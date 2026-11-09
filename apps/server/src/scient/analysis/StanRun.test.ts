@@ -17,7 +17,9 @@ import {
   stanNeedsData,
   stanSetup,
   stanSourceProblem,
+  stanServerBuilds,
   stanToolchain,
+  publishStan,
   translateStan,
 } from "./StanRun.ts";
 
@@ -183,6 +185,11 @@ describe("the toolchain", () => {
           "C:\\Windows",
         ].join(";"),
       },
+      added: [
+        "C:\\cmdstan\\stan\\lib\\stan_math\\lib\\tbb",
+        "C:\\rtools44\\usr\\bin",
+        "C:\\rtools44\\x86_64-w64-mingw32.static.posix\\bin",
+      ],
     });
   });
 
@@ -252,7 +259,7 @@ describe("the run", () => {
     return { prepared, root, stanc, folder, staging };
   };
 
-  it("checks, builds in a folder of its own, samples four chains, summarizes and diagnoses", () => {
+  it("checks, builds in the folder's build, samples four chains, summarizes and diagnoses", () => {
     const project = temporaryFolder("scient stan model ");
     const model = NodePath.join(project, "eight schools.stan");
     NodeFS.writeFileSync(model, EIGHT_SCHOOLS);
@@ -260,9 +267,7 @@ describe("the run", () => {
     const { prepared, root, stanc, folder, staging } = plan(model);
     const draws = NodePath.join(project, "eight schools-draws");
     const chains = [1, 2, 3, 4].map((chain) => NodePath.join(draws, `eight_schools_${chain}.csv`));
-    const [own] = NodeFS.readdirSync(folder).filter((entry) => entry.startsWith("build-"));
-    const built = NodePath.join(folder, own!, "eight_schools");
-    const program = NodePath.join(folder, "eight_schools");
+    const built = NodePath.join(folder, "build", "eight_schools");
     expect(prepared.before).toEqual([
       {
         executable: stanc,
@@ -283,14 +288,7 @@ describe("the run", () => {
         showOutput: "on-failure",
       },
       {
-        executable: "/bin/sh",
-        args: ["-c", '[ -e "$1" ] || mv -f "$0" "$1"; [ -e "$1" ]', built, program],
-        cwd: "/project",
-        environment: { PATH: "/usr/bin" },
-        showOutput: "on-failure",
-      },
-      {
-        executable: program,
+        executable: built,
         args: [
           "sample",
           "num_chains=4",
@@ -316,47 +314,57 @@ describe("the run", () => {
     expect(prepared).toMatchObject({
       executable: NodePath.join(root, "bin", "diagnose"),
       args: chains,
+      publication: { from: built, to: NodePath.join(folder, "eight_schools") },
     });
-    // Its own folder holds only this C++: no .stan for make to translate, no older objects.
-    expect(NodeFS.readdirSync(NodePath.join(folder, own!))).toEqual(["eight_schools.hpp"]);
+    // The build holds only this C++: no .stan for make to translate, no earlier objects.
+    expect(NodeFS.readdirSync(NodePath.join(folder, "build"))).toEqual(["eight_schools.hpp"]);
     expect(NodeFS.readdirSync(project).filter((name) => name.endsWith(".hpp"))).toEqual([]);
   });
 
-  it("samples the program already built from the same C++, building nothing", () => {
+  it("samples the program already published from the same C++, building nothing", () => {
     const model = NodePath.join(temporaryFolder("scient-stan-"), "a.stan");
     NodeFS.writeFileSync(model, "parameters { real y; }\n");
     const folder = builtFolder("a");
     NodeFS.writeFileSync(NodePath.join(folder, "a"), "the program");
     const { prepared } = plan(model, folder);
+    expect(prepared.publication).toBeNull();
     expect(prepared.before.map((step) => step.executable)).toEqual([
       expect.stringMatching(/stanc$/u),
       NodePath.join(folder, "a"),
       expect.stringMatching(/stansummary$/u),
     ]);
-    expect(NodeFS.readdirSync(folder).sort()).toEqual(["a", "a.hpp"]);
   });
 
-  it("builds each time in a new folder, so objects a build left behind are never linked", () => {
+  it("empties the build first, so objects an interrupted build left are never linked", () => {
     const model = NodePath.join(temporaryFolder("scient-stan-"), "a.stan");
     NodeFS.writeFileSync(model, "parameters { real y; }\n");
     const folder = builtFolder("a");
-    // What an interrupted build or KEEP_OBJECT=true leaves: an object beside a build's C++.
-    const earlier = NodePath.join(folder, "build-1-000000000000");
-    NodeFS.mkdirSync(earlier);
-    NodeFS.writeFileSync(NodePath.join(earlier, "a.o"), "old object");
-    NodeFS.writeFileSync(NodePath.join(folder, "a.o"), "old object");
-    const first = plan(model, folder).prepared.before[1]!.args.at(-1)!;
-    const second = plan(model, folder).prepared.before[1]!.args.at(-1)!;
-    expect(new Set([first, second, NodePath.join(earlier, "a")]).size).toBe(3);
-    for (const target of [first, second]) {
-      expect(NodeFS.readdirSync(NodePath.dirname(target))).toEqual(["a.hpp"]);
-    }
+    // What an interrupted build or KEEP_OBJECT=true leaves behind.
+    NodeFS.mkdirSync(NodePath.join(folder, "build"));
+    NodeFS.writeFileSync(NodePath.join(folder, "build", "a.o"), "old object");
+    NodeFS.writeFileSync(NodePath.join(folder, "build", "a"), "old program");
+    plan(model, folder);
+    expect(NodeFS.readdirSync(NodePath.join(folder, "build"))).toEqual(["a.hpp"]);
+  });
+
+  it("publishes a built program with a rename, and no shell anywhere in the run", async () => {
+    const model = NodePath.join(temporaryFolder("scient-stan-"), "a.stan");
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    const { prepared, folder } = plan(model);
+    const shells = /(?:^|[\\/])(?:sh|bash|cmd(?:\.exe)?)$/iu;
+    expect([...prepared.before, prepared].filter((step) => shells.test(step.executable))).toEqual(
+      [],
+    );
+    NodeFS.writeFileSync(prepared.publication!.from, "the program");
+    await publishStan(prepared.publication!);
+    expect(NodeFS.readFileSync(NodePath.join(folder, "a"), "utf8")).toBe("the program");
+    expect(plan(model, folder).prepared.publication).toBeNull();
   });
 
   it("samples a model that reads no data without a data argument", () => {
     const model = NodePath.join(temporaryFolder("scient-stan-"), "a.stan");
     NodeFS.writeFileSync(model, "parameters { real y; }\nmodel { y ~ normal(0, 1); }\n");
-    expect(plan(model).prepared.before[3]?.args).not.toContain("data");
+    expect(plan(model).prepared.before[2]?.args).not.toContain("data");
   });
 
   it("removes the last run's table and chains, which stansummary would not replace", () => {
@@ -375,6 +383,39 @@ describe("the run", () => {
     expect(stanModelName("/m/my-model.stan", "linux")).toBe("my_model");
     expect(stanModelName("/m/2024 fit.stan", "linux")).toBe("m_2024_fit");
     expect(stanModelName("C:\\m\\Fit.STAN", "win32")).toBe("Fit");
+  });
+});
+
+describe("each server's own builds", () => {
+  const staging = (state: string, runId: string) => ({
+    projectId: "project",
+    runId: ExecutionRunId.make(runId),
+    artifactStagingDirectory: NodePath.join(state, "runs", "project", runId, "artifact-staging"),
+  });
+
+  it("keeps one server's builds apart from another's, and shares them across its own runs", () => {
+    const first = stanServerBuilds(
+      staging("/home/a/.scient/userdata/analysis", "r1"),
+      "linux",
+      "/tmp",
+    );
+    const again = stanServerBuilds(
+      staging("/home/a/.scient/userdata/analysis", "r2"),
+      "linux",
+      "/tmp",
+    );
+    const other = stanServerBuilds(staging("/home/a/.scient/dev/analysis", "r1"), "linux", "/tmp");
+    expect(first).toBe(again);
+    expect(other).not.toBe(first);
+    expect(NodePath.dirname(first)).toBe("/tmp/scient-stan");
+    // A staging folder laid out otherwise gets this process's own key, shared with no server.
+    const unknown = stanServerBuilds(
+      { projectId: "p", runId: ExecutionRunId.make("r"), artifactStagingDirectory: "/x/staging" },
+      "linux",
+      "/tmp",
+    );
+    expect(new Set([first, other, unknown]).size).toBe(3);
+    expect(NodePath.basename(unknown)).toMatch(/^process-\d+-[0-9a-f]{12}$/u);
   });
 });
 
@@ -408,9 +449,9 @@ describe("a model in a folder whose name a shell or make would read", () => {
       cwd: project,
       platform: "linux",
     });
-    const [check, make, publish] = prepared.before;
+    const [check, make] = prepared.before;
     expect(check?.args.at(-1)).toBe(model);
-    for (const arg of [...make!.args, ...publish!.args.slice(2)]) {
+    for (const arg of make!.args) {
       expect(arg).not.toContain(name);
       expect(stanMakeSafe(arg.replace(/^[A-Z_]+=/u, ""), "linux"), arg).toBe(true);
     }
@@ -488,24 +529,34 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to C++ and keeping it 
     const temporary = temporaryFolder("scient-stan-builds-");
     const project = temporaryFolder("scient stan model ");
     const model = NodePath.join(project, "m.stan");
-    const translate = (options: { readonly timeoutMs?: number; readonly now?: number } = {}) =>
+    const builds = NodePath.join(temporary, "scient-stan", "server-a");
+    const translate = (
+      options: {
+        readonly timeoutMs?: number;
+        readonly now?: number;
+        readonly environment?: Readonly<Record<string, string>>;
+      } = {},
+    ) =>
       translateStan({
         runId: ExecutionRunId.make("run"),
         stanc,
         root,
         model,
-        environment: { PATH: "/usr/bin:/bin" },
+        toolchain: {
+          make: "/usr/bin/make",
+          environment: { PATH: "/usr/bin:/bin", ...options.environment },
+        },
+        builds,
         platform: "linux",
-        temporary,
-        ...options,
+        ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        ...(options.now === undefined ? {} : { now: options.now }),
       });
     const folderOf = async () => {
       const translation = await translate();
       if (!("folder" in translation)) throw new Error(JSON.stringify(translation));
       return translation.folder;
     };
-    const builds = NodePath.join(temporary, "scient-stan");
-    return { builds, folderOf, model, project, translate };
+    return { builds, folderOf, model, project, root, temporary, translate };
   };
 
   it("keeps the same C++ in the same folder, so its program is reused", async () => {
@@ -561,36 +612,48 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to C++ and keeping it 
     expect(() => NodeProcess.kill(pid, 0)).toThrow();
   });
 
-  it("lets two translations of one model at once share one folder and one C++", async () => {
-    const { builds, model, project, translate } = computer();
+  it("gives a new folder when the compiler, its flags or CmdStan's makefiles change", async () => {
+    const { folderOf, model, root, translate } = computer();
     NodeFS.writeFileSync(model, "parameters { real y; }\n");
-    const [first, second] = await Promise.all([translate(), translate()]);
-    expect(first).toEqual(second);
-    const written = NodeFS.readFileSync(NodePath.join(project, "written.log"), "utf8")
-      .trim()
-      .split("\n");
-    expect(new Set(written).size).toBe(2);
-    for (const file of written) {
-      expect(NodePath.basename(file)).toMatch(/^m\.\d+-[0-9a-f]{12}\.hpp$/u);
-    }
-    expect("folder" in first! && NodeFS.readdirSync(first.folder)).toEqual(["m.hpp"]);
-    expect(NodeFS.readdirSync(NodePath.join(builds, "incoming"))).toEqual([]);
+    const folderFor = async (environment: Readonly<Record<string, string>> = {}) => {
+      const translation = await translate({ environment });
+      if (!("folder" in translation)) throw new Error(JSON.stringify(translation));
+      return translation.folder;
+    };
+    const plain = await folderOf();
+    expect(await folderFor()).toBe(plain);
+    // A variable make does not read leaves the build as it was.
+    expect(await folderFor({ EDITOR: "vi" })).toBe(plain);
+    const folders = [
+      await folderFor({ CXX: "/opt/gcc/bin/g++" }),
+      await folderFor({ CXXFLAGS: "-O0" }),
+      await folderFor({ STAN_OPENCL: "true" }),
+    ];
+    NodeFS.mkdirSync(NodePath.join(root, "make"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(root, "make", "program"), "%.o : %.hpp\n");
+    folders.push(await folderOf());
+    NodeFS.writeFileSync(NodePath.join(root, "make", "program"), "%.o : %.hpp\n\t# changed\n");
+    folders.push(await folderOf());
+    expect(new Set([plain, ...folders]).size).toBe(6);
   });
 
-  it("removes builds unused for 30 days, keeping the one just used", async () => {
-    const { builds, folderOf, model, translate } = computer();
+  it("prunes only this server's builds unused for 30 days", async () => {
+    const { builds, folderOf, model, temporary, translate } = computer();
     NodeFS.writeFileSync(model, "parameters { real y; }\n");
     const folder = await folderOf();
     const stale = NodePath.join(builds, "0123456789abcdef0123456789abcdef");
-    NodeFS.mkdirSync(stale);
+    const otherServer = NodePath.join(temporary, "scient-stan", "server-b", "fedcba9876543210");
+    for (const old of [stale, otherServer]) NodeFS.mkdirSync(old, { recursive: true });
     const day = 24 * 60 * 60;
     // 2026-11-09, in seconds.
     const now = 1_794_182_400;
-    NodeFS.utimesSync(stale, now - 31 * day, now - 31 * day);
-    NodeFS.utimesSync(folder, now - 31 * day, now - 31 * day);
+    for (const old of [stale, folder, otherServer, NodePath.dirname(otherServer)]) {
+      NodeFS.utimesSync(old, now - 31 * day, now - 31 * day);
+    }
     await translate({ now: now * 1000 });
     expect(NodeFS.existsSync(stale)).toBe(false);
     expect(NodeFS.existsSync(folder)).toBe(true);
+    expect(NodeFS.existsSync(otherServer)).toBe(true);
   });
 
   it("never opens what a comment names, such as a pipe that would block", async () => {

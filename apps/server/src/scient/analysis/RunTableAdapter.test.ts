@@ -22,6 +22,7 @@ import {
   makeRunTableAdapters,
   mathlibNeedsCache,
 } from "./RunTableAdapter.ts";
+import { stanServerBuilds } from "./StanRun.ts";
 
 const tool = (languageId: string, name: string, executable: string): FoundLanguageTool => ({
   languageId,
@@ -448,13 +449,14 @@ describe("Stata and SAS, which write their results to files", () => {
     ]);
   });
 
-  it("reads the files after the run only for Stata and SAS", () => {
+  it("concludes runs only for Stata and SAS, which leave results in files, and Stan", () => {
     const concluding = makeRunTableAdapters({
       tools: async () => new Map(),
       environment: {},
       platform: "linux",
     }).flatMap((adapter) => (adapter.concludeRun === undefined ? [] : [adapter.kind]));
-    expect(concluding).toEqual(["stata", "sas"]);
+    // Stan concludes to publish the program a successful run built.
+    expect(concluding).toEqual(["stata", "sas", "stan"]);
   });
 
   it("says SAS has no Mac version instead of only that it was not found", async () => {
@@ -647,11 +649,9 @@ describe("a Stan model", () => {
         absoluteSourcePath: NodePath.join(folder, relativePath),
         artifactStagingDirectory: NodePath.join(folder, ".staging"),
       };
+      made.push(stanServerBuilds(context, "linux"));
       await adapter.prepareRun?.(context);
-      const prepared = adapter.prepare(context);
-      const sample = prepared.before?.find((step) => step.args[0] === "sample");
-      if (sample !== undefined) made.push(NodePath.dirname(sample.executable));
-      return prepared;
+      return { context, prepared: adapter.prepare(context) };
     };
     return { adapter, folder, model, root, run, stanc, tools };
   };
@@ -662,12 +662,11 @@ describe("a Stan model", () => {
     async () => {
       const { folder, model, root, run, stanc, tools } = stanComputer();
       model("models/a.stan", "parameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\n");
-      const prepared = await run("models/a.stan");
+      const { prepared } = await run("models/a.stan");
       expect(prepared.before?.map((step) => step.executable)).toEqual([
         stanc,
         NodePath.join(tools, "make"),
-        "/bin/sh",
-        expect.stringMatching(/scient-stan[\\/][0-9a-f]{32}[\\/]a$/u),
+        expect.stringMatching(/scient-stan[\\/][^\\/]+[\\/][0-9a-f]{32}[\\/]build[\\/]a$/u),
         NodePath.join(root, "bin", "stansummary"),
       ]);
       expect(prepared.executable).toBe(NodePath.join(root, "bin", "diagnose"));
@@ -678,13 +677,39 @@ describe("a Stan model", () => {
         undefined,
         "on-failure",
         "on-failure",
-        "on-failure",
         undefined,
       ]);
       expect(NodeFS.readdirSync(NodePath.join(folder, "models")).sort()).toEqual([
         "a-draws",
         "a.stan",
       ]);
+    },
+  );
+
+  it.runIf(NodeFS.existsSync("/bin/sh"))(
+    "publishes the program it built only when the whole run succeeded",
+    async () => {
+      const { adapter, model, run } = stanComputer();
+      model("a.stan", "parameters {\n  real y;\n}\n");
+      const sampleOf = (prepared: ReturnType<typeof adapter.prepare>) =>
+        prepared.before!.find((step) => step.args[0] === "sample")!.executable;
+      const failed = await run("a.stan");
+      const built = sampleOf(failed.prepared);
+      NodeFS.writeFileSync(built, "the program");
+      expect(await adapter.concludeRun?.(failed.context, 2)).toMatchObject({
+        failureMessage: "Stan exited with code 2.",
+      });
+      const retried = await run("a.stan");
+      expect(sampleOf(retried.prepared)).toBe(built);
+      NodeFS.writeFileSync(built, "the program");
+      expect(await adapter.concludeRun?.(retried.context, 0)).toMatchObject({
+        failureMessage: null,
+      });
+      const published = NodePath.join(NodePath.dirname(NodePath.dirname(built)), "a");
+      expect(NodeFS.readFileSync(published, "utf8")).toBe("the program");
+      const later = await run("a.stan");
+      expect(sampleOf(later.prepared)).toBe(published);
+      expect(later.prepared.before).toHaveLength(3);
     },
   );
 

@@ -38,7 +38,10 @@ import {
   STAN_INSTALL_HINT,
   stanSetup,
   stanSourceProblem,
+  publishStan,
+  stanServerBuilds,
   translateStan,
+  type StanPublication,
   type StanTranslation,
 } from "./StanRun.ts";
 
@@ -244,7 +247,8 @@ function prepareStanRun(
     ...step,
     ...startable(step, step.environment, platform),
   });
-  return { ...started(plan), before: plan.before.map(started) };
+  const { publication, ...main } = plan;
+  return { ...started(main), before: plan.before.map(started), publication };
 }
 
 function prepare(
@@ -252,12 +256,9 @@ function prepare(
   environment: Readonly<Record<string, string>>,
   platform: NodeJS.Platform,
   context: AnalysisRunContext,
-  translation: StanTranslation | undefined,
 ) {
   const executable = context.runtime.executablePath;
   if (executable === null) throw new Error(`${context.runtime.label} was not found.`);
-  if (route.languageId === "stan")
-    return prepareStanRun(executable, environment, platform, context, translation);
   const { command } = chooseTool(route, [], executable, environment, platform)!;
   const file = context.absoluteSourcePath;
   const process = { cwd: context.source.cwd, environment };
@@ -405,6 +406,7 @@ export function makeRunTableAdapters(input: {
     const baselines = new WeakMap<AnalysisRunContext, BatchLogBaseline>();
     // Stan only: the build folder this run's C++ went to, or why it did not translate.
     const translations = new WeakMap<AnalysisRunContext, StanTranslation>();
+    const publications = new WeakMap<AnalysisRunContext, StanPublication>();
     const missing =
       route.languageId === "sas" && input.platform === "darwin"
         ? "SAS has no version for Mac. It runs on Windows and Linux, or online through SAS OnDemand for Academics."
@@ -457,12 +459,25 @@ export function makeRunTableAdapters(input: {
                   stanc,
                   root: setup.root,
                   model: context.absoluteSourcePath,
-                  environment: setup.toolchain.environment,
+                  toolchain: setup.toolchain,
+                  builds: stanServerBuilds(context, input.platform),
                   platform: input.platform,
                 });
                 translations.set(context, translation);
               }
               await capture.prepareRun?.(context);
+            },
+            // A program is published only once every step succeeded. Stan's exit code is its
+            // verdict, which a run's conclusion must give, so it is the same as without one.
+            concludeRun: async (context: AnalysisRunContext, exitCode: number | null) => {
+              const publication = publications.get(context);
+              if (exitCode === 0 && publication !== undefined) await publishStan(publication);
+              return {
+                output: [],
+                failureMessage: exitCode === 0 ? null : `${label} exited with code ${exitCode}.`,
+                diagnostics: [],
+                writtenFiles: [],
+              };
             },
           }
         : {}),
@@ -479,8 +494,21 @@ export function makeRunTableAdapters(input: {
               return logs.conclude(context, exitCode, before);
             },
           }),
-      prepare: (context) =>
-        prepare(route, environment, input.platform, context, translations.get(context)),
+      prepare: (context) => {
+        const stanc = context.runtime.executablePath;
+        if (route.languageId !== "stan" || stanc === null) {
+          return prepare(route, environment, input.platform, context);
+        }
+        const { publication, ...steps } = prepareStanRun(
+          stanc,
+          environment,
+          input.platform,
+          context,
+          translations.get(context),
+        );
+        if (publication !== null) publications.set(context, publication);
+        return steps;
+      },
     };
   });
 }

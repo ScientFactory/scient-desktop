@@ -512,6 +512,7 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
               `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`,
             ).toBe(0);
           }
+          yield* Effect.promise(async () => adapter.concludeRun?.(context, 0));
           const summary = NodeFS.readFileSync(
             NodePath.join(cwd, "models", "m-draws", "summary.csv"),
             "utf8",
@@ -522,16 +523,20 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
         expect(yield* sample()).toBe(linked ? 105 : 6);
         expect(hasMake()).toBe(true);
         const first = program()!;
-        // The same C++ again: the program it built is sampled, and nothing is compiled.
+        expect(NodePath.basename(NodePath.dirname(first))).toBe("build");
+        const published = NodePath.join(NodePath.dirname(NodePath.dirname(first)), "m");
+        // The same C++ again: the program the run published is sampled, and nothing is compiled.
         expect(yield* sample()).toBe(linked ? 105 : 6);
         expect(hasMake()).toBe(false);
-        expect(program()).toBe(first);
+        expect(program()).toBe(published);
         // A changed include changes the C++, which gets a folder and a program of its own.
         write("models/f.stanfunctions", "real f() { return 20; }\n");
         expect(yield* sample()).toBe(linked ? 123 : 24);
         expect(hasMake()).toBe(true);
-        expect(program()).not.toBe(first);
-        expect(NodeFS.existsSync(first)).toBe(true);
+        expect(NodePath.dirname(NodePath.dirname(program()!))).not.toBe(
+          NodePath.dirname(published),
+        );
+        expect(NodeFS.existsSync(published)).toBe(true);
         // A model that no longer translates fails the run, and nothing earlier runs in its place.
         write("models/f.stanfunctions", "real f() { return 20 }\n");
         const staging = NodeFS.mkdtempSync(NodePath.join(cwd, ".staging-"));
