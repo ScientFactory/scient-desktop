@@ -958,7 +958,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           // matches it, and the cap never passes the popup's available height.
           "relative flex w-screen max-w-80 flex-row overflow-hidden",
           props.docked
-            ? "max-sm:h-56 max-sm:w-full max-sm:max-w-none"
+            ? "sm:max-w-74 max-sm:h-56 max-sm:w-full max-sm:max-w-none"
             : "max-h-[min(21.625rem,var(--available-height,85vh))]",
           // SCIENT-FORK:END
         )}
@@ -1263,7 +1263,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             {selectedFooterEntry && props.renderProviderFooter
               ? props.renderProviderFooter(selectedFooterEntry)
               : null}
-            {props.onContinueInNewChat ? (
+            {props.onContinueInNewChat && !props.docked ? (
               <ModelPickerNewChatFooter
                 disabled={props.continueInNewChatDisabled ?? false}
                 onFork={handleContinueInNewChat}

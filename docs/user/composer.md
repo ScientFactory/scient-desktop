@@ -180,6 +180,15 @@ instance:
 
 ## Model defaults
 
+Fresh Scient Agent, Pi, and Oh My Pi model preferences include GPT-6.1 Terra among the visible
+OpenAI account models when the agent discovers it. Saved visibility choices take precedence.
+The reasoning column shows the model’s supported levels directly; other agent options appear
+below them when available.
+
+On desktop and web, model choices show the company below the model name. Long names wrap
+so their distinguishing suffix stays readable. The picker has one bottom footer: **Fork to
+continue in a new chat** on the left when available, and speed and permission controls on the right.
+
 For providers that support custom models, **Settings → Providers → Models** lets you give an
 unlisted model a display name and define its options. Only options supported by the integration
 affect turns; declaring an option does not add a new provider capability. Antigravity uses the
@@ -676,7 +685,7 @@ worktree** is selected, each background thread creates its own worktree.
 
 Forking lets you continue a conversation with a different provider or model
 without changing the original. Use **Fork** beside a sent message or completed
-response, use the compact **Fork** action in the model picker, or run `/fork`
+response, use **Fork to continue in a new chat** in the model picker, or run `/fork`
 to start from the latest completed response. In the new conversation, choose
 the provider and model you want before sending.
 

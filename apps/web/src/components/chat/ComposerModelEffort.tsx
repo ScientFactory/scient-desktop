@@ -20,6 +20,7 @@ import {
   MenuTrigger,
 } from "../ui/menu";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
@@ -537,22 +538,9 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
 }
 
 const FOOTER_SEGMENT =
-  "flex h-6 cursor-pointer items-center justify-center gap-1 px-2 text-muted-foreground text-xs outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
+  "flex h-5 cursor-pointer items-center justify-center gap-1 px-1.5 text-muted-foreground text-2xs outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
 
-function SpeedSegment(props: {
-  checked: boolean;
-  label: string;
-  description?: string | undefined;
-  onPick: () => void;
-}) {
-  const buttonProps = {
-    type: "button",
-    role: "radio",
-    "aria-checked": props.checked,
-    "data-checked": props.checked || undefined,
-    className: FOOTER_SEGMENT,
-    onClick: props.onPick,
-  } as const;
+function SpeedSegment(props: { value: string; label: string; description?: string | undefined }) {
   const content = (
     <>
       {props.label === "Fast" || props.label === "Ultrafast" ? (
@@ -561,10 +549,10 @@ function SpeedSegment(props: {
       {props.label}
     </>
   );
-  if (!props.description) return <button {...buttonProps}>{content}</button>;
+  if (!props.description) return <Toggle value={props.value}>{content}</Toggle>;
   return (
     <Tooltip>
-      <TooltipTrigger render={<button {...buttonProps} />}>{content}</TooltipTrigger>
+      <TooltipTrigger render={<Toggle value={props.value} />}>{content}</TooltipTrigger>
       <TooltipPopup side="top">{props.description}</TooltipPopup>
     </Tooltip>
   );
@@ -578,33 +566,41 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
     traits.booleanDescriptors,
   );
   if (traits.modelIsUnavailable || (!speedSelect && !fastToggle)) return null;
+  const selected = speedSelect
+    ? traits.selectValue(speedSelect)
+    : String(fastToggle?.currentValue === true);
   return (
-    <div
-      role="radiogroup"
+    <ToggleGroup
       aria-label={speedSelect?.label ?? fastToggle?.label}
-      className="flex rounded-lg bg-input/40 p-0.5"
+      variant="segmented"
+      size="segmented-compact"
+      value={[selected]}
+      onValueChange={(next) => {
+        const value = next[0];
+        if (value === undefined || value === selected) return;
+        if (speedSelect) traits.changeSelect(speedSelect, value);
+        else if (fastToggle) traits.changeBoolean(fastToggle.id, value === "true");
+      }}
     >
       {speedSelect
         ? selectableProviderOptionChoices(speedSelect).map((option) => (
             <SpeedSegment
               key={option.id}
-              checked={option.id === traits.selectValue(speedSelect)}
+              value={option.id}
               label={option.label}
               description={option.description}
-              onPick={() => traits.changeSelect(speedSelect, option.id)}
             />
           ))
         : fastToggle
           ? ([false, true] as const).map((value) => (
               <SpeedSegment
                 key={String(value)}
-                checked={(fastToggle.currentValue === true) === value}
+                value={String(value)}
                 label={value ? "Fast" : "Standard"}
-                onPick={() => traits.changeBoolean(fastToggle.id, value)}
               />
             ))
           : null}
-    </div>
+    </ToggleGroup>
   );
 }
 
@@ -656,11 +652,11 @@ function PermissionsMenu(props: {
             type="button"
             data-composer-permissions-trigger
             aria-label={`Permissions: ${current.label}`}
-            className="ms-auto flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-muted-foreground text-xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
+            className="ms-auto flex h-6 cursor-pointer items-center gap-1 rounded-md px-1.5 text-muted-foreground text-2xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
           />
         }
       >
-        <CurrentIcon aria-hidden="true" className="size-3.5" />
+        <CurrentIcon aria-hidden="true" className="size-3" />
         {current.label}
         <ChevronUpIcon aria-hidden="true" className="size-3" />
       </MenuTrigger>
@@ -683,7 +679,7 @@ export function ComposerPickerFooter(props: {
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-3 py-2">
+    <div className="ms-auto flex flex-wrap items-center justify-end gap-2">
       {props.traits ? <SpeedControl traits={props.traits} /> : null}
       {props.traits ? <UltracodeControl traits={props.traits} /> : null}
       <PermissionsMenu
