@@ -89,7 +89,7 @@ it("withholds autofill from an older bridge and drops values after the tab navig
     />,
   );
   await expect
-    .element(page.getByRole("button", { name: "Fill sign-in", exact: true }))
+    .element(page.getByRole("button", { name: "Saved sign-ins for example.com" }))
     .not.toBeInTheDocument();
   Object.defineProperty(window, "desktopBridge", {
     configurable: true,
@@ -105,7 +105,8 @@ it("withholds autofill from an older bridge and drops values after the tab navig
       url="https://example.com/login"
     />,
   );
-  await page.getByRole("button", { name: "Fill sign-in", exact: true }).click();
+  await page.getByRole("button", { name: "Saved sign-ins for example.com" }).click();
+  await page.getByRole("button", { name: "Fill No username" }).click();
   await entered.promise;
   await screen.rerender(
     <BrowserAccountControls

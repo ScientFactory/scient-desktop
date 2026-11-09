@@ -550,11 +550,6 @@ export function automaticSignIn(form: DesktopLoginForm) {
   );
 }
 
-export function signInLabel(account: AccountSummary) {
-  const username = account.details.kind === "website" ? account.details.username : undefined;
-  return username ? `${account.name} · ${username}` : account.name;
-}
-
 export function writableOnePasswordVaults(status: AccountStoresStatus["onePassword"]) {
   return status.state === "connected"
     ? (status.vaults?.filter((vault) => !vault.readOnly) ?? [])

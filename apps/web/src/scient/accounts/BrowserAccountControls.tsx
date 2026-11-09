@@ -1,7 +1,7 @@
 import { useSignInRecording } from "./useSignInRecording";
 import { useUniversityBrowsing } from "./useUniversityBrowsing";
 import { useEffect, useEffectEvent, useRef, useState, useSyncExternalStore } from "react";
-import { CheckIcon, KeyRoundIcon } from "lucide-react";
+import { useNavigate } from "@tanstack/react-router";
 import { ACCOUNTS_PROTOCOL } from "@t3tools/contracts";
 import type {
   AccountSummary,
@@ -13,7 +13,7 @@ import type {
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import { Button } from "~/components/ui/button";
-import { Menu, MenuTrigger, MenuPopup, MenuItem } from "~/components/ui/menu";
+import { InputGroupAddon } from "~/components/ui/input-group";
 import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { toastManager } from "~/components/ui/toast";
 import { accountsState } from "./accountsState";
@@ -22,11 +22,14 @@ import {
   capturedSignInInput,
   fillableAccounts,
   matchingAccounts,
-  signInLabel,
+  mergeProfiles,
 } from "./accountsView";
+import { SignInKey } from "./SignInKey";
 
 import { SaveStores } from "./SaveStores";
 import { autofilledTabs, filledTabRecord } from "./accountAutofill";
+import { useClientSettings } from "~/hooks/useSettings";
+import { useThreadPreviewState } from "~/previewStateStore";
 
 const NEVER_KEY = "scient.accounts.never-save.v1";
 /** A submitted form has had time to reject the password by now. */
@@ -250,6 +253,20 @@ function DesktopBrowserAccountControls({
       ? fillableAccounts(data.accounts, url, profileId)
       : [];
   const [anchor, setAnchor] = useState<HTMLSpanElement | null>(null);
+  // A page an agent controls could read what is filled or shown, so it gets no key.
+  const agentTab =
+    useThreadPreviewState(threadRef).sessions[previewTabId ?? ""]?.automationOwner !== undefined;
+  const navigate = useNavigate();
+  const profileNames = new Map(
+    mergeProfiles(
+      useClientSettings((settings) => settings.browserProfiles),
+      data?.profiles ?? [],
+    ).map((profile) => [profile.id, profile.name]),
+  );
+  const profileOf = (account: AccountSummary) =>
+    ("profileId" in account.details ? account.details.profileId : undefined) ?? profileId;
+  const profiles = new Set(matches.map(profileOf));
+  const profileName = (account: AccountSummary) => profileNames.get(profileOf(account));
   const autofilled = useSyncExternalStore(autofilledTabs.subscribe, () =>
     autofilledTabs.get(tabId),
   );
@@ -288,44 +305,39 @@ function DesktopBrowserAccountControls({
   if (!data || !canWrite) return null;
   return (
     <>
-      <span ref={setAnchor} className="flex">
-        {matches.length === 1 && !filled ? (
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            aria-label="Fill sign-in"
-            disabled={busy}
-            onClick={() => void fill(matches[0]!)}
-          >
-            <KeyRoundIcon />
-          </Button>
-        ) : matches.length > 0 ? (
-          <Menu>
-            <MenuTrigger
-              render={
-                <Button
-                  type="button"
-                  size="icon-xs"
-                  variant={filled ? "secondary" : "ghost"}
-                  aria-label={filled ? `Filled: ${signInLabel(filled)}` : "Fill sign-in"}
-                  disabled={busy}
-                />
-              }
-            >
-              <KeyRoundIcon />
-            </MenuTrigger>
-            <MenuPopup align="end">
-              {matches.map((account) => (
-                <MenuItem key={account.accountId} onClick={() => void fill(account)}>
-                  <span className="flex-1">{signInLabel(account)}</span>
-                  {account.accountId === filled?.accountId ? <CheckIcon /> : null}
-                </MenuItem>
-              ))}
-            </MenuPopup>
-          </Menu>
-        ) : null}
-      </span>
+      {matches.length > 0 && !agentTab ? (
+        <InputGroupAddon align="inline-end">
+          <span ref={setAnchor} className="flex">
+            <SignInKey
+              site={new URL(url).hostname}
+              rows={matches.map((account) => ({
+                accountId: account.accountId,
+                username:
+                  account.details.kind === "website" ? (account.details.username ?? "") : "",
+                profile: profiles.size > 1 ? profileName(account) : undefined,
+              }))}
+              filledId={filled?.accountId}
+              busy={busy}
+              onFill={(accountId) => {
+                const account = matches.find((match) => match.accountId === accountId);
+                if (account) void fill(account);
+              }}
+              onReveal={async (accountId) => {
+                const account = matches.find((match) => match.accountId === accountId);
+                if (!account) return undefined;
+                const result = await getValues({
+                  accountId: account.accountId,
+                  origin: new URL(url).origin,
+                });
+                return result.ok ? result.value.password : undefined;
+              }}
+              onEdit={() => void navigate({ to: "/settings/accounts" })}
+            />
+          </span>
+        </InputGroupAddon>
+      ) : (
+        <span ref={setAnchor} className="flex" />
+      )}
       {pending ? (
         <SaveSignIn
           key={`${pending.capture.tabId}:${pending.capture.url}:${pending.capture.username}`}
