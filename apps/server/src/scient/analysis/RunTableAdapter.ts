@@ -220,6 +220,7 @@ function prepareStanRun(
   environment: Readonly<Record<string, string>>,
   platform: NodeJS.Platform,
   context: AnalysisRunContext,
+  translated: boolean,
 ) {
   const setup = stanSetup(stanc, environment, platform);
   if ("problem" in setup) {
@@ -237,6 +238,7 @@ function prepareStanRun(
     staging: context.artifactStagingDirectory,
     cwd: context.source.cwd,
     platform,
+    translated,
   });
   const started = <Step extends (typeof plan.before)[number]>(step: Step): Step => ({
     ...step,
@@ -250,11 +252,12 @@ function prepare(
   environment: Readonly<Record<string, string>>,
   platform: NodeJS.Platform,
   context: AnalysisRunContext,
+  translated: boolean,
 ) {
   const executable = context.runtime.executablePath;
   if (executable === null) throw new Error(`${context.runtime.label} was not found.`);
   if (route.languageId === "stan")
-    return prepareStanRun(executable, environment, platform, context);
+    return prepareStanRun(executable, environment, platform, context, translated);
   const { command } = chooseTool(route, [], executable, environment, platform)!;
   const file = context.absoluteSourcePath;
   const process = { cwd: context.source.cwd, environment };
@@ -400,6 +403,8 @@ export function makeRunTableAdapters(input: {
     const label = names.get(route.languageId) ?? route.label ?? route.languageId;
     const logs = batchLogsFor(route.languageId, input.platform);
     const baselines = new WeakMap<AnalysisRunContext, BatchLogBaseline>();
+    // Stan only: whether this run's model was translated into the build before its steps.
+    const translations = new WeakMap<AnalysisRunContext, boolean>();
     const missing =
       route.languageId === "sas" && input.platform === "darwin"
         ? "SAS has no version for Mac. It runs on Windows and Linux, or online through SAS OnDemand for Academics."
@@ -447,13 +452,14 @@ export function makeRunTableAdapters(input: {
               const stanc = context.runtime.executablePath;
               const setup = stanc === null ? null : stanSetup(stanc, environment, input.platform);
               if (stanc !== null && setup !== null && !("problem" in setup)) {
-                await translateStan({
+                const translated = await translateStan({
                   stanc,
                   root: setup.root,
                   model: context.absoluteSourcePath,
                   environment: setup.toolchain.environment,
                   platform: input.platform,
                 });
+                translations.set(context, translated);
               }
               await capture.prepareRun?.(context);
             },
@@ -472,7 +478,8 @@ export function makeRunTableAdapters(input: {
               return logs.conclude(context, exitCode, before);
             },
           }),
-      prepare: (context) => prepare(route, environment, input.platform, context),
+      prepare: (context) =>
+        prepare(route, environment, input.platform, context, translations.get(context) === true),
     };
   });
 }

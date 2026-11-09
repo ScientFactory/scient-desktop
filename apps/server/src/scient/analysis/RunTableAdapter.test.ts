@@ -658,9 +658,9 @@ describe("a Stan model", () => {
       NodePath.join(root, "bin", "stansummary"),
     ]);
     expect(prepared.executable).toBe(NodePath.join(root, "bin", "diagnose"));
-    expect(prepared.before?.[0]?.args).toContain(
-      `--o=${NodePath.join(folder, ".staging", "a.hpp")}`,
-    );
+    // Nothing translated the model before the steps, so the first step writes the build's C++.
+    const build = stanBuildFolder(root, NodePath.join(folder, "models", "a.stan"), "linux");
+    expect(prepared.before?.[0]?.args).toContain(`--o=${NodePath.join(build, "a.hpp")}`);
     expect(prepared.before?.map((step) => step.showOutput)).toEqual([
       undefined,
       "on-failure",

@@ -495,7 +495,7 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
           const make = run.prepared?.before?.[1];
           return make === undefined ? null : make.args.at(-1)!;
         };
-        const sample = Effect.fn("live.stan.sample")(function* () {
+        const sample = Effect.fn("live.stan.sample")(function* (translateFirst = true) {
           const staging = NodeFS.mkdtempSync(NodePath.join(cwd, ".staging-"));
           const context = {
             runId: ExecutionRunId.make("run-table-live"),
@@ -505,7 +505,7 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
             absoluteSourcePath: model,
             artifactStagingDirectory: staging,
           };
-          yield* Effect.promise(async () => adapter.prepareRun?.(context));
+          if (translateFirst) yield* Effect.promise(async () => adapter.prepareRun?.(context));
           run.prepared = adapter.prepare(context);
           for (const step of [...(run.prepared.before ?? []), run.prepared]) {
             const result = yield* runStep(step);
@@ -527,6 +527,9 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
         write("models/f.stanfunctions", "real f() { return 20; }\n");
         expect(yield* sample()).toBe(linked ? 123 : 24);
         expect(NodeFS.statSync(program()!).mtimeMs).toBeGreaterThan(built);
+        // Without the translation before the steps, the first step translates into the build.
+        write("models/f.stanfunctions", "real f() { return 30; }\n");
+        expect(yield* sample(false)).toBe(linked ? 133 : 34);
         NodeFS.rmSync(cwd, { recursive: true, force: true });
       }).pipe(Effect.provide(Live)),
   );

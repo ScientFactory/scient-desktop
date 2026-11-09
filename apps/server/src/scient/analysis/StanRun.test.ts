@@ -241,6 +241,7 @@ describe("the run", () => {
       platform,
       temporary,
       threads: 18,
+      translated: true,
     });
     return { prepared, root, stanc, temporary, staging };
   };
@@ -362,6 +363,7 @@ describe("a model in a folder whose name a shell or make would read", () => {
       cwd: folder,
       platform: "linux",
       temporary,
+      translated: true,
     });
     const [check, make] = prepared.before;
     expect(check?.args.at(-1)).toBe(model);
@@ -423,6 +425,10 @@ for arg in "$@"; do
   esac
 done
 grep -q error "$model" && { echo "Syntax error in '$model', line 1" >&2; exit 1; }
+grep -q slow "$model" && sleep 5
+# 1.2 MB of warnings, beyond the 1 MiB a buffered child may print.
+grep -q noisy "$model" && head -c 1200000 /dev/zero | tr '\\0' w >&2
+echo "$out" >> "$dir/written.log"
 cat "$model" "$dir"/*.stanfunctions > "$out" 2>/dev/null
 exit 0
 `;
@@ -438,7 +444,7 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to the build's C++", (
     const folder = temporaryFolder("scient stan model ");
     const model = NodePath.join(folder, "m.stan");
     const hpp = NodePath.join(stanBuildFolder(root, model, "linux", temporary), "m.hpp");
-    const translate = () =>
+    const translate = (timeoutMs?: number) =>
       translateStan({
         stanc,
         root,
@@ -446,12 +452,25 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to the build's C++", (
         environment: { PATH: "/usr/bin:/bin" },
         platform: "linux",
         temporary,
+        ...(timeoutMs === undefined ? {} : { timeoutMs }),
       });
     // 2020-01-01, in seconds.
     const old = 1_577_836_800;
     const age = () => NodeFS.utimesSync(hpp, old, old);
     const replaced = () => NodeFS.statSync(hpp).mtimeMs !== old * 1000;
-    return { folder, hpp, model, translate, age, replaced };
+    const plan = (translated: boolean) =>
+      prepareStan({
+        stanc,
+        root,
+        toolchain: { make: "/usr/bin/make", environment: {} },
+        model,
+        staging: folder,
+        cwd: folder,
+        platform: "linux",
+        temporary,
+        translated,
+      });
+    return { folder, hpp, model, translate, age, replaced, plan };
   };
 
   it("keeps the C++ when nothing changed, so make does not compile again", async () => {
@@ -460,10 +479,11 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to the build's C++", (
     NodeFS.writeFileSync(NodePath.join(folder, "f.stanfunctions"), "real f() { return 1; }\n");
     await translate();
     expect(NodeFS.readFileSync(hpp, "utf8")).toContain("return 1");
+    NodeFS.writeFileSync(NodePath.join(NodePath.dirname(hpp), "m"), "the program");
     age();
     await translate();
     expect(replaced()).toBe(false);
-    expect(NodeFS.readdirSync(NodePath.dirname(hpp))).toEqual(["m.hpp"]);
+    expect(NodeFS.readdirSync(NodePath.dirname(hpp)).sort()).toEqual(["m", "m.hpp"]);
   });
 
   it("replaces the C++ when only an included file changed", async () => {
@@ -471,20 +491,59 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to the build's C++", (
     NodeFS.writeFileSync(model, "functions {\n#include f.stanfunctions\n}\n");
     NodeFS.writeFileSync(NodePath.join(folder, "f.stanfunctions"), "real f() { return 1; }\n");
     await translate();
+    NodeFS.writeFileSync(NodePath.join(NodePath.dirname(hpp), "m"), "the program");
     age();
     NodeFS.writeFileSync(NodePath.join(folder, "f.stanfunctions"), "real f() { return 2; }\n");
     await translate();
     expect(replaced()).toBe(true);
     expect(NodeFS.readFileSync(hpp, "utf8")).toContain("return 2");
+    // make may compare whole seconds, so the program is removed rather than left to look newer.
+    expect(NodeFS.readdirSync(NodePath.dirname(hpp))).toEqual(["m.hpp"]);
   });
 
-  it("leaves the last good C++ when the model does not translate", async () => {
+  it("never lets an earlier model run when this one does not translate", async () => {
+    const { hpp, model, translate, plan } = computer();
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    expect(await translate()).toBe(true);
+    const program = NodePath.join(NodePath.dirname(hpp), "m");
+    NodeFS.writeFileSync(program, "the earlier model");
+    NodeFS.writeFileSync(model, "an error\n");
+    expect(await translate()).toBe(false);
+    expect(NodeFS.readdirSync(NodePath.dirname(hpp))).toEqual([]);
+    // The run's first step translates into the build, so it fails there or builds this model.
+    NodeFS.writeFileSync(program, "the earlier model");
+    expect(plan(false).before[0]?.args).toContain(`--o=${hpp}`);
+    expect(NodeFS.existsSync(program)).toBe(false);
+    expect(plan(true).before[0]?.args).not.toContain(`--o=${hpp}`);
+  });
+
+  it("takes a translation that prints more than a child's output buffer", async () => {
+    const { hpp, model, translate } = computer();
+    NodeFS.writeFileSync(model, "// noisy\nparameters { real y; }\n");
+    expect(await translate()).toBe(true);
+    expect(NodeFS.readFileSync(hpp, "utf8")).toContain("noisy");
+  });
+
+  it("gives up on a translation past its time, and leaves nothing to build from", async () => {
     const { hpp, model, translate } = computer();
     NodeFS.writeFileSync(model, "parameters { real y; }\n");
     await translate();
-    NodeFS.writeFileSync(model, "an error\n");
-    await translate();
-    expect(NodeFS.readFileSync(hpp, "utf8")).toBe("parameters { real y; }\n");
+    NodeFS.writeFileSync(model, "// slow\nparameters { real y; }\n");
+    expect(await translate(200)).toBe(false);
+    expect(NodeFS.existsSync(hpp)).toBe(false);
+  });
+
+  it("writes each attempt to its own file, so two at once do not mix", async () => {
+    const { folder, hpp, model, translate } = computer();
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    expect(await Promise.all([translate(), translate()])).toEqual([true, true]);
+    const written = NodeFS.readFileSync(NodePath.join(folder, "written.log"), "utf8")
+      .trim()
+      .split("\n");
+    expect(new Set(written).size).toBe(2);
+    for (const file of written) {
+      expect(NodePath.basename(file)).toMatch(/^m\.\d+-[0-9a-f]{12}\.next\.hpp$/u);
+    }
     expect(NodeFS.readdirSync(NodePath.dirname(hpp))).toEqual(["m.hpp"]);
   });
 
