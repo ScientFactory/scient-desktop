@@ -21,6 +21,27 @@ import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts
 const failure = (message: string) => new AccountsError({ reason: "unavailable", message });
 
 /**
+ * API keys Scient holds itself, by value, to find one already kept. Keys in 1Password or the
+ * Keychain aren't opened just to compare, and one that can't be read is skipped.
+ */
+export const heldApiKeys = Effect.fn("AccountKeyLinks.heldApiKeys")(function* (
+  accounts: AccountsServiceShape,
+) {
+  const held = new Map<string, AccountId>();
+  for (const account of (yield* accounts.snapshot).accounts) {
+    const source = account.secrets.token?.source.type;
+    if (account.details.kind !== "api-key" || (source !== "scient" && source !== "custom-model"))
+      continue;
+    const { token } = yield* accounts
+      .resolveSecrets(account.accountId, ["token"])
+      .pipe(Effect.orElseSucceed(() => ({ token: undefined })));
+    const value = token === undefined ? undefined : Redacted.value(token);
+    if (value !== undefined && !held.has(value)) held.set(value, account.accountId);
+  }
+  return held;
+});
+
+/**
  * Lets a provider variable use a key from Accounts. Providers read their variables at start, so the
  * value is copied into the variable and copied again whenever the account's key changes.
  */
@@ -108,13 +129,9 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
     // A reference to another secret store has no value here to keep.
     if (!instance || typeof value !== "string" || !value)
       return yield* failure("This variable has no key Scient can keep.");
-    const snapshot = yield* accounts.snapshot;
     // The same key under any name is one key: follow that account, so rotating it reaches here.
-    for (const account of snapshot.accounts) {
-      if (account.details.kind !== "api-key") continue;
-      const { token } = yield* accounts.resolveSecrets(account.accountId, ["token"]);
-      if (token !== undefined && Redacted.value(token) === value) return account.accountId;
-    }
+    const existing = (yield* heldApiKeys(accounts)).get(value);
+    if (existing) return existing;
     const label =
       instance.displayName ??
       PROVIDER_DISPLAY_NAMES[instance.driver as ProviderDriverKind] ??

@@ -160,9 +160,29 @@ it.effect("keeps a variable's own key in Accounts and links the variable to it",
 it.effect("links to an account already holding the same key instead of keeping it twice", () =>
   Effect.gen(function* () {
     // Saved under another variable name, or none: still the same key.
-    const existing = { accountId, details: { kind: "api-key", envName: "OPENAI_KEY" } };
+    const existing = {
+      accountId,
+      details: { kind: "api-key", envName: "OPENAI_KEY" },
+      secrets: { token: { source: { type: "scient" } } },
+    };
     const { saves, links } = yield* keep([existing], { token: "typed-key" });
     expect(saves).toEqual([]);
     expect(links).toEqual([[{ instanceId, variable: "OPENAI_API_KEY", accountId }, accountId]]);
+  }),
+);
+
+it.effect("never opens a key kept in another store just to compare it", () =>
+  Effect.gen(function* () {
+    // Its 1Password reference may be disconnected; comparing must not need it.
+    const external = {
+      accountId,
+      details: { kind: "api-key", envName: "GITHUB_TOKEN" },
+      secrets: { token: { source: { type: "1password", reference: "op://v/i/f" } } },
+    };
+    const { saves, links } = yield* keep([external], { token: "typed-key" });
+    expect(saves).toHaveLength(1);
+    expect(links).toEqual([
+      [{ instanceId, variable: "OPENAI_API_KEY", accountId: "acc_saved_0001" }, "acc_saved_0001"],
+    ]);
   }),
 );
