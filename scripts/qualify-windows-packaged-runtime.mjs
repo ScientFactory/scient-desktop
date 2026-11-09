@@ -84,23 +84,24 @@ if (process.argv.includes("--launch-smoke")) {
     delete smokeEnv.ELECTRON_NO_ASAR;
     delete smokeEnv.NODE_OPTIONS;
     let survivors = "";
+    const smokeStart = new Date().toISOString();
     const result = await runDesktopSmoke({
       executable: NodePath.join(packageRoot, "Scient.exe"),
       cwd: packageRoot,
       env: smokeEnv,
-      // Name what still holds the app's output: anything running from the install or the profile.
+      // Name what still holds the app's output: anything started since the launch, or run from the install.
       onUndrained: ({ pid, exited }) => {
         const listing = NodeChildProcess.spawnSync(
           "powershell.exe",
           [
             "-NoProfile",
             "-Command",
-            "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -like ($env:SMOKE_ROOT + '*') -or $_.CommandLine -like ('*' + $env:SMOKE_ROOT + '*') -or $_.CommandLine -like ('*' + $env:SMOKE_PROFILE + '*') } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List | Out-String -Width 400",
+            "Get-CimInstance Win32_Process | Where-Object { $_.CreationDate -ge [datetime]::Parse($env:SMOKE_START).ToLocalTime() -or $_.ExecutablePath -like ($env:SMOKE_ROOT + '*') } | Select-Object ProcessId,ParentProcessId,Name,CreationDate,CommandLine | Format-List | Out-String -Width 400",
           ],
           {
             encoding: "utf8",
             timeout: 15000,
-            env: { ...process.env, SMOKE_ROOT: packageRoot, SMOKE_PROFILE: profileRoot },
+            env: { ...process.env, SMOKE_ROOT: packageRoot, SMOKE_START: smokeStart },
           },
         );
         survivors = `app pid ${pid}, app exited: ${exited}\n${listing.stdout ?? ""}${listing.stderr ?? ""}`;
