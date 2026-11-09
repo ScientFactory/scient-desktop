@@ -4,6 +4,9 @@ import { textDirection } from "~/textDirection";
 
 import { ScientVoiceCommentControl } from "~/scient/voice/ScientVoiceCommentControl";
 import { buildVoiceDraftReplacement } from "~/scient/voice/voiceComposerInsert";
+// SCIENT-FORK:START — typing a comment restyles only its textarea.
+import { SKIP_MIRRORED_DEFAULT } from "~/scient/writing/textareaDefaultValue";
+// SCIENT-FORK:END
 
 import { Button } from "../ui/button";
 
@@ -64,6 +67,9 @@ export function AssistantCitationCommentEditor({
     >
       <textarea
         ref={textareaRef}
+        // SCIENT-FORK:START — typing a comment restyles only its textarea.
+        {...SKIP_MIRRORED_DEFAULT}
+        // SCIENT-FORK:END
         aria-label="Comment on selected text"
         aria-description={keyboardDescription}
         aria-invalid={commentTooLong || undefined}

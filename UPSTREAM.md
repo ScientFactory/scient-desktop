@@ -1904,6 +1904,18 @@ truncation and selection checks in
 setting the whole tree RTL is not a substitute for preserving each name's bidi
 paragraph.
 
+## Typing beside an open PDF
+
+The web client's PDF.js 6.4.299 carries `patches/pdfjs-dist@6.4.299.patch`, a
+single condition in the legacy viewer that Scient imports. On every `keyup` and
+`selectionchange` in the app, TextLayerBuilder re-appended each text layer's
+`endOfContent`. PDF.js's DrawLayer observes that move and reads
+`Selection.isCollapsed`, which forces a full layout, so typing in chat beside a long
+PDF paid for a document layout on every key. The patch skips the move when the
+node is already last. PDF.js main still has the unconditional append. Keep the
+patch until an upgrade includes an equivalent fix, then confirm
+`apps/web/src/scient/pdf/pdfTextLayerReset.browser.test.ts` passes without it.
+
 ## Side panel and Files bar
 
 Scient's side panel replaces T3's tab bar look, its empty state and its file

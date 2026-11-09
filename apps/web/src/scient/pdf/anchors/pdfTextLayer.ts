@@ -132,8 +132,10 @@ export function readPdfTextSelection(
   selection: Selection | null,
 ): PdfTextSelection {
   const refuse = (reason: PdfSelectionRefusal): PdfTextSelection => ({ _tag: "Refused", reason });
-  if (!selection || selection.isCollapsed || selection.rangeCount !== 1) return { _tag: "Empty" };
+  if (selection?.rangeCount !== 1) return { _tag: "Empty" };
+  // Selection.isCollapsed forces layout; this runs after every caret move anywhere.
   const range = selection.getRangeAt(0);
+  if (range.collapsed) return { _tag: "Empty" };
   const startLayer = closestTextLayer(range.startContainer);
   const endLayer = closestTextLayer(range.endContainer);
   const viewer = runtime.viewer.viewer;
