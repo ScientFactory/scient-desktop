@@ -619,6 +619,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`33db45effd176c01a27b3f2976192e77ad82b301` is recorded in
+[the 2026-11-09 33db45effd receipt](docs/internals/t3-upstream-sync-20261109-33db45effd.md).
+Literal merge `dce80a7807a0f16dd1a3acdec885d3c644e48d73` has owned base
+`b7b639186a2365393d73f5b68b748c86b02312ec` and the frozen official target as parents, retaining
+the 37 official commits after `402d0623d5`. T3's one-page Welcome replaces its wizard for hosted
+builds; Scient keeps Getting started. T3's "use in another app (MCP)" wizard is aligned with
+Scient names and stays dormant with T3 Connect. No migrations. Release remains separate.
+
+The previous committed alignment through
 `402d0623d5f4160859607e9b7c11fc829fbe3e18` is recorded in
 [the 2026-11-09 402d0623d5 receipt](docs/internals/t3-upstream-sync-20261109-402d0623d5.md).
 Literal merge `4ced9d1208a9bdf0116ed3d7e60b72e53452d42c` has owned base
@@ -629,7 +638,7 @@ suggest the next prompt (on by default in Scient), the `scient` command installs
 launch, Pi offers speed tiers, and database space can be reclaimed from Settings. No migrations.
 Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `6417151c093e54dbba0e6c824c69d03983793b9a` is recorded in
 [the 2026-11-08 6417151c09 receipt](docs/internals/t3-upstream-sync-20261108-6417151c09.md).
 Literal merge `aaf3b2af5b767d8b3d3ac3524e3314db3f642445` has owned base
