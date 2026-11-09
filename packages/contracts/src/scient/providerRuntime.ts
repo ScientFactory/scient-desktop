@@ -12,18 +12,16 @@ export interface RuntimeTextCitation {
 
 /**
  * Watch-loop task types: Monitor-tool tasks plus background shells (a shell
- * that outlives its turn is in practice a watch loop). Canonical single copy —
- * the server liveness registry, ingestion's agentKind stamp, and the client
- * fold's legacy fallback all classify with these sets.
+ * that outlives its turn is in practice a watch loop).
  */
-export const MONITOR_TASK_TYPES: ReadonlySet<string> = new Set([
+const MONITOR_TASK_TYPES: ReadonlySet<string> = new Set([
   "monitor",
   "monitor_mcp",
   "local_bash",
   "shell",
 ]);
 /** Task types that are neither agents nor watch loops (plan-mode bookkeeping). */
-export const INERT_TASK_TYPES: ReadonlySet<string> = new Set(["plan", "dream"]);
+const INERT_TASK_TYPES: ReadonlySet<string> = new Set(["plan", "dream"]);
 
 /**
  * Use a background denylist because SDK agent type names drift and allowlists silently lose subagents.

@@ -257,6 +257,11 @@
       "purpose": "Sync replaced secrets and their directory so acknowledged connector credential rotations and removals survive a crash (ConnectorRuntime.test.ts)."
     },
     {
+      "path": "packages/shared/src/mcpApp.ts",
+      "anchor": "connector names",
+      "purpose": "Upstream-owned and unchanged by Scient: T3's MCP Apps helper only mentions claude.ai connector names when it parses Claude's mcp__<server>__ tool prefix."
+    },
+    {
       "path": "apps/server/scripts/record-claude-agent-sdk-replay-fixture.ts",
       "anchor": "claude_mcp_tool_presentation",
       "purpose": "Upstream-owned and unchanged by Scient: its recording notes name the claude.ai Firecrawl connector, so upstream comment edits match the connector signal. Nothing Scient mounts here."
@@ -377,6 +382,21 @@
       "path": "apps/server/src/scient/accounts/AccountsService.ts",
       "anchor": "readonly resolveBound:",
       "purpose": "Expose the live account-token resolver and matching-account list consumed by Extensions bindings."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/AccountsServiceLive.ts",
+      "anchor": "githubCredential.value.get",
+      "purpose": "List Source Control's effective GitHub login, through the connector's credential service, so Accounts groups it with the GitHub connector."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/AccountsLayers.ts",
+      "anchor": "GitHubSourceControlCredential.layer",
+      "purpose": "Provide the GitHub credential service the connector also uses to the Accounts service."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/Accounts.testkit.ts",
+      "anchor": "Layer.succeed(GitHubSourceControlCredential",
+      "purpose": "Let Accounts tests stand in for Source Control's GitHub credential."
     },
     {
       "path": "apps/web/src/scient/accounts/accountsView.ts",

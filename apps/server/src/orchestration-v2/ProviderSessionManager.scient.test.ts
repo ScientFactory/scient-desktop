@@ -51,6 +51,7 @@ import {
   EnvironmentId,
   MessageId,
   NodeId,
+  ProjectId,
   type ProviderAuthState,
   ProviderInstanceId,
   ProviderSessionId,
@@ -71,7 +72,13 @@ import * as EffectScheduler from "effect/Scheduler";
 import * as Scope from "effect/Scope";
 import { scientInvocationForMcp } from "../mcp/ScientMcpInvocation.ts";
 import { ComputeMcpGateway } from "../mcp/toolkits/compute/ComputeMcpGateway.ts";
-import { WorkspaceBindingResolutionError } from "../scient/projectScope/WorkspaceBinding.ts";
+import {
+  WorkspaceAuthorityGeneration,
+  WorkspaceAuthorityScopeRevision,
+  WorkspaceBindingId,
+  WorkspaceBindingResolutionError,
+  type WorkspaceBindingRecordV1,
+} from "../scient/projectScope/WorkspaceBinding.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { listScientComputeInventory } from "../mcp/toolkits/compute/handlers.ts";
 import {
@@ -206,6 +213,92 @@ it.effect.each(
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 describes project tools only while discovery can list them",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const verified = yield* Ref.make(false);
+      const binding: WorkspaceBindingRecordV1 = {
+        schemaVersion: 1,
+        bindingId: WorkspaceBindingId.make("binding-awareness"),
+        environmentId: EnvironmentId.make("environment-provider-session-manager"),
+        hostProjectId: ProjectId.make("project-awareness"),
+        canonicalRoot: "/tmp/project-awareness",
+        rootFileSystemIdentity: null,
+        scientProjectId: null,
+        repositoryIdentity: null,
+        worktreeIdentity: null,
+        lineageBindingId: null,
+        trustState: "verified",
+        authorityGeneration: WorkspaceAuthorityGeneration.make(1),
+        createdAt: "2026-11-03T00:00:00.000Z",
+        lastVerifiedAt: "2026-11-03T00:00:00.000Z",
+        supersededBy: null,
+      };
+      const resolverLayer = Layer.mock(WorkspaceBindingResolver)({
+        resolveThread: () =>
+          Effect.flatMap(Ref.get(verified), (isVerified) =>
+            isVerified
+              ? Effect.succeed({
+                  binding,
+                  relation: "only-binding" as const,
+                  relatedBindingCount: 0,
+                  scopeRevision: WorkspaceAuthorityScopeRevision.make(1),
+                })
+              : Effect.fail(
+                  new WorkspaceBindingResolutionError({
+                    operation: "resolve-thread",
+                    kind: "project-required",
+                  }),
+                ),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-mcp-awareness-manifest");
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const open = Effect.gen(function* () {
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+          const configured = yield* mcpSessions.read(threadId);
+          if (configured === undefined)
+            return yield* Effect.die("Injectable native session must have a credential");
+          return configured;
+        });
+        const projectless = yield* open;
+        assert.isFalse(projectless.capabilities.has("compute"));
+        assert.isFalse(projectless.capabilities.has("documents:build"));
+        assert.isTrue(projectless.capabilities.has("accounts"));
+        // Call-time authority keeps the grants; only the text follows discovery.
+        const granted = yield* registry.resolve(
+          projectless.authorizationHeader.replace(/^Bearer\s+/, ""),
+        );
+        assert.isTrue(granted?.capabilities.has("compute"));
+        assert.isTrue(granted?.capabilities.has("documents:build"));
+        yield* Ref.set(verified, true);
+        const inProject = yield* open;
+        assert.equal(inProject.authorizationHeader, projectless.authorizationHeader);
+        assert.isTrue(inProject.capabilities.has("compute"));
+        assert.isTrue(inProject.capabilities.has("documents:build"));
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({ state, idleTimeoutMs: 60_000, workspaceResolverLayer: resolverLayer }),
+        ),
+      );
+    }),
 );
 
 it.effect.each(
@@ -2513,8 +2606,8 @@ for (const status of ["error", "stopped"] as const) {
         yield* Effect.sync(() => {
           unhealthy = true;
         });
-        // The exposed opening snapshot remains ready; internal live status decides.
-        assert.equal(original.providerSession.status, "ready");
+        // The exposed session follows the live snapshot; retirement still waits for close.
+        assert.equal(original.providerSession.status, status);
         const reopening = yield* manager.open(input).pipe(Effect.exit, Effect.forkChild);
         yield* Deferred.await(closeEntered);
         assert.equal((yield* Ref.get(state)).openCount, 1);

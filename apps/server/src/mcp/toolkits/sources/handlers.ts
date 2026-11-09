@@ -16,7 +16,6 @@ import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
-import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
@@ -46,17 +45,6 @@ const attempt = <A>(run: () => Promise<A>) =>
     // output.
     catch: () => toolError("operation-failed", "The Sources operation could not be completed."),
   });
-
-const requireSourcesWrite = Effect.fn("ScientSourcesToolkit.requireWrite")(function* () {
-  const invocation = yield* AgentInvocationContext.AgentInvocationContext;
-  if (!invocation.capabilities.has("sources:write")) {
-    return yield* toolError(
-      "capability-unavailable",
-      "This provider session does not grant Sources write access.",
-    );
-  }
-  return invocation;
-});
 
 // PDF-only adds often share a filename-derived title. Include the content hash
 // so distinct files become distinct sources; same-pdf / same-identifier still
@@ -182,13 +170,6 @@ function mergePreparedAgentPdfCandidate(
 
 export const resolveScientSourcesProject = Effect.fn("ScientSourcesToolkit.resolveProject")(
   function* () {
-    const invocation = yield* AgentInvocationContext.AgentInvocationContext;
-    if (!invocation.capabilities.has("sources:read")) {
-      return yield* toolError(
-        "capability-unavailable",
-        "This provider session does not grant Sources access.",
-      );
-    }
     const workspace = yield* consumeAgentWorkspace().pipe(
       Effect.mapError((error) => toolError(error.code, error.message)),
     );
@@ -292,7 +273,6 @@ export const updateScientSourceNoteForInvocation = Effect.fn("ScientSourcesToolk
     readonly expectedRevision: number;
     readonly note: string | null;
   }) {
-    yield* requireSourcesWrite();
     const { root } = yield* resolveScientSourcesProject();
     const current = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
     if (!current) return yield* toolError("not-found", "The source was not found in this project.");
@@ -320,7 +300,6 @@ export const updateScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.u
     readonly metadata: ScientSourceEditableMetadata;
     readonly allowPossibleMetadataMatch?: boolean;
   }) {
-    yield* requireSourcesWrite();
     const { root } = yield* resolveScientSourcesProject();
     const result = yield* attempt(() =>
       updateScientSource({
@@ -343,7 +322,6 @@ export const updateScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.u
 
 export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.remove")(
   function* (input: { readonly sourceId: string; readonly expectedRevision: number }) {
-    yield* requireSourcesWrite();
     const { root } = yield* resolveScientSourcesProject();
     const result = yield* attempt(() =>
       removeSource({
@@ -366,7 +344,6 @@ export const reviewScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
     readonly expectedRevision: number;
     readonly action: "approve" | "reject";
   }) {
-    yield* requireSourcesWrite();
     const { root } = yield* resolveScientSourcesProject();
     const current = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
     if (!current) return yield* toolError("not-found", "The source was not found in this project.");
@@ -411,7 +388,6 @@ export const reviewScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
 export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add")(function* (
   input: ScientSourceAddInputType,
 ) {
-  yield* requireSourcesWrite();
   const { root } = yield* resolveScientSourcesProject();
   const { candidate: initialCandidate, validationIssues: initialIssues } =
     candidateFromAgentInput(input);
@@ -508,7 +484,6 @@ export const attachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
     readonly expectedRevision: number;
     readonly pdfRelativePath: string;
   }) {
-    yield* requireSourcesWrite();
     const { root } = yield* resolveScientSourcesProject();
     const resolvedPdf = yield* attempt(() =>
       resolveScientSourceInputPdf(root, input.pdfRelativePath),
@@ -536,7 +511,6 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
     readonly attachmentId: string;
     readonly expectedRevision: number;
   }) {
-    yield* requireSourcesWrite();
     const { root } = yield* resolveScientSourcesProject();
     const result = yield* attempt(() => detachSourcePdf({ root, ...input }));
     return {

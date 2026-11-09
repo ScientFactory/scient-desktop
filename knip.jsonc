@@ -96,6 +96,7 @@
         "@napi-rs/canvas",
         "@napi-rs/keyring",
         "ffi-rs",
+        "transcribe-cpp",
       ],
     },
     "apps/desktop": {
@@ -123,6 +124,8 @@
         "scripts/prepare-dev-app-bundle.mjs",
         // Spawned by githubChannels.test.ts to exercise the locked Electron updater.
         "scripts/qualify-update-channels.cjs",
+        // Run by hand against a dev app to qualify session copies on each platform.
+        "scripts/qualify-session-copy.mjs",
       ],
       // The injected runtime resolves Playwright by string; release tooling runs
       // electron-builder from this workspace, outside its package scripts.
@@ -136,13 +139,11 @@
       "entry": [
         "scripts/warm-dep-cache.ts",
         "test/fixtures/**/*.mjs",
-        // Explicit standalone connected extracted-intent qualification configuration.
-        "extractedIntentSend.vitest.config.ts",
         // Documented standalone Chromium selection qualification configuration.
         "latexSelection.vitest.config.ts",
         "latexPaging.vitest.config.ts",
         // The standalone PDF print page is loaded by scient-document.html.
-        "src/scient/documentPage/main.tsx",
+        "src/scient/documentPage/main.tsx!",
         // The Visual performance benchmark: its production build configuration,
         // page entry (latex-visual-benchmark.html) and Node runner.
         "latexVisualBenchmark.config.ts",
@@ -179,7 +180,6 @@
         "src/components/settings/ChatGptWelcomeCoordinator.tsx": ["files"],
         "src/components/settings/CodexSetupSection.logic.ts": ["files"],
         "src/components/settings/CodexSetupSection.tsx": ["files"],
-        "src/components/settings/ProviderAuthCallbackCoordinator.tsx": ["files"],
         "src/providerAuthDelivery.ts": ["files"],
       },
     },
@@ -200,10 +200,13 @@
       // Fonts are configured as asset paths; Expo autolinks the native packages.
       "ignoreDependencies": [
         "@expo-google-fonts/dm-sans",
-        "@t3tools/mobile-highlights-native",
         "@t3tools/mobile-review-diff-native",
         "@t3tools/mobile-terminal-native",
       ],
+    },
+    "apps/mobile/modules/t3-highlights": {
+      // Nitrogen discovers HybridObject specifications by filename.
+      "entry": ["src/*.nitro.ts!"],
     },
     "apps/mobile/modules/t3-source-text": {
       // React Native codegen discovers component specifications by filename.

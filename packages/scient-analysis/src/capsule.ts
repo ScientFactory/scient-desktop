@@ -2,7 +2,7 @@ import type { AnalysisRunSnapshot } from "./contract.ts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 
-export const ANALYSIS_RUN_CAPSULE_VERSION = 1 as const;
+const ANALYSIS_RUN_CAPSULE_VERSION = 1 as const;
 
 export interface AnalysisRunCapsuleFile {
   readonly relativePath: string;

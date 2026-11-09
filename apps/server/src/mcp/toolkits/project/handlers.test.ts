@@ -343,7 +343,7 @@ const projectLaunchHarness = (input: {
   readonly defaultRuntimeMode?: RuntimeMode;
   readonly overrideModel?: ModelSelection;
   readonly checkWorktreeBase?: ThreadLaunch.ThreadLaunchService["Service"]["checkWorktreeBase"];
-  readonly webOrigin?: string;
+  readonly hostedAppUrl?: string;
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
 }) => {
@@ -415,7 +415,7 @@ const projectLaunchHarness = (input: {
             sessionId: "session-1",
             label: "Claude Code",
             access: input.runtimeModeCeiling,
-            webOrigin: input.webOrigin,
+            hostedAppUrl: input.hostedAppUrl,
           },
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
@@ -555,7 +555,7 @@ it.effect(
         runtimeModeCeiling: "full-access",
         defaultRuntimeMode: "auto-accept-edits",
         launched,
-        webOrigin: "https://box.example.ts.net",
+        hostedAppUrl: "https://box.example.ts.net",
       });
       const fullClientToolkit = yield* ProjectToolkit.pipe(
         Effect.provide(
@@ -570,7 +570,7 @@ it.effect(
       expect(fullClientResult.at(-1)?.result).toMatchObject({
         projectId,
         modelSelection,
-        link: `https://box.example.ts.net/environment/${encodeURIComponent(launched[1]?.threadId ?? "")}`,
+        link: `https://box.example.ts.net/threads/environment/${encodeURIComponent(launched[1]?.threadId ?? "")}`,
       });
       expect(launched).toHaveLength(2);
       expect(launched[1]?.runtimeMode).toBe("auto-accept-edits");
@@ -980,5 +980,33 @@ it.effect("deleting a project through MCP also discards its clone record", () =>
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
 
     expect(discarded).toEqual([harness.projectId]);
+  }),
+);
+
+it.effect("an update the project refuses tells the agent why", () =>
+  Effect.gen(function* () {
+    const harness = projectLaunchHarness({ runtimeModeCeiling: "full-access", launched: [] });
+    const detail = "Project monograms must contain at most two characters.";
+    const dependencies = Layer.merge(
+      harness.dependencies,
+      Layer.mock(Project.ProjectService)({
+        update: (input) =>
+          Effect.fail(new Project.ProjectInvalidError({ projectId: input.projectId, detail })),
+      }),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+
+    const refused = yield* toolkit
+      .handle("scient_project_update", {
+        projectId: harness.projectId,
+        projectIcon: { kind: "monogram", text: "ABC", color: "blue" },
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(refused.at(-1)?.result).toMatchObject({ code: "invalid_request", message: detail });
   }),
 );

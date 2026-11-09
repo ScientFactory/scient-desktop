@@ -91,7 +91,7 @@
     "openScientArtifact",
     "ResizeSeparator",
     "useScientHorizontalSplit",
-    "analysis(Start|Cancel|Verify|List|Get|Cleanup|Promote)",
+    "analysis(Start|Cancel|List|Get|Cleanup|Promote)",
     "compute(Inspect|Verify|Start|List|Get|Submit|Cancel|Interrupt|Restart|Stop)",
     "scientificComputing",
     "SCIENT_MATLAB",
@@ -340,6 +340,11 @@
     }
   ],
   "scientMounts": [
+    {
+      "path": "apps/server/src/telemetry/OperationAnalytics.ts",
+      "anchor": "readonly capture?: ComputeCaptureSummary",
+      "purpose": "Carry bounded Run File capture receipts through the shared Scient operation observer while preserving its consent fence and terminal deduplication."
+    },
     {
       "path": "apps/server/src/telemetry/ScientFeatureUsage.ts",
       "anchor": "[WS_METHODS.computeStartSession]",

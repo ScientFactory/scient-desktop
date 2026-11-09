@@ -2208,19 +2208,17 @@ export const make = Effect.gen(function* () {
     },
     (effect, operation) =>
       effect.pipe(
-        Effect.catch((error) =>
-          Effect.fail(
-            isLatexBuildError(error)
-              ? error
-              : new LatexBuildError({
-                  operation,
-                  reason: "workspace-unsettled",
-                  detail:
-                    error instanceof Error
-                      ? error.message
-                      : "Workspace source observation is unavailable or requires recovery.",
-                }),
-          ),
+        Effect.mapError((error) =>
+          isLatexBuildError(error)
+            ? error
+            : new LatexBuildError({
+                operation,
+                reason: "workspace-unsettled",
+                detail:
+                  error instanceof Error
+                    ? error.message
+                    : "Workspace source observation is unavailable or requires recovery.",
+              }),
         ),
       ),
   );

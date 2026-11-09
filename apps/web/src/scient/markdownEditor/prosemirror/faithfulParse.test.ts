@@ -3,7 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { makeFaithfulMarkdownParse } from "./faithfulParse";
 import { scientMarkdownOutlinePlugin, scientMarkdownOutlineState } from "./outline";
-import { createScientMarkdownProjection, serializeScientMarkdownProjection } from "./projection";
+import { createScientMarkdownProjection, projectScientMarkdownSource } from "./projection";
 import { scientMarkdownSchema, scientMarkdownSerializer } from "./schema";
 import { ScientProseMirrorSession } from "./session";
 import { EditorState } from "prosemirror-state";
@@ -37,7 +37,7 @@ describe("faithful Markdown projection", () => {
     const children: string[] = [];
     first?.forEach((child) => children.push(child.type.name));
     expect(children).toContain(atom);
-    expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(source);
+    expect(projectScientMarkdownSource(projection, projection.document).source).toBe(source);
   });
 
   it("changes only the typed character when typing in a heading with math", () => {
@@ -103,7 +103,7 @@ describe("faithful Markdown projection", () => {
     expect(projection.document.childCount).toBe(1);
     expect(projection.document.firstChild?.type.name).toBe("raw_block");
     expect(projection.document.firstChild?.attrs.source).toBe(source.trimEnd());
-    expect(serializeScientMarkdownProjection(projection, projection.document)).toBe(source);
+    expect(projectScientMarkdownSource(projection, projection.document).source).toBe(source);
   });
 
   it.each([

@@ -128,36 +128,18 @@ export function latexBuildInputsChangedDuringCompile(
   );
 }
 
-const EvidenceJson = Schema.fromJsonString(LatexBuildEvidence);
-const encodeEvidence = Schema.encodeSync(EvidenceJson);
-const decodeEvidence = Schema.decodeUnknownSync(EvidenceJson);
 const PublishedEvidenceJson = Schema.fromJsonString(PublishedLatexBuildEvidence);
 const encodePublishedEvidence = Schema.encodeSync(PublishedEvidenceJson);
 const decodePublishedEvidence = Schema.decodeUnknownSync(PublishedEvidenceJson);
-
-export function encodeLatexBuildEvidence(evidence: LatexBuildEvidence): string {
-  return encodeEvidence(evidence);
-}
-
-/**
- * `null` for anything this version cannot read — a state file written before
- * evidence existed, a schema version it does not know, a truncated write. The
- * caller treats that exactly as it treats a mismatch: rebuild once, and the
- * build that follows writes a file this version does understand.
- */
-export function decodeLatexBuildEvidence(source: string): LatexBuildEvidence | null {
-  try {
-    return decodeEvidence(source);
-  } catch {
-    return null;
-  }
-}
 
 export function encodePublishedLatexBuildEvidence(evidence: PublishedLatexBuildEvidence): string {
   return encodePublishedEvidence(evidence);
 }
 
-/** Legacy unscoped evidence deliberately decodes to `null` and earns one rebuild. */
+/**
+ * `null` for anything this version cannot read (no file, an unknown schema
+ * version, a truncated write, legacy unscoped evidence): the caller rebuilds once.
+ */
 export function decodePublishedLatexBuildEvidence(
   source: string,
 ): PublishedLatexBuildEvidence | null {

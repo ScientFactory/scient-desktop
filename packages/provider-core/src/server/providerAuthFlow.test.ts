@@ -470,6 +470,7 @@ it.effect("closing the controller scope interrupts and drains its adapter respon
 it.effect("a failed method refresh keeps the last discovered methods", () =>
   Effect.gen(function* () {
     let fail = false;
+    let removed = false;
     const controller = yield* ProviderAuthFlow.make({
       instanceId,
       credentialBinding: { owner: "provider", key: "shared-agent" },
@@ -478,10 +479,14 @@ it.effect("a failed method refresh keeps the last discovered methods", () =>
           ? Effect.fail(
               new ProviderSetupError({ instanceId, operation: "status", detail: "interrupted" }),
             )
-          : Effect.succeed([method]),
+          : Effect.succeed(removed ? [] : [method]),
       ),
       authenticate: () => Effect.void,
       logout: Effect.void,
+      removeMethod: () =>
+        Effect.sync(() => {
+          removed = true;
+        }),
     });
     yield* controller.refreshMethods!;
     fail = true;
@@ -491,6 +496,15 @@ it.effect("a failed method refresh keeps the last discovered methods", () =>
       .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
     assert.deepEqual(state.methods, [method]);
     assert.strictEqual(state.message, "interrupted");
+    const error = yield* Effect.flip(controller.removeMethod!(method.id));
+    assert.isTrue(removed);
+    assert.strictEqual(error.detail, "interrupted");
+    fail = false;
+    yield* controller.refreshMethods!;
+    const refreshed = yield* controller
+      .subscribe("owner")
+      .pipe(Stream.runHead, Effect.map(Option.getOrThrow));
+    assert.deepEqual(refreshed.methods, []);
   }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 

@@ -272,10 +272,8 @@ const probeAndDiscoverDroidViaAcp = (
         environment,
         makeAcpRuntime,
         cwd,
-      ).pipe(Effect.catch((error) => Effect.die(error)));
-      const initializeResult = yield* acp
-        .initialize()
-        .pipe(Effect.catch((error) => Effect.die(error)));
+      ).pipe(Effect.orDie);
+      const initializeResult = yield* acp.initialize().pipe(Effect.orDie);
       const accountCapabilities = droidAccountCapabilitiesFromInitializeResult(initializeResult);
       // `null` = the agent refused startup with the scoped Droid
       // authentication signal (CLI not signed in). Any other failure is a
@@ -618,17 +616,6 @@ export const checkDroidProviderStatusWithCapabilities = Effect.fn(
     probeOutcome.accountCapabilities,
     probeOutcome.sessionId,
   );
-});
-
-export const checkDroidProviderStatus = Effect.fn("checkDroidProviderStatus")(function* (
-  droidSettings: DroidSettings,
-  environment: NodeJS.ProcessEnv = process.env,
-): Effect.fn.Return<
-  ServerProviderDraft,
-  never,
-  ChildProcessSpawner.ChildProcessSpawner | SecureRandom.SecureRandom
-> {
-  return (yield* checkDroidProviderStatusWithCapabilities(droidSettings, environment)).snapshot;
 });
 
 export const enrichDroidSnapshot = (input: {

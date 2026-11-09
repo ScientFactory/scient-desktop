@@ -137,24 +137,26 @@ export function queuedRunExecutionThread(input: {
   return { capturedThread, generateInitialTitle, modesChanged };
 }
 
-/** The modes a steer executes under, and whether they differ from the active run's. */
+/** The modes a steer executes under, and whether they differ from the active run's.
+ * A server notice (a delegated completion or task question) keeps the run's modes, so a
+ * composer mode change never restarts the turn it steers into. */
 export function steerExecutionThread(input: {
   readonly thread: OrchestrationV2AppThread;
   readonly targetRun: OrchestrationV2Run;
   readonly runtimeMode: OrchestrationV2Run["runtimeMode"];
   readonly interactionMode: OrchestrationV2Run["interactionMode"];
   readonly delegatedCompletion: OrchestrationV2ConversationMessage["delegatedCompletion"];
+  readonly notification?: OrchestrationV2ConversationMessage["notification"] | undefined;
 }) {
   const { thread, targetRun } = input;
+  const notice = input.delegatedCompletion !== undefined || input.notification !== undefined;
   const executionThread = {
     ...thread,
     runtimeMode:
-      input.runtimeMode ??
-      (input.delegatedCompletion === undefined ? undefined : targetRun.runtimeMode) ??
-      thread.runtimeMode,
+      input.runtimeMode ?? (notice ? targetRun.runtimeMode : undefined) ?? thread.runtimeMode,
     interactionMode:
       input.interactionMode ??
-      (input.delegatedCompletion === undefined ? undefined : targetRun.interactionMode) ??
+      (notice ? targetRun.interactionMode : undefined) ??
       thread.interactionMode,
   };
   const executionModesChanged =

@@ -4,29 +4,6 @@ import * as NodeFS from "node:fs";
 import { describe, expect, it } from "@effect/vitest";
 
 describe("Scient file surface seams", () => {
-  it("keeps additive Scient behavior mounted without leaking runtime logic into the viewer", () => {
-    const source = NodeFS.readFileSync(
-      new URL("../../components/files/FilePreviewPanel.tsx", import.meta.url),
-      "utf8",
-    );
-    expect(source).not.toContain("ScientFileAuxiliarySurface");
-    expect(source.match(/<ScientComputeFileSurface/gu)).toHaveLength(1);
-    expect(source.match(/useWorkspaceFileRefresh\(/gu)).toHaveLength(1);
-    expect(source).not.toMatch(/-batch|AnalysisRunFilePanel/iu);
-    expect(source).not.toContain("matlabOneShotVisible");
-  });
-
-  // regression: 979fd8a9e1 feat(compute): consolidate owned fresh and MATLAB batch execution
-  it("places batch in the same Results surface without another execution panel", () => {
-    const auxiliary = NodeFS.readFileSync(
-      new URL("../compute/ScientComputeFileSurface.tsx", import.meta.url),
-      "utf8",
-    );
-    expect(auxiliary).toContain("showingBatch");
-    expect(auxiliary).toContain("<ComputeBatchResults");
-    expect(auxiliary).not.toContain("AnalysisRunFilePanel");
-  });
-
   // regression: eed0733208 feat(compute): implement Phase 4 scientific workflow
   it("keeps Python execution controls in the Scient-owned file surface", () => {
     const surface = NodeFS.readFileSync(

@@ -6,12 +6,14 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Tracer from "effect/Tracer";
+import * as TestClock from "effect/testing/TestClock";
 import * as SqlClient from "effect/sql/SqlClient";
 import { layerMemory as SqlitePersistenceMemory } from "../../persistence/Sqlite.ts";
 import * as EventStore from "../EventStore.ts";
 import * as EventSink from "../EventSink.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import * as ProjectionMaintenance from "../ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../testkit/ProjectionReplay.ts";
 import * as LegacyV1ThreadImporter from "./LegacyV1ThreadImporter.ts";
 import { projectWorkLog } from "@scientfactory/conversation";
 import { conversationSnapshotProjection } from "../../scient/conversationExport/conversationSnapshotProjection.ts";
@@ -21,7 +23,11 @@ const stores = Layer.mergeAll(EventStore.layer, ProjectionStore.layer).pipe(
 );
 const sink = EventSink.layer.pipe(Layer.provideMerge(stores));
 const importer = LegacyV1ThreadImporter.layer.pipe(Layer.provideMerge(sink));
-const TestLayer = Layer.mergeAll(importer, ProjectionMaintenance.layer.pipe(Layer.provide(sink)));
+const TestLayer = Layer.mergeAll(
+  importer,
+  ProjectionReplay.layer.pipe(Layer.provide(sink)),
+  ProjectionMaintenance.layer.pipe(Layer.provide(sink)),
+);
 const THREAD = ThreadId.make("migration-history");
 const seed = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -102,7 +108,7 @@ it.effect(
         yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
       }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
       assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(
         (yield* projections.getThreadProjection(THREAD)).turnItems,
         repaired.turnItems,
@@ -176,7 +182,7 @@ it.effect.each(
       yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
     }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
     assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
     const replayed = yield* projections.getThreadProjection(THREAD);
     assert.deepEqual(replayed.messages, projection.messages);
     assert.deepEqual(replayed.turnItems, projection.turnItems);
@@ -249,7 +255,7 @@ it.live("retains V2 message and item edits racing a completed Codex citation rep
       repaired.turnItems.find((row) => row.id === item.id),
       { ...item, text: "Authoritative V2 item edit", title: "Preserved title" },
     );
-    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
     const replayed = yield* projections.getThreadProjection(THREAD);
     assert.deepEqual(replayed.messages, repaired.messages);
     assert.deepEqual(replayed.turnItems, repaired.turnItems);
@@ -305,7 +311,7 @@ it.effect("does not apply historical citation repair to an unowned native assist
 );
 
 it.effect(
-  "repairs old completed citations after compaction removed the original message event",
+  "repairs old completed citations after an old compaction removed the original message event",
   () =>
     Effect.gen(function* () {
       yield* seed;
@@ -314,7 +320,7 @@ it.effect(
       const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const sink = yield* EventSink.EventSinkV2;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       yield* migration.reconcileShells;
       const message = (yield* projections.getThreadProjection(THREAD)).messages.find(
         (row) => row.id === "answer",
@@ -334,10 +340,9 @@ it.effect(
       });
       yield* sql`UPDATE orchestration_v2_legacy_imports SET transcript_imported_at = '2026-02-01T00:00:00.000Z'
       WHERE thread_id = ${THREAD}`;
-      // Compaction now keeps each message's first event, but databases compacted by
-      // earlier releases lost it; remove it as those releases did.
+      // Pruning keeps V1 import events, but databases compacted by earlier releases lost
+      // this one; remove it as those releases did.
       yield* sql`DELETE FROM orchestration_events WHERE event_id = 'migration:v1:message:answer'`;
-      yield* maintenance.compactEventStore();
       yield* maintenance.rebuild;
       yield* migration.ensureTranscript(THREAD);
       const repaired = yield* projections.getThreadProjection(THREAD);
@@ -436,7 +441,7 @@ it.effect(
       assert.equal(statements.filter((text) => text.includes("WITH history AS")).length, 0);
       assert.isTrue(statements.some((text) => text.includes("history_repair_version")));
       assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(
         (yield* projections.getThreadProjection(THREAD)).turnItems,
         edited.turnItems,
@@ -507,7 +512,7 @@ it.effect(
       const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
       yield* repair;
       assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(
         (yield* projections.getThreadProjection(THREAD)).turnItems,
         edited.turnItems,
@@ -566,7 +571,7 @@ it.effect("preserves completed and interrupted reasoning as inert historical V2 
     yield* migration.ensureTranscript(THREAD);
     yield* migration.reconcileShells;
     assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
     assert.deepEqual(
       (yield* projections.getThreadProjection(THREAD)).turnItems,
       projection.turnItems,
@@ -641,7 +646,7 @@ it.live("preserves a V2 edit interleaved between reasoning position repair read 
         output: "Concurrent V2 result",
       },
     );
-    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
     assert.deepEqual(
       (yield* projections.getThreadProjection(THREAD)).turnItems,
       repaired.turnItems,
@@ -747,7 +752,7 @@ it.effect(
       const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
       yield* repair;
       assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(
         (yield* projections.getThreadProjection(THREAD)).turnItems,
         edited.turnItems,
@@ -798,7 +803,7 @@ it.effect(
       assert.deepEqual(complete.providerSessions, []);
       assert.deepEqual(complete.runtimeRequests, []);
       assert.deepEqual(yield* sql`SELECT * FROM orchestration_v2_effect_outbox`, []);
-      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(
         (yield* projections.getThreadProjection(THREAD)).turnItems,
         complete.turnItems,
@@ -865,7 +870,7 @@ it.effect("preserves ordered historical artifacts without restoring approval aut
       (yield* projections.getThreadProjection(THREAD)).turnItems,
       projection.turnItems,
     );
-    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const maintenance = yield* ProjectionReplay.ProjectionReplay;
     yield* maintenance.rebuild;
     assert.deepEqual(
       (yield* projections.getThreadProjection(THREAD)).turnItems,
@@ -892,7 +897,7 @@ it.effect(
       assert.equal(before.plans[0]?.runId, null);
       assert.equal(before.nodes[0]?.runtimeRequestId, null);
       yield* migration.ensureTranscript(THREAD);
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      const maintenance = yield* ProjectionReplay.ProjectionReplay;
       yield* maintenance.rebuild;
       const after = yield* projections.getThreadProjection(THREAD);
       assert.deepEqual(after.plans, before.plans);
@@ -938,7 +943,7 @@ it.effect("upgrades a completed message-only import without overwriting V2 edits
       migrated.turnItems[6]?.type === "assistant_message" ? migrated.turnItems[6].text : null,
       "Edited in V2",
     );
-    const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+    const maintenance = yield* ProjectionReplay.ProjectionReplay;
     yield* maintenance.rebuild;
     assert.deepEqual(
       (yield* projections.getThreadProjection(THREAD)).turnItems,
@@ -1151,7 +1156,7 @@ it.effect(
       const sequence = yield* (yield* EventStore.EventStoreV2).latestSequence();
       yield* repair;
       assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(
         (yield* projections.getThreadProjection(THREAD)).turnItems,
         repaired.turnItems,
@@ -1162,7 +1167,7 @@ it.effect(
 );
 
 it.effect(
-  "retains edited submitted answers through interrupted generation stamp, compaction and startup retry",
+  "retains edited submitted answers through interrupted generation stamp, pruning and startup retry",
   () =>
     Effect.gen(function* () {
       yield* seed;
@@ -1170,7 +1175,6 @@ it.effect(
       const migration = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
       const projections = yield* ProjectionStore.ProjectionStoreV2;
       const sink = yield* EventSink.EventSinkV2;
-      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
       yield* migration.reconcileShells;
       yield* migration.ensureTranscript(THREAD);
       yield* sql`UPDATE orchestration_v2_legacy_imports SET history_repair_version = 1 WHERE thread_id = ${THREAD}`;
@@ -1206,15 +1210,30 @@ it.effect(
             occurredAt: partial.updatedAt,
             payload: edited,
           },
+          // The stream head is never pruned; a later write lets the edit itself go.
+          {
+            id: EventId.make("answer-edit-saved-again"),
+            type: "turn-item.updated",
+            threadId: THREAD,
+            occurredAt: partial.updatedAt,
+            payload: edited,
+          },
         ],
       });
-      yield* maintenance.compactEventStore();
-      // The current compactor retains turn-item history; replay must still select the newer V2 answer.
+      const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+      yield* maintenance.pruneEventStore();
+      yield* TestClock.adjust("1 day");
+      const pruned = yield* maintenance.pruneEventStore();
+      assert.isAbove(pruned.deletedEventCount, 0);
+      assert.lengthOf(
+        yield* sql`SELECT 1 FROM orchestration_events WHERE event_id = 'answer-edited-after-interrupted-stamp'`,
+        0,
+      );
+      // V1 import events survive pruning: the retry must not mistake the answer for a new one.
       assert.equal(
         (yield* sql`SELECT event_id FROM orchestration_events WHERE event_id = ${answerId}`).length,
         1,
       );
-      yield* maintenance.rebuild;
       yield* sql`DROP TRIGGER reject_answer_generation`;
       yield* repair;
       assert.deepEqual(
@@ -1229,13 +1248,6 @@ it.effect(
       assert.equal(
         marker?.history_repair_version,
         LegacyV1ThreadImporter.LEGACY_HISTORY_REPAIR_VERSION,
-      );
-      yield* maintenance.rebuild;
-      assert.deepEqual(
-        (yield* projections.getThreadProjection(THREAD)).turnItems.find(
-          (item) => item.id === answerId,
-        ),
-        edited,
       );
     }).pipe(Effect.provide(TestLayer)),
 );
@@ -1313,7 +1325,7 @@ it.live(
         ),
         edited,
       );
-      yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+      yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
       assert.deepEqual(
         (yield* projections.getThreadProjection(THREAD)).turnItems.find(
           (item) => item.id === edited.id,
@@ -1514,7 +1526,7 @@ it.effect("imports one item per tool call with its full content and true outcome
       yield* (yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter).ensureTranscript(THREAD);
     }).pipe(Effect.provide(Layer.fresh(LegacyV1ThreadImporter.layer)));
     assert.equal(yield* (yield* EventStore.EventStoreV2).latestSequence(), sequence);
-    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
     assert.deepEqual(
       (yield* projections.getThreadProjection(THREAD)).turnItems,
       projection.turnItems,
@@ -1560,7 +1572,7 @@ it.effect("keeps a thread an earlier build imported row by row in that shape", (
       ),
     );
     assert.isTrue(items.every((item) => positioned.has(item.id)));
-    yield* (yield* ProjectionMaintenance.ProjectionMaintenanceV2).rebuild;
+    yield* (yield* ProjectionReplay.ProjectionReplay).rebuild;
     const repaired = yield* projections.getThreadProjection(THREAD);
     assert.equal(repaired.turnItems.length, items.length);
   }).pipe(Effect.provide(TestLayer)),

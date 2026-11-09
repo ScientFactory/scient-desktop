@@ -3,7 +3,7 @@ import type { Transaction } from "prosemirror-state";
 import { NodeSelection, TextSelection } from "prosemirror-state";
 import { CellSelection } from "prosemirror-tables";
 
-import { createScientMarkdownProjection, serializeScientMarkdownProjection } from "./projection";
+import { createScientMarkdownProjection, projectScientMarkdownSource } from "./projection";
 import {
   filterScientMarkdownSlashCommands,
   listKindAt,
@@ -75,7 +75,7 @@ describe("Scient Markdown commands", () => {
     const reparsed = createScientMarkdownProjection(session.session.draftSource);
     expect(reparsed.document.firstChild?.attrs.dir).toBe("rtl");
     expect(reparsed.document.child(1)?.attrs.dir).toBeNull();
-    expect(serializeScientMarkdownProjection(reparsed, reparsed.document)).toBe(
+    expect(projectScientMarkdownSource(reparsed, reparsed.document).source).toBe(
       session.session.draftSource,
     );
   });
@@ -180,7 +180,7 @@ describe("Scient Markdown commands", () => {
     expect(session.session.draftSource).toBe("alpha \\\nbeta\n");
 
     const reparsed = createScientMarkdownProjection(session.session.draftSource);
-    expect(serializeScientMarkdownProjection(reparsed, reparsed.document)).toBe(
+    expect(projectScientMarkdownSource(reparsed, reparsed.document).source).toBe(
       session.session.draftSource,
     );
   });
@@ -296,7 +296,7 @@ describe("Scient Markdown dock command coverage", () => {
       }
       const source = session.session.draftSource;
       const reparsed = createScientMarkdownProjection(source);
-      expect(serializeScientMarkdownProjection(reparsed, reparsed.document)).toBe(source);
+      expect(projectScientMarkdownSource(reparsed, reparsed.document).source).toBe(source);
 
       runUserCommand(session, "undo");
       expect(session.state.doc.firstChild?.type.name).toBe("paragraph");

@@ -15,7 +15,7 @@ export interface TextBounds {
 }
 
 /** An omission line as `boundText` writes it: a count of 1 to 9 digits, no leading zero. */
-export const OMISSION_LINE_PATTERN = /^\[… ([1-9]\d{0,8}) lines? omitted …\]$/u;
+const OMISSION_LINE_PATTERN = /^\[… ([1-9]\d{0,8}) lines? omitted …\]$/u;
 
 function omissionLine(omittedLines: number): string {
   return `[… ${omittedLines} ${omittedLines === 1 ? "line" : "lines"} omitted …]`;

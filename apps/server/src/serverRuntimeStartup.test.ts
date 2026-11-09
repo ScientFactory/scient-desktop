@@ -224,8 +224,7 @@ it.effect.each([
         }),
         Layer.mock(ServiceLauncherClient.ServiceLauncherClient)({
           managed: false,
-          // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-          prepareTrial: Effect.succeed(undefined),
+          prepareTrial: Effect.undefined,
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(AnalyticsService.AnalyticsService)({}),
@@ -472,8 +471,6 @@ it.effect("startup heartbeat reports thread and project counts and hashed accoun
           flush: Effect.void,
           status: Effect.succeed({ available: false, consent: "off" as const }),
           collectionEpoch: Effect.succeed(0),
-          setConsent: () => Effect.succeed({ available: false, consent: "off" as const }),
-          deleteData: Effect.succeed(false),
         }),
         Effect.provide(
           Layer.mergeAll(

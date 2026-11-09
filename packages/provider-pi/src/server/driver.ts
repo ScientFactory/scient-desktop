@@ -63,6 +63,9 @@ const UPDATE = makePackageManagedProviderMaintenanceResolver({
   npmPackageName: "@earendil-works/pi-coding-agent",
   nativeUpdate: { args: ["update", "--self"] },
 });
+// SCIENT-FORK:START — a host keeps its private Pi runtime out of this rule.
+export const piMaintenanceResolver = UPDATE;
+// SCIENT-FORK:END
 
 export type PiDriverEnv =
   | PiAdapterV2DriverEnv

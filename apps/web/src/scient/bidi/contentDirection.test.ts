@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  countStrongScripts,
   countTableStrongScripts,
   findRtlFlowArrowSpans,
   normalizeRtlFlowArrows,
   resolveAggregateDirection,
-  resolveDominantDirection,
+  resolveDominantDirectionFromCounts,
   resolveFenceDirection,
   resolveMarkdownDirectionHint,
   resolveMarkdownDirection,
@@ -116,10 +117,12 @@ describe("message and block direction", () => {
   });
 
   it("uses the dominant language for tables and the surrounding direction only for ties", () => {
-    expect(resolveDominantDirection("English details שלום", "rtl")).toBe("ltr");
-    expect(resolveDominantDirection("English שלום עולם נוסף", "ltr")).toBe("rtl");
-    expect(resolveDominantDirection("ab אב", "ltr")).toBe("ltr");
-    expect(resolveDominantDirection("ab אב", "rtl")).toBe("rtl");
+    const dominant = (text: string, fallback: "ltr" | "rtl") =>
+      resolveDominantDirectionFromCounts(countStrongScripts(text), fallback);
+    expect(dominant("English details שלום", "rtl")).toBe("ltr");
+    expect(dominant("English שלום עולם נוסף", "ltr")).toBe("rtl");
+    expect(dominant("ab אב", "ltr")).toBe("ltr");
+    expect(dominant("ab אב", "rtl")).toBe("rtl");
   });
 
   it("uses prose first and technical content only for identifier-only table columns", () => {

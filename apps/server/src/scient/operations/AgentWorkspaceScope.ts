@@ -1,7 +1,9 @@
+import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { AgentInvocationContext } from "./AgentInvocationContext.ts";
+import type { WorkspaceBindingRecordV1 } from "../projectScope/WorkspaceBinding.ts";
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
 
 export class AgentWorkspaceError extends Schema.TaggedError<AgentWorkspaceError>()(
@@ -11,6 +13,22 @@ export class AgentWorkspaceError extends Schema.TaggedError<AgentWorkspaceError>
     message: Schema.String,
   },
 ) {}
+
+const verifiedFor = (binding: WorkspaceBindingRecordV1, environmentId: EnvironmentId) =>
+  binding.environmentId === environmentId &&
+  binding.trustState === "verified" &&
+  binding.supersededBy === null;
+
+/** Discovery's rule for a thread's project tools, checked outside any tool call. */
+export const threadWorkspaceVerified = Effect.fn("AgentWorkspaceScope.threadWorkspaceVerified")(
+  function* (threadId: ThreadId, environmentId: EnvironmentId) {
+    const resolver = yield* WorkspaceBindingResolver;
+    return yield* resolver.resolveThread(threadId).pipe(
+      Effect.map(({ binding }) => verifiedFor(binding, environmentId)),
+      Effect.orElseSucceed(() => false),
+    );
+  },
+);
 
 /** A captured receipt is revalidated, never replaced with the thread's newer root. */
 export const resolveAgentWorkspace = Effect.fn("AgentWorkspaceScope.resolve")(function* () {
@@ -31,11 +49,7 @@ export const resolveAgentWorkspace = Effect.fn("AgentWorkspaceScope.resolve")(fu
       ),
     ));
   const binding = resolved.binding;
-  if (
-    binding.environmentId !== invocation.environmentId ||
-    binding.trustState !== "verified" ||
-    binding.supersededBy !== null
-  ) {
+  if (!verifiedFor(binding, invocation.environmentId)) {
     return yield* new AgentWorkspaceError({
       code: "project-changed",
       message: "The current project workspace is not verified for this operation.",
@@ -68,12 +82,7 @@ export const resolveAgentWorkspace = Effect.fn("AgentWorkspaceScope.resolve")(fu
 export const consumeAgentWorkspace = Effect.fn("AgentWorkspaceScope.consume")(function* () {
   const invocation = yield* AgentInvocationContext;
   if (!invocation.workspace) return yield* resolveAgentWorkspace();
-  const binding = invocation.workspace.binding;
-  if (
-    binding.environmentId !== invocation.environmentId ||
-    binding.trustState !== "verified" ||
-    binding.supersededBy !== null
-  )
+  if (!verifiedFor(invocation.workspace.binding, invocation.environmentId))
     return yield* new AgentWorkspaceError({
       code: "project-changed",
       message: "The admitted workspace is not verified for this operation.",

@@ -699,7 +699,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
           let taskCallId: string | undefined;
           let echoCallId: string | undefined;
           let yieldCallId: string | undefined;
-          const nativeChildReceipts: Array<typeof OmpSubagentLifecyclePayload.Type> = [];
+          const nativeChildReceipts: Array<OmpSubagentLifecyclePayload> = [];
           // The parent delegates once; the subagent, recognizable by its
           // assignment, calls the Scient tool and reports the result: through
           // `yield` where OMP offers it, and as its final answer since 18.10,
@@ -820,8 +820,7 @@ describe.runIf(binary)("real Oh My Pi with Scient tools and awareness", () => {
                   connectors: [],
                 },
               }),
-            // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-            resolve: () => Effect.succeed(undefined),
+            resolve: () => Effect.undefined,
             touch: () => Effect.void,
             replaceSkillScope: () => Effect.void,
             revokeProviderSession: () => Effect.void,

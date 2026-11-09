@@ -1,7 +1,6 @@
 import {
   MANAGED_RUNTIME_POLICY,
   ManagedAntigravityRuntime,
-  detectManagedRuntimeTarget,
   managedRuntimeTargetKey,
   resolveReviewedAntigravityArtifact,
 } from "@scientfactory/provider-runtime";
@@ -11,20 +10,13 @@ import * as Effect from "effect/Effect";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import {
+  detectTargetSafely,
   makeManagedProviderRuntimeResolution,
   nativeProviderRuntimeBackendLabel,
   type ManagedProviderRuntimeResolution,
 } from "./ManagedProviderRuntimeActions.ts";
 
 const DEFAULT_ANTIGRAVITY_BINARY = "agy";
-
-function detectTargetSafely(input: { readonly platform: NodeJS.Platform; readonly arch: string }) {
-  try {
-    return detectManagedRuntimeTarget(input);
-  } catch {
-    return undefined;
-  }
-}
 
 export interface AntigravityManagedRuntimeResolution extends ManagedProviderRuntimeResolution {}
 

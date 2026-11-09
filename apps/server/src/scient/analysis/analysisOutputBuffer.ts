@@ -3,7 +3,7 @@ import type { ExecutionOutputChunk, ExecutionProcessOutput } from "@scientfactor
 export const ANALYSIS_OUTPUT_MAXIMUM_BYTES = 4 * 1024 * 1024;
 export const ANALYSIS_OUTPUT_MAXIMUM_CHUNK_BYTES = 256 * 1024;
 
-export function completeUtf8PrefixByteLength(bytes: Uint8Array, requested: number): number {
+function completeUtf8PrefixByteLength(bytes: Uint8Array, requested: number): number {
   if (requested >= bytes.byteLength) return bytes.byteLength;
   let boundary = requested;
   while (boundary > 0 && (bytes[boundary]! & 0xc0) === 0x80) boundary -= 1;

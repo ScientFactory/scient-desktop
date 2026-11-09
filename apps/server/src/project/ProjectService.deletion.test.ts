@@ -29,7 +29,7 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EventStore from "../orchestration-v2/EventStore.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as LegacyV1ThreadImporter from "../orchestration-v2/legacy/LegacyV1ThreadImporter.ts";
-import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
+import * as ProjectionReplay from "../orchestration-v2/testkit/ProjectionReplay.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
@@ -61,7 +61,7 @@ const layerEventPersistence = EventSink.layer.pipe(
 );
 const layerServices = Layer.mergeAll(
   LegacyV1ThreadImporter.layer.pipe(Layer.provideMerge(layerEventPersistence)),
-  ProjectionMaintenance.layer.pipe(Layer.provide(layerEventPersistence)),
+  ProjectionReplay.layer.pipe(Layer.provide(layerEventPersistence)),
   ProjectStore.layer,
   IdAllocator.layer,
   ThreadCommandExecutor.layer,
@@ -339,7 +339,7 @@ it.effect(
 
       yield* Effect.gen(function* () {
         const importer = yield* LegacyV1ThreadImporter.LegacyV1ThreadImporter;
-        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        const maintenance = yield* ProjectionReplay.ProjectionReplay;
         const projections = yield* ProjectionStore.ProjectionStoreV2;
         const service = yield* ProjectService.make;
         assert.deepEqual(yield* importer.reconcileShells, {
@@ -745,7 +745,9 @@ it.effect.each(
       const gatedSink = EventSink.layer.pipe(
         Layer.provide(Layer.succeed(EventStore.EventStoreV2, gatedEvents)),
       );
-      const service = yield* ProjectService.make.pipe(Effect.provide(Layer.fresh(gatedSink)));
+      // The sink's batch worker lives as long as its layer, so build it in the test's scope.
+      const sinkContext = yield* Layer.build(Layer.fresh(gatedSink));
+      const service = yield* ProjectService.make.pipe(Effect.provide(sinkContext));
       yield* tracker.start(
         {
           projectId,

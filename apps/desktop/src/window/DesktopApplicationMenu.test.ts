@@ -33,6 +33,7 @@ const layerElectronApp = Layer.succeed(ElectronApp.ElectronApp, {
   name: Effect.succeed("Scient"),
   // SCIENT-FORK:END scient-window
   systemLocale: Effect.succeed("en-US"),
+  preferredSystemLanguages: Effect.succeed(["en-US"]),
   whenReady: Effect.void,
   requestSingleInstanceLock: Effect.succeed(true),
   quit: Effect.void,

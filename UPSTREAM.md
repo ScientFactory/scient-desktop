@@ -619,6 +619,79 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`6417151c093e54dbba0e6c824c69d03983793b9a` is recorded in
+[the 2026-11-08 6417151c09 receipt](docs/internals/t3-upstream-sync-20261108-6417151c09.md).
+Literal merge `aaf3b2af5b767d8b3d3ac3524e3314db3f642445` has owned base
+`fd01f549ad561c20c13994435dabb0effd67f91c` and the frozen official target as parents, retaining
+the 28 official commits after `4c3a9d5818`. HTML tools take a file path, a scheduled task can move
+to another thread, side chats start with the parent's reasoning level, and agent sessions pick up
+Linked environments changes. A starting turn may reopen its own reserved session for that. No
+migrations. Release remains separate.
+
+The previous committed alignment through
+`4c3a9d58184f20bd76833bd599c3544d2c09e3eb` is recorded in
+[the 2026-11-07 4c3a9d5818 receipt](docs/internals/t3-upstream-sync-20261107-4c3a9d5818.md).
+Literal merge `23567dd575ff3e83b3276159f013e615430e7572` has owned base
+`8d32bf8e12f9951e0f5b6f33d1a85c3a415f04fc` and the frozen official target as parents, retaining
+the 61 official commits after `6577c6b618`. Archived threads can be deleted, a usage-limit
+auto-resume survives a restart, Cursor usage reads only the signed-in account (no Keychain), and
+ACP agents keep form questions and child tool output. T3's cloud dictation stays dormant with its
+local voice engine. No migrations. Release remains separate.
+
+An earlier committed alignment through
+`6577c6b6185167c0e502fa01f9e8e8f2dee6ff25` is recorded in
+[the 2026-11-06 6577c6b618 receipt](docs/internals/t3-upstream-sync-20261106-6577c6b618.md).
+Literal merge `2a52792f87706bd55cee4aaced2c1bd1ad90719c` has owned base
+`d733f61e1df59ceab8ccc4c340f6b588bf105272` and the frozen official target as parents, retaining
+the 194 official commits after `4aab23cd72`. Provider writes are batched per transaction, secret
+requests and provider credentials can use a secret provider, PR comments reach the chat, and
+Ultracode works at any effort. T3's local voice engine is merged but dormant until the voice
+decision; Scient's voice stays the one users see. No migrations. Release remains separate.
+
+An earlier committed alignment through
+`4aab23cd72d71ab3b58878482f3d22f93a088125` is recorded in
+[the 2026-11-05 4aab23cd72 receipt](docs/internals/t3-upstream-sync-20261105-4aab23cd72.md).
+Literal merge `eb043f39aaa91ab794aae028ea3cb6c75d26615d` has owned base
+`e3e90a0f7437ff4d66dff2374d2dc52cae7c890d` and the frozen official target as parents, retaining
+the 18 official commits after `67eebaca23`. A message can start a fresh session in the same thread
+(`/clear`, and scheduled tasks that reuse one thread), side chats inherit the parent's permissions,
+a thread with a pending question can be snoozed, and threads follow their worktree's branch. T3's
+migration 80 lands at Scient's 084. Release remains separate.
+
+An earlier committed alignment through
+`67eebaca23f8f7bc46e8817434087fc9c5acf8e3` is recorded in
+[the 2026-11-05 67eebaca23 receipt](docs/internals/t3-upstream-sync-20261105-67eebaca23.md).
+Literal merge `db85f90ef1a339864f8b33da730b3fca03959fe0` has owned base
+`adbdf535ee91f0db7c3105273b66af672e998432` and the frozen official target as parents, retaining
+the 32 official commits after `a21d788752`. T3's stricter Effect rules now cover Scient's own code
+(typed Schema errors, typed `Effect.try` failures, environment through `HostProcess.Environment`),
+idle agent tabs free a slot at the server's tab limit, silent Antigravity prompts time out, and
+clones can use host/owner/repo folders. No migrations. Release remains separate.
+
+An earlier committed alignment through
+`a21d788752695764028e6d26ba924f3963e05806` is recorded in
+[the 2026-11-05 a21d788752 receipt](docs/internals/t3-upstream-sync-20261105-a21d788752.md).
+Literal merge `de156f96e8b0e9a55a7231bd39f7e4cdf3d097aa` has owned base
+`013cea61f19372e8e336ef80fad8e0ec73b23790` and the frozen official target as parents, retaining
+the 156 official commits after `7c22e24e3f`. Packages now typecheck with `effect-tsgo tsrs`, asset
+signing moves behind T3's `AssetSigner` with Scient's document and import URLs on the same key,
+agents ask for secrets through the card, Claude tool calls can render MCP Apps outside Scient's own
+server, and T3's merge of Scient's Pi stop-order fix retires Scient's copy. No migrations. Release
+remains separate.
+
+An earlier committed alignment through
+`7c22e24e3fa1a3bb3a95f27aea000067f198fe7f` is recorded in
+[the 2026-11-04 7c22e24e3f receipt](docs/internals/t3-upstream-sync-20261104-7c22e24e3f.md).
+Literal merge `6d16ce63d44f32164b9157b43537d319c792e812` has owned base
+`03ce72e8702d8b6b4bc2546da1d04df3ac0ecf8e` and the frozen official target as parents, retaining
+the 58 official commits after `61c3794c32`. T3 now prunes event history the projections cover;
+Scient keeps V1 import baselines and copies legacy handoff bodies so nothing it reads is lost.
+Copy thread keeps Scient's in-app link behind one origin seam for shareable links, managed policy
+gains Group Policy templates under Scient's key, and forks after an undo drop undone turns on
+Scient's frozen path too. One migration (83) and one Scient-track migration (28). Release remains
+separate.
+
+An earlier committed alignment through
 `61c3794c32b0eeebfac09add43e403618c65d2d7` is recorded in
 [the 2026-11-03 61c3794c32 receipt](docs/internals/t3-upstream-sync-20261103-61c3794c32.md).
 Literal merge `b5e8c858ddac7cb973dcbb58f46ff6d1e8110c9e` has owned base
@@ -628,7 +701,7 @@ services, Kiro arrives off by default with Scient's instructions and tool names,
 earlier turn no longer copy the whole session, and Scient code touched by the merge is realigned or
 trimmed. One migration (82). Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `30084f0018c5751a07291222e8d04e16d513700a` is recorded in
 [the 2026-11-03 30084f0018 receipt](docs/internals/t3-upstream-sync-20261103-30084f0018.md).
 Literal merge `6a48c5374b0002f54ff134789e14870a9ac00c58` has owned base
@@ -1952,3 +2025,70 @@ When aligning, check:
   `scient/multiWindow/previewHostWindows.ts`) or all `appWindows`.
 - **Shortcuts.** File > New Window uses `CmdOrCtrl+Alt+Shift+N`. If T3 binds it,
   decide which command keeps the key and update `docs/user/multiple-windows.md`.
+
+## Office preview limits
+
+T3's `apps/web/src/components/files/officeArchive.ts` bounds a Word file before its engine opens it.
+The bounds were sized for a renderer on the page's main thread, so ordinary documents lost parts:
+any table over about 2,000 tags or 128 KB cut the document off there, a body stopped at 5,000
+paragraphs, and styles past 1,024 definitions or lists past 2,000 tags were dropped, which unstyled
+the whole document. Scient replaces the numbers with `WORD_LIMITS`, measured against the
+`@betteroffice/docx` engine, which runs in its own worker:
+
+- Paragraph text, 32K characters. Line breaking grows with the square of one paragraph's text
+  (16K 0.7 s, 32K 1.5 s, 128K 11.6 s on an M-series Mac). This replaces the 128 KB element limit,
+  which mostly measured picture markup.
+- One body element, 100,000 tags: a table is laid out in one go, and a 4,000-row table takes 2.2 s.
+- A header or footer, 128 KB: its cost grows with its own length, not the page count. A longer
+  one alone is left out, as an unused one is, and the preview says it is limited only when the
+  document uses it. Text in CDATA counts toward a paragraph's limit.
+- The body's 4 MB read limit stays (about 700 pages of prose, opened in under 1 s). Styles, lists,
+  notes and the expansion totals rose to where they no longer bind real documents; the engine opened
+  4,000 chained styles, 2,000 lists or 5,000 footnotes in under 0.75 s.
+- Archive, entry and nesting limits are T3's, unchanged.
+
+`WordDocument.tsx` shows the first 1,000 pages with the "Preview limited" notice instead of
+replacing them with an error once layout passes 1,000. Each changed line in these files names a
+`WORD_LIMITS` field or sits in a marked block. T3's limit cases in
+`AttachmentFilePreview.browser.test.tsx` size their inputs and bounds from `WORD_LIMITS`, so each
+still crosses the limit it checks. If T3 resizes its own budgets, compare them with these
+measurements before taking either.
+
+The limits (not the 1,000-page change) are offered to T3 as pingdotgg/t3code#32040 (issue #32039).
+If it merges, take T3's version and drop the marked lines in `officeArchive.ts` and its test.
+
+## Office reader
+
+Word and PowerPoint files read with the PDF reader's controls: page number, zoom (buttons, keys
+and pinch), a sidebar of pages and find. The reader is `apps/web/src/scient/office`; T3's viewer
+still draws the pages, and its files keep marked seams:
+
+| T3 file                                              | Seam                                                                                                                                                                                                   |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `office/OfficePages.tsx`                             | `zoom` and `onWidth`; zooming keeps the middle of the view; wide pages scroll sideways; 2^25-pixel canvases; `onPlace` reports the page and point at the top                                           |
+| `office/WordDocument.tsx`, `Presentation.tsx`        | `ScientOfficeReader` instead of `OfficePages`; thumbnail paints and find; Word says when layout is complete. Presentation drops T3's previous/next slide bar, which the reader's page controls replace |
+| `office/document.worker.ts`, `word-protocol.ts`      | `find` through the engine's `searchText`, placed on pages by document position; thumbnail paints do not release the pages built around the view                                                        |
+| `office/presentation.worker.ts`, `slide-protocol.ts` | `text` (a slide's text layer, word by word from its laid-out glyphs) and `find`                                                                                                                        |
+
+Selected text on a page or slide quotes into chat as an Office quote (`OfficeCitation`, with the
+other quote kinds in `packages/contracts/src/fileCitations.ts`). `FilePreviewPanel.tsx` gives the
+reader its file and conversation (`OfficeFileContext`), and `AssistantCitationChip.tsx` names,
+links and reopens the quote in its existing Scient blocks.
+
+A file opened again returns to its page, point on it and zoom (`officeReaderPlace.ts`, kept for
+the window's session), unless a quote opens it at its own page.
+
+T3 remounts a workspace document preview whenever anything in the project may have changed: the
+key of `FilePreviewPanel.tsx`'s document branch carried the thread's workspace mutation id, which
+moves after every command, edit or tool call. An open Word file loaded again and went back to its
+first page while an agent worked. Scient keys that branch by the file alone and wraps it in
+`ScientFileRevisionBoundary` (`scient/fileSurfaces`), which checks the file's revision on each
+possible change and remounts only for a new one (a reload the reader asks for, from the header
+or the Files pane, still always remounts it); `AssetAccess.ts` reports the revision for every
+exact workspace file, not only PDFs. The boundary is offered to T3 as pingdotgg/t3code#32670 (issue #32669,
+`FileRevisionBoundary`); if it merges, take T3's and drop `ScientFileRevisionBoundary` and the
+marked key in `FilePreviewPanel.tsx`.
+
+When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
+worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
+replace Scient's rather than run beside it.

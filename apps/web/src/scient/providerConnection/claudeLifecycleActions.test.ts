@@ -6,11 +6,7 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import {
-  startClaudeSignIn,
-  startReviewedClaudeRuntimeAction,
-  updateClaudeRuntime,
-} from "./claudeLifecycleActions";
+import { startClaudeSignIn } from "./claudeLifecycleActions";
 import type { ProviderLifecycleController } from "./useProviderLifecycleController";
 
 const INSTANCE_ID = ProviderInstanceId.make("claudeAgent");
@@ -62,66 +58,6 @@ function controller(overrides: Partial<ProviderLifecycleController> = {}) {
 }
 
 describe("Claude lifecycle actions", () => {
-  it("routes a managed update through the reviewed runtime plan", async () => {
-    const lifecycle = controller();
-    const managed = provider({
-      connection: {
-        methods: ["claude_subscription"],
-        canDisconnect: false,
-        operation: null,
-        runtime: {
-          source: "scient_managed",
-          supportTier: "fully_assisted",
-          target: "darwin-arm64",
-          actions: ["update", "repair", "remove"],
-          managedVersion: "2.1.170",
-          previousManagedVersion: null,
-          operation: null,
-          message: "Managed Claude is ready.",
-        },
-      },
-    });
-
-    await updateClaudeRuntime(lifecycle, managed);
-
-    expect(lifecycle.planRuntime).toHaveBeenCalledWith("update");
-    expect(lifecycle.startRuntime).toHaveBeenCalledWith(updatePlan);
-    expect(lifecycle.updateExternalRuntime).not.toHaveBeenCalled();
-  });
-
-  it("routes repair through a fresh reviewed runtime plan", async () => {
-    const repairPlan = { ...updatePlan, action: "repair" as const };
-    const lifecycle = controller({
-      planRuntime: vi.fn(async () => repairPlan),
-    });
-
-    await startReviewedClaudeRuntimeAction(lifecycle, "repair");
-
-    expect(lifecycle.planRuntime).toHaveBeenCalledWith("repair");
-    expect(lifecycle.startRuntime).toHaveBeenCalledWith(repairPlan);
-  });
-
-  it("preserves T3's updater for an external installation", async () => {
-    const lifecycle = controller();
-    await updateClaudeRuntime(
-      lifecycle,
-      provider({
-        versionAdvisory: {
-          status: "behind_latest",
-          currentVersion: "2.1.170",
-          latestVersion: "2.1.171",
-          updateCommand: "claude update",
-          canUpdate: true,
-          checkedAt: "2026-08-09T08:00:00.000Z",
-          message: "Update available.",
-        },
-      }),
-    );
-
-    expect(lifecycle.updateExternalRuntime).toHaveBeenCalledOnce();
-    expect(lifecycle.planRuntime).not.toHaveBeenCalled();
-  });
-
   it("lets Claude own the first browser launch and retains Scient's reopen recovery", async () => {
     const lifecycle = controller({
       startConnection: vi.fn(async () =>

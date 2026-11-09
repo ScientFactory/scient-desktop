@@ -1,13 +1,15 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
-  formatThreadLink,
   guessThreadLinkRef,
   percentDecodedThreadLinkId,
   type ThreadLink,
   unknownThreadLinkLabel,
 } from "@t3tools/shared/threadLinks";
 
+// SCIENT-FORK:START — thread links go through Scient's own origin, never T3's hosted app.
+import { scientThreadCopyMarkdown } from "@t3tools/shared/scientThreadLinks";
+// SCIENT-FORK:END
 import { useThreadRefs, useThreadShell } from "../../state/entities";
 import { UnresolvedChip } from "../contextChipParts";
 import { ThreadContextChip } from "../ThreadContextChip";
@@ -36,6 +38,9 @@ export function MarkdownThreadLink(props: {
   const ref = { environmentId: thread.environmentId, threadId: thread.id };
   const title = thread.title.trim() || props.label || "Untitled thread";
   return (
-    <ThreadContextChip record={{ ...ref, title }} copyMarkdown={formatThreadLink(ref, title)} />
+    <ThreadContextChip
+      record={{ ...ref, title }}
+      copyMarkdown={scientThreadCopyMarkdown(ref, title)}
+    />
   );
 }

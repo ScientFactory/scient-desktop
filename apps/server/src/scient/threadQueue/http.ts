@@ -15,7 +15,6 @@ import {
   requireEnvironmentScope,
 } from "../../auth/http.ts";
 import { makeLegacyQueueCompatibility } from "../../orchestration-v2/legacy/LegacyQueueCompatibility.ts";
-import { QueueError } from "./Ledger.ts";
 import {
   OrchestratorCommandRejectedError,
   OrchestratorDispatchError,
@@ -23,7 +22,6 @@ import {
 import { userFacingDispatchErrorMessage } from "../../orchestration-v2/UserFacingErrors.ts";
 
 const isQueueOperationError = Schema.is(ScientThreadQueueOperationError);
-const isQueueError = Schema.is(QueueError);
 const isDispatchError = Schema.is(OrchestratorDispatchError);
 const isRejectedError = Schema.is(OrchestratorCommandRejectedError);
 const isLegacyDispatchError = Schema.is(OrchestrationDispatchCommandError);
@@ -47,8 +45,6 @@ export const scientThreadQueueHttpApiLayer = HttpApiBuilder.group(
             cause,
           ): Effect.Effect<never, ScientThreadQueueOperationError | EnvironmentInternalError> => {
             if (isQueueOperationError(cause)) return Effect.fail(cause);
-            if (isQueueError(cause))
-              return Effect.fail(new ScientThreadQueueOperationError({ message: cause.message }));
             if (isDispatchError(cause) && typeof cause.cause === "string")
               return Effect.fail(new ScientThreadQueueOperationError({ message: cause.cause }));
             if (isRejectedError(cause) && isLegacyDispatchError(cause.cause)) {
@@ -63,18 +59,6 @@ export const scientThreadQueueHttpApiLayer = HttpApiBuilder.group(
     });
     return handlers
       .handle("list", ({ endpoint, payload }) => handle(endpoint.name, { method: "list", payload }))
-      .handle("enqueue", ({ endpoint, payload }) =>
-        handle(endpoint.name, { method: "enqueue", payload }),
-      )
-      .handle("update", ({ endpoint, payload }) =>
-        handle(endpoint.name, { method: "update", payload }),
-      )
-      .handle("remove", ({ endpoint, payload }) =>
-        handle(endpoint.name, { method: "remove", payload }),
-      )
-      .handle("reorder", ({ endpoint, payload }) =>
-        handle(endpoint.name, { method: "reorder", payload }),
-      )
       .handle("control", ({ endpoint, payload }) =>
         handle(endpoint.name, { method: "control", payload }),
       );

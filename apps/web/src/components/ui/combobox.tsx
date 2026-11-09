@@ -115,7 +115,7 @@ function ComboboxSearchInput(props: React.ComponentProps<typeof ComboboxInput>) 
         />
         <ComboboxInput
           {...props}
-          className="[&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
+          className="flex w-full [&_input]:h-6.5 [&_input]:ps-5 [&_input]:font-sans [&_input]:leading-6.5"
           showTrigger={false}
           size="sm"
           unstyled
@@ -140,6 +140,7 @@ function ComboboxPopup({
   sideOffset = 4,
   alignOffset,
   align = "start",
+  collisionAvoidance,
   anchor: anchorProp,
   ...props
 }: ComboboxPrimitive.Popup.Props & {
@@ -148,6 +149,7 @@ function ComboboxPopup({
   alignOffset?: ComboboxPrimitive.Positioner.Props["alignOffset"];
   side?: ComboboxPrimitive.Positioner.Props["side"];
   anchor?: ComboboxPrimitive.Positioner.Props["anchor"];
+  collisionAvoidance?: ComboboxPrimitive.Positioner.Props["collisionAvoidance"];
 }) {
   const scrollScope = React.useContext(OverlayScrollScope);
   const { chipsRef, multiple } = React.use(ComboboxContext);
@@ -159,6 +161,7 @@ function ComboboxPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
+        collisionAvoidance={collisionAvoidance}
         className="z-[130] select-none"
         data-slot="combobox-positioner"
         side={side}

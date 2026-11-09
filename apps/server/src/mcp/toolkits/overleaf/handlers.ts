@@ -163,7 +163,9 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
       return Effect.succeed(
         toolError(
           "recovery-required",
-          `${error.message} Use scient_overleaf_manage with action recover.`,
+          field("reason") === "unreadable-record" || field("reason") === "newer-unfinished-record"
+            ? `${error.message} Ask the user to do this; it can't be done from a tool.`
+            : `${error.message} Use scient_overleaf_manage with action recover.`,
         ),
       );
     case "CheckoutSuspendedError":
@@ -261,7 +263,7 @@ const filesOf = (files: FileDecisions | undefined) =>
         },
       };
 
-/** The calling thread, resolved by the service (pr-c-design.md section 6). */
+/** The calling thread, resolved by the service. */
 const callerOf = Effect.gen(function* () {
   const invocation = yield* AgentInvocationContext.AgentInvocationContext;
   return {
@@ -359,7 +361,7 @@ const MANAGE_REFUSALS: Record<OverleafConnectionRefusal, string> = {
 const manageRefusalLine = (reason: string) =>
   `Nothing changed: ${overleafFilesystemRefusalText(reason) ?? MANAGE_REFUSALS[reason as OverleafConnectionRefusal] ?? reason}`;
 
-/** File kinds that suggest a folder holds more than a paper (pr-c-design.md section 3). */
+/** File kinds that suggest a folder holds more than a paper. */
 const CODE_OR_DATA =
   /\.(?:py|ipynb|m|mat|r|rmd|jl|js|ts|tsx|jsx|c|cc|cpp|h|hpp|rs|go|java|sh|csv|tsv|parquet|h5|hdf5|npy|npz|pkl|feather|nc|sqlite|db|json|ya?ml|toml)$/iu;
 const SUGGEST_AT = 5;
@@ -541,7 +543,7 @@ export const overleafConnectForInvocation = Effect.fn("ScientOverleafToolkit.con
     if (firstSync !== null) {
       lines.push("The first sync:", ...previewLines(firstSync));
     }
-    // Information, not a step: the agent decides (pr-c-design.md section 3).
+    // Information, not a step: the agent decides.
     if (input.mode === "link-folder") {
       const count = yield* codeOrDataIn(
         NodePath.join(connected.connection.checkoutRoot, connected.connection.folder),

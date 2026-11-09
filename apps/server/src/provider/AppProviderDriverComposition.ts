@@ -150,10 +150,10 @@ export const GrokDriver = makeGrokDriver<GrokCompositionRequirements, GrokCompos
   resolveRuntime: resolveGrokRuntime,
 });
 
-/** fx speaks ACP without a private system seam, so it gets Scient prompts but no awareness. */
+/** fx speaks ACP without a private system seam, so its awareness rides the first prompt. */
 export const FxDriver = makeFxDriver({ application: scientAcpProviderBridge });
 
-/** Kiro gets Scient's prompts and runtime instructions, not T3 Code's; awareness is not wired. */
+/** Kiro gets Scient's prompts and runtime instructions, not T3 Code's; awareness rides the first prompt. */
 export const KiroDriver = makeKiroDriver({ application: scientAcpProviderBridge });
 
 export type AcpRegistryCompositionEnv = AcpRegistryDriverEnv | ServerSettingsService;

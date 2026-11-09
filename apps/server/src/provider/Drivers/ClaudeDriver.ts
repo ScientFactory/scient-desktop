@@ -262,6 +262,7 @@ export const ClaudeDriver: ScientProviderDriver<ClaudeSettings, ClaudeDriverEnv,
         scopedLimitNames,
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),
         onNativeInventory: (inventory) => publishInventory(inventory),
+        modelCatalog,
       },
       // SCIENT-FORK:END
     ).pipe(

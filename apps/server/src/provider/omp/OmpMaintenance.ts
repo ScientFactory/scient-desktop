@@ -12,11 +12,8 @@ import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderL
 import {
   formatProviderUpdateCommand,
   homebrewOwnershipFromCommandPath,
-  makeManualOnlyProviderMaintenanceCapabilities,
-  type ProviderMaintenanceCapabilitiesResolver,
   type ProviderMaintenanceResolutionContext,
 } from "@t3tools/provider-core/server/maintenanceResolver";
-import { ompTarget } from "./OmpTarget.ts";
 
 /**
  * Scient never runs Oh My Pi's own updater: `omp update` cannot install a
@@ -24,7 +21,6 @@ import { ompTarget } from "./OmpTarget.ts";
  * System installs get a version advisory with the command to run by hand;
  * Scient-managed installs update through the managed-runtime pipeline.
  */
-const PROVIDER = ompTarget.driverKind;
 
 /** npm `latest`: what bun, npm and the standalone installer's `omp update` install. */
 export const OMP_NPM_LATEST_URL = "https://registry.npmjs.org/@oh-my-pi/pi-coding-agent/latest";
@@ -141,14 +137,6 @@ export const resolveOmpInstallation = Effect.fn("resolveOmpInstallation")(functi
     platform: input.platform,
   });
 });
-
-/** Every Oh My Pi installation is manual-only: Scient never spawns an OMP updater. */
-export const ompMaintenance: ProviderMaintenanceCapabilitiesResolver = {
-  resolve: () =>
-    Effect.succeed(
-      makeManualOnlyProviderMaintenanceCapabilities({ provider: PROVIDER, packageName: null }),
-    ),
-};
 
 const fetchLatest = Effect.fn("OmpMaintenance.fetchLatest")(
   function* (url: string, parse: (body: string) => string | null) {

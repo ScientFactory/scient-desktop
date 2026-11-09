@@ -15,7 +15,6 @@ import {
   isWhisperRuntimePlatformSupported,
   lowerWhisperProcessPriority,
   resolveWhisperInferenceTimeoutMs,
-  resolveWhisperRuntimePaths,
   WhisperRuntimeError,
   type WhisperSpawn,
   type WhisperSpawnOptions,
@@ -55,33 +54,6 @@ describe("pure runtime helpers", () => {
     expect(resolveWhisperInferenceTimeoutMs(180_000)).toBe(540_000); // 3x at clip ceiling
     expect(resolveWhisperInferenceTimeoutMs(10_000_000)).toBe(540_000); // cap
     expect(resolveWhisperInferenceTimeoutMs(1_000, 1_000)).toBe(3_000); // custom floor, 3x wins
-  });
-
-  it("resolves runtime paths for packaged/dev and windows/posix", () => {
-    const packaged = resolveWhisperRuntimePaths({
-      isPackaged: true,
-      resourcesPath: "/res",
-      desktopRuntimeDirectory: "/dev",
-      platform: "linux",
-    });
-    expect(packaged.runtimeDirectory).toBe("/res/whisper-runtime");
-    expect(packaged.executablePath).toBe("/res/whisper-runtime/whisper-server");
-
-    const dev = resolveWhisperRuntimePaths({
-      isPackaged: false,
-      resourcesPath: "/res",
-      desktopRuntimeDirectory: "/dev",
-      platform: "linux",
-    });
-    expect(dev.runtimeDirectory).toBe("/dev/whisper-runtime");
-
-    const win = resolveWhisperRuntimePaths({
-      isPackaged: true,
-      resourcesPath: "C:\\res",
-      desktopRuntimeDirectory: "C:\\dev",
-      platform: "win32",
-    });
-    expect(win.executablePath.endsWith("whisper-server.exe")).toBe(true);
   });
 
   it("prepends the runtime dir to LD_LIBRARY_PATH only on linux", () => {

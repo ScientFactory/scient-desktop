@@ -2,7 +2,7 @@
 
 Status: Current implementation; release and runtime qualification are separate.
 Owner: Yaacov
-Last updated: 2026-10-06
+Last updated: 2026-11-03
 Doc type: Current implementation
 
 This document owns the shared capability admission and workspace-authority
@@ -12,23 +12,25 @@ resolver, and document publication behavior.
 
 ## Scope
 
-The foundation reuses existing Browser, Sources, Skills, and Documents tools.
+The foundation covers Scient's own tools: Accounts, Sources, Skills, Documents,
+Overleaf, Compute and the handoff-summary reader. Upstream's tools, the browser
+among them, keep upstream's registration and checks; discovery only hides those
+whose grant a session lacks.
 It adds shared discovery/admission, provider-independent invocation context,
 bounded Skill orientation, explicit Skill-selection metadata, and verified
 workspace receipts for project operations. Existing domain services still
 perform the work.
 
 The shared boundary is wired to merged orchestration V2 and the existing domain services.
-Compute's MCP tool exposes read-only runtime inventory through its existing gateway; a listed
-runtime path is not authority to install, execute or attach to a runtime or project session.
-This wiring does not migrate scientific history or qualify Compute execution/session behavior.
-Earlier combined experiments remain separate Git/state recovery material, not supported inputs.
+Compute's tools run code, project files and notebook cells in the thread's project, and report
+runtime inventory and setup, which need no project. Earlier combined experiments remain separate
+Git/state recovery material, not supported inputs.
 
 ## Ownership
 
 | Boundary                                                        | Owner                                                                    |
 | --------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| Pure operation metadata and workspace receipt schemas           | `packages/scient-operations`                                             |
+| Operation admission shape and workspace receipt schemas         | `packages/scient-operations`                                             |
 | Existing tool definitions and schemas                           | `apps/server/src/mcp/toolkits`                                           |
 | Catalog derived from those definitions                          | `mcp/ScientOperationCatalog.ts`                                          |
 | Shared dispatch and domain invocation context                   | `scient/operations`                                                      |
@@ -43,9 +45,9 @@ server service, credential store, or plugin runtime.
 ## Tools, guidance, and delivery
 
 Tool definitions remain the source of their input/output/error schemas,
-descriptions and effect hints. An annotation adds stable operation identity,
-family, scope, required grants and a documentation owner. Catalog composition
-rejects duplicate identities and unknown/replacement tool definitions.
+descriptions and effect hints. An annotation adds only what admission reads:
+stable operation identity, scope and required grants. Catalog composition
+rejects duplicate identities and tool names, and tools without an annotation.
 
 The host composes handlers once. A caller supplies the registered tool name
 and input; it cannot replace the handler per request. Admission checks the
@@ -54,17 +56,22 @@ Skills are instructions, not authority or a way to manufacture missing tools.
 
 MCP projects its authenticated context into `AgentInvocationContext`.
 The projection explicitly recognizes Scient grants; adding a host capability
-does not silently authorize a Scient operation. First-party callers can use
-the same dispatcher with a host-issued native session identity, without
-inventing external-provider credentials. A fixture proves that path with a
-real registered Skill handler; it is not a native-agent runtime.
+does not silently authorize a Scient operation. Handlers on these routes do not
+repeat the dispatcher's grant check; they keep the checks it does not make, such
+as workspace re-verification before publication.
 
 One request-local `tools/list` middleware filters Scient tools using the same
-admission rules as calls. A previously returned list is not a grant. Device and
-Pull Request tools remain explicitly declared host-owned tools with their own
-handlers and policy. Unknown ownership is a composition error, not an implicit
-grant. Browser snapshot registration preserves the existing image-plus-metadata
-response rather than turning images into JSON text.
+admission rules as calls. A previously returned list is not a grant. Upstream's
+tools are explicitly declared host-owned tools with their own handlers and
+policy; those whose every call needs one grant are declared with it and hidden
+without it, after upstream's own `EnabledWhen` hiding: thread, orchestrator,
+attachment, project and environment tools need `orchestration`; browser and
+browser controls `preview`; worktree handoff and status `worktree`; devices
+`device`. HTML tools need none. Pull-request tools and `scient_worktree_list`
+stay listed: forwarded to a linked environment they need only `orchestration`
+here. A thread-less OAuth
+client keeps the tools its grants allow. Unknown ownership is a composition
+error, not an implicit grant.
 
 Effect continues to own the dated MCP wire schemas, transport, parameter
 validation and result encoding. The discovery adapter must be checked whenever
@@ -173,22 +180,17 @@ authenticated MCP invocation context into shared admission before invoking the r
 handler; provider preparation and MCP mounting retain their existing owners. Domain services
 stay independently owned.
 
-When another tool family lands, deliberately register its ownership, availability and provider
-naming, and test discovery together with existing host tools. The existing
-[`Compute inventory toolkit`](../../apps/server/src/mcp/toolkits/compute/tools.ts) is discovery-only:
-it reports configured settings, managed-runtime status and candidates, not execution readiness.
-It cannot install a runtime, execute code, or attach to a user's session. Compute execution/history
-changes require their own ownership and compatibility review.
+When another tool family lands, deliberately register its ownership, availability, provider
+naming and work-log label, and test discovery together with existing host tools.
 
-Deferred work includes a capability Settings page, installable add-ons/plugins,
-lazy tool-schema delivery, and Compute agent execution. None is needed to use the current
-shared admission boundary. Scient Agent's existing driver is described in
+Deferred work includes a capability Settings page and installable add-ons/plugins. Neither is
+needed to use the current shared admission boundary. Scient Agent's existing driver is described in
 [Provider architecture](./providers.md); it is not a future workspace-admission requirement.
 
 ## Verification boundaries
 
 Regression fixtures cover concurrent per-request discovery, denied calls before
-handler execution, explicit/native Skill access, changed workspace evidence,
+handler execution, explicit Skill access, changed workspace evidence,
 publication fences, migration-ledger compatibility, queued context recovery,
 and bounded Skill orientation. Synthetic provider tests do not establish live
 provider compatibility, visual quality, or future plugin-scale performance.

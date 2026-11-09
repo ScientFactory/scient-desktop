@@ -31,12 +31,15 @@ export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
         const random = yield* SecureRandom.SecureRandom;
         context = yield* random.uuidV4().pipe(Effect.orElseSucceed(() => undefined));
       }
-      return context === undefined ? current : { ...current, collectionContext: context };
+      return context === undefined
+        ? current
+        : { ...current, collectionContext: context, voiceLifecycleVersion: 2 as const };
     },
   );
 
   const record = Effect.fn("AnalyticsUiAdapter.record")(function* (event: ScientAnalyticsUiEvent) {
     if (
+      event.name.startsWith("voice.") ||
       event.name === "panel.viewed" ||
       event.name === "settings.viewed" ||
       event.name === "usage.viewed" ||

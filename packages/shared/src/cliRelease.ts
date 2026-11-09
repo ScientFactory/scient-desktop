@@ -18,6 +18,13 @@ export function cliArchiveTarCommand(
   return `${systemRoot}\\System32\\tar.exe`;
 }
 
+/** `segments` added to `baseUrl`'s path, keeping its query, such as a signed mirror URL's token. */
+export function releaseAssetUrl(baseUrl: string, ...segments: ReadonlyArray<string>): string {
+  const url = new URL(baseUrl);
+  url.pathname = [url.pathname.replace(/\/+$/, ""), ...segments.map(encodeURIComponent)].join("/");
+  return url.toString();
+}
+
 export const CLI_RELEASE_CHANNELS = ["stable", "beta", "nightly", "preview"] as const;
 export type CliReleaseChannel = (typeof CLI_RELEASE_CHANNELS)[number];
 
@@ -43,6 +50,21 @@ export function crossesReleaseTrack(fromVersion: string, toVersion: string): boo
 export function desktopUpdateChannelOf(version: string): "latest" | "beta" | "nightly" {
   const channel = cliReleaseChannelOf(version);
   return channel === "nightly" || channel === "beta" ? channel : "latest";
+}
+
+/**
+ * The update feed file a desktop app on this platform reads, which an update mirror publishes at
+ * its root beside the release's server packages.
+ */
+export function updateFeedFileName(
+  channel: "latest" | "beta" | "nightly",
+  platform: NodeJS.Platform,
+  arch: string,
+): string {
+  if (platform === "darwin") return `${channel}-mac.yml`;
+  if (platform === "linux")
+    return arch === "arm64" ? `${channel}-linux-arm64.yml` : `${channel}-linux.yml`;
+  return `${channel}.yml`;
 }
 
 /** Page until the channel matches; nightlies can push preview/stable releases past the first page. */

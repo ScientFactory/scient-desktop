@@ -647,18 +647,21 @@ export function mergePullRequestFilterOptionsView(
 ) {
   const labels: PullRequestFilterOptions["labels"][number][] = [];
   const authors: PullRequestFilterOptions["authors"][number][] = [];
+  const references: PullRequestFilterOptions["references"][number][] = [];
   const errors = new Set<string>();
   if (queryError !== null) errors.add(queryError);
   let truncated = false;
   for (const [, options] of values) {
     labels.push(...options.labels);
     authors.push(...options.authors);
+    references.push(...options.references);
     truncated ||= options.truncated;
     if (options.partialFailure !== undefined) errors.add(options.partialFailure);
   }
   return {
     labels,
     authors,
+    references,
     truncated,
     error: errors.size === 0 ? null : [...errors].join("\n"),
   };

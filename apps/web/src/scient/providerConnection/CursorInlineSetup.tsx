@@ -4,7 +4,6 @@ import {
   type ServerProvider,
 } from "@t3tools/contracts";
 import {
-  CheckCircle2Icon,
   DownloadIcon,
   ExternalLinkIcon,
   LoaderIcon,
@@ -20,6 +19,7 @@ import {
   AssistedSetupActions,
   AssistedSetupDiagnostics,
   AssistedSetupFrame,
+  AssistedSetupStatusFrame,
   AssistedSetupStatus,
   AssistedSetupUpdateButton,
   AssistedSetupUpdateStatus,
@@ -286,7 +286,7 @@ export function CursorInlineSetup(props: {
       activeRuntimeOperation?.action ??
       (pendingAction === "repair" || pendingAction === "update" ? pendingAction : "install");
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={runtimeStage(activeRuntimeOperation)}
           icon={<LoaderIcon className="size-5 animate-spin text-primary" />}
@@ -315,13 +315,13 @@ export function CursorInlineSetup(props: {
             Cancel
           </Button>
         </AssistedSetupActions>
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (externalUpdateProgress) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupUpdateStatus
           name="Cursor CLI"
           provider={props.provider}
@@ -329,14 +329,14 @@ export function CursorInlineSetup(props: {
           update={externalProviderUpdate(props.provider)}
           working={externalUpdateProgress}
         />
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (needsRuntimeRepair) {
     const error = localError ?? runtimeOperation?.message ?? "The Cursor CLI operation failed.";
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={error}
           icon={<TriangleAlertIcon className="size-5 text-warning" />}
@@ -349,7 +349,7 @@ export function CursorInlineSetup(props: {
           </Button>
         </AssistedSetupActions>
         {runtimeDiagnostics}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -357,7 +357,7 @@ export function CursorInlineSetup(props: {
     const error = localError ?? failedRuntimeOperationMessage(runtimeOperation, "install");
     const canInstall = runtime?.actions.includes("install") ?? false;
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             error ??
@@ -390,7 +390,7 @@ export function CursorInlineSetup(props: {
           </AssistedSetupActions>
         ) : null}
         {error ? runtimeDiagnostics : null}
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
@@ -399,7 +399,7 @@ export function CursorInlineSetup(props: {
     const verifying = activeConnectionOperation?.status === "verifying";
     const openFailure = !starting && !verifying ? page.failure : null;
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body={
             starting
@@ -452,14 +452,14 @@ export function CursorInlineSetup(props: {
             </Button>
           ) : null}
         </AssistedSetupActions>
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   if (isAuthenticated) {
     if (!isReady) {
       return (
-        <StatusFrame
+        <AssistedSetupStatusFrame
           accountAction={props.accountAction}
           body={
             props.provider.message ??
@@ -476,7 +476,7 @@ export function CursorInlineSetup(props: {
     if (updateOffer) {
       const issue = providerUpdateIssue(props.provider, updateOffer, localError);
       return (
-        <SetupFrame>
+        <AssistedSetupFrame>
           <AssistedSetupUpdateStatus
             issue={issue}
             name="Cursor CLI"
@@ -492,11 +492,11 @@ export function CursorInlineSetup(props: {
             />
           </AssistedSetupActions>
           {issue ? runtimeDiagnostics : null}
-        </SetupFrame>
+        </AssistedSetupFrame>
       );
     }
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         accountAction={props.accountAction}
         body={accountDescription(props.provider)}
         title="Cursor is ready"
@@ -506,7 +506,7 @@ export function CursorInlineSetup(props: {
 
   if (props.provider.status === "error" && props.provider.auth.status === "unknown") {
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         accountAction={props.accountAction}
         body={props.provider.message ?? "Cursor's account or model check did not finish."}
         title="Cursor needs attention"
@@ -517,7 +517,7 @@ export function CursorInlineSetup(props: {
 
   if (props.provider.auth.required === false) {
     return (
-      <StatusFrame
+      <AssistedSetupStatusFrame
         body={
           isReady
             ? "This Cursor setup does not require account sign-in."
@@ -532,20 +532,20 @@ export function CursorInlineSetup(props: {
 
   if (!supportsBrowserSignIn) {
     return (
-      <SetupFrame>
+      <AssistedSetupFrame>
         <AssistedSetupStatus
           body="This Cursor instance uses external credentials or custom settings. Manage them in provider Settings."
           icon={<ShieldCheckIcon className="size-5 text-primary" />}
           title="Custom Cursor setup"
         />
-      </SetupFrame>
+      </AssistedSetupFrame>
     );
   }
 
   const signInError =
     localError ?? (connectionOperation?.status === "failed" ? connectionOperation.message : null);
   return (
-    <SetupFrame>
+    <AssistedSetupFrame>
       <AssistedSetupStatus
         body={
           signInError ??
@@ -579,37 +579,6 @@ export function CursorInlineSetup(props: {
           provider={props.provider}
         />
       ) : null}
-    </SetupFrame>
+    </AssistedSetupFrame>
   );
-}
-
-function StatusFrame(props: {
-  readonly accountAction?: ReactNode;
-  /** Runtime diagnostics, shown only for a warning. */
-  readonly diagnostics?: ReactNode;
-  readonly body: ReactNode;
-  readonly title: string;
-  readonly warning?: boolean;
-}) {
-  return (
-    <SetupFrame>
-      <AssistedSetupStatus
-        body={props.body}
-        icon={
-          props.warning ? (
-            <TriangleAlertIcon className="size-5 text-warning" />
-          ) : (
-            <CheckCircle2Icon className="size-5 text-success" />
-          )
-        }
-        title={props.title}
-        trailing={props.accountAction}
-      />
-      {props.diagnostics}
-    </SetupFrame>
-  );
-}
-
-function SetupFrame(props: { readonly children: ReactNode }) {
-  return <AssistedSetupFrame>{props.children}</AssistedSetupFrame>;
 }

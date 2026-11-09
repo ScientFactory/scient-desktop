@@ -321,6 +321,10 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
@@ -479,6 +483,10 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
               Effect.succeed({
                 stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                 backgroundTasks: () => Effect.succeed(false),
+                mcpServerStatus: Effect.succeed([]),
+                readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                listPermissionRules: Effect.die("unexpected permission rules read"),
                 setPermissionMode: () =>
                   Effect.die("Permission-mode mutation is outside this fixture."),
                 messages: Stream.never,
@@ -1048,6 +1056,10 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.fromQueue(sdkMessages),
@@ -1230,6 +1242,10 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
@@ -1313,6 +1329,10 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
                   return {
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.never,
@@ -2690,6 +2710,10 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.empty,
@@ -2830,6 +2854,10 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   return {
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),
@@ -4347,6 +4375,10 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                 return {
                   stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                   backgroundTasks: () => Effect.succeed(false),
+                  mcpServerStatus: Effect.succeed([]),
+                  readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                  callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                  listPermissionRules: Effect.die("unexpected permission rules read"),
                   setPermissionMode: () =>
                     Effect.die("Permission-mode mutation is outside this fixture."),
                   messages: Stream.never,
@@ -4765,7 +4797,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
   });
   // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
-  it("projects assistant usage against the selected context window", () => {
+  it("projects assistant usage against the given context window", () => {
     const usage = ClaudeAdapterV2.claudeProviderTurnTokenUsage(
       {
         input_tokens: 42_000,
@@ -4773,7 +4805,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
         cache_read_input_tokens: 5_000,
         output_tokens: 1_000,
       },
-      CLAUDE_TEST_MODEL_SELECTION,
+      200_000,
       "2026-08-29T00:00:00.000Z",
     );
 
@@ -4959,6 +4991,10 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                   return {
                     stopTask: () => Effect.die("Unexpected workflow task stop in this fixture."),
                     backgroundTasks: () => Effect.succeed(false),
+                    mcpServerStatus: Effect.succeed([]),
+                    readMcpResource: () => Effect.die("unexpected MCP resource read"),
+                    callMcpTool: () => Effect.die("unexpected MCP tool call"),
+                    listPermissionRules: Effect.die("unexpected permission rules read"),
                     setPermissionMode: () =>
                       Effect.die("Permission-mode mutation is outside this fixture."),
                     messages: Stream.fromQueue(sdkMessages),

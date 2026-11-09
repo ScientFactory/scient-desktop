@@ -5,7 +5,7 @@ import {
   piCustomModelReasoning,
   piNativeProviderId,
 } from "./PiCustomModels.ts";
-import { piDiscoveredModelToServerProviderModel } from "./PiModel.ts";
+import { piDiscoveredModelToServerProviderModel } from "@t3tools/provider-pi/server/model";
 
 it("inherits only from an exact native endpoint and API format", () => {
   expect(piNativeProviderId("https://api.openai.com/v1", "openai-responses")).toBe("openai");

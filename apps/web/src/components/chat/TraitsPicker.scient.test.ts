@@ -2,7 +2,7 @@ import { buildTraitsTriggerDisplay } from "@t3tools/client-runtime/model-traits"
 import { getProviderOptionDescriptors, getProviderOptionCurrentValue } from "@t3tools/shared/model";
 import { describe, expect, it } from "vite-plus/test";
 import { ProviderDriverKind, type ProviderOptionDescriptor } from "@t3tools/contracts";
-import { shouldRenderTraitsControls, withoutPromptInjectedOptions } from "./TraitsPicker";
+import { getTraitsSectionVisibility, withoutPromptInjectedOptions } from "./TraitsPicker";
 
 const CONTEXT_WINDOW: ProviderOptionDescriptor = {
   id: "contextWindow",
@@ -21,7 +21,7 @@ const FAST_MODE: ProviderOptionDescriptor = {
   currentValue: true,
 };
 
-describe("shouldRenderTraitsControls", () => {
+describe("getTraitsSectionVisibility", () => {
   // regression: 16d1e4d030 feat(models): add shared model connections for Pi and Droid (#246)
   it("keeps unknown strict reasoning visible without inventing an effort", () => {
     const descriptor: ProviderOptionDescriptor = {
@@ -35,7 +35,7 @@ describe("shouldRenderTraitsControls", () => {
     };
     expect(display([descriptor]).label).toBe("Reasoning unknown");
     expect(
-      shouldRenderTraitsControls({
+      getTraitsSectionVisibility({
         provider: ProviderDriverKind.make("pi"),
         model: "custom",
         models: [
@@ -51,7 +51,7 @@ describe("shouldRenderTraitsControls", () => {
         modelOptions: undefined,
         promptUltrathink: "none",
         planModeEnabled: false,
-      }),
+      }).hasAnyControls,
     ).toBe(true);
   });
 });

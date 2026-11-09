@@ -132,16 +132,27 @@ it("encodes libpq passwords and read-only configuration, quotes shell values wit
   ).toThrow();
   const cookie = {
     domain: ".example.com",
+    hostOnly: false,
     path: "/",
     secure: true,
     httpOnly: true,
-    expires: -1,
+    sameSite: "lax" as const,
     name: "session",
     value: "synthetic",
   };
-  expect(netscapeCookieJar([cookie])).toContain(
-    "#HttpOnly_.example.com\tTRUE\t/\tTRUE\t0\tsession\tsynthetic",
-  );
+  const jar = netscapeCookieJar([
+    cookie,
+    { ...cookie, domain: "app.example.com", hostOnly: true, httpOnly: false, expires: 2000.5 },
+    {
+      ...cookie,
+      name: "partitioned",
+      partitionKey: { topLevelSite: "https://top.example", hasCrossSiteAncestor: false },
+    },
+  ]);
+  expect(jar).toContain("#HttpOnly_.example.com\tTRUE\t/\tTRUE\t0\tsession\tsynthetic");
+  // A host-only cookie stays off subdomains; the format can't carry a partition.
+  expect(jar).toContain("\napp.example.com\tFALSE\t/\tTRUE\t2000\tsession\tsynthetic");
+  expect(jar).not.toContain("partitioned");
   expect(() => netscapeCookieJar([{ ...cookie, value: "synthetic\ninjected" }])).toThrow(
     "unsupported cookie",
   );

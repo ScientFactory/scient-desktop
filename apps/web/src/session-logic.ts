@@ -5,6 +5,7 @@ import {
 import type { ThreadStructure, ThreadStructureRuntime } from "@t3tools/client-runtime/state/shell";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import {
+  checkpointSupportsRewind,
   type AssetResource,
   type OrchestrationV2Checkpoint,
   type OrchestrationV2ExecutionNode,
@@ -1084,10 +1085,11 @@ export function deriveRevertTurnCountByUserMessageId(input: {
   readonly availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   readonly unsettledRunId?: RunId | null;
 }): Map<ChatMessage["id"], number> {
-  const readyTurnCountByRunId = new Map<RunId, number>();
+  const rewindTurnCountByRunId = new Map<RunId, number>();
   for (const checkpoint of input.checkpoints) {
-    if (checkpoint.status === "ready") {
-      readyTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
+    // SCIENT-FORK: a boundary without a file snapshot still rewinds the conversation.
+    if (checkpointSupportsRewind(checkpoint, false)) {
+      rewindTurnCountByRunId.set(checkpoint.runId, checkpoint.checkpointTurnCount);
     }
   }
   const targetByRunId = new Map<RunId, number | undefined>();
@@ -1113,7 +1115,7 @@ export function deriveRevertTurnCountByUserMessageId(input: {
           ? input.threadStartCheckpointReady
             ? 0
             : undefined
-          : readyTurnCountByRunId.get(previousRunId),
+          : rewindTurnCountByRunId.get(previousRunId),
       );
       previousRunId = runId;
     }
@@ -1135,12 +1137,18 @@ export function findRevertCheckpoint(
   checkpoints: ReadonlyArray<OrchestrationV2Checkpoint>,
   turnCount: number,
 ): OrchestrationV2Checkpoint | undefined {
-  return checkpoints.findLast(
-    (checkpoint) =>
-      checkpoint.status === "ready" &&
-      (turnCount === 0
-        ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
-        : checkpoint.appRunOrdinal === turnCount),
+  const atTurn = (checkpoint: OrchestrationV2Checkpoint) =>
+    turnCount === 0
+      ? checkpoint.ordinalWithinScope === 0 && checkpoint.appRunOrdinal === null
+      : checkpoint.appRunOrdinal === turnCount;
+  // SCIENT-FORK: prefer a captured snapshot; any current boundary still rewinds the conversation.
+  return (
+    checkpoints.findLast(
+      (checkpoint) => checkpointSupportsRewind(checkpoint, true) && atTurn(checkpoint),
+    ) ??
+    checkpoints.findLast(
+      (checkpoint) => checkpointSupportsRewind(checkpoint, false) && atTurn(checkpoint),
+    )
   );
 }
 

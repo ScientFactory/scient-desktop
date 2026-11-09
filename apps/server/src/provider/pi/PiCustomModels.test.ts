@@ -24,14 +24,11 @@ const client: PiRpcClient = {
   getCommands: () =>
     Effect.succeed({ commands: [{ name: "scient-models-refresh", source: "extension" }] }),
   getThinkingLevels: () => Effect.succeed({ levels: [] }),
-  getSessionStats: () => Effect.die("Not used"),
-  clearQueue: () => Effect.void,
   synchronizeEvents: () => Effect.void,
   setModel: () => Effect.die("Not used"),
   setThinkingLevel: () => Effect.void,
   prompt: () => Effect.void,
   abort: () => Effect.void,
-  respondToExtensionUi: () => Effect.void,
   close: () => Effect.void,
 };
 
@@ -235,9 +232,7 @@ it.effect("scopes and closes the credential bootstrap and denies unauthenticated
         expect(Object.values(captured!.env!)).not.toContain("synthetic-key");
       }),
     );
-    const reachable = yield* HttpClient.get(endpoint).pipe(
-      Effect.match({ onSuccess: () => true, onFailure: () => false }),
-    );
+    const reachable = yield* HttpClient.get(endpoint).pipe(Effect.isSuccess);
     expect(reachable).toBe(false);
   }).pipe(Effect.provide([NodeServices.layer, FetchHttpClient.layer])),
 );

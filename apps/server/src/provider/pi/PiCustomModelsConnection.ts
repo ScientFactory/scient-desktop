@@ -27,7 +27,6 @@ import {
   PiRpcAvailableModels,
   PiRpcCommands,
   PiRpcModel,
-  PiRpcSessionStats,
   PiRpcState,
   PiRpcThinkingLevels,
 } from "@t3tools/provider-pi/server/rpcSchema";
@@ -35,7 +34,6 @@ import {
 const decodeModels = Schema.decodeUnknownEffect(PiRpcAvailableModels);
 const decodeCommands = Schema.decodeUnknownEffect(PiRpcCommands);
 const decodeModel = Schema.decodeUnknownEffect(PiRpcModel);
-const decodeStats = Schema.decodeUnknownEffect(PiRpcSessionStats);
 const decodeState = Schema.decodeUnknownEffect(PiRpcState);
 const decodeLevels = Schema.decodeUnknownEffect(PiRpcThinkingLevels);
 const isConnectionError = Schema.is(Schema.Union([ConnectionError, ConnectionTimeoutError]));
@@ -85,11 +83,6 @@ function modelClient(connection: PiRpcConnection): PiRpcClient {
         Effect.flatMap(decodeLevels),
         Effect.mapError(nativeError),
       ),
-    getSessionStats: () =>
-      request({ type: "get_session_stats" }).pipe(
-        Effect.flatMap(decodeStats),
-        Effect.mapError(nativeError),
-      ),
     setModel: (provider, modelId) =>
       request({ type: "set_model", provider, modelId }).pipe(
         Effect.flatMap(decodeModel),
@@ -104,12 +97,7 @@ function modelClient(connection: PiRpcConnection): PiRpcClient {
         ...(streamingBehavior === undefined ? {} : { streamingBehavior }),
       }).pipe(Effect.asVoid),
     abort: () => request({ type: "abort" }).pipe(Effect.asVoid),
-    clearQueue: () => request({ type: "clear_queue" }).pipe(Effect.asVoid),
     synchronizeEvents: () => Effect.die("The model authority facade must not consume V2 events."),
-    respondToExtensionUi: (response) =>
-      connection
-        .send({ type: "extension_ui_response", ...response })
-        .pipe(Effect.mapError(nativeError)),
     close: () => connection.terminate,
   };
 }

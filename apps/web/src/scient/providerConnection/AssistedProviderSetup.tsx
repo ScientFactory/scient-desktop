@@ -1,5 +1,6 @@
 import type { ProviderDriverKind, ServerProvider } from "@t3tools/contracts";
 import {
+  CheckCircle2Icon,
   CopyIcon,
   LoaderIcon,
   RefreshCwIcon,
@@ -28,6 +29,34 @@ export function AssistedSetupFrame(props: { readonly children: ReactNode }) {
     >
       {props.children}
     </div>
+  );
+}
+
+/** A finished setup state: ready, or a warning with its runtime diagnostics. */
+export function AssistedSetupStatusFrame(props: {
+  readonly accountAction?: ReactNode;
+  /** Runtime diagnostics, shown only for a warning. */
+  readonly diagnostics?: ReactNode;
+  readonly title: string;
+  readonly body: ReactNode;
+  readonly warning?: boolean;
+}) {
+  return (
+    <AssistedSetupFrame>
+      <AssistedSetupStatus
+        body={props.body}
+        icon={
+          props.warning ? (
+            <TriangleAlertIcon className="size-5 text-warning" />
+          ) : (
+            <CheckCircle2Icon className="size-5 text-success" />
+          )
+        }
+        title={props.title}
+        trailing={props.accountAction}
+      />
+      {props.diagnostics}
+    </AssistedSetupFrame>
   );
 }
 

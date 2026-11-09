@@ -43,7 +43,6 @@ it("records the new session's own site after an identity provider, never the pro
     previousUrl: "https://accounts.google.com/signin",
     url: "https://www.overleaf.com/project",
     incognito: false,
-    hasAccount: false,
     before: [{ domain: ".google.com", httpOnly: true }],
     after: [
       { domain: ".google.com", httpOnly: true },
@@ -92,7 +91,6 @@ it("records the new session's own site after an identity provider, never the pro
   ).toBe("moodle.huji.ac.il");
   for (const patch of [
     { incognito: true },
-    { hasAccount: true },
     { previousUrl: "https://other.com" },
     { url: "https://accounts.google.com" },
     { after: input.before },

@@ -27,7 +27,6 @@ import {
   type PiRpcResponse,
   PiRpcState,
   PiRpcThinkingLevels,
-  PiRpcSessionStats,
   type PiThinkingLevel,
 } from "./rpcSchema.ts";
 
@@ -77,11 +76,6 @@ export interface PiRpcImage {
   readonly mimeType: string;
 }
 
-export type PiExtensionUiResponse =
-  | { readonly id: string; readonly value: string }
-  | { readonly id: string; readonly confirmed: boolean }
-  | { readonly id: string; readonly cancelled: true };
-
 export interface PiRpcClient {
   readonly assessModelConnections?: (
     models: ReadonlyArray<PiRpcModel>,
@@ -97,8 +91,6 @@ export interface PiRpcClient {
   readonly getAvailableModels: () => Effect.Effect<PiRpcAvailableModels, PiRpcError>;
   readonly getCommands: () => Effect.Effect<PiRpcCommands, PiRpcError>;
   readonly getThinkingLevels: () => Effect.Effect<typeof PiRpcThinkingLevels.Type, PiRpcError>;
-  readonly getSessionStats: () => Effect.Effect<typeof PiRpcSessionStats.Type, PiRpcError>;
-  readonly clearQueue: () => Effect.Effect<void, PiRpcError>;
   /** Wait until the event consumer has processed frames received before this fence. */
   readonly synchronizeEvents: () => Effect.Effect<void, PiRpcError>;
   readonly setModel: (provider: string, modelId: string) => Effect.Effect<PiRpcModel, PiRpcError>;
@@ -109,9 +101,6 @@ export interface PiRpcClient {
     streamingBehavior?: "steer" | "followUp",
   ) => Effect.Effect<void, PiRpcError>;
   readonly abort: () => Effect.Effect<void, PiRpcError>;
-  readonly respondToExtensionUi: (
-    response: PiExtensionUiResponse,
-  ) => Effect.Effect<void, PiRpcError>;
   readonly close: () => Effect.Effect<void>;
 }
 
@@ -126,7 +115,6 @@ const decodeStateValue = Schema.decodeUnknownEffect(PiRpcState);
 const decodeModelsValue = Schema.decodeUnknownEffect(PiRpcAvailableModels);
 const decodeCommandsValue = Schema.decodeUnknownEffect(PiRpcCommands);
 const decodeModelValue = Schema.decodeUnknownEffect(PiRpcModel);
-const decodeStatsValue = Schema.decodeUnknownEffect(PiRpcSessionStats);
 const decodeThinkingValue = Schema.decodeUnknownEffect(PiRpcThinkingLevels);
 
 export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(function* (
@@ -383,14 +371,6 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
     getState: () => request("get_state", {}, decodeState),
     getAvailableModels: () => request("get_available_models", {}, decodeModels),
     getCommands: () => request("get_commands", {}, decodeCommands),
-    getSessionStats: () =>
-      request("get_session_stats", {}, (data) =>
-        decodeStatsValue(data).pipe(
-          Effect.mapError(
-            (cause) => new PiRpcProtocolError({ detail: "Invalid session stats", cause }),
-          ),
-        ),
-      ),
     getThinkingLevels: () =>
       request("get_available_thinking_levels", {}, (data) =>
         decodeThinkingValue(data).pipe(
@@ -399,7 +379,6 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
           ),
         ),
       ),
-    clearQueue: () => request("clear_queue", {}, () => Effect.void),
     setModel: (provider, modelId) => request("set_model", { provider, modelId }, decodeModel),
     setThinkingLevel: (level) => request("set_thinking_level", { level }, () => Effect.void),
     prompt: (message, images, streamingBehavior) =>
@@ -413,18 +392,6 @@ export const makePiRpcTransport = Effect.fn("PiRpcClient.makeTransport")(functio
         () => Effect.void,
       ),
     abort: () => request("abort", {}, () => Effect.void),
-    respondToExtensionUi: (response) =>
-      write({ type: "extension_ui_response", ...response }).pipe(
-        Effect.timeout(Duration.millis(timeoutMs)),
-        Effect.catchTags({
-          TimeoutError: () =>
-            close.pipe(
-              Effect.andThen(
-                new PiRpcProtocolError({ detail: "Pi extension response write timed out" }),
-              ),
-            ),
-        }),
-      ),
     close: () => close,
   };
 });

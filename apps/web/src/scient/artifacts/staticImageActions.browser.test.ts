@@ -5,7 +5,7 @@ import {
   copyStaticImage,
   downloadStaticImage,
   staticImageCopyDimensions,
-} from "./staticImageActions";
+} from "~/components/preview/staticImageActions";
 
 async function _cleanupFixture0(_fixture: _Fixture) {
   vi.unstubAllGlobals();

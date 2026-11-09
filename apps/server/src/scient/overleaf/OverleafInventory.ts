@@ -152,7 +152,7 @@ export interface OverleafCapturedFile {
 }
 
 /**
- * Why a new file is left out unless someone selects it (pr-c-design section 5).
+ * Why a new file is left out unless someone selects it.
  * A rule evaluated at every capture, never a remembered choice. `too-large`
  * is over Overleaf's file limit: never read, and selecting it is refused.
  */
@@ -321,13 +321,15 @@ export interface OverleafInventoryInput {
 
 const isFilesystemError = Schema.is(OverleafFilesystemError);
 
-class Refused extends Error {
-  readonly refusal: OverleafInventoryRefusal;
-  constructor(refusal: OverleafInventoryRefusal) {
-    super(refusal.reason);
-    this.refusal = refusal;
+class Refused extends Schema.TaggedError<Refused>()("OverleafInventoryRefused", {
+  refusal: Schema.declare((_: unknown): _ is OverleafInventoryRefusal => true),
+}) {
+  override get message(): string {
+    return this.refusal.reason;
   }
 }
+
+const isRefused = Schema.is(Refused);
 
 /** Code-unit order: the same on every machine, unlike locale-aware comparison. */
 const byPath = (left: string, right: string) => (left < right ? -1 : left > right ? 1 : 0);
@@ -386,8 +388,10 @@ export async function captureOverleafInventory(
         (error: unknown) => {
           if (errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR") return null;
           throw new Refused({
-            reason: "unreadable",
-            path: NodePath.relative(input.folder, folder) || ".",
+            refusal: {
+              reason: "unreadable",
+              path: NodePath.relative(input.folder, folder) || ".",
+            },
           });
         },
       );
@@ -418,7 +422,7 @@ export async function captureOverleafInventory(
       now.dev !== expected.dev ||
       now.ino !== expected.ino
     )
-      throw new Refused({ reason: "unstable", path });
+      throw new Refused({ refusal: { reason: "unstable", path } });
   };
   const parentOf = (path: string) =>
     path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
@@ -435,7 +439,7 @@ export async function captureOverleafInventory(
   let availability: ReadonlyMap<string, OverleafFileAvailability> = new Map();
   const checkAvailability = (path: string) => {
     const found = availability.get(absolute(path)) ?? "helper-unavailable";
-    if (found !== "available") throw new Refused({ reason: found, path });
+    if (found !== "available") throw new Refused({ refusal: { reason: found, path } });
   };
 
   /** Reads one regular file without following links, failing if it or its folders change. */
@@ -450,16 +454,17 @@ export async function captureOverleafInventory(
       );
     } catch (error) {
       if (["ELOOP", "EISDIR"].includes(errorCode(error) ?? ""))
-        throw new Refused({ reason: "not-a-file", path });
+        throw new Refused({ refusal: { reason: "not-a-file", path } });
       if (["ENOENT", "ENOTDIR"].includes(errorCode(error) ?? ""))
-        throw new Refused({ reason: "unstable", path });
-      throw new Refused({ reason: "unreadable", path });
+        throw new Refused({ refusal: { reason: "unstable", path } });
+      throw new Refused({ refusal: { reason: "unreadable", path } });
     }
     try {
       const before = await handle.stat({ bigint: true });
-      if (!before.isFile()) throw new Refused({ reason: "not-a-file", path });
+      if (!before.isFile()) throw new Refused({ refusal: { reason: "not-a-file", path } });
       const size = Number(before.size);
-      if (size > limits.fileBytes) throw new Refused({ reason: "file-too-large", path });
+      if (size > limits.fileBytes)
+        throw new Refused({ refusal: { reason: "file-too-large", path } });
       onSize(size);
       // One byte more than expected reveals a file that grew while being read.
       const buffer = new Uint8Array(size + 1);
@@ -477,16 +482,16 @@ export async function captureOverleafInventory(
         after.mtimeNs !== before.mtimeNs ||
         after.ctimeNs !== before.ctimeNs
       )
-        throw new Refused({ reason: "unstable", path });
+        throw new Refused({ refusal: { reason: "unstable", path } });
       // The bytes came from the file the path still names, in the folder walked.
       await verifyFolder(parentOf(path), path);
       const named = await NodeFSP.lstat(absolute(path), { bigint: true }).catch(() => null);
       if (named === null || named.dev !== after.dev || named.ino !== after.ino)
-        throw new Refused({ reason: "unstable", path });
+        throw new Refused({ refusal: { reason: "unstable", path } });
       return { bytes: buffer.subarray(0, size), fileId: overleafDiskFileId(after) };
     } catch (error) {
-      if (error instanceof Refused) throw error;
-      throw new Refused({ reason: "unreadable", path });
+      if (isRefused(error)) throw error;
+      throw new Refused({ refusal: { reason: "unreadable", path } });
     } finally {
       await handle.close();
     }
@@ -535,8 +540,8 @@ export async function captureOverleafInventory(
     ])
       absolute(path);
     const root = await folderIdentity("");
-    if (root === null) throw new Refused({ reason: "folder-unavailable" });
-    if (await insideGitFolder()) throw new Refused({ reason: "git-folder" });
+    if (root === null) throw new Refused({ refusal: { reason: "folder-unavailable" } });
+    if (await insideGitFolder()) throw new Refused({ refusal: { reason: "git-folder" } });
     folders.set("", root);
 
     const managed = new Set(input.managedPaths);
@@ -581,18 +586,22 @@ export async function captureOverleafInventory(
           encoding: "buffer" as BufferEncoding,
         })) {
           walked += 1;
-          if (walked > limits.walkEntries) throw new Refused({ reason: "walk-limit" });
+          if (walked > limits.walkEntries) throw new Refused({ refusal: { reason: "walk-limit" } });
           const raw: unknown = entry.name;
           if (!Buffer.isBuffer(raw))
-            throw new Refused({ reason: "invalid-encoding", path: next.relative || "." });
+            throw new Refused({
+              refusal: { reason: "invalid-encoding", path: next.relative || "." },
+            });
           const name = raw.toString("utf8");
           if (!Buffer.from(name, "utf8").equals(raw))
-            throw new Refused({ reason: "invalid-encoding", path: next.relative || "." });
+            throw new Refused({
+              refusal: { reason: "invalid-encoding", path: next.relative || "." },
+            });
           entries.push({ name, entry });
         }
       } catch (error) {
-        if (error instanceof Refused) throw error;
-        throw new Refused({ reason: "unreadable", path: next.relative || "." });
+        if (isRefused(error)) throw error;
+        throw new Refused({ refusal: { reason: "unreadable", path: next.relative || "." } });
       }
       await listing();
       for (const { name, entry } of entries.toSorted((left, right) =>
@@ -613,7 +622,7 @@ export async function captureOverleafInventory(
             excluded.push({ path, reason: "invalid-path" });
           else {
             const identity = await folderIdentity(path);
-            if (identity === null) throw new Refused({ reason: "unstable", path });
+            if (identity === null) throw new Refused({ refusal: { reason: "unstable", path } });
             folders.set(path, identity);
             queue.push({ relative: path, hidden: next.hidden || name.startsWith(".") });
           }
@@ -646,17 +655,17 @@ export async function captureOverleafInventory(
     for (const path of managed) {
       if (present.has(path)) continue;
       if (skipped.get(path) === "link" || skipped.get(path) === "special")
-        throw new Refused({ reason: "not-a-file", path });
+        throw new Refused({ refusal: { reason: "not-a-file", path } });
       // Hidden by an exclusion (for example a folder that became a repository): not a deletion.
       if (skipped.has(path) || ancestorsOf(path).some((folder) => skipped.has(folder)))
-        throw new Refused({ reason: "managed-excluded", path });
+        throw new Refused({ refusal: { reason: "managed-excluded", path } });
       const alias = onDisk.get(manuscriptCollisionKey(path));
       if (alias !== undefined && alias !== path && !folders.has(path))
-        throw new Refused({ reason: "alias", path, onDisk: alias });
+        throw new Refused({ refusal: { reason: "alias", path, onDisk: alias } });
     }
     for (const path of requested) {
       if (!present.has(path) || managed.has(path))
-        throw new Refused({ reason: "not-selectable", path });
+        throw new Refused({ refusal: { reason: "not-selectable", path } });
     }
     const sizes = new Map(files.map((file) => [file.path, file.size]));
     /** Whether `path` can be selected; refuses why not unless lenient. */
@@ -669,7 +678,7 @@ export async function captureOverleafInventory(
             : (sizes.get(path) ?? 0) > limits.fileBytes
               ? { reason: "file-too-large", path }
               : null;
-      if (refusal !== null && !lenient) throw new Refused(refusal);
+      if (refusal !== null && !lenient) throw new Refused({ refusal });
       return refusal === null;
     };
     // Keeping a file only here wins over every request to send it.
@@ -700,12 +709,15 @@ export async function captureOverleafInventory(
     let capturedBytes = 0;
     const account = (size: number) => {
       capturedBytes += size;
-      if (capturedBytes > limits.totalBytes) throw new Refused({ reason: "total-too-large" });
+      if (capturedBytes > limits.totalBytes)
+        throw new Refused({ refusal: { reason: "total-too-large" } });
     };
     const capture = async (path: string) => {
-      if (captured.size >= limits.managedFiles) throw new Refused({ reason: "managed-limit" });
+      if (captured.size >= limits.managedFiles)
+        throw new Refused({ refusal: { reason: "managed-limit" } });
       const { bytes, fileId } = await readStable(path, account);
-      if (isOverleafLfsPointer(bytes)) throw new Refused({ reason: "lfs-pointer", path });
+      if (isOverleafLfsPointer(bytes))
+        throw new Refused({ refusal: { reason: "lfs-pointer", path } });
       captured.set(path, { bytes, revision: bytesRevision(bytes), fileId });
     };
     for (const file of files) {
@@ -781,7 +793,7 @@ export async function captureOverleafInventory(
         refusal: { reason: error.reason, path: relative.length <= 4_096 ? relative || "." : "." },
       };
     }
-    if (error instanceof Refused) return { _tag: "refused", refusal: error.refusal };
+    if (isRefused(error)) return { _tag: "refused", refusal: error.refusal };
     throw error;
   }
 }

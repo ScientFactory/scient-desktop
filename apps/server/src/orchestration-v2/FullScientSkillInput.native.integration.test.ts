@@ -1,3 +1,4 @@
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DocumentText from "../provider/DocumentText.ts";
 // Native and issued-token evidence uses digests, never bearer values.
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Synchronous wire observation records digests without exposing bearer tokens.
@@ -42,6 +43,7 @@ import {
   storeAttachmentUpload,
   ATTACHMENT_UPLOAD_ROUTE_PREFIX,
 } from "../assets/AttachmentUpload.ts";
+import * as AssetSigner from "../assets/AssetSigner.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveAttachmentPath, parseThreadSegmentFromAttachmentId } from "../attachmentStore.ts";
@@ -163,7 +165,7 @@ const runConjunction = () =>
       const selection = { instanceId, model: "gpt-5.4" };
       const allocator = yield* IdAllocatorV2;
       const offered = yield* Queue.unbounded<{
-        params: typeof CodexSchema.V2TurnStartParams.Type;
+        params: CodexSchema.V2TurnStartParams;
         scope: McpInvocationScope;
         token: string;
       }>();
@@ -172,7 +174,7 @@ const runConjunction = () =>
       const decoder = new TextDecoder();
       let buffered = "";
       const methods: string[] = [];
-      const nativeOffers: Array<typeof CodexSchema.V2TurnStartParams.Type> = [];
+      const nativeOffers: Array<CodexSchema.V2TurnStartParams> = [];
       const nativeThread = "controlled-native-thread";
       const nativeTurn = {
         id: "controlled-native-turn",
@@ -377,7 +379,8 @@ const runConjunction = () =>
           }),
         ).pipe(
           Effect.provide(
-            ServerSecretStore.layer.pipe(
+            AssetSigner.layer.pipe(
+              Layer.provideMerge(ServerSecretStore.layer),
               Layer.provideMerge(configLayer),
               Layer.provideMerge(NodeServices.layer),
             ),
@@ -775,7 +778,7 @@ const runConjunction = () =>
           "Scient selected skills",
         ];
         const positions = orderedSections.map((section) => text.indexOf(section));
-        const evidenceDir = process.env.SCIENT_C718_EVIDENCE_DIR;
+        const evidenceDir = (yield* HostProcess.Environment).SCIENT_C718_EVIDENCE_DIR;
         if (evidenceDir) {
           const evidenceRoot =
             "/Users/yaacov/REPOs/ScientFactory/reviews/v1-removal-20261004/control/";

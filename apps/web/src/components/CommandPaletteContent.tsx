@@ -1,5 +1,11 @@
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
-import { type ComponentProps, type ReactNode, useImperativeHandle, useRef } from "react";
+import {
+  type ComponentProps,
+  type ReactNode,
+  type RefObject,
+  useImperativeHandle,
+  useRef,
+} from "react";
 
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
 import { Kbd, KbdGroup } from "./ui/kbd";
@@ -9,8 +15,7 @@ import { Kbd, KbdGroup } from "./ui/kbd";
  * left there by the removed input. Claim it so typing cannot reach the composer
  * behind the modal. On first open the dialog's own initial focus handles it.
  */
-function claimFocusInOpenDialog(input: HTMLInputElement | null) {
-  if (!input) return;
+function claimFocusInOpenDialog(input: HTMLInputElement) {
   const active = input.ownerDocument.activeElement;
   if (
     active === null ||
@@ -21,6 +26,24 @@ function claimFocusInOpenDialog(input: HTMLInputElement | null) {
   }
 }
 
+export interface PendingInputSelection {
+  readonly value: string;
+  readonly start: number | null;
+  readonly end: number | null;
+  readonly direction: "forward" | "backward" | "none" | null;
+}
+
+function restorePendingSelection(
+  input: HTMLInputElement,
+  pendingSelectionRef: RefObject<PendingInputSelection | null> | undefined,
+) {
+  const selection = pendingSelectionRef?.current;
+  if (!pendingSelectionRef || !selection) return;
+  pendingSelectionRef.current = null;
+  if (input.value !== selection.value) return;
+  input.setSelectionRange(selection.start, selection.end, selection.direction ?? undefined);
+}
+
 type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children"> & {
   readonly children: ReactNode;
   readonly containerProps?: Omit<ComponentProps<"div">, "className">;
@@ -29,6 +52,7 @@ type CommandPaletteContentProps = Omit<ComponentProps<typeof Command>, "children
   readonly footerTrailing?: ReactNode;
   readonly inputAccessory?: ReactNode;
   readonly inputProps: ComponentProps<typeof CommandInput>;
+  readonly pendingSelectionRef?: RefObject<PendingInputSelection | null>;
   readonly panelSize?: "list" | "tall-list" | "fill" | "project-picker";
   readonly showBackHint?: boolean;
   readonly testId?: string;
@@ -42,6 +66,7 @@ export function CommandPaletteContent({
   footerTrailing,
   inputAccessory,
   inputProps,
+  pendingSelectionRef,
   panelSize = "list",
   showBackHint,
   testId,
@@ -61,6 +86,8 @@ export function CommandPaletteContent({
             {...inputProps}
             ref={(input) => {
               inputRef.current = input;
+              if (!input) return;
+              restorePendingSelection(input, pendingSelectionRef);
               claimFocusInOpenDialog(input);
             }}
           />

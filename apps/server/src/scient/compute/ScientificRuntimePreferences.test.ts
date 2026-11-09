@@ -41,17 +41,15 @@ describe("scientific runtime preference ownership", () => {
       const preferences = makeScientificRuntimePreferences(settings, {
         readRuntimeExecutablePath: legacy,
       });
-      yield* preferences.writeRuntimeExecutablePath("matlab", "/selected/matlab");
-      expect((yield* settings.getSettings).scientificComputing.languages[MATLAB]?.executable).toBe(
-        "/selected/matlab",
-      );
       yield* settings.updateSettings({
         scientificComputing: { languages: { [MATLAB]: { executable: "/changed/matlab" } } },
       });
       expect((yield* preferences.readRuntimeExecutablePath("matlab")).executablePath).toBe(
         "/changed/matlab",
       );
-      yield* preferences.writeRuntimeExecutablePath("matlab", null);
+      yield* settings.updateSettings({
+        scientificComputing: { languages: { [MATLAB]: { executable: "" } } },
+      });
       expect((yield* preferences.readRuntimeExecutablePath("matlab")).executablePath).toBeNull();
       expect(legacy).not.toHaveBeenCalled();
       expect((yield* settings.getSettings).scientificComputing.languages[PYTHON]).toEqual({
@@ -89,7 +87,11 @@ describe("scientific runtime preference ownership", () => {
       expect((yield* copied.getSettings).scientificComputing.languages[PYTHON]?.executable).toBe(
         "",
       );
-      yield* copied.writeRuntimeExecutablePath("python", "/b/python");
+      yield* settings.updateSettings({
+        scientificComputing: {
+          languages: { [PYTHON]: { executable: "", selections: { "host-b": "/b/python" } } },
+        },
+      });
       expect((yield* here.readRuntimeExecutablePath("python")).executablePath).toBe(
         "/chosen/python",
       );

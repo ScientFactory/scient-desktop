@@ -107,31 +107,6 @@ describe("Oh My Pi process environment", () => {
     ).toEqual({ NO_PROXY: "127.0.0.1,localhost,::1" });
   });
 
-  it("names internals by prefix and exact name, and nothing that merely resembles them", () => {
-    const environment = ompProcessEnvironment({
-      baseEnv: {
-        T3CODE_BOOTSTRAP_FD: "3",
-        T3_PAIRING_KEY: "pairing",
-        SCIENT_ANALYTICS_ENABLED: "1",
-        scient_admin_api_key: "admin",
-        ELECTRON_ENABLE_LOGGING: "1",
-        T3X: "kept",
-        SCIENTIFIC_DATA: "/data",
-        PORTAGE_TMPDIR: "/tmp",
-        ANTHROPIC_API_KEY: "anthropic",
-      },
-    });
-    expect(Object.keys(environment).sort()).toEqual([
-      "ANTHROPIC_API_KEY",
-      "ELECTRON_ENABLE_LOGGING",
-      "NO_PROXY",
-      "PORTAGE_TMPDIR",
-      "SCIENTIFIC_DATA",
-      "T3X",
-      "no_proxy",
-    ]);
-  });
-
   it("applies the instance environment as configured, filtering only what was inherited", () => {
     const environment = ompProcessEnvironment({
       baseEnv: LOGIN,
@@ -196,38 +171,6 @@ describe("Oh My Pi process environment", () => {
     });
     expect(environment.OMP_PROFILE).toBe("");
     expect(environment).not.toHaveProperty("PI_PROFILE");
-  });
-
-  it("keeps Scient's loopback endpoints out of an inherited proxy", () => {
-    const environment = ompProcessEnvironment({
-      baseEnv: { HTTPS_PROXY: "http://proxy.corp:3128", NO_PROXY: "corp.internal, localhost" },
-      platform: "darwin",
-    });
-    expect(environment.HTTPS_PROXY).toBe("http://proxy.corp:3128");
-    expect(environment.NO_PROXY).toBe("corp.internal,localhost,127.0.0.1,::1");
-    // Bun reads the lowercase spelling first; it must carry the user's list too.
-    expect(environment.no_proxy).toBe("corp.internal,localhost,127.0.0.1,::1");
-    // Windows has one case-insensitive variable; the existing spelling is kept.
-    expect(
-      ompProcessEnvironment({ baseEnv: { No_Proxy: "corp.internal" }, platform: "win32" }),
-    ).toEqual({ No_Proxy: "corp.internal,127.0.0.1,localhost,::1" });
-  });
-
-  it.each([
-    ["only NO_PROXY", { NO_PROXY: "corp.internal" }],
-    ["only no_proxy", { no_proxy: "corp.internal" }],
-  ])("keeps the user's exclusions in both spellings when they set %s", (_label, baseEnv) => {
-    const environment = ompProcessEnvironment({ baseEnv });
-    expect(environment.NO_PROXY).toBe("corp.internal,127.0.0.1,localhost,::1");
-    expect(environment.no_proxy).toBe("corp.internal,127.0.0.1,localhost,::1");
-  });
-
-  it("unions the two spellings when they differ", () => {
-    const environment = ompProcessEnvironment({
-      baseEnv: { NO_PROXY: "a.internal,localhost", no_proxy: "b.internal, a.internal" },
-    });
-    expect(environment.NO_PROXY).toBe("a.internal,localhost,b.internal,127.0.0.1,::1");
-    expect(environment.no_proxy).toBe(environment.NO_PROXY);
   });
 
   it("merges every Windows spelling into one variable", () => {

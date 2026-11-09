@@ -39,8 +39,6 @@ class FakeClient implements PiRpcClient {
   getAvailableModels = () => Effect.succeed({ models: [] });
   getCommands = () => Effect.succeed({ commands: [] });
   getThinkingLevels = () => Effect.succeed({ levels: ["high"] as PiThinkingLevel[] });
-  getSessionStats = () => Effect.die("unused");
-  clearQueue = () => Effect.void;
   synchronizeEvents = () => Effect.void;
   setModel = (provider: string, modelId: string) =>
     this.setModelError === undefined
@@ -88,7 +86,6 @@ class FakeClient implements PiRpcClient {
         });
   };
   abort = () => Effect.void;
-  respondToExtensionUi = () => Effect.void;
   close = () =>
     Effect.sync(() => {
       this.closeCalls += 1;
@@ -146,6 +143,11 @@ it.effect("selects the decoded model and thinking level, then parses assistant t
     assert.equal(spawns[0]?.args?.includes("--no-session"), true);
     for (const arg of ["--no-context-files", "--no-extensions", "--no-skills", "--no-tools"])
       assert.equal(spawns[0]?.args?.includes(arg), true);
+    // The process is stopped as soon as it answers, so Pi's startup refresh must stay off.
+    assert.deepEqual(
+      spawns[0]?.args?.filter((arg) => arg === "--offline"),
+      ["--offline"],
+    );
     assert.equal(client.closeCalls, 1);
   });
 });

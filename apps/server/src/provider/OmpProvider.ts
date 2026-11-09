@@ -158,8 +158,7 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
           }),
         ),
       );
-      // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-      const accountList = readAccounts ? readAccounts(client) : Effect.succeed(undefined);
+      const accountList = readAccounts ? readAccounts(client) : Effect.undefined;
       return yield* Effect.all([modelList, client.getCommands(), accountList], {
         concurrency: "unbounded",
       }).pipe(

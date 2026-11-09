@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { Atom, AtomRegistry } from "effect/reactivity";
 
+import { BearerConnectionTarget } from "../connection/model.ts";
 import * as EnvironmentRegistry from "../connection/registry.ts";
 import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import type { RpcSession } from "../rpc/session.ts";
@@ -24,7 +25,11 @@ const PROJECT = {
 
 const makeHarness = Effect.fn("TestProjectCommands.makeHarness")(function* () {
   const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
-    target: { environmentId: ENVIRONMENT_ID },
+    target: new BearerConnectionTarget({
+      environmentId: ENVIRONMENT_ID,
+      label: "Test",
+      connectionId: "test",
+    }),
     session: yield* SubscriptionRef.make(
       Option.some({
         client: {

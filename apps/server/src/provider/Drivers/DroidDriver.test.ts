@@ -379,7 +379,7 @@ it.live("checks Droid periodically without starting Droid sessions", () =>
     // Each periodic check spawns the recording binary for `--version`; three
     // more version spawns are the receipt of several checks at the interval.
     yield* Effect.acquireUseRelease(
-      Effect.try(() => NodeFS.watch(directory)),
+      Effect.sync(() => NodeFS.watch(directory)),
       (watcher) =>
         Effect.callback<void>((resume) => {
           let settled = false;

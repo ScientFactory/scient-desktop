@@ -14,6 +14,7 @@ import { describe, expect, it } from "@effect/vitest";
 import { CommandId, EventId, ProjectId, ProviderInstanceId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
@@ -85,7 +86,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP turn usage", () => {
           const instanceId = ProviderInstanceId.make("omp-turn-usage");
           const { environment } = ompLiveInstance(root, {
             blockEgress: true,
-            baseEnv: { PATH: process.env.PATH ?? "" },
+            baseEnv: { PATH: (yield* HostProcess.Environment).PATH ?? "" },
           });
           const factory = yield* makeOmpCustomModelsClientFactory(
             ompQualifyTarget,

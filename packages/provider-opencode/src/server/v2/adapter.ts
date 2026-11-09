@@ -92,7 +92,7 @@ import {
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { turnScopedSelectionTransition } from "@t3tools/provider-core/server/selectionTransition";
 import { OPENCODE_PROVIDER, openCodePermissionRequestKind } from "../adapter.ts";
-import { openCodeToolTurnItem } from "../toolItems.ts";
+import { openCodeCommandFailed, openCodeToolTurnItem } from "../toolItems.ts";
 import { makeOpenCodeTurnAcceptance } from "./turnAcceptance.ts";
 // SCIENT-FORK:START — Scient Extensions connectors beside the thread's own server.
 import {
@@ -682,7 +682,7 @@ const agentFor = (input: ProviderAdapter.ProviderAdapterV2TurnInput) =>
   input.runtimePolicy.interactionMode === "plan" ? "plan" : "build";
 
 const commandOf = (text: string) => {
-  const match = /^\/([^\s/]+)(?:\s+([\s\S]*))?$/.exec(text.trim());
+  const match = /^\/(\S+)(?:\s+([\s\S]*))?$/.exec(text.trim());
   return match === null ? undefined : { name: match[1]!, text: match[2] ?? "" };
 };
 
@@ -1063,7 +1063,11 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       turn: ActiveTurn,
       id: string,
       status: "running" | "completed" | "failed" | "interrupted",
-      result?: { readonly output: string | undefined; readonly metadata: unknown },
+      result?: {
+        readonly output: string | undefined;
+        readonly metadata: unknown;
+        readonly files?: ReadonlyArray<{ readonly uri: string; readonly mime: string }>;
+      },
     ) {
       const tool = turn.tools.get(id);
       if (tool === undefined) return;
@@ -1071,16 +1075,21 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
       const startedAt = turn.startedAt.get(id) ?? updatedAt;
       const completedAt = status === "running" ? null : updatedAt;
       const nativeId = `${turn.scope}${id}`;
-      yield* emitNode(state, turn, nativeId, "tool_call", status, startedAt, completedAt);
+      const settled =
+        status === "completed" && openCodeCommandFailed(tool.name, result?.metadata)
+          ? "failed"
+          : status;
+      yield* emitNode(state, turn, nativeId, "tool_call", settled, startedAt, completedAt);
       yield* emit({
         type: "turn_item.updated",
         driver,
         turnItem: openCodeToolTurnItem(
-          itemBase(state, turn, nativeId, status, startedAt, completedAt, updatedAt),
+          itemBase(state, turn, nativeId, settled, startedAt, completedAt, updatedAt),
           {
             name: tool.name,
             input: tool.input,
             output: result?.output,
+            files: result?.files,
             completedMetadata: status === "completed" ? result?.metadata : undefined,
           },
         ),
@@ -1959,13 +1968,14 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
         native,
       });
       yield* emit({ type: "node.updated", driver, node });
+      yield* emit({ type: "turn_item.updated", driver, turnItem: item });
+      // A response can commit as soon as the actionable request is published.
       yield* emit({
         type: "runtime_request.updated",
         driver,
         threadId: turn.input.threadId,
         runtimeRequest: request,
       });
-      yield* emit({ type: "turn_item.updated", driver, turnItem: item });
       yield* setSessionStatus("waiting", null);
     });
 
@@ -2173,6 +2183,7 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           const output = textOf(event.data.content);
           yield* emitTool(state, turn, event.data.id, "completed", {
             output,
+            files: event.data.content.flatMap((part) => (part.type === "file" ? [part] : [])),
             metadata: event.data.metadata,
           });
           turn.tools.delete(event.data.id);
@@ -2635,6 +2646,9 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           if (part.state.status === "completed") {
             yield* emitTool(state, turn, part.id, "completed", {
               output: textOf(part.state.content),
+              files: part.state.content.flatMap((content) =>
+                content.type === "file" ? [content] : [],
+              ),
               metadata: part.state.metadata,
             });
             turn.tools.delete(part.id);

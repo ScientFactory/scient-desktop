@@ -13,7 +13,7 @@ import {
   pendingPdfReveal,
   releasePdfReveal,
   requestPdfReveal,
-  resetPdfRevealRequests,
+  clearPdfReveals,
   takePdfReveal,
 } from "./pdfRevealRequests";
 
@@ -51,7 +51,7 @@ const key = "document";
 describe("pending quote reveals", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    resetPdfRevealRequests();
+    clearPdfReveals();
   });
   afterEach(() => vi.useRealTimers());
 

@@ -287,11 +287,6 @@ describe("scient_document_export", () => {
         expect(error.code, outputPath).toBe(code);
         expect(broker.invoke).not.toHaveBeenCalled();
       }
-      const noAuthority = run(
-        { sourcePath: "notes/report.md", outputPath: "out/report.pdf" },
-        { root, capabilities: new Set() },
-      );
-      expect((yield* Effect.flip(noAuthority.effect)).code).toBe("capability-unavailable");
       const notMarkdown = run(
         { sourcePath: "notes/report.html", outputPath: "out/report.pdf" },
         { root },

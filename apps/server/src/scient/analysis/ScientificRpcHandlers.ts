@@ -37,14 +37,6 @@ export const makeScientificRpcHandlers = ({
   readonly dataTables: DataTables.DataTables["Service"];
 }) =>
   WsScientificRpcGroup.of({
-    [WS_METHODS.analysisConfigureRuntime]: (input) =>
-      observeRpcEffect(WS_METHODS.analysisConfigureRuntime, analysis.configureRuntime(input), {
-        "rpc.aggregate": "analysis",
-      }),
-    [WS_METHODS.analysisVerifyRuntime]: (input) =>
-      observeRpcEffect(WS_METHODS.analysisVerifyRuntime, analysis.verifyRuntime(input), {
-        "rpc.aggregate": "analysis",
-      }),
     [WS_METHODS.analysisStartRun]: (input) =>
       observeRpcEffect(WS_METHODS.analysisStartRun, analysis.startRun(input), {
         "rpc.aggregate": "analysis",

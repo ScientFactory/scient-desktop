@@ -1,4 +1,4 @@
-import { ProviderDriverKind } from "@t3tools/contracts";
+import { ProviderDriverKind, settingsSecretLiteral } from "@t3tools/contracts";
 import { OpenCodeSettings } from "../settings.ts";
 import * as Digest from "effect/crypto/Digest";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -16,6 +16,8 @@ import * as OpenCode2TextGeneration from "./v2/textGeneration.ts";
 import { makeOpenCodeTextGeneration } from "./textGeneration.ts";
 import * as ProviderLatestVersions from "@t3tools/provider-core/server/ProviderLatestVersions";
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
+import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as OpenCodeAdapterV2 from "./adapter.ts";
 import * as OpenCode2AdapterV2 from "./v2/adapter.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
@@ -156,6 +158,11 @@ function selectOpenCodeRuntimeTextGeneration(
         v1: v1.generateReviewGuide(input),
         v2: v2.generateReviewGuide(input),
       }),
+    generateTranscriptionPostProcessing: (input) =>
+      byOpenCodeRuntime(probe.get, {
+        v1: v1.generateTranscriptionPostProcessing(input),
+        v2: v2.generateTranscriptionPostProcessing(input),
+      }),
   };
 }
 
@@ -227,7 +234,13 @@ export const makeOpenCodeDriver = (
       accentColor,
       continuationGroupKey: continuationIdentity.continuationKey,
     });
-    const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+    const effectiveConfig = {
+      ...config,
+      enabled,
+      binaryPath: expandHomePath(config.binaryPath, yield* HostProcess.HomeDirectory),
+      // The instance registry has already read a referenced password from its secret provider.
+      serverPassword: settingsSecretLiteral(config.serverPassword),
+    } satisfies OpenCodeSettings;
     const adapterOptions = openCodeAdapterOptions(driverOptions);
     const runtimeProbe = yield* makeOpenCodeRuntimeProbe(
       probeOpenCodeRuntime(effectiveConfig, processEnv).pipe(
@@ -276,7 +289,7 @@ export const makeOpenCodeDriver = (
         accentColor,
         environment,
         enabled,
-        config,
+        config: effectiveConfig,
       })
       .pipe(
         Effect.mapError(

@@ -75,10 +75,11 @@ export function threadShellFromProjection(
       .filter((request) => request.status === "pending")
       .sort(
         (left, right) =>
+          Number(left.kind === "user_input") - Number(right.kind === "user_input") ||
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
       )[0] ?? null;
-  const pendingSecretRequest =
-    pendingRuntimeRequest === null || pendingRuntimeRequest.responseCapability.type === "message"
+  const waitingCard =
+    pendingRuntimeRequest === null || pendingRuntimeRequest.kind === "user_input"
       ? secretRequestAsPendingInput(
           projection.turnItems
             .filter(
@@ -91,6 +92,14 @@ export function threadShellFromProjection(
                 DateTime.toEpochMillis(right.updatedAt) - DateTime.toEpochMillis(left.updatedAt),
             )[0] ?? null,
         )
+      : null;
+  // A waiting card shows over an older question, never over an approval.
+  const pendingSecretRequest =
+    waitingCard !== null &&
+    (pendingRuntimeRequest === null ||
+      DateTime.toEpochMillis(waitingCard.createdAt) >=
+        DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
+      ? waitingCard
       : null;
   const latestUserMessage = userMessages[0] ?? null;
   const pendingBackgroundTasks = derivePendingBackgroundWork({

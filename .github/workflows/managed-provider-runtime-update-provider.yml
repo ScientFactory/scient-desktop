@@ -379,6 +379,7 @@ jobs:
             apps/server/src/provider \
             apps/server/src/resourceTelemetry \
             apps/server/src/scient/providerLifecycle \
+            apps/server/src/scient/sourceControl \
             apps/server/src/scient/threadSections \
             apps/server/src/scient/workspace/CheckoutBarrier.ts \
             apps/server/src/scient/workspace/NativeFilePublication.ts \
@@ -547,7 +548,6 @@ jobs:
             apps/server/src/scient/providerLifecycle/ProviderConnectionActions.ts \
             apps/server/src/scient/providerLifecycle/QualifiedRpcManagedRuntime.ts \
             apps/server/src/scient/providerLifecycle/codexSubscriptionSharingPolicy.ts \
-            apps/server/src/scient/providerLifecycle/managedRuntimeVersion.ts \
             apps/server/src/scient/threadSections/settingsPrecondition.ts \
             apps/server/src/sourceControl/sourceControlDefinitions.ts \
             apps/server/src/sourceControl/sourceControlHostSecrets.ts \

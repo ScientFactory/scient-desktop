@@ -2,7 +2,7 @@ import * as Base64 from "effect/encoding/Base64";
 import * as Result from "effect/Result";
 import { describe, expect, it } from "vite-plus/test";
 
-import { VOICE_CLIP_SAMPLE_RATE_HZ, computeRms, encodeWavClip } from "./voiceWavEncoder.ts";
+import { VOICE_CLIP_SAMPLE_RATE_HZ, encodeWavClip } from "./voiceWavEncoder.ts";
 
 function readAscii(view: DataView, offset: number, length: number): string {
   let text = "";
@@ -13,21 +13,6 @@ function readAscii(view: DataView, offset: number, length: number): string {
 function viewOf(bytes: Uint8Array): DataView {
   return new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
 }
-
-describe("computeRms", () => {
-  it("is 0 for an empty frame", () => {
-    expect(computeRms(new Float32Array(0))).toBe(0);
-  });
-
-  it("is the constant amplitude for a DC frame", () => {
-    expect(computeRms(new Float32Array([1, 1, 1, 1]))).toBeCloseTo(1);
-  });
-
-  it("computes root-mean-square for a symmetric frame", () => {
-    // sqrt((0.5^2 + 0.5^2) / 2) = 0.5
-    expect(computeRms(new Float32Array([0.5, -0.5]))).toBeCloseTo(0.5);
-  });
-});
 
 describe("encodeWavClip WAV header", () => {
   const clip = encodeWavClip(

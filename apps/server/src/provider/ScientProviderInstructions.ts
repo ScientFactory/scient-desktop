@@ -1,4 +1,5 @@
 import {
+  T3_CODE_BROWSER_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_SECTIONS,
@@ -40,19 +41,30 @@ export const SCIENT_CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS = scientAgentCopy(
   CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS,
 );
 
+/** Scient's awareness carries the browser text, gated on the browser grant. */
+const ACP_BROWSER_BLOCK = `${T3_CODE_BROWSER_TOOL_INSTRUCTIONS.trim()}\n\n`;
+
+/** Prompt-delivered awareness goes first, inside the instructions block. */
+const withAwareness = (awareness: string | undefined) =>
+  awareness === undefined
+    ? SCIENT_ORCHESTRATION_INSTRUCTIONS
+    : `\n\n${awareness}${SCIENT_ORCHESTRATION_INSTRUCTIONS}`;
+
 /**
  * ACP has no system/developer prompt field, so send Scient's copy of the shared
  * context in the first user prompt and whenever the tools or interaction mode change.
+ * Pass `awareness` only for providers with no private seam that already carries it.
  */
 export function buildScientAcpPromptWithInstructions(
   input: T3AcpPromptWithInstructionsInput,
+  awareness?: string,
 ): string {
   return t3AcpPromptWithInstructions({
     ...input,
     content: {
       wrapperElement: "scient_instructions",
-      rewrite: scientAgentCopy,
-      orchestration: SCIENT_ORCHESTRATION_INSTRUCTIONS,
+      rewrite: (text) => scientAgentCopy(text.replace(ACP_BROWSER_BLOCK, "")),
+      orchestration: withAwareness(awareness),
     },
   });
 }
@@ -68,10 +80,11 @@ export function buildScientOrchestrationPrompt(input: {
   readonly hasDeviceTools: boolean;
   readonly orchestrationDelivered: boolean;
   readonly deviceInstructionsDelivered: boolean;
+  readonly awareness?: string;
 }): string {
   return t3OrchestrationPrompt({
     ...input,
-    instructions: SCIENT_ORCHESTRATION_INSTRUCTIONS,
+    instructions: withAwareness(input.awareness),
     deviceInstructions: SCIENT_DEVICE_TOOL_INSTRUCTIONS,
     wrapperElement: "scient_orchestration_instructions",
   });

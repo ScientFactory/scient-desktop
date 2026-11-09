@@ -1,4 +1,4 @@
-import type { AgentCaller, OperationCapability } from "@scientfactory/operations";
+import type { OperationCapability } from "@scientfactory/operations";
 import type { SkillRelease } from "@scientfactory/scient-skills";
 import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Context from "effect/Context";
@@ -30,17 +30,17 @@ export interface AgentSkillScope {
 }
 
 /** Host-authenticated admission context, never decoded from a tool argument. */
-interface AgentInvocationBase {
+export interface AgentInvocationScope {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
+  readonly providerSessionId: string;
+  readonly providerInstanceId: ProviderInstanceId;
   readonly capabilities: ReadonlySet<OperationCapability>;
   readonly skillScope?: AgentSkillScope;
   readonly issuedAt: number;
   /** Captured once for a workspace operation, reused at publication checks. */
   readonly workspace?: ResolvedThreadWorkspaceBinding;
 }
-
-export type AgentInvocationScope = AgentInvocationBase & AgentCaller<ProviderInstanceId>;
 
 export class AgentInvocationContext extends Context.Service<
   AgentInvocationContext,

@@ -1,16 +1,9 @@
 import type { PreparedConnection } from "@t3tools/client-runtime/connection";
 import {
-  deleteEnvironmentScientAnalyticsData,
   getEnvironmentScientAnalyticsStatus,
   recordEnvironmentScientAnalyticsEvent,
-  updateEnvironmentScientAnalyticsPreference,
 } from "@t3tools/client-runtime/state/scient-analytics";
-import type {
-  ScientAnalyticsConsent,
-  ScientAnalyticsStatus,
-  ScientAnalyticsUiEvent,
-  EnvironmentId,
-} from "@t3tools/contracts";
+import type { ScientAnalyticsUiEvent, EnvironmentId } from "@t3tools/contracts";
 import { useEffect, useEffectEvent } from "react";
 import * as Option from "effect/Option";
 
@@ -89,38 +82,17 @@ export function useRecordScientAnalytics() {
   };
 }
 
-export function readScientAnalyticsStatus(
-  prepared: PreparedConnection,
-): Promise<ScientAnalyticsStatus> {
-  return gate.readStatus(prepared);
-}
-
-export async function setScientAnalyticsConsent(
-  prepared: PreparedConnection,
-  consent: ScientAnalyticsConsent,
-): Promise<ScientAnalyticsStatus> {
-  gate.beginControl(prepared);
-  try {
-    const status = await runtime.runPromise(
-      updateEnvironmentScientAnalyticsPreference({ prepared, consent }),
-    );
-    gate.endControl(prepared, status);
-    return status;
-  } catch (error) {
-    gate.endControl(prepared);
-    throw error;
-  }
-}
-
-export async function deleteScientAnalyticsData(prepared: PreparedConnection): Promise<void> {
-  gate.beginControl(prepared);
-  try {
-    await runtime.runPromise(deleteEnvironmentScientAnalyticsData(prepared));
-  } catch (error) {
-    gate.endControl(prepared);
-    throw error;
-  }
-  gate.endControl(prepared);
-  // A refresh failure must not report that a successful deletion did not happen.
-  await gate.readStatus(prepared).catch(() => undefined);
+/** Bind a committed dictation to its original connection and consent context. */
+export function useBeginVoiceAnalytics(explicitEnvironmentId?: EnvironmentId) {
+  const primary = usePrimaryEnvironmentId();
+  const environmentId = explicitEnvironmentId ?? primary;
+  const prepared = usePreparedConnection(environmentId);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- primes the imperative analytics consent cache when the bound connection changes
+  useEffect(() => {
+    if (Option.isSome(prepared)) gate.prime(prepared.value);
+  }, [prepared]);
+  return () => {
+    const connection = environmentId === null ? null : readPreparedConnection(environmentId);
+    return connection === null ? () => {} : gate.beginVoiceOperation(connection);
+  };
 }

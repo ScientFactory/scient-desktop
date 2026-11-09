@@ -12,7 +12,10 @@ import { layerFromPath } from "../../../persistence/Sqlite.ts";
 import { nativeImportRuntimeTestLayer } from "../../../scient/conversationImport/conversationImport.native-test-harness.ts";
 import { PROVIDER_ID } from "../../../scient/conversationImport/conversationImport.test-fixtures.ts";
 import { ProjectionStoreV2, layer as projectionLayer } from "../../ProjectionStore.ts";
-import { ProjectionMaintenanceV2, layer as maintenanceLayer } from "../../ProjectionMaintenance.ts";
+import {
+  ProjectionReplay,
+  layer as projectionReplayLayer,
+} from "../../testkit/ProjectionReplay.ts";
 import { OrchestratorV2 } from "../../Orchestrator.ts";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import { makeNativeSessionAdapterV2 } from "../../Adapters/NativeSessionAdapterV2.ts";
@@ -48,8 +51,8 @@ it.live(
               chain.push((yield* fork(chain.at(-1)!.thread.id, `restart-${index}`)).projection);
             for (const index of [0, 2, 4]) yield* remove(chain[index]!.thread.id);
             assert.isTrue(
-              (yield* ProjectionMaintenanceV2.use((m) => m.rebuild).pipe(
-                Effect.provide(maintenanceLayer),
+              (yield* ProjectionReplay.use((m) => m.rebuild).pipe(
+                Effect.provide(projectionReplayLayer),
               )).valid,
             );
             return chain.filter((_, index) => [1, 3, 5, 6].includes(index));
@@ -227,8 +230,8 @@ it.live.each(["fork-first", "rollback-first", "concurrent", "native-delete-first
               );
           }
           assert.isTrue(
-            (yield* ProjectionMaintenanceV2.use((m) => m.rebuild).pipe(
-              Effect.provide(maintenanceLayer),
+            (yield* ProjectionReplay.use((m) => m.rebuild).pipe(
+              Effect.provide(projectionReplayLayer),
             )).valid,
           );
         }).pipe(Effect.provide(nativeImportRuntimeTestLayer(registry, runtimeOptions)));

@@ -14,14 +14,14 @@ const mocks = vi.hoisted(() => ({
 const environmentId = EnvironmentId.make("local");
 const projectId = ProjectId.make("imported");
 vi.mock("../../providerOperateAccess", () => ({ resolvePrimaryOperateAccess: () => mocks.access }));
-vi.mock("../../environments/primary", () => ({
-  usePrimarySessionState: () => ({
+vi.mock("../../state/session", () => ({
+  useEnvironmentSessionState: () => ({
     data: {
       authenticated: true,
       permissions: mocks.access === "granted" ? [AuthOrchestrationOperateScope] : [],
     },
     isPending: false,
-    error: null,
+    hasError: false,
   }),
 }));
 vi.mock("../../state/environments", () => ({

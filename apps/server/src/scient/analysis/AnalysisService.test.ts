@@ -88,29 +88,6 @@ const testAdapter: AnalysisRuntimeAdapter = {
   fileExtensions: [".m"],
   inspect: async ({ customExecutablePath, inspectedAt }) =>
     runtimeProfile(inspectedAt, customExecutablePath),
-  prepareVerification: async (profile) => ({
-    executableIdentity: `identity:${profile.executablePath ?? "missing"}`,
-    executable: profile.executablePath ?? "/test/matlab",
-    args: ["verify"],
-    cwd: "/tmp",
-    environment: {},
-    timeoutMs: 1_000,
-    collect: async (result) => ({
-      status: result.exitCode === 0 ? "ready" : "startup-failed",
-      verifiedAt: result.verifiedAt,
-      durationMs: result.durationMs,
-      executableIdentity: `identity:${profile.executablePath ?? "missing"}`,
-      release: "test",
-      version: "test",
-      architecture: "test",
-      installationRoot: profile.executablePath,
-      javaAvailable: true,
-      javaVersion: "test",
-      toolboxes: [],
-      detail: "Test runtime is ready.",
-    }),
-    cleanup: async () => undefined,
-  }),
   prepare: (context) => ({
     executable: "/test/matlab",
     args: [context.source.relativePath],
@@ -170,13 +147,6 @@ const makeServiceTestLayer = Effect.fn("makeServiceTestLayer")(function* (
     start: (request) =>
       Effect.gen(function* () {
         yield* Ref.update(processStartCount, (count) => count + 1);
-        if (request.args[0] === "verify") {
-          return {
-            output: Stream.empty,
-            exitCode: Effect.succeed(0),
-            cancel: Effect.void,
-          };
-        }
         const exitCode = yield* Deferred.make<number>();
         if (onProcessClose !== undefined) yield* Effect.addFinalizer(() => onProcessClose);
         processExits.set(request.runId, exitCode);
@@ -260,16 +230,14 @@ const analyticsFixture = Effect.gen(function* () {
       }),
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
-    setConsent: (consent) =>
-      Effect.sync(() => {
-        status = { available: true, consent };
-        epoch += 1;
-        return status;
-      }),
     flush: Effect.void,
-    deleteData: Effect.succeed(true),
   });
-  return { events, terminalEvents, service };
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.sync(() => {
+      status = { available: true, consent };
+      epoch += 1;
+    });
+  return { events, terminalEvents, service, setConsent };
 });
 
 type ArtifactFixtureMode =
@@ -582,12 +550,19 @@ describe("analysis artifact analytics", () => {
             "scient.operation.started",
             `scient.operation.${scenario.outcome}`,
           ]);
-          expect(captureEvents[1]?.properties).toEqual({
+          expect(captureEvents[1]?.properties).toMatchObject({
             operationKind: "compute-artifact",
             trigger: "user",
             durationMs: expect.any(Number),
             failureClass: "unknown",
+            captureSchemaVersion: 2,
+            captureSource: "run-file",
           });
+          if (scenario.outcome === "failed") {
+            expect(captureEvents[1]?.properties).not.toHaveProperty("rejectedOutputCount");
+          } else {
+            expect(captureEvents[1]?.properties).toHaveProperty("rejectedOutputCount", 0);
+          }
           const payload = yield* encodeUnknownJson(analytics.events);
           for (const privateValue of [
             harness.projectRoot,
@@ -673,7 +648,7 @@ describe("analysis artifact analytics", () => {
     Effect.gen(function* () {
       const harness = yield* makeServiceTestLayer(artifactTestAdapter("captured"));
       const analytics = yield* analyticsFixture;
-      if (mode === "off") yield* analytics.service.setConsent("off");
+      if (mode === "off") yield* analytics.setConsent("off");
       yield* Effect.scoped(
         Effect.gen(function* () {
           const service = yield* AnalysisService;
@@ -684,8 +659,8 @@ describe("analysis artifact analytics", () => {
             runtimeId,
           });
           const runId = yield* Queue.take(harness.startedRuns);
-          if (mode === "epoch-change") yield* analytics.service.setConsent("off");
-          yield* analytics.service.setConsent("product");
+          if (mode === "epoch-change") yield* analytics.setConsent("off");
+          yield* analytics.setConsent("product");
           const updates = yield* service.subscribeRuns({ cwd: harness.projectRoot });
           yield* Deferred.succeed(harness.processExits.get(runId)!, 0);
           yield* updates.pipe(
@@ -737,7 +712,7 @@ describe("analysis outcome analytics", () => {
     Effect.gen(function* () {
       const harness = yield* serviceTestLayer;
       const analytics = yield* analyticsFixture;
-      if (mode === "off") yield* analytics.service.setConsent("off");
+      if (mode === "off") yield* analytics.setConsent("off");
       yield* Effect.scoped(
         Effect.gen(function* () {
           const service = yield* AnalysisService;
@@ -754,8 +729,8 @@ describe("analysis outcome analytics", () => {
             sourceRevision,
             runtimeId,
           });
-          if (mode === "epoch-change") yield* analytics.service.setConsent("off");
-          yield* analytics.service.setConsent("product");
+          if (mode === "epoch-change") yield* analytics.setConsent("off");
+          yield* analytics.setConsent("product");
           const cancelled = yield* service.cancelRun({
             cwd: harness.projectRoot,
             runId: queued.receipt.runId,
@@ -1154,42 +1129,6 @@ describe("analysis service coordination", () => {
         ),
       );
       expect(analytics.events).toEqual([]);
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
-  );
-
-  it.effect("reuses verification only until runtime configuration changes", () =>
-    Effect.gen(function* () {
-      const harness = yield* serviceTestLayer;
-      yield* Effect.scoped(
-        Effect.gen(function* () {
-          const service = yield* AnalysisService;
-          const first = yield* service.verifyRuntime({
-            cwd: harness.projectRoot,
-            runtimeId,
-          });
-          const cached = yield* service.verifyRuntime({
-            cwd: harness.projectRoot,
-            runtimeId,
-          });
-          expect(first.verification?.status).toBe("ready");
-          expect(cached.verification?.executableIdentity).toBe(
-            first.verification?.executableIdentity,
-          );
-          expect(yield* Ref.get(harness.processStartCount)).toBe(1);
-
-          yield* service.configureRuntime({
-            cwd: harness.projectRoot,
-            runtimeKind: "matlab",
-            executablePath: "/test/other-matlab",
-          });
-          const refreshed = yield* service.verifyRuntime({
-            cwd: harness.projectRoot,
-            runtimeId,
-          });
-          expect(refreshed.verification?.executableIdentity).toBe("identity:/test/other-matlab");
-          expect(yield* Ref.get(harness.processStartCount)).toBe(2);
-        }).pipe(Effect.provide(harness.analysisLayer)),
-      );
     }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
   );
 

@@ -7,7 +7,9 @@ import { initializeScientProject } from "@scientfactory/project-init";
 import { AnalysisSourceRevision, WS_METHODS } from "@t3tools/contracts";
 import { assert, type Vitest } from "@effect/vitest";
 import type * as Digest from "effect/crypto/Digest";
+import type * as Mac from "effect/crypto/Mac";
 import type * as SecureRandom from "effect/crypto/SecureRandom";
+import type * as Signature from "effect/crypto/Signature";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -22,7 +24,13 @@ const encodeRuntimeSettings = Schema.encodeUnknownEffect(Schema.fromJsonString(S
 
 // Registered by server.test.ts so these cases exercise the same T3 server seam.
 export const registerAnalysisRpcTests = (
-  it: Vitest.MethodsNonLive<NodeServices.NodeServices | SecureRandom.SecureRandom | Digest.Digest>,
+  it: Vitest.MethodsNonLive<
+    | NodeServices.NodeServices
+    | SecureRandom.SecureRandom
+    | Digest.Digest
+    | Mac.Mac
+    | Signature.Signature
+  >,
   harness: ScientRpcServerTestHarness,
 ): void => {
   const {
@@ -32,7 +40,10 @@ export const registerAnalysisRpcTests = (
     getWsServerUrl,
     withWsRpcClient,
   } = harness;
-  const buildAppUnderTest = Effect.fn("AnalysisRpcServerTests.buildAppUnderTest")(function* () {
+  // The MATLAB choice is saved in the settings that runtime preferences read, as the app saves it.
+  const buildAppUnderTest = Effect.fn("AnalysisRpcServerTests.buildAppUnderTest")(function* (
+    matlabExecutable: string,
+  ) {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const baseDir = yield* fs.makeTempDirectoryScoped({
@@ -46,7 +57,7 @@ export const registerAnalysisRpcTests = (
       yield* encodeRuntimeSettings({
         scientificComputing: {
           schemaVersion: 1,
-          languages: { matlab: { enabled: true, executable: "" } },
+          languages: { matlab: { enabled: true, executable: matlabExecutable } },
         },
       }),
     );
@@ -88,15 +99,13 @@ export const registerAnalysisRpcTests = (
       );
       yield* fs.chmod(matlabExecutable, 0o755);
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest(matlabExecutable);
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+            const inspection = yield* client[WS_METHODS.analysisInspectRuntimes]({
               cwd: workspaceDir,
-              runtimeKind: "matlab",
-              executablePath: matlabExecutable,
             });
             assert.equal(inspection.runtimes[0]?.availability, "available");
             const source = yield* client[WS_METHODS.projectsReadFile]({
@@ -205,15 +214,13 @@ export const registerAnalysisRpcTests = (
       );
       yield* fs.chmod(matlabExecutable, 0o755);
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest(matlabExecutable);
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+            const inspection = yield* client[WS_METHODS.analysisInspectRuntimes]({
               cwd: workspaceDir,
-              runtimeKind: "matlab",
-              executablePath: matlabExecutable,
             });
             const source = yield* client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
@@ -329,80 +336,6 @@ export const registerAnalysisRpcTests = (
   );
 
   it.effect(
-    "verifies MATLAB explicitly and reuses the executable-identity cache until refresh",
-    () =>
-      Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const workspaceDir = yield* fs.makeTempDirectoryScoped({
-          prefix: "scient-matlab-verify-project-",
-        });
-        const runtimeDir = yield* fs.makeTempDirectoryScoped({
-          prefix: "scient-matlab-verify-runtime-",
-        });
-        const matlabExecutable = path.join(runtimeDir, "matlab");
-        const launchesPath = path.join(runtimeDir, "launches.txt");
-        yield* Effect.promise(() => initializeScientProject({ root: workspaceDir }));
-        yield* fs.writeFileString(
-          matlabExecutable,
-          [
-            "#!/usr/bin/env node",
-            "const fs = require('node:fs');",
-            "const path = require('node:path');",
-            "fs.appendFileSync(path.join(path.dirname(__filename), 'launches.txt'), 'verify\\n');",
-            "fs.writeFileSync(process.env.SCIENT_MATLAB_VERIFY_RESULT, JSON.stringify({",
-            "  release: 'R2026a', version: '26.1', architecture: 'maca64',",
-            "  installationRoot: '/Applications/MATLAB_R2026a.app',",
-            "  javaAvailable: true, javaVersion: 'Java 21',",
-            "  toolboxes: [{ name: 'MATLAB', version: '26.1' }]",
-            "}));",
-            "",
-          ].join("\n"),
-        );
-        yield* fs.chmod(matlabExecutable, 0o755);
-
-        yield* buildAppUnderTest();
-        const wsUrl = yield* getWsServerUrl("/ws");
-        const verifications = yield* Effect.scoped(
-          withWsRpcClient(wsUrl, (client) =>
-            Effect.gen(function* () {
-              const configured = yield* client[WS_METHODS.analysisConfigureRuntime]({
-                cwd: workspaceDir,
-                runtimeKind: "matlab",
-                executablePath: matlabExecutable,
-              });
-              const runtimeId = configured.runtimes[0]!.id;
-              const first = yield* client[WS_METHODS.analysisVerifyRuntime]({
-                cwd: workspaceDir,
-                runtimeId,
-              });
-              const cached = yield* client[WS_METHODS.analysisVerifyRuntime]({
-                cwd: workspaceDir,
-                runtimeId,
-              });
-              const refreshed = yield* client[WS_METHODS.analysisVerifyRuntime]({
-                cwd: workspaceDir,
-                runtimeId,
-                refresh: true,
-              });
-              return { first, cached, refreshed };
-            }),
-          ),
-        );
-
-        assert.equal(verifications.first.verification?.status, "ready");
-        assert.equal(verifications.first.verification?.release, "R2026a");
-        assert.equal(verifications.first.verification?.javaAvailable, true);
-        assert.deepEqual(verifications.first.verification?.toolboxes, [
-          { name: "MATLAB", version: "26.1" },
-        ]);
-        assert.deepEqual(verifications.cached.verification, verifications.first.verification);
-        assert.equal(verifications.refreshed.verification?.status, "ready");
-        assert.equal((yield* fs.readFileString(launchesPath)).trim().split("\n").length, 2);
-      }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
-  );
-
-  it.effect(
     "runs one MATLAB process at a time in FIFO order and skips a cancelled queued run",
     () =>
       Effect.gen(function* () {
@@ -442,15 +375,13 @@ export const registerAnalysisRpcTests = (
         );
         yield* fs.chmod(matlabExecutable, 0o755);
 
-        yield* buildAppUnderTest();
+        yield* buildAppUnderTest(matlabExecutable);
         const wsUrl = yield* getWsServerUrl("/ws");
         const result = yield* Effect.scoped(
           withWsRpcClient(wsUrl, (client) =>
             Effect.gen(function* () {
-              const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+              const inspection = yield* client[WS_METHODS.analysisInspectRuntimes]({
                 cwd: workspaceDir,
-                runtimeKind: "matlab",
-                executablePath: matlabExecutable,
               });
               const runtimeId = inspection.runtimes[0]!.id;
               const revisions = new Map<string, AnalysisSourceRevision>();
@@ -558,15 +489,13 @@ export const registerAnalysisRpcTests = (
       );
       yield* fs.chmod(matlabExecutable, 0o755);
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest(matlabExecutable);
       const wsUrl = yield* getWsServerUrl("/ws");
       const completed = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+            const inspection = yield* client[WS_METHODS.analysisInspectRuntimes]({
               cwd: workspaceDir,
-              runtimeKind: "matlab",
-              executablePath: matlabExecutable,
             });
             const source = yield* client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
@@ -644,15 +573,13 @@ export const registerAnalysisRpcTests = (
       );
       yield* fs.chmod(matlabExecutable, 0o755);
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest(matlabExecutable);
       const wsUrl = yield* getWsServerUrl("/ws");
       const completed = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+            const inspection = yield* client[WS_METHODS.analysisInspectRuntimes]({
               cwd: workspaceDir,
-              runtimeKind: "matlab",
-              executablePath: matlabExecutable,
             });
             const source = yield* client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
@@ -716,15 +643,13 @@ export const registerAnalysisRpcTests = (
       yield* fs.writeFileString(matlabExecutable, "#!/usr/bin/env node\nprocess.exit(0);\n");
       yield* fs.chmod(matlabExecutable, 0o755);
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest(matlabExecutable);
       const wsUrl = yield* getWsServerUrl("/ws");
       const result = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+            const inspection = yield* client[WS_METHODS.analysisInspectRuntimes]({
               cwd: workspaceDir,
-              runtimeKind: "matlab",
-              executablePath: matlabExecutable,
             });
             const opened = yield* client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
@@ -770,15 +695,13 @@ export const registerAnalysisRpcTests = (
       );
       yield* fs.chmod(matlabExecutable, 0o755);
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest(matlabExecutable);
       const wsUrl = yield* getWsServerUrl("/ws");
       const completed = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+            const inspection = yield* client[WS_METHODS.analysisInspectRuntimes]({
               cwd: workspaceDir,
-              runtimeKind: "matlab",
-              executablePath: matlabExecutable,
             });
             const source = yield* client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,
@@ -843,15 +766,13 @@ export const registerAnalysisRpcTests = (
       );
       yield* fs.chmod(matlabExecutable, 0o755);
 
-      yield* buildAppUnderTest();
+      yield* buildAppUnderTest(matlabExecutable);
       const wsUrl = yield* getWsServerUrl("/ws");
       const terminalRun = yield* Effect.scoped(
         withWsRpcClient(wsUrl, (client) =>
           Effect.gen(function* () {
-            const inspection = yield* client[WS_METHODS.analysisConfigureRuntime]({
+            const inspection = yield* client[WS_METHODS.analysisInspectRuntimes]({
               cwd: workspaceDir,
-              runtimeKind: "matlab",
-              executablePath: matlabExecutable,
             });
             const source = yield* client[WS_METHODS.projectsReadFile]({
               cwd: workspaceDir,

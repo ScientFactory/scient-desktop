@@ -11,16 +11,13 @@ const environmentId = EnvironmentId.make("local");
 const updateSettings = vi.hoisted(() => vi.fn());
 const primarySession = vi.hoisted(() => ({
   data: { authenticated: true, scopes: ["orchestration:operate"] },
-  error: null as string | null,
+  hasError: false,
   isPending: false,
 }));
 
 vi.mock("react", async (importOriginal) => ({
   ...(await importOriginal<typeof import("react")>()),
   useCallback: <T>(callback: T) => callback,
-}));
-vi.mock("../../environments/primary", () => ({
-  usePrimarySessionState: () => primarySession,
 }));
 vi.mock("../../hooks/useSettings", () => ({
   useEnvironmentSettings: () => ({
@@ -38,7 +35,7 @@ vi.mock("../../state/environments", () => ({
   usePrimaryEnvironmentId: () => environmentId,
 }));
 vi.mock("../../state/session", () => ({
-  useEnvironmentSessionState: () => ({ data: null, hasError: false, isPending: false }),
+  useEnvironmentSessionState: () => primarySession,
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: { updateSettings: Symbol("updateSettings") },

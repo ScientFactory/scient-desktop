@@ -116,6 +116,7 @@ const layerDesktopEnvironment = Layer.unwrap(
     );
     const platform = yield* HostProcess.Platform;
     const processArch = yield* HostProcess.Architecture;
+    const env = yield* HostProcess.Environment;
     return DesktopEnvironment.layer({
       dirname: __dirname,
       homeDirectory: NodeOS.homedir(),
@@ -124,9 +125,7 @@ const layerDesktopEnvironment = Layer.unwrap(
       ...metadata,
       // The Finder-facing dev bundle contains a tiny bootstrap app, while the
       // real desktop main bundle still lives in this worktree.
-      ...(process.env.SCIENT_DEV_BOOTSTRAP === "1"
-        ? { appPath: __dirname, isPackaged: false }
-        : {}),
+      ...(env.SCIENT_DEV_BOOTSTRAP === "1" ? { appPath: __dirname, isPackaged: false } : {}),
     });
   }),
 );

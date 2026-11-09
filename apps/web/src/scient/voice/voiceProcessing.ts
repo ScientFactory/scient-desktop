@@ -28,7 +28,7 @@ export interface VoiceJobInput {
   /** The recorder's final flush, already started. */
   readonly clip: Promise<VoiceWavClip | null>;
   readonly send: boolean;
-  readonly voiceBridge: VoiceTranscriptionClient;
+  readonly voiceBridge: Pick<VoiceTranscriptionClient, "transcribe" | "cancelTranscriptionRequest">;
   readonly correction: {
     readonly corrector: VoiceTranscriptCorrectionClient;
     readonly environmentId: EnvironmentId;
@@ -47,11 +47,14 @@ interface VoiceJob {
   phase: VoiceJobPhase;
   active: boolean;
   requestId: string | null;
+  readonly startedAt: number;
+  transcriptionDurationMs?: number;
   correction: {
     readonly transcript: string;
     readonly abortController: AbortController;
     readonly startedAt: number;
     readonly audioDurationMs: number;
+    readonly correctionStartedAt: number;
   } | null;
 }
 
@@ -68,6 +71,14 @@ interface VoiceProcessingSnapshot {
 const jobsById = new Map<string, VoiceJob>();
 let snapshot: VoiceProcessingSnapshot = { jobs: new Map(), errors: new Map() };
 const listeners = new Set<() => void>();
+
+function record(job: VoiceJob, event: ScientAnalyticsUiEvent): void {
+  try {
+    job.input.recordAnalytics(event);
+  } catch {
+    // Analytics must not prevent transcription, delivery, cancellation or fallback.
+  }
+}
 
 function publish(next: Partial<VoiceProcessingSnapshot>): void {
   snapshot = { ...snapshot, ...next };
@@ -125,14 +136,40 @@ function settle(job: VoiceJob): boolean {
   return true;
 }
 
-function complete(job: VoiceJob, text: string, startedAt: number, audioDurationMs: number): void {
+function complete(
+  job: VoiceJob,
+  text: string,
+  startedAt: number,
+  audioDurationMs: number,
+  correctionOutcome = "disabled",
+): void {
   if (!settle(job)) return;
-  job.input.deliver(text, job.input.send);
-  job.input.recordAnalytics({
+  try {
+    job.input.deliver(text, job.input.send);
+  } catch (error) {
+    record(job, {
+      name: "voice.transcription.failed",
+      properties: {
+        voiceSchemaVersion: 2,
+        engineClass: "local-whisper",
+        failureClass: "delivery",
+        stage: "delivering",
+        durationMs: performance.now() - job.startedAt,
+      },
+    });
+    throw error;
+  }
+  record(job, {
     name: "voice.transcription.completed",
     properties: {
       engineClass: "local-whisper",
-      durationMs: performance.now() - startedAt,
+      voiceSchemaVersion: 2,
+      durationMs: performance.now() - job.startedAt,
+      transcriptionDurationMs: job.transcriptionDurationMs ?? performance.now() - startedAt,
+      ...(job.correction
+        ? { correctionDurationMs: performance.now() - job.correction.correctionStartedAt }
+        : {}),
+      correctionOutcome,
       audioDurationMs,
     },
   });
@@ -140,20 +177,33 @@ function complete(job: VoiceJob, text: string, startedAt: number, audioDurationM
 
 async function run(job: VoiceJob): Promise<void> {
   const { input } = job;
-  const clip = await input.clip.catch(() => null);
-  if (!job.active) return;
-  if (!clip) {
-    if (settle(job)) input.fail(EMPTY_TRANSCRIPT_MESSAGE);
-    return;
-  }
-  const startedAt = performance.now();
-  input.recordAnalytics({
+  record(job, {
     name: "voice.transcription.started",
     properties: {
+      voiceSchemaVersion: 2,
       engineClass: "local-whisper",
       languageMode: input.language ? "explicit" : "automatic",
     },
   });
+  const clip = await input.clip.catch(() => null);
+  if (!job.active) return;
+  if (!clip) {
+    if (settle(job)) {
+      record(job, {
+        name: "voice.transcription.failed",
+        properties: {
+          voiceSchemaVersion: 2,
+          engineClass: "local-whisper",
+          failureClass: "audio",
+          stage: "preparing",
+          durationMs: performance.now() - job.startedAt,
+        },
+      });
+      input.fail(EMPTY_TRANSCRIPT_MESSAGE);
+    }
+    return;
+  }
+  const startedAt = performance.now();
   const requestId = randomUUID();
   job.requestId = requestId;
   try {
@@ -166,15 +216,24 @@ async function run(job: VoiceJob): Promise<void> {
       ...(input.language ? { language: input.language } : {}),
     };
     const transcript = await input.voiceBridge.transcribe(request);
+    job.transcriptionDurationMs = performance.now() - startedAt;
     job.requestId = null;
     if (!job.active) return;
     const text = transcript.text.trim();
     if (!text) {
-      if (settle(job)) input.fail(EMPTY_TRANSCRIPT_MESSAGE);
-      input.recordAnalytics({
+      if (!settle(job)) return;
+      record(job, {
         name: "voice.transcription.failed",
-        properties: { engineClass: "local-whisper", failureClass: "audio" },
+        properties: {
+          voiceSchemaVersion: 2,
+          engineClass: "local-whisper",
+          failureClass: "audio",
+          stage: "transcribing",
+          durationMs: performance.now() - job.startedAt,
+          transcriptionDurationMs: job.transcriptionDurationMs,
+        },
       });
+      input.fail(EMPTY_TRANSCRIPT_MESSAGE);
       return;
     }
     if (!input.correction) {
@@ -188,6 +247,7 @@ async function run(job: VoiceJob): Promise<void> {
       abortController,
       startedAt,
       audioDurationMs: clip.durationMs,
+      correctionStartedAt: performance.now(),
     };
     job.phase = "correcting";
     publishJobs();
@@ -199,15 +259,22 @@ async function run(job: VoiceJob): Promise<void> {
       ...(input.language ? { language: input.language } : {}),
       signal: abortController.signal,
     });
-    complete(job, corrected.text, startedAt, clip.durationMs);
+    complete(job, corrected.text, startedAt, clip.durationMs, corrected.kind);
   } catch (error) {
     job.requestId = null;
     if (!settle(job)) return;
-    input.fail(describeVoiceError(error));
-    input.recordAnalytics({
+    record(job, {
       name: "voice.transcription.failed",
-      properties: { engineClass: "local-whisper", failureClass: "engine" },
+      properties: {
+        voiceSchemaVersion: 2,
+        engineClass: "local-whisper",
+        failureClass: "engine",
+        stage: "transcribing",
+        durationMs: performance.now() - job.startedAt,
+        transcriptionDurationMs: performance.now() - startedAt,
+      },
     });
+    input.fail(describeVoiceError(error));
   }
 }
 
@@ -225,6 +292,7 @@ export function startVoiceJob(input: VoiceJobInput): {
     phase: "transcribing",
     active: true,
     requestId: null,
+    startedAt: performance.now(),
     correction: null,
   };
   jobsById.set(job.id, job);
@@ -241,12 +309,26 @@ export async function cancelVoiceJob(id: string): Promise<void> {
   const requestId = job.requestId;
   job.correction?.abortController.abort();
   if (!settle(job)) return;
-  if (phase === "transcribing") {
-    job.input.recordAnalytics({
-      name: "voice.transcription.cancelled",
-      properties: { stage: "transcribing" },
-    });
-  }
+  record(job, {
+    name: "voice.transcription.cancelled",
+    properties: {
+      voiceSchemaVersion: 2,
+      stage:
+        phase === "transcribing" && requestId === null && job.transcriptionDurationMs === undefined
+          ? "preparing"
+          : phase,
+      durationMs: performance.now() - job.startedAt,
+      ...(job.transcriptionDurationMs === undefined
+        ? {}
+        : { transcriptionDurationMs: job.transcriptionDurationMs }),
+      ...(job.correction
+        ? {
+            correctionDurationMs: performance.now() - job.correction.correctionStartedAt,
+            correctionOutcome: "cancelled",
+          }
+        : {}),
+    },
+  });
   if (requestId) {
     await job.input.voiceBridge.cancelTranscriptionRequest?.({ requestId }).catch(() => undefined);
   }
@@ -264,7 +346,13 @@ export function finishVoiceJobWithOriginal(id: string): void {
   const correction = job?.correction;
   if (!job || !correction || job.phase !== "correcting") return;
   correction.abortController.abort();
-  complete(job, correction.transcript, correction.startedAt, correction.audioDurationMs);
+  complete(
+    job,
+    correction.transcript,
+    correction.startedAt,
+    correction.audioDurationMs,
+    "bypassed",
+  );
 }
 
 /** @internal Test isolation for the window-level store. */

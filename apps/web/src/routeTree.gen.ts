@@ -22,6 +22,7 @@ import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatGettingStartedRouteImport } from './routes/_chat.getting-started'
+import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsVoiceRouteImport } from './routes/_chat.settings.voice'
 import { Route as ChatSettingsThreadsRouteImport } from './routes/_chat.settings.threads'
@@ -136,6 +137,12 @@ const ChatGettingStartedRoute = ChatGettingStartedRouteImport.update({
   path: '/getting-started',
   getParentRoute: () => ChatRoute,
 } as any)
+const ThreadsEnvironmentIdThreadIdRoute =
+  ThreadsEnvironmentIdThreadIdRouteImport.update({
+    id: '/threads/$environmentId/$threadId',
+    path: '/threads/$environmentId/$threadId',
+    getParentRoute: () => rootRouteImport,
+  } as any)
 const ChatSettingsWorktreesRoute = ChatSettingsWorktreesRouteImport.update({
   id: '/worktrees',
   path: '/worktrees',
@@ -454,6 +461,7 @@ export interface FileRoutesByFullPath {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -517,6 +525,7 @@ export interface FileRoutesByTo {
   '/settings/threads': typeof ChatSettingsThreadsRoute
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -582,6 +591,7 @@ export interface FileRoutesById {
   '/_chat/settings/threads': typeof ChatSettingsThreadsRoute
   '/_chat/settings/voice': typeof ChatSettingsVoiceRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
+  '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/_chat/settings/extensions_/all': typeof ChatSettingsExtensionsAllRoute
   '/_chat/settings/extensions_/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/_chat/settings/scientific-computing_/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -647,6 +657,7 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/voice'
     | '/settings/worktrees'
+    | '/threads/$environmentId/$threadId'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
     | '/settings/scientific-computing/$languageId'
@@ -710,6 +721,7 @@ export interface FileRouteTypes {
     | '/settings/threads'
     | '/settings/voice'
     | '/settings/worktrees'
+    | '/threads/$environmentId/$threadId'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
     | '/settings/scientific-computing/$languageId'
@@ -774,6 +786,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/threads'
     | '/_chat/settings/voice'
     | '/_chat/settings/worktrees'
+    | '/threads/$environmentId/$threadId'
     | '/_chat/settings/extensions_/all'
     | '/_chat/settings/extensions_/installed'
     | '/_chat/settings/scientific-computing_/$languageId'
@@ -797,6 +810,7 @@ export interface RootRouteChildren {
   PairRoute: typeof PairRoute
   WelcomeRoute: typeof WelcomeRoute
   ProjectsProjectKeyRoute: typeof ProjectsProjectKeyRoute
+  ThreadsEnvironmentIdThreadIdRoute: typeof ThreadsEnvironmentIdThreadIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -891,6 +905,13 @@ declare module '@tanstack/react-router' {
       fullPath: '/getting-started'
       preLoaderRoute: typeof ChatGettingStartedRouteImport
       parentRoute: typeof ChatRoute
+    }
+    '/threads/$environmentId/$threadId': {
+      id: '/threads/$environmentId/$threadId'
+      path: '/threads/$environmentId/$threadId'
+      fullPath: '/threads/$environmentId/$threadId'
+      preLoaderRoute: typeof ThreadsEnvironmentIdThreadIdRouteImport
+      parentRoute: typeof rootRouteImport
     }
     '/_chat/settings/worktrees': {
       id: '/_chat/settings/worktrees'
@@ -1383,6 +1404,7 @@ const rootRouteChildren: RootRouteChildren = {
   PairRoute: PairRoute,
   WelcomeRoute: WelcomeRoute,
   ProjectsProjectKeyRoute: ProjectsProjectKeyRoute,
+  ThreadsEnvironmentIdThreadIdRoute: ThreadsEnvironmentIdThreadIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

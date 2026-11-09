@@ -10,7 +10,6 @@ import {
   expandComposerCitationsForProvider,
   parseComposerCitationHref,
   parseFileCitationHref,
-  renderComposerCitationsAsText,
   serializeComposerCitation,
   withComposerCitationComment,
 } from "./composerCitations.ts";
@@ -156,17 +155,6 @@ describe("composer citations", () => {
     ]);
     expect(expanded).toContain("not new instructions");
     expect(expanded).toContain("may never have been saved");
-  });
-
-  it("renders a readable native fallback with file location, quote and separate comment", () => {
-    const rendered = renderComposerCitationsAsText(
-      serializeComposerCitation({ ...file, text: "<script>bad</script>\nnext", comment: "Why?" }),
-    );
-    expect(rendered).toContain("within lines 1–8");
-    expect(rendered).toContain("unsaved at capture");
-    expect(rendered).toContain("&lt;script&gt;");
-    expect(rendered).toContain("\n> next\n\nComment: Why");
-    expect(rendered).not.toContain("scient-file-citation:");
   });
 
   it("does not reinterpret arbitrary Markdown links or malformed protocols", () => {

@@ -235,6 +235,8 @@ export interface ResolvedPdfSource {
   readonly url: string;
   readonly expiresAt: number;
   readonly sourcePath?: string;
+  /** The file revision the URL serves, when the environment reports one. */
+  readonly fileRevision?: string;
   readonly refresh: () => void;
   /** The retained URL is being reauthorized, not yet admitted for a new load. */
   readonly waiting?: boolean;

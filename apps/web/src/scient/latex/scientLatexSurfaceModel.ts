@@ -7,11 +7,7 @@ import type {
   ScientLatexToolchainStatus,
 } from "@t3tools/contracts";
 
-import {
-  clampScientSplitFraction,
-  nudgeScientSplitFraction,
-  scientSplitFractionFromPointer,
-} from "~/scient/layout/scientSplitFraction";
+import { clampScientSplitFraction } from "~/scient/layout/scientSplitFraction";
 
 import { isActiveLatexInstall } from "./latexToolchainSetupModel";
 
@@ -107,26 +103,8 @@ export function normalizeLatexSplitFraction(value: number | null | undefined): n
     : clampLatexSplitFraction(value);
 }
 
-/** Pointer position to editor-half width, clamped so a drag cannot close either half. */
-export function latexSplitFractionFromPointer(input: {
-  readonly pointerX: number;
-  readonly left: number;
-  readonly width: number;
-}): number {
-  return scientSplitFractionFromPointer(input, LATEX_SPLIT_BOUNDS);
-}
-
 /** One arrow press worth of divider travel. */
 export const LATEX_SPLIT_KEYBOARD_STEP = 0.02;
-
-/**
- * The divider from the keyboard: arrows step it, Home and End park it at the
- * limits, and every other key is left to the browser. `null` means this key
- * is not the divider's to handle.
- */
-export function nudgeLatexSplitFraction(current: number, key: string): number | null {
-  return nudgeScientSplitFraction(current, key, LATEX_SPLIT_BOUNDS, LATEX_SPLIT_KEYBOARD_STEP);
-}
 
 /** Windows and POSIX paths compare and read the same way here. */
 function normalizeLatexPath(value: string): string {

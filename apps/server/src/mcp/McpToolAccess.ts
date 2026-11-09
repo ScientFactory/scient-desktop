@@ -1,4 +1,6 @@
+// SCIENT-FORK:START — thread callers act within the live owner's invocation policy.
 import { requireInvocationPolicy } from "./InvocationPolicy.ts";
+// SCIENT-FORK:END
 import {
   type EnvironmentId,
   type OrchestrationV2LinkOrigin,
@@ -108,6 +110,7 @@ const refuseReadOnlyClient = McpInvocationContext.McpInvocationContext.pipe(
 const writingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(loadCaller()),
   Effect.tap(assertLiveCaller),
+  // SCIENT-FORK:START — thread callers act within the live owner's invocation policy.
   Effect.filterOrElse(
     (context) => context.scope.thread === undefined,
     (context) =>
@@ -119,11 +122,13 @@ const writingCaller = refuseReadOnlyClient.pipe(
         })),
       ),
   ),
+  // SCIENT-FORK:END
 );
 
 const orchestratingCaller = refuseReadOnlyClient.pipe(
   Effect.andThen(readCaller()),
   Effect.tap(assertLiveCaller),
+  // SCIENT-FORK:START — thread callers act within the live owner's invocation policy.
   Effect.filterOrElse(
     (context) => context.scope.thread === undefined,
     (context) =>
@@ -135,6 +140,7 @@ const orchestratingCaller = refuseReadOnlyClient.pipe(
         })),
       ),
   ),
+  // SCIENT-FORK:END
 );
 
 const requireThreadCaller = McpInvocationContext.McpInvocationContext.pipe(

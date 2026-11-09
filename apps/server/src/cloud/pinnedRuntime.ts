@@ -7,9 +7,11 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
+import { releaseAssetUrl } from "@t3tools/shared/cliRelease";
 import {
   SCIENT_SERVER_ALLOWED_INSTALL_SCRIPTS,
   SCIENT_SERVER_PACKAGE_NAME,
+  scientServerAssetName,
   scientServerPackageSpec,
 } from "@t3tools/shared/scientRelease";
 
@@ -100,7 +102,27 @@ interface PinnedRuntimeInstallInput {
   readonly validate: (
     paths: PinnedRuntimePaths,
   ) => Effect.Effect<void, PinnedRuntimeInstallError | PinnedRuntimePreflightBlockedError>;
+  /** A managed policy's update mirror, laid out as a release: `v<version>/scient-server-<version>.tgz`. */
+  readonly releaseBaseUrl?: string | undefined;
 }
+
+const PACKAGE_INSTALL_STEP = "installing the pinned Scient runtime (this can take a few minutes)";
+
+const isPinnedRuntimeInstallError = Schema.is(PinnedRuntimeInstallError);
+
+/** Whether npm could not install the server package, as when a mirror does not publish it. */
+export const isPackageInstallFailure = (error: unknown): error is PinnedRuntimeInstallError =>
+  isPinnedRuntimeInstallError(error) && error.step === PACKAGE_INSTALL_STEP;
+
+/** The server package npm installs: Scient's GitHub release, or the policy mirror's copy of it. */
+const pinnedRuntimePackageSpec = (version: string, releaseBaseUrl?: string): string =>
+  releaseBaseUrl === undefined
+    ? scientServerPackageSpec(version)
+    : releaseAssetUrl(releaseBaseUrl, `v${version}`, scientServerAssetName(version));
+
+/** Why an install from a policy mirror failed, without the mirror URL, whose query can hold a token. */
+export const mirrorInstallFailureReason = (organization: string, version: string): string =>
+  `Could not install Scient server ${version} from ${organization}'s update mirror. Check that it publishes v${version}/${scientServerAssetName(version)}.`;
 
 const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(function* (
   input: PinnedRuntimeInstallInput,
@@ -173,7 +195,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   };
 
   return yield* Effect.gen(function* () {
-    const installStep = "installing the pinned Scient runtime (this can take a few minutes)";
+    const installStep = PACKAGE_INSTALL_STEP;
     const packageJsonPath = input.path.join(stagingDir, "package.json");
     yield* fs
       .writeFileString(
@@ -200,7 +222,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
       stagingDir,
       "--no-fund",
       "--no-audit",
-      scientServerPackageSpec(input.version),
+      pinnedRuntimePackageSpec(input.version, input.releaseBaseUrl),
     ];
     input.onProgress?.({ stage: "install" });
     yield* runner

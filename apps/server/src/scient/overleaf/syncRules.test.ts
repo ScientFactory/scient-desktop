@@ -7,17 +7,14 @@ import {
   applyChoices,
   applyUnits,
   canMergeInEditor,
-  classifyEarlierPublish,
   closeOverRenames,
   conflictGroups,
-  firstStaleFile,
   guardedPaths,
   hasConflictMarkers,
   hasConflictBlock,
   hasScientConflictMarkers,
   heldFiles,
   publicationTree,
-  unitOutcome,
 } from "./syncRules.ts";
 
 const tree = (entries: Record<string, string>) => new Map(Object.entries(entries));
@@ -177,21 +174,6 @@ describe("applyChoices", () => {
   });
 });
 
-describe("firstStaleFile", () => {
-  it("names a file that changed since capture and is about to be written", () => {
-    const captured = tree({ "a.tex": "1", "b.tex": "1" });
-    const target = tree({ "a.tex": "2", "b.tex": "1" });
-    expect(firstStaleFile({ captured, target, current: (path) => captured.get(path) })).toBeNull();
-    expect(
-      firstStaleFile({ captured, target, current: (path) => (path === "a.tex" ? "edited" : "1") }),
-    ).toBe("a.tex");
-    // A file the sync does not touch may change freely.
-    expect(
-      firstStaleFile({ captured, target, current: (path) => (path === "b.tex" ? "edited" : "1") }),
-    ).toBeNull();
-  });
-});
-
 describe("applyUnits", () => {
   it("binds the two paths of one renamed file even when they arrive as separate changes", () => {
     const changes: ReadonlyArray<FileChange> = [
@@ -218,15 +200,6 @@ describe("applyUnits", () => {
       },
     ];
     expect(applyUnits({ changes, renames: [], conflicts })).toEqual([[0, 1], [2]]);
-  });
-});
-
-describe("unitOutcome", () => {
-  it("is done only when every part is, and interrupted when partly on disk", () => {
-    expect(unitOutcome(["done", "done"])).toBe("done");
-    expect(unitOutcome(["done", "skipped"])).toBe("interrupted");
-    expect(unitOutcome(["skipped", "interrupted"])).toBe("interrupted");
-    expect(unitOutcome(["skipped", "skipped"])).toBe("skipped");
   });
 });
 
@@ -574,54 +547,6 @@ describe("publicationTree", () => {
         }),
       ),
     ).toEqual({ "a.tex": "theirs", "other.tex": "mine" });
-  });
-});
-
-describe("classifyEarlierPublish", () => {
-  const sent = { sentTree: "T", sentCommit: "C" };
-
-  it("recognizes a publish that is still Overleaf's head", () => {
-    expect(
-      classifyEarlierPublish({
-        ...sent,
-        remoteHeadCommit: "C",
-        remoteHeadTree: "T",
-        treesSince: [],
-      }),
-    ).toBe("accepted");
-    expect(
-      classifyEarlierPublish({
-        ...sent,
-        remoteHeadCommit: "rewritten",
-        remoteHeadTree: "T",
-        treesSince: [],
-      }),
-    ).toBe("accepted");
-  });
-
-  it("recognizes a publish that was accepted and then changed by a collaborator", () => {
-    expect(
-      classifyEarlierPublish({
-        ...sent,
-        remoteHeadCommit: "revert",
-        remoteHeadTree: "old",
-        treesSince: [
-          { commit: "revert", tree: "old" },
-          { commit: "rewritten", tree: "T" },
-        ],
-      }),
-    ).toBe("accepted");
-  });
-
-  it("does not guess when history shows nothing", () => {
-    expect(
-      classifyEarlierPublish({
-        ...sent,
-        remoteHeadCommit: "other",
-        remoteHeadTree: "X",
-        treesSince: [{ commit: "other", tree: "X" }],
-      }),
-    ).toBe("not-established");
   });
 });
 

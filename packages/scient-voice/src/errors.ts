@@ -54,6 +54,7 @@ export interface VoiceTranscriptionErrorOptions {
  * safe to surface to a user; `kind` classifies the failure for callers, and
  * `fallbackAllowed` tells a router whether another engine may be attempted.
  */
+// @effect-diagnostics-next-line extendsNativeError:off - @scientfactory/scient-voice has no Effect runtime; hosts catch it as a native error.
 export class VoiceTranscriptionError extends Error {
   readonly kind: VoiceTranscriptionErrorKind;
   readonly fallbackAllowed: boolean;
@@ -74,8 +75,4 @@ export class VoiceTranscriptionError extends Error {
 
 export function isVoiceTranscriptionError(value: unknown): value is VoiceTranscriptionError {
   return value instanceof VoiceTranscriptionError;
-}
-
-export function voiceTranscriptionFailureAllowsFallback(value: unknown): boolean {
-  return isVoiceTranscriptionError(value) && value.fallbackAllowed;
 }

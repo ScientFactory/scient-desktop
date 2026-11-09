@@ -214,6 +214,9 @@ const makeHarness = Effect.fnUntraced(function* (
     | "modelCatalog"
     | "continuationRequests"
     | "runtimeInstructions"
+    // SCIENT-FORK:START — host awareness delivery.
+    | "scientAwareness"
+    // SCIENT-FORK:END
   > = {},
   configureMcp?: boolean,
 ) {
@@ -488,6 +491,138 @@ describe("MuseAdapterV2", () => {
           },
         });
       }
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — host awareness rides the first turn and again only when it changes.
+  it.effect("sends host awareness with the first turn and again only when the grants change", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(THREAD_ID));
+      const grant = (capabilities: ReadonlyArray<string>) =>
+        mcpSessions.set({
+          environmentId: EnvironmentId.make("test-environment"),
+          threadId: THREAD_ID,
+          providerSessionId: "test-session",
+          providerInstanceId: INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43210/mcp",
+          authorizationHeader: "Bearer thread-scoped-test-token",
+          capabilities: new Set(capabilities),
+          connectors: [],
+        });
+      yield* grant(["accounts"]);
+      const fake = yield* makeFakeMuse();
+      fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          scientAwareness: (capabilities) => `aware:${[...capabilities].sort().join(",")}`,
+        },
+      );
+      const turnTexts = Effect.fnUntraced(function* (ordinal: number) {
+        yield* harness.runtime.startTurn(
+          yield* turnInput(harness.providerThread, ordinal, harness.policy),
+        );
+        const call = yield* fake.takeCall("turn/start");
+        yield* fake.emit("turn/completed", { turnId: call.commandId, terminal: "completed" });
+        yield* harness.takeEvent("turn.terminal");
+        const input = call.params.input as ReadonlyArray<{ readonly text?: string }>;
+        return input.flatMap((part) => (part.text === undefined ? [] : [part.text]));
+      });
+
+      const first = yield* turnTexts(1);
+      assert.strictEqual(first[0], "<scient_instructions>\naware:accounts\n</scient_instructions>");
+      assert.include(first[1], "<runtime_info>");
+      const second = yield* turnTexts(2);
+      assert.isFalse(second.some((text) => text.includes("<scient_instructions>")));
+      yield* grant(["accounts", "compute"]);
+      const widened = yield* turnTexts(3);
+      assert.strictEqual(
+        widened[0],
+        "<scient_instructions>\naware:accounts,compute\n</scient_instructions>",
+      );
+      const unchanged = yield* turnTexts(4);
+      assert.isFalse(unchanged.some((text) => text.includes("<scient_instructions>")));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+  // SCIENT-FORK:END
+
+  // SCIENT-FORK:START — a completed compaction may drop the awareness, so it is sent again.
+  it.effect("sends host awareness again after a completed manual or automatic compaction", () =>
+    Effect.gen(function* () {
+      const mcpSessions = yield* McpProviderSessions.McpProviderSessions;
+      yield* Effect.addFinalizer(() => mcpSessions.clear(THREAD_ID));
+      yield* mcpSessions.set({
+        environmentId: EnvironmentId.make("test-environment"),
+        threadId: THREAD_ID,
+        providerSessionId: "test-session",
+        providerInstanceId: INSTANCE_ID,
+        endpoint: "http://127.0.0.1:43210/mcp",
+        authorizationHeader: "Bearer thread-scoped-test-token",
+        capabilities: new Set(["accounts"]),
+        connectors: [],
+      });
+      const fake = yield* makeFakeMuse();
+      fake.host.initializeResult.grantedCapabilities.push("sessionMcp");
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        {
+          scientAwareness: () => "aware",
+        },
+      );
+      const compaction = (turnId: string, status: string, revision: number) =>
+        fake.emit("item/completed", {
+          turnId,
+          item: {
+            itemId: `compaction-${turnId}`,
+            turnId,
+            kind: "compaction",
+            revision,
+            status,
+            ...(status === "completed" ? { outcome: "compacted" } : {}),
+          },
+        });
+      const carriesAwareness = Effect.fnUntraced(function* (
+        ordinal: number,
+        during: (turnId: string) => Effect.Effect<void> = () => Effect.void,
+      ) {
+        yield* harness.runtime.startTurn(
+          yield* turnInput(harness.providerThread, ordinal, harness.policy),
+        );
+        const call = yield* fake.takeCall("turn/start");
+        yield* during(call.commandId!);
+        yield* fake.emit("turn/completed", { turnId: call.commandId, terminal: "completed" });
+        yield* harness.takeEvent("turn.terminal");
+        const input = call.params.input as ReadonlyArray<{ readonly text?: string }>;
+        return input.some((part) => part.text?.includes("<scient_instructions>") === true);
+      });
+
+      assert.isTrue(yield* carriesAwareness(1));
+      // Manual compaction.
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
+      const compact = yield* fake.takeCall("session/compact");
+      yield* compaction(compact.commandId!, "completed", 1);
+      yield* harness.takeEvent("turn.terminal");
+      assert.isTrue(yield* carriesAwareness(3));
+      assert.isFalse(yield* carriesAwareness(4));
+      // An automatic compaction still in progress keeps the delivered awareness.
+      assert.isFalse(yield* carriesAwareness(5, (turnId) => compaction(turnId, "inProgress", 1)));
+      assert.isFalse(yield* carriesAwareness(6));
+      // A completed automatic compaction sends it again on the next turn.
+      assert.isFalse(yield* carriesAwareness(7, (turnId) => compaction(turnId, "completed", 1)));
+      assert.isTrue(yield* carriesAwareness(8));
+      assert.isFalse(yield* carriesAwareness(9));
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
   // SCIENT-FORK:END
@@ -916,12 +1051,20 @@ describe("MuseAdapterV2", () => {
       yield* fake.emit("turn/completed", {
         turnId: nativeId,
         terminal: "failed",
-        error: { message: "Provider rejected this turn" },
+        error: { message: "Provider rejected this turn: api_key=abc123" },
       });
       const terminal = yield* harness.takeEvent("turn.terminal");
       assert.strictEqual(terminal.status, "failed");
       assert.strictEqual(terminal.threadDisposition, "reusable");
-      assert.isNotNull(terminal.failure);
+      assert.strictEqual(
+        terminal.failure?.message,
+        "Provider rejected this turn: api_key=[REDACTED]",
+      );
+      assert.strictEqual(
+        harness.allEvents.findLast((event) => event.type === "provider_session.updated")
+          ?.providerSession.lastError,
+        terminal.failure?.message,
+      );
       assert.isTrue(
         harness.allEvents.some(
           (event) =>
@@ -991,16 +1134,33 @@ describe("MuseAdapterV2", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
-  it.effect(
-    "closes a newly opened host when native session registration returns another identity",
-    () =>
+  it.effect.each([
+    {
+      reason: "another identity",
+      method: "session/start",
+      sessionId: "unexpected-session",
+      initialNativeThreadId: undefined,
+      history: { items: [] },
+    },
+    {
+      reason: "an unavailable projection",
+      method: "session/resume",
+      sessionId: "saved-session",
+      initialNativeThreadId: "saved-session",
+      history: { items: null, mode: "none", noneReason: "projectionUnavailable" },
+    },
+  ])(
+    "closes a newly opened host when native session registration returns $reason",
+    ({ method, sessionId, initialNativeThreadId, history }) =>
       Effect.gen(function* () {
         const fake = yield* makeFakeMuse();
-        fake.queueResponse("session/start", {
-          session: { sessionId: "unexpected-session", modelId: MODEL, activeTurnId: null },
-          history: { items: [] },
+        fake.queueResponse(method, {
+          session: { sessionId, modelId: MODEL, activeTurnId: null },
+          history,
         });
-        const result = yield* makeHarness(fake).pipe(Effect.exit);
+        const result = yield* makeHarness(fake, INSTANCE_ID, initialNativeThreadId).pipe(
+          Effect.exit,
+        );
         assert.strictEqual(result._tag, "Failure");
         yield* Effect.promise(() => fake.host.exited);
         assert.strictEqual(fake.closeCount(), 1);
@@ -1582,6 +1742,11 @@ describe("MuseAdapterV2", () => {
         text: "Previous answer",
       };
       fake.setHistory([nativeItem]);
+      fake.queueResponse("session/resume", {
+        session: { sessionId: "saved-session", modelId: MODEL, activeTurnId: null },
+        viewCursor: "",
+        history: { items: null, mode: "none", noneReason: "excluded" },
+      });
       const harness = yield* makeHarness(fake, INSTANCE_ID, "saved-session");
       const resumed = yield* fake.takeCall("session/resume");
       assert.strictEqual(resumed.params.sessionId, "saved-session");
@@ -1751,6 +1916,178 @@ describe("MuseAdapterV2", () => {
       assert.strictEqual(terminal.status, "failed");
       assert.strictEqual(terminal.threadDisposition, "reusable");
       yield* startConversation(harness, fake, 2);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("reports a compaction rejected at admission on its own terminal", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      fake.queueResponse("session/compact", new Error("command rejected: run_active"));
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread));
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.status, "failed");
+      assert.strictEqual(terminal.threadDisposition, "reusable");
+      assert.include(terminal.failure?.message, "run_active");
+      yield* startConversation(harness, fake, 2);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("treats recovering an already ended turn as done", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
+      assert.strictEqual((yield* harness.takeEvent("turn.terminal")).status, "completed");
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: turn.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      yield* startConversation(harness, fake, 2);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("does not acknowledge Stop on an ended turn while a background subagent runs", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const harness = yield* makeHarness(fake);
+      const turn = yield* startConversation(harness, fake);
+      yield* fake.emit("item/started", {
+        turnId: turn.nativeId,
+        item: {
+          itemId: "background-child",
+          kind: "subagent",
+          revision: 1,
+          status: "inProgress",
+          turnId: turn.nativeId,
+          subagentId: "subagent-1",
+          controlStatus: "running",
+          childSessionId: "child-session-1",
+          objective: "Finish in the background",
+        },
+      });
+      yield* harness.takeEvent("app_thread.created");
+      yield* fake.emit("turn/completed", { turnId: turn.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      const stopped = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: turn.providerTurn.id,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.strictEqual(stopped._tag, "Failure");
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("ends a compaction whose item names the held wake as its run", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Deferred.succeed(offered, request) } },
+      );
+      const previous = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: previous.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      yield* fake.emit("turn/started", { turnId: "background-wake" });
+      yield* Deferred.await(offered);
+      yield* fake.emit("turn/completed", { turnId: "background-wake", terminal: "completed" });
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
+      yield* fake.emit("item/completed", {
+        item: {
+          itemId: "manual-compact",
+          kind: "compaction",
+          revision: 1,
+          status: "completed",
+          turnId: "background-wake",
+          outcome: "compacted",
+        },
+      });
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.runOrdinal, 2);
+      assert.strictEqual(terminal.status, "completed");
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("drops a held wake when Stop closes the compacting host", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Deferred.succeed(offered, request) } },
+      );
+      const previous = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: previous.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      yield* fake.emit("turn/started", { turnId: "background-wake" });
+      const continuation = yield* Deferred.await(offered);
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
+      const running = yield* harness.takeEvent(
+        "provider_turn.updated",
+        (event) => event.providerTurn.status === "running",
+      );
+      yield* harness.runtime.interruptTurn({
+        providerThread: harness.providerThread,
+        providerTurnId: running.providerTurn.id,
+        requestRuntimeRestart: true,
+      });
+      assert.isFalse(yield* harness.runtime.hasPendingBackgroundWork!);
+      const dispatched = yield* continuation.dispatchIfCurrent!(Effect.void);
+      assert.isTrue(Option.isNone(dispatched));
+    }).pipe(Effect.scoped, Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps a running wake held when Muse declines compaction", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakeMuse();
+      const offered =
+        yield* Deferred.make<ProviderContinuationRequests.ProviderContinuationRequest>();
+      const harness = yield* makeHarness(
+        fake,
+        INSTANCE_ID,
+        undefined,
+        undefined,
+        undefined,
+        runtimePolicy,
+        { continuationRequests: { offer: (request) => Deferred.succeed(offered, request) } },
+      );
+      const previous = yield* startConversation(harness, fake);
+      yield* fake.emit("turn/completed", { turnId: previous.nativeId, terminal: "completed" });
+      yield* harness.takeEvent("turn.terminal");
+      yield* fake.emit("turn/started", { turnId: "background-wake" });
+      yield* Deferred.await(offered);
+      fake.queueResponse("session/compact", new Error("command rejected: run_active"));
+      yield* harness.runtime.compactThread!(yield* turnInput(harness.providerThread, 2));
+      const terminal = yield* harness.takeEvent("turn.terminal");
+      assert.strictEqual(terminal.status, "failed");
+      assert.isTrue(yield* harness.runtime.hasPendingBackgroundWork!);
+      const stopped = yield* harness.runtime
+        .interruptTurn({
+          providerThread: harness.providerThread,
+          providerTurnId: terminal.providerTurnId,
+          requestRuntimeRestart: true,
+        })
+        .pipe(Effect.exit);
+      assert.strictEqual(stopped._tag, "Failure");
     }).pipe(Effect.scoped, Effect.provide(testLayer)),
   );
 

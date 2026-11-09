@@ -9,6 +9,7 @@ import { NodeHttpClient, NodeHttpServer } from "@effect/platform-node";
 import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -157,7 +158,7 @@ describe.runIf(ompQualifyBinary)("installed native OMP MCP authority", () => {
           const instanceId = ProviderInstanceId.make("native-mcp-authority");
           const { environment: isolated } = ompLiveInstance(root, {
             blockEgress: true,
-            baseEnv: { PATH: process.env.PATH ?? "" },
+            baseEnv: { PATH: (yield* HostProcess.Environment).PATH ?? "" },
           });
           const customModels = yield* makeOmpCustomModelsClientFactory(
             ompQualifyTarget,

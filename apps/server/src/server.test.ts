@@ -212,6 +212,7 @@ import {
   AntigravityInstallation,
   AntigravityInstallationError,
 } from "./provider/AntigravityInstallation.ts";
+import * as ProviderInstallation from "./provider/providerInstallation.ts";
 import { CodexInstallation } from "./provider/CodexInstallation.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -255,6 +256,8 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
+import * as AssetSigner from "./assets/AssetSigner.ts";
+import * as EnvironmentKeys from "./cloud/environmentKeys.ts";
 import * as SecretResolver from "./secrets/SecretResolver.ts";
 import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as PairingGrantStore from "./auth/PairingGrantStore.ts";
@@ -274,9 +277,9 @@ import * as ResourceAttribution from "./resourceTelemetry/ResourceAttribution.ts
 import * as ResourceTelemetry from "./resourceTelemetry/ResourceTelemetry.ts";
 import * as UsageService from "./usage/UsageService.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
-import * as Data from "effect/Data";
 import { registerAnalysisRpcTests } from "./scient/analysis/AnalysisRpcServerTests.ts";
 import { registerComputeRpcTests } from "./scient/compute/ComputeRpcServerTests.ts";
+import { ComputeRecipeNetwork } from "./scient/compute/ComputeRecipeSource.ts";
 import { registerMarkdownTransportTests } from "./scient/markdown/MarkdownTransportServerTests.ts";
 import {
   measureHttpGet,
@@ -1041,6 +1044,8 @@ const buildAppUnderTest = (options?: {
         // backed by this fixture's state directory, project store and provider registry.
         Layer.provide(ScientExtensionsLayerLive.pipe(Layer.provide(ProjectStoreV2.layer))),
         // SCIENT-FORK:END
+        // Provider installs run through T3's service, over the mocked installations below.
+        Layer.provide(ProviderInstallation.layer),
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ModelManifest.ModelManifest)({
@@ -1057,12 +1062,9 @@ const buildAppUnderTest = (options?: {
                 Effect.succeed(
                   makeManualOnlyProviderMaintenanceCapabilities({ provider, packageName: null }),
                 ),
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-              getProviderConnectionActionsForInstance: () => Effect.succeed(undefined),
-              // @effect-diagnostics-next-line effectSucceedWithVoid:off - This optional result requires undefined, not the wider void type.
-              getProviderManagedRuntimeActionsForInstance: () => Effect.succeed(undefined),
+              getProviderConnectionActionsForInstance: () => Effect.undefined,
+              getProviderManagedRuntimeActionsForInstance: () => Effect.undefined,
               getVoiceTranscriptCorrectionForInstance: () =>
-                // @effect-diagnostics-next-line effectSucceedWithVoid:off -- Exact optional return requires undefined, not void.
                 Effect.succeed<ProviderVoiceTranscriptCorrection | undefined>(undefined),
               setProviderManagedRuntimeSummary: () => Effect.succeed([]),
               setProviderMaintenanceActionState: () => Effect.succeed([]),
@@ -1269,6 +1271,9 @@ const buildAppUnderTest = (options?: {
         // SCIENT-FORK:START — Scient Accounts: provide synthetic accounts to all server harnesses.
         Layer.provide(AccountsTestkit.layer),
         // SCIENT-FORK:END
+        // SCIENT-FORK:START — Compute recipe updates come from GitHub; harnesses keep the shipped recipes.
+        Layer.provide(Layer.succeed(ComputeRecipeNetwork)(false)),
+        // SCIENT-FORK:END
         Layer.provide(ManagedPolicy.layerTest()),
         // The real resolver, reading this fixture's settings, so secret reloads stay exercised.
         Layer.provide(SecretResolver.layer.pipe(Layer.provide(serverSettingsLayer))),
@@ -1377,6 +1382,7 @@ const buildAppUnderTest = (options?: {
                 recoveryRequests: Stream.empty,
                 tunnelConnected: Stream.empty,
                 requestRecovery: () => Effect.void,
+                restartConnector: () => Effect.succeed(false),
                 withLinkStateLock: (effect) => effect,
                 ...options?.layers?.cloudManagedEndpointRuntime,
               }),
@@ -1435,6 +1441,7 @@ const buildAppUnderTest = (options?: {
           };
         }),
         Layer.provideMerge(makeAuthTestLayer()),
+        Layer.provideMerge(Layer.mergeAll(AssetSigner.layer, EnvironmentKeys.layer)),
         Layer.provideMerge(ServerSecretStore.layer),
         Layer.provide(workspaceAndProjectServicesLayer),
         // Reuse the same fixture owners for dependencies introduced by later layers.
@@ -1781,6 +1788,19 @@ const makeCloudEnvironmentHealthRequest = (input: {
   };
 };
 
+// Cloud configuration is read through Config and straight from process.env, so a test
+// that opts into the cloud route sets the real process environment. Returns the restore.
+const setProcessEnvironment = (values: Readonly<Record<string, string>>) => {
+  const previous = Object.keys(values).map((name) => [name, process.env[name]] as const);
+  Object.assign(process.env, values);
+  return () => {
+    for (const [name, value] of previous) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  };
+};
+
 const decodeCompactJwtPayload = <A>(token: string): A => {
   const encodedPayload = token.split(".")[1];
   if (!encodedPayload) {
@@ -1789,13 +1809,15 @@ const decodeCompactJwtPayload = <A>(token: string): A => {
   return JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as A;
 };
 
-class AuthenticationGetterError extends Data.TaggedError("AuthenticationGetterError")<{
-  readonly message: string;
-}> {}
+class AuthenticationGetterError extends Schema.TaggedError<AuthenticationGetterError>()(
+  "AuthenticationGetterError",
+  { message: Schema.String },
+) {}
 
-class TestHttpRequestError extends Data.TaggedError("TestHttpRequestError")<{
-  readonly cause: unknown;
-}> {}
+class TestHttpRequestError extends Schema.TaggedError<TestHttpRequestError>()(
+  "TestHttpRequestError",
+  { cause: Schema.Defect() },
+) {}
 
 const testRequestUrl = (input: Parameters<typeof fetch>[0]): string => {
   const value = input.toString();
@@ -3533,87 +3555,78 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect("rejects replayed cloud mint requests atomically", () => {
+    it.effect("rejects replayed cloud mint requests atomically", () =>
       // This is a cloud protocol regression test; opt the test process into
       // the otherwise-disabled D4 cloud route explicitly.
-      const previousCloudEnv = {
-        enabled: process.env.SCIENT_NEXT_CLOUD_ENABLED,
-        relay: process.env.T3CODE_RELAY_URL,
-        clerk: process.env.T3CODE_CLERK_PUBLISHABLE_KEY,
-        oauth: process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID,
-      };
-      const restoreCloudEnv = Effect.sync(() => {
-        for (const [name, value] of [
-          ["SCIENT_NEXT_CLOUD_ENABLED", previousCloudEnv.enabled],
-          ["T3CODE_RELAY_URL", previousCloudEnv.relay],
-          ["T3CODE_CLERK_PUBLISHABLE_KEY", previousCloudEnv.clerk],
-          ["T3CODE_CLERK_CLI_OAUTH_CLIENT_ID", previousCloudEnv.oauth],
-        ] as const) {
-          if (value === undefined) delete process.env[name];
-          else process.env[name] = value;
-        }
-      });
-      return Effect.gen(function* () {
-        process.env.SCIENT_NEXT_CLOUD_ENABLED = "true";
-        process.env.T3CODE_RELAY_URL = "https://relay.example.test";
-        process.env.T3CODE_CLERK_PUBLISHABLE_KEY = "pk_test_example";
-        process.env.T3CODE_CLERK_CLI_OAUTH_CLIENT_ID = "oauth_test";
-        yield* buildAppUnderTest();
-
-        const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
-          privateKeyEncoding: { format: "pem", type: "pkcs8" },
-          publicKeyEncoding: { format: "pem", type: "spki" },
-        });
-        const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
-        const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
-        const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
-          method: "POST",
-          headers: {
-            cookie: ownerCookie,
-            "content-type": "application/json",
-          },
-          body: jsonRequestBody({
-            relayUrl: "https://relay.example.test",
-            cloudUserId: "user_123",
-            environmentCredential: "t3env_test_credential",
-            cloudMintPublicKey: cloudKeyPair.publicKey,
-            endpointRuntime: null,
+      Effect.acquireUseRelease(
+        Effect.sync(() =>
+          setProcessEnvironment({
+            SCIENT_NEXT_CLOUD_ENABLED: "true",
+            T3CODE_RELAY_URL: "https://relay.example.test",
+            T3CODE_CLERK_PUBLISHABLE_KEY: "pk_test_example",
+            T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: "oauth_test",
           }),
-        });
-        assert.equal(relayConfigResponse.status, 200);
+        ),
+        () =>
+          Effect.gen(function* () {
+            yield* buildAppUnderTest();
 
-        const now = yield* DateTime.now;
-        const request = makeCloudMintCredentialRequest({
-          privateKey: cloudKeyPair.privateKey,
-          environmentId: testEnvironmentDescriptor.environmentId,
-          clientProofKeyThumbprint: "client-proof-key-thumbprint",
-          nonce: "cloud-mint-nonce-1",
-          issuedAt: DateTime.formatIso(now),
-          expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
-        });
-        const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
-        const postMint = () =>
-          fetchEffect(mintUrl, {
-            method: "POST",
-            headers: {
-              "content-type": "application/json",
-            },
-            body: jsonRequestBody(request),
-          });
+            const cloudKeyPair = NodeCrypto.generateKeyPairSync("ed25519", {
+              privateKeyEncoding: { format: "pem", type: "pkcs8" },
+              publicKeyEncoding: { format: "pem", type: "spki" },
+            });
+            const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+            const relayConfigUrl = yield* getHttpServerUrl("/api/connect/relay-config");
+            const relayConfigResponse = yield* fetchEffect(relayConfigUrl, {
+              method: "POST",
+              headers: {
+                cookie: ownerCookie,
+                "content-type": "application/json",
+              },
+              body: jsonRequestBody({
+                relayUrl: "https://relay.example.test",
+                cloudUserId: "user_123",
+                environmentCredential: "t3env_test_credential",
+                cloudMintPublicKey: cloudKeyPair.publicKey,
+                endpointRuntime: null,
+              }),
+            });
+            assert.equal(relayConfigResponse.status, 200);
 
-        const firstResponse = yield* postMint();
-        const replayResponse = yield* postMint();
-        const replayBody = yield* responseJsonEffect<{
-          readonly _tag?: string;
-          readonly message?: string;
-        }>(replayResponse);
+            const now = yield* DateTime.now;
+            const request = makeCloudMintCredentialRequest({
+              privateKey: cloudKeyPair.privateKey,
+              environmentId: testEnvironmentDescriptor.environmentId,
+              clientProofKeyThumbprint: "client-proof-key-thumbprint",
+              nonce: "cloud-mint-nonce-1",
+              issuedAt: DateTime.formatIso(now),
+              expiresAt: DateTime.formatIso(DateTime.add(now, { minutes: 5 })),
+            });
+            const mintUrl = yield* getHttpServerUrl("/api/t3-connect/mint-credential");
+            const postMint = () =>
+              fetchEffect(mintUrl, {
+                method: "POST",
+                headers: {
+                  "content-type": "application/json",
+                },
+                body: jsonRequestBody(request),
+              });
 
-        assert.equal(firstResponse.status, 200);
-        assert.equal(replayResponse.status, 409);
-        assert.equal(replayBody._tag, "EnvironmentHttpConflictError");
-        assert.equal(replayBody.message, "Cloud mint request was already consumed.");
-      }).pipe(Effect.ensuring(restoreCloudEnv), Effect.provide(NodeHttpServerTest));
-    });
+            const firstResponse = yield* postMint();
+            const replayResponse = yield* postMint();
+            const replayBody = yield* responseJsonEffect<{
+              readonly _tag?: string;
+              readonly message?: string;
+            }>(replayResponse);
+
+            assert.equal(firstResponse.status, 200);
+            assert.equal(replayResponse.status, 409);
+            assert.equal(replayBody._tag, "EnvironmentHttpConflictError");
+            assert.equal(replayBody.message, "Cloud mint request was already consumed.");
+          }),
+        (restore) => Effect.sync(restore),
+      ).pipe(Effect.provide(NodeHttpServerTest)),
+    );
 
     it.effect("serves the documented T3 Connect mint credential endpoint", () =>
       Effect.gen(function* () {
@@ -6129,6 +6142,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             generateReviewGuide: (): never => {
               throw new Error("Unexpected review guide generation");
             },
+            generateTranscriptionPostProcessing: (): never => {
+              throw new Error("Unexpected transcript cleanup");
+            },
             generatePrContent: (): never => {
               throw new Error("Unexpected generation");
             },
@@ -6341,6 +6357,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               generateReviewGuide: (): never => {
                 throw new Error("Unexpected review guide generation");
               },
+              generateTranscriptionPostProcessing: (): never => {
+                throw new Error("Unexpected transcript cleanup");
+              },
               generatePrContent: (): never => {
                 throw new Error("Unexpected generation");
               },
@@ -6447,6 +6466,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               },
               generateReviewGuide: (): never => {
                 throw new Error("Unexpected review guide generation");
+              },
+              generateTranscriptionPostProcessing: (): never => {
+                throw new Error("Unexpected transcript cleanup");
               },
               generatePrContent: (): never => {
                 throw new Error("Unexpected generation");
@@ -6680,6 +6702,9 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
             },
             generateReviewGuide: (): never => {
               throw new Error("Unexpected review guide generation");
+            },
+            generateTranscriptionPostProcessing: (): never => {
+              throw new Error("Unexpected transcript cleanup");
             },
             generatePrContent: (): never => {
               throw new Error("Unexpected generation");
@@ -10008,24 +10033,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
                 const cookie = yield* getAuthenticatedSessionCookieHeader();
                 const headers = { cookie, "content-type": "application/json" };
                 const queueItemId = "qitem_httpclone";
-                const enqueueResponse = yield* fetchEffect(
-                  yield* getHttpServerUrl("/api/scient/thread-queue/v2/enqueue"),
-                  {
-                    method: "POST",
-                    headers,
-                    body: jsonRequestBody({
-                      threadId,
-                      queueItemId,
-                      text: "Keep the captured skills",
-                      attachments: [],
-                      selectedScientSkillNames: ["analysis"],
-                      modelSelection: defaultModelSelection,
-                    }),
-                  },
+                yield* app.v2.orchestrator.dispatch({
+                  type: "legacy-queue.import",
+                  commandId: CommandId.make("queue-http-clone-held"),
+                  threadId,
+                  queueItemId,
+                  messageId: MessageId.make("queue-http-clone-held-message"),
+                  text: "Keep the captured skills",
+                  attachments: [],
+                  selectedScientSkillNames: ["analysis"],
+                  modelSelection: defaultModelSelection,
+                  createdAt: DateTime.makeUnsafe("2026-01-01T00:00:00.000Z"),
+                });
+                const listResponse = yield* fetchEffect(
+                  yield* getHttpServerUrl("/api/scient/thread-queue/v2/list"),
+                  { method: "POST", headers, body: jsonRequestBody({ threadId }) },
                 );
-                assert.equal(enqueueResponse.status, 200);
+                assert.equal(listResponse.status, 200);
                 const admitted = yield* decodeQueueSnapshot(
-                  yield* responseJsonEffect<unknown>(enqueueResponse),
+                  yield* responseJsonEffect<unknown>(listResponse),
                 );
                 assert.equal(admitted.items.length, 1);
                 assert.deepEqual(admitted.items[0]?.selectedScientSkillNames, ["analysis"]);

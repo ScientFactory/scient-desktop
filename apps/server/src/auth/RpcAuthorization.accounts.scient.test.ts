@@ -29,7 +29,7 @@ it.effect(
           request: () => Effect.die("not reached"),
           continue: () => Effect.die("not reached"),
           list: () => Effect.die("not reached"),
-          universitySignIn: () => Effect.die("not reached"),
+          signInAsPerson: () => Effect.die("not reached"),
           universityBrowse: () => Effect.die("not reached"),
           universities: () => Effect.die("not reached"),
         },

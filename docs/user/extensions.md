@@ -40,6 +40,26 @@ matching API-key account is saved in **Settings → Accounts & secrets**. Updati
 account's key updates the service too. Account access set to **Off**, or the global
 **Agent access** switch, prevents its use.
 
+### GitHub
+
+GitHub uses the account Source Control already has, so one sign-in serves both.
+
+- When Source Control has a GitHub account, Scient adds GitHub on its own, for all
+  projects. Remove it to stop that: it is not added again until you add it yourself.
+- **Add GitHub** offers **Connect as** that account. When Source Control has several
+  GitHub accounts, pick one; Source Control's own choice comes first.
+- Without one, **Sign in with GitHub** shows a code to copy and opens GitHub's
+  device page in Scient's browser. Enter the code there and approve Scient for
+  GitHub. Source Control uses the same sign-in.
+- Scient for GitHub reaches only the accounts and organizations it is installed
+  on. **Install on an organization** adds one.
+- **Use a token instead** adds GitHub with a personal access token.
+
+The connector stays with the account it was connected as. If Source Control no
+longer has that account, GitHub shows **Account missing** until you sign in as
+that account again; it never switches to another account. Scient sends this
+credential only to GitHub's own MCP server.
+
 Scient holds the sign-in or key. Every agent that Scient runs can use the
 service through Scient, and agents never receive your credentials: they are
 not written into agent configuration, environment variables, or transcripts.
@@ -169,3 +189,6 @@ computer, and the sign-in page returns to that environment when you finish.
 - Each service can be connected once per environment. To use a different
   account, use **Reconnect** instead of adding it again.
 - Plugin bundles cannot contain code, local servers, or interface panels.
+- Signing in with Scient for GitHub does not let `git clone` reach private
+  repositories; cloning still uses your git credential helper, such as
+  `gh auth setup-git`.

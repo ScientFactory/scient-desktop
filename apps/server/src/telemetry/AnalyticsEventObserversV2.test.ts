@@ -163,18 +163,15 @@ function analyticsFixture() {
         return () => listeners.delete(listener);
       }),
     flush: Effect.void,
-    setConsent: (consent) =>
-      Effect.promise(async () => {
-        status = { ...status, consent };
-        await advance();
-        return status;
-      }),
-    deleteData: Effect.promise(async () => {
-      await advance();
-      return true;
-    }),
   });
-  return { service, events };
+  // A consent change or a deletion moves observers across a collection boundary.
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.promise(async () => {
+      status = { ...status, consent };
+      await advance();
+    });
+  const deleteData = Effect.promise(advance);
+  return { service, events, setConsent, deleteData };
 }
 
 describe("native V2 analytics", () => {
@@ -239,7 +236,7 @@ describe("native V2 analytics", () => {
                   streamChanges: Stream.empty,
                 }),
                 Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.sync(() => undefined),
+                  getInstance: () => Effect.undefined,
                 }),
                 Layer.mock(ProjectionStoreV2)({}),
               ),
@@ -248,7 +245,7 @@ describe("native V2 analytics", () => {
           );
           yield* Deferred.await(initialEntered);
           latest = 10;
-          const control = yield* fixture.service.setConsent("product").pipe(Effect.forkScoped);
+          const control = yield* fixture.setConsent("product").pipe(Effect.forkScoped);
           yield* Deferred.await(boundaryEntered);
           yield* Deferred.succeed(releaseInitial, undefined);
           yield* Fiber.join(launch);
@@ -271,7 +268,7 @@ describe("native V2 analytics", () => {
     Effect.scoped(
       Effect.gen(function* () {
         const fixture = analyticsFixture();
-        yield* fixture.service.setConsent("off");
+        yield* fixture.setConsent("off");
         const queue = yield* Queue.unbounded<OrchestrationV2StoredEvent>();
         const recorded = yield* Deferred.make<void>();
         let latest = 0;
@@ -302,13 +299,13 @@ describe("native V2 analytics", () => {
                 streamChanges: Stream.empty,
               }),
               Layer.mock(ProviderInstanceRegistry)({
-                getInstance: () => Effect.sync(() => undefined),
+                getInstance: () => Effect.undefined,
               }),
               Layer.mock(ProjectionStoreV2)({}),
             ),
           ),
         );
-        yield* fixture.service.setConsent("product");
+        yield* fixture.setConsent("product");
         for (const sequence of [1, 2]) {
           latest = sequence;
           yield* Queue.offer(queue, {
@@ -380,7 +377,7 @@ describe("native V2 analytics", () => {
                   streamChanges: Stream.empty,
                 }),
                 Layer.mock(ProviderInstanceRegistry)({
-                  getInstance: () => Effect.sync(() => undefined),
+                  getInstance: () => Effect.undefined,
                 }),
                 Layer.mock(ProjectionStoreV2)({
                   getThreadShell: () =>
@@ -416,15 +413,15 @@ describe("native V2 analytics", () => {
             },
           });
           yield* Deferred.await(entered);
-          if (boundary === "consent") yield* fixture.service.setConsent("off");
+          if (boundary === "consent") yield* fixture.setConsent("off");
           latest = 2;
           yield* Queue.offer(queue, {
             sequence: 2,
             commandId: null,
             event: { ...runEvent("running"), type: "run.created", driver },
           });
-          if (boundary === "consent") yield* fixture.service.setConsent("product");
-          else yield* fixture.service.deleteData;
+          if (boundary === "consent") yield* fixture.setConsent("product");
+          else yield* fixture.deleteData;
           yield* Deferred.succeed(release, undefined);
           yield* Deferred.await(fenced);
           latest = 3;
@@ -537,15 +534,15 @@ describe("native V2 analytics", () => {
       return Effect.gen(function* () {
         const observer = yield* makeV2AnalyticsObservers;
         const context = { driver: ProviderDriverKind.make("droid") };
-        yield* fixture.service.setConsent("off");
+        yield* fixture.setConsent("off");
         yield* observer.event(steerEvent(), context);
-        yield* fixture.service.setConsent("product");
+        yield* fixture.setConsent("product");
         // Held release may have fresh timestamps and a reconstructed `steer` intent.
         yield* observer.event(steerEvent("private-steer", "steer", true), context);
         const unknown = steerEvent("private-unknown");
         Object.defineProperty(unknown.payload, "inputAlreadyAdmitted", { value: undefined });
         yield* observer.event(unknown, context);
-        yield* fixture.service.deleteData;
+        yield* fixture.deleteData;
         yield* observer.event(steerEvent("private-steer", "steer", true), context);
         expect(fixture.events).toEqual([]);
         yield* observer.event(steerEvent("private-fresh-steer"), context);
@@ -579,9 +576,9 @@ describe("native V2 analytics", () => {
     return Effect.gen(function* () {
       const observer = yield* makeV2AnalyticsObservers;
       const admission: OrchestrationV2DomainEvent = { ...runEvent("running"), type: "run.created" };
-      yield* fixture.service.setConsent("off");
+      yield* fixture.setConsent("off");
       yield* observer.event(admission);
-      yield* fixture.service.setConsent("product");
+      yield* fixture.setConsent("product");
       yield* observer.event(admission, undefined, 0);
       expect(fixture.events).toEqual([]);
       yield* observer.event(
@@ -729,15 +726,15 @@ describe("native V2 analytics", () => {
       return Effect.gen(function* () {
         const observer = yield* makeV2AnalyticsObservers;
         yield* observer.event(runEvent("running"));
-        yield* fixture.service.setConsent("off");
-        yield* fixture.service.setConsent("product");
+        yield* fixture.setConsent("off");
+        yield* fixture.setConsent("product");
         yield* observer.event(runEvent("completed"));
         expect(fixture.events).toEqual([]);
         yield* observer.event({
           ...runEvent("running"),
           payload: { ...run, id: RunId.make("second") },
         });
-        yield* fixture.service.deleteData;
+        yield* fixture.deleteData;
         yield* observer.event({
           ...runEvent("completed"),
           payload: { ...run, id: RunId.make("second"), status: "completed" },

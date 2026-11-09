@@ -19,10 +19,7 @@ import * as Layer from "effect/Layer";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import { ContextHandoffPolicyOverride } from "./ScientContextHandoffPolicy.ts";
-import {
-  contextHistoryCandidate,
-  type ContextHistoryCandidate,
-} from "./scient-fork/ContextHistoryCandidates.ts";
+import type { ContextHistoryCandidate } from "./scient-fork/ContextHistoryCandidates.ts";
 import { ProjectionStoreThreadNotFoundError } from "./ProjectionStore.ts";
 
 const layerTest = ContextHandoffService.layer.pipe(Layer.provide(IdAllocator.layer));
@@ -43,9 +40,15 @@ it.layer(layerTest)("ContextHandoffService resource contract", (it) => {
           coveredRunOrdinals: { from: 1, to: 1 },
           strategy: "full_thread_summary",
           items: [
-            contextHistoryCandidate(
-              importedItem({ role: "user", id: "metadata", text: "Retained", ordinal: 0 }),
-            ),
+            {
+              sourceOnly: true,
+              id: TurnItemId.make("turn-item:metadata"),
+              threadId: ThreadId.make("thread:legacy-context"),
+              runId: null,
+              nodeId: null,
+              type: "user_message",
+              partialSnapshot: false,
+            } satisfies ContextHistoryCandidate,
           ],
           createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00Z"),
         })
@@ -360,6 +363,36 @@ it.effect("caps the side chat context block without summarizing discarded parent
     });
     assert.isTrue(framingOnly.startsWith("You are in a side chat beside the main thread."));
     assert.notInclude(framingOnly, "Main thread activity");
+
+    const multiFilePatch = ContextHandoffService.makeSideChatContext({
+      parentThreadId,
+      digest: [
+        {
+          id: TurnItemId.make("turn-item:patch"),
+          threadId: parentThreadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 60,
+          status: "completed",
+          title: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: DateTime.makeUnsafe(0),
+          type: "file_change",
+          fileName: "src/a.ts",
+          changes: [
+            { operation: "update", path: "src/a.ts" },
+            { operation: "add", path: "src/b.ts" },
+            { operation: "update", path: "src/new.ts", oldPath: "src/old.ts" },
+          ],
+        },
+      ],
+    });
+    assert.include(multiFilePatch, "- File change: src/a.ts, src/b.ts, src/new.ts");
   }).pipe(Effect.provide(layerTest)),
 );
 

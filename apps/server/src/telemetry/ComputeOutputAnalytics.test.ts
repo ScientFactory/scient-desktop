@@ -15,16 +15,14 @@ const fixture = () => {
       }),
     status: Effect.sync(() => status),
     collectionEpoch: Effect.sync(() => epoch),
-    setConsent: (consent) =>
-      Effect.sync(() => {
-        status = { available: true, consent };
-        epoch += 1;
-        return status;
-      }),
     flush: Effect.void,
-    deleteData: Effect.succeed(true),
   });
-  return { events, service };
+  const setConsent = (consent: AnalyticsStatus["consent"]) =>
+    Effect.sync(() => {
+      status = { available: true, consent };
+      epoch += 1;
+    });
+  return { events, service, setConsent };
 };
 
 describe("interactive output analytics", () => {
@@ -43,10 +41,16 @@ describe("interactive output analytics", () => {
     })),
   )("$caseTitle", ({ scenario }) => {
     const f = fixture();
+    const values: readonly boolean[] = scenario.retained;
     return Effect.gen(function* () {
       const observe = yield* makeComputeOutputAnalytics;
       yield* observe({ key: "private-id", phase: "started", startedAt: 100 });
       yield* observe({ key: "private-id", phase: "started", startedAt: 200 });
+      yield* observe({
+        key: "private-id",
+        phase: "coverage",
+        capture: { coverage: "complete", rejectedCount: 0 },
+      });
       for (const retained of scenario.retained)
         yield* observe({ key: "private-id", phase: "output", retained });
       yield* observe({
@@ -59,7 +63,12 @@ describe("interactive output analytics", () => {
       expect(f.events).toEqual([
         {
           name: "scient.operation.started",
-          properties: { operationKind: "compute-artifact", trigger: "other" },
+          properties: {
+            operationKind: "compute-artifact",
+            trigger: "other",
+            captureSchemaVersion: 2,
+            captureSource: "interactive",
+          },
         },
         {
           name: `scient.operation.${scenario.expected}`,
@@ -68,6 +77,19 @@ describe("interactive output analytics", () => {
             trigger: "other",
             durationMs: 300,
             failureClass: "unknown",
+            captureSchemaVersion: 2,
+            captureSource: "interactive",
+            captureCoverage: "complete",
+            captureOutcome: values.includes(false)
+              ? values.includes(true)
+                ? "partial"
+                : "failed"
+              : values.includes(true)
+                ? "retained"
+                : "none",
+            captureReason: values.includes(false) ? "persistence-failed" : "none",
+            retainedOutputCount: scenario.retained.filter(Boolean).length,
+            rejectedOutputCount: scenario.retained.filter((value) => !value).length,
           },
         },
       ]);
@@ -78,19 +100,46 @@ describe("interactive output analytics", () => {
     const f = fixture();
     return Effect.gen(function* () {
       const observe = yield* makeComputeOutputAnalytics;
-      yield* f.service.setConsent("off");
+      yield* f.setConsent("off");
       yield* observe({ key: "old", phase: "started", startedAt: 100 });
-      yield* f.service.setConsent("product");
+      yield* f.setConsent("product");
       yield* observe({ key: "old", phase: "output", retained: true });
       yield* observe({ key: "old", phase: "finished" });
       yield* observe({ key: "reset", phase: "started", startedAt: 100 });
-      yield* f.service.setConsent("off");
-      yield* f.service.setConsent("product");
+      yield* f.setConsent("off");
+      yield* f.setConsent("product");
       yield* observe({ key: "reset", phase: "output", retained: true });
       yield* observe({ key: "reset", phase: "finished" });
       expect(f.events.map((event) => event.name)).toEqual(["scient.operation.started"]);
     }).pipe(Effect.provideService(AnalyticsService, f.service));
   });
+
+  it.effect.each([false, true])(
+    "keeps partial scan coverage separate from retention (%s)",
+    (retained) => {
+      const f = fixture();
+      return Effect.gen(function* () {
+        const observe = yield* makeComputeOutputAnalytics;
+        yield* observe({ key: "synthetic", phase: "started", startedAt: 100 });
+        yield* observe({
+          key: "synthetic",
+          phase: "coverage",
+          capture: { coverage: "partial", coverageReason: "scan-depth-limit", rejectedCount: 0 },
+        });
+        if (retained) yield* observe({ key: "synthetic", phase: "output", retained: true });
+        yield* observe({ key: "synthetic", phase: "finished", finishedAt: 200 });
+        expect(f.events.at(-1)).toMatchObject({
+          name: retained ? "scient.operation.completed" : "scient.operation.skipped",
+          properties: {
+            captureOutcome: retained ? "retained" : "unobserved",
+            captureCoverage: "partial",
+            captureReason: "scan-depth-limit",
+            rejectedOutputCount: 0,
+          },
+        });
+      }).pipe(Effect.provideService(AnalyticsService, f.service));
+    },
+  );
 
   it.effect(
     "bounds active correlation and coalesces repeated updates without dropping active starts",

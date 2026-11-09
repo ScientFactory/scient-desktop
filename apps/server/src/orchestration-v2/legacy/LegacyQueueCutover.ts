@@ -230,9 +230,10 @@ export const cutOverLegacyQueues = Effect.gen(function* () {
     }
     pending.push(threadId);
   }
-  const files = yield* Effect.tryPromise(() =>
-    discoverLegacyQueueThreads(config.stateDir, migrated),
-  );
+  const files = yield* Effect.tryPromise({
+    try: () => discoverLegacyQueueThreads(config.stateDir, migrated),
+    catch: (cause) => new QueueError({ message: String(cause) }),
+  });
   const threadIds = new Set([...pending, ...files]);
   let imported = 0;
   for (const threadId of threadIds) {
