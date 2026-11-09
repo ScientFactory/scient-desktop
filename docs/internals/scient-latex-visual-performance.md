@@ -205,11 +205,10 @@ document on every transaction or frame:
   moved the blocks read after it, misplacing whole pages until the next pass.
 
 Scrolling the 61-page synthetic manuscript at 4× CPU throttle, these took long
-frames from about 13 s to 3–5 s per 15 s, and at 1× from 5.5 s to under 0.4 s.
+frames from about 13 s to about 1 s per 15 s, and at 1× from about 4 s to none.
 
-Inserting or removing any top-level block still restyles every block's subtree
-(about 18,000 elements in that manuscript, about 50 ms at 1×). Chromium reports
-the blocks as affected by `:has()`. Deleting the app's `:has()` rules in place cut
-it to 18 ms, and deleting sibling and positional rules as well to 8 ms. The
-Tailwind variants that compile to `X:is(:where(G):has(A) *)` also make each
-rendered PDF page restyle the whole app.
+Inserting or removing a top-level block still restyles every block Chromium
+marks as affected by `:has()`, up to about 4,000 elements in that manuscript. The
+sibling rules `p:has(+ .node-latexDisplayMath)` and
+`:is(h4, h5)[data-latex-command]:has(+ p)` cause it: removing them cut the long
+frames of showing the document's tab from about 5.5 s to about 3.2 s at 4×.
