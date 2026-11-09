@@ -386,7 +386,7 @@ function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
       <SettingsSearchTarget id={searchableSetting("extensions").id} className="outline-none">
         <ExtensionsTopBar tab="discover" kind={kind}>
           <span className="flex w-full items-center gap-2 sm:w-auto">
-            {showsKind(kind, "plugins") ? <AddYourOwn /> : null}
+            <AddYourOwn kind={kind} />
             <SearchField
               label={kind === "skills" ? "Search skills" : "Search plugins"}
               value={search}
@@ -400,7 +400,7 @@ function Discover({ kind }: { readonly kind: ExtensionKind | undefined }) {
           {kind === "skills" ? null : <DiscoverSearchResults query={query} kind={kind} />}
           {showsKind(kind, "plugins") ? <ProviderStoreShelves query={query} /> : null}
           {showsKind(kind, "skills") ? <SkillSearchResults query={query} /> : null}
-          {showsKind(kind, "plugins") ? <AddYourOwn variant="link" /> : null}
+          <AddYourOwn variant="link" kind={kind} />
         </>
       ) : (
         <DiscoverHome kind={kind} />

@@ -7,6 +7,8 @@ export type OperationCapability =
   | "documents:build"
   | "compute"
   | "skills:read"
+  /** Save and read the user's own (personal) skills. */
+  | "skills:write"
   | "sources:read"
   | "sources:write"
   /** Read-only access to threads in the calling thread's project. */

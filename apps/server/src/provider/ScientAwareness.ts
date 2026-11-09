@@ -50,7 +50,7 @@ export const SCIENT_OVERLEAF_AWARENESS = buildScientOverleafAwareness(
 
 /** Included when this provider can receive turn-scoped Scient skills. */
 const buildScientSkillsAwareness = (tools: ScientToolProjection): string => `## Scient skills
-Scient skills are instructions the user manages in Scient, separate from your provider's own skills. On a substantive task, follow this turn's Scient skill scope note; without one, call \`${tools.name("scient_skills_list")}\`. Load a skill with \`${tools.name("scient_skill_load")}\` before you follow it; load one the user selected directly.${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Skills give guidance only and grant no tools or permissions.`;
+Scient skills are instructions the user manages in Scient, separate from your provider's own skills. On a substantive task, follow this turn's Scient skill scope note; without one, call \`${tools.name("scient_skills_list")}\`. Load a skill with \`${tools.name("scient_skill_load")}\` before you follow it; load one the user selected directly. Save a skill the user keeps with \`${tools.name("scient_skill_save")}\`, not in your provider's own skills folder.${tools.deferred ? " If these tools are deferred, find their exact names through `ToolSearch` first." : ""} Skills give guidance only and grant no tools or permissions.`;
 
 export const SCIENT_SKILLS_AWARENESS = buildScientSkillsAwareness(CANONICAL_SCIENT_TOOL_PROJECTION);
 

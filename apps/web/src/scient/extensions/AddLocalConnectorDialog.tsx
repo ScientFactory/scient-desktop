@@ -8,9 +8,12 @@ import type {
   LocalBundleInspection,
   LocalEnvironmentInput,
   LocalImportableServer,
+  ImportableSkill,
+  PersonalSkillCandidate,
+  PersonalSkillSource,
 } from "@t3tools/contracts";
 import { VaultSecretRef } from "@t3tools/contracts";
-import { PlusIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
@@ -27,9 +30,20 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
 import { readLocalApi } from "../../localApi";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { toastManager } from "../../components/ui/toast";
+import { Textarea } from "../../components/ui/textarea";
+import {
+  addPersonalSkills,
+  inspectPersonalSkills,
+  listImportableSkills,
+  undoPersonalSkill,
+} from "../skills/scientSkillsState";
+import { finishSkillPrompt, useSkillAgentChat } from "../skills/skillAgentChat";
+import { canAddCandidate, ImportableSkillRows, SkillCandidateRows } from "./AddSkillsRows";
 import { commandFailureMessage, ErrorNote } from "./ExtensionsFeedback";
 import {
   addConnector,
@@ -38,7 +52,7 @@ import {
   listImportableConnectors,
   testConnector,
 } from "./extensionsState";
-import { entryName, splitCommandLine } from "./extensionsView";
+import { entryName, type ExtensionKind, splitCommandLine } from "./extensionsView";
 import {
   initialAnswers,
   LocalSetupFields,
@@ -61,6 +75,12 @@ type Step =
   | { readonly name: "plugin"; readonly path: string; readonly displayName: string }
   | { readonly name: "command" }
   | {
+      readonly name: "skills";
+      readonly stagingId: string;
+      readonly sourceLabel: string;
+      readonly candidates: ReadonlyArray<PersonalSkillCandidate>;
+    }
+  | {
       readonly name: "check";
       readonly connector: ConnectorSummary;
       readonly result: ConnectorTestResult | null;
@@ -68,6 +88,8 @@ type Step =
 
 const VARIABLE_NAME = /^[A-Za-z_][A-Za-z0-9_]{0,127}$/;
 const WEB_ADDRESS = /^https?:\/\//i;
+/** A path on that computer: absolute, home-relative, relative, or a Windows drive or share. */
+const LOCAL_PATH = /^(?:\/|~|\.{1,2}[\\/]|[A-Za-z]:[\\/]|\\\\)/u;
 
 /** An error as a whole and as one short line. */
 interface Failure {
@@ -182,6 +204,7 @@ export function AddLocalConnectorDialog({
   environmentId,
   entry,
   onWebAddress,
+  kind,
 }: {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
@@ -189,6 +212,8 @@ export function AddLocalConnectorDialog({
   readonly entry: DiscoverEntry | null;
   /** A pasted `https://` address: a connector that runs online, added by URL. */
   readonly onWebAddress?: (url: string) => void;
+  /** On the Skills tab, other agents' skills are offered instead of their servers. */
+  readonly kind?: ExtensionKind | undefined;
 }) {
   const formId = useId();
   const pkg = entry?.localPackage;
@@ -204,6 +229,15 @@ export function AddLocalConnectorDialog({
   const [reading, setReading] = useState(false);
   const listImportable = useAtomCommand(listImportableConnectors, { reportFailure: false });
   const [importable, setImportable] = useState<ReadonlyArray<LocalImportableServer>>([]);
+  const skillsFirst = kind === "skills";
+  const inspectSkills = useAtomCommand(inspectPersonalSkills, { reportFailure: false });
+  const addSkills = useAtomCommand(addPersonalSkills, { reportFailure: false });
+  const undoSkill = useAtomCommand(undoPersonalSkill, { reportFailure: false });
+  const listSkills = useAtomCommand(listImportableSkills, { reportFailure: false });
+  const [importableSkills, setImportableSkills] = useState<ReadonlyArray<ImportableSkill>>([]);
+  const [showImports, setShowImports] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const startChat = useSkillAgentChat(environmentId);
   const [answers, setAnswers] = useState<Record<string, SetupAnswer>>(() =>
     entry ? initialAnswers(packageFields(entry), accounts) : {},
   );
@@ -223,21 +257,130 @@ export function AddLocalConnectorDialog({
   useEffect(() => {
     if (pkg !== undefined) return;
     let live = true;
-    void listImportable({ environmentId, input: {} }).then((result) => {
-      if (live && result._tag === "Success") setImportable(result.value.servers);
-    });
+    if (skillsFirst) {
+      void listSkills({ environmentId, input: {} }).then((result) => {
+        if (live && result._tag === "Success") setImportableSkills(result.value.skills);
+      });
+    } else {
+      void listImportable({ environmentId, input: {} }).then((result) => {
+        if (live && result._tag === "Success") setImportable(result.value.servers);
+      });
+    }
     return () => {
       live = false;
     };
-  }, [environmentId, listImportable, pkg]);
+  }, [environmentId, listImportable, listSkills, pkg, skillsFirst]);
 
+  /** Skills come first: a source that holds none falls through to connectors and plugins. */
+  const readSkills = async (source: PersonalSkillSource) => {
+    const result = await inspectSkills({ environmentId, input: { source } });
+    if (result._tag !== "Success") {
+      setError(commandFailureMessage(result), "Scient could not use that.");
+      return "failed" as const;
+    }
+    if (result.value.kind === "none") return "none" as const;
+    setStep({
+      name: "skills",
+      stagingId: result.value.stagingId,
+      sourceLabel: result.value.sourceLabel,
+      candidates: result.value.candidates,
+    });
+    return "skills" as const;
+  };
+
+  const addSkillCandidates = async (
+    stagingId: string,
+    candidates: ReadonlyArray<PersonalSkillCandidate>,
+    busyKey: string,
+  ) => {
+    setBusy(busyKey);
+    setError(null);
+    const result = await addSkills({
+      environmentId,
+      input: { stagingId, keys: candidates.map((candidate) => candidate.key) },
+    });
+    setBusy(null);
+    if (result._tag !== "Success") {
+      setError(commandFailureMessage(result), "Scient could not add it.");
+      return;
+    }
+    onOpenChange(false);
+    const [only] = result.value.added;
+    toastManager.add(
+      result.value.added.length === 1 && only !== undefined
+        ? {
+            type: "success",
+            title: `Added ${only}`,
+            description: "It is on for every agent from your next message.",
+            actionProps: {
+              children: "Undo",
+              onClick: () => void undoSkill({ environmentId, input: { name: only } }),
+            },
+          }
+        : {
+            type: "success",
+            title: `Added ${result.value.added.length} skills`,
+            description: "They are on for every agent from your next message.",
+          },
+    );
+  };
+
+  const finishWithAgent = async (candidate: PersonalSkillCandidate, sourceLabel: string) => {
+    if (!startChat) return;
+    if (await startChat(finishSkillPrompt(candidate, sourceLabel))) onOpenChange(false);
+    else setError("Scient could not open a new chat.");
+  };
+
+  const importSkill = async (skill: ImportableSkill) => {
+    setBusy(`${skill.app}:${skill.folder}`);
+    setError(null);
+    const result = await inspectSkills({
+      environmentId,
+      input: { source: { type: "path", path: skill.folder } },
+    });
+    setBusy(null);
+    if (result._tag !== "Success" || result.value.kind === "none") {
+      setError(
+        result._tag === "Success" ? "That is no longer a skill." : commandFailureMessage(result),
+        "Scient could not use that.",
+      );
+      return;
+    }
+    const [candidate, ...others] = result.value.candidates;
+    if (candidate && others.length === 0 && canAddCandidate(candidate)) {
+      await addSkillCandidates(result.value.stagingId, [candidate], `${skill.app}:${skill.folder}`);
+      return;
+    }
+    setStep({
+      name: "skills",
+      stagingId: result.value.stagingId,
+      sourceLabel: result.value.sourceLabel,
+      candidates: result.value.candidates,
+    });
+  };
+
+  /** One box takes a path, a web address, or a skill's text pasted in. */
   const readPath = async (candidate: string) => {
     const trimmed = candidate.trim();
     if (trimmed.length === 0) return;
-    if (WEB_ADDRESS.test(trimmed) && onWebAddress) return onWebAddress(trimmed);
+    const isWeb = WEB_ADDRESS.test(trimmed) && !/\s/u.test(trimmed);
+    const isPath = !isWeb && !trimmed.includes("\n") && LOCAL_PATH.test(trimmed);
     setPath(trimmed);
     setReading(true);
     setError(null);
+    if (!isWeb && !isPath) {
+      await readSkills({ type: "text", text: trimmed });
+      return setReading(false);
+    }
+    const skills = await readSkills(
+      isWeb ? { type: "url", url: trimmed } : { type: "path", path: trimmed },
+    );
+    if (skills !== "none") return setReading(false);
+    if (isWeb) {
+      setReading(false);
+      if (onWebAddress) return onWebAddress(trimmed);
+      return setError("Scient found no skill at that address.");
+    }
     const result = await inspect({ environmentId, input: { path: trimmed } });
     setReading(false);
     if (result._tag !== "Success") {
@@ -385,15 +528,22 @@ export function AddLocalConnectorDialog({
         ? `Add ${entryName(entry)}`
         : step.name === "plugin"
           ? `Install ${step.displayName}`
-          : "Add your own";
+          : step.name === "skills"
+            ? step.candidates.length === 1
+              ? "Add a skill"
+              : "Add skills"
+            : "Add your own";
   const showsSetup = pkg !== undefined || step.name === "bundle" || step.name === "command";
   const description =
     step.name === "plugin"
       ? "A Scient plugin: it adds the skills and connectors it lists. Nothing in it runs."
-      : step.name === "choose" && pkg === undefined
-        ? "A connector or plugin from a file, a folder, a web address, or one of your other apps. Every agent can use it."
-        : "This runs a program on the computer running this environment. Every agent can use its tools.";
+      : step.name === "skills"
+        ? "A skill you add is on for every agent from your next message. You can turn it off or undo the change in Skills."
+        : step.name === "choose" && pkg === undefined
+          ? "A skill, connector or plugin. Every agent can use it."
+          : "This runs a program on the computer running this environment. Every agent can use its tools.";
   const choosing = step.name === "choose" && pkg === undefined;
+  const importCount = skillsFirst ? importableSkills.length : importable.length;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -416,96 +566,142 @@ export function AddLocalConnectorDialog({
 
             {choosing ? (
               <>
-                <div className="grid grid-cols-1 gap-2">
-                  {getPathForFile || pickFolder ? (
-                    <div className="flex flex-wrap gap-2">
-                      {getPathForFile ? (
-                        <>
-                          <Button variant="outline" onClick={() => filePicker.current?.click()}>
-                            Choose a file…
-                          </Button>
-                          <input
-                            ref={filePicker}
-                            type="file"
-                            accept=".mcpb,.dxt,.zip"
-                            hidden
-                            onChange={(event) => {
-                              const file = event.target.files?.[0];
-                              const picked = file ? getPathForFile(file) : null;
-                              event.target.value = "";
-                              if (picked) void readPath(picked);
-                            }}
-                          />
-                        </>
-                      ) : null}
-                      {pickFolder ? (
-                        <Button
-                          variant="outline"
-                          onClick={() =>
-                            void pickFolder().then((picked) => {
-                              if (picked) void readPath(picked);
-                            })
-                          }
-                        >
-                          Choose a folder…
-                        </Button>
-                      ) : null}
-                    </div>
-                  ) : null}
-                  <Label htmlFor="local-path">
-                    {getPathForFile
-                      ? "Or paste a path or web address"
-                      : "A path on that computer, or a web address"}
-                  </Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="local-path"
-                      className="min-w-0 flex-1"
-                      placeholder="/path/to/connector.mcpb or https://…"
-                      value={path}
-                      onChange={(event) => setPath(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter") {
-                          event.preventDefault();
-                          void readPath(path);
-                        }
-                      }}
-                    />
-                    <Button
-                      variant="outline"
-                      disabled={reading || !path.trim()}
-                      onClick={() => void readPath(path)}
-                    >
-                      {reading ? "Reading…" : "Open"}
-                    </Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                    A connector file (.mcpb or .zip), a connector or plugin folder, or a server's
-                    web address.
-                  </p>
-                </div>
-                {importable.length > 0 ? (
-                  <div className="grid grid-cols-1 gap-2">
-                    <Label>From your other apps</Label>
-                    <ServerRows servers={importable} busy={busy} onAdd={importServer} />
+                {getPathForFile || pickFolder ? (
+                  <div
+                    className={`grid justify-items-center gap-2 rounded-lg border border-dashed px-4 py-5 text-center transition-colors ${
+                      dragging ? "border-primary bg-primary/5" : "border-border"
+                    }`}
+                    onDragOver={(event) => {
+                      if (!getPathForFile) return;
+                      event.preventDefault();
+                      setDragging(true);
+                    }}
+                    onDragLeave={() => setDragging(false)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      setDragging(false);
+                      const file = event.dataTransfer.files[0];
+                      const dropped = file && getPathForFile ? getPathForFile(file) : null;
+                      if (dropped) void readPath(dropped);
+                    }}
+                  >
+                    <p className="text-sm text-muted-foreground">
+                      {getPathForFile ? "Drop a file or folder here, or" : "Choose a folder"}
+                    </p>
+                    <Menu>
+                      <MenuTrigger render={<Button variant="outline" size="sm" />}>
+                        Choose…
+                        <ChevronDownIcon aria-hidden className="size-3.5 opacity-70" />
+                      </MenuTrigger>
+                      <MenuPopup align="center">
+                        {getPathForFile ? (
+                          <MenuItem onClick={() => filePicker.current?.click()}>A file…</MenuItem>
+                        ) : null}
+                        {pickFolder ? (
+                          <MenuItem
+                            onClick={() =>
+                              void pickFolder().then((picked) => {
+                                if (picked) void readPath(picked);
+                              })
+                            }
+                          >
+                            A folder…
+                          </MenuItem>
+                        ) : null}
+                      </MenuPopup>
+                    </Menu>
+                    {getPathForFile ? (
+                      <input
+                        ref={filePicker}
+                        type="file"
+                        accept=".mcpb,.dxt,.zip,.skill,.md,.markdown,.txt"
+                        hidden
+                        onChange={(event) => {
+                          const file = event.target.files?.[0];
+                          const picked = file ? getPathForFile(file) : null;
+                          event.target.value = "";
+                          if (picked) void readPath(picked);
+                        }}
+                      />
+                    ) : null}
                   </div>
                 ) : null}
-                <Button
-                  size="xs"
-                  variant="ghost-muted"
-                  className="-ms-2 justify-self-start"
-                  onClick={() => {
-                    setError(null);
-                    setStep({ name: "command" });
-                  }}
-                >
-                  Advanced: run a command
-                </Button>
+                <div className="flex items-start gap-2">
+                  <Textarea
+                    aria-label="Path, web address or text"
+                    className="min-w-0 flex-1 [&_textarea]:max-h-48 [&_textarea]:min-h-0 [&_textarea]:resize-none [&_textarea]:[field-sizing:content]"
+                    rows={1}
+                    placeholder="Or paste a path, a web address, or a skill's text"
+                    value={path}
+                    spellCheck={false}
+                    onChange={(event) => setPath(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !event.shiftKey && !path.includes("\n")) {
+                        event.preventDefault();
+                        void readPath(path);
+                      }
+                    }}
+                  />
+                  <Button
+                    variant="outline"
+                    disabled={reading || !path.trim()}
+                    onClick={() => void readPath(path)}
+                  >
+                    {reading ? "Reading…" : "Open"}
+                  </Button>
+                </div>
+                {importCount > 0 ? (
+                  <div className="grid grid-cols-1 gap-2">
+                    <Button
+                      size="xs"
+                      variant="ghost-muted"
+                      className="-ms-2 justify-self-start"
+                      aria-expanded={showImports}
+                      onClick={() => setShowImports((shown) => !shown)}
+                    >
+                      {skillsFirst ? "From your other agents" : "From your other apps"} ·{" "}
+                      {importCount}
+                      <ChevronDownIcon
+                        aria-hidden
+                        className={`size-3.5 transition-transform ${showImports ? "rotate-180" : ""}`}
+                      />
+                    </Button>
+                    {showImports ? (
+                      skillsFirst ? (
+                        <ImportableSkillRows
+                          skills={importableSkills}
+                          busy={busy}
+                          onAdd={(skill) => void importSkill(skill)}
+                        />
+                      ) : (
+                        <ServerRows servers={importable} busy={busy} onAdd={importServer} />
+                      )
+                    ) : null}
+                  </div>
+                ) : null}
               </>
             ) : null}
 
             {step.name === "plugin" ? (
               <p className="text-sm text-muted-foreground">{step.path}</p>
+            ) : null}
+
+            {step.name === "skills" ? (
+              <div className="grid grid-cols-1 gap-2">
+                <Label>Found in {step.sourceLabel}</Label>
+                <SkillCandidateRows
+                  candidates={step.candidates}
+                  busy={busy}
+                  onAdd={(candidate) =>
+                    void addSkillCandidates(step.stagingId, [candidate], candidate.key)
+                  }
+                  onFinish={
+                    startChat
+                      ? (candidate) => void finishWithAgent(candidate, step.sourceLabel)
+                      : undefined
+                  }
+                />
+              </div>
             ) : null}
 
             {step.name === "servers" ? (
@@ -666,6 +862,19 @@ export function AddLocalConnectorDialog({
             </Button>
           ) : (
             <>
+              {choosing && !skillsFirst ? (
+                <Button
+                  variant="ghost-muted"
+                  className="me-auto"
+                  title="For developers: start a connector from the command that runs it, such as uvx my-server."
+                  onClick={() => {
+                    setError(null);
+                    setStep({ name: "command" });
+                  }}
+                >
+                  Run a command…
+                </Button>
+              ) : null}
               {step.name !== "choose" && pkg === undefined ? (
                 <Button
                   variant="outline"
@@ -684,6 +893,22 @@ export function AddLocalConnectorDialog({
               {step.name === "plugin" ? (
                 <Button disabled={busy !== null} onClick={() => void submit()}>
                   {busy === "add" ? "Installing…" : "Install"}
+                </Button>
+              ) : null}
+              {step.name === "skills" && step.candidates.filter(canAddCandidate).length > 1 ? (
+                <Button
+                  disabled={busy !== null}
+                  onClick={() =>
+                    void addSkillCandidates(
+                      step.stagingId,
+                      step.candidates.filter(canAddCandidate),
+                      "all",
+                    )
+                  }
+                >
+                  {busy === "all"
+                    ? "Adding…"
+                    : `Add all ${step.candidates.filter(canAddCandidate).length}`}
                 </Button>
               ) : null}
               {showsSetup ? (

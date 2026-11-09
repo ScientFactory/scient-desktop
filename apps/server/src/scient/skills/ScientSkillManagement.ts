@@ -15,12 +15,15 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import * as PersonalSkills from "./PersonalSkills.ts";
 import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
 import { resolveEffectiveUserSkillPolicies } from "./ScientSkillEffectivePolicy.ts";
 import { SCIENT_SKILL_DELIVERY } from "./ScientSkillSession.ts";
 
 export interface ScientSkillManagementShape {
+  /** Skills the user added or an agent saved for them. */
+  readonly personal: PersonalSkills.PersonalSkillsShape;
   readonly list: (
     projectRoot?: string,
   ) => Effect.Effect<ScientSkillInventory, ScientSkillManagementError>;
@@ -42,6 +45,7 @@ export interface ScientSkillManagementShape {
 }
 
 const emptyManagement: ScientSkillManagementShape = {
+  personal: PersonalSkills.PersonalSkills.defaultValue(),
   list: () => Effect.succeed({ skills: [], diagnostics: [], supportedProviders: [] }),
   readDocument: () =>
     Effect.fail(
@@ -82,8 +86,11 @@ const compareReleasesForPresentation = (left: SkillRelease, right: SkillRelease)
 const make = Effect.fn("ScientSkillManagement.make")(function* () {
   const skillRegistry = yield* ScientSkillRegistry.ScientSkillRegistry;
   const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
+  const personalSkills = yield* PersonalSkills.PersonalSkills;
 
   const listUserSkills = Effect.gen(function* () {
+    // Reads the personal skills folder first, so edits made in Finder show up.
+    const personal = yield* personalSkills.details;
     const snapshot = yield* policy.snapshot;
     const registry = yield* skillRegistry.current;
     const effectiveByReleaseKey = new Map(
@@ -109,9 +116,12 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
           defaultActive: effective?.defaultActive ?? false,
           active: effective?.active ?? false,
           invocationPolicy: effective?.invocationPolicy ?? release.defaultInvocationPolicy,
+          ...(release.origin === "personal" && personal.byName.has(release.name)
+            ? { personal: personal.byName.get(release.name)! }
+            : {}),
         };
       }),
-      diagnostics: [],
+      diagnostics: [...personal.diagnostics],
       supportedProviders,
     } satisfies ScientSkillInventory;
   });
@@ -185,7 +195,7 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
       const project = yield* inspectProject(projectRoot);
       return {
         skills: [...personal.skills, ...project.skills],
-        diagnostics: project.diagnostics,
+        diagnostics: [...personal.diagnostics, ...project.diagnostics],
         supportedProviders,
       } satisfies ScientSkillInventory;
     },
@@ -282,7 +292,13 @@ const make = Effect.fn("ScientSkillManagement.make")(function* () {
     return yield* list(input.projectRoot);
   });
 
-  return ScientSkillManagement.of({ list, readDocument, setProjectPreference, setUserActivation });
+  return ScientSkillManagement.of({
+    personal: personalSkills,
+    list,
+    readDocument,
+    setProjectPreference,
+    setUserActivation,
+  });
 });
 
 export const layer = Layer.effect(ScientSkillManagement, make());

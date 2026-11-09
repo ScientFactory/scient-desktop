@@ -134,6 +134,8 @@ export function ScientSkillsLibrary({
   const userSkills = (inventory.data?.skills ?? []).filter(
     (skill) =>
       skill.scope === "user" &&
+      // The user's own skills have their own section.
+      skill.origin !== "personal" &&
       (!onlyActive || skill.active) &&
       matchesQuery(query, [skill.name, skill.description, skill.category]),
   );

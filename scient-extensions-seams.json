@@ -432,6 +432,11 @@
       "path": "packages/shared/src/scientMcpToolPresentation.ts",
       "anchor": "t3_connector_setup",
       "purpose": "Name the local-connector setup tool in the work log."
+    },
+    {
+      "path": "apps/server/src/scient/skills/PersonalSkillSources.ts",
+      "anchor": "scient.plugin.json",
+      "purpose": "Leave connector and plugin folders to the connector path when adding skills."
     }
   ]
 }

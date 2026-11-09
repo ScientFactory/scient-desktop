@@ -35,6 +35,12 @@ import { page, userEvent } from "vite-plus/test/browser";
 vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => async () => false }));
 vi.mock("../accounts/useScratchThread", () => ({ useScratchThread: () => async () => null }));
 vi.mock("../skills/composerSkills", () => ({ useTryComposerSkill: () => undefined }));
+vi.mock("../skills/skillAgentChat", () => ({
+  useSkillAgentChat: () => undefined,
+  finishSkillPrompt: () => "",
+  improveSkillPrompt: () => "",
+  fixSkillPrompt: () => "",
+}));
 vi.mock("../../components/ChatMarkdown", () => ({
   default: ({ text }: { text: string }) => <div>{text}</div>,
 }));
