@@ -54,6 +54,8 @@ import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+// SCIENT-FORK: a turn start's session reservation.
+import { reserveSessionForStartup } from "./scient-provider/StartupSessionHold.ts";
 import * as CommandOutputHub from "./CommandOutputHub.ts";
 import * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
@@ -4330,6 +4332,9 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const settings = yield* ServerSettings.ServerSettingsService.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -4436,6 +4441,11 @@ it.effect(
         assert.equal((yield* Ref.get(state)).resumeCount, 2);
         yield* resumeSecondThread;
         assert.equal((yield* Ref.get(state)).resumeCount, 3);
+        // regression: #26722 a Linked environments change reloads only the idle thread's tools.
+        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
+        yield* resumeSecondThread;
+        assert.equal((yield* Ref.get(state)).resumeCount, 4);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
         const subscribe = firstRuntime.subscribeEvents;
         assert.isDefined(subscribe);
         if (subscribe === undefined) return;
@@ -4467,15 +4477,18 @@ it.effect(
           runtimePolicy,
         });
         yield* resumeSecondThread;
-        assert.equal((yield* Ref.get(state)).resumeCount, 4);
+        assert.equal((yield* Ref.get(state)).resumeCount, 5);
 
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, []);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
 
         yield* manager.detach({ providerSessionId, threadId: firstThreadId });
         assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
         assert.equal((yield* Ref.get(state)).closeCount, 0);
         assert.equal((yield* Ref.get(state)).interruptCount, 1);
-        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, ["native-thread"]);
+        assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+          "native-thread",
+          "native-thread",
+        ]);
 
         yield* manager.detach({ providerSessionId, threadId: secondThreadId });
         yield* TestClock.adjust("1 second");
@@ -4483,7 +4496,15 @@ it.effect(
         assert.equal((yield* Ref.get(state)).closeCount, 1);
       });
 
-      yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 1000 })));
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
+          }),
+        ),
+      );
     }),
 );
 
@@ -4886,10 +4907,13 @@ it.effect(
 );
 
 it.effect(
-  "ProviderSessionManagerV2 rejects a second thread when the provider runtime is exclusive",
+  "ProviderSessionManagerV2 rejects a second thread when the provider runtime is exclusive, and reopens it when Linked environments changes",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
+      const settings = yield* ServerSettings.ServerSettingsService.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
       const effect = Effect.gen(function* () {
         const eventSink = yield* EventSink.EventSinkV2;
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -4934,15 +4958,88 @@ it.effect(
 
         assert.equal(error._tag, "ProviderSessionOpenError");
         assert.equal((yield* Ref.get(state)).openCount, 1);
+
+        // regression: #26722 an exclusive runtime configures MCP at open, so it reopens.
+        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
+        yield* manager.open({
+          threadId: firstThreadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
       });
 
       yield* effect.pipe(
         Effect.provide(
-          layerTest({ state, idleTimeoutMs: 1000, capabilities: ExclusiveCapabilities }),
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            capabilities: ExclusiveCapabilities,
+            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
+          }),
         ),
       );
     }),
 );
+
+// SCIENT-FORK:START — a turn start reserves its session before opening it; that start's own
+// open still reopens an exclusive runtime when Linked environments changed.
+it.effect(
+  "ProviderSessionManagerV2 reopens an exclusive runtime for Linked environments while its start holds the reservation",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const settings = yield* ServerSettings.ServerSettingsService.pipe(
+        Effect.provide(ServerSettings.layerTest()),
+      );
+      const effect = Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const projectId = yield* idAllocator.allocate.project({
+          fixtureName: "provider-session-manager-reserved-links",
+        });
+        const threadId = yield* idAllocator.allocate.thread({
+          fixtureName: "provider-session-manager-reserved-links-thread",
+          projectId,
+        });
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+
+        yield* Effect.scoped(
+          reserveSessionForStartup(manager, providerSessionId).pipe(Effect.andThen(open)),
+        );
+        yield* settings.updateSettings({ linkedEnvironmentsEnabled: true });
+        yield* Effect.scoped(
+          reserveSessionForStartup(manager, providerSessionId).pipe(Effect.andThen(open)),
+        );
+
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      });
+
+      yield* effect.pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 1000,
+            capabilities: ExclusiveCapabilities,
+            serverSettingsLayer: Layer.succeed(ServerSettings.ServerSettingsService, settings),
+          }),
+        ),
+      );
+    }),
+);
+// SCIENT-FORK:END
 
 it.effect.each(["missing", "file"] as const)(
   "rejects a %s workspace before opening a provider session",

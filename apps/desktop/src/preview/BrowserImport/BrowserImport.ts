@@ -145,7 +145,10 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
 > {
   if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
-  if (yield* isSourceRunning(definition, context)) return "browserRunning";
+  // SCIENT-FORK:START — Scient Accounts: Chromium on macOS and Linux is read from a copy while it runs.
+  const readWhileRunning = definition.engine === "chromium" && context.platform !== "win32";
+  if (!readWhileRunning && (yield* isSourceRunning(definition, context))) return "browserRunning";
+  // SCIENT-FORK:END
   // TCC permits stat without Full Disk Access, so a listed Safari jar may still be unreadable.
   if (definition.engine === "safari") {
     const jar = yield* resolveCookieDatabase(definition, context, ".");

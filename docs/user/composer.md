@@ -58,6 +58,17 @@ at the end, leave the block. **Backspace** at the start of a code block turns it
 back into plain lines. Choose the language in a code block's corner to change
 it. Very large code blocks are shown without syntax highlighting.
 
+## Spelling
+
+Right-click an underlined word to replace it with a suggestion. On Windows and
+Linux, Scient checks spelling in your system languages. It also checks in the
+language of any alphabet you write that none of them uses: Latin letters add
+English, and Hebrew, Greek, Armenian, Korean or Tamil letters add that
+language. To add or remove a language, right-click in the composer and use
+**Spelling Languages**; your choice stays until you change it. Windows
+suggestions use dictionaries Scient downloads the first time a language is on.
+On macOS, the system spellchecker detects each paragraph's language itself.
+
 ## Attach files
 
 On web and desktop, attach files with the file picker, drag and drop, or paste.

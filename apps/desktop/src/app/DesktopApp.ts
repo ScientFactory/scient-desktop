@@ -200,8 +200,8 @@ const bootstrap = Effect.gen(function* () {
     clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
   });
   // SCIENT-FORK:END
-  // SCIENT-FORK:START — spellcheck follows the language being written.
-  yield* configureSpelling(environment.platform);
+  // SCIENT-FORK:START — spellcheck follows the languages being written.
+  yield* configureSpelling(environment);
   // SCIENT-FORK:END
   yield* installDesktopIpcHandlers();
   yield* logBootstrapInfo("bootstrap ipc handlers registered");

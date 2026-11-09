@@ -53,6 +53,9 @@ import {
   parseAppWindowRoute,
 } from "../scient/multiWindow/appWindows.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — spelling suggestions and languages in the context menu.
+import { spellingMenuItems } from "../scient/spelling/ipc.ts";
+// SCIENT-FORK:END
 import { copyContextMenuImage } from "./ContextMenuImage.ts";
 
 const TITLEBAR_HEIGHT = 40;
@@ -650,20 +653,9 @@ export const make = Effect.gen(function* () {
 
         const menuTemplate: Electron.MenuItemConstructorOptions[] = [];
 
-        if (params.misspelledWord) {
-          for (const suggestion of params.dictionarySuggestions.slice(0, 5)) {
-            menuTemplate.push({
-              label: suggestion,
-              click: () => {
-                if (!contents.isDestroyed()) contents.replaceMisspelling(suggestion);
-              },
-            });
-          }
-          if (params.dictionarySuggestions.length === 0) {
-            menuTemplate.push({ label: "No suggestions", enabled: false });
-          }
-          menuTemplate.push({ type: "separator" });
-        }
+        // SCIENT-FORK:START — Scient's spelling suggestions and the Spelling Languages submenu.
+        menuTemplate.push(...spellingMenuItems(contents, params));
+        // SCIENT-FORK:END
 
         if (Option.isSome(ElectronShell.parseSafeExternalUrl(params.linkURL))) {
           menuTemplate.push(

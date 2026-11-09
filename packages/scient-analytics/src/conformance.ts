@@ -233,6 +233,74 @@ export function buildAnalyticsConformanceFixture() {
     ...(name === "install.owner_observed" ? [] : [fixtureCase("fallbacks", name, undefined)]),
     fixtureCase("representative", name, representativeInput(name)),
   ]);
+  for (const captureSource of ["interactive", "run-file"]) {
+    cases.push(
+      fixtureCase(`capture-v2-${captureSource}-started`, "scient.operation.started", {
+        operationKind: "compute-artifact",
+        captureSchemaVersion: 2,
+        captureSource,
+      }),
+    );
+  }
+  cases.push(
+    fixtureCase("capture-v2-run-file-unenumerated", "scient.operation.failed", {
+      operationKind: "compute-artifact",
+      captureSchemaVersion: 2,
+      captureSource: "run-file",
+      captureOutcome: "partial",
+      captureCoverage: "unavailable",
+      captureReason: "artifact-collection-failed",
+      retainedOutputCount: 1,
+    }),
+  );
+  for (const captureOutcome of ["retained", "partial", "none", "failed", "unobserved"]) {
+    const rejected = captureOutcome === "partial" || captureOutcome === "failed";
+    const retained = captureOutcome === "partial" || captureOutcome === "retained";
+    cases.push(
+      fixtureCase(
+        `capture-v2-${captureOutcome}`,
+        rejected
+          ? "scient.operation.failed"
+          : retained
+            ? "scient.operation.completed"
+            : "scient.operation.skipped",
+        {
+          operationKind: "compute-artifact",
+          captureSchemaVersion: 2,
+          captureSource: "interactive",
+          captureOutcome,
+          captureCoverage: captureOutcome === "unobserved" ? "partial" : "complete",
+          captureReason: rejected
+            ? "output-limit"
+            : captureOutcome === "unobserved"
+              ? "scan-entry-limit"
+              : "none",
+          retainedOutputCount: retained ? 1 : 0,
+          rejectedOutputCount: rejected ? 1 : 0,
+        },
+      ),
+    );
+  }
+  for (const correctionOutcome of ["disabled", "corrected", "fallback", "bypassed", "cancelled"]) {
+    cases.push(
+      fixtureCase(
+        `voice-v2-${correctionOutcome}`,
+        correctionOutcome === "cancelled"
+          ? "voice.transcription.cancelled"
+          : "voice.transcription.completed",
+        {
+          voiceSchemaVersion: 2,
+          engineClass: "local-whisper",
+          correctionOutcome,
+          durationMs: 900,
+          transcriptionDurationMs: 300,
+          ...(correctionOutcome === "disabled" ? {} : { correctionDurationMs: 600 }),
+          ...(correctionOutcome === "cancelled" ? { stage: "correcting" } : {}),
+          audioDurationMs: 3000,
+        },
+      ),
+    );
+  }
   for (const name of [
     "feature.viewed",
     "scient.operation.started",
