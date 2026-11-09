@@ -11,11 +11,13 @@ import {
   type ConversationExportMenuId,
 } from "../scient/conversationExport/menu";
 import type { OpenInNewWindowMenuId } from "../scient/multiWindow/openInNewWindow";
+import type { BrowserProfileMenuId } from "../scient/accounts/threadProfileMenu";
 // SCIENT-FORK:END
 
 export type ThreadActionMenuId =
   // SCIENT-FORK:START
   | SectionMenuId
+  | BrowserProfileMenuId
   | ConversationExportMenuId
   | OpenInNewWindowMenuId
   // SCIENT-FORK:END
@@ -128,6 +130,7 @@ export interface ThreadActionMenuState {
   readonly sectionMenu?: ContextMenuItem<SectionMenuId> | null;
   /** Present only where the app can open another window. */
   readonly openInNewWindow?: ContextMenuItem<OpenInNewWindowMenuId> | null;
+  readonly browserProfileMenu?: ContextMenuItem<BrowserProfileMenuId> | null;
   // SCIENT-FORK:END
   /** Guest links need their own grant, so the caller checks it instead of `canOperate`. */
   readonly canShareWithGuest?: boolean;
@@ -274,6 +277,9 @@ export function buildThreadActionMenuItems(
       : []),
     // SCIENT-FORK:START — keep the computer awake until a thread is done.
     ...keepAwakeMenu(state.keepAwakeChosen),
+    // SCIENT-FORK:END
+    // SCIENT-FORK:START — the conversation's browser profile.
+    ...(state.browserProfileMenu ? [state.browserProfileMenu] : []),
     // SCIENT-FORK:END
     {
       id: "copy",

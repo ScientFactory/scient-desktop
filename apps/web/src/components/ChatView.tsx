@@ -1327,9 +1327,14 @@ function ChatViewContent(props: ChatViewProps) {
           renderedRightPanelSurface,
         );
   const canMaximizeRightPanel = rightPanelOpen;
+  // SCIENT-FORK:START — a panel asked to open maximized is drawn so from its first frame.
+  const maximizeRequested = useRightPanelStore(
+    (state) => state.pendingMaximizeThreadKey === routeThreadKey,
+  );
   // An embedded side chat has no panel; a stale maximized flag would hide its own column.
   const rightPanelMaximized =
-    !embedded && canMaximizeRightPanel && rightPanelState.maximized === true;
+    !embedded && canMaximizeRightPanel && (rightPanelState.maximized === true || maximizeRequested);
+  // SCIENT-FORK:END
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPopoverHandle] = useState(PopoverCreateHandle);
   const [chatCanvasStore] = useState(createChatCanvasStore);

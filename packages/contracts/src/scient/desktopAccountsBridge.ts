@@ -47,6 +47,16 @@ export interface DesktopLoginForm {
   readonly userEdited: boolean;
   readonly hasPassword: boolean;
   readonly hasValues: boolean;
+  /** The page's username box, then its second one: what each accepts. */
+  readonly boxes: ReadonlyArray<DesktopLoginBox>;
+}
+
+/** What a username box accepts: an email or not, and its own length and pattern limits. */
+export interface DesktopLoginBox {
+  readonly email: boolean;
+  readonly minLength: number;
+  readonly maxLength: number;
+  readonly pattern: string;
 }
 
 export interface DesktopSignInFill {
@@ -58,6 +68,8 @@ export interface DesktopSignInFill {
   /** Submit a complete sign-in after filling it. */
   readonly submit?: boolean;
   readonly username?: string;
+  /** Another saved username for the page's second box: an email beside an ID, or the reverse. */
+  readonly otherUsername?: string;
   readonly password?: string;
   readonly otp?: string;
 }

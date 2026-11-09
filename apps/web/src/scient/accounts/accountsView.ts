@@ -34,6 +34,7 @@ import {
 import { previewBridge } from "~/components/preview/previewBridge";
 import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
 import { matchingSignIns } from "@t3tools/shared/scientAccountSignIn";
+import { loginValueFits, type LoginBox } from "@t3tools/shared/scientLoginFields";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import ACCOUNT_ICONS from "./accountIcons.json";
 import { activeProfiles } from "./activeProfiles";
@@ -79,6 +80,32 @@ export const matchingAccounts = (
   url: string,
   profileId: string,
 ) => matchingSignIns(accounts, url, profileId);
+
+/**
+ * What fills a page's login boxes (its username box, then a second one): the first sign-in whose
+ * username fits a box, and another sign-in's username of the second box's own kind, so a page
+ * asking for an ID and an email gets both.
+ */
+export function fillChoice<Account extends Pick<AccountSummary, "details">>(
+  matches: ReadonlyArray<Account>,
+  boxes: ReadonlyArray<LoginBox>,
+) {
+  const name = ({ details }: Account) =>
+    details.kind === "website" ? details.username : undefined;
+  const fits = (box: LoginBox | undefined, exact: boolean) => (account: Account) => {
+    const username = name(account);
+    return box !== undefined && username !== undefined && loginValueFits(box, username, exact);
+  };
+  const account =
+    matches.find(fits(boxes[0], false)) ?? matches.find(fits(boxes[1], false)) ?? matches[0];
+  if (!account || boxes.length < 2) return { account, otherUsername: undefined };
+  // The page puts the username in the box made for it first, as here.
+  const madeFor = boxes.findIndex((box) => fits(box, true)(account));
+  const taken = madeFor === -1 ? boxes.findIndex((box) => fits(box, false)(account)) : madeFor;
+  const other = taken === -1 ? undefined : boxes[1 - taken];
+  const second = matches.filter((match) => name(match) !== name(account)).find(fits(other, true));
+  return { account, otherUsername: second && name(second) };
+}
 
 /** Whether the conversation's agent may use an account now, without asking. */
 export function agentMayUse(

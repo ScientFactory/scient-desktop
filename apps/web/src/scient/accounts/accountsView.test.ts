@@ -36,6 +36,7 @@ import {
   accountManagePage,
   capturedSignInInput,
   automaticSignIn,
+  fillChoice,
   writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
@@ -343,12 +344,34 @@ it("ranks exact-origin sign-ins before recent domain matches and refuses repeate
     userEdited: false,
     hasPassword: true,
     hasValues: false,
+    boxes: [],
   };
   expect(automaticSignIn(form)).toBe(true);
   expect(automaticSignIn({ ...form, userEdited: true })).toBe(false);
   expect(automaticSignIn({ ...form, hasValues: true })).toBe(false);
   expect(automaticSignIn({ ...form, profileId: "incognito" })).toBe(false);
   expect(automaticSignIn({ ...form, url: "http://example.com" })).toBe(false);
+});
+
+it("fills each login box with a saved username that fits it", () => {
+  const signIn = (username: string) => ({
+    details: { kind: "website" as const, sites: ["idp.example.edu"], username },
+  });
+  const id = signIn("123456789");
+  const email = signIn("person@example.edu");
+  const emailBox = { email: true, minLength: -1, maxLength: -1, pattern: "" };
+  const idBox = { email: false, minLength: 9, maxLength: 9, pattern: "" };
+  const textBox = { email: false, minLength: -1, maxLength: -1, pattern: "" };
+  // An ID beside an email: both, whichever row comes first.
+  expect(fillChoice([id, email], [emailBox, idBox])).toEqual({
+    account: email,
+    otherUsername: "123456789",
+  });
+  // Only IDs saved: the ID goes to its box, the email box stays empty.
+  expect(fillChoice([id], [emailBox, idBox])).toEqual({ account: id, otherUsername: undefined });
+  // A box for a 9-digit ID takes the ID row even when an email row comes first.
+  expect(fillChoice([email, id], [{ ...textBox, pattern: "[0-9]{9}" }]).account).toBe(id);
+  expect(fillChoice([email, id], [textBox]).account).toBe(email);
 });
 
 it("offers connected vaults until a write rejection marks one read-only", () => {

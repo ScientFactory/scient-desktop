@@ -678,10 +678,13 @@ export const BrowserProfileChoices = Schema.Struct({
 export type BrowserProfileChoices = typeof BrowserProfileChoices.Type;
 
 export const BrowserProfileChoiceInput = Schema.Union([
-  /** The user switched a conversation's tab to this profile, on this page's site. */
+  /**
+   * The user switched a conversation's tab to this profile, on this page's site. Null clears the
+   * conversation's own profile so the project's applies; its site switches stay.
+   */
   Schema.Struct({
     threadId: ThreadId,
-    profileId: BrowserProfileId,
+    profileId: Schema.NullOr(BrowserProfileId),
     url: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
     /** Only this page's site: the conversation's own profile stays as it is. */
     siteOnly: Schema.optional(Schema.Boolean),

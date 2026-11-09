@@ -45,6 +45,7 @@ const Fill = Schema.Struct({
   tabId: DesktopPreviewTabInputSchema.fields.tabId,
   expectedOrigin: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
   username: Schema.optional(Value),
+  otherUsername: Schema.optional(Value),
   password: Schema.optional(Value),
   otp: Schema.optional(Value),
   documentId: Schema.optional(Schema.String.check(Schema.isMaxLength(64))),
@@ -508,6 +509,14 @@ const FormReport = Schema.Struct({
   userEdited: Schema.Boolean,
   hasPassword: Schema.Boolean,
   hasValues: Schema.Boolean,
+  boxes: Schema.Array(
+    Schema.Struct({
+      email: Schema.Boolean,
+      minLength: Schema.Number,
+      maxLength: Schema.Number,
+      pattern: Schema.String.check(Schema.isMaxLength(1024)),
+    }),
+  ).check(Schema.isMaxLength(2)),
 });
 const decodeFormReport = Schema.decodeUnknownOption(FormReport);
 const TabInput = Schema.Struct({ tabId: DesktopPreviewTabInputSchema.fields.tabId });

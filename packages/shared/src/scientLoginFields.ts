@@ -13,6 +13,14 @@ export interface LoginField {
   readonly maxLength?: number | undefined;
 }
 
+/** What a username box accepts, from its own type and constraints. */
+export interface LoginBox {
+  readonly email: boolean;
+  readonly minLength: number;
+  readonly maxLength: number;
+  readonly pattern: string;
+}
+
 export interface LoginFieldRules {
   /** Two password fields or a new-password one mean sign-up or change-password: no username or password. */
   readonly refuseNewPasswordPage?: boolean | undefined;
@@ -32,7 +40,9 @@ interface PageInput extends PageElement {
   readonly id: string;
   readonly placeholder: string;
   readonly inputMode: string;
+  readonly minLength: number;
   readonly maxLength: number;
+  readonly pattern: string;
   getAttribute(name: string): string | null;
   closest(selectors: string): unknown;
 }
@@ -56,7 +66,10 @@ function loginElementVisible(element: PageElement) {
   );
 }
 
-/** Indexes of the username, password and one-time-code fields, or -1. */
+/**
+ * Indexes of the username, password and one-time-code fields, or -1. `other` is a second box for
+ * who the user is, beside the username: an ID box beside an email box, or the reverse.
+ */
 export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: LoginFieldRules = {}) {
   const tokens = fields.map((field) => field.autocomplete.split(/\s+/));
   const first = (...tests: ReadonlyArray<(field: LoginField, index: number) => boolean>) => {
@@ -81,6 +94,7 @@ export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: Logi
     (field) =>
       field.type !== "password" &&
       field.type !== "email" &&
+      !/user|login|mail/i.test(field.name ?? "") &&
       /otp|mfa|2fa|two.?factor|verification|one.?time|(auth|security|sms).?code|\bcode\b/i.test(
         field.label ?? "",
       ),
@@ -107,7 +121,61 @@ export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: Logi
       fallback = index;
   }
   const username = refused ? -1 : named === -1 ? fallback : named;
-  return { username, password, otp };
+  const isEmail = (field: LoginField | undefined, index: number) =>
+    field?.type === "email" ||
+    tokens[index]?.includes("email") === true ||
+    /^e-?mail$/i.test(field?.name ?? "");
+  const emailUsername = isEmail(fields[username], username);
+  // An ID box comes before the email box; either comes before the password.
+  const other =
+    username === -1
+      ? -1
+      : first(
+          (field, index) =>
+            index !== username &&
+            textual(field, index) &&
+            isEmail(field, index) !== emailUsername &&
+            (!emailUsername || index < username) &&
+            (password === -1 || index < password),
+        );
+  return { username, password, otp, other };
+}
+
+/** A box's own type and constraints, as `loginValueFits` reads them. */
+function loginBox(input: {
+  readonly type: string;
+  readonly autocomplete: string;
+  readonly name: string;
+  readonly minLength: number;
+  readonly maxLength: number;
+  readonly pattern: string;
+}): LoginBox {
+  return {
+    email:
+      input.type === "email" ||
+      input.autocomplete.toLowerCase().split(/\s+/).includes("email") ||
+      /^e-?mail$/i.test(input.name),
+    minLength: input.minLength,
+    maxLength: input.maxLength,
+    pattern: input.pattern,
+  };
+}
+
+/**
+ * Whether a saved username fits a box, within its limits: never a non-email in an email box.
+ * `exact` also keeps an email out of a box that isn't for one, for choosing the best box first.
+ */
+export function loginValueFits(box: LoginBox, value: string, exact = false) {
+  const email = /^[^\s@]+@[^\s@]+$/.test(value);
+  if (box.email ? !email : exact && email) return false;
+  if (box.maxLength > 0 && value.length > box.maxLength) return false;
+  if (box.minLength > 0 && value.length < box.minLength) return false;
+  if (!box.pattern) return true;
+  try {
+    return new RegExp(`^(?:${box.pattern})$`, "v").test(value);
+  } catch {
+    return true;
+  }
 }
 
 /** The login fields among a page's or a form's inputs, as indexes into `inputs`. */
@@ -167,8 +235,10 @@ export const loginFieldsKit = {
   visible: loginElementVisible,
   collect: collectLoginFields,
   rememberBox: findRememberBox,
+  box: loginBox,
+  fits: loginValueFits,
 };
 export type LoginFieldsKit = typeof loginFieldsKit;
 
 /** `loginFieldsKit` as a page-script expression; `.name` keeps any bundler rename. */
-export const loginFieldsKitSource = `(() => { ${loginElementVisible.toString()} ${detectLoginFields.toString()} ${collectLoginFields.toString()} ${findRememberBox.toString()} return { visible: ${loginElementVisible.name}, collect: ${collectLoginFields.name}, rememberBox: ${findRememberBox.name} }; })()`;
+export const loginFieldsKitSource = `(() => { ${loginElementVisible.toString()} ${detectLoginFields.toString()} ${collectLoginFields.toString()} ${findRememberBox.toString()} ${loginBox.toString()} ${loginValueFits.toString()} return { visible: ${loginElementVisible.name}, collect: ${collectLoginFields.name}, rememberBox: ${findRememberBox.name}, box: ${loginBox.name}, fits: ${loginValueFits.name} }; })()`;
