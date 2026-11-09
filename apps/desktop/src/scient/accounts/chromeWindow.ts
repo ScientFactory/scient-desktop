@@ -294,6 +294,8 @@ export async function signInInWindow(input: {
     // A folder left by an attempt whose clean-up failed would sign this one in as that one.
     if (!(await removeFolder(folder))) return { outcome: "failed" };
     await NodeFS.promises.mkdir(folder, { recursive: true, mode: 0o700 });
+    // Cancel may come before the window opens.
+    if (!run.keep) return { outcome: "cancelled" };
     const window = NodeChildProcess.spawn(browser.executable, windowArgs(folder, url, platform), {
       stdio: "ignore",
     });
@@ -303,8 +305,9 @@ export async function signInInWindow(input: {
     await ended;
     if (!run.keep) return { outcome: "cancelled" };
     const jar = await readProfile(browser, folder, platform, run);
-    // Cancel may come while the profile is read.
+    // Cancel may come while the profile is read; after this, the result stands.
     if (!run.keep) return { outcome: "cancelled" };
+    run.ended = true;
     if (!jar) return { outcome: "failed" };
     return { outcome: "read", ...signedInCookies(jar.cookies, Date.now() / 1000) };
   } catch {
