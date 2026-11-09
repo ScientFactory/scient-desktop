@@ -343,16 +343,6 @@ function axisIndices(plane: number, axes: readonly TiffAxis[]) {
   });
 }
 
-export function tiffPlaneLabel(info: Pick<TiffPreviewInfo, "plane" | "planes" | "axes">) {
-  if (info.planes <= 1) return null;
-  const order = { C: 0, Z: 1, T: 2 };
-  const parts = axisIndices(info.plane, info.axes)
-    .filter(({ axis }) => axis.size > 1)
-    .toSorted((left, right) => order[left.axis.name] - order[right.axis.name]);
-  if (!parts.length) return `Page ${info.plane + 1} of ${info.planes}`;
-  return parts.map(({ axis, index }) => `${axis.name} ${index + 1}/${axis.size}`).join(" · ");
-}
-
 export async function readTiffPlane(
   tiff: GeoTIFF,
   request: {

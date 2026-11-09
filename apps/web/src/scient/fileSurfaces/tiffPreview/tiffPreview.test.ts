@@ -15,7 +15,8 @@ import {
   registerBoundedTiffDecoders,
   zstdContentSize,
 } from "./tiffBlockDecoders";
-import { readTiffPlane, tiffPlaneLabel } from "./tiffPreview";
+import { readTiffPlane, type TiffPreviewInfo } from "./tiffPreview";
+import { tiffAxisSteps } from "./tiffPreviewText";
 import { openTiffBytes } from "./tiffSource";
 
 // Records typed-array allocations above `limit` elements and refuses them instead of allocating.
@@ -64,6 +65,13 @@ async function plane(
     plane: options.plane ?? 0,
     ...(options.maxOutputPixels ? { maxOutputPixels: options.maxOutputPixels } : {}),
   });
+}
+
+// The toolbar's plane text: one position per named axis, or the page number.
+function tiffPlaneLabel(info: TiffPreviewInfo) {
+  const steps = tiffAxisSteps(info.plane, info.axes);
+  if (!steps.length) return `Page ${info.plane + 1} of ${info.planes}`;
+  return steps.map((step) => `${step.name} ${step.index + 1}/${step.size}`).join(" · ");
 }
 
 const red = (rgba: Uint8ClampedArray, pixel: number) => rgba[pixel * 4]!;
