@@ -314,7 +314,7 @@
     {
       "path": "packages/client-runtime/src/secretRequest.ts",
       "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: an Accounts card keeps the key in Accounts.",
-      "purpose": "Say on scient_account_add cards that the key is kept in Accounts, on web and mobile."
+      "purpose": "Say on scient_account_add cards that the key is kept in Accounts, and on one-time cards that it went to that agent only and is not kept, on web and mobile."
     },
     {
       "path": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",

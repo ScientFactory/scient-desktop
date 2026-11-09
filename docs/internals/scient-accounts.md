@@ -419,6 +419,10 @@ consumer's project. Activity names the plugin, variable and agent.
   stop every provider from starting. `keyLinks.ts` lets one follow an API-key account: providers read
   variables at start, so the value is copied in and copied again when the account changes.
   **Keys used by Scient** lists them by name in the client (`keysInUse`); values stay on the server.
+- **One-time cards** (`request_secret` without the Accounts prefix) say on answer that the value went
+  to that agent only and isn't kept in Accounts. Agent copy sends API keys and tokens the user
+  creates to `scient_account_add`, and `request_secret` only to codes used once (2FA, pairing) or
+  tools that ask for a `secretRef`.
 - **Plain files** (`plainKeys.ts`): the page lists secrets in project `.env` files and shell profiles
   by name. Keeping one copies it into an API-key account and leaves the file alone.
 - Server sign-in and session-signing material is never moved.
