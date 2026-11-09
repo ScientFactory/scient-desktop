@@ -3317,6 +3317,12 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
         // SCIENT-FORK:END
         NSLocalNetworkUsageDescription:
           "Scient connects to devices on your local network for remote environments and commands run by terminals and coding agents.",
+        NSCalendarsUsageDescription:
+          "Commands you run in Scient may need access to your calendars.",
+        NSCalendarsFullAccessUsageDescription:
+          "Commands you run in Scient may need to read and write your calendar events.",
+        NSCalendarsWriteOnlyAccessUsageDescription:
+          "Commands you run in Scient may need to add events to your calendars.",
         NSCameraUsageDescription:
           "Scient lets commands run by terminals and coding agents use the camera.",
       },

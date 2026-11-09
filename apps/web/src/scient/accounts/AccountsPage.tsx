@@ -104,7 +104,7 @@ import { AccountStoreMenuItems } from "./AccountStoreMenuItems";
 import {
   BrowserImportDialog,
   BrowserProfiles,
-  GOOGLE_BLOCKED,
+  GOOGLE_SIGNED_OUT,
   useImportingPasswords,
 } from "./BrowserProfiles";
 import { copySignInIntoMain } from "./mainFill";
@@ -608,9 +608,7 @@ export function MainSiteChoice({
         <MenuPopup align="end">
           {googleMissing && onImport ? (
             <MenuGroup>
-              <MenuGroupLabel className="max-w-64">
-                {GOOGLE_BLOCKED} Sign in in your browser, then import that profile
-              </MenuGroupLabel>
+              <MenuGroupLabel className="max-w-64">{GOOGLE_SIGNED_OUT}</MenuGroupLabel>
               <MenuItem onClick={onImport}>Import from a browser…</MenuItem>
             </MenuGroup>
           ) : google && using && usingRow ? (

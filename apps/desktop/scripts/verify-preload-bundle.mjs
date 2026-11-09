@@ -104,17 +104,28 @@ const executeBundle = (source, sandboxModules) => {
     return sandboxModules.get(moduleName);
   };
 
+  // A real preload loads with the page's DOM; no page events fire while the bundle runs here.
+  const document = Object.assign(new EventTarget(), {
+    fullscreenElement: null,
+    // SCIENT-FORK: Scient's preload sets root style properties once the DOM is ready.
+    documentElement: { style: { setProperty: () => {} } },
+  });
+  const window = Object.assign(new EventTarget(), { document });
+  // SCIENT-FORK:START — run DOMContentLoaded work at once, as the stub always did.
+  const addWindowListener = window.addEventListener.bind(window);
+  window.addEventListener = (name, callback, options) => {
+    if (name === "DOMContentLoaded") callback();
+    else addWindowListener(name, callback, options);
+  };
+  // SCIENT-FORK:END
+
   NodeVM.runInNewContext(
     source,
     {
+      document,
       process: sandboxProcess,
       require: requireSandboxModule,
-      window: {
-        addEventListener: (name, callback) => {
-          if (name === "DOMContentLoaded") callback();
-        },
-      },
-      document: { documentElement: { style: { setProperty: () => {} } } },
+      window,
     },
     {
       filename: "desktop-preload.cjs",

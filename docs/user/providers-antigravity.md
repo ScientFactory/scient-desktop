@@ -119,6 +119,9 @@ Before a conversation starts, desktop/web can update an older saved Gemini famil
 selection to its matching available reasoning variant. Existing conversations are
 not switched automatically. If the matching variant is unavailable, select an
 available model rather than reinstalling the provider.
+Use Antigravity's native `/plan` command for planning. Tool approvals follow [Permission modes](./permission-modes.md).
+Questions with fixed choices still need one of the offered answers, even in
+**Full access**.
 
 The model picker also refreshes when a running session reports new model choices.
 Models available in other Antigravity apps may not be available through the ACP agent.

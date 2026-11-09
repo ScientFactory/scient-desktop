@@ -1,3 +1,4 @@
+import { isLocalEditorFileUrl, LOCAL_FILE_LINK_SCHEMES } from "@t3tools/contracts";
 import type { Paragraph, PhrasingContent, Root, RootContent } from "mdast";
 import { remarkKeepWindowsPaths } from "./markdownWindowsPaths.ts";
 import { type PluggableList, type Processor, type Transformer, unified } from "unified";
@@ -19,6 +20,7 @@ import { THREAD_LINK_PROTOCOL } from "./threadLinks.ts";
 // SCIENT-FORK:START — shared quote protocol owner.
 import { FILE_CITATION_PROTOCOL } from "./composerCitations.ts";
 import { COMPUTE_CITATION_PROTOCOL } from "./computeCitations.ts";
+import { OFFICE_CITATION_PROTOCOL } from "./officeCitations.ts";
 import { PDF_CITATION_PROTOCOL } from "./pdfCitations.ts";
 // SCIENT-FORK:END
 
@@ -169,6 +171,26 @@ function rehypePreserveImageSourceMeta() {
 
 const IMAGE_SRC_PROTOCOLS = [...(defaultSchema.protocols?.src ?? []), "file", "t3-context"];
 
+// The sanitizer compares schemes case-sensitively, so lowercase accepted editor links first.
+function rehypeNormalizeLocalEditorLinks() {
+  return (tree: MarkdownImageHastNode) => {
+    const visit = (node: MarkdownImageHastNode) => {
+      const href = node.properties?.href;
+      if (node.type === "element" && node.tagName === "a" && typeof href === "string") {
+        try {
+          const url = new URL(href);
+          if (isLocalEditorFileUrl(url)) node.properties = { ...node.properties, href: url.href };
+        } catch {
+          // Not an absolute URL; the sanitizer decides.
+        }
+      }
+      node.children?.forEach(visit);
+    };
+
+    visit(tree);
+  };
+}
+
 const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
   ...defaultSchema,
   attributes: {
@@ -203,9 +225,12 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
       FILE_CITATION_PROTOCOL,
       PDF_CITATION_PROTOCOL,
       COMPUTE_CITATION_PROTOCOL,
+      OFFICE_CITATION_PROTOCOL,
       // SCIENT-FORK:END
       "t3-context",
       THREAD_LINK_PROTOCOL,
+      // Scheme only: the renderer's URL transform checks the rest of the link shape.
+      ...LOCAL_FILE_LINK_SCHEMES,
     ],
     src: IMAGE_SRC_PROTOCOLS,
     dataDarkSrc: IMAGE_SRC_PROTOCOLS,
@@ -312,6 +337,7 @@ export const CHAT_MARKDOWN_REHYPE_PLUGINS: PluggableList = [
   rehypePreserveBareAnchorPlaceholders,
   rehypeRawWhenPresent,
   rehypePreserveImageSourceMeta,
+  rehypeNormalizeLocalEditorLinks,
   [rehypeSanitize, CHAT_MARKDOWN_SANITIZE_SCHEMA],
 ];
 

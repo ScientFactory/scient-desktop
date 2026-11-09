@@ -311,27 +311,10 @@ describe("resolveAddProjectEntry", () => {
 });
 
 describe("shouldOpenNewThreadTargetPicker", () => {
-  it("opens only for the multi-project modern sidebar", () => {
-    expect(
-      shouldOpenNewThreadTargetPicker({
-        legacySidebarEnabled: false,
-        projectGroupCount: 2,
-      }),
-    ).toBe(true);
-    expect(
-      shouldOpenNewThreadTargetPicker({
-        legacySidebarEnabled: true,
-        projectGroupCount: 2,
-      }),
-    ).toBe(false);
-  });
-
   // SCIENT-FORK:START
   it("opens for any number of projects, so Add project is always offered", () => {
     for (const projectGroupCount of [0, 1, 3]) {
-      expect(
-        shouldOpenNewThreadTargetPicker({ legacySidebarEnabled: false, projectGroupCount }),
-      ).toBe(true);
+      expect(shouldOpenNewThreadTargetPicker({ projectGroupCount })).toBe(true);
     }
   });
   // SCIENT-FORK:END
@@ -1163,7 +1146,7 @@ describe("newThreadNoProjectIndex", () => {
   });
 
   it("goes after the pinned projects and the first unpinned one", () => {
-    expect(newThreadNoProjectIndex([entry(true), entry(true), entry(false, true), entry()])).toBe(
+    expect(newThreadNoProjectIndex([entry(false, true), entry(true), entry(true), entry()])).toBe(
       3,
     );
     expect(newThreadNoProjectIndex([entry(false, true), entry(), entry(false, false, true)])).toBe(

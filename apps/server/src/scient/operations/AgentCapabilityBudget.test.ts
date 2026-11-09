@@ -163,7 +163,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(46);
+      expect(scientTools).toHaveLength(47);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "scient_account_add",
         "scient_account_browser_session",
@@ -181,6 +181,7 @@ it.live(
         "scient_compute_sessions",
         "scient_compute_setup",
         "scient_compute_variables",
+        "scient_connector_setup",
         "scient_document_export",
         "scient_handoff_summary_read",
         "scient_latex_build",

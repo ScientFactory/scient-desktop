@@ -68,9 +68,22 @@ export function managedRuntimeInstallationFailureMessage(
   cause: unknown,
 ): string {
   const summary = `Scient could not install the private ${providerName} runtime.`;
-  return cause instanceof ManagedRuntimeFileError || cause instanceof ManagedProviderRuntimeError
-    ? `${summary} ${cause.message}`
-    : summary;
+  if (cause instanceof ManagedRuntimeFileError || cause instanceof ManagedProviderRuntimeError)
+    return `${summary} ${cause.message}`;
+  // Other messages can carry paths or secrets; a system error code carries neither.
+  const code =
+    cause instanceof Error && "code" in cause && typeof cause.code === "string"
+      ? cause.code
+      : undefined;
+  return code && /^E[A-Z]+$/u.test(code) ? `${summary} System error ${code}.` : summary;
+}
+
+/** Progress text while a download waits to try again after a temporary failure. */
+export function managedRuntimeRetryMessage(
+  providerName: string,
+  retry: NonNullable<ManagedProviderRuntimeProgress["retry"]>,
+): string {
+  return `Couldn't download ${providerName} (${retry.reason}). Trying again, ${retry.retry} of ${retry.retries}.`;
 }
 
 /** What `binary --version` prints when it exits 0 within five seconds. */
@@ -657,13 +670,17 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
             const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
             const downloadFinished =
               progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
-            if (!stageChanged && !downloadAdvanced && !downloadFinished) return;
+            const retry = progress.retry;
+            if (!stageChanged && !downloadAdvanced && !downloadFinished && !retry) return;
             lastStatus = progress.stage;
             lastReportedBytes = downloadedBytes;
             runFork(
               report({
                 status: progress.stage,
-                message: progressMessage(progress),
+                message: retry
+                  ? managedRuntimeRetryMessage(providerName, retry)
+                  : progressMessage(progress),
+                ...(retry ? { retrying: true } : {}),
                 ...(progress.downloadedBytes === undefined
                   ? {}
                   : { downloadedBytes: progress.downloadedBytes }),

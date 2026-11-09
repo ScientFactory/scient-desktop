@@ -1604,6 +1604,12 @@ describe("AssetAccess", () => {
         revision: { size: 9 },
       });
       expect(yield* resolveAsset(token, "private-notes.pdf")).toBeNull();
+      const renewed = yield* issueAssetUrl({
+        resource: { _tag: "workspace-file", threadId: ThreadId.make("thread-1"), path: pdfPath },
+        workspaceRoot: root,
+      });
+      expect(result.fileRevision).toEqual(expect.any(String));
+      expect(renewed.fileRevision).toBe(result.fileRevision);
 
       yield* fileSystem.writeFile(pdfPath, new TextEncoder().encode("%PDF-1.7\nchanged"));
       const staleAsset = yield* resolveAsset(token, "paper.pdf");
@@ -1625,8 +1631,39 @@ describe("AssetAccess", () => {
           refreshedSuffix.slice(refreshedSeparator + 1),
         ),
       ).toMatchObject({ revision: { size: 16 } });
+      expect(refreshed.fileRevision).not.toBe(result.fileRevision);
     }).pipe(Effect.provide(layerTest)),
   );
+
+  // SCIENT-FORK:START — a preview keeps a loaded document while its file's revision holds.
+  it.effect("reports the revision of a workspace document", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-asset-document-workspace-",
+      });
+      const documentPath = path.join(root, "report.docx");
+      yield* fileSystem.writeFileString(documentPath, "PK first");
+      const issue = () =>
+        issueAssetUrl({
+          resource: {
+            _tag: "workspace-file",
+            threadId: ThreadId.make("thread-1"),
+            path: documentPath,
+          },
+          workspaceRoot: root,
+        });
+      const first = yield* issue();
+      const renewed = yield* issue();
+      expect(first.fileRevision).toEqual(expect.any(String));
+      expect(renewed.fileRevision).toBe(first.fileRevision);
+
+      yield* fileSystem.writeFileString(documentPath, "PK second, longer");
+      expect((yield* issue()).fileRevision).not.toBe(first.fileRevision);
+    }).pipe(Effect.provide(layerTest)),
+  );
+  // SCIENT-FORK:END
 
   it.effect("issues exact renewable URLs for immutable generated PDF revisions", () =>
     Effect.gen(function* () {
@@ -2018,6 +2055,7 @@ describe("AssetAccess", () => {
         revision: { size: 4 },
       });
       expect(yield* resolveAsset(suffix.slice(0, separatorIndex), "sibling.png")).toBeNull();
+      expect(issued.fileRevision).toEqual(expect.any(String));
 
       const replacementPath = path.join(root, "replacement.png");
       yield* fileSystem.writeFile(replacementPath, new Uint8Array([137, 80, 78, 71]));

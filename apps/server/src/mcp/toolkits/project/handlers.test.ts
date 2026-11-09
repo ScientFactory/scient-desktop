@@ -535,7 +535,7 @@ it.effect(
       expect(result.at(-1)?.result).toMatchObject({
         projectId,
         modelSelection,
-        link: `<t3-thread://v2/environment/${launched[0]?.threadId}>`,
+        link: `[Fix](t3-thread://v2/environment/${launched[0]?.threadId})`,
       });
       expect(launched[0]).toMatchObject({
         projectId,

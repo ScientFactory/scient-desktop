@@ -532,7 +532,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
       spawner,
       helperExecutable,
       environment,
-      timeout: "5 seconds",
+      timeout: "30 seconds",
       onTimeout: () => authSupportError("Antigravity browser suppression verification timed out."),
     }),
     // SCIENT-FORK:END

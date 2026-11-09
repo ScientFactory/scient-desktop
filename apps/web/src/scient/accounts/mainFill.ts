@@ -28,7 +28,7 @@ import { readPrimaryEnvironmentId } from "~/state/environments";
 
 import { accountsState } from "./accountsState";
 import { activeProfiles } from "./activeProfiles";
-import { loadSourceProfiles, matchExistingProfile } from "./accountsView";
+import { loadSourceProfiles, matchExistingProfile, signedOutOfGoogle } from "./accountsView";
 import type { CookieMetadata } from "./sessionDetection";
 
 type FillMain = NonNullable<DesktopAccountsBridge["fillMain"]>;
@@ -99,6 +99,22 @@ export function replaceAllowedSince(accounts: ReadonlyArray<AccountSummary>, row
     }
   return since;
 }
+
+/** Each site whose Main row was last seen signed out, with when: a whole jar may replace those. */
+function mainSignedOutSince(accounts: ReadonlyArray<AccountSummary>) {
+  const since: Record<string, string> = {};
+  for (const row of accounts) {
+    const details = website(row);
+    if (details?.profileId !== DEFAULT_BROWSER_PROFILE_ID || row.signIn?.state !== "signed-out")
+      continue;
+    for (const site of details.sites) since[site] = row.signIn.at;
+  }
+  return since;
+}
+
+/** Main's Google is replaced only once Google has signed Main out: then it has nothing to keep. */
+const replaceGoogleIn = (accounts: ReadonlyArray<AccountSummary>) =>
+  signedOutOfGoogle(accounts, DEFAULT_BROWSER_PROFILE_ID) ? { replaceGoogle: true } : {};
 
 /** After a copy, each unit copied or already the same gets Main's row for the sign-in. */
 async function recordCopies(
@@ -226,6 +242,7 @@ export function mainFillTrigger(deps: {
         units: [website(row)!.sites],
         mode: "fill-or-replace",
         replaceAllowedSince: replaceAllowedSince(snapshot.accounts, row),
+        ...replaceGoogleIn(snapshot.accounts),
         skipSites: [],
       })
       .catch((cause: unknown) => {
@@ -512,7 +529,10 @@ async function fillFromProfile(
     environmentId,
     from: profileId,
     ...(join.length ? { join } : {}),
-    mode: "fill",
+    // Where Main was seen signed out, this profile's working sign-in replaces it.
+    mode: "fill-or-replace",
+    replaceAllowedSince: mainSignedOutSince(snapshot.accounts),
+    ...replaceGoogleIn(snapshot.accounts),
     skipSites: mainSignOuts(snapshot),
   };
   const result = await fillMain(input).catch((cause: unknown) => {
@@ -557,7 +577,9 @@ export async function copySignInIntoMain(environmentId: EnvironmentId, row: Acco
     environmentId,
     from: profileId,
     units: [details.sites],
-    mode: "fill",
+    mode: "fill-or-replace",
+    replaceAllowedSince: replaceAllowedSince(snapshot.accounts, row),
+    ...replaceGoogleIn(snapshot.accounts),
     skipSites: [],
   }).catch((cause: unknown) => {
     warn("Couldn't copy a sign-in into Main", cause);
@@ -819,7 +841,9 @@ export async function importIntoMain(
   const filled = await fillMain({
     environmentId,
     from: { importSourceId, sourceProfileDirectory },
-    mode: "fill",
+    mode: "fill-or-replace",
+    replaceAllowedSince: mainSignedOutSince(snapshot.accounts),
+    ...replaceGoogleIn(snapshot.accounts),
     skipSites: mainSignOuts(snapshot),
   });
   if (filled) await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);

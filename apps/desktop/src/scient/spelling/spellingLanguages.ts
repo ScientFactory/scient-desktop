@@ -1,66 +1,39 @@
-import { franc } from "franc";
-
 /**
- * Languages Chromium has Hunspell dictionaries for, keyed by the ISO 639-3
- * code franc reports. Windows and Linux spellcheck only with the dictionaries
- * the app enables, so a document in any other language is left unchecked
- * rather than underlined throughout.
+ * Windows and Linux check only the languages the app enables: the system's, the language of any
+ * alphabet written that no system language uses, and the user's choices, which win. Alphabets,
+ * unlike a guess at the language, cannot turn short English prompts into Danish.
  */
-const DICTIONARY_LANGUAGE_BY_DETECTED: Readonly<Record<string, string>> = {
-  afr: "af",
-  als: "sq",
-  bos: "sh",
-  bul: "bg",
-  cat: "ca",
-  ces: "cs",
-  dan: "da",
-  deu: "de",
-  ekk: "et",
-  ell: "el",
-  eng: "en",
-  fra: "fr",
-  glg: "gl",
-  heb: "he",
-  hin: "hi",
-  hrv: "hr",
-  hun: "hu",
-  hye: "hy",
-  ind: "id",
-  ita: "it",
-  kor: "ko",
-  lit: "lt",
-  lvs: "lv",
-  nld: "nl",
-  nob: "nb",
-  pes: "fa",
-  pol: "pl",
-  por: "pt",
-  ron: "ro",
-  rus: "ru",
-  slk: "sk",
-  slv: "sl",
-  spa: "es",
-  srp: "sr",
-  swe: "sv",
-  tam: "ta",
-  tgk: "tg",
-  tur: "tr",
-  ukr: "uk",
-  vie: "vi",
-};
+interface Alphabet {
+  /** The ISO 15924 code Intl gives the alphabet's languages. */
+  readonly script: string;
+  /** Two letters in a row, so a lone symbol such as a Greek α in a formula does not count. */
+  readonly word: RegExp;
+  readonly language: string;
+}
 
-const DETECTABLE = Object.keys(DICTIONARY_LANGUAGE_BY_DETECTED);
+const ALPHABETS: readonly Alphabet[] = [
+  { script: "Latn", word: /\p{Script=Latin}{2}/u, language: "en" },
+  { script: "Hebr", word: /\p{Script=Hebrew}{2}/u, language: "he" },
+  { script: "Grek", word: /\p{Script=Greek}{2}/u, language: "el" },
+  { script: "Armn", word: /\p{Script=Armenian}{2}/u, language: "hy" },
+  { script: "Kore", word: /\p{Script=Hangul}{2}/u, language: "ko" },
+  { script: "Taml", word: /\p{Script=Tamil}{2}/u, language: "ta" },
+];
 
 /** The variant to use when neither the user's locales nor a bare code name one. */
 const FALLBACK_VARIANT: Readonly<Record<string, string>> = { en: "en-US", pt: "pt-BR" };
-
-/** Short samples guess wrong; a title alone is not enough to switch dictionaries. */
-const MIN_SAMPLE_LENGTH = 20;
-/** System languages always stay enabled; this many detected ones are kept besides. */
-const MAX_DETECTED_LANGUAGES = 3;
 const MAX_SYSTEM_LANGUAGES = 4;
 
 const baseOf = (tag: string): string => tag.toLowerCase().split("-")[0] ?? "";
+const unique = (codes: readonly string[]): string[] => [...new Set(codes)];
+
+function scriptOf(locale: string): string | undefined {
+  try {
+    return new Intl.Locale(locale).maximize().script;
+  } catch {
+    return undefined;
+  }
+}
 
 /** The installed dictionary for a language, preferring the user's own regional variant. */
 export function dictionaryFor(
@@ -85,64 +58,92 @@ export function dictionaryFor(
   return available.find((dictionary) => baseOf(dictionary) === base) ?? null;
 }
 
-const unique = (dictionaries: readonly string[]): string[] => [...new Set(dictionaries)];
-
-/** What Hunspell needs to check spelling as the user writes. */
+/** What Chromium needs to check spelling as the user writes. */
 export interface SpellcheckSession {
   readonly availableSpellCheckerLanguages: readonly string[];
   readonly setSpellCheckerLanguages: (languages: string[]) => void;
 }
 
-export interface DocumentSpelling {
-  readonly languages: () => readonly string[];
-  /** Enables the dictionary for the language a sample is written in. Returns true when it was added. */
-  readonly noteSample: (sample: string) => boolean;
+/** Why a language is on: the system lists it, the text uses its alphabet, or the user chose it. */
+export type LanguageSource = "system" | "alphabet" | "user";
+
+export interface SpellingLanguage {
+  readonly code: string;
+  readonly source: LanguageSource;
 }
 
-/**
- * Keeps Hunspell's dictionaries matched to what the user writes: every
- * language in the system settings, plus the few most recent languages found in
- * documents. A word is accepted when any enabled dictionary knows it.
- */
+/** The user's choices from the context menu: true turns a language on, false keeps it off. */
+export type LanguageChoices = Readonly<Record<string, boolean>>;
+
+export interface DocumentSpelling {
+  readonly available: readonly string[];
+  readonly languages: () => readonly SpellingLanguage[];
+  readonly choices: () => LanguageChoices;
+  /** Enables the language of each new alphabet in a sample. Returns true when languages changed. */
+  readonly noteSample: (sample: string) => boolean;
+  /** Records the user's choice for one language. Returns true when languages changed. */
+  readonly choose: (code: string, enabled: boolean) => boolean;
+}
+
+interface State {
+  readonly fromAlphabets: readonly string[];
+  readonly choices: LanguageChoices;
+}
+
 export function makeDocumentSpelling(
   session: SpellcheckSession,
   preferredLocales: readonly string[],
+  savedChoices: LanguageChoices,
 ): DocumentSpelling {
   const available = session.availableSpellCheckerLanguages;
-  // Every regional dictionary the user lists stays enabled, such as both
-  // British and American English.
+  // Every regional dictionary the user lists stays enabled, such as both British and American English.
   const system = unique(
     preferredLocales.flatMap((locale) => dictionaryFor(locale, available, preferredLocales) ?? []),
   ).slice(0, MAX_SYSTEM_LANGUAGES);
-  let detected: string[] = [];
-  const languages = () => unique([...system, ...detected]);
-  // Only what Electron accepted is recorded, so a failed change is retried.
-  const apply = (next: string[]) => {
-    session.setSpellCheckerLanguages(unique([...system, ...next]));
-    detected = next;
+  // A system language without a dictionary, such as Japanese, still covers its own alphabet.
+  const systemScripts = new Set(preferredLocales.map(scriptOf));
+  const isAvailable = (code: string) => available.includes(code);
+
+  const languagesOf = ({ fromAlphabets, choices }: State): SpellingLanguage[] => {
+    const automatic = [
+      ...system.map((code) => ({ code, source: "system" as const })),
+      ...fromAlphabets.map((code) => ({ code, source: "alphabet" as const })),
+    ].filter(({ code }) => choices[code] !== false);
+    const chosen = Object.keys(choices)
+      .filter((code) => choices[code] && !automatic.some((language) => language.code === code))
+      .map((code) => ({ code, source: "user" as const }));
+    return [...automatic, ...chosen];
   };
-  if (system.length > 0) apply([]);
+  const codesOf = (next: State) => languagesOf(next).map(({ code }) => code);
+
+  let state: State = {
+    fromAlphabets: [],
+    choices: Object.fromEntries(Object.entries(savedChoices).filter(([code]) => isAvailable(code))),
+  };
+  // Only what Electron accepted is recorded, so a failed change is retried.
+  const commit = (next: State): boolean => {
+    const changed = codesOf(next).join() !== codesOf(state).join();
+    if (changed) session.setSpellCheckerLanguages(codesOf(next));
+    state = next;
+    return changed;
+  };
+  // Electron keeps the last list across restarts, so the app sets its own from the start.
+  if (available.length > 0) session.setSpellCheckerLanguages(codesOf(state));
 
   return {
-    languages,
+    available,
+    languages: () => languagesOf(state),
+    choices: () => state.choices,
     noteSample: (sample) => {
-      if (sample.trim().length < MIN_SAMPLE_LENGTH || available.length === 0) return false;
-      // Choosing among every supported language, not just the installed ones,
-      // keeps a German page from passing for the nearest installed language.
-      const code = franc(sample, { only: DETECTABLE, minLength: MIN_SAMPLE_LENGTH });
-      const language = DICTIONARY_LANGUAGE_BY_DETECTED[code];
-      if (language === undefined) return false;
-      if (system.some((dictionary) => baseOf(dictionary) === language)) return false;
-      const known = detected.find((dictionary) => baseOf(dictionary) === language);
-      if (known !== undefined) {
-        // The most recently written languages are the ones kept.
-        detected = [...detected.filter((dictionary) => dictionary !== known), known];
-        return false;
-      }
-      const dictionary = dictionaryFor(language, available, preferredLocales);
-      if (dictionary === null) return false;
-      apply([...detected, dictionary].slice(-MAX_DETECTED_LANGUAGES));
-      return true;
+      const found = ALPHABETS.filter(
+        (alphabet) => !systemScripts.has(alphabet.script) && alphabet.word.test(sample),
+      )
+        .flatMap(({ language }) => dictionaryFor(language, available, preferredLocales) ?? [])
+        .filter((code) => !system.includes(code) && !state.fromAlphabets.includes(code));
+      if (found.length === 0) return false;
+      return commit({ ...state, fromAlphabets: [...state.fromAlphabets, ...found] });
     },
+    choose: (code, enabled) =>
+      isAvailable(code) && commit({ ...state, choices: { ...state.choices, [code]: enabled } }),
   };
 }

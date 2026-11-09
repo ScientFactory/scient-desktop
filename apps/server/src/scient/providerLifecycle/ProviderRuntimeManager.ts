@@ -132,6 +132,7 @@ function operation(input: {
   readonly downloadedBytes?: number;
   readonly totalBytes?: number;
   readonly waitingForIdle?: boolean;
+  readonly retrying?: boolean;
 }): ProviderRuntimeOperation {
   return {
     operationId: input.operationId,
@@ -147,6 +148,7 @@ function operation(input: {
       ? {}
       : { totalBytes: Math.max(1, Math.floor(input.totalBytes)) }),
     ...(input.waitingForIdle ? { waitingForIdle: true } : {}),
+    ...(input.retrying ? { retrying: true } : {}),
   };
 }
 
@@ -531,6 +533,7 @@ export const make = Effect.fn("ProviderRuntimeManager.make")(function* () {
                 : { downloadedBytes: progress.downloadedBytes }),
               ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
               ...(progress.waitingForIdle ? { waitingForIdle: true } : {}),
+              ...(progress.retrying ? { retrying: true } : {}),
             }),
           },
         });

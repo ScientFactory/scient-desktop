@@ -4,6 +4,7 @@ import {
   ANALYSIS_OUTPUT_MAXIMUM_BYTES,
   ANALYSIS_OUTPUT_MAXIMUM_CHUNK_BYTES,
   appendBoundedAnalysisOutput,
+  makeHeldAnalysisOutput,
 } from "./analysisOutputBuffer.ts";
 
 const observedAt = "2026-08-13T00:00:00.000Z";
@@ -86,5 +87,29 @@ describe("bounded analysis output", () => {
         ANALYSIS_OUTPUT_MAXIMUM_CHUNK_BYTES,
       );
     }
+  });
+});
+
+describe("output held until a step ends", () => {
+  it("keeps everything that fits, in order", () => {
+    const held = makeHeldAnalysisOutput(64);
+    held.hold([{ stream: "stdout", text: "compiling\n" }]);
+    held.hold([{ stream: "stderr", text: "error: no\n" }]);
+    expect(held.release()).toEqual([
+      { stream: "stdout", text: "compiling\n" },
+      { stream: "stderr", text: "error: no\n" },
+    ]);
+  });
+
+  it("keeps the end, where a failure's cause is, without splitting a character", () => {
+    const held = makeHeldAnalysisOutput(8);
+    held.hold([{ stream: "stdout", text: "a long preamble\n" }]);
+    held.hold([{ stream: "stderr", text: "€€€" }]);
+    const kept = held.release();
+    expect(kept[0]).toEqual({
+      stream: "stderr",
+      text: "[Earlier output of this step was left out.]\n",
+    });
+    expect(kept.slice(1)).toEqual([{ stream: "stderr", text: "€€" }]);
   });
 });

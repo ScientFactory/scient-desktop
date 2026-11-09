@@ -5,6 +5,7 @@
 import {
   CONVERSATION_REFERENCE_URL_PREFIX,
   isComputeCitation,
+  isOfficeCitation,
   isFileCitation,
   isPdfCitation,
   pdfCitationText,
@@ -222,6 +223,27 @@ export function projectInlineReferences(input: {
               startLine: citation.startLine,
               endLine: citation.endLine,
               unsaved: citation.origin === "draft",
+              text: citation.text,
+              comment: citation.comment ?? null,
+            },
+          };
+        }
+        if (isOfficeCitation(citation)) {
+          // The export's page quote: a document and the page the quote is on.
+          const label = citation.unit === "slide" ? "Slide quote" : "Word quote";
+          return {
+            label,
+            image: false,
+            reference: {
+              _tag: "pdf-excerpt",
+              id,
+              label,
+              document: projectRelativePath(
+                isAbsolutePath(citation.path) ? citation.path : `${citation.cwd}/${citation.path}`,
+                [citation.cwd, ...input.roots],
+              ),
+              firstPage: citation.page,
+              lastPage: citation.page,
               text: citation.text,
               comment: citation.comment ?? null,
             },

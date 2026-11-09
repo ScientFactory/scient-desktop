@@ -3,6 +3,7 @@ import {
   ExecutionReceipt,
   ExecutionReceiptSummary,
   ExecutionRunId,
+  type ExecutionProcessOutput,
 } from "@scientfactory/execution";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -260,7 +261,7 @@ const AnalysisRunBase = Schema.Struct({
   diagnostics: Schema.Array(AnalysisDiagnostic).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
-  /** Tables the run wrote in the project, relative to it. */
+  /** Files the run wrote in the project, relative to it. */
   writtenFiles: Schema.optional(Schema.Array(PathString)),
   artifacts: Schema.Array(AnalysisArtifact).pipe(Schema.withDecodingDefaultKey(Effect.succeed([]))),
   artifactReceipt: AnalysisArtifactReceipt.pipe(
@@ -498,10 +499,20 @@ export interface AnalysisArtifactCandidate {
 
 export interface AnalysisArtifactCollection {
   readonly candidates: ReadonlyArray<AnalysisArtifactCandidate>;
-  /** Tables the run wrote in the project, relative to it. */
+  /** Files the run wrote in the project, relative to it. */
   readonly writtenFiles?: ReadonlyArray<string>;
   /** A producer warning that does not invalidate representations published successfully. */
   readonly failureMessage: string | null;
+}
+
+export interface AnalysisRunOutcome {
+  /** What the tool wrote to files instead of printing, shown after what it printed. */
+  readonly output: ReadonlyArray<ExecutionProcessOutput>;
+  /** Null when the run did what was asked, whatever its exit code; otherwise why not. */
+  readonly failureMessage: string | null;
+  readonly diagnostics: ReadonlyArray<AnalysisDiagnostic>;
+  /** Files the run wrote in the project, relative to it. */
+  readonly writtenFiles: ReadonlyArray<string>;
 }
 
 export interface AnalysisRuntimeAdapter {
@@ -529,10 +540,17 @@ export interface AnalysisRuntimeAdapter {
       readonly args: ReadonlyArray<string>;
       readonly cwd: string;
       readonly environment: Readonly<Record<string, string>>;
+      /** "on-failure": its output appears only if it fails, such as a build that worked. */
+      readonly showOutput?: "on-failure";
     }>;
   };
   readonly collectArtifacts?: (context: AnalysisRunContext) => Promise<AnalysisArtifactCollection>;
   readonly collectDiagnostics?: (
     context: AnalysisRunContext,
   ) => Promise<ReadonlyArray<AnalysisDiagnostic>>;
+  /** For a tool whose output is in files and whose exit code does not say how the run went. */
+  readonly concludeRun?: (
+    context: AnalysisRunContext,
+    exitCode: number | null,
+  ) => Promise<AnalysisRunOutcome>;
 }

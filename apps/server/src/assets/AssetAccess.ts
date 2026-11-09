@@ -71,6 +71,7 @@ import { ScientAssetClaimsSchemas } from "./ScientAssetClaims.ts";
 import {
   isScientAssetClaims,
   issueScientAssetClaims,
+  fileInfoRevision,
   resolveScientAsset,
 } from "./ScientAssetAccess.ts";
 // SCIENT-FORK:END
@@ -551,7 +552,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
     )
       ? yield* readImageDimensionsFromHeader(canonicalFile)
       : null;
-    const pdfInfo = isWorkspacePdfPreviewPath(resolved.relativePath)
+    // SCIENT-FORK:START — every exact file reports its revision, so a preview keeps a loaded
+    // document while a check finds the file unchanged.
+    const fileInfo = !/\.html?$/i.test(resolved.relativePath)
       ? yield* fileSystem.stat(canonicalFile).pipe(
           Effect.mapError(
             (cause) =>
@@ -562,6 +565,8 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
           ),
         )
       : null;
+    const pdfInfo = isWorkspacePdfPreviewPath(resolved.relativePath) ? fileInfo : null;
+    // SCIENT-FORK:END
     return {
       claims: !/\.html?$/i.test(resolved.relativePath)
         ? {
@@ -590,7 +595,9 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
       fileName: path.basename(resolved.relativePath),
       sourcePath: resolved.relativePath,
       imageDimensions,
-      fileRevision: undefined,
+      // SCIENT-FORK:START — the revision a reader keeps its document by; see fileInfoRevision.
+      fileRevision: fileInfo ? fileInfoRevision(fileInfo) : undefined,
+      // SCIENT-FORK:END
     };
   },
 );
@@ -688,6 +695,9 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = finalized.fileName;
       sourcePath = finalized.sourcePath;
       imageDimensions = finalized.imageDimensions;
+      // SCIENT-FORK:START — report the revision, as draft-workspace-file does below.
+      fileRevision = finalized.fileRevision;
+      // SCIENT-FORK:END
       break;
     }
     case "draft-workspace-file": {
@@ -920,6 +930,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = issued.fileName;
       sourcePath = issued.sourcePath;
       expiresAt = issued.expiresAt;
+      fileRevision = issued.fileRevision;
       break;
     }
     // SCIENT-FORK:END
