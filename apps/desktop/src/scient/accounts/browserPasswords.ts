@@ -35,25 +35,25 @@ const LoginRow = Schema.Struct({
   username_value: Schema.String,
   password_value: Schema.Uint8Array,
   blacklisted_by_user: Schema.Number,
-  date_password_modified: Schema.optional(Schema.NullOr(Schema.Number)),
-  date_last_used: Schema.optional(Schema.NullOr(Schema.Number)),
-  date_created: Schema.optional(Schema.NullOr(Schema.Number)),
+  password_modified_ms: Schema.optional(Schema.NullOr(Schema.Number)),
+  last_used_ms: Schema.optional(Schema.NullOr(Schema.Number)),
+  created_ms: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 const isChromiumKeyError = Schema.is(ChromiumKeyError);
 const decodeRows = Schema.decodeUnknownEffect(Schema.Array(LoginRow));
 const csvCell = (value: string) => `"${value.replaceAll('"', '""')}"`;
-/** Chromium stores times as microseconds since 1601; 0 means never. */
-const chromiumDate = (micros: number | null | undefined) =>
-  micros && micros > 0
+/** Milliseconds since 1601 (Chromium's microseconds, divided in SQL); 0 means never. */
+const chromiumDate = (millis: number | null | undefined) =>
+  millis && millis > 0
     ? Option.getOrUndefined(
-        Option.map(DateTime.make(micros / 1000 - 11_644_473_600_000), DateTime.formatIso),
+        Option.map(DateTime.make(millis - 11_644_473_600_000), DateTime.formatIso),
       )
     : undefined;
 /** When the password was last changed, as Chrome knows it: changed, else last used, else saved. */
 const passwordChanged = (row: typeof LoginRow.Type) =>
-  chromiumDate(row.date_password_modified) ??
-  chromiumDate(row.date_last_used) ??
-  chromiumDate(row.date_created) ??
+  chromiumDate(row.password_modified_ms) ??
+  chromiumDate(row.last_used_ms) ??
+  chromiumDate(row.created_ms) ??
   "";
 
 export const passwordsToCsv = (
@@ -108,7 +108,11 @@ export const readPasswordDatabase = Effect.fn("DesktopAccounts.readPasswordDatab
     const snapshot = yield* snapshotCookieDatabase(database, "scient-password-import-");
     const rows = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      return yield* sql`select * from logins`.pipe(Effect.flatMap(decodeRows));
+      // Chromium times are microseconds since 1601, past JavaScript's safe integers; divide in SQL.
+      return yield* sql`select origin_url, signon_realm, username_value, password_value, blacklisted_by_user,
+                date_password_modified / 1000 as password_modified_ms,
+                date_last_used / 1000 as last_used_ms, date_created / 1000 as created_ms
+              from logins`.pipe(Effect.flatMap(decodeRows));
     }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: snapshot, readonly: true })));
     return passwordsToCsv(rows, keys, platform);
   },
