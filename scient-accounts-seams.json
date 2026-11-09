@@ -249,7 +249,7 @@
     {
       "path": "apps/desktop/src/preview/BrowserImport/BrowserImport.ts",
       "anchor": "coveredBySite",
-      "purpose": "Leave working sign-ins alone when a browser refresh copies cookies."
+      "purpose": "Leave working sign-ins alone when a browser refresh copies cookies, and read Chromium on macOS and Linux while it runs."
     },
     {
       "path": "apps/desktop/src/preview/BrowserImport/ChromiumCookies.ts",
@@ -259,7 +259,7 @@
     {
       "path": "apps/desktop/src/preview/BrowserImport/CookieDatabase.ts",
       "anchor": "Scient Accounts: keep partitioned cookies with their stored ancestor bit.",
-      "purpose": "Carry an imported cookie's partition key."
+      "purpose": "Carry an imported cookie's partition key, and read a running browser's databases from a copy taken while nothing changed."
     },
     {
       "path": "apps/web/src/components/settings/ProjectSettingsPanel.tsx",

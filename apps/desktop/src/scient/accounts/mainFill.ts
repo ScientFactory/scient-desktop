@@ -4,6 +4,7 @@ import {
   BrowserProfileId,
   DEFAULT_BROWSER_PROFILE_ID,
   EnvironmentId,
+  GOOGLE_SITE,
   INCOGNITO_BROWSER_PROFILE_ID,
   IsoDateTime,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
@@ -43,6 +44,7 @@ import {
   markOwnWrites,
   watchForeignInserts,
 } from "./mainInserts.ts";
+import { readGoogleSessions } from "./googleSessions.ts";
 import { withCookieDebugger } from "./sessionCookies.ts";
 import { siteCookieRemovals } from "./signedInSites.ts";
 
@@ -63,6 +65,7 @@ export const FillMainInput = Schema.Struct({
   join: Schema.optional(Units),
   mode: Schema.Literals(["fill", "fill-or-replace"]),
   replaceAllowedSince: Schema.optional(Schema.Record(Site, IsoDateTime)),
+  replaceGoogle: Schema.optional(Schema.Boolean),
   skipSites: Schema.Array(Site).check(Schema.isMaxLength(20_000)),
 });
 export type FillMainInput = typeof FillMainInput.Type;
@@ -141,6 +144,12 @@ export async function copyIntoMain(
       const units: Array<{ sites: string[]; outcome: UnitOutcome }> = [];
       // Units sharing a site are one component, decided once, before anything is written.
       const planned = input.units ? mergeUnits(input.units) : jarUnits(jar, input.join);
+      // Google is replaced only on Google's own word: no account in Main still works. Google's check
+      // writes cookies into Main, so the insert tracker can't vouch for it; it is asked right before
+      // Google's unit, and the unit's watcher protects whatever a page writes after that.
+      const googleDeadNow = async () =>
+        (await readGoogleSessions(main).catch(() => null))?.every((account) => !account.valid) ??
+        false;
       for (const unit of planned) {
         const sites = [...unitSites(unit)];
         const since = unit.flatMap((entry) => {
@@ -151,6 +160,8 @@ export async function copyIntoMain(
         if (sites.some((entry) => failed.has(entry))) outcome = "restore-failed";
         else if (sites.some((entry) => skipped.has(entry))) outcome = "blocked";
         else {
+          const googleDead =
+            input.replaceGoogle === true && sites.includes(GOOGLE_SITE) && (await googleDeadNow());
           const foreign = watchForeignInserts(main);
           try {
             outcome = await applyUnit(store, {
@@ -159,9 +170,11 @@ export async function copyIntoMain(
               mode: input.mode,
               // The tracker can't vouch for a time before it started; then replace is refused.
               replaceAllowed:
-                since.length > 0 &&
-                tracker !== undefined &&
-                !tracker.touchedSince(sites, Math.min(...since)),
+                googleDead ||
+                (since.length > 0 &&
+                  tracker !== undefined &&
+                  !tracker.touchedSince(sites, Math.min(...since))),
+              ...(googleDead ? { replaceGoogle: true } : {}),
               nowSeconds: Date.now() / 1000,
               foreign: () => foreign.cookies,
             });

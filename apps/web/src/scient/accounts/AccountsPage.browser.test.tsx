@@ -253,14 +253,14 @@ it.each([
   [
     "a profile from a browser there to sign in, then refreshes it",
     { browser: "chrome", profileName: "Yaacov", importedAt: "2026-11-03T00:00:00.000Z" },
-    "Google blocks signing in here. Sign in in Chrome, then Refresh from Chrome",
+    "Signed out of Google.",
     "Refresh from Chrome",
     "refresh",
   ],
   [
     "a profile with no source to a browser, then to import that profile",
     undefined,
-    "Google blocks signing in here. Sign in in your browser, then import that profile",
+    "Signed out of Google.",
     "Import from a browser…",
     "import",
   ],
@@ -293,6 +293,22 @@ it.each([
     expect(actions.importProfile).toHaveBeenCalledTimes(ran === "import" ? 1 : 0);
   },
 );
+
+it("offers Main a copy of another profile's working Google before an import", async () => {
+  const copy = vi.fn();
+  const actions = {
+    refresh: vi.fn(),
+    importProfile: vi.fn(),
+    copyFrom: { name: "Yaacov", run: copy },
+  };
+  await using _screen = await render(
+    <ProfileDetail signedOut email={undefined} recover={googleRecovery(undefined, actions)} />,
+  );
+  await expect.element(page.getByText("Signed out of Google.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Copy from Yaacov", exact: true }).click();
+  expect(copy).toHaveBeenCalledOnce();
+  expect(actions.importProfile).not.toHaveBeenCalled();
+});
 
 it("shows only the address while Google accepts the profile", async () => {
   await using _screen = await render(
@@ -517,13 +533,7 @@ it("offers importing a browser profile when no profile here holds a working Goog
     />,
   );
   await page.getByRole("button", { name: "Who Main uses on google.com" }).click();
-  await expect
-    .element(
-      page.getByText(
-        "Google blocks signing in here. Sign in in your browser, then import that profile",
-      ),
-    )
-    .toBeVisible();
+  await expect.element(page.getByText("Signed out of Google.", { exact: true })).toBeVisible();
   await page.getByRole("menuitem", { name: "Import from a browser…" }).click();
   expect(onImport).toHaveBeenCalledOnce();
 });

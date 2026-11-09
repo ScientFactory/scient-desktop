@@ -495,7 +495,13 @@ describe("trigger 1: after an import into another profile", () => {
     state.filled = [];
     await fillMainFromProfile(environmentId, "work");
     expect(fills).toEqual([
-      expect.objectContaining({ from: "work", mode: "fill", skipSites: ["gitlab.com"] }),
+      {
+        environmentId,
+        from: "work",
+        mode: "fill-or-replace",
+        replaceAllowedSince: {},
+        skipSites: ["gitlab.com"],
+      },
     ]);
     expect(state.filled).toEqual([
       { environmentId, input: { accountId: session.accountId, profileName: "Work" } },
@@ -530,18 +536,37 @@ describe("Copy from a profile into Main", () => {
     return fills;
   };
 
-  it("copies the one sign-in through Main's fill, never over what Main holds", async () => {
+  it("copies the one sign-in through Main's fill, over Main's only once Google signed Main out", async () => {
     const fills = bridge("copied");
     const session = google();
     state.snapshot = snapshot([session]);
     state.filled = [];
     expect(await copySignInIntoMain(environmentId, session)).toBe("copied");
-    expect(fills).toEqual([
-      { environmentId, from: "work", units: [["google.com"]], mode: "fill", skipSites: [] },
-    ]);
+    const fill = {
+      environmentId,
+      from: "work",
+      units: [["google.com"]],
+      mode: "fill-or-replace",
+      replaceAllowedSince: {},
+      skipSites: [],
+    };
+    expect(fills).toEqual([fill]);
+
     expect(state.filled).toEqual([
       { environmentId, input: { accountId: session.accountId, profileName: "Work" } },
     ]);
+    // Google signed Main out: Main has no session to keep, so the working one replaces it.
+    const mainGoogle = row("default", ["google.com"], {
+      signIn: { state: "signed-out", at: AT, by: "look" },
+    });
+    state.snapshot = snapshot([session, mainGoogle]);
+    await copySignInIntoMain(environmentId, session);
+    expect(fills[1]).toEqual({
+      ...fill,
+      replaceAllowedSince: { "google.com": AT },
+      replaceGoogle: true,
+    });
+    state.snapshot = snapshot([session]);
     bridge("conflict");
     expect(await copySignInIntoMain(environmentId, session)).toBe("conflict");
     vi.unstubAllGlobals();
