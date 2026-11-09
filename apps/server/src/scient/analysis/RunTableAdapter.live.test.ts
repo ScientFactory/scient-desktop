@@ -249,6 +249,8 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
             output += `$ ${step.executable} ${step.args.join(" ")}\n${result.output}`;
             code = result.code;
             if (adapter.concludeRun === undefined) expect(result.code, output).toBe(0);
+            // As Run does: a failed step, such as a build, ends the run before the next starts.
+            if (result.code !== 0) break;
           }
           const concludeRun = adapter.concludeRun;
           if (concludeRun !== undefined) {

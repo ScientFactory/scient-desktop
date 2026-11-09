@@ -282,7 +282,7 @@ describe("the run", () => {
       },
       {
         executable: "/usr/bin/make",
-        args: ["-s", "STAN_THREADS=true", built],
+        args: ["-s", "STAN_THREADS=true", "INC_DIR_OPT=-I", built],
         cwd: root,
         environment: { PATH: "/usr/bin" },
         showOutput: "on-failure",
@@ -636,13 +636,14 @@ describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to C++ and keeping it 
       await folderFor({ CXX: "/opt/gcc/bin/g++" }),
       await folderFor({ CXXFLAGS: "-O0" }),
       await folderFor({ STAN_OPENCL: "true" }),
+      await folderFor({ CPATH: "/usr/local/include" }),
     ];
     NodeFS.mkdirSync(NodePath.join(root, "make"), { recursive: true });
     NodeFS.writeFileSync(NodePath.join(root, "make", "program"), "%.o : %.hpp\n");
     folders.push(await folderOf());
     NodeFS.writeFileSync(NodePath.join(root, "make", "program"), "%.o : %.hpp\n\t# changed\n");
     folders.push(await folderOf());
-    expect(new Set([plain, ...folders]).size).toBe(6);
+    expect(new Set([plain, ...folders]).size).toBe(7);
   });
 
   it("fingerprints the compiler make/local names, as make reports it, asking make once", async () => {

@@ -256,8 +256,13 @@ const STOP_GRACE_MS = 15_000;
 const MESSAGE_CHARACTERS = 64 * 1024;
 /** A build unused this long goes; each run that uses one marks it used. */
 const UNUSED_BUILD_MS = 30 * 24 * 60 * 60 * 1000;
-/** Make variables every build uses, which change the program and so its folder. */
-const MAKE_FLAGS = ["STAN_THREADS=true"];
+/**
+ * Make variables every build uses, which change the program and so its folder. CmdStan names its
+ * own Eigen, Boost, SUNDIALS and TBB with -isystem, which CPATH and -I folders outrank, so Homebrew's
+ * SUNDIALS 7 in /usr/local on an Intel Mac replaced the SUNDIALS 6 CmdStan is built against. As -I
+ * they come before any of those.
+ */
+const MAKE_FLAGS = ["STAN_THREADS=true", "INC_DIR_OPT=-I"];
 
 async function readIfPresentAsync(file: string): Promise<Buffer | null> {
   try {
@@ -393,7 +398,7 @@ async function filesUnder(folder: string, platform: NodeJS.Platform): Promise<Ar
 
 /** Variables CmdStan's makefiles read that change the program they build. */
 const BUILD_VARIABLE =
-  /^(?:CXX|CC|CXXFLAGS|CPPFLAGS|LDFLAGS|LDLIBS|CXX_TYPE|O|MAKEFLAGS|STAN_\w+|TBB_\w+)$/u;
+  /^(?:CXX|CC|CXXFLAGS|CPPFLAGS|LDFLAGS|LDLIBS|CXX_TYPE|O|MAKEFLAGS|STAN_\w+|TBB_\w+|CPATH|C_INCLUDE_PATH|CPLUS_INCLUDE_PATH|LIBRARY_PATH|SDKROOT|MACOSX_DEPLOYMENT_TARGET)$/u;
 
 /**
  * Everything that changes the program built from this C++: CmdStan's makefiles, the version files
