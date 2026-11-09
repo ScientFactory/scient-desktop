@@ -3189,4 +3189,25 @@ describe("connectors agents make and fix", () => {
       ).toMatchObject({ outcome: "needs-setup" });
     }).pipe(Effect.provide(testLayer)),
   );
+
+  it.live(
+    "writes the connector-authoring template, which starts and lists its tools with no key",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const chat = NodePath.join(harness.config.stateDir, "..", "chat");
+        const copied = yield* harness.runtime.copyForAgent({
+          workingFolder: chat,
+          name: "Open Works",
+        });
+        expect(copied.folder).toBe(NodePath.join(chat, "connectors", "open-works"));
+        const manifest = yield* Effect.promise(async () =>
+          JSON.parse(await NodeFSP.readFile(NodePath.join(copied.folder, "manifest.json"), "utf8")),
+        );
+        expect(manifest).toMatchObject({ name: "open-works", display_name: "Open Works" });
+        const checked = yield* harness.runtime.checkFolder({ folder: copied.folder }, undefined);
+        expect(checked.ok).toBe(true);
+        expect(checked.tools.map((tool) => tool.name).sort()).toEqual(["get_work", "search_works"]);
+      }).pipe(Effect.provide(testLayer)),
+  );
 });

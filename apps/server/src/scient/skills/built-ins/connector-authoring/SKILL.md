@@ -1,0 +1,90 @@
+---
+name: connector-authoring
+description: Build, test, fix or improve a connector (a local MCP server) in Scient. Use when the user asks to make, fix, repair or improve a connector or MCP server, when a connector stopped or returns errors, or when the user needs to reach a service, website, database, file collection or command-line tool that no installed connector or Scient tool covers, including sites with no public API that the user signs in to.
+---
+
+# Connector Authoring
+
+A connector gives agents tools for one service. In Scient it is a folder with a
+`manifest.json` (MCP Bundle format) and a small Node program. Scient starts it, hands it keys
+and sign-ins from Accounts, and checks it before it goes in. The goal: a connector that does
+the user's real tasks, returns correct data, stays signed in, and holds no secret in its files.
+
+This skill grants no tools or permissions.
+
+## Make a connector
+
+1. **Check what exists.** Look at the tools you already have (`mcp__<connector>__…` and
+   Scient's own: papers, sources, accounts, compute) and at Extensions → Discover. If one
+   covers the need, use it or tell the user how to add it. If the work is one-off, a script
+   fits better; if it is know-how rather than access, a skill does (`scient-skill-authoring`).
+2. **Ask briefly**, in one message and only what you don't know: which service (a link), the
+   two or three things they want to do with it (with an example), and how they sign in (an API
+   key, a university or site login, nothing).
+3. **Choose the kind:**
+   - a web API with a key or none: `auth-and-sessions.md` for keys, `science-apis.md` for
+     science services;
+   - an API that only offers OAuth: `auth-and-sessions.md`, "OAuth APIs";
+   - a website the user signs in to, with no documented API: `study-a-website.md` first, then
+     `auth-and-sessions.md`;
+   - files, a database or a command-line tool on this computer: `local-tools.md`.
+4. **Plan a few tools** shaped like the user's tasks, not one per endpoint. Read
+   `tool-design.md`. Tell the user the plan in a few lines and go on.
+5. **Build from the template.** `scient_connector_copy {name}` writes a working connector to
+   `connectors/<slug>/` (an OpenAlex example with no dependencies). Read its `README.md`,
+   replace the example tools in `server.mjs`, and update `manifest.json`. Keep `mcp.mjs`,
+   `http.mjs` and `session.mjs` unless you have a reason. Scient runs Node connectors on its own
+   Node, and npm may be missing: add libraries only when truly needed, installed inside the
+   folder.
+6. **Test with real calls.** `scient_connector_check {folder, calls}` with real inputs from the
+   user's tasks. For a site the user signs in to, add `signIn` with the name of their Accounts
+   sign-in, so the check runs signed in. Read the data: it must match the source, not just
+   arrive. See `testing.md`. Fix and check again until it passes.
+7. **Save and set up.** `scient_connector_save {folder}`. When it says `needs-setup`, call
+   `scient_connector_setup {connector}`: keys open a private card, a sign-in links the user's
+   Accounts sign-in. Then check once more with `connector` set, so it uses them. (`signIn` is
+   only for a folder that isn't saved yet.)
+8. **Report** in a few lines: what it does, its tools, what you tested with one real result,
+   what you didn't test, and that its page has Undo.
+
+## Fix or improve a connector
+
+1. `scient_connector_copy {connector}` copies it into this chat's folder and returns its
+   status, last error and log.
+2. Read the error, the log and the code. Read `fixing.md`.
+3. Reproduce with `scient_connector_check {folder, connector, calls}`, using the call that
+   failed.
+4. Make the smallest fix. Keep tool names, inputs and result fields.
+5. Check again: the failing call and the calls that worked before.
+6. `scient_connector_save {folder, connector}`. Scient keeps the old version (Undo on the
+   connector's page). A vendor's connector becomes the user's own copy; say so.
+
+## Hard rules
+
+- **Secrets only through Scient.** Keys, passwords, tokens and cookies never go in chat, code,
+  `manifest.json`, files, logs or results. Keys reach the program through setup and Accounts,
+  as environment variables; sign-ins as Scient's cookie files. Never ask for a key in chat.
+- **The user's own account, used fairly.** Only their account, for their own use. Respect the
+  site's terms; if they forbid automated access, say so and stop. Be polite: pace requests,
+  back off when limited, identify honestly. Send the browser's user agent only with the
+  user's own sign-in session (`SCIENT_SIGN_IN_USER_AGENT`), never to get past a bot check.
+- **Never get past a captcha or 2FA yourself.** Hand it to the user.
+- **Read first.** Explore by reading. Ask the user before any request that changes data
+  (submit, post, delete, enroll, pay), while studying and when testing.
+- **No captures with secrets.** Never save request captures, HAR files, cookies or page dumps
+  in the connector or the project. Use masked or made-up values in notes and tests.
+
+## References
+
+- `references/tool-design.md`: when planning or changing tools (names, schemas, results,
+  paging, errors, annotations).
+- `references/auth-and-sessions.md`: when the connector needs a key, OAuth, or the user's
+  sign-in to a website, and how it stays signed in.
+- `references/study-a-website.md`: before building for a site with no documented API.
+- `references/science-apis.md`: when using OpenAlex, NCBI, arXiv, Crossref, Semantic Scholar,
+  ClinicalTrials.gov, Zotero, Moodle or a similar service.
+- `references/local-tools.md`: for local files, databases and command-line tools.
+- `references/testing.md`: before calling a connector done.
+- `references/fixing.md`: when a connector fails or the user asks to improve one.
+- `references/sources.md`: where these methods come from.
+- `templates/`: the connector `scient_connector_copy` writes; read its `README.md`.

@@ -45,6 +45,7 @@ describe("Scient skill management", () => {
           "workspace-readiness-review",
           "improve-workspace-readiness",
           "scient-skill-authoring",
+          "connector-authoring",
           "pdf-authoring",
           "html-pdf-authoring",
           "latex-authoring",
@@ -54,6 +55,7 @@ describe("Scient skill management", () => {
           "Workspace readiness",
           "Workspace readiness",
           "Skill creation",
+          "Connector creation",
           "Document creation",
           "Document creation",
           "Document creation",
@@ -63,6 +65,7 @@ describe("Scient skill management", () => {
           new Set([
             "Review and improve a workspace so people and agents can understand it and work safely.",
             "Create and improve reusable guidance for Scient agents.",
+            "Make and fix connectors that give agents tools for a service.",
             "Create polished documents and reliable final outputs.",
           ]),
         );
@@ -185,7 +188,7 @@ describe("Scient skill management", () => {
           active: false,
           invocationPolicy: "explicit",
         });
-        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(7);
+        expect(updated.skills.filter((skill) => skill.scope === "user")).toHaveLength(8);
         yield* Effect.promise(() =>
           NodeFSP.appendFile(
             NodePath.join(projectRoot, ".scient", "skills", "project-method", "SKILL.md"),
