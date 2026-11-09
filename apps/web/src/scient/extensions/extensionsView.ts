@@ -535,13 +535,13 @@ export function entryFacts(
 export function connectorFacts(
   entry: DiscoverEntry | undefined,
   connector: Pick<ConnectorSummary, "status" | "auth">,
-): ReadonlyArray<string> {
+): ReadonlyArray<readonly [string, string]> {
   const signedIn = connector.status === "connected" && connector.auth.type !== "none";
   return entryFacts(entry).flatMap(([label, value]) =>
     !signedIn || label !== "Access"
-      ? [value]
+      ? [[label, value] as const]
       : connector.auth.type === "source-control"
-        ? [`Signed in as ${connector.auth.account}`]
+        ? [[label, `Signed in as ${connector.auth.account}`] as const]
         : [],
   );
 }
