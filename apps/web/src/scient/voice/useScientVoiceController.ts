@@ -29,7 +29,7 @@ import {
   useVoiceJobError,
 } from "./voiceProcessing.ts";
 import type { VoiceWavClip } from "./voiceWavEncoder.ts";
-import { useRecordScientAnalytics } from "../analytics/client.ts";
+import { useBeginVoiceAnalytics, useRecordScientAnalytics } from "../analytics/client.ts";
 import type { VoiceTranscriptCorrectionClient } from "./voiceTranscriptCorrectionClient.ts";
 
 export type VoicePhase =
@@ -155,7 +155,8 @@ export function useScientVoiceController({
   onTranscript,
   onRequestSubmit,
 }: VoiceControllerOptions): ScientVoiceController {
-  const recordAnalytics = useRecordScientAnalytics();
+  const recordAnalytics = useStableCallback(useRecordScientAnalytics());
+  const beginVoiceAnalytics = useBeginVoiceAnalytics(environmentId);
   const [{ localPhase, errorMessage, microphonePermissionDenied }, dispatchController] = useReducer(
     (
       state: {
@@ -291,7 +292,7 @@ export function useScientVoiceController({
       voiceBridge: client,
       correction: correctionRequested ? { corrector: correctionClient, environmentId } : null,
       language: languagePreference === "auto" ? undefined : languagePreference,
-      recordAnalytics,
+      recordAnalytics: beginVoiceAnalytics(),
       deliver: origin
         ? (text, sendText) => deliverVoiceTranscriptToDraft(origin, text, sendText)
         : (text, sendText) => {
@@ -326,8 +327,13 @@ export function useScientVoiceController({
           describeMicrophoneAccessRefusal(access, window.desktopBridge?.getClientPlatform?.()),
         );
         recordAnalytics({
-          name: "voice.transcription.failed",
-          properties: { engineClass: "local-whisper", failureClass: "permission" },
+          name: "voice.recording.failed",
+          properties: {
+            voiceSchemaVersion: 2,
+            engineClass: "local-whisper",
+            failureClass: "permission",
+            stage: "recording",
+          },
         });
         return;
       }
@@ -451,8 +457,8 @@ export function useScientVoiceController({
     if (operation !== operationRef.current) return;
     if (cancelledPhase === "recording") {
       recordAnalytics({
-        name: "voice.transcription.cancelled",
-        properties: { stage: cancelledPhase },
+        name: "voice.recording.cancelled",
+        properties: { voiceSchemaVersion: 2, stage: cancelledPhase },
       });
     }
     setElapsedMs(0);
@@ -483,8 +489,10 @@ export function useScientVoiceController({
     phaseRef.current = "idle";
     dispatchController({ type: "recorder-error", kind: recorderErrorKind });
     recordAnalytics({
-      name: "voice.transcription.failed",
+      name: "voice.recording.failed",
       properties: {
+        voiceSchemaVersion: 2,
+        stage: "recording",
         engineClass: "local-whisper",
         failureClass: recorderErrorKind === "permission-denied" ? "permission" : "audio",
       },

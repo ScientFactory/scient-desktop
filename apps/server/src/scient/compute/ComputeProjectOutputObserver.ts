@@ -11,6 +11,15 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import { inspectComputeStaticImage } from "./ComputeStaticImage.ts";
+import type { ComputeCaptureReason, ComputeProjectCaptureStatus } from "./ComputeCaptureStatus.ts";
+
+const SCAN_REASONS = {
+  "time limit": "scan-timeout",
+  "entry limit": "scan-entry-limit",
+  "depth limit": "scan-depth-limit",
+  "unreadable directory": "scan-unreadable",
+  "unreadable file": "scan-unreadable",
+} as const;
 
 const MAXIMUM_SCANNED_ENTRIES = 4_096;
 const MAXIMUM_DIRECTORY_DEPTH = 8;
@@ -48,12 +57,14 @@ interface ProjectImageSnapshot {
   readonly files: ReadonlyMap<string, ProjectImageState>;
   readonly directories: ReadonlyMap<string, ReadonlySet<string>>;
   readonly warnings: ReadonlyArray<string>;
+  readonly coverageReason?: ComputeCaptureReason;
 }
 
 export interface ComputeProjectOutputObservation {
   readonly projectRoot: string;
   readonly baseline: ProjectImageSnapshot | null;
   readonly warnings: ReadonlyArray<string>;
+  readonly coverageReason?: ComputeCaptureReason;
 }
 
 export interface ObservedComputeProjectImage {
@@ -70,6 +81,8 @@ export interface ComputeProjectOutputCollection {
   /** Tables written during the observation, to point at. They are not read. */
   readonly tables: ReadonlyArray<string>;
   readonly warnings: ReadonlyArray<string>;
+  /** Structured facts only; analytics must never classify the warning text. */
+  readonly capture?: ComputeProjectCaptureStatus;
 }
 
 export interface ComputeProjectOutputLimits {
@@ -147,7 +160,7 @@ async function snapshotProjectImages(
   const deadline = now() + OBSERVATION_TIMEOUT_MS;
   const files = new Map<string, ProjectImageState>();
   const inventories = new Map<string, ReadonlySet<string>>();
-  const reasons = new Set<string>();
+  const reasons = new Set<keyof typeof SCAN_REASONS>();
   const directories = [{ absolutePath: projectRoot, relativePath: "", depth: 0 }];
   let scannedEntries = 0;
 
@@ -232,6 +245,7 @@ async function snapshotProjectImages(
   return {
     files,
     directories: inventories,
+    ...(reasons.size === 0 ? {} : { coverageReason: SCAN_REASONS[[...reasons][0]!] }),
     warnings:
       reasons.size === 0
         ? []
@@ -244,24 +258,34 @@ async function readObservedImage(
   relativePath: string,
   observed: ProjectImageState,
   signal: AbortSignal,
-): Promise<ObservedComputeProjectImage | string> {
+): Promise<
+  ObservedComputeProjectImage | { readonly warning: string; readonly reason: ComputeCaptureReason }
+> {
+  const rejected = (reason: ComputeCaptureReason, warning: string) => ({ reason, warning });
   if (relativePath.length > 4_096) {
-    return "A generated figure path exceeded Scient's retained provenance limit.";
+    return rejected(
+      "unsafe-image",
+      "A generated figure path exceeded Scient's retained provenance limit.",
+    );
   }
   const mediaType = imageMediaType(relativePath);
-  if (mediaType === null) return `Generated file '${relativePath}' is not a supported figure.`;
+  if (mediaType === null)
+    return rejected("invalid-image", `Generated file '${relativePath}' is not a supported figure.`);
   const absolutePath = NodePath.join(projectRoot, ...relativePath.split("/"));
   const noFollow = "O_NOFOLLOW" in NodeFS.constants ? NodeFS.constants.O_NOFOLLOW : 0;
   let file: NodeFSP.FileHandle | null = null;
   try {
     const pathMetadata = await NodeFSP.lstat(absolutePath, { bigint: true });
     if (!pathMetadata.isFile()) {
-      return `Generated figure '${relativePath}' is not a regular file.`;
+      return rejected("unsafe-image", `Generated figure '${relativePath}' is not a regular file.`);
     }
     file = await NodeFSP.open(absolutePath, NodeFS.constants.O_RDONLY | noFollow);
     const canonicalPath = await NodeFSP.realpath(absolutePath);
     if (!isInsideProjectRoot(projectRoot, canonicalPath)) {
-      return `Generated figure '${relativePath}' resolved outside the project.`;
+      return rejected(
+        "unsafe-image",
+        `Generated figure '${relativePath}' resolved outside the project.`,
+      );
     }
     const before = await file.stat({ bigint: true });
     const canonicalMetadata = await NodeFSP.lstat(canonicalPath, { bigint: true });
@@ -273,10 +297,16 @@ async function readObservedImage(
       before.dev !== canonicalMetadata.dev ||
       before.ino !== canonicalMetadata.ino
     ) {
-      return `Generated figure '${relativePath}' changed before it could be retained.`;
+      return rejected(
+        "image-changed",
+        `Generated figure '${relativePath}' changed before it could be retained.`,
+      );
     }
     if (before.size > BigInt(MAXIMUM_IMAGE_BYTES)) {
-      return `Generated figure '${relativePath}' exceeded the ${String(MAXIMUM_IMAGE_BYTES)}-byte limit.`;
+      return rejected(
+        "image-limit",
+        `Generated figure '${relativePath}' exceeded the ${String(MAXIMUM_IMAGE_BYTES)}-byte limit.`,
+      );
     }
     // A writer can grow the file after stat. Never allocate/read beyond the cap.
     signal.throwIfAborted();
@@ -290,7 +320,10 @@ async function readObservedImage(
     }
     const contents = buffer.subarray(0, offset);
     if (contents.byteLength > MAXIMUM_IMAGE_BYTES) {
-      return `Generated figure '${relativePath}' exceeded the ${String(MAXIMUM_IMAGE_BYTES)}-byte limit.`;
+      return rejected(
+        "image-limit",
+        `Generated figure '${relativePath}' exceeded the ${String(MAXIMUM_IMAGE_BYTES)}-byte limit.`,
+      );
     }
     const after = await file.stat({ bigint: true });
     if (
@@ -299,11 +332,17 @@ async function readObservedImage(
       after.mtimeNs !== before.mtimeNs ||
       after.ctimeNs !== before.ctimeNs
     ) {
-      return `Generated figure '${relativePath}' changed while it was being retained.`;
+      return rejected(
+        "image-changed",
+        `Generated figure '${relativePath}' changed while it was being retained.`,
+      );
     }
     const inspection = inspectComputeStaticImage(mediaType, contents);
     if (inspection === null) {
-      return `Generated figure '${relativePath}' is not a valid ${mediaType === "image/png" ? "PNG" : "SVG"}.`;
+      return rejected(
+        "invalid-image",
+        `Generated figure '${relativePath}' is not a valid ${mediaType === "image/png" ? "PNG" : "SVG"}.`,
+      );
     }
     const contentHash = `sha256:${NodeCrypto.createHash("sha256").update(contents).digest("hex")}`;
     return {
@@ -315,7 +354,7 @@ async function readObservedImage(
       height: inspection.height,
     };
   } catch {
-    return `Generated figure '${relativePath}' could not be read safely.`;
+    return rejected("unsafe-image", `Generated figure '${relativePath}' could not be read safely.`);
   } finally {
     await file?.close().catch(() => undefined);
   }
@@ -323,7 +362,17 @@ async function readObservedImage(
 
 const disabledObserver: ComputeProjectOutputObserverPort = {
   begin: (projectRoot) => Effect.succeed({ projectRoot, baseline: null, warnings: [] }),
-  collect: () => Effect.succeed({ images: [], tables: [], warnings: [] }),
+  collect: () =>
+    Effect.succeed({
+      images: [],
+      tables: [],
+      warnings: [],
+      capture: {
+        coverage: "unavailable",
+        coverageReason: "observation-unavailable",
+        rejectedCount: 0,
+      },
+    }),
 };
 
 export class ComputeProjectOutputObserver extends Context.Service<
@@ -368,7 +417,16 @@ const liveObserver: ComputeProjectOutputObserverPort = {
     ),
   collect: (observation, limits) =>
     observation.baseline === null
-      ? Effect.succeed({ images: [], tables: [], warnings: observation.warnings })
+      ? Effect.succeed({
+          images: [],
+          tables: [],
+          warnings: observation.warnings,
+          capture: {
+            coverage: "unavailable" as const,
+            coverageReason: observation.coverageReason ?? ("observation-unavailable" as const),
+            rejectedCount: 0,
+          },
+        })
       : Effect.clockWith((clock) =>
           Effect.tryPromise({
             try: (signal) =>
@@ -416,11 +474,19 @@ const liveObserver: ComputeProjectOutputObserverPort = {
               ).pipe(
                 Effect.map((results) => {
                   const images = results.filter(
-                    (result): result is ObservedComputeProjectImage => typeof result !== "string",
+                    (result): result is ObservedComputeProjectImage => !("warning" in result),
                   );
-                  const warnings = results.filter(
-                    (result): result is string => typeof result === "string",
-                  );
+                  const rejected = results.filter((result) => "warning" in result);
+                  const warnings = rejected.map((result) => result.warning);
+                  const coverageReason =
+                    observation.baseline!.coverageReason ?? after.coverageReason;
+                  const rejectionReason =
+                    rejected[0]?.reason ??
+                    (changed.length > countLimited.length
+                      ? "image-limit"
+                      : countLimited.length > limited.length
+                        ? "output-limit"
+                        : undefined);
                   if (changed.length > countLimited.length) {
                     warnings.push(
                       `Only the first ${String(MAXIMUM_IMAGES_PER_EXECUTION)} generated figures were retained.`,
@@ -434,6 +500,13 @@ const liveObserver: ComputeProjectOutputObserverPort = {
                   return {
                     images,
                     tables,
+                    capture: {
+                      coverage:
+                        coverageReason === undefined ? ("complete" as const) : ("partial" as const),
+                      ...(coverageReason === undefined ? {} : { coverageReason }),
+                      rejectedCount: rejected.length + changed.length - limited.length,
+                      ...(rejectionReason === undefined ? {} : { rejectionReason }),
+                    },
                     warnings: [
                       ...new Set([
                         ...observation.warnings,
@@ -447,6 +520,11 @@ const liveObserver: ComputeProjectOutputObserverPort = {
                 Effect.orElseSucceed(() => ({
                   images: [],
                   tables,
+                  capture: {
+                    coverage: "unavailable" as const,
+                    coverageReason: "observation-unavailable" as const,
+                    rejectedCount: 0,
+                  },
                   warnings: [
                     ...observation.warnings,
                     "Scient could not safely retain generated project figures.",
@@ -460,12 +538,22 @@ const liveObserver: ComputeProjectOutputObserverPort = {
                 Effect.succeed({
                   images: [],
                   tables: [],
+                  capture: {
+                    coverage: "unavailable" as const,
+                    coverageReason: "scan-timeout" as const,
+                    rejectedCount: 0,
+                  },
                   warnings: ["Some project files could not be checked (time limit)."],
                 }),
             }),
             Effect.orElseSucceed(() => ({
               images: [],
               tables: [],
+              capture: {
+                coverage: "unavailable" as const,
+                coverageReason: "observation-unavailable" as const,
+                rejectedCount: 0,
+              },
               warnings: [
                 ...observation.warnings,
                 "Scient could not finish observing generated project figures.",
