@@ -28,6 +28,7 @@ import {
 } from "./timelineScrollAnchoring";
 import { createPageScrollController, type PageScrollKey } from "./pageScrollController";
 import { createUpwardScrollDetector, isTimelineScrollTarget } from "./timelineScrollTarget";
+import { scrollTimelineToEnd } from "./timelineEndScroll";
 
 import { releaseChatTimelineAnchor } from "../ChatView.logic";
 import type { Dispatch, RefObject } from "react";
@@ -225,11 +226,10 @@ export function useTimelineFollow(input: TimelineFollowInput) {
     setTimelinePositioningPending(true);
     requestAnimationFrame(() => {
       if (generation !== anchorUserScrollGenerationRef.current) return;
-      void Promise.resolve(
-        legendListRef.current?.scrollToEnd({
-          animated: animated && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-        }),
-      ).then(() => {
+      void scrollTimelineToEnd(legendListRef.current, {
+        animated: animated && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        stillWanted: () => generation === anchorUserScrollGenerationRef.current,
+      }).then(() => {
         if (generation !== anchorUserScrollGenerationRef.current) return;
         programmaticScrollPendingRef.current = false;
         setTimelinePositioningPending(false);
