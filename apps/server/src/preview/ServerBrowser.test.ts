@@ -2924,7 +2924,7 @@ it.effect("a stalled desktop viewer still gets its size, control and reconnect",
 );
 
 // SCIENT-FORK:START — sent upstream with the status reconnect and owner reads fixes.
-it.live("status reconnects the agent's tab after the desktop lets it go", () =>
+it.effect("status reconnects the agent's tab after the desktop lets it go", () =>
   Effect.scoped(
     Effect.gen(function* () {
       const broker = yield* Broker.PreviewAutomationBroker;
