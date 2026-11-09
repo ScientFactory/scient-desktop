@@ -722,7 +722,7 @@ function ApiKeysDialog({
   canWrite: boolean;
   onEdit: (account: AccountSummary) => void;
   onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
-  onKept: (name: string) => void;
+  onKept: (file: string, name: string) => void;
   onClose: () => void;
 }) {
   const navigate = useNavigate();
@@ -748,11 +748,11 @@ function ApiKeysDialog({
       row.stored === "agent"
         ? await link({ instanceId: row.instanceId, variable: row.variable })
         : row.stored === "files"
-          ? await keepPlainKey({ roots, file: row.files[0]!, name: row.name })
+          ? await keepPlainKey({ roots, file: row.file, name: row.name })
           : undefined;
     keeping.current.delete(row.id);
     if (!result?.ok) return;
-    if (row.stored === "files") onKept(row.name);
+    if (row.stored === "files") onKept(row.file, row.name);
     toastManager.add({ type: "success", title: `Kept ${row.name} in Accounts` });
   };
   return (
@@ -1219,9 +1219,11 @@ function AccountsContent({
           canWrite={canWrite}
           onEdit={setEditing}
           onActivity={setActivity}
-          onKept={(name) =>
+          onKept={(file, name) =>
             setPlainKeys((current) =>
-              current.map((item) => (item.name === name ? { ...item, kept: true } : item)),
+              current.map((item) =>
+                item.file === file && item.name === name ? { ...item, kept: true } : item,
+              ),
             )
           }
           onClose={() => setDialog(null)}

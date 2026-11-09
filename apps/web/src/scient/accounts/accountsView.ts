@@ -883,14 +883,15 @@ export function providerManagedAccounts(
             : droidRows(provider, known.mcpServers);
     next.set(provider.instanceId, rows);
   }
-  // Agents signed in to one account report the same connectors: one connection, one row.
-  const account = (instanceId: ProviderInstanceId) =>
-    providers.find((provider) => provider.instanceId === instanceId)?.auth.email;
+  // Agents signed in to one known account report the same connectors: one connection, one row.
+  // Without an account (Droid reports none), each agent's connector stays its own row.
+  const owner = (instanceId: ProviderInstanceId) =>
+    providers.find((provider) => provider.instanceId === instanceId)?.auth.email ?? instanceId;
   const seen = new Set<string>();
   const rows = [...next.values()]
     .flat()
     .filter((row) => {
-      const key = JSON.stringify([row.kind, account(row.instanceId), row.name]);
+      const key = JSON.stringify([row.kind, owner(row.instanceId), row.name]);
       return !seen.has(key) && Boolean(seen.add(key));
     })
     .toSorted((a, b) => a.name.localeCompare(b.name));
@@ -1058,14 +1059,14 @@ export type ApiKeyRow = {
   /** Custom models' own store, which Accounts seals: kept already. */
   | { readonly stored: "custom-models" }
   | { readonly stored: "agent"; readonly instanceId: string; readonly variable: string }
-  /** Keep in Accounts copies it from the first file. */
-  | { readonly stored: "files"; readonly files: ReadonlyArray<string> }
+  /** Each file's copy is its own key until Scient has compared their values. */
+  | { readonly stored: "files"; readonly file: string }
 );
 
 /** Where a key not kept in Accounts lives, or nothing when it is kept. */
 export function onlyIn(row: ApiKeyRow) {
   if (row.stored === "agent") return `Only in ${row.uses[0]?.label} settings`;
-  return row.stored === "files" ? `Only in ${row.files.join(", ")}` : undefined;
+  return row.stored === "files" ? `Only in ${row.file}` : undefined;
 }
 
 /**
@@ -1133,9 +1134,6 @@ export function apiKeyRows(input: {
         stored: "custom-models",
       });
   }
-  const files = new Map<string, string[]>();
-  for (const key of input.plainKeys)
-    if (!key.kept) files.set(key.name, [...(files.get(key.name) ?? []), key.file]);
   const byName = (a: ApiKeyRow, b: ApiKeyRow) =>
     a.name.localeCompare(b.name, undefined, { numeric: true });
   return [
@@ -1155,14 +1153,20 @@ export function apiKeyRows(input: {
     ].toSorted(byName),
     ...[
       ...others.filter((row) => row.stored === "agent"),
-      ...[...files].map(([name, paths]): ApiKeyRow => ({
-        id: `files:${name}`,
-        name,
-        service: undefined,
-        uses: [],
-        stored: "files",
-        files: paths,
-      })),
+      ...input.plainKeys.flatMap((key): ApiKeyRow[] =>
+        key.kept
+          ? []
+          : [
+              {
+                id: `files:${key.file}:${key.name}`,
+                name: key.name,
+                service: undefined,
+                uses: [],
+                stored: "files",
+                file: key.file,
+              },
+            ],
+      ),
     ].toSorted(byName),
   ];
 }

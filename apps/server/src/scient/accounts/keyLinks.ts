@@ -109,9 +109,9 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
     if (!instance || typeof value !== "string" || !value)
       return yield* failure("This variable has no key Scient can keep.");
     const snapshot = yield* accounts.snapshot;
+    // The same key under any name is one key: follow that account, so rotating it reaches here.
     for (const account of snapshot.accounts) {
-      if (account.details.kind !== "api-key" || account.details.envName !== target.variable)
-        continue;
+      if (account.details.kind !== "api-key") continue;
       const { token } = yield* accounts.resolveSecrets(account.accountId, ["token"]);
       if (token !== undefined && Redacted.value(token) === value) return account.accountId;
     }

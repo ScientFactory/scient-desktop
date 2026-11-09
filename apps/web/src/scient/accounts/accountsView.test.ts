@@ -641,13 +641,13 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
 });
 
 it("shows a connector once when agents signed in to one account both report it", () => {
-  const claude = (id: string, email: string): ServerProvider => ({
+  const claude = (id: string, email?: string): ServerProvider => ({
     instanceId: ProviderInstanceId.make(id),
     driver: ProviderDriverKind.make("claudeAgent"),
     enabled: true,
     installed: true,
     status: "ready",
-    auth: { status: "authenticated", email },
+    auth: email ? { status: "authenticated", email } : { status: "authenticated" },
     checkedAt: "2026-10-27T00:00:00.000Z",
     version: null,
     models: [],
@@ -664,6 +664,8 @@ it("shows a connector once when agents signed in to one account both report it",
     "Claude Docs",
     "Claude Docs",
   ]);
+  // No account reported: nothing says they are one connection.
+  expect(names([claude("claude"), claude("work")])).toEqual(["Claude Docs", "Claude Docs"]);
 });
 
 it("keeps provider rows only under the connection and permission that read them", () => {
@@ -895,8 +897,9 @@ describe("API keys", () => {
       ["HF_TOKEN", ["Work"], "Only in Work settings"],
       // Linked by agent and variable: Work's variable of the same name is its own key.
       ["OPENAI_API_KEY", ["Work"], "Only in Work settings"],
-      // A key in two files is one row; one already in Accounts has none.
-      ["WANDB_API_KEY", [], "Only in /p/.env, /home/.zshrc"],
+      // Each file's copy is its own row (their values may differ); one already in Accounts has none.
+      ["WANDB_API_KEY", [], "Only in /p/.env"],
+      ["WANDB_API_KEY", [], "Only in /home/.zshrc"],
     ]);
     expect(rows.find((row) => row.name === "OpenAI")?.uses[0]?.link).toEqual({
       instanceId: "codex",

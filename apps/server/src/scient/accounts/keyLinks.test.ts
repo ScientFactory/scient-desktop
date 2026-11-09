@@ -159,7 +159,8 @@ it.effect("keeps a variable's own key in Accounts and links the variable to it",
 
 it.effect("links to an account already holding the same key instead of keeping it twice", () =>
   Effect.gen(function* () {
-    const existing = { accountId, details: { kind: "api-key", envName: "OPENAI_API_KEY" } };
+    // Saved under another variable name, or none: still the same key.
+    const existing = { accountId, details: { kind: "api-key", envName: "OPENAI_KEY" } };
     const { saves, links } = yield* keep([existing], { token: "typed-key" });
     expect(saves).toEqual([]);
     expect(links).toEqual([[{ instanceId, variable: "OPENAI_API_KEY", accountId }, accountId]]);
