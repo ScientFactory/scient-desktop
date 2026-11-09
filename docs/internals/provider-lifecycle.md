@@ -267,7 +267,10 @@ Configuration fields use compact secondary typography. Repetitive binary-path ex
 omitted; other field guidance remains available through keyboard-accessible information controls,
 including the account-isolation explanation for a shadow home. Authentication prompts avoid
 repeating command-line instructions when a supported sign-in action is available. Failed operations
-and compatibility problems retain their diagnostic details.
+and compatibility problems retain their diagnostic details. A failed setup keeps its reason behind a
+small information button beside the status (settings and getting started); hovering or clicking it
+opens a card. Unknown error messages stay hidden there because they can carry paths or secrets; only
+a system error code such as `EEXIST` is added.
 
 Provider authorization pages open through the system browser in the native desktop client.
 Web clients request a separate authorization popup, including when hosted inside Scient's preview
@@ -509,13 +512,23 @@ catalog is authoritative for the selected release's version, artifact name, URL,
 An install, update, or repair:
 
 1. creates a unique private staging directory;
-2. downloads with size, total-time, idle-time, redirect-host, and cancellation bounds;
+2. downloads with size, total-time, idle-time, redirect-host, and cancellation bounds, retrying
+   failures that are usually temporary (see below);
 3. verifies the exact qualified digest;
 4. extracts in process while rejecting traversal, links, duplicates, excessive files, and excessive
    expanded data, or stages the qualified raw executable;
 5. validates provider-specific required package contents;
 6. runs the provider's bounded smoke test with an explicit environment; and
 7. activates the verified directory atomically and cleans staging.
+
+Every managed download, provider or Compute, gives a failure that is usually temporary four more
+tries over about a minute: HTTP 408, 429 and 5xx, a failed or dropped connection, a stall, or a body
+shorter than the catalog size. Waits are about 2, 5, 15 and 30 seconds with jitter, or the server's
+`Retry-After` up to a minute, and each retry starts again from the catalog URL because redirect
+targets expire. Cancellation, the total-time bound, size and host refusals, other 4xx, certificate
+errors and local disk errors stay final. While waiting, the operation reports `retrying` and the UI
+says Retrying; the final message says what failed in plain words. This exists because release hosts
+have outages: on 2026-11-09 GitHub returned 504 to anonymous release downloads for hours.
 
 Routine status refresh never deletes staging because a serialized mutation may still own it.
 Abandoned staging is reconciled when the next mutation acquires ownership. Cross-process mutation locks are reclaimed when their owner is gone or when the OS process start identity proves that its PID was reused. An overdue heartbeat alone does not revoke ownership: a suspended process can resume. If an older lock has no start identity or the OS identity cannot be read, a live PID remains busy until that process exits. Scient has no automatic override for that case; with every Scient instance closed, deleting the provider's `mutation.lock` under its runtime root clears it. A newly qualified artifact
