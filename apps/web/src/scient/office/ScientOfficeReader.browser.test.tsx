@@ -342,7 +342,12 @@ it("reaches a page among the last mounted once the rest mount", async () => {
   );
   await using screen = await render(view(6), { container, router: false });
   const scroller = container.querySelector<HTMLElement>("[data-office-pages]")!;
-  await vi.waitFor(() => expect(scroller.clientWidth).toBeGreaterThan(0));
+  // Pages take their size from the measured width, which a resize observer reports later.
+  await vi.waitFor(() =>
+    expect(
+      scroller.querySelector<HTMLElement>('[aria-label="Page 1"]')!.offsetHeight,
+    ).toBeGreaterThan(0),
+  );
   using _timers = fakeTimers();
   await screen.rerender(view(40));
   // Page 6 is the last mounted: nothing below it yet to scroll it to the top.
