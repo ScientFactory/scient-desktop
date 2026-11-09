@@ -539,10 +539,24 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
     previous = new Map() as Parameters<typeof providerManagedAccounts>[2],
     inventory = providers,
   ) => providerManagedAccounts(providers, inventory, previous);
+  const droid = {
+    ...base,
+    instanceId: ProviderInstanceId.make("synthetic-droid"),
+    driver: ProviderDriverKind.make("droid"),
+    mcpServers: [
+      { name: "Linear", status: "connected" as const, signedIn: true },
+      { name: "Local tools", status: "connected" as const },
+      { name: "Notion", status: "needs-auth" as const },
+    ],
+  };
   const first = rows([base, codex]);
   expect(first.rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
     ["codex", "Connected app", codex.instanceId],
     ["claude", "Signed in", base.instanceId],
+  ]);
+  // Droid's own word that it holds the sign-in; a local server or one asking to sign in is not.
+  expect(rows([droid]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
+    ["droid", "Linear", droid.instanceId],
   ]);
   expect(
     rows([

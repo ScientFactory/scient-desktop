@@ -719,7 +719,7 @@ export function toggleScope(
 }
 
 type ProviderManagedAccount = {
-  kind: "claude" | "codex";
+  kind: "claude" | "codex" | "droid";
   id: string;
   instanceId: ProviderInstanceId;
   name: string;
@@ -805,8 +805,22 @@ function codexRows(provider: ServerProvider, plugins: NonNullable<ServerProvider
   }));
 }
 
+/** Droid's servers holding the user's sign-in; a local server or one never signed in is not one. */
+function droidRows(provider: ServerProvider, servers: NonNullable<ServerProvider["mcpServers"]>) {
+  return servers
+    .filter((server) => server.signedIn === true)
+    .map((server) => ({
+      kind: "droid" as const,
+      id: JSON.stringify([provider.instanceId, server.name]),
+      instanceId: provider.instanceId,
+      name: server.name,
+      href: "/settings/extensions/installed" as const,
+    }));
+}
+
 /**
- * Claude and Codex connections, kept steady while their inventory is unknown or refreshing.
+ * Claude, Codex and Droid connections, kept steady while their inventory is unknown or refreshing.
+ * Other agents don't report which of their connectors hold a sign-in, so they have no rows.
  * `providers` is the live list (which instances count), `inventory` the last extensions reply.
  */
 export function providerManagedAccounts(
@@ -817,17 +831,19 @@ export function providerManagedAccounts(
   const next = new Map<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>();
   for (const provider of providers) {
     if (!provider.enabled || !provider.installed) continue;
-    if (provider.driver !== "claudeAgent" && provider.driver !== "codex") continue;
+    if (!["claudeAgent", "codex", "droid"].includes(provider.driver)) continue;
     const known = inventory.find((entry) => entry.instanceId === provider.instanceId);
     const kept = previous.get(provider.instanceId) ?? [];
     const rows =
-      provider.driver === "claudeAgent"
-        ? known?.mcpServers
-          ? claudeRows(provider, known.mcpServers, kept)
-          : kept
-        : known?.plugins
+      provider.driver === "codex"
+        ? known?.plugins
           ? codexRows(provider, known.plugins)
-          : kept;
+          : kept
+        : !known?.mcpServers
+          ? kept
+          : provider.driver === "claudeAgent"
+            ? claudeRows(provider, known.mcpServers, kept)
+            : droidRows(provider, known.mcpServers);
     next.set(provider.instanceId, rows);
   }
   const rows = [...next.values()].flat().toSorted((a, b) => a.name.localeCompare(b.name));

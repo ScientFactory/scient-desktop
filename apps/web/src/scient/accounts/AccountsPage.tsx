@@ -124,6 +124,7 @@ const MANAGED_IN = {
   "custom-model": "Custom models",
   claude: "Claude",
   codex: "Codex",
+  droid: "Droid",
   extension: "Extensions",
 } as const;
 
@@ -374,7 +375,7 @@ function ManagedAccountRow({
   environmentId,
 }: {
   row: {
-    kind: "custom-model" | "extension" | "claude" | "codex";
+    kind: "custom-model" | "extension" | "claude" | "codex" | "droid";
     instanceId?: ProviderInstanceId;
     name: string;
     detail?: string | undefined;

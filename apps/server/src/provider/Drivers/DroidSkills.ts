@@ -77,6 +77,7 @@ function droidMcpServersToServerProvider(raw: unknown): ReadonlyArray<ServerProv
         ...(scope ? { scope } : {}),
         ...(server.toolCount === undefined ? {} : { toolCount: server.toolCount }),
         ...(error ? { error } : {}),
+        ...(server.requiresAuth && server.hasAuthTokens ? { signedIn: true } : {}),
       },
     ];
   });

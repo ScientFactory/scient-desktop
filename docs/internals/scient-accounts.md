@@ -712,7 +712,9 @@ its wire contract using the [analytics deployment procedure](product-analytics.m
 ### Provider-managed sign-ins
 
 Accounts also shows read-only “Managed in Claude” rows for connected `claudeai`
-MCP servers and “Managed in Codex” rows for accessible Codex apps. These come from
+MCP servers, “Managed in Codex” rows for accessible Codex apps, and “Managed in Droid” rows
+for Droid servers that hold Droid's own sign-in (`requiresAuth` with `hasAuthTokens`, as
+`signedIn`). Other agents don't report which of their connectors are signed in, so they have none. These come from
 Extensions' page-owned native inventory refresh and revision subscription; an
 installed plugin or an available app alone is not a sign-in. Apps shared by
 several plugins appear once per agent instance. Each row links to that agent's
