@@ -107,3 +107,61 @@ it.effect("follows a key rotated in Accounts after the layer is built", () =>
     ]);
   }).pipe(Effect.scoped),
 );
+
+const keep = (accounts: ReadonlyArray<unknown>, values: Readonly<Record<string, string>>) => {
+  const links: Array<unknown> = [];
+  const settings = {
+    subscribeChanges: Effect.succeed(Stream.empty),
+    getSettings: Effect.succeed({
+      providerInstances: {
+        [instanceId]: {
+          driver: "codex",
+          environment: [{ name: "OPENAI_API_KEY", value: "typed-key", sensitive: true }],
+        },
+      },
+    }),
+    updateProviderInstance: () => Effect.die("the variable already holds the key"),
+  } as unknown as ServerSettingsService["Service"];
+  const fake = fakeAccounts({ accounts: accounts as never, values });
+  const service = {
+    ...fake.service,
+    setKeyLink: (target: unknown, id: unknown) => Effect.sync(() => void links.push([target, id])),
+  } as typeof fake.service;
+  return Effect.scoped(
+    makeAccountKeyLinks(service).pipe(
+      Effect.flatMap((linkKey) => linkKey({ instanceId, variable: "OPENAI_API_KEY" })),
+      Effect.as({ saves: fake.saves, links }),
+      Effect.provideService(ServerSettingsService, settings),
+    ),
+  );
+};
+
+it.effect("keeps a variable's own key in Accounts and links the variable to it", () =>
+  Effect.gen(function* () {
+    const { saves, links } = yield* keep([], { token: "typed-key" });
+    expect(saves).toEqual([
+      {
+        name: "Codex · OPENAI_API_KEY",
+        details: {
+          kind: "api-key",
+          sites: [],
+          auth: { type: "bearer" },
+          envName: "OPENAI_API_KEY",
+        },
+        secrets: { token: { type: "scient", value: "typed-key" } },
+      },
+    ]);
+    expect(links).toEqual([
+      [{ instanceId, variable: "OPENAI_API_KEY", accountId: "acc_saved_0001" }, "acc_saved_0001"],
+    ]);
+  }),
+);
+
+it.effect("links to an account already holding the same key instead of keeping it twice", () =>
+  Effect.gen(function* () {
+    const existing = { accountId, details: { kind: "api-key", envName: "OPENAI_API_KEY" } };
+    const { saves, links } = yield* keep([existing], { token: "typed-key" });
+    expect(saves).toEqual([]);
+    expect(links).toEqual([[{ instanceId, variable: "OPENAI_API_KEY", accountId }, accountId]]);
+  }),
+);

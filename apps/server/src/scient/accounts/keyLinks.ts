@@ -1,7 +1,11 @@
 import {
   AccountsError,
+  PROVIDER_DISPLAY_NAMES,
+  type AccountId,
   type AccountKeyLink,
+  type AccountLinkKeyInput,
   type AccountsSnapshot,
+  type ProviderDriverKind,
   type ProviderInstanceId,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -90,16 +94,51 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
     ),
   ).pipe(Effect.forkScoped);
 
-  return Effect.fn("AccountKeyLinks.link")(function* (link: AccountKeyLink) {
+  // The variable's key as an API key: an account already holding the same key, else a new one.
+  const keep = Effect.fn("AccountKeyLinks.keep")(function* (
+    target: Omit<AccountKeyLink, "accountId">,
+  ) {
+    const current = yield* settings.getSettings.pipe(
+      Effect.mapError(() => failure("Provider settings are unavailable.")),
+    );
+    const instance = current.providerInstances[target.instanceId as ProviderInstanceId];
+    const value = instance?.environment?.find(
+      (item) => item.name === target.variable && item.sensitive,
+    )?.value;
+    // A reference to another secret store has no value here to keep.
+    if (!instance || typeof value !== "string" || !value)
+      return yield* failure("This variable has no key Scient can keep.");
+    const snapshot = yield* accounts.snapshot;
+    for (const account of snapshot.accounts) {
+      if (account.details.kind !== "api-key" || account.details.envName !== target.variable)
+        continue;
+      const { token } = yield* accounts.resolveSecrets(account.accountId, ["token"]);
+      if (token !== undefined && Redacted.value(token) === value) return account.accountId;
+    }
+    const label =
+      instance.displayName ??
+      PROVIDER_DISPLAY_NAMES[instance.driver as ProviderDriverKind] ??
+      instance.driver;
+    const saved = yield* accounts.save({
+      name: `${label} · ${target.variable}`.slice(0, 80),
+      details: { kind: "api-key", sites: [], auth: { type: "bearer" }, envName: target.variable },
+      secrets: { token: { type: "scient", value } },
+    });
+    return saved.accountId;
+  });
+
+  return Effect.fn("AccountKeyLinks.link")(function* (input: AccountLinkKeyInput) {
+    const accountId: AccountId = input.accountId ?? (yield* keep(input));
+    const link = { ...input, accountId };
     yield* apply(link);
-    yield* accounts.setKeyLink(link, link.accountId);
+    yield* accounts.setKeyLink(link, accountId);
   });
 });
 
 /** Server-lifetime, so a key changed in Accounts reaches its variables whenever it changes. */
 export class AccountKeyLinks extends Context.Service<
   AccountKeyLinks,
-  { readonly link: (link: AccountKeyLink) => Effect.Effect<void, AccountsError> }
+  { readonly link: (input: AccountLinkKeyInput) => Effect.Effect<void, AccountsError> }
 >()("t3/scient/accounts/keyLinks/AccountKeyLinks") {}
 
 export const layer = Layer.effect(

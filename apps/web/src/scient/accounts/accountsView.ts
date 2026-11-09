@@ -23,6 +23,7 @@ import {
   type ConnectorSummary,
   type AccountUseAction,
   type AccountSaveInput,
+  type AccountPlainKey,
   type DesktopCapturedSignIn,
   type BrowserProfile,
   type BrowserProfileRecord,
@@ -882,7 +883,17 @@ export function providerManagedAccounts(
             : droidRows(provider, known.mcpServers);
     next.set(provider.instanceId, rows);
   }
-  const rows = [...next.values()].flat().toSorted((a, b) => a.name.localeCompare(b.name));
+  // Agents signed in to one account report the same connectors: one connection, one row.
+  const account = (instanceId: ProviderInstanceId) =>
+    providers.find((provider) => provider.instanceId === instanceId)?.auth.email;
+  const seen = new Set<string>();
+  const rows = [...next.values()]
+    .flat()
+    .filter((row) => {
+      const key = JSON.stringify([row.kind, account(row.instanceId), row.name]);
+      return !seen.has(key) && Boolean(seen.add(key));
+    })
+    .toSorted((a, b) => a.name.localeCompare(b.name));
   return { rows, next };
 }
 
@@ -1028,17 +1039,43 @@ export function keptAgentKeys(accounts: ReadonlyArray<AccountSummary>, agent: st
   return [...bySetting.values()];
 }
 
-export interface KeyInUse {
-  readonly name: string;
-  readonly usedBy: ReadonlyArray<string>;
-  /** Provider variables can follow a saved key; Custom models keys already live in Accounts. */
-  readonly variables: ReadonlyArray<{ readonly instanceId: string; readonly variable: string }>;
+/** A place that uses a key, and the settings page where it does. */
+export interface KeyUse {
+  readonly label: string;
   readonly href: "/settings/providers" | "/settings/custom-models";
+  /** The agent variable that follows the key. */
+  readonly link?: { readonly instanceId: string; readonly variable: string };
 }
 
-/** The keys Scient itself uses, by name: never their values. Same name, one row. */
-export function keysInUse(
-  instances: Readonly<
+/** One key in the API keys card, wherever it is stored; never its value. */
+export type ApiKeyRow = {
+  readonly id: string;
+  readonly name: string;
+  readonly service: string | undefined;
+  readonly uses: ReadonlyArray<KeyUse>;
+} & (
+  | { readonly stored: "accounts"; readonly account: AccountSummary }
+  /** Custom models' own store, which Accounts seals: kept already. */
+  | { readonly stored: "custom-models" }
+  | { readonly stored: "agent"; readonly instanceId: string; readonly variable: string }
+  /** Keep in Accounts copies it from the first file. */
+  | { readonly stored: "files"; readonly files: ReadonlyArray<string> }
+);
+
+/** Where a key not kept in Accounts lives, or nothing when it is kept. */
+export function onlyIn(row: ApiKeyRow) {
+  if (row.stored === "agent") return `Only in ${row.uses[0]?.label} settings`;
+  return row.stored === "files" ? `Only in ${row.files.join(", ")}` : undefined;
+}
+
+/**
+ * Every key Scient knows, one row each: API-key accounts with the agent variables and Custom
+ * models connection that use them, then agent secret variables and plain-file keys not kept here.
+ */
+export function apiKeyRows(input: {
+  readonly accounts: ReadonlyArray<AccountSummary>;
+  readonly keyLinks: AccountsSnapshot["keyLinks"];
+  readonly instances: Readonly<
     Record<
       string,
       {
@@ -1049,29 +1086,83 @@ export function keysInUse(
           | undefined;
       }
     >
-  >,
-  customModelKeys: ReadonlyArray<{ readonly name: string }>,
-  driverName: (driver: string) => string,
-): ReadonlyArray<KeyInUse> {
-  const byName = new Map<string, KeyInUse>();
-  for (const [instanceId, instance] of Object.entries(instances))
+  >;
+  readonly customModelKeys: AccountsSnapshot["customModelKeys"];
+  readonly plainKeys: ReadonlyArray<AccountPlainKey>;
+  readonly driverName: (driver: string) => string;
+}): ReadonlyArray<ApiKeyRow> {
+  const uses = new Map<string, KeyUse[]>();
+  const keys = input.accounts.filter((account) => account.details.kind === "api-key");
+  const used = (accountId: string, use: KeyUse) =>
+    uses.set(accountId, [...(uses.get(accountId) ?? []), use]);
+  const others: ApiKeyRow[] = [];
+  for (const [instanceId, instance] of Object.entries(input.instances))
     for (const variable of instance.environment ?? []) {
       if (!variable.sensitive) continue;
-      const existing = byName.get(variable.name);
-      byName.set(variable.name, {
-        name: variable.name,
-        usedBy: [...(existing?.usedBy ?? []), instance.displayName ?? driverName(instance.driver)],
-        variables: [...(existing?.variables ?? []), { instanceId, variable: variable.name }],
-        href: "/settings/providers",
-      });
+      const label = instance.displayName ?? input.driverName(instance.driver);
+      const accountId = input.keyLinks?.find(
+        (link) => link.instanceId === instanceId && link.variable === variable.name,
+      )?.accountId;
+      const link = { instanceId, variable: variable.name };
+      // A link to a removed account leaves its last key in the variable only.
+      if (accountId && keys.some((account) => account.accountId === accountId))
+        used(accountId, { label, href: "/settings/providers", link });
+      else
+        others.push({
+          id: `agent:${instanceId}:${variable.name}`,
+          name: variable.name,
+          service: undefined,
+          uses: [{ label, href: "/settings/providers" }],
+          stored: "agent",
+          ...link,
+        });
     }
+  for (const connection of input.customModelKeys) {
+    const use = { label: "Custom models", href: "/settings/custom-models" } as const;
+    const account = keys.find(({ secrets }) => {
+      const source = secrets.token?.source;
+      return source?.type === "custom-model" && source.connectionId === connection.connectionId;
+    });
+    if (account) used(account.accountId, use);
+    else
+      others.push({
+        id: `custom-model:${connection.connectionId}`,
+        name: connection.name,
+        service: connection.origin,
+        uses: [use],
+        stored: "custom-models",
+      });
+  }
+  const files = new Map<string, string[]>();
+  for (const key of input.plainKeys)
+    if (!key.kept) files.set(key.name, [...(files.get(key.name) ?? []), key.file]);
+  const byName = (a: ApiKeyRow, b: ApiKeyRow) =>
+    a.name.localeCompare(b.name, undefined, { numeric: true });
   return [
-    ...byName.values(),
-    ...customModelKeys.map((key) => ({
-      name: key.name,
-      usedBy: ["Custom models"],
-      variables: [],
-      href: "/settings/custom-models" as const,
-    })),
+    ...[
+      ...keys.map((account): ApiKeyRow => ({
+        id: `account:${account.accountId}`,
+        name: account.name,
+        service:
+          account.details.kind === "api-key"
+            ? account.details.sites.join(", ") || account.details.envName
+            : undefined,
+        uses: uses.get(account.accountId) ?? [],
+        stored: "accounts",
+        account,
+      })),
+      ...others.filter((row) => row.stored === "custom-models"),
+    ].toSorted(byName),
+    ...[
+      ...others.filter((row) => row.stored === "agent"),
+      ...[...files].map(([name, paths]): ApiKeyRow => ({
+        id: `files:${name}`,
+        name,
+        service: undefined,
+        uses: [],
+        stored: "files",
+        files: paths,
+      })),
+    ].toSorted(byName),
   ];
 }

@@ -21,7 +21,8 @@ import {
   signedOutOfGoogle,
   sitesToKeep,
   activityLine,
-  keysInUse,
+  apiKeyRows,
+  onlyIn,
   keptAgentKeys,
   agentMayUse,
   libraryLinkTemplate,
@@ -639,6 +640,32 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
   ]);
 });
 
+it("shows a connector once when agents signed in to one account both report it", () => {
+  const claude = (id: string, email: string): ServerProvider => ({
+    instanceId: ProviderInstanceId.make(id),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: { status: "authenticated", email },
+    checkedAt: "2026-10-27T00:00:00.000Z",
+    version: null,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    mcpServers: [{ name: "claude.ai Claude Docs", status: "connected", scope: "claudeai" }],
+  });
+  const names = (providers: ReadonlyArray<ServerProvider>) =>
+    providerManagedAccounts(providers, providers, new Map()).rows.map((row) => row.name);
+  expect(names([claude("claude", "a@example.com"), claude("work", "a@example.com")])).toEqual([
+    "Claude Docs",
+  ]);
+  expect(names([claude("claude", "a@example.com"), claude("work", "b@example.com")])).toEqual([
+    "Claude Docs",
+    "Claude Docs",
+  ]);
+});
+
 it("keeps provider rows only under the connection and permission that read them", () => {
   const claude: ServerProvider = {
     instanceId: ProviderInstanceId.make("synthetic-claude"),
@@ -804,31 +831,77 @@ describe("account status", () => {
   });
 });
 
-describe("keys used by Scient", () => {
-  it("lists secret variables by name, one row per name, and never ordinary settings", () => {
-    const keys = keysInUse(
+describe("API keys", () => {
+  const key = (id: string, name: string, token: AccountSummary["secrets"][string]["source"]) =>
+    ({
+      accountId: AccountId.make(id),
+      name,
+      details: { kind: "api-key", sites: [], auth: { type: "bearer" }, envName: "OPENAI_API_KEY" },
+      secrets: { token: { source: token } },
+    }) as never as AccountSummary;
+  const rows = apiKeyRows({
+    accounts: [
+      key("acc_openai01", "OpenAI", { type: "scient" }),
+      key("acc_groq0001", "Groq", { type: "custom-model", connectionId: "groq" }),
       {
-        codex: {
-          driver: "codex",
-          environment: [
-            { name: "OPENAI_API_KEY", sensitive: true },
-            { name: "CODEX_HOME", sensitive: false },
-          ],
-        },
-        work: {
-          driver: "omp",
-          displayName: "Work",
-          environment: [{ name: "OPENAI_API_KEY", sensitive: true }],
-        },
+        accountId: AccountId.make("acc_site0001"),
+        details: { kind: "website", sites: [] },
+      } as never,
+    ],
+    keyLinks: [
+      {
+        accountId: AccountId.make("acc_openai01"),
+        instanceId: "codex",
+        variable: "OPENAI_API_KEY",
       },
-      [{ name: "Groq" }],
-      () => "Codex",
-    );
-    expect(keys.map((key) => [key.name, key.usedBy])).toEqual([
-      ["OPENAI_API_KEY", ["Codex", "Work"]],
-      ["Groq", ["Custom models"]],
+      { accountId: AccountId.make("acc_gone0001"), instanceId: "work", variable: "HF_TOKEN" },
+    ],
+    instances: {
+      codex: {
+        driver: "codex",
+        environment: [
+          { name: "OPENAI_API_KEY", sensitive: true },
+          { name: "CODEX_HOME", sensitive: false },
+        ],
+      },
+      work: {
+        driver: "omp",
+        displayName: "Work",
+        environment: [
+          { name: "HF_TOKEN", sensitive: true },
+          { name: "OPENAI_API_KEY", sensitive: true },
+        ],
+      },
+    },
+    customModelKeys: [
+      { connectionId: "groq", name: "Groq" },
+      { connectionId: "local", name: "Local", origin: "https://models.example" },
+    ],
+    plainKeys: [
+      { file: "/p/.env", name: "WANDB_API_KEY", kept: false },
+      { file: "/home/.zshrc", name: "WANDB_API_KEY", kept: false },
+      { file: "/p/.env", name: "OPENAI_API_KEY", kept: true },
+    ],
+    driverName: () => "Codex",
+  });
+
+  it("shows each key once, with what uses it, and where a key not kept here lives", () => {
+    expect(rows.map((row) => [row.name, row.uses.map((use) => use.label), onlyIn(row)])).toEqual([
+      // Custom models keep their keys in Accounts' sealed store: kept, even without an account.
+      ["Groq", ["Custom models"], undefined],
+      ["Local", ["Custom models"], undefined],
+      ["OpenAI", ["Codex"], undefined],
+      // Its account was removed, so the variable's last key is only in the agent.
+      ["HF_TOKEN", ["Work"], "Only in Work settings"],
+      // Linked by agent and variable: Work's variable of the same name is its own key.
+      ["OPENAI_API_KEY", ["Work"], "Only in Work settings"],
+      // A key in two files is one row; one already in Accounts has none.
+      ["WANDB_API_KEY", [], "Only in /p/.env, /home/.zshrc"],
     ]);
-    expect(keys[0]?.variables).toHaveLength(2);
+    expect(rows.find((row) => row.name === "OpenAI")?.uses[0]?.link).toEqual({
+      instanceId: "codex",
+      variable: "OPENAI_API_KEY",
+    });
   });
 });
 
