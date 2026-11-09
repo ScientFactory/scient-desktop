@@ -228,6 +228,7 @@ export function useTimelineFollow(input: TimelineFollowInput) {
       if (generation !== anchorUserScrollGenerationRef.current) return;
       void scrollTimelineToEnd(legendListRef.current, {
         animated: animated && !window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+        stillWanted: () => generation === anchorUserScrollGenerationRef.current,
       }).then(() => {
         if (generation !== anchorUserScrollGenerationRef.current) return;
         programmaticScrollPendingRef.current = false;
