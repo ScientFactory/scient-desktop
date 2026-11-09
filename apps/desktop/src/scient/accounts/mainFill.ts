@@ -144,13 +144,12 @@ export async function copyIntoMain(
       const units: Array<{ sites: string[]; outcome: UnitOutcome }> = [];
       // Units sharing a site are one component, decided once, before anything is written.
       const planned = input.units ? mergeUnits(input.units) : jarUnits(jar, input.join);
-      // Google is replaced only on Google's own word, asked now: no account in Main still works.
-      // Google's check writes cookies into Main, so the insert tracker can't vouch for it.
-      const googleDead =
-        input.replaceGoogle === true &&
-        planned.some((unit) => unitSites(unit).has(GOOGLE_SITE)) &&
-        ((await readGoogleSessions(main).catch(() => null))?.every((account) => !account.valid) ??
-          false);
+      // Google is replaced only on Google's own word: no account in Main still works. Google's check
+      // writes cookies into Main, so the insert tracker can't vouch for it; it is asked right before
+      // Google's unit, and the unit's watcher protects whatever a page writes after that.
+      const googleDeadNow = async () =>
+        (await readGoogleSessions(main).catch(() => null))?.every((account) => !account.valid) ??
+        false;
       for (const unit of planned) {
         const sites = [...unitSites(unit)];
         const since = unit.flatMap((entry) => {
@@ -161,6 +160,8 @@ export async function copyIntoMain(
         if (sites.some((entry) => failed.has(entry))) outcome = "restore-failed";
         else if (sites.some((entry) => skipped.has(entry))) outcome = "blocked";
         else {
+          const googleDead =
+            input.replaceGoogle === true && sites.includes(GOOGLE_SITE) && (await googleDeadNow());
           const foreign = watchForeignInserts(main);
           try {
             outcome = await applyUnit(store, {
@@ -169,7 +170,7 @@ export async function copyIntoMain(
               mode: input.mode,
               // The tracker can't vouch for a time before it started; then replace is refused.
               replaceAllowed:
-                (googleDead && sites.includes(GOOGLE_SITE)) ||
+                googleDead ||
                 (since.length > 0 &&
                   tracker !== undefined &&
                   !tracker.touchedSince(sites, Math.min(...since))),

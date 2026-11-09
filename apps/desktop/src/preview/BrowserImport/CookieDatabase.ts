@@ -66,7 +66,10 @@ const quietCopy = Effect.fnUntraced(
     const suffixes = ["", ...SIDE_FILES];
     const look = Effect.forEach(suffixes, (suffix) =>
       fileSystem.stat(cookiePath + suffix).pipe(
-        Effect.map((info) => `${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}`),
+        Effect.map(
+          (info) =>
+            `${Option.getOrUndefined(info.ino)}:${info.size}:${Option.getOrUndefined(info.mtime)?.getTime()}`,
+        ),
         Effect.orElseSucceed(() => undefined),
       ),
     );
@@ -103,6 +106,9 @@ export const snapshotCookieDatabase = Effect.fn("CookieDatabase.snapshotCookieDa
   if (copy !== undefined) {
     const settled = yield* Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
+      // Timestamps are only to the millisecond; SQLite's own check catches a copy torn inside one.
+      const [check] = yield* sql<{ readonly quick_check: string }>`PRAGMA quick_check`;
+      if (check?.quick_check !== "ok") return false;
       yield* sql`VACUUM INTO ${target}`;
       return true;
     }).pipe(

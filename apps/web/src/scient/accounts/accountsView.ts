@@ -66,7 +66,8 @@ export function sitesToKeep(
   return accounts.flatMap(({ details, signIn }) =>
     details.kind === "website" &&
     details.profileId === profileId &&
-    (signIn?.state === "signed-in" || (googleWorks && details.sites.includes(GOOGLE_SITE)))
+    // Google's own answer decides Google, even over a row last seen signed in.
+    (details.sites.includes(GOOGLE_SITE) ? googleWorks : signIn?.state === "signed-in")
       ? details.sites
       : [],
   );
