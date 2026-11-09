@@ -392,6 +392,7 @@ import {
   type LatexVisualMathAttributes,
   type LatexVisualDocumentChange,
 } from "./latexVisualDocument";
+import { SKIP_MIRRORED_DEFAULT } from "../writing/textareaDefaultValue";
 
 const LatexSourceAttributes = Extension.create({
   name: "latexSourceAttributes",
@@ -1445,6 +1446,7 @@ function LatexMathView({
                 }}
               />
               <textarea
+                {...SKIP_MIRRORED_DEFAULT}
                 ref={sourceEditor}
                 className="scient-content-scrollbar"
                 aria-label="LaTeX formula code"
@@ -2355,6 +2357,7 @@ function LatexRawBlockView({ node, editor, getPos }: NodeViewProps) {
       </p>
       {active ? (
         <textarea
+          {...SKIP_MIRRORED_DEFAULT}
           ref={sourceField}
           autoFocus
           aria-label="Block LaTeX source"
@@ -4243,6 +4246,7 @@ function LatexRichPreviewView({
                   <dd>
                     {descriptionEditable ? (
                       <textarea
+                        {...SKIP_MIRRORED_DEFAULT}
                         aria-label={`Description item ${index + 1} body`}
                         onKeyDown={(event) => descriptionKeyDown(event, index, "body")}
                         disabled={!editorEditable}

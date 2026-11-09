@@ -51,7 +51,7 @@ async function _cleanupFixture0(_fixture: _Fixture) {
 type Row = { readonly id: string };
 
 const thread = (id: string, sectionId: string | null, environmentId = "env") =>
-  ({ id, environmentId, sectionId, pinnedAt: null, session: null }) as never;
+  ({ id, environmentId, sectionId, pinnedAt: null, session: null, runtime: null }) as never;
 
 async function renderView(
   _fixture: _Fixture,
