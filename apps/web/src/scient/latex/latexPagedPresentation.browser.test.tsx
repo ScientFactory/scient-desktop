@@ -790,6 +790,16 @@ async function sizeReported(
   observer.observe(element);
   return waitForTestReceipt(context.signal, reported.promise, () => observer.disconnect());
 }
+/** Page gaps and flow offsets, by position. */
+function publishedSpacers(editor: Editor) {
+  return latexPagedKey
+    .getState(editor.state)!
+    .decorations.find()
+    .flatMap((decoration) => {
+      const value: unknown = decoration.spec.pagedHeight ?? decoration.spec.latexFlowOffset;
+      return typeof value === "number" ? [`${decoration.from}:${value}`] : [];
+    });
+}
 function reportVisibility(block: Element, skipped: boolean) {
   block.dispatchEvent(
     new ContentVisibilityAutoStateChangeEvent("contentvisibilityautostatechange", { skipped }),
@@ -826,15 +836,10 @@ it("repeats a layout pass over an unchanged document without restyling its block
   const block = view.dom.querySelector(":scope > p")!;
   // Not hidden since pagination began observing it, the block counts as resized.
   await sizeReported(block, context);
-  const spacers = () =>
-    latexPagedKey
-      .getState(editor.state)!
-      .decorations.find()
-      .flatMap((decoration) => {
-        const value: unknown = decoration.spec.pagedHeight ?? decoration.spec.latexFlowOffset;
-        return typeof value === "number" ? [`${decoration.from}:${value}`] : [];
-      });
-  const before = { revision: latexPagedKey.getState(editor.state)!.revision, spacers: spacers() };
+  const before = {
+    revision: latexPagedKey.getState(editor.state)!.revision,
+    spacers: publishedSpacers(editor),
+  };
   expect(before.spacers.length).toBeGreaterThan(0);
   const restyled: string[] = [];
   const styles = new MutationObserver((records) => {
@@ -852,8 +857,55 @@ it("repeats a layout pass over an unchanged document without restyling its block
   reportVisibility(block, false);
   await waitForLatexVisualTestReadiness(_fixture.host, context, "repeated pass");
   expect(latexPagedKey.getState(editor.state)!.revision).toBeGreaterThan(before.revision);
-  expect(spacers()).toEqual(before.spacers);
+  expect(publishedSpacers(editor)).toEqual(before.spacers);
   expect(restyled).toEqual([]);
+});
+
+it("reads every block origin of a layout pass from one layout", async (context) => {
+  await using _fixture = _createFixture(context);
+  _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  const editor = await mount(_fixture, MANUSCRIPT, "one-layout");
+  const view = editor.view;
+  const [first, second] = view.dom.querySelectorAll<HTMLElement>(":scope > p");
+  await sizeReported(first!, context);
+  const before = publishedSpacers(editor);
+  const grow = document.createElement("style");
+  grow.textContent = ".scient-latex-visual-document > p:first-of-type { padding-bottom: 40px; }";
+  _fixture.cleanup.defer(() => grow.remove());
+  {
+    using _timers = fakeTimers();
+    const continuations = new Map<number, FrameRequestCallback>();
+    let nextId = 0;
+    using _request = vi.spyOn(window, "requestAnimationFrame").mockImplementation((callback) => {
+      continuations.set(--nextId, callback);
+      return nextId;
+    });
+    using _cancel = vi.spyOn(window, "cancelAnimationFrame").mockImplementation((id) => {
+      continuations.delete(id);
+    });
+    let measuredTime = 0;
+    // Each check exhausts the work budget, so the pass yields wherever it may.
+    using _measurementClock = vi
+      .spyOn(performance, "now")
+      .mockImplementation(() => (measuredTime += 100));
+    let read = false;
+    const original = second!.getBoundingClientRect.bind(second);
+    using _read = vi.spyOn(second!, "getBoundingClientRect").mockImplementation(() => {
+      read = true;
+      return original();
+    });
+    reportVisibility(first!, false);
+    for (let step = 0; continuations.size > 0; step++) {
+      expect(step).toBeLessThan(10_000);
+      const [id, callback] = continuations.entries().next().value!;
+      continuations.delete(id);
+      callback(0);
+      // The block above grows once the pass has begun reading origins.
+      if (read && !grow.isConnected) document.head.append(grow);
+    }
+  }
+  expect(grow.isConnected).toBe(true);
+  expect(publishedSpacers(editor)).toEqual(before);
 });
 
 function _createFixture(context: TestContext) {

@@ -1214,11 +1214,9 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
               profile.twoSided && page % 2 === 1
                 ? (profile.marginRightIn - profile.marginLeftIn) * 96
                 : 0;
+            // Every origin must come from one layout: a block revealed between
+            // slices would move the blocks read after it.
             for (let index = 0; index < plan.placements.length; index++) {
-              if (performance.now() > deadline) {
-                yield;
-                deadline = performance.now() + 6;
-              }
               const owned = owners[index];
               if (!owned) continue;
               const { entry, part } = owned;
