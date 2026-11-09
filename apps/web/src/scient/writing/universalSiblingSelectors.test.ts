@@ -24,3 +24,25 @@ it("keeps universal sibling selectors out of app styles", () => {
   });
   expect(offenders).toEqual([]);
 });
+
+// In Chromium, a :has() anchored on body, html or :root made each keystroke in a controlled
+// textarea restyle the whole document. Key such styles off an attribute on a small element.
+// A source heuristic, not a CSS parser: it does not follow native nesting.
+const rootHas =
+  /(?<![\w.#-])(?:html|body|:root)(?:\[[^\]]*\]|[.#][\w-]+|:(?!has\()[\w-]+(?:\([^()]*\))?)*:has\(/u;
+
+it("keeps :has() off the document root", () => {
+  expect(
+    ["body:has(.a) .b", "html:has(.a)", ":root:has(.a)", "body.x:hover:has(.a) .b"].filter(
+      (selector) => !rootHas.test(selector),
+    ),
+  ).toEqual([]);
+  expect(
+    [".body:has(.a)", "#body:has(.a)", "tbody:has(.a)"].filter((s) => rootHas.test(s)),
+  ).toEqual([]);
+  const offenders = sources(root).flatMap((path) => {
+    const text = NodeFS.readFileSync(path, "utf8").replace(/\/\*[\s\S]*?\*\//gu, "");
+    return rootHas.test(text) ? [NodePath.relative(root, path)] : [];
+  });
+  expect(offenders).toEqual([]);
+});
