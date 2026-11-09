@@ -92,6 +92,43 @@ body {
   font-size: 11pt;
 }
 
+/* Whole-document font from the front matter (see documentFont.ts). */
+.scient-document[data-scient-font-size="10pt"] {
+  --scient-document-size-scale: calc(10 / 10.5);
+}
+.scient-document[data-scient-font-size="11pt"] {
+  --scient-document-size-scale: calc(11 / 10.5);
+}
+.scient-document[data-scient-font-size="12pt"] {
+  --scient-document-size-scale: calc(12 / 10.5);
+}
+.scient-document[data-scient-font-size] {
+  font-size: calc(10.5pt * var(--scient-document-size-scale));
+}
+.scient-document[data-scient-font-size] h1 {
+  font-size: calc(20pt * var(--scient-document-size-scale));
+}
+.scient-document[data-scient-font-size] h2 {
+  font-size: calc(15pt * var(--scient-document-size-scale));
+}
+.scient-document[data-scient-font-size] h3 {
+  font-size: calc(12.5pt * var(--scient-document-size-scale));
+}
+.scient-document[data-scient-font-size] :where(h4, h5, h6) {
+  font-size: calc(11pt * var(--scient-document-size-scale));
+}
+.scient-document[data-scient-font-family="serif"] {
+  font-family: serif, "Noto Sans Hebrew", "Arial Hebrew", "Noto Sans Arabic";
+}
+.scient-document[data-scient-font-family="sans-serif"] {
+  font-family: sans-serif, "Noto Sans Hebrew", "Arial Hebrew", "Noto Sans Arabic";
+}
+.scient-document[data-scient-font-family="monospace"] {
+  font-family:
+    ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace, "Noto Sans Hebrew",
+    "Arial Hebrew";
+}
+
 .scient-document :where(p, ul, ol, blockquote, .scient-document-table, figure) {
   margin: 0 0 0.8em;
 }

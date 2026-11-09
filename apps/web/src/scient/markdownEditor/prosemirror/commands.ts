@@ -33,6 +33,12 @@ import { scientMarkdownSchema } from "./schema";
 import { selectMarkdownTable } from "./tables";
 import { nextScientMarkdownFootnoteLabel } from "../footnotes";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
+import type { FontFamilyName, FontSizeName } from "../../writing/fontChoices";
+import {
+  readMarkdownDocumentFont,
+  writeMarkdownDocumentFont,
+  type MarkdownDocumentFont,
+} from "../documentFont";
 
 export type ScientMarkdownCommand =
   | "add-column-after"
@@ -55,6 +61,8 @@ export type ScientMarkdownCommand =
   | "direction-rtl"
   | "display-math"
   | "footnote"
+  | `font-family-${FontFamilyName | "default"}`
+  | `font-size-${FontSizeName | "default"}`
   | "clear-formatting"
   | "hard-break"
   | "heading-1"
@@ -481,6 +489,82 @@ function clearMarkdownFormatting(): Command {
   };
 }
 
+/** Set one font mark on the selection (or the typing marks at a caret); `null` removes it. */
+function setMarkdownFontMark(markName: string, attrs: Attrs | null): Command {
+  return (state, dispatch) => {
+    if (!dispatch) return true;
+    const type = requiredMarkType(markName);
+    const { from, to, empty, $from } = state.selection;
+    if (empty) {
+      const kept = (state.storedMarks ?? $from.marks()).filter((mark) => mark.type !== type);
+      dispatch(state.tr.setStoredMarks(attrs ? type.create(attrs).addToSet(kept) : kept));
+      return true;
+    }
+    let transaction = state.tr.removeMark(from, to, type);
+    if (attrs) {
+      // Like toggleMark: the written span cannot keep whitespace at its ends.
+      const isSpace = (at: number) => /^\s$/u.test(state.doc.textBetween(at, at + 1));
+      let start = from;
+      let end = to;
+      while (start < end && isSpace(start)) start += 1;
+      while (end > start && isSpace(end - 1)) end -= 1;
+      transaction = transaction.addMark(start, end, type.create(attrs));
+    }
+    dispatch(transaction);
+    return true;
+  };
+}
+
+function fontCommand(
+  command: `font-family-${FontFamilyName | "default"}` | `font-size-${FontSizeName | "default"}`,
+): Command {
+  const [, kind, value] = /^font-(size|family)-(.+)$/u.exec(command) ?? [];
+  const attrs = value === "default" ? null : kind === "size" ? { size: value } : { family: value };
+  return setMarkdownFontMark(kind === "size" ? "font_size" : "font_family", attrs);
+}
+
+/** The leading YAML or TOML front matter block, if the document starts with one. */
+function leadingFrontMatter(doc: ProseMirrorNode): ProseMirrorNode | null {
+  const first = doc.firstChild;
+  const kind = first?.attrs.sourceKind;
+  return first?.type.name === "raw_block" && (kind === "yaml" || kind === "toml") ? first : null;
+}
+
+export function documentFontOf(doc: ProseMirrorNode): MarkdownDocumentFont {
+  return readMarkdownDocumentFont(leadingFrontMatter(doc)?.attrs.source ?? null);
+}
+
+/** Whether the document's front matter can carry font keys (none yet, or YAML). */
+export function documentFontEditable(doc: ProseMirrorNode): boolean {
+  const front = leadingFrontMatter(doc);
+  return front === null || front.attrs.sourceKind === "yaml";
+}
+
+/** Write the whole-document font keys into the front matter, creating or removing the block. */
+export function runScientMarkdownDocumentFont(
+  font: MarkdownDocumentFont,
+  state: EditorState,
+  dispatch?: (transaction: Transaction) => void,
+): boolean {
+  const front = leadingFrontMatter(state.doc);
+  const next = writeMarkdownDocumentFont(front ? String(front.attrs.source) : null, font);
+  if (next === undefined) return false;
+  if (!dispatch) return true;
+  let transaction = state.tr;
+  if (next === null) {
+    if (front) transaction = transaction.delete(0, front.nodeSize);
+  } else if (front) {
+    transaction = transaction.setNodeMarkup(0, undefined, { ...front.attrs, source: next });
+  } else {
+    transaction = transaction.insert(
+      0,
+      requiredNodeType("raw_block").create({ source: next, sourceKind: "yaml" }),
+    );
+  }
+  dispatch(closeHistory(transaction));
+  return true;
+}
+
 /** Set block direction across the selection; a table is one directional block. */
 function setMarkdownTextDirection(direction: "ltr" | "rtl" | null): Command {
   return (state, dispatch) => {
@@ -593,6 +677,8 @@ function commandFor(command: ScientMarkdownCommand): Command {
       // GFM cannot encode spans or arbitrary header cells. Keep the command
       // boundary honest as well as the menu, including keyboard/API callers.
       return () => false;
+    default:
+      return fontCommand(command);
   }
 }
 

@@ -22,6 +22,7 @@ import { Plugin, PluginKey, type Command } from "prosemirror-state";
 import { goToNextCell, tableEditing } from "prosemirror-tables";
 
 import { scientMarkdownDirectionPresentationPlugin } from "./directionPresentation";
+import { scientMarkdownDocumentFontPlugin } from "./documentFontPresentation";
 import { runScientMarkdownCommand } from "./commands";
 import { scientMarkdownSchema } from "./schema";
 import { imageUploadPlugin } from "./imageUploads";
@@ -128,6 +129,7 @@ export function buildScientMarkdownPlugins(): ReadonlyArray<Plugin> {
   return [
     sourceIdentityPlugin(),
     scientMarkdownDirectionPresentationPlugin(),
+    scientMarkdownDocumentFontPlugin(),
     imageUploadPlugin(),
     scientMarkdownSearchPlugin(),
     scientMarkdownOutlinePlugin(),

@@ -16,6 +16,7 @@ export interface DocumentLayoutSettings {
   gutter?: string;
   mirroredMargins?: boolean;
   engine?: "pdflatex" | "xelatex" | "lualatex";
+  fontFamily?: "default" | "serif" | "sans-serif" | "monospace";
   mainFont?: string;
   sansFont?: string;
   monoFont?: string;
@@ -38,6 +39,11 @@ export interface DocumentLayoutSettings {
   evenFooterRight?: string;
 }
 
+/** The default-family declaration written for each generic family. */
+const FAMILY_DEFAULTS = { serif: "rmdefault", "sans-serif": "sfdefault", monospace: "ttdefault" };
+const FAMILY_DEFAULT_PATTERN =
+  /\\renewcommand\s*\{\\familydefault\}\s*\{\\(rmdefault|sfdefault|ttdefault)\}/gu;
+
 const length = (value: string) =>
   /^(?:\d+(?:\.\d*)?|\.\d+)\s*(?:in|cm|mm|pt|bp|em|ex)$/u.test(value.trim());
 const plain = (value: string) => !/[\\{}%#$&_~^\r\n]/u.test(value);
@@ -56,6 +62,7 @@ export function documentLayoutSettings(source: string) {
   const family = (name: string) =>
     last(new RegExp(`\\\\set${name}font\\s*(?:\\[[^\\]]*\\])?\\s*\\{([^{}]+)\\}`, "gu"))?.[1] ?? "";
   const classOptions = last(/\\documentclass\s*(?:\[([^\]]*)\])?\s*\{[^{}]+\}/gu)?.[1] ?? "";
+  const familyDefault = last(FAMILY_DEFAULT_PATTERN)?.[1];
   const running = latexRunningPageStyle(source);
   const odd = latexRunningPageSourceFields(running, 1);
   const even = latexRunningPageSourceFields(running, 2);
@@ -84,6 +91,9 @@ export function documentLayoutSettings(source: string) {
     gutter: `${profile.bindingOffsetIn.toFixed(4)}in`,
     mirroredMargins: profile.twoSided,
     engine,
+    fontFamily: (Object.entries(FAMILY_DEFAULTS).find(
+      ([, command]) => command === familyDefault,
+    )?.[0] ?? "default") as NonNullable<DocumentLayoutSettings["fontFamily"]>,
     mainFont: latexDocumentLanguage(source).mainFont ?? family("main"),
     sansFont: family("sans"),
     monoFont: family("mono"),
@@ -252,6 +262,15 @@ export function updateDocumentLayoutSettings(
     replace(
       /\\(?:raggedright|RaggedRight|justifying)\b/gu,
       update.alignment === "left" ? "\\RaggedRight" : "\\justifying",
+    );
+  }
+  if (update.fontFamily === "default") {
+    const end = latexPreambleEnd(result);
+    result = result.slice(0, end).replace(FAMILY_DEFAULT_PATTERN, "") + result.slice(end);
+  } else if (update.fontFamily !== undefined) {
+    replace(
+      FAMILY_DEFAULT_PATTERN,
+      `\\renewcommand{\\familydefault}{\\${FAMILY_DEFAULTS[update.fontFamily]}}`,
     );
   }
   if (update.engine !== undefined) {
