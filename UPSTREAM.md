@@ -619,6 +619,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`6417151c093e54dbba0e6c824c69d03983793b9a` is recorded in
+[the 2026-11-08 6417151c09 receipt](docs/internals/t3-upstream-sync-20261108-6417151c09.md).
+Literal merge `aaf3b2af5b767d8b3d3ac3524e3314db3f642445` has owned base
+`fd01f549ad561c20c13994435dabb0effd67f91c` and the frozen official target as parents, retaining
+the 28 official commits after `4c3a9d5818`. HTML tools take a file path, a scheduled task can move
+to another thread, side chats start with the parent's reasoning level, and agent sessions pick up
+Linked environments changes. A starting turn may reopen its own reserved session for that. No
+migrations. Release remains separate.
+
+The previous committed alignment through
 `4c3a9d58184f20bd76833bd599c3544d2c09e3eb` is recorded in
 [the 2026-11-07 4c3a9d5818 receipt](docs/internals/t3-upstream-sync-20261107-4c3a9d5818.md).
 Literal merge `23567dd575ff3e83b3276159f013e615430e7572` has owned base
@@ -628,7 +638,7 @@ auto-resume survives a restart, Cursor usage reads only the signed-in account (n
 ACP agents keep form questions and child tool output. T3's cloud dictation stays dormant with its
 local voice engine. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `6577c6b6185167c0e502fa01f9e8e8f2dee6ff25` is recorded in
 [the 2026-11-06 6577c6b618 receipt](docs/internals/t3-upstream-sync-20261106-6577c6b618.md).
 Literal merge `2a52792f87706bd55cee4aaced2c1bd1ad90719c` has owned base

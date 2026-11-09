@@ -4,6 +4,7 @@ import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import type { ComputeCaptureSummary } from "../scient/compute/ComputeCaptureStatus.ts";
 
 export interface OperationObservation {
   /** Opaque local correlation only. Never part of the event payload. */
@@ -16,6 +17,7 @@ export interface OperationObservation {
   readonly failureClass?: "process-crash" | "unknown";
   /** The compute language, such as `python` or `r`; a closed runtime id, never a path. */
   readonly language?: string;
+  readonly capture?: ComputeCaptureSummary;
 }
 
 /** Observe durable outcomes, not RPC acceptance or polling. No raw inputs/results. */
@@ -56,6 +58,10 @@ export const makeOperationAnalytics = Effect.gen(function* () {
             input.finishedAt === undefined ? undefined : input.finishedAt - input.startedAt,
           failureClass: input.failureClass ?? "unknown",
           ...(input.language === undefined ? {} : { language: input.language }),
+          ...(input.operationKind === "compute-artifact"
+            ? { captureSchemaVersion: 2, captureSource: "run-file" }
+            : {}),
+          ...input.capture,
         },
       );
     }).pipe(Effect.ignoreCause());

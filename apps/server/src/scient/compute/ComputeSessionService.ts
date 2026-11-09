@@ -1583,14 +1583,15 @@ const make = Effect.gen(function* () {
     const record = yield* Ref.get(live.recordRef);
     // Output minted by a namespace that has been replaced belongs to nothing
     // a client is looking at.
-    if (event.generation !== record.generation) return false;
+    if (event.generation !== record.generation)
+      return { retained: false, reason: "observation-unavailable" as const };
     const executionId = event.requestId === null ? null : ComputeExecutionId.make(event.requestId);
     const budgets = yield* readBudgets(live, executionId);
-    if (budgets === null) return false;
+    if (budgets === null) return { retained: false, reason: "observation-unavailable" as const };
     // A transcript that has already said it is incomplete says it once;
     // everything after the marker is dropped in silence.
     const silenced = budgets.execution?.truncated ?? budgets.session.truncated;
-    if (silenced) return false;
+    if (silenced) return { retained: false, reason: "output-limit" as const };
     const size = computeOutputByteLength(event.output);
     const overSession = budgets.session.bytes + size - budgets.session.ceiling;
     const crossed =
@@ -1609,7 +1610,7 @@ const make = Effect.gen(function* () {
         session: crossed.scope === "session",
       });
       yield* publishOutputs(live, executionId, [marker]);
-      return false;
+      return { retained: false, reason: "output-limit" as const };
     }
     // Store image bytes before their transcript reference. Missing or refused bytes must produce
     // the same visible loss marker as a ceiling, even when an internal transport supplied the
@@ -1633,7 +1634,7 @@ const make = Effect.gen(function* () {
           session: executionId === null,
         });
         yield* publishOutputs(live, executionId, [marker]);
-        return false;
+        return { retained: false, reason: "missing-resource" as const };
       }
       yield* store
         .writeOutputImage({
@@ -1693,7 +1694,7 @@ const make = Effect.gen(function* () {
           session: executionId === null,
         });
         yield* publishOutputs(live, executionId, [marker]);
-        return false;
+        return { retained: false, reason: "resource-mismatch" as const };
       }
       for (const resource of event.resources) {
         yield* store
@@ -1739,7 +1740,7 @@ const make = Effect.gen(function* () {
       },
     );
     yield* publishOutputs(live, executionId, [event.output]);
-    return true;
+    return { retained: true };
   });
 
   const applyOutput = Effect.fn("ComputeSessionService.applyOutput")(function* (
@@ -1755,18 +1756,26 @@ const make = Effect.gen(function* () {
         output.bundle.representations.some(
           (representation) => representation.mediaType !== "text/plain",
         ));
-    if (!rich || event.requestId === null) return yield* persistOutput(live, event);
+    if (!rich || event.requestId === null)
+      return yield* persistOutput(live, event).pipe(Effect.map((receipt) => receipt.retained));
     const record = yield* Ref.get(live.recordRef);
-    if (event.generation !== record.generation) return yield* persistOutput(live, event);
+    if (event.generation !== record.generation)
+      return yield* persistOutput(live, event).pipe(Effect.map((receipt) => receipt.retained));
     const key = analyticsExecutionKey(live, event.requestId, event.generation);
     return yield* persistOutput(live, event).pipe(
       Effect.onExit((exit) =>
         observeComputeOutputs({
           key,
           phase: "output",
-          retained: Exit.isSuccess(exit) && exit.value,
+          retained: Exit.isSuccess(exit) && exit.value.retained,
+          ...(Exit.isSuccess(exit)
+            ? "reason" in exit.value
+              ? { reason: exit.value.reason }
+              : {}
+            : { reason: "persistence-failed" as const }),
         }),
       ),
+      Effect.map((receipt) => receipt.retained),
     );
   });
 
@@ -1801,19 +1810,27 @@ const make = Effect.gen(function* () {
         Exit.isFailure(exit)
           ? observeComputeOutputs({
               key: analyticsExecutionKey(live, event.requestId, event.generation),
-              phase: "output",
-              retained: false,
+              phase: "coverage",
+              capture: {
+                coverage: "unavailable",
+                coverageReason: "observation-unavailable",
+                rejectedCount: 0,
+              },
             })
           : Effect.void,
       ),
     );
-    if (collection.warnings.length > 0) {
-      yield* observeComputeOutputs({
-        key: analyticsExecutionKey(live, event.requestId, event.generation),
-        phase: "output",
-        retained: false,
-      });
-    }
+    yield* observeComputeOutputs({
+      key: analyticsExecutionKey(live, event.requestId, event.generation),
+      phase: "coverage",
+      capture: collection.capture ?? {
+        coverage: collection.warnings.length > 0 ? "unavailable" : "complete",
+        ...(collection.warnings.length > 0
+          ? { coverageReason: "observation-unavailable" as const }
+          : {}),
+        rejectedCount: 0,
+      },
+    });
     for (const image of collection.images) {
       yield* applyOutput(live, {
         _tag: "output",
@@ -1992,6 +2009,7 @@ const make = Effect.gen(function* () {
                     projectRoot: live.workingDirectory,
                     baseline: null,
                     warnings: ["Project-file observation timed out."],
+                    coverageReason: "scan-timeout" as const,
                   }),
               }),
             );
