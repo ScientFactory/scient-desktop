@@ -4,6 +4,12 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 // SCIENT-FORK:START — keep the computer awake until a thread is done.
 import { handleKeepAwakeMenuAction, readKeepAwakeChosen } from "../scient/keepAwake/threadChoice";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — the conversation's browser profile.
+import {
+  handleBrowserProfileMenuAction,
+  readBrowserProfileMenu,
+} from "../scient/accounts/threadProfileMenu";
+// SCIENT-FORK:END
 import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
   dropThreadContext,
@@ -2821,6 +2827,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         // SCIENT-FORK:START — keep the computer awake until a thread is done.
         const keepAwakeChosen = await readKeepAwakeChosen(thread);
         // SCIENT-FORK:END
+        // SCIENT-FORK:START — the conversation's browser profile.
+        const browserProfileMenu = await readBrowserProfileMenu(threadRef, thread.projectId);
+        // SCIENT-FORK:END
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
             buildThreadActionMenuItems({
@@ -2862,6 +2871,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               // SCIENT-FORK:START
               sectionMenu: sectionMenuFor([thread]),
               openInNewWindow: openInNewWindowMenuItem(),
+              browserProfileMenu,
               // SCIENT-FORK:END
             }),
             position,
@@ -2876,6 +2886,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;
         if (handleOpenInNewWindowMenuAction(clicked.value, threadRef)) return;
+        if (await handleBrowserProfileMenuAction(clicked.value, threadRef)) return;
         // SCIENT-FORK:END
         if (threadActionRequiresOperate(clicked.value) && !checkThreadOperations([thread])) return;
         if (clicked.value?.startsWith("snooze:")) {

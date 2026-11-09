@@ -34,12 +34,12 @@ export const SCIENT_AGENT_COPY_DIFFERENCES: ReadonlyArray<readonly [string, stri
     "`projectId`: one project, else yours, else all outside a thread.",
     "`projectId`: inside a thread, only yours; outside a thread, one project, else all.",
   ],
-  // Keys worth keeping go into Scient Accounts; request_secret stays for one-time secrets.
+  // API keys and tokens go into Scient Accounts; request_secret stays for codes used once.
   [
     "only the user can give: call `request_secret`, not a chat ask or a handoff.",
-    "only the user can give: use its account from `scient_accounts_list`; if none, `scient_account_add` for a key to keep, or `request_secret` for a one-time one, not a chat ask or a handoff.",
+    "only the user can give: use its account from `scient_accounts_list`; if none, `scient_account_add` for a key or token, `request_secret` for a one-time code, not a chat ask or a handoff.",
   ],
-  ["Asked how: call now.", "Asked how: ask now with this or `scient_account_add`."],
+  ["Asked how: call now.", "Asked how: ask now; API keys: `scient_account_add`."],
   // Scient chat renders chart and diagram fences inline.
   [
     "show any visual the user asks for here: pass the path to an HTML file, or inline HTML to `html_preview`, then `html_render`.",

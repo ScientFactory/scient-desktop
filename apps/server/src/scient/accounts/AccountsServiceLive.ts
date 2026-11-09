@@ -619,6 +619,9 @@ export const layer = Layer.effect(
             ...(input.details.kind === "api-key" && Redacted.value(value).length > 4
               ? { hint: Redacted.value(value).slice(-4) }
               : {}),
+            ...(change.type === "scient" && change.changedAt
+              ? { changedAt: change.changedAt }
+              : {}),
           };
           updates.push({
             field,
@@ -1651,6 +1654,7 @@ export const layer = Layer.effect(
                 if (existing) {
                   const current = yield* resolve(existing.summary.accountId, ["password", "totp"]);
                   const details = existing.summary.details;
+                  const changedAt = existing.summary.secrets["password"]?.changedAt;
                   if (
                     details.kind === "website" &&
                     (input.profileId === undefined || details.profileId === input.profileId) &&
@@ -1658,6 +1662,26 @@ export const layer = Layer.effect(
                     Redacted.value(current.password) === entry.password &&
                     (current.totp ? Redacted.value(current.totp) : undefined) === entry.totp
                   ) {
+                    // Same values: only a newer date is kept; its sign-in evidence stays as it is.
+                    const password = existing.summary.secrets["password"];
+                    if (password && entry.changedAt && (!changedAt || entry.changedAt > changedAt))
+                      yield* commit(
+                        replaceAccount({
+                          ...existing,
+                          summary: {
+                            ...existing.summary,
+                            secrets: {
+                              ...existing.summary.secrets,
+                              password: { ...password, changedAt: entry.changedAt },
+                            },
+                          },
+                        }),
+                      );
+                    result.skipped++;
+                    continue;
+                  }
+                  // An older copy of the same sign-in never replaces a newer password.
+                  if (entry.changedAt && changedAt && entry.changedAt < changedAt) {
                     result.skipped++;
                     continue;
                   }
@@ -1692,7 +1716,11 @@ export const layer = Layer.effect(
                         : {}),
                   },
                   secrets: {
-                    password: { type: "scient", value: entry.password },
+                    password: {
+                      type: "scient",
+                      value: entry.password,
+                      ...(entry.changedAt ? { changedAt: entry.changedAt } : {}),
+                    },
                     totp: entry.totp ? { type: "scient", value: entry.totp } : { type: "clear" },
                   },
                 });

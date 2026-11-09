@@ -22,6 +22,7 @@ import {
   sitesToKeep,
   activityLine,
   keysInUse,
+  keptAgentKeys,
   agentMayUse,
   libraryLinkTemplate,
   githubIdentities,
@@ -36,6 +37,7 @@ import {
   accountManagePage,
   capturedSignInInput,
   automaticSignIn,
+  fillChoice,
   writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
@@ -50,6 +52,7 @@ import {
   changedSourceProfile,
   toggleScope,
 } from "./accountsView";
+import { keptAgentOf } from "@t3tools/contracts";
 import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 
 function website(profileId?: string): AccountSummary {
@@ -343,12 +346,57 @@ it("ranks exact-origin sign-ins before recent domain matches and refuses repeate
     userEdited: false,
     hasPassword: true,
     hasValues: false,
+    boxes: [],
   };
   expect(automaticSignIn(form)).toBe(true);
   expect(automaticSignIn({ ...form, userEdited: true })).toBe(false);
   expect(automaticSignIn({ ...form, hasValues: true })).toBe(false);
   expect(automaticSignIn({ ...form, profileId: "incognito" })).toBe(false);
   expect(automaticSignIn({ ...form, url: "http://example.com" })).toBe(false);
+});
+
+it("fills each login box with a saved username that fits it", () => {
+  const signIn = (username: string) => ({
+    details: { kind: "website" as const, sites: ["idp.example.edu"], username },
+    secrets: {},
+  });
+  const id = signIn("123456789");
+  const email = signIn("person@example.edu");
+  const emailBox = { email: true, minLength: -1, maxLength: -1, pattern: "" };
+  const idBox = { email: false, minLength: 9, maxLength: 9, pattern: "" };
+  const textBox = { email: false, minLength: -1, maxLength: -1, pattern: "" };
+  // An ID beside an email: both, whichever row comes first.
+  expect(fillChoice([id, email], [emailBox, idBox])).toEqual({
+    account: email,
+    otherUsername: "123456789",
+  });
+  // Only IDs saved: the ID goes to its box, the email box stays empty.
+  expect(fillChoice([id], [emailBox, idBox])).toEqual({ account: id, otherUsername: undefined });
+  // A box for a 9-digit ID takes the ID row even when an email row comes first.
+  expect(fillChoice([email, id], [{ ...textBox, pattern: "[0-9]{9}" }]).account).toBe(id);
+  expect(fillChoice([email, id], [textBox]).account).toBe(email);
+});
+
+it("fills the newest saved password of the username, and never one the site refused", () => {
+  const row = (changedAt?: string, signIn?: AccountSummary["signIn"]) => ({
+    details: { kind: "website" as const, sites: ["idp.example.edu"], username: "a@example.edu" },
+    secrets: {
+      password: {
+        source: { type: "scient" as const },
+        ...(changedAt ? { changedAt } : {}),
+      },
+    },
+    ...(signIn ? { signIn } : {}),
+  });
+  const box = [{ email: true, minLength: -1, maxLength: -1, pattern: "" }];
+  const older = row("2023-01-01T00:00:00.000Z");
+  const newer = row("2025-01-01T00:00:00.000Z");
+  expect(fillChoice([older, newer], box).account).toBe(newer);
+  // Imported before dates were kept: the one that last worked, never a refused one.
+  const worked = row(undefined, { state: "signed-in", at: "2025-02-01T00:00:00.000Z" });
+  const refused = row(undefined, { state: "password-rejected", at: "2025-03-01T00:00:00.000Z" });
+  expect(fillChoice([row(), refused, worked], box).account).toBe(worked);
+  expect(fillChoice([refused], box).account).toBeUndefined();
 });
 
 it("offers connected vaults until a write rejection marks one read-only", () => {
@@ -539,10 +587,24 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
     previous = new Map() as Parameters<typeof providerManagedAccounts>[2],
     inventory = providers,
   ) => providerManagedAccounts(providers, inventory, previous);
+  const droid = {
+    ...base,
+    instanceId: ProviderInstanceId.make("synthetic-droid"),
+    driver: ProviderDriverKind.make("droid"),
+    mcpServers: [
+      { name: "Linear", status: "connected" as const, signedIn: true },
+      { name: "Local tools", status: "connected" as const },
+      { name: "Notion", status: "needs-auth" as const },
+    ],
+  };
   const first = rows([base, codex]);
   expect(first.rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
     ["codex", "Connected app", codex.instanceId],
     ["claude", "Signed in", base.instanceId],
+  ]);
+  // Droid's own word that it holds the sign-in; a local server or one asking to sign in is not.
+  expect(rows([droid]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
+    ["droid", "Linear", droid.instanceId],
   ]);
   expect(
     rows([
@@ -912,4 +974,27 @@ describe("renamedSourceLabel", () => {
       "Microsoft Edge · Profile 1",
     );
   });
+});
+
+it("offers back the latest key kept for each setting of this kind of agent", () => {
+  const kept = (id: string, agent: string, setting: string, createdAt: string): AccountSummary => ({
+    ...website(),
+    accountId: AccountId.make(`acc_kept_${id}`),
+    details: { kind: "api-key", sites: [], auth: { type: "bearer" }, keptFrom: { agent, setting } },
+    createdAt,
+  });
+  const gemini = keptAgentOf({ driver: "acpRegistry", config: { agentId: "gemini" } });
+  const older = kept("older01", gemini, "GEMINI_API_KEY", "2026-01-01T00:00:00.000Z");
+  const newer = kept("newer01", gemini, "GEMINI_API_KEY", "2026-02-01T00:00:00.000Z");
+  const field = kept("field01", gemini, "config.apiKey", "2026-01-01T00:00:00.000Z");
+  const otherAgent = kept(
+    "other01",
+    "acpRegistry:qwen",
+    "GEMINI_API_KEY",
+    "2026-03-01T00:00:00.000Z",
+  );
+  expect(keptAgentKeys([newer, otherAgent, older, field, website()], gemini)).toEqual([
+    newer,
+    field,
+  ]);
 });

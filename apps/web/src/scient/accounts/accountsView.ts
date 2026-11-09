@@ -34,6 +34,7 @@ import {
 import { previewBridge } from "~/components/preview/previewBridge";
 import { authorizationDecision } from "@t3tools/shared/scientAccountAuthorization";
 import { matchingSignIns } from "@t3tools/shared/scientAccountSignIn";
+import { loginValueFits, type LoginBox } from "@t3tools/shared/scientLoginFields";
 import { universityDetails } from "@t3tools/shared/scientPaperLinks";
 import ACCOUNT_ICONS from "./accountIcons.json";
 import { activeProfiles } from "./activeProfiles";
@@ -79,6 +80,46 @@ export const matchingAccounts = (
   url: string,
   profileId: string,
 ) => matchingSignIns(accounts, url, profileId);
+
+/**
+ * What fills a page's login boxes: the first sign-in whose username fits a box (of those with that
+ * username, the newest password, else one that last worked, never a refused one), and another
+ * sign-in's username for the second box, so a page asking for an ID and an email gets both.
+ */
+export function fillChoice<Account extends Pick<AccountSummary, "details" | "secrets" | "signIn">>(
+  matches: ReadonlyArray<Account>,
+  boxes: ReadonlyArray<LoginBox>,
+) {
+  const usable = matches.filter((match) => match.signIn?.state !== "password-rejected");
+  const name = ({ details }: Account) =>
+    details.kind === "website" ? details.username : undefined;
+  const fits = (box: LoginBox | undefined, exact: boolean) => (account: Account) => {
+    const username = name(account);
+    return box !== undefined && username !== undefined && loginValueFits(box, username, exact);
+  };
+  const first =
+    usable.find(fits(boxes[0], false)) ?? usable.find(fits(boxes[1], false)) ?? usable[0];
+  const recency = (account: Account) => [
+    account.secrets["password"]?.changedAt ?? "",
+    account.signIn?.state === "signed-in" ? account.signIn.at : "",
+    account.secrets["password"]?.verifiedAt ?? "",
+  ];
+  const newestFirst = (a: Account, b: Account) => {
+    const [x, y] = [recency(a), recency(b)];
+    const index = x.findIndex((value, at) => value !== y[at]);
+    return index === -1 ? 0 : y[index]!.localeCompare(x[index]!);
+  };
+  const account = usable
+    .filter((match) => first !== undefined && name(match) === name(first))
+    .sort(newestFirst)[0];
+  if (!account || boxes.length < 2) return { account, otherUsername: undefined };
+  // The page puts the username in the box made for it first, as here.
+  const madeFor = boxes.findIndex((box) => fits(box, true)(account));
+  const taken = madeFor === -1 ? boxes.findIndex((box) => fits(box, false)(account)) : madeFor;
+  const other = taken === -1 ? undefined : boxes[1 - taken];
+  const second = usable.filter((match) => name(match) !== name(account)).find(fits(other, true));
+  return { account, otherUsername: second && name(second) };
+}
 
 /** Whether the conversation's agent may use an account now, without asking. */
 export function agentMayUse(
@@ -509,11 +550,6 @@ export function automaticSignIn(form: DesktopLoginForm) {
   );
 }
 
-export function signInLabel(account: AccountSummary) {
-  const username = account.details.kind === "website" ? account.details.username : undefined;
-  return username ? `${account.name} · ${username}` : account.name;
-}
-
 export function writableOnePasswordVaults(status: AccountStoresStatus["onePassword"]) {
   return status.state === "connected"
     ? (status.vaults?.filter((vault) => !vault.readOnly) ?? [])
@@ -719,7 +755,7 @@ export function toggleScope(
 }
 
 type ProviderManagedAccount = {
-  kind: "claude" | "codex";
+  kind: "claude" | "codex" | "droid";
   id: string;
   instanceId: ProviderInstanceId;
   name: string;
@@ -805,8 +841,22 @@ function codexRows(provider: ServerProvider, plugins: NonNullable<ServerProvider
   }));
 }
 
+/** Droid's servers holding the user's sign-in; a local server or one never signed in is not one. */
+function droidRows(provider: ServerProvider, servers: NonNullable<ServerProvider["mcpServers"]>) {
+  return servers
+    .filter((server) => server.signedIn === true)
+    .map((server) => ({
+      kind: "droid" as const,
+      id: JSON.stringify([provider.instanceId, server.name]),
+      instanceId: provider.instanceId,
+      name: server.name,
+      href: "/settings/extensions/installed" as const,
+    }));
+}
+
 /**
- * Claude and Codex connections, kept steady while their inventory is unknown or refreshing.
+ * Claude, Codex and Droid connections, kept steady while their inventory is unknown or refreshing.
+ * Other agents don't report which of their connectors hold a sign-in, so they have no rows.
  * `providers` is the live list (which instances count), `inventory` the last extensions reply.
  */
 export function providerManagedAccounts(
@@ -817,17 +867,19 @@ export function providerManagedAccounts(
   const next = new Map<ProviderInstanceId, ReadonlyArray<ProviderManagedAccount>>();
   for (const provider of providers) {
     if (!provider.enabled || !provider.installed) continue;
-    if (provider.driver !== "claudeAgent" && provider.driver !== "codex") continue;
+    if (!["claudeAgent", "codex", "droid"].includes(provider.driver)) continue;
     const known = inventory.find((entry) => entry.instanceId === provider.instanceId);
     const kept = previous.get(provider.instanceId) ?? [];
     const rows =
-      provider.driver === "claudeAgent"
-        ? known?.mcpServers
-          ? claudeRows(provider, known.mcpServers, kept)
-          : kept
-        : known?.plugins
+      provider.driver === "codex"
+        ? known?.plugins
           ? codexRows(provider, known.plugins)
-          : kept;
+          : kept
+        : !known?.mcpServers
+          ? kept
+          : provider.driver === "claudeAgent"
+            ? claudeRows(provider, known.mcpServers, kept)
+            : droidRows(provider, known.mcpServers);
     next.set(provider.instanceId, rows);
   }
   const rows = [...next.values()].flat().toSorted((a, b) => a.name.localeCompare(b.name));
@@ -964,6 +1016,16 @@ export function activityLine(entry: AccountActivityEntry, where: string | undefi
               ? `Failed: ${ACTIVITY_LABELS[entry.action].toLowerCase()}`
               : ACTIVITY_LABELS[entry.action];
   return where ? `${what} · ${where}` : what;
+}
+
+/** Keys Scient kept from removed agents of this kind: the latest for each setting. */
+export function keptAgentKeys(accounts: ReadonlyArray<AccountSummary>, agent: string) {
+  const bySetting = new Map<string, AccountSummary>();
+  for (const account of accounts.toSorted((a, b) => a.createdAt.localeCompare(b.createdAt))) {
+    const from = account.details.kind === "api-key" ? account.details.keptFrom : undefined;
+    if (from?.agent === agent) bySetting.set(from.setting, account);
+  }
+  return [...bySetting.values()];
 }
 
 export interface KeyInUse {

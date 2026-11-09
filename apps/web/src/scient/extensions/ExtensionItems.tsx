@@ -217,7 +217,9 @@ export function ConnectorItem({
         connector.local?.commandLine ??
         connector.url
       }
-      facts={connectorFacts(entry, connector).join(" · ")}
+      facts={connectorFacts(entry, connector)
+        .map(([, value]) => value)
+        .join(" · ")}
       status={actions.busy === "sign-in" ? "Opening sign-in…" : connectorStatusText(connector)}
       trailing={
         <ItemMenu name={entry ? entryName(entry) : connector.displayName} target={target}>

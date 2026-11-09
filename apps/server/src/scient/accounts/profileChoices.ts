@@ -22,7 +22,7 @@ const latest = <V>(
 
 /**
  * A switch in a conversation becomes its profile and, for the page's site, that site's profile.
- * A site-only choice leaves the conversation's profile as it was.
+ * A site-only choice leaves the conversation's profile as it was; null clears it, sites kept.
  */
 export function withThreadChoice(
   choices: BrowserProfileChoices,
@@ -32,7 +32,7 @@ export function withThreadChoice(
   const site = pageSite(input.url)?.hostname;
   const thread = choices.threads[input.threadId];
   const sites = thread?.sites ?? {};
-  const profileId = input.siteOnly ? thread?.profileId : input.profileId;
+  const profileId = input.siteOnly ? thread?.profileId : (input.profileId ?? undefined);
   return {
     ...choices,
     threads: latest(
@@ -41,7 +41,7 @@ export function withThreadChoice(
       {
         ...(profileId === undefined ? {} : { profileId }),
         sites:
-          site === undefined
+          site === undefined || input.profileId === null
             ? sites
             : latest(Object.entries(sites), site, { profileId: input.profileId, at }, MAX_SITES),
       },

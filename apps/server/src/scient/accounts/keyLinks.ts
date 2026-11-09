@@ -3,12 +3,16 @@ import {
   type AccountKeyLink,
   type AccountsSnapshot,
   type ProviderInstanceId,
+  type ServerSettings,
 } from "@t3tools/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import type { AccountsServiceShape } from "./AccountsService.ts";
+import { AccountsService, type AccountsServiceShape } from "./AccountsService.ts";
 
 const failure = (message: string) => new AccountsError({ reason: "unavailable", message });
 
@@ -64,8 +68,53 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
     );
   yield* Stream.runForEach(accounts.changes, follow).pipe(Effect.forkScoped);
 
+  // After a settings change commits, links of agents that no longer exist go, so a later agent
+  // with the same id starts clean and a removal that failed keeps its links. Only on a change, so
+  // startup never opens Accounts.
+  const dropRemoved = (current: ServerSettings) =>
+    accounts.snapshot.pipe(
+      Effect.flatMap((snapshot) =>
+        Effect.forEach(
+          (snapshot.keyLinks ?? []).filter(
+            (link) => !(link.instanceId in current.providerInstances),
+          ),
+          (link) => accounts.setKeyLink(link),
+          { discard: true },
+        ),
+      ),
+      Effect.ignore,
+    );
+  yield* Effect.scoped(
+    settings.subscribeChanges.pipe(
+      Effect.flatMap((changes) => Stream.runForEach(changes, dropRemoved)),
+    ),
+  ).pipe(Effect.forkScoped);
+
   return Effect.fn("AccountKeyLinks.link")(function* (link: AccountKeyLink) {
     yield* apply(link);
     yield* accounts.setKeyLink(link, link.accountId);
   });
 });
+
+/** Server-lifetime, so a key changed in Accounts reaches its variables whenever it changes. */
+export class AccountKeyLinks extends Context.Service<
+  AccountKeyLinks,
+  { readonly link: (link: AccountKeyLink) => Effect.Effect<void, AccountsError> }
+>()("t3/scient/accounts/keyLinks/AccountKeyLinks") {}
+
+export const layer = Layer.effect(
+  AccountKeyLinks,
+  Effect.gen(function* () {
+    return { link: yield* makeAccountKeyLinks(yield* AccountsService) };
+  }),
+);
+
+/** The RPC side; a server without Accounts answers that it is unavailable. */
+export const linkKeyForRpc = Effect.serviceOption(AccountKeyLinks).pipe(
+  Effect.map(
+    Option.match({
+      onNone: () => () => Effect.fail(failure("Accounts is unavailable.")),
+      onSome: (service) => service.link,
+    }),
+  ),
+);
