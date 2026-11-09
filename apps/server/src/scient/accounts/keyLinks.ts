@@ -3,6 +3,7 @@ import {
   type AccountKeyLink,
   type AccountsSnapshot,
   type ProviderInstanceId,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -66,6 +67,30 @@ export const makeAccountKeyLinks = Effect.fn("AccountKeyLinks.make")(function* (
       { discard: true },
     );
   yield* Stream.runForEach(accounts.changes, follow).pipe(Effect.forkScoped);
+
+  // After a settings change commits, links of agents that no longer exist go, so a later agent
+  // with the same id starts clean and a removal that failed keeps its links.
+  const dropRemoved = (current: ServerSettings) =>
+    accounts.snapshot.pipe(
+      Effect.flatMap((snapshot) =>
+        Effect.forEach(
+          (snapshot.keyLinks ?? []).filter(
+            (link) => !(link.instanceId in current.providerInstances),
+          ),
+          (link) => accounts.setKeyLink(link),
+          { discard: true },
+        ),
+      ),
+      Effect.ignore,
+    );
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      const changes = yield* settings.subscribeChanges;
+      const current = yield* settings.getSettings.pipe(Effect.option);
+      if (current._tag === "Some") yield* dropRemoved(current.value);
+      yield* Stream.runForEach(changes, dropRemoved);
+    }),
+  ).pipe(Effect.forkScoped);
 
   return Effect.fn("AccountKeyLinks.link")(function* (link: AccountKeyLink) {
     yield* apply(link);

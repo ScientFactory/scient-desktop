@@ -93,8 +93,6 @@ export const makeKeptAgentKeys = Effect.fn("KeptAgentKeys.make")(function* (
           secrets: { token: { type: "scient", value } },
         });
       }
-      // The agent is gone; a later one with the same id starts with no links.
-      for (const link of links) yield* accounts.setKeyLink(link);
     }
   });
   if (settings.setRemovedAgentKeeper) yield* settings.setRemovedAgentKeeper(keep);

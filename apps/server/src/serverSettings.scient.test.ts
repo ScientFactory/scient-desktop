@@ -1,7 +1,14 @@
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AccountsError, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AccountId,
+  AccountsError,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type AccountKeyLink,
+} from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
@@ -9,6 +16,9 @@ import * as ServerConfig from "./config.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
 import * as ServerSettingsModule from "./serverSettings.ts";
+import { fakeAccounts } from "./scient/accounts/Accounts.testkit.ts";
+import { makeAccountKeyLinks } from "./scient/accounts/keyLinks.ts";
+import { makeKeptAgentKeys } from "./scient/accounts/keptAgentKeys.ts";
 import type { RemovedAgent } from "./scient/accounts/removedAgentKeys.ts";
 
 const layerSettings = ServerSettingsModule.layer.pipe(
@@ -73,4 +83,68 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("removed agent ke
       assert.equal(token(yield* service.getSettings), "sk-typed");
     }).pipe(Effect.provide(layerSettings)),
   );
+
+  it.effect("keeps a failed removal's key links, and drops them once a removal commits", () => {
+    let failRemove = false;
+    const layerSecret = Layer.effect(
+      ServerSecretStore.ServerSecretStore,
+      Effect.map(ServerSecretStore.ServerSecretStore, (store) => ({
+        ...store,
+        remove: (name: string) =>
+          failRemove
+            ? Effect.fail(
+                new ServerSecretStore.SecretStorePersistError({
+                  resource: "provider environment secret",
+                  cause: new Error("Disk full"),
+                }),
+              )
+            : store.remove(name),
+      })),
+    ).pipe(Layer.provide(ServerSecretStore.layer));
+    const layerFailingRemove = ServerSettingsModule.layer.pipe(
+      Layer.provide(layerSecret),
+      Layer.provide(ManagedPolicy.layerTest()),
+      Layer.provideMerge(Layer.fresh(SqlitePersistence.layerMemory)),
+      Layer.provideMerge(
+        Layer.fresh(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3code-removed-agent-links-" }),
+        ),
+      ),
+    );
+    return Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const linked: AccountKeyLink = {
+        instanceId,
+        variable: "OPENAI_API_KEY",
+        accountId: AccountId.make("acc_linked01"),
+      };
+      let keyLinks: ReadonlyArray<AccountKeyLink> = [linked];
+      const dropped = yield* Deferred.make<void>();
+      const fake = fakeAccounts();
+      const accounts = {
+        ...fake.service,
+        snapshot: fake.service.snapshot.pipe(Effect.map((snapshot) => ({ ...snapshot, keyLinks }))),
+        setKeyLink: (target: Pick<AccountKeyLink, "instanceId" | "variable">) =>
+          Effect.sync(() => {
+            keyLinks = keyLinks.filter(
+              (link) => link.instanceId !== target.instanceId || link.variable !== target.variable,
+            );
+          }).pipe(Effect.andThen(Deferred.succeed(dropped, undefined)), Effect.asVoid),
+      };
+      yield* add(service);
+      yield* makeKeptAgentKeys(accounts);
+      yield* makeAccountKeyLinks(accounts);
+      failRemove = true;
+      const error = yield* service
+        .updateProviderInstance({ operation: "remove", instanceId })
+        .pipe(Effect.flip);
+      assert.notEqual(error.operation, "keep-removed-agent-keys");
+      assert.equal(token(yield* service.getSettings), "sk-typed");
+      assert.deepEqual(keyLinks, [linked]);
+      failRemove = false;
+      yield* service.updateProviderInstance({ operation: "remove", instanceId });
+      yield* Deferred.await(dropped);
+      assert.deepEqual(keyLinks, []);
+    }).pipe(Effect.scoped, Effect.provide(layerFailingRemove));
+  });
 });

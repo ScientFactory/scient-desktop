@@ -19,6 +19,7 @@ const link = { accountId, instanceId, variable: "OPENAI_API_KEY" };
 const run = (value: string) => {
   const updates: Array<unknown> = [];
   const settings = {
+    subscribeChanges: Effect.succeed(Stream.empty),
     getSettings: Effect.succeed({
       providerInstances: {
         [instanceId]: {
@@ -71,6 +72,7 @@ it.effect("follows a key rotated in Accounts after the layer is built", () =>
     const changes = yield* Queue.unbounded<AccountsSnapshot>();
     const updated = yield* Deferred.make<unknown>();
     const settings = {
+      subscribeChanges: Effect.succeed(Stream.empty),
       getSettings: Effect.succeed({
         providerInstances: {
           [instanceId]: {

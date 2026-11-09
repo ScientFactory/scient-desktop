@@ -422,9 +422,10 @@ consumer's project. Activity names the plugin, variable and agent.
   Removing an agent deletes its settings, so `keptAgentKeys.ts` first keeps each key typed into
   them (sensitive variables and secret fields) as an API-key account with `keptFrom` (agent kind,
   setting), unless it is linked to an account (even one since deleted, which stays deleted) or the
-  same key is already kept, and drops the agent's links. It runs inside the settings write that
-  removes the agent, before its secrets are deleted (`setRemovedAgentKeeper`); if keeping fails,
-  the removal fails. Adding an agent of the same kind offers them back
+  same key is already kept. It runs inside the settings write that removes the agent, before its
+  secrets are deleted (`setRemovedAgentKeeper`); if keeping fails, the removal fails. Links of
+  agents that no longer exist are dropped after each settings change commits, so a failed removal
+  keeps them. Adding an agent of the same kind offers them back
   (`accounts.keys.restoreKept`); a restored variable then follows its account. Both run once per
   server, so a key changed in Accounts reaches linked variables whenever it changes. Cursor and
   Antigravity keep their sign-in per instance id, which re-adding under the same name reuses; a

@@ -49,7 +49,7 @@ const fakeSettings = (instances: Record<string, unknown>) => {
   return { service, updates, keeper: () => keeper! };
 };
 
-it.effect("keeps a removed agent's typed keys in Accounts once each, and drops its links", () =>
+it.effect("keeps a removed agent's typed keys in Accounts once each, and leaves its links", () =>
   Effect.gen(function* () {
     const settings = fakeSettings({});
     const fake = fakeAccounts({
@@ -122,10 +122,8 @@ it.effect("keeps a removed agent's typed keys in Accounts once each, and drops i
         },
       },
     ]);
-    expect(links).toEqual([
-      { target: expect.objectContaining({ variable: "LINKED_KEY" }), accountId: undefined },
-      { target: expect.objectContaining({ variable: "DELETED_KEY" }), accountId: undefined },
-    ]);
+    // Links go only once the removal commits (keyLinks.ts), so a failed removal keeps them.
+    expect(links).toEqual([]);
   }),
 );
 
