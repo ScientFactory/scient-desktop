@@ -93,6 +93,44 @@ jobs:
           CHANGED: ${{ steps.catalog.outputs.changed }}
         run: echo "$PROVIDER discovery — $RESULT; available=$AVAILABLE; changed=$CHANGED" >> "$GITHUB_STEP_SUMMARY"
 
+  # Its own job: a missing copy turns the run red without blocking a new
+  # release, because installs still fall back to the official release.
+  mirror-health:
+    name: Check Scient's copies of the published ${{ inputs.provider }} release
+    if: inputs.provider == 'scient'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Checkout qualification source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ inputs.publish && github.ref == 'refs/heads/main' && 'main' || github.sha }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/scripts...
+
+      - name: Check every copy of the published release is present at its catalog size
+        shell: bash
+        env:
+          PROVIDER: ${{ inputs.provider }}
+        run: |
+          set -euo pipefail
+          published="$RUNNER_TEMP/published-managed-runtime-catalog.json"
+          git fetch --no-tags --depth=1 origin \
+            "refs/heads/$CATALOG_BRANCH:refs/remotes/origin/$CATALOG_BRANCH"
+          git show "refs/remotes/origin/$CATALOG_BRANCH:$CATALOG_PATH" > "$published"
+          node scripts/check-managed-runtime-mirror.ts --provider "$PROVIDER" --catalog "$published"
+
   qualify:
     name: Qualify ${{ inputs.provider }} / ${{ matrix.runner }}
     needs: discover
@@ -239,6 +277,15 @@ jobs:
         with:
           name: managed-runtime-catalog-${{ inputs.provider }}
           path: ${{ runner.temp }}/managed-runtime-catalog-candidate
+
+      - name: Require Scient's own copies to match the qualified release
+        if: inputs.provider == 'scient'
+        env:
+          PROVIDER: ${{ inputs.provider }}
+        run: >-
+          node scripts/check-managed-runtime-mirror.ts --full
+          --provider "$PROVIDER"
+          --catalog "$RUNNER_TEMP/managed-runtime-catalog-candidate/managed-runtime-catalog.json"
 
       - name: Merge and publish the qualified provider
         shell: bash
@@ -430,6 +477,7 @@ jobs:
 
           # Scient qualification runs the same isolated activation check used by Desktop.
           if [[ "$PROVIDER" == scient ]] && ! git diff --quiet "$SOURCE_SHA" refs/remotes/origin/main -- \
+            scripts/check-managed-runtime-mirror.ts \
             apps/server/src/policy \
             packages/tailscale \
             packages/provider-fx \

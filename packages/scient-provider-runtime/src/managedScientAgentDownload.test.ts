@@ -127,8 +127,8 @@ it.each(["checksum", "smoke", "admission", "qualification", "cancellation"] as c
             { status: 503 },
           ),
       )
-      .mockResolvedValueOnce(
-        new Response(bytes, { headers: { "content-length": String(bytes.length) } }),
+      .mockImplementation(
+        async () => new Response(bytes, { headers: { "content-length": String(bytes.length) } }),
       );
     vi.stubGlobal("fetch", fetch);
     const smoke = vi.fn(async () => {
@@ -146,7 +146,10 @@ it.each(["checksum", "smoke", "admission", "qualification", "cancellation"] as c
     await expect(
       runtime.install({ artifact: candidate, signal: controller.signal, beforeActivate, qualify }),
     ).rejects.toThrow();
-    expect(fetch).toHaveBeenCalledTimes(failure === "cancellation" ? 1 : 2);
+    // A wrong digest rules out each copy in turn: Scient's after its 503, then GitHub's.
+    expect(fetch).toHaveBeenCalledTimes(
+      failure === "cancellation" ? 1 : failure === "checksum" ? 3 : 2,
+    );
     if (failure === "checksum" || failure === "cancellation") expect(smoke).not.toHaveBeenCalled();
     if (failure === "checksum" || failure === "cancellation" || failure === "smoke")
       expect(beforeActivate).not.toHaveBeenCalled();

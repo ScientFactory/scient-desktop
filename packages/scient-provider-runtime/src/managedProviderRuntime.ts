@@ -6,11 +6,13 @@ import * as NodePath from "node:path";
 
 import {
   managedRuntimeArtifactReceipt,
+  managedRuntimeMirrorUrl,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeArtifactReceipt,
 } from "./managedRuntimeArtifact.ts";
 import {
   downloadManagedRuntime,
+  type ManagedRuntimeDownloadRetry,
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
   verifyManagedRuntimeChecksum,
@@ -38,6 +40,8 @@ export interface ManagedProviderRuntimeProgress {
   readonly stage: ManagedProviderRuntimeStage;
   readonly downloadedBytes?: number | undefined;
   readonly totalBytes?: number | undefined;
+  /** Set while the download waits to try again after a temporary failure. */
+  readonly retry?: ManagedRuntimeDownloadRetry | undefined;
 }
 
 export interface ManagedProviderRuntimeStateV1 {
@@ -671,14 +675,28 @@ export class ManagedProviderRuntime {
         downloadedBytes: 0,
         totalBytes: artifact.size,
       });
+      const mirrorUrl = managedRuntimeMirrorUrl(artifact);
       await this.#dependencies.download({
-        url: artifact.url,
+        ...(mirrorUrl
+          ? {
+              url: mirrorUrl,
+              fallbackUrl: artifact.url,
+              checksum: artifact.checksum,
+              allowedHosts: [...artifact.allowedHosts, new URL(mirrorUrl).hostname],
+            }
+          : { url: artifact.url, allowedHosts: artifact.allowedHosts }),
         destination: archivePath,
-        allowedHosts: artifact.allowedHosts,
         expectedSize: artifact.size,
         signal,
         onProgress: (downloadedBytes, totalBytes) =>
           onProgress?.({ stage: "downloading", downloadedBytes, totalBytes }),
+        onRetry: (retry) =>
+          onProgress?.({
+            stage: "downloading",
+            downloadedBytes: 0,
+            totalBytes: artifact.size,
+            retry,
+          }),
       });
       onProgress?.({ stage: "verifying" });
       await this.#dependencies.verify(archivePath, artifact.checksum);

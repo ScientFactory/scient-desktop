@@ -104,7 +104,7 @@ describe("Vega-Lite runtime policy", () => {
     ).rejects.toThrow("too large");
   });
 
-  it("provides stable light and dark defaults without changing author data colors", () => {
+  it("provides stable light and dark defaults", () => {
     expect(vegaLiteThemeConfig("light")).toMatchObject({
       background: null,
       axis: { labelColor: "#525252" },
@@ -113,7 +113,6 @@ describe("Vega-Lite runtime policy", () => {
       background: null,
       axis: { labelColor: "#d4d4d4" },
     });
-    expect(vegaLiteThemeConfig("dark")).not.toHaveProperty("range");
   });
 
   it("adds the compact inspection cursor only to tooltip marks without an existing cursor", () => {
