@@ -522,7 +522,7 @@ An install, update, or repair:
 7. activates the verified directory atomically and cleans staging.
 
 Every managed download, provider or Compute, gives a failure that is usually temporary four more
-tries over about a minute: HTTP 408, 429 and 5xx, a failed or dropped connection, a stall, or a body
+tries over about a minute: HTTP 408, 429 and 5xx other than 501, a failed or dropped connection, a stall, or a body
 shorter than the catalog size. Waits are about 2, 5, 15 and 30 seconds with jitter, or the server's
 `Retry-After` up to a minute, and each retry starts again from the catalog URL because redirect
 targets expire. Cancellation, the total-time bound, size and host refusals, other 4xx, certificate

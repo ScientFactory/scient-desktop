@@ -17,7 +17,10 @@ import type {
 } from "./managedRuntimeArtifact.ts";
 
 const MAX_REDIRECTS = 5;
-const TRANSIENT_DOWNLOAD_STATUSES = new Set([408, 429, 500, 502, 503, 504]);
+/** Busy or failing servers and gateways; 501 means the server can never do it. */
+function isTransientDownloadStatus(status: number): boolean {
+  return status === 408 || status === 429 || (status >= 500 && status < 600 && status !== 501);
+}
 /**
  * Waits before each new try after a failure that is usually temporary: about a
  * minute in all, spread so many installs don't retry at the same moment.
@@ -138,7 +141,7 @@ async function fetchWithAllowedRedirects(input: {
     assertAllowedHttpsUrl(current, input.allowedHosts);
     input.signal.throwIfAborted();
     const response = await fetch(current, { redirect: "manual", signal: input.signal });
-    if (TRANSIENT_DOWNLOAD_STATUSES.has(response.status)) {
+    if (isTransientDownloadStatus(response.status)) {
       await response.body?.cancel().catch(() => undefined);
       throw new TransientDownloadFailure(
         "status",

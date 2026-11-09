@@ -45,8 +45,8 @@ afterEach(async () => {
 
 describe("transient managed runtime downloads", () => {
   // regression: a5d49bba34 fix(scient-agent): recover transient managed download failures
-  // One row per status: dropping one from TRANSIENT_DOWNLOAD_STATUSES fails no other test.
-  it.each([408, 429, 500, 502, 503, 504])(
+  // Gateway codes such as 522 and 524 come from CDNs in front of release hosts.
+  it.each([408, 429, 500, 502, 503, 504, 522, 524])(
     "recovers from HTTP %s before writing or verifying bytes",
     async (status) => {
       const request = await input();
@@ -78,7 +78,7 @@ describe("transient managed runtime downloads", () => {
     },
   );
 
-  it.each([401, 403, 404])("does not retry HTTP %s", async (status) => {
+  it.each([401, 403, 404, 501])("does not retry HTTP %s", async (status) => {
     const request = await input();
     const fetch = vi.fn().mockResolvedValue(new Response("refused", { status }));
     vi.stubGlobal("fetch", fetch);
