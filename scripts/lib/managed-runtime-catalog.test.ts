@@ -36,18 +36,27 @@ const scientArtifactNames = [
   "scient-agent-windows-x64.exe",
 ];
 const scientDigest = "a".repeat(64);
-function scientRelease(version = "0.1.0") {
+/** `compressed`: which of the release's zstd copies to publish, and with their checksums. */
+function scientRelease(
+  version = "0.1.0",
+  compressed: "none" | "all" | "without-checksum" = "none",
+) {
+  const files = (name: string) => {
+    const url = `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/${name}`;
+    return [
+      { name, browser_download_url: url, size: 123456, digest: `sha256:${scientDigest}` },
+      { name: `${name}.sha256`, browser_download_url: `${url}.sha256`, size: 94, digest: null },
+    ];
+  };
   return {
     tag_name: `v${version}`,
     draft: false,
     prerelease: false,
-    assets: scientArtifactNames.flatMap((name) => {
-      const url = `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/${name}`;
-      return [
-        { name, browser_download_url: url, size: 123456, digest: `sha256:${scientDigest}` },
-        { name: `${name}.sha256`, browser_download_url: `${url}.sha256`, size: 94, digest: null },
-      ];
-    }),
+    assets: scientArtifactNames.flatMap((name) => [
+      ...files(name),
+      ...(compressed === "all" ? files(`${name}.zst`) : []),
+      ...(compressed === "without-checksum" ? files(`${name}.zst`).slice(0, 1) : []),
+    ]),
   };
 }
 function scientFetch(
@@ -122,6 +131,127 @@ describe("Scient Agent first managed release", () => {
         provider: "scient",
       }),
     ).toBe(promoted);
+  });
+
+  it("records each binary's compressed copy when the release carries one", async () => {
+    const result = await refreshManagedRuntimeProvider(
+      currentCatalog,
+      "scient",
+      scientFetch({ release: scientRelease("0.1.0", "all") }),
+    );
+    const release = validateManagedRuntimeCandidate(result.catalog, "scient");
+    expect(Object.values(release.artifacts).map((artifact) => artifact.compressed)).toEqual(
+      scientArtifactNames.map(() => ({
+        format: "zstd",
+        size: 123456,
+        checksum: { algorithm: "sha256", digest: scientDigest },
+      })),
+    );
+    const without = await refreshManagedRuntimeProvider(currentCatalog, "scient", scientFetch());
+    expect(
+      Object.values(validateManagedRuntimeCandidate(without.catalog, "scient").artifacts).some(
+        (artifact) => artifact.compressed !== undefined,
+      ),
+    ).toBe(false);
+    await expect(
+      refreshManagedRuntimeProvider(
+        currentCatalog,
+        "scient",
+        scientFetch({ release: scientRelease("0.1.0", "without-checksum") }),
+      ),
+    ).rejects.toThrow(/missing scient-agent-.*\.zst or its checksum/u);
+  });
+
+  it("publishes compressed copies added to an already published release", async () => {
+    const first = await refreshManagedRuntimeProvider(currentCatalog, "scient", scientFetch());
+    const published = mergeQualifiedManagedRuntimeProvider({
+      current: currentCatalog,
+      candidate: first.catalog,
+      provider: "scient",
+    });
+    const unchanged = await refreshManagedRuntimeProvider(published, "scient", scientFetch());
+    expect(unchanged).toEqual({ catalog: published, changedProviders: [] });
+    const added = await refreshManagedRuntimeProvider(
+      published,
+      "scient",
+      scientFetch({ release: scientRelease("0.1.0", "all") }),
+    );
+    expect(added.changedProviders).toEqual(["scient"]);
+    const republished = mergeQualifiedManagedRuntimeProvider({
+      current: published,
+      candidate: added.catalog,
+      provider: "scient",
+    });
+    expect(republished.providers.scient).toEqual(added.catalog.providers.scient);
+    expect(republished.providers.scient!.artifacts["darwin-arm64"]!.compressed).toBeDefined();
+    const again = await refreshManagedRuntimeProvider(
+      republished,
+      "scient",
+      scientFetch({ release: scientRelease("0.1.0", "all") }),
+    );
+    expect(again.changedProviders).toEqual([]);
+    // Other binaries under the same version are still a repack.
+    const binary = added.catalog.providers.scient!.artifacts["darwin-arm64"]!;
+    expect(() =>
+      mergeQualifiedManagedRuntimeProvider({
+        current: published,
+        candidate: {
+          ...added.catalog,
+          providers: {
+            ...added.catalog.providers,
+            scient: {
+              ...added.catalog.providers.scient!,
+              artifacts: {
+                ...added.catalog.providers.scient!.artifacts,
+                "darwin-arm64": {
+                  ...binary,
+                  checksum: { algorithm: "sha256", digest: "b".repeat(64) },
+                },
+              },
+            },
+          },
+        },
+        provider: "scient",
+      }),
+    ).toThrow(/same-version catalog repack/u);
+  });
+
+  it("keeps the compressed copies through reading, validation and publication", async () => {
+    const discovered = await refreshManagedRuntimeProvider(
+      currentCatalog,
+      "scient",
+      scientFetch({ release: scientRelease("0.1.0", "all") }),
+    );
+    // As the workflow passes the candidate between jobs: as JSON, read back for one provider.
+    const read = readManagedRuntimeCatalog(
+      JSON.parse(JSON.stringify(discovered.catalog)),
+      "scient",
+    );
+    const published = mergeQualifiedManagedRuntimeProvider({
+      current: currentCatalog,
+      candidate: read,
+      provider: "scient",
+    });
+    for (const catalog of [read, published, validateManagedRuntimeCatalog(published)]) {
+      expect(catalog.providers.scient).toEqual(discovered.catalog.providers.scient);
+    }
+    const artifact = discovered.catalog.providers.scient!.artifacts["darwin-arm64"]!;
+    for (const compressed of [{ ...artifact.compressed, format: "xz" }, { format: "zstd" }]) {
+      expect(() =>
+        validateManagedRuntimeCatalog({
+          schemaVersion: 1,
+          providers: {
+            scient: {
+              ...discovered.catalog.providers.scient,
+              artifacts: {
+                ...discovered.catalog.providers.scient!.artifacts,
+                "darwin-arm64": { ...artifact, compressed },
+              },
+            },
+          },
+        }),
+      ).toThrow(/compressed copy/u);
+    }
   });
 
   // regression: 8f4842a96b feat(scient-agent): add managed runtime installation and maintenance

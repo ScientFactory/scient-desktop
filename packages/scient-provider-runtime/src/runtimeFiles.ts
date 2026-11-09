@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as NodeStream from "node:stream";
 import * as NodeStreamPromises from "node:stream/promises";
 import * as NodeTimersPromises from "node:timers/promises";
+import * as NodeZlib from "node:zlib";
 
 import * as Tar from "tar";
 import * as Yauzl from "yauzl";
@@ -401,6 +402,61 @@ export async function verifyManagedRuntimeChecksum(
   }
   if (hash.digest("hex") !== expected) {
     throw new ManagedRuntimeFileError("Managed runtime verification failed: checksum mismatch.");
+  }
+}
+
+/**
+ * The largest zstd window a published copy may use (`zstd --long=27`, 128 MiB); a copy that
+ * needs more is refused rather than given more memory.
+ */
+const ZSTD_WINDOW_LOG_MAX = 27;
+
+/** Whether this process can unpack a zstd copy: Node 22.15 or newer, Electron 44's Node 24. */
+export function canUnpackManagedRuntimeZstd(): boolean {
+  return typeof NodeZlib.createZstdDecompress === "function";
+}
+
+/**
+ * Unpacks a downloaded zstd copy into the raw file. Stops as soon as the output passes
+ * `expectedSize` and requires exactly that many bytes; the caller still checks the digest.
+ */
+export async function unpackManagedRuntimeZstd(input: {
+  readonly source: string;
+  readonly destination: string;
+  readonly expectedSize: number;
+  readonly signal: AbortSignal;
+}): Promise<void> {
+  let written = 0;
+  const limit = new NodeStream.Transform({
+    transform(chunk: Buffer, _encoding, callback) {
+      written += chunk.byteLength;
+      callback(
+        written > input.expectedSize
+          ? new ManagedRuntimeFileError("The compressed download unpacks to more than its release.")
+          : null,
+        chunk,
+      );
+    },
+  });
+  try {
+    await NodeStreamPromises.pipeline(
+      NodeFS.createReadStream(input.source),
+      NodeZlib.createZstdDecompress({
+        params: { [NodeZlib.constants.ZSTD_d_windowLogMax]: ZSTD_WINDOW_LOG_MAX },
+      }),
+      limit,
+      NodeFS.createWriteStream(input.destination, { flags: "wx", mode: 0o600 }),
+      { signal: input.signal },
+    );
+    if (written !== input.expectedSize) {
+      throw new ManagedRuntimeFileError(
+        "The compressed download unpacks to less than its release.",
+      );
+    }
+  } catch (cause) {
+    await NodeFSP.rm(input.destination, { force: true }).catch(() => undefined);
+    if (input.signal.aborted || cause instanceof ManagedRuntimeFileError) throw cause;
+    throw new ManagedRuntimeFileError("The compressed download could not be unpacked.", { cause });
   }
 }
 
