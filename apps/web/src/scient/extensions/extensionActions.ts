@@ -62,6 +62,8 @@ export interface ConnectorActionsState extends ItemActionsState {
   readonly signIn: () => Promise<void>;
   readonly test: () => Promise<void>;
   readonly setEnabled: (enabled: boolean) => Promise<unknown>;
+  /** Local connectors: stops every running copy; the next request starts a fresh one. */
+  readonly restart: () => Promise<unknown>;
   /** Sends the whole new scope; the list re-reads the server's answer. */
   readonly setAvailability: (availability: GrantScope) => Promise<unknown>;
   readonly remove: () => Promise<void>;
@@ -225,6 +227,8 @@ export function useConnectorActions(connector: ConnectorSummary): ConnectorActio
     },
     setEnabled: (enabled: boolean) =>
       lock.run("enable", () => update({ environmentId, input: { connectorId, enabled } })),
+    restart: () =>
+      lock.run("restart", () => update({ environmentId, input: { connectorId, restart: true } })),
     setAvailability: (availability: GrantScope) =>
       lock.run("availability", () =>
         update({ environmentId, input: { connectorId, availability } }),
@@ -258,7 +262,7 @@ export function useAddEntry(entry: DiscoverEntry) {
     busy: lock.busy,
     locked: lock.locked,
     feedback: lock.feedback,
-    canAdd: entry.installable && remote !== undefined,
+    canAdd: entry.installable && (remote !== undefined || entry.localPackage !== undefined),
     add: async () => {
       if (!entry.installable || remote === undefined || lock.locked) return;
       const addEntry = () =>

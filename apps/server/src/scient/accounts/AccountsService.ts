@@ -70,6 +70,14 @@ export type AccountKeyConsumer =
       readonly envName: string;
       readonly origin?: string;
       readonly projectId?: ProjectId;
+    }
+  /** A local connector's key; like a plugin key, it has no site and follows the project scope. */
+  | {
+      readonly kind: "local-connector";
+      readonly connectorId: ConnectorId;
+      readonly connector: string;
+      readonly key: string;
+      readonly projectId?: ProjectId;
     };
 
 /** Server-derived identity of the agent session using an account; never request-supplied. */

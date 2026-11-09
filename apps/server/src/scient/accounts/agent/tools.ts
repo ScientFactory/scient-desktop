@@ -275,6 +275,40 @@ const add = metadata(
   "add",
   "Add an account key",
 );
+const connectorSetup = metadata(
+  Tool.make("scient_connector_setup", {
+    failure: AccountsError,
+    dependencies: [
+      ...common.dependencies,
+      McpInvocationContext,
+      OrchestratorMcpService,
+      SecretRequests,
+    ],
+    description:
+      "When a local connector says it needs setup: saves settings you asked the user in chat, and asks for each missing key in a private card (or links their saved key). Then call its tool again. replaceKeys asks again for a key the program rejected.",
+    parameters: Schema.Struct({
+      connector: TrimmedNonEmptyString.annotate({ description: "Its MCP server name." }),
+      settings: Schema.optional(
+        Schema.Record(
+          TrimmedNonEmptyString,
+          Schema.Union([
+            Schema.String.check(Schema.isMaxLength(4096)),
+            Schema.Number,
+            Schema.Boolean,
+          ]),
+        ),
+      ).annotate({ description: "Plain answers by setting key." }),
+      replaceKeys: Schema.optional(Schema.Array(TrimmedNonEmptyString)),
+    }),
+    success: Schema.Struct({
+      status: Schema.Literals(["ready", "needs"]),
+      missing: Schema.Array(Schema.String),
+      message: Schema.String,
+    }),
+  }),
+  "connector-setup",
+  "Set up a local connector",
+);
 const paperDependencies = [
   ...common.dependencies,
   FileSystem.FileSystem,
@@ -377,6 +411,7 @@ export const ScientAccountsToolkit = Toolkit.make(
   browserSession,
   findProfile,
   add,
+  connectorSetup,
   paperGet,
   paperQueue,
   paperStatus,
