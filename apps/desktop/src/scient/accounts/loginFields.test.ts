@@ -58,4 +58,32 @@ describe("login field selection", () => {
       ]),
     ).toEqual({ username: 0, password: 1, otp: 2, other: -1 });
   });
+  it("takes a box labelled as a code for a code box, even masked as a password", () => {
+    const labelled = (label: string, name = ""): LoginField => ({
+      ...field("password"),
+      name,
+      label,
+    });
+    // HUJI's SMS step: one masked box whose visible label says "Temporary code".
+    expect(detectLoginFields([labelled("code Temporary code", "code")])).toEqual({
+      username: -1,
+      password: -1,
+      otp: 0,
+      other: -1,
+    });
+    // HUJI's OTP tab: o_password, titled "OTP code".
+    expect(
+      detectLoginFields([
+        { ...field("text"), name: "username", label: "username" },
+        labelled("o_password hujicc-otp-password OTP code", "o_password"),
+      ]),
+    ).toEqual({ username: 0, password: -1, otp: 1, other: -1 });
+    for (const label of ["password Password", "password סיסמה"])
+      expect(
+        detectLoginFields([
+          { ...field("text"), name: "username", label: "username" },
+          labelled(label, "password"),
+        ]),
+      ).toEqual({ username: 0, password: 1, otp: -1, other: -1 });
+  });
 });

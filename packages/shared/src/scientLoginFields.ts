@@ -45,13 +45,14 @@ interface PageInput extends PageElement {
   readonly minLength: number;
   readonly maxLength: number;
   readonly pattern: string;
+  readonly title: string;
+  readonly labels: ArrayLike<PageElement & { readonly textContent: string | null }> | null;
   getAttribute(name: string): string | null;
   closest(selectors: string): unknown;
 }
 
 interface PageCheckbox extends PageInput {
   readonly checked: boolean;
-  readonly labels: ArrayLike<PageElement & { readonly textContent: string | null }> | null;
 }
 
 function loginElementVisible(element: PageElement) {
@@ -74,6 +75,14 @@ function loginElementVisible(element: PageElement) {
  */
 export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: LoginFieldRules = {}) {
   const tokens = fields.map((field) => field.autocomplete.split(/\s+/));
+  // A box labelled as a code takes only a one-time code, even masked as a password.
+  const isCode = (field: LoginField, index: number) =>
+    tokens[index]?.includes("one-time-code") === true ||
+    (field.type !== "email" &&
+      !/^(user(name)?|login)$/i.test(field.name ?? "") &&
+      /otp|mfa|2fa|two.?factor|verification|one.?time|temporary|sms|\bcode\b|קוד/i.test(
+        field.label ?? "",
+      ));
   const first = (...tests: ReadonlyArray<(field: LoginField, index: number) => boolean>) => {
     for (const test of tests) {
       const found = fields.findIndex((field, index) => field.usable && test(field, index));
@@ -81,11 +90,8 @@ export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: Logi
     }
     return -1;
   };
-  // A code field masked as a password is never the password, so a code can't replace it.
   const passwords = fields.flatMap((field, index) =>
-    field.usable && field.type === "password" && !tokens[index]?.includes("one-time-code")
-      ? [index]
-      : [],
+    field.usable && field.type === "password" && !isCode(field, index) ? [index] : [],
   );
   const isNew = (index: number) => tokens[index]?.includes("new-password") === true;
   const refused =
@@ -93,13 +99,7 @@ export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: Logi
   const password = refused ? -1 : (passwords.find((index) => !isNew(index)) ?? -1);
   const otp = first(
     (_field, index) => tokens[index]?.includes("one-time-code") === true,
-    (field) =>
-      field.type !== "password" &&
-      field.type !== "email" &&
-      !/^(user(name)?|login)$/i.test(field.name ?? "") &&
-      /otp|mfa|2fa|two.?factor|verification|one.?time|(auth|security|sms).?code|\bcode\b/i.test(
-        field.label ?? "",
-      ),
+    isCode,
     (field) =>
       field.type !== "password" &&
       field.inputMode === "numeric" &&
@@ -205,7 +205,24 @@ export function collectLoginFields<Input extends PageInput>(
       input.type !== "hidden" &&
       !input.closest("[hidden], [inert]") &&
       loginElementVisible(input),
-    label: [input.name, input.id, input.placeholder, input.getAttribute("aria-label")].join(" "),
+    // What a person reads beside the box too: its labels, aria-labelledby and title.
+    label: [
+      input.name,
+      input.id,
+      input.placeholder,
+      input.getAttribute("aria-label"),
+      input.title,
+      ...Array.from(input.labels ?? [], (label) => label.textContent),
+      ...(input.getAttribute("aria-labelledby") ?? "").split(/\s+/).map(
+        (id) =>
+          id &&
+          (
+            globalThis as unknown as {
+              document: { getElementById(id: string): { textContent: string | null } | null };
+            }
+          ).document.getElementById(id)?.textContent,
+      ),
+    ].join(" "),
     name: input.name || input.id,
     inputMode: input.inputMode,
     maxLength: input.maxLength,

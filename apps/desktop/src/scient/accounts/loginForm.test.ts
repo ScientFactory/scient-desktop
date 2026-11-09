@@ -103,6 +103,39 @@ it("captures trusted submit controls and Enter once, after guest permission and 
   expect(captured).toHaveLength(4);
 });
 
+it("reads a box's visible label and title, so a masked code box gets no password and no save", () => {
+  document.body.innerHTML =
+    '<form><label for="code">Temporary code</label><input id="code" name="code" type="password"><button type="submit">Enter</button></form>' +
+    '<form hidden><input name="username"><input type="password" name="o_password" title="OTP code"></form>';
+  const [code, , otpBox] = [...document.querySelectorAll("input")] as HTMLInputElement[];
+  using _rect = vi.spyOn(code!, "getClientRects").mockReturnValue({ length: 1 } as DOMRectList);
+  using _page = { [Symbol.dispose]: () => document.body.replaceChildren() };
+  const captured: unknown[] = [];
+  using _capture = {
+    [Symbol.dispose]: installSignInCapture(
+      () => true,
+      (value) => captured.push(value),
+    ),
+  };
+  const secret = NodeCrypto.randomUUID();
+  expect(window.eval(loginFillScript({ password: secret }, location.origin))).toBe(false);
+  expect(code!.value).toBe("");
+  // A code the user typed is not a sign-in to save.
+  code!.value = String(NodeCrypto.randomInt(100_000, 999_999));
+  const submit = new Event("submit", { bubbles: true });
+  Object.defineProperty(submit, "isTrusted", { value: true });
+  document.querySelector("form")!.dispatchEvent(submit);
+  expect(captured).toEqual([]);
+  // HUJI's OTP tab: o_password titled "OTP code" takes only a code.
+  document.querySelector("form")!.toggleAttribute("hidden", true);
+  document.querySelectorAll("form")[1]!.toggleAttribute("hidden", false);
+  using _otpRect = vi
+    .spyOn(otpBox!, "getClientRects")
+    .mockReturnValue({ length: 1 } as DOMRectList);
+  expect(window.eval(loginFillScript({ password: secret }, location.origin))).toBe(false);
+  expect(otpBox!.value).toBe("");
+});
+
 it("never takes a code field masked as a password for the password", () => {
   document.body.innerHTML =
     '<form><input type="password" autocomplete="one-time-code"><button type="submit">Go</button></form>';
