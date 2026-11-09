@@ -4,6 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import type { DesktopCliCommandState } from "@t3tools/contracts";
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { pathSetup, readUserLoginShell } from "@t3tools/shared/shell";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -16,6 +17,9 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import * as DesktopCliShim from "./DesktopCliShim.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
+import { makeComponentLogger } from "./DesktopObservability.ts";
+
+const { logInfo, logWarning } = makeComponentLogger("desktop-cli-command");
 
 // Settings → Install `scient` command, like VS Code's "Install 'code' command".
 // The app's launcher (see DesktopCliShim) lives in the Scient home and is off PATH
@@ -58,6 +62,10 @@ export class DesktopCliCommand extends Context.Service<
     readonly state: Effect.Effect<DesktopCliCommandState>;
     readonly install: Effect.Effect<DesktopCliCommandState, DesktopCliCommandError>;
     readonly uninstall: Effect.Effect<DesktopCliCommandState, DesktopCliCommandError>;
+    /** Adds the installed command's folder to PATH in the user's shell startup file. */
+    readonly addToPath: Effect.Effect<DesktopCliCommandState, DesktopCliCommandError>;
+    /** Installs the command on a fresh install's first launch; removing it in Settings sticks. */
+    readonly installOnFirstLaunch: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopCliCommand") {}
 
@@ -77,6 +85,11 @@ export const make = Effect.gen(function* () {
 
   const fail = (message: string) => new DesktopCliCommandError({ message });
   const exists = (target: string) => fs.exists(target).pipe(Effect.orElseSucceed(() => false));
+  const firstLaunchMarker = path.join(environment.stateDir, "cli-command-first-launch");
+  // Read before this launch writes either one: an app that ran before left its launcher or
+  // settings. Its user may have removed the command or chosen another, so only Settings installs.
+  const freshInstall =
+    !(yield* exists(launcher)) && !(yield* exists(environment.desktopSettingsPath));
   const writableDirectory = (directory: string) =>
     fs.access(directory, { writable: true }).pipe(
       Effect.as(true),
@@ -188,6 +201,32 @@ export const make = Effect.gen(function* () {
     return false;
   });
 
+  const startupLine = (installedPath: string) => {
+    const setup = pathSetup({
+      directory: path.dirname(installedPath),
+      home: environment.homeDirectory,
+      // A Finder or desktop launch may not set SHELL.
+      shell: env.SHELL || readUserLoginShell(),
+      platform: environment.platform,
+      configHome: env.XDG_CONFIG_HOME,
+      zdotdir: env.ZDOTDIR,
+    });
+    if (setup === undefined) return undefined;
+    const file = setup.file.startsWith("~/")
+      ? path.join(environment.homeDirectory, setup.file.slice(2))
+      : setup.file;
+    return { ...setup, path: file };
+  };
+  const hasLine = (setup: { readonly path: string; readonly line: string }) =>
+    fs.readFileString(setup.path).pipe(
+      Effect.map((content) => content.split("\n").some((line) => line.trim() === setup.line)),
+      Effect.orElseSucceed(() => false),
+    );
+  const folderOnPath = (link: string) =>
+    Effect.sync(() =>
+      pathEntries(env.PATH, ":").some((entry) => entry.replace(/\/+$/, "") === path.dirname(link)),
+    );
+
   const state: DesktopCliCommand["Service"]["state"] = Effect.gen(function* () {
     if (!environment.isPackaged) {
       return {
@@ -224,6 +263,15 @@ export const make = Effect.gen(function* () {
     // first `scient` on PATH must be ours; a `scient` earlier on PATH would shadow it.
     const first = yield* firstOnPath;
     const onPath = Option.isSome(first) && (yield* runsOurLauncher(first.value));
+    // Only a folder missing from PATH, with no other scient first: with one, the added folder
+    // (last on PATH) would still not run this scient.
+    const setup =
+      onPath ||
+      Option.isSome(shadowedBy) ||
+      Option.isNone(installed) ||
+      (yield* folderOnPath(installed.value))
+        ? undefined
+        : startupLine(installed.value);
     return {
       supported: true,
       installedPath: Option.getOrNull(installed),
@@ -231,6 +279,9 @@ export const make = Effect.gen(function* () {
       onPath,
       launcherPath,
       ...shadow,
+      ...(setup === undefined
+        ? {}
+        : { pathSetup: { file: setup.file, added: yield* hasLine(setup) } }),
     };
   }).pipe(
     Effect.orElseSucceed(() => ({
@@ -319,6 +370,8 @@ export const make = Effect.gen(function* () {
 
   const uninstall: DesktopCliCommand["Service"]["uninstall"] = Effect.gen(function* () {
     if (!environment.isPackaged) return yield* state;
+    // A first launch put off for the shell PATH must not bring back what the user removed.
+    yield* fs.writeFileString(firstLaunchMarker, "").pipe(Effect.ignore);
     if (windows) {
       const owned = yield* recordedWindowsPath;
       if (Option.isSome(owned)) {
@@ -343,7 +396,74 @@ export const make = Effect.gen(function* () {
     Effect.withSpan("desktop.cliCommand.uninstall"),
   );
 
-  return DesktopCliCommand.of({ state, install, uninstall });
+  const addToPath: DesktopCliCommand["Service"]["addToPath"] = Effect.gen(function* () {
+    const installed = yield* installedAt;
+    if (windows || Option.isNone(installed)) {
+      return yield* fail("Install the scient command first.");
+    }
+    const setup = startupLine(installed.value);
+    if (setup === undefined) return yield* fail("Scient cannot add scient to this shell's PATH.");
+    const shadowedBy = yield* foreignFirstOnPath;
+    if (Option.isSome(shadowedBy)) {
+      return yield* fail(
+        `Another scient at ${shadowedBy.value} runs first; Scient leaves it in place.`,
+      );
+    }
+    if (!(yield* folderOnPath(installed.value)) && !(yield* hasLine(setup))) {
+      yield* fs.makeDirectory(path.dirname(setup.path), { recursive: true }).pipe(
+        Effect.andThen(
+          fs.writeFileString(setup.path, `\n# Added by Scient\n${setup.line}\n`, { flag: "a" }),
+        ),
+        Effect.mapError(() => fail(`Could not add scient to ${setup.file}.`)),
+      );
+    }
+    return yield* state;
+  }).pipe(
+    // One at a time, so Settings and onboarding cannot both append the line.
+    DesktopCliShim.pathMutationLock.withPermit,
+    Effect.withSpan("desktop.cliCommand.addToPath"),
+  );
+
+  const installOnFirstLaunch: DesktopCliCommand["Service"]["installOnFirstLaunch"] = Effect.gen(
+    function* () {
+      if (!environment.isPackaged || (yield* exists(firstLaunchMarker))) return;
+      // Mark first so a failed or removed install is never retried behind the user's back.
+      yield* fs.writeFileString(firstLaunchMarker, "");
+      if (!freshInstall) {
+        return yield* logInfo("left the scient command to Settings on an existing install");
+      }
+      // A scient that is not ours in these folders, even off PATH, means the user has one already.
+      // On Windows the app never writes there, so any scient there is someone else's.
+      for (const directory of directories) {
+        for (const name of windows ? [`${commandName}.cmd`, `${commandName}.exe`] : [commandName]) {
+          const other = path.join(directory, name);
+          const present =
+            (yield* exists(other)) || Option.isSome(yield* fs.readLink(other).pipe(Effect.option));
+          if (present && (windows || !(yield* isOurLink(other)))) {
+            return yield* logInfo("left the scient command to Settings beside another scient", {
+              other,
+            });
+          }
+        }
+      }
+      const installed = yield* install;
+      yield* logInfo("installed the scient command on first launch", {
+        installedPath: installed.installedPath,
+        onPath: installed.onPath,
+      });
+    },
+  ).pipe(
+    // Our own messages are short and name only paths; anything else is logged as a category.
+    Effect.catch((error) =>
+      logWarning("did not install the scient command on first launch", {
+        reason: error._tag === "DesktopCliCommandError" ? error.message : "state-write-failed",
+      }),
+    ),
+    Effect.withSpan("desktop.cliCommand.installOnFirstLaunch"),
+  );
+
+  // SCIENT-FORK: Scient's ownership rules with T3's first-launch install and PATH setup.
+  return DesktopCliCommand.of({ state, install, uninstall, addToPath, installOnFirstLaunch });
 });
 
 export const layer = Layer.effect(DesktopCliCommand, make);

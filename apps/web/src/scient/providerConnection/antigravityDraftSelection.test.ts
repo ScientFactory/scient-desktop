@@ -180,7 +180,6 @@ it("repairs a remembered draft after catalog refresh and retains the native ID t
       model: state.selectedModel,
       models: provider.models,
       modelOptions: state.modelOptions?.[id],
-      planModeEnabled: false,
     }).modelOptionsForDispatch,
   ).toBeUndefined();
   await vi.advanceTimersByTimeAsync(300);

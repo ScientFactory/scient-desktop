@@ -118,7 +118,8 @@ import {
   nativeTurnTokenUsage,
   type NativeTurnUsage,
 } from "@t3tools/provider-core/server/turnUsage";
-import { PI_FILE_CHANGE_TOOLS } from "./mcpExtensionSource.ts";
+import { PI_FILE_CHANGE_TOOLS, PI_T3_SERVICE_TIER_COMMAND } from "./mcpExtensionSource.ts";
+import { PI_STANDARD_SERVICE_TIER } from "./modelCapabilities.ts";
 import { piRequestUsage } from "./requestUsage.ts";
 
 export const PI_PROVIDER = ProviderDriverKind.make("pi");
@@ -796,6 +797,9 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       );
       let appliedModel: string | null = null;
       let appliedThinking: string | null = null;
+      // Pi reloads extensions (resetting the tier) on paths the adapter cannot see, so a chosen tier
+      // is resent every turn; Standard sends a clear only when an earlier tier may still be set.
+      let serviceTierMayBeSet = false;
       let appliedSessionName: string | null = null;
       const outOfTurnExtensionErrors: Array<PiRpcRecord> = [];
       let lastKnownLeaf: string | null = null;
@@ -2720,6 +2724,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               }
               return;
             }
+            // Only id-less prompts own ACK slots; a late reply to an id-bearing request must not take one.
+            if (command === "prompt" && typeof event["id"] === "string") return;
             const pendingPrompt = command === "prompt" ? pendingPromptResponses.shift() : undefined;
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
@@ -3110,7 +3116,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
 
       // SCIENT-FORK: the same confirmed native selection policy as discovery and one-shot generation.
       const selectionClient = makePiSelectionClient((record) => request(record));
-      const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
+      const applyModelAndThinking = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
         const thinking =
           getModelSelectionStringOptionValue(modelSelection, "thinkingLevel") ??
           getModelSelectionStringOptionValue(modelSelection, "thinking");
@@ -3170,6 +3176,28 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           providerSession: sessionEntity,
         });
         return confirmed.confirmedThinkingLevel;
+      });
+      const applySelection = Effect.fnUntraced(function* (modelSelection: ModelSelection) {
+        const thinkingLevel = yield* applyModelAndThinking(modelSelection);
+        const requestedTier = getModelSelectionStringOptionValue(modelSelection, "serviceTier");
+        const serviceTier =
+          requestedTier === undefined || requestedTier === PI_STANDARD_SERVICE_TIER
+            ? null
+            : requestedTier;
+        if (serviceTier !== null || serviceTierMayBeSet) {
+          serviceTierMayBeSet = true;
+          const result = yield* request({
+            type: "prompt",
+            message: `/${PI_T3_SERVICE_TIER_COMMAND} ${serviceTier ?? ""}`.trimEnd(),
+          });
+          // Pi before 0.99 acknowledges a handled extension command without a disposition.
+          const disposition = recordString(result, "disposition");
+          if (disposition !== undefined && disposition !== "handled") {
+            return yield* protocolError("Scient's Pi extension did not apply the service tier");
+          }
+          serviceTierMayBeSet = serviceTier !== null;
+        }
+        return thinkingLevel;
       });
 
       const resolvePromptPayload = Effect.fnUntraced(function* (

@@ -122,3 +122,16 @@ it("does not grant additional allowance to a large dependency spill", () => {
   assert.equal(result.allowance, 37);
   assert.equal(result.counts.core, 20_000);
 });
+
+it("counts the server compile cache apart from the core budget, up to its cap", () => {
+  const cache = (count: number) =>
+    Array.from({ length: count }, (_, index) => `resources/server-compile-cache/${index}`);
+  const core = ["resources/app.asar", "Scient.exe"];
+  const base = analyzeWindowsPayloadInventory({ files: core, arch: "x64" }).allowance;
+  const result = analyzeWindowsPayloadInventory({ files: [...core, ...cache(39)], arch: "x64" });
+  assert.equal(result.counts.compileCache, 39);
+  assert.equal(result.counts.core, 2);
+  assert.equal(result.allowance, base + 39);
+  const oversized = analyzeWindowsPayloadInventory({ files: [...core, ...cache(70)], arch: "x64" });
+  assert.equal(oversized.allowance, base + 64);
+});

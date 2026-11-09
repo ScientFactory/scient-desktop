@@ -7,7 +7,7 @@ import {
   thinkingLevelCapabilities,
 } from "@t3tools/provider-core/server/agentModel";
 
-import type { PiThinkingLevel } from "./thinkingCapabilities.ts";
+import type { PiThinkingLevel } from "./modelCapabilities.ts";
 
 export interface PiDiscoveredModel {
   readonly provider: string;

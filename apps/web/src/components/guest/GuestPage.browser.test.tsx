@@ -352,13 +352,15 @@ describe("GuestPage", () => {
     expect(Math.abs(scroller().scrollTop - readingAt)).toBeLessThanOrEqual(1);
     // SCIENT-FORK:END
 
-    // The guest's own message waits at the end for the owner.
+    // The guest sends; their message waits at the end for the owner.
     const waiting = {
       id: GuestMessageId.make("guest-1"),
       text: "Can you also check the logout flow?",
       status: "pending" as const,
       submittedAt: "2026-10-23T10:01:00.000Z",
     };
+    await userEvent.type(screen.getByRole("textbox", { name: "Message" }), waiting.text);
+    await userEvent.click(screen.getByRole("button", { name: "Send" }));
     send({ type: "view", view: { ...view, messages: [waiting] } });
     await expect.element(screen.getByText(waiting.text)).toBeInTheDocument();
     // SCIENT-FORK:START — their message lands in view. The reply still appearing above it goes on
