@@ -15,14 +15,14 @@ export function ProviderFailureInfo(props: { readonly title: string; readonly de
         render={
           <Button
             type="button"
-            size="icon-xs"
+            size="icon-tiny"
             variant="ghost-muted"
             aria-label={`${props.title}: show why`}
             className="flex-none self-center"
           />
         }
       >
-        <InfoIcon />
+        <InfoIcon className="size-3.5" />
       </PopoverTrigger>
       <PopoverPopup side="bottom" align="start" width="md" padding="comfortable">
         <div className="grid min-w-0 gap-0.5">
