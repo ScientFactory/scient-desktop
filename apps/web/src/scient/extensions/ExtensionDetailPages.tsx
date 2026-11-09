@@ -25,6 +25,11 @@ import {
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { toastManager } from "../../components/ui/toast";
+import { shellEnvironment } from "../../state/shell";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { LocalSetupDialog } from "./LocalSetupFields";
+
 import { WorksWithValue } from "./WorksWith";
 import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
@@ -452,6 +457,7 @@ function connectionState(connector: ConnectorSummary): string {
   if (connector.status === "needs-credential") {
     return connector.auth.type === "source-control" ? "Account missing" : "Key missing";
   }
+  if (connector.local !== undefined) return "Runs on this computer";
   return connector.auth.type === "none" ? "No account needed" : "Signed in";
 }
 
@@ -464,6 +470,14 @@ function connectionDetail(connector: ConnectorSummary, busy: string | null): str
     return connector.auth.type === "credential" && connector.auth.storage === "bound"
       ? "The secret this service used is no longer available."
       : "The stored key is gone. Remove this service and add it again.";
+  }
+  if (connector.local !== undefined) {
+    const { running, missing, problem } = connector.local;
+    if (problem !== undefined) return problem;
+    if (missing.length > 0) return `Needs ${missing.join(", ")}`;
+    return running === 0
+      ? "Starts when an agent uses it"
+      : `${running} ${running === 1 ? "copy" : "copies"} running, one per chat`;
   }
   return connector.auth.type === "none"
     ? (urlHost(connector.url) ?? connector.url)
@@ -584,9 +598,20 @@ function ConnectorDetail({
   readonly entry: DiscoverEntry | undefined;
   readonly back: BackTo;
 }) {
-  const { inventory, catalog } = useExtensionsEnvironment();
+  const { inventory, catalog, environmentId, canWrite } = useExtensionsEnvironment();
   const actions = useConnectorActions(connector);
   const allowed = connectorActions(connector);
+  const [editing, setEditing] = useState(false);
+  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, { reportFailure: false });
+  const revealFolder = async (folder: string) => {
+    const result = await openInEditor({
+      environmentId,
+      input: { cwd: folder, editor: "file-manager", reveal: true },
+    });
+    if (result._tag === "Failure") {
+      toastManager.add({ type: "error", title: "Unable to show the folder", description: folder });
+    }
+  };
   const name = entry ? entryName(entry) : connector.displayName;
   const iconUrl = entry?.iconUrl ?? connector.iconUrl;
   const tagline = (entry ? entryTagline(entry) : undefined) ?? connector.description;
@@ -650,6 +675,16 @@ function ConnectorDetail({
               >
                 Test
               </MenuItem>
+              {connector.local !== undefined ? (
+                <>
+                  <MenuItem disabled={actions.locked} onClick={() => void actions.restart()}>
+                    Restart
+                  </MenuItem>
+                  <MenuItem onClick={() => void revealFolder(connector.local!.directory)}>
+                    Show in folder
+                  </MenuItem>
+                </>
+              ) : null}
             </MoreMenu>
           </CardRow>
           <CardRow>
@@ -670,6 +705,44 @@ function ConnectorDetail({
         </div>
         {connector.lastError ? (
           <p className="text-sm text-destructive-foreground">{connector.lastError}</p>
+        ) : null}
+        {connector.local !== undefined && connector.local.setup.length > 0 ? (
+          <div className={CARD_CLASS}>
+            {connector.local.setup.map(({ field, value, account }) => (
+              <CardRow key={field.key}>
+                <span className="min-w-0 flex-1 text-sm text-foreground">{field.title}</span>
+                <span className="truncate text-sm text-muted-foreground">
+                  {field.sensitive
+                    ? (account ?? (field.required ? "Missing" : "Not set"))
+                    : value === undefined
+                      ? field.required
+                        ? "Missing"
+                        : "Not set"
+                      : Array.isArray(value)
+                        ? value.join(", ")
+                        : String(value)}
+                </span>
+              </CardRow>
+            ))}
+            <CardRow>
+              <span className="min-w-0 flex-1" />
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={!canWrite}
+                onClick={() => setEditing(true)}
+              >
+                Edit setup
+              </Button>
+            </CardRow>
+          </div>
+        ) : null}
+        {editing && connector.local !== undefined ? (
+          <LocalSetupDialog
+            connector={{ ...connector, local: connector.local }}
+            environmentId={environmentId}
+            onClose={() => setEditing(false)}
+          />
         ) : null}
         <div className="grid gap-1 empty:hidden">
           <ActionFeedback feedback={actions.feedback} waitingForSignIn={actions.waitingForSignIn} />
@@ -693,8 +766,22 @@ function ConnectorDetail({
             entry?.repositoryUrl ? <ExternalLink href={entry.repositoryUrl} /> : null,
           ),
           ["Works with", <WorksWithValue key="works-with" />],
-          ["Sign-in used", connectorAuthLabel(connector.auth)],
-          ["URL", <Mono key="url">{connector.url}</Mono>],
+          ...(connector.local === undefined
+            ? ([
+                ["Sign-in used", connectorAuthLabel(connector.auth)],
+                ["URL", <Mono key="url">{connector.url}</Mono>],
+              ] satisfies ReadonlyArray<Fact>)
+            : [
+                fact("Version", connector.local.version),
+                fact("Author", connector.local.author),
+                fact(
+                  "Runs",
+                  connector.local.commandLine === undefined ? null : (
+                    <Mono key="runs">{connector.local.commandLine}</Mono>
+                  ),
+                ),
+                ["Folder", <Mono key="folder">{connector.local.directory}</Mono>] satisfies Fact,
+              ]),
           ["Server name", <Mono key="server-name">{connector.serverName}</Mono>],
           ["Source", connectorSourceLabel(source, curated, pluginName)],
         ]}

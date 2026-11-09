@@ -8,15 +8,11 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
-// SCIENT-FORK:START — one tooltip timing for the whole app; marked textareas keep their text node.
+// SCIENT-FORK:START — one tooltip timing for the whole app.
 import { AppTooltipTiming } from "./scient/presentation/AppTooltipTiming";
-import { installMirroredDefaultSkip } from "./scient/writing/textareaDefaultValue";
 // SCIENT-FORK:END
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
-// SCIENT-FORK:START — typing in a marked textarea restyles only it.
-installMirroredDefaultSkip(document);
-// SCIENT-FORK:END
 const router = startAppServices();
 
 const clerkPublishableKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY as string | undefined;

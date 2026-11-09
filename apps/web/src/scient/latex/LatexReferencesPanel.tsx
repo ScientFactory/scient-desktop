@@ -28,7 +28,6 @@ import {
   validBibliographyKey,
   type BibliographyEntry,
 } from "./latexBibliographyModel";
-import { SKIP_MIRRORED_DEFAULT } from "../writing/textareaDefaultValue";
 
 export interface BibliographyDocument {
   id: string;
@@ -687,7 +686,6 @@ export function LatexReferencesPanel(props: {
               <label>
                 Entry source
                 <textarea
-                  {...SKIP_MIRRORED_DEFAULT}
                   aria-label="Bibliography entry source"
                   value={draft.raw}
                   disabled={!writable || saving}
@@ -708,7 +706,6 @@ export function LatexReferencesPanel(props: {
                 <label>
                   Entry text (LaTeX)
                   <textarea
-                    {...SKIP_MIRRORED_DEFAULT}
                     aria-label="Reference entry text"
                     value={draft.body}
                     rows={6}

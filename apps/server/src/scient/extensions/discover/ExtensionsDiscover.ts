@@ -11,6 +11,7 @@ import {
   type DiscoverPage,
   type DiscoverRemote,
   type ExtensionCategory,
+  LocalPackage,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
@@ -77,7 +78,8 @@ const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 const MAX_QUERY_LENGTH = 200;
 
-export const UNSUPPORTED_LOCAL_ONLY = "Runs locally. Local servers are not supported yet";
+const UNSUPPORTED_LOCAL_ONLY =
+  "Runs locally in a form Scient cannot start yet (it runs npm and PyPI packages)";
 export const UNSUPPORTED_REQUIRES_CONFIGURATION =
   "Requires configuration (headers or URL settings) before it can be connected";
 export const UNSUPPORTED_NOT_HTTPS = "Its remote endpoint is not served over https";
@@ -193,13 +195,94 @@ function resolveRemote(remote: RegistryRemote): DiscoverRemote | undefined {
   };
 }
 
+const RegistryArgument = Schema.Struct({
+  type: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  value: Schema.optional(Schema.String),
+  default: Schema.optional(Schema.String),
+  isRequired: Schema.optional(Schema.Boolean),
+});
+
+const RegistryPackage = Schema.Struct({
+  registryType: Schema.String,
+  identifier: Schema.String,
+  version: Schema.optional(Schema.String),
+  transport: Schema.optional(Schema.Struct({ type: Schema.String })),
+  runtimeArguments: Schema.optional(Schema.Array(Schema.Unknown)),
+  packageArguments: Schema.optional(Schema.Array(RegistryArgument)),
+  environmentVariables: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        name: Schema.String,
+        description: Schema.optional(Schema.String),
+        isRequired: Schema.optional(Schema.Boolean),
+        isSecret: Schema.optional(Schema.Boolean),
+        default: Schema.optional(Schema.String),
+      }),
+    ),
+  ),
+});
+const decodeRegistryPackage = Schema.decodeUnknownExit(RegistryPackage);
+const isLocalPackage = Schema.is(LocalPackage);
+
+/**
+ * The first npm or PyPI stdio package Scient can start through `npx` or `uvx`: arguments must have
+ * fixed values or defaults, since the add form asks only for environment variables.
+ */
+function localPackageOf(packages: ReadonlyArray<unknown>): LocalPackage | undefined {
+  for (const raw of packages) {
+    const decoded = decodeRegistryPackage(raw);
+    if (Exit.isFailure(decoded)) continue;
+    const pkg = decoded.value;
+    const runner =
+      pkg.registryType === "npm" ? "npx" : pkg.registryType === "pypi" ? "uvx" : undefined;
+    if (runner === undefined || (pkg.transport !== undefined && pkg.transport.type !== "stdio")) {
+      continue;
+    }
+    if ((pkg.runtimeArguments ?? []).length > 0) continue;
+    const args: string[] = [];
+    let complete = true;
+    for (const argument of pkg.packageArguments ?? []) {
+      const value = nonBlank(argument.value) ?? nonBlank(argument.default);
+      if (value === undefined) {
+        if (argument.isRequired === true) complete = false;
+        continue;
+      }
+      if (argument.type === "named" && argument.name !== undefined) args.push(argument.name);
+      args.push(value);
+    }
+    if (!complete) continue;
+    const candidate = {
+      runner,
+      identifier: pkg.identifier.trim(),
+      version: pkg.version?.trim() ?? "",
+      args,
+      environment: (pkg.environmentVariables ?? []).map((variable) => {
+        const description = nonBlank(variable.description);
+        const fallback = nonBlank(variable.default);
+        return {
+          name: variable.name.trim(),
+          ...(description === undefined ? {} : { description }),
+          required: variable.isRequired === true,
+          secret: variable.isSecret === true,
+          ...(fallback === undefined ? {} : { default: fallback }),
+        };
+      }),
+    };
+    if (isLocalPackage(candidate)) return candidate;
+  }
+  return undefined;
+}
+
 /** Normalize one active registry server into a Discover entry. */
 function toDiscoverEntry(entry: RegistryServerEntry): Omit<DiscoverEntry, "installedConnectorId"> {
   const { server } = entry;
   const remotes = server.remotes ?? [];
   const streamable = remotes.filter((remote) => remote.type === "streamable-http");
   const usable = streamable.flatMap((remote) => resolveRemote(remote) ?? []);
-  const installable = usable.some((remote) => !remote.requiresInput);
+  const remoteInstallable = usable.some((remote) => !remote.requiresInput);
+  const localPackage = remoteInstallable ? undefined : localPackageOf(server.packages ?? []);
+  const installable = remoteInstallable || localPackage !== undefined;
   const unsupportedReason = installable
     ? undefined
     : usable.length > 0
@@ -224,6 +307,7 @@ function toDiscoverEntry(entry: RegistryServerEntry): Omit<DiscoverEntry, "insta
     ...(websiteUrl === undefined ? {} : { websiteUrl }),
     ...(repositoryUrl === undefined ? {} : { repositoryUrl }),
     remotes: usable,
+    ...(localPackage === undefined ? {} : { localPackage }),
     categories: [],
     installable,
     ...(unsupportedReason === undefined ? {} : { unsupportedReason }),
@@ -366,8 +450,14 @@ export const makeWith = Effect.fn("ExtensionsDiscover.make")(function* (
     if (Option.isNone(connectorRuntime)) return { byName, byUrl };
     const inventory = yield* connectorRuntime.value.list();
     for (const connector of inventory.connectors) {
-      if (connector.source.type === "registry" && !byName.has(connector.source.name)) {
-        byName.set(connector.source.name, connector.connectorId);
+      const registryName =
+        connector.source.type === "registry"
+          ? connector.source.name
+          : connector.source.type === "local"
+            ? connector.source.registry?.name
+            : undefined;
+      if (registryName !== undefined && !byName.has(registryName)) {
+        byName.set(registryName, connector.connectorId);
       }
       const url = canonicalConnectorUrl(connector.url);
       if (!byUrl.has(url)) byUrl.set(url, connector.connectorId);

@@ -179,14 +179,16 @@ describe("MCP Registry discover", () => {
           remotes: [{ url: "https://{api_host}/mcp", requiresInput: true }],
           unsupportedReason: Discover.UNSUPPORTED_REQUIRES_CONFIGURATION,
         });
+        // npm and PyPI stdio packages run locally through npx and uvx.
         expect(byName["agency.kesey/pretrip"]).toMatchObject({
-          installable: false,
+          installable: true,
           remotes: [],
-          unsupportedReason: Discover.UNSUPPORTED_LOCAL_ONLY,
+          localPackage: { runner: "npx", identifier: "pretrip-mcp", version: "1.0.1", args: [] },
         });
-        expect(byName["com.mcparmory/github"]?.unsupportedReason).toBe(
-          Discover.UNSUPPORTED_LOCAL_ONLY,
-        );
+        expect(byName["com.mcparmory/github"]).toMatchObject({
+          installable: true,
+          localPackage: { runner: "uvx", identifier: "mcparmory-github", version: "1.0.6" },
+        });
         expect(byName["ai.agentrapay/agentra"]).toMatchObject({
           installable: false,
           remotes: [],

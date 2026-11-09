@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import {
+  type ConnectorAddInput,
   type ConnectorAddResult,
   type ConnectorAuthSummary,
   ConnectorId,
@@ -18,6 +19,7 @@ import {
   type GrantScope,
   isReservedConnectorServerName,
   type ProjectId,
+  type VaultSecretRef,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -31,6 +33,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
@@ -100,6 +103,9 @@ import {
   makeConnectorStateStore,
 } from "./ConnectorStateStore.ts";
 import type { McpInvocationScope } from "../../../mcp/McpInvocationContext.ts";
+import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
+import { makeLocalConnectorHost } from "./LocalConnectorProcesses.ts";
+import { makeLocalConnectors } from "./LocalConnectors.ts";
 
 const MAX_CONNECTORS = 30;
 /** Refresh this long before the access token expires. */
@@ -513,6 +519,86 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       return Effect.succeed([true, { ...current, connectors }] as const);
     });
     if (changed) yield* publishChange;
+  });
+
+  const localHost = yield* makeLocalConnectorHost({
+    onEvent: (event) => {
+      switch (event.type) {
+        case "started":
+        case "stopped":
+          return publishChange;
+        case "ready":
+          return updateRecord(event.connectorId, (current, updatedAt) =>
+            current.lastError === undefined
+              ? current
+              : { ...current, lastError: undefined, updatedAt },
+          ).pipe(Effect.ignore);
+        case "failed":
+          return updateRecord(event.connectorId, (current, updatedAt) =>
+            current.lastError === event.message
+              ? current
+              : { ...current, lastError: event.message, updatedAt },
+          ).pipe(Effect.ignore);
+      }
+    },
+  });
+  yield* localHost.sweepIdle.pipe(Effect.repeat(Schedule.spaced("1 minute")), Effect.forkScoped);
+  const localConnectors = yield* makeLocalConnectors({
+    stateDir: options.stateDir,
+    accounts,
+    projects,
+  });
+  /** One connector as clients see it; a local one reads its manifest for what it needs. */
+  const summarizeWith =
+    (names: ReadonlyMap<VaultSecretRef, string>) =>
+    (record: ConnectorRecord): Effect.Effect<ConnectorSummary> =>
+      record.local === undefined
+        ? Effect.succeed(toSummary(record))
+        : localConnectors.summarize(record.local, names).pipe(
+            Effect.map((local) => ({
+              ...toSummary(record),
+              local: { ...local, running: localHost.running(record.connectorId) },
+            })),
+          );
+  const keyNamesFor = (records: ReadonlyArray<ConnectorRecord>) =>
+    records.some((record) => record.local !== undefined)
+      ? localConnectors.keyNames
+      : Effect.succeed(new Map<VaultSecretRef, string>());
+  const summaryOf = (record: ConnectorRecord) =>
+    Effect.flatMap(keyNamesFor([record]), (names) => summarizeWith(names)(record));
+
+  const exchangeLocal = Effect.fn("ConnectorRuntime.exchangeLocal")(function* (
+    record: ConnectorRecord,
+    request: {
+      readonly method: "GET" | "POST" | "DELETE";
+      readonly sessionId: string | undefined;
+      readonly body: Uint8Array | undefined;
+      readonly signal: AbortSignal;
+    },
+    location: ConnectorForwardRequest["location"],
+  ) {
+    // A key turned off, removed or changed in Accounts stops the copies holding it; the agent's
+    // next request starts a fresh one, which asks Accounts again.
+    if (
+      request.sessionId !== undefined &&
+      !(yield* localConnectors.stillAuthorized(record, location))
+    ) {
+      yield* localHost.stop(
+        record.connectorId,
+        `${record.displayName} restarted because one of its keys changed in Accounts.`,
+      );
+    }
+    const response = yield* localHost.exchange(
+      { connectorId: record.connectorId, displayName: record.displayName },
+      request,
+      localConnectors.start(record, record.serverName, location),
+    );
+    return {
+      type: "response",
+      response,
+      // A program may echo its own key back; agents never receive one long enough to matter.
+      secrets: localConnectors.secretsFor(record.connectorId).filter(isProtectableCredential),
+    } satisfies SendOutcome;
   });
 
   /** Deduplicated (first occurrence kept); every project must exist and not be deleted. */
@@ -1225,13 +1311,69 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         ] as const);
       });
       yield* publishChange;
-      return { connector: toSummary(connected), nextStep: "ready" } satisfies ConnectorAddResult;
+      return {
+        connector: yield* summaryOf(connected),
+        nextStep: "ready",
+      } satisfies ConnectorAddResult;
     },
   );
 
+  /** The folder and keys first, then the record; a failed commit removes what was made. */
+  const addLocal = Effect.fn("ConnectorRuntime.addLocal")(function* (
+    input: ConnectorAddInput,
+    target: Extract<
+      ConnectorAddInput["target"],
+      { readonly type: "local-bundle" | "local-command" | "local-package" | "local-import" }
+    >,
+  ) {
+    if ((yield* store.read).connectors.length >= MAX_CONNECTORS) {
+      return yield* extensionsError(
+        "limit-reached",
+        `Scient supports at most ${MAX_CONNECTORS} connected services.`,
+      );
+    }
+    const connectorId = yield* newConnectorId;
+    const prepared = yield* localConnectors.prepare(connectorId, target, input.displayName);
+    const createdAt = yield* isoNow;
+    const description = input.description ?? prepared.description;
+    const committed = yield* commitNewRecord({
+      connectorId,
+      serverName: prepared.displayName,
+      displayName: prepared.displayName,
+      ...(description === undefined ? {} : { description }),
+      url: `scient-local:${connectorId}`,
+      source:
+        prepared.registry === undefined
+          ? { type: "local" }
+          : { type: "local", registry: prepared.registry },
+      auth: { type: "none" },
+      status: "connected",
+      enabled: true,
+      authRevision: 0,
+      availability: { type: "all-projects" },
+      createdAt,
+      updatedAt: createdAt,
+      local: prepared.local,
+    }).pipe(Effect.tapError(() => prepared.cleanup));
+    yield* publishChange;
+    return {
+      connector: yield* summaryOf(committed),
+      nextStep: "ready",
+    } satisfies ConnectorAddResult;
+  });
+
   const add: ConnectorRuntimeShape["add"] = Effect.fn("ConnectorRuntime.add")(function* (input) {
-    const policy = egressPolicyFor(input.target.url, { type: input.target.type });
-    const url = yield* checkUrl(input.target.url, policy);
+    const target = input.target;
+    if (
+      target.type === "local-bundle" ||
+      target.type === "local-command" ||
+      target.type === "local-package" ||
+      target.type === "local-import"
+    ) {
+      return yield* addLocal(input, target);
+    }
+    const policy = egressPolicyFor(target.url, { type: target.type });
+    const url = yield* checkUrl(target.url, policy);
     if (
       input.credential?.type === "entered" &&
       !enteredSecrets(input.credential.strategy, input.credential.value).every(
@@ -1259,8 +1401,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     const displayName =
       input.displayName ??
       curated?.displayName ??
-      (input.target.type === "registry"
-        ? (input.target.name.split("/").pop() ?? input.target.name)
+      (target.type === "registry"
+        ? (target.name.split("/").pop() ?? target.name)
         : new URL(url).hostname);
     if (
       curated?.id === "github" &&
@@ -1277,8 +1419,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         url,
         policy,
         source:
-          input.target.type === "registry"
-            ? { type: "registry", name: input.target.name, version: input.target.version }
+          target.type === "registry"
+            ? { type: "registry", name: target.name, version: target.version }
             : { type: "url" },
         displayName,
         description,
@@ -1399,8 +1541,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       ...(description === undefined ? {} : { description }),
       url,
       source:
-        input.target.type === "registry"
-          ? { type: "registry", name: input.target.name, version: input.target.version }
+        target.type === "registry"
+          ? { type: "registry", name: target.name, version: target.version }
           : { type: "url" },
       auth,
       status,
@@ -1423,7 +1565,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     );
     yield* publishChange;
     return {
-      connector: toSummary(created),
+      connector: yield* summaryOf(created),
       nextStep: status === "connected" ? "ready" : "sign-in-required",
     } satisfies ConnectorAddResult;
   });
@@ -1438,6 +1580,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     lifetimes.get(connectorId)?.abort();
     flows.cancelConnector(connectorId);
     sessions.dropConnector(connectorId);
+    yield* localHost.stop(connectorId, `${record.displayName} was removed in Scient.`);
     const committed = yield* lifecycle(connectorId)
       .withPermits(1)(
         Effect.gen(function* () {
@@ -1474,6 +1617,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
                 ),
               );
           }
+          // Its keys are Accounts keys the user may use elsewhere, so they stay.
+          if (record.local !== undefined) yield* localConnectors.discard(record.local);
           const session = oauth?.material.session;
           if (session !== undefined) yield* revokeLater(record, session);
         }),
@@ -1698,6 +1843,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       ...(message === undefined ? {} : { message }),
     });
     if (record.status === "needs-auth") return result("needs-auth", "Sign in to use this service.");
+    if (record.local !== undefined) {
+      const local = (yield* summaryOf(record)).local;
+      if (local?.problem !== undefined) return result("error", local.problem);
+      if (local !== undefined && local.missing.length > 0) {
+        return result("needs-setup", `Needs ${local.missing.join(", ")}.`);
+      }
+    }
     const fetch = makeConnectorFetch({
       policy: policyOf(record),
       redirect: "error",
@@ -1711,6 +1863,24 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       new Headers(init?.headers).forEach((value, name) => {
         headers[name] = value;
       });
+      if (record.local !== undefined) {
+        const method = init?.method ?? "GET";
+        const body = init?.body;
+        const outcome = await run(
+          exchangeLocal(
+            record,
+            {
+              method: method === "POST" || method === "DELETE" ? method : "GET",
+              sessionId: headers["mcp-session-id"],
+              body: typeof body === "string" ? new TextEncoder().encode(body) : undefined,
+              signal: init?.signal ?? new AbortController().signal,
+            },
+            undefined,
+          ),
+        );
+        applied.push(...outcome.secrets);
+        return outcome.response;
+      }
       const outcome = await run(
         sendAuthorized(
           record,
@@ -1764,6 +1934,20 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
       if (isConnectorEgressRejected(error) || error instanceof TypeError) {
         return result("unreachable", describeEgressFailure(error));
+      }
+      // Scient writes a local program's start and stop failures for people; the program's own
+      // error text may still carry its key.
+      if (record.local !== undefined && error instanceof Error) {
+        const keys = localConnectors.secretsFor(record.connectorId);
+        const message = redactString(
+          keys
+            .filter((key) => key.length > 0)
+            .reduce((text, key) => text.replaceAll(key, "[hidden]"), error.message),
+          credentialSet(applied),
+        )
+          .replace(/^MCP error -?\d+: /, "")
+          .trim();
+        if (message.length > 0) return result("error", message);
       }
       return result("error", "The service did not complete the MCP handshake and tool listing.");
     }
@@ -1950,20 +2134,32 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         return Semaphore.release(permits, 1).pipe(Effect.asVoid);
       });
 
-      const outcome = yield* sendAuthorized(
-        record,
-        {
-          method: request.method,
-          headers:
-            upstreamSessionId === undefined
-              ? forwarded
-              : { ...forwarded, "mcp-session-id": upstreamSessionId },
-          body: request.body,
-          signal: exchange.signal,
-        },
-        proxyFetch(policyOf(record)),
-        request.scope,
-      ).pipe(Effect.onInterrupt(() => release));
+      const outcome: SendOutcome =
+        record.local === undefined
+          ? yield* sendAuthorized(
+              record,
+              {
+                method: request.method,
+                headers:
+                  upstreamSessionId === undefined
+                    ? forwarded
+                    : { ...forwarded, "mcp-session-id": upstreamSessionId },
+                body: request.body,
+                signal: exchange.signal,
+              },
+              proxyFetch(policyOf(record)),
+              request.scope,
+            ).pipe(Effect.onInterrupt(() => release))
+          : yield* exchangeLocal(
+              record,
+              {
+                method: request.method,
+                sessionId: upstreamSessionId,
+                body: request.body,
+                signal: exchange.signal,
+              },
+              request.location,
+            ).pipe(Effect.onInterrupt(() => release));
       if (outcome.type !== "response") {
         yield* release;
         if (outcome.type === "rejected") {
@@ -2098,7 +2294,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       const state = yield* store.read;
       return {
         revision: yield* Ref.get(revision),
-        connectors: state.connectors.map(toSummary),
+        connectors: yield* Effect.forEach(
+          state.connectors,
+          summarizeWith(yield* keyNamesFor(state.connectors)),
+        ),
         diagnostics: state.diagnostics,
       };
     }),
@@ -2154,18 +2353,40 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
       const availability =
         input.availability === undefined ? undefined : yield* checkAvailability(input.availability);
+      let local: ConnectorRecord["local"];
+      if (input.localSetup !== undefined) {
+        const record = yield* requireRecord(input.connectorId);
+        if (record.local === undefined) {
+          return yield* extensionsError("invalid-input", "Only local connectors have setup.");
+        }
+        local = yield* localConnectors.setup(record, input.localSetup);
+      }
+      const restarts = input.restart === true || local !== undefined;
       yield* updateRecord(input.connectorId, (current, updatedAt) => ({
         ...current,
         ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
         ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
         ...(availability === undefined ? {} : { availability }),
+        ...(local === undefined ? {} : { local }),
+        ...(restarts ? { lastError: undefined } : {}),
         updatedAt,
       }));
+      // Turned off, set up again or restarted: running copies stop; the next request starts anew.
+      if (restarts || input.enabled === false) {
+        yield* localHost.stop(
+          input.connectorId,
+          input.enabled === false ? "This connector was turned off in Scient." : "Restarting.",
+        );
+      }
     }),
     remove: Effect.fn("ConnectorRuntime.remove")(function* (input) {
       yield* removeRecord(yield* requireRecord(input.connectorId));
     }),
     test,
+    inspectLocal: localConnectors.inspect,
+    importables: Effect.fn("ConnectorRuntime.importables")(function* () {
+      return { servers: yield* localConnectors.importables((yield* store.read).connectors) };
+    }),
     resolveDelivery: Effect.fn("ConnectorRuntime.resolveDelivery")(function* (input) {
       yield* followSourceControlNow;
       const state = yield* store.read;
@@ -2211,4 +2432,4 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     return yield* makeConnectorRuntime({ stateDir: config.stateDir });
   }),
-);
+).pipe(Layer.provide(LocalDuplexProcess.layer));

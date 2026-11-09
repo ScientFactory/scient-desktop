@@ -412,6 +412,26 @@
       "path": "apps/server/src/provider/Drivers/DroidSkills.ts",
       "anchor": "ServerProviderMcpServer",
       "purpose": "Map Droid's own MCP server listing to Scient Extensions' native MCP server rows."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/AccountAgentService.ts",
+      "anchor": "scient_connector_setup: setUpConnector",
+      "purpose": "Serve the local-connector setup tool from the Accounts toolkit, whose private key card it uses."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/connectorSetup.ts",
+      "anchor": "export const setUpConnector",
+      "purpose": "Save a local connector's missing settings and link its keys through Accounts' card, then restart it."
+    },
+    {
+      "path": "apps/server/src/scient/accounts/agent/tools.ts",
+      "anchor": "\"scient_connector_setup\"",
+      "purpose": "Declare the agent tool that sets up a local connector reporting Needs setup."
+    },
+    {
+      "path": "packages/shared/src/scientMcpToolPresentation.ts",
+      "anchor": "t3_connector_setup",
+      "purpose": "Name the local-connector setup tool in the work log."
     }
   ]
 }
