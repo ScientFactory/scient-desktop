@@ -46,3 +46,21 @@ it("keeps :has() off the document root", () => {
   });
   expect(offenders).toEqual([]);
 });
+
+// In Chromium, a sibling :has(+ …) or :has(~ …) restyled every top-level LaTeX block on each
+// block insertion: half the cost of showing a long document. Mark the block from the editor.
+const siblingHas = /:has\(\s*[+~]/u;
+
+it("keeps sibling :has() out of Scient styles", () => {
+  expect(["p:has(+ .a)", "p:has( ~ .a)"].filter((selector) => !siblingHas.test(selector))).toEqual(
+    [],
+  );
+  expect(["p:has(> .a)", "p:has(.a + .b)"].filter((selector) => siblingHas.test(selector))).toEqual(
+    [],
+  );
+  const offenders = sources(NodePath.join(root, "scient")).flatMap((path) => {
+    const text = NodeFS.readFileSync(path, "utf8").replace(/\/\*[\s\S]*?\*\//gu, "");
+    return siblingHas.test(text) ? [NodePath.relative(root, path)] : [];
+  });
+  expect(offenders).toEqual([]);
+});

@@ -1273,16 +1273,22 @@ export const LatexPagedPresentation = Extension.create<{ source: () => string }>
                 }
                 if (shortDisplays.has(entry) && !reusable.has(entry))
                   decorations.push(
-                    Decoration.node(entry.position, entry.position + entry.node.nodeSize, {
-                      "data-short-display": "true",
-                    }),
+                    Decoration.node(
+                      entry.position,
+                      entry.position + entry.node.nodeSize,
+                      { "data-short-display": "true" },
+                      { latexShortDisplay: true },
+                    ),
                   );
                 if (!reusable.has(entry))
                   for (const math of entry.measurement.nestedDisplays ?? [])
                     decorations.push(
-                      Decoration.node(entry.position + math.from, entry.position + math.to, {
-                        "data-short-display": "true",
-                      }),
+                      Decoration.node(
+                        entry.position + math.from,
+                        entry.position + math.to,
+                        { "data-short-display": "true" },
+                        { latexShortDisplay: true },
+                      ),
                     );
                 const compressed = part.unit.height - placement.height;
                 if (compressed > 0.01 && !reusable.has(entry))

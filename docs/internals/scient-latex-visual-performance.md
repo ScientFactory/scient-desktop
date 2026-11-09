@@ -207,8 +207,10 @@ document on every transaction or frame:
 Scrolling the 61-page synthetic manuscript at 4× CPU throttle, these took long
 frames from about 13 s to about 1 s per 15 s, and at 1× from about 4 s to none.
 
-Inserting or removing a top-level block still restyles every block Chromium
-marks as affected by `:has()`, up to about 4,000 elements in that manuscript. The
-sibling rules `p:has(+ .node-latexDisplayMath)` and
-`:is(h4, h5)[data-latex-command]:has(+ p)` cause it: removing them cut the long
-frames of showing the document's tab from about 5.5 s to about 3.2 s at 4×.
+Sibling `:has(+ …)` rules on document blocks made each top-level insertion or
+removal restyle every block Chromium marked as affected by `:has()`, up to about
+4,000 elements in that manuscript. `latexBlockNeighbours.ts` now marks a block by
+the block after it in the document (`data-latex-before-display`,
+`data-latex-run-in`), and a test forbids sibling `:has()` in Scient styles. That
+cut the long frames of showing the manuscript's tab from about 6.1 s to about
+2.9 s at 4×. Most of what remains is the style and layout of the inserted content.
