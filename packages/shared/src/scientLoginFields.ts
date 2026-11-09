@@ -94,7 +94,7 @@ export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: Logi
     (field) =>
       field.type !== "password" &&
       field.type !== "email" &&
-      !/user|login|mail/i.test(field.name ?? "") &&
+      !/^(user(name)?|login)$/i.test(field.name ?? "") &&
       /otp|mfa|2fa|two.?factor|verification|one.?time|(auth|security|sms).?code|\bcode\b/i.test(
         field.label ?? "",
       ),

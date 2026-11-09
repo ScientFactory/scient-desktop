@@ -45,5 +45,12 @@ describe("login field selection", () => {
     expect(
       detectLoginFields([named("text", "username", "username otp-username"), field("password")]),
     ).toEqual({ username: 0, password: 1, otp: -1, other: -1 });
+    expect(
+      detectLoginFields([
+        named("text", "username"),
+        field("password"),
+        named("text", "login_code", "login_code Verification code"),
+      ]),
+    ).toEqual({ username: 0, password: 1, otp: 2, other: -1 });
   });
 });
