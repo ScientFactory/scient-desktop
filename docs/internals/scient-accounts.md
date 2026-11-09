@@ -385,6 +385,12 @@ connector `needs-credential`; it never falls back to an owned value or OAuth.
 Disconnecting a bound connector leaves the account intact. Successful resolutions
 and denied access appear in Accounts activity without values.
 
+Local connectors' keys use `resolveBound` with a `local-connector` consumer
+(connector, key name, optional project): no site, and like plugin keys the account's
+project scope is checked against the thread's project. The connector keeps only the
+`account:<id>:token` ref; see
+[local connectors](scient-extensions.md#local-connectors).
+
 Plugin keys use the same two calls with a `plugin-key` consumer (agent, plugin,
 variable name, optional site and project). Without a site, `listBindable` offers
 every API-key account and `resolveBound` skips the site match; it still checks
@@ -443,17 +449,18 @@ consumer's project. Activity names the plugin, variable and agent.
 Family `accounts`, capability `accounts`, granted to every provider session by
 `prepareMcpSession`. Values never appear in tool output, thread items, logs, errors or exports.
 
-| Tool                             | What it does                                                                                                                                                                                      |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, username (unless Off), access, whether readable, how to use it, status, last check                                             |
-| `scient_account_sign_in`         | Signs in on the agent's tab (or a new tab in the account's profile): fills username, password and 2FA code across SSO steps                                                                       |
-| `scient_account_fill`            | Types one saved field into the agent's own tab on a page of the account's sites; the agent handles the page, in any language. One password fill per account every 15 minutes                      |
-| `scient_account_credentials`     | Readable accounts only: writes owner-only files for this session and returns their paths and how to use them                                                                                      |
-| `scient_account_request`         | Brokered HTTP with a hidden API key, only to the account's sites; read-only allows `GET`/`HEAD`                                                                                                   |
-| `scient_account_find_profile`    | Checks up to eight Allowed, in-scope non-incognito profiles in temporary background tabs; returns access labels and the first that opens, plus skipped names; never prompts                       |
-| `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                                          |
-| `scient_account_add`             | `api-key`: upstream's private secret card, saved as an API-key account. `website`, `university`: the person sign-in in the conversation's card. Returns the id and usage, or the matching account |
-| `scient_paper_get`               | A paper's PDF by DOI or link into `papers/`: OpenAlex's published free copy, the publisher and each connected university in the browser, then a preprint                                          |
+| Tool                             | What it does                                                                                                                                                                                                                                     |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `scient_accounts_list`           | Accounts and profiles this session may use: id, name, kind, sites, username (unless Off), access, whether readable, how to use it, status, last check                                                                                            |
+| `scient_account_sign_in`         | Signs in on the agent's tab (or a new tab in the account's profile): fills username, password and 2FA code across SSO steps                                                                                                                      |
+| `scient_account_fill`            | Types one saved field into the agent's own tab on a page of the account's sites; the agent handles the page, in any language. One password fill per account every 15 minutes                                                                     |
+| `scient_account_credentials`     | Readable accounts only: writes owner-only files for this session and returns their paths and how to use them                                                                                                                                     |
+| `scient_account_request`         | Brokered HTTP with a hidden API key, only to the account's sites; read-only allows `GET`/`HEAD`                                                                                                                                                  |
+| `scient_account_find_profile`    | Checks up to eight Allowed, in-scope non-incognito profiles in temporary background tabs; returns access labels and the first that opens, plus skipped names; never prompts                                                                      |
+| `scient_account_browser_session` | A profile's cookies for one site as a cookie-jar file, for scripts; needs `scriptSignIn`                                                                                                                                                         |
+| `scient_account_add`             | `api-key`: upstream's private secret card, saved as an API-key account. `website`, `university`: the person sign-in in the conversation's card. Returns the id and usage, or the matching account                                                |
+| `scient_connector_setup`         | A local connector's missing setup: saves plain answers the agent asked in chat, asks for each missing key in `scient_account_add`'s card (or links a matching saved key) and restarts the connector; `replaceKeys` asks again for a rejected key |
+| `scient_paper_get`               | A paper's PDF by DOI or link into `papers/`: OpenAlex's published free copy, the publisher and each connected university in the browser, then a preprint                                                                                         |
 
 Every call runs `AccountsService.authorize`. Allowed proceeds; Ask shows the user a card ("Allow
 in this conversation", "Always in this project", "Always") and waits up to ten minutes.

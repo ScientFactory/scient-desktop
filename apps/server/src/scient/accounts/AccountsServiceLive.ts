@@ -130,7 +130,10 @@ const consumerActivity = (consumer: AccountKeyConsumer) =>
   consumer.kind === "connector"
     ? { detail: consumer.origin }
     : {
-        detail: `plugin ${consumer.pluginId} ${consumer.envName} on ${consumer.agent}`,
+        detail:
+          consumer.kind === "plugin-key"
+            ? `plugin ${consumer.pluginId} ${consumer.envName} on ${consumer.agent}`
+            : `connector ${consumer.connector} ${consumer.key}`,
         ...(consumer.projectId ? { projectId: consumer.projectId } : {}),
       };
 
@@ -1926,7 +1929,7 @@ export const layer = Layer.effect(
       resolveBound: Effect.fn("AccountsService.resolveBound")((ref, consumer, options) =>
         locked(
           Effect.gen(function* () {
-            const { origin } = consumer;
+            const origin = consumer.kind === "local-connector" ? undefined : consumer.origin;
             const accountId = boundAccountId(ref);
             if (Option.isNone(accountId))
               return yield* fail("invalid-input", "The account reference is invalid.");
@@ -1937,9 +1940,9 @@ export const layer = Layer.effect(
               details.kind !== "api-key" ||
               (origin !== undefined && !siteMatches(details.sites, origin)) ||
               agentAccessOff(state.agentAccess, controls.access) ||
-              (consumer.kind === "plugin-key" && !inScope(controls.scope, consumer.projectId))
+              (consumer.kind !== "connector" && !inScope(controls.scope, consumer.projectId))
             ) {
-              if (consumer.kind !== "plugin-key")
+              if (consumer.kind === "connector")
                 yield* appendActivity({
                   target: { type: "account", accountId: accountId.value },
                   action: "request",
@@ -1955,12 +1958,10 @@ export const layer = Layer.effect(
           }),
         ).pipe(
           Effect.tapError(() =>
-            consumer.kind === "plugin-key"
-              ? service.recordBoundDenial!(ref, consumer)
-              : Effect.void,
+            consumer.kind !== "connector" ? service.recordBoundDenial!(ref, consumer) : Effect.void,
           ),
           Effect.tap(() => {
-            if (consumer.kind === "plugin-key" && options?.auditAllowed === false)
+            if (consumer.kind !== "connector" && options?.auditAllowed === false)
               return Effect.void;
             const accountId = boundAccountId(ref);
             return Option.isSome(accountId)

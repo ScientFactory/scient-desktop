@@ -38,7 +38,7 @@
   "upstreamMounts": [
     {
       "path": "packages/contracts/src/browserProfile.ts",
-      "anchor": "SCIENT-FORK:START \u2014 distinguish original browser storage from the new-tab preference.",
+      "anchor": "SCIENT-FORK:START — distinguish original browser storage from the new-tab preference.",
       "purpose": "Name the built-in original browser profile Main while preserving its default id."
     },
     {
@@ -118,7 +118,7 @@
     },
     {
       "path": "apps/web/src/components/settings/ConnectionsSettings.tsx",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the sign-ins copied there go first, if it answers in 5 s.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the sign-ins copied there go first, if it answers in 5 s.",
       "purpose": "Removing a computer first deletes the sign-ins this desktop copied there, waiting at most 5 s."
     },
     {
@@ -193,27 +193,27 @@
     },
     {
       "path": "apps/server/src/mcp/McpInvocationContext.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: grant account tools to authenticated provider sessions.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: grant account tools to authenticated provider sessions.",
       "purpose": "Grant account tools to authenticated provider sessions."
     },
     {
       "path": "apps/server/src/orchestration-v2/ProviderSessionManager.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: all provider sessions can use user-granted accounts.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: all provider sessions can use user-granted accounts.",
       "purpose": "All provider sessions can use user-granted accounts."
     },
     {
       "path": "apps/server/src/mcp/McpHttpServer.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: mount account tools on the existing MCP transport.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: mount account tools on the existing MCP transport.",
       "purpose": "Mount account tools on the existing MCP transport."
     },
     {
       "path": "apps/server/src/mcp/toolkits/preview/handlers.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: enforce profile grants at preview discovery and open.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: enforce profile grants at preview discovery and open.",
       "purpose": "Enforce profile grants at discovery and open, and recheck access before every existing-tab action with safe denials."
     },
     {
       "path": "apps/server/src/mcp/toolkits/preview/tools.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: declare profile authorization dependencies and safe denials.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: declare profile authorization dependencies and safe denials.",
       "purpose": "Declare profile authorization dependencies and safe denials."
     },
     {
@@ -223,17 +223,17 @@
     },
     {
       "path": "apps/server/src/preview/ServerBrowser.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: execute account operations over server and desktop CDP sessions.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: execute account operations over server and desktop CDP sessions.",
       "purpose": "Execute account operations over server and desktop CDP sessions."
     },
     {
       "path": "apps/server/src/preview/ServerBrowserContexts.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a tab waits for a cookie copy into its profile.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: a tab waits for a cookie copy into its profile.",
       "purpose": "Hook ProfileContextLeases into contextFor and the clear path so tabs and clears wait for a cookie copy's hold; keep profile directories private."
     },
     {
       "path": "apps/server/src/preview/ServerBrowserContexts.test.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: profile directories are made private.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: profile directories are made private.",
       "purpose": "Mock the private-directory chmod that every persistent context launch now makes."
     },
     {
@@ -303,7 +303,7 @@
     },
     {
       "path": "apps/web/src/components/settings/BrowserImportWizard.tsx",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts shares the browser import quit step.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts shares the browser import quit step.",
       "purpose": "Reuse the browser quit step in the Accounts browser picker."
     },
     {
@@ -313,52 +313,52 @@
     },
     {
       "path": "packages/client-runtime/src/secretRequest.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: an Accounts card keeps the key in Accounts.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: an Accounts card keeps the key in Accounts.",
       "purpose": "Say on scient_account_add cards that the key is kept in Accounts, and on one-time cards that it went to that agent only and is not kept, on web and mobile."
     },
     {
       "path": "apps/web/src/components/settings/AddProviderInstanceDialog.tsx",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: offer the keys kept from an earlier agent of this kind.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: offer the keys kept from an earlier agent of this kind.",
       "purpose": "Offer the keys Accounts kept from a removed agent when one of the same kind is added, and put them back after it is created."
     },
     {
       "path": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: only scient_account_add may open an Accounts card.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: only scient_account_add may open an Accounts card.",
       "purpose": "Reserve the Accounts card id prefix so request_secret cannot imitate an Accounts card."
     },
     {
       "path": "apps/web/src/components/preview/openPreviewSession.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.",
       "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
     },
     {
       "path": "apps/web/src/browser/browserDefaults.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: profiles merged into Main are not offered.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: profiles merged into Main are not offered.",
       "purpose": "Offer only active profiles: one merged into Main is hidden from pickers and defaults."
     },
     {
       "path": "apps/web/src/browser/openFileInPreview.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.",
       "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
     },
     {
       "path": "apps/web/src/components/preview/openTerminalLinkInPreview.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: the site's, conversation's or project's profile.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: the site's, conversation's or project's profile.",
       "purpose": "Open a new tab in the profile signed in to its site, else the conversation's, project's or default profile."
     },
     {
       "path": "apps/server/src/mcp/toolkits/previewControls/handlers.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: hide and protect tabs in profiles this session may not see.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: hide and protect tabs in profiles this session may not see.",
       "purpose": "List and close only tabs in browser profiles the agent session may see, by the same rule as preview_status."
     },
     {
       "path": "apps/server/src/mcp/toolkits/previewControls/tools.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: a hidden profile's tab is refused with a safe denial.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: a hidden profile's tab is refused with a safe denial.",
       "purpose": "Let the preview control tools return an Accounts denial for a hidden profile's tab."
     },
     {
       "path": "packages/contracts/src/settings.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: sign-ins go to other computers unless turned off in Accounts.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers unless turned off in Accounts.",
       "purpose": "Keep the on-by-default client setting that gates sending sign-ins to other computers, and name the settings error when a removed agent's keys can't be kept in Accounts."
     }
   ],
@@ -420,27 +420,27 @@
     },
     {
       "path": "apps/server/src/mcp/ScientOperationCatalog.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: register account operation definitions.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: register account operation definitions.",
       "purpose": "Register account operation definitions."
     },
     {
       "path": "apps/server/src/mcp/ScientMcpInvocation.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: carry the MCP grant into Scient operations.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: carry the MCP grant into Scient operations.",
       "purpose": "Carry the MCP grant into Scient operations."
     },
     {
       "path": "packages/shared/src/scientMcpToolPresentation.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: group account operations in the work log.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: group account operations in the work log.",
       "purpose": "Group account operations in the work log."
     },
     {
       "path": "packages/scient-operations/src/operation.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: declare the account operation grant.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: declare the account operation grant.",
       "purpose": "Declare the account operation grant."
     },
     {
       "path": "apps/server/src/orchestration-v2/ProviderSessionManager.scient.test.ts",
-      "anchor": "SCIENT-FORK:START \u2014 Scient Accounts: keep credential-policy fixtures complete.",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: keep credential-policy fixtures complete.",
       "purpose": "Keep Scient credential-reuse fixtures complete when accounts is granted."
     },
     {
@@ -517,6 +517,11 @@
       "path": "scripts/lib/cli-external-packages.scient.test.ts",
       "anchor": "\"@1password/sdk\"",
       "purpose": "Expect the 1Password SDK to stay on disk, outside the server bundle."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/LocalConnectors.ts",
+      "anchor": "kind: \"local-connector\"",
+      "purpose": "Resolve a local connector's linked Accounts keys at start and when Accounts changes."
     }
   ]
 }

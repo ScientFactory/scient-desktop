@@ -64,13 +64,20 @@ export const SKIP_REASON_LABELS: Readonly<Record<ExtensionDeliverySkipReason, st
 export const TEST_OUTCOME_LABELS: Readonly<Record<ConnectorTestResult["outcome"], string>> = {
   ok: "Reachable",
   "needs-auth": "Needs sign-in",
+  "needs-setup": "Needs setup",
   unreachable: "Unreachable",
   error: "Error",
 };
 
 /** A turned-off connector says so first; otherwise its health. */
-export function connectorStatusText(connector: Pick<ConnectorSummary, "status" | "enabled">) {
+export function connectorStatusText(
+  connector: Pick<ConnectorSummary, "status" | "enabled" | "lastError" | "local">,
+) {
   if (!connector.enabled) return "Off";
+  if (connector.local?.problem !== undefined) return "Can't read its folder";
+  if (connector.local !== undefined && connector.local.missing.length > 0) return "Needs setup";
+  if (connector.local !== undefined && connector.lastError !== undefined)
+    return "Stopped with an error";
   return CONNECTOR_STATUS_TEXT[connector.status];
 }
 
@@ -129,6 +136,8 @@ export function connectorSourceLabel(
       return curated ? "Scient catalog" : "Added by URL";
     case "plugin":
       return `Plugin ${pluginName ?? source.pluginId}`;
+    case "local":
+      return source.registry === undefined ? "Runs on this computer" : "MCP Registry, runs locally";
   }
 }
 
@@ -501,6 +510,7 @@ export function showsKind(selected: ExtensionKind | undefined, kind: ExtensionKi
 
 export function entryNeedsSetup(entry: DiscoverEntry): boolean {
   return (
+    entry.localPackage !== undefined ||
     entry.oauthClientRequired === true ||
     entryNeedsToken(entry) ||
     entry.apiKey !== undefined ||
@@ -550,4 +560,37 @@ export function validateCuratedAddress(value: string, template: string): string 
   return matchesExtensionAddressTemplate(value, template)
     ? null
     : "Enter an https address matching " + template + ".";
+}
+
+/**
+ * Splits a typed command line into a program and its arguments. Quotes group words, and `\"`
+ * inside double quotes is a quote; other backslashes stay, as in Windows paths. Null when a quote
+ * is left open.
+ */
+export function splitCommandLine(text: string): ReadonlyArray<string> | null {
+  const parts: string[] = [];
+  let current = "";
+  let quote: '"' | "'" | null = null;
+  let started = false;
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index]!;
+    if (quote !== null) {
+      if (char === quote) quote = null;
+      else if (quote === '"' && char === "\\" && text[index + 1] === '"') current += text[++index];
+      else current += char;
+    } else if (char === '"' || char === "'") {
+      quote = char;
+      started = true;
+    } else if (/\s/.test(char)) {
+      if (started) parts.push(current);
+      current = "";
+      started = false;
+    } else {
+      current += char;
+      started = true;
+    }
+  }
+  if (quote !== null) return null;
+  if (started) parts.push(current);
+  return parts;
 }

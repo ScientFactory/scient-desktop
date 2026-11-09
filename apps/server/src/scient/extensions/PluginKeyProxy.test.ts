@@ -5,6 +5,7 @@ import * as NodeOS from "node:os";
 import { expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { Effect, Fiber, Layer, Stream } from "effect";
 import {
   ConnectorId,
@@ -16,6 +17,7 @@ import {
 } from "@t3tools/contracts";
 import type { McpThreadInvocationScope } from "../../mcp/McpInvocationContext.ts";
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
+import * as LocalDuplexProcess from "../execution/LocalDuplexProcess.ts";
 import { ConnectorCredentialStore } from "./connectors/ConnectorCredentialStore.ts";
 import { makeConnectorRuntime } from "./connectors/ConnectorRuntime.ts";
 import * as PluginConnectorEligibility from "./plugins/PluginConnectorEligibility.ts";
@@ -74,6 +76,7 @@ it.effect(
         Layer.mock(ProjectStoreV2)({}),
         PluginConnectorEligibility.layer,
         NodeCrypto.layer,
+        LocalDuplexProcess.layer.pipe(Layer.provideMerge(NodeServices.layer)),
       );
       const runtime = yield* makeConnectorRuntime({ stateDir: root }).pipe(
         Effect.provide(dependencies),
