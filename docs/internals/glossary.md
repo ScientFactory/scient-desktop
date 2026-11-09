@@ -189,7 +189,7 @@ snapshot. A checkpoint snapshot is a different workspace artifact. See [Projecti
 
 #### Usage limits
 
-The rolling subscription quota windows a provider reports for its signed-in account, such as Claude's five-hour and weekly windows or Codex's primary and secondary allowances. Each driver decides in its own `checkProvider` whether it has any and returns them on the snapshot as `usageLimits`; drivers with no notion of subscription usage leave the field absent. Adapters that receive rate-limit telemetry during a turn normalise it into a `ProviderUsageLimitsUpdate` at the boundary, and `ProviderUsageLimitsIngestion` folds it onto the owning instance's snapshot through `ServerProviderShape.applyUsageLimits`, so no central service needs to know a driver kind. See [providerUsageLimits.ts](../../packages/contracts/src/providerUsageLimits.ts) and [makeManagedServerProvider.ts](../../apps/server/src/provider/makeManagedServerProvider.ts).
+The rolling subscription quota windows a provider reports for its signed-in account, such as Claude's five-hour and weekly windows or Codex's primary and secondary allowances. Each driver decides in its own `checkProvider` whether it has any and returns them on the snapshot as `usageLimits`; drivers with no notion of subscription usage leave the field absent. Adapters that receive rate-limit telemetry during a turn normalise it into a `ProviderUsageLimitsUpdate` at the boundary, and `ProviderUsageLimitsIngestion` folds it onto the owning instance's snapshot through `ServerProviderShape.applyUsageLimits`, so no central service needs to know a driver kind. See [providerUsageLimits.ts](../../packages/contracts/src/providerUsageLimits.ts) and [managedProvider.ts](../../packages/provider-core/src/server/managedProvider.ts).
 
 #### Usage limit source
 
@@ -215,8 +215,7 @@ independent of answer success.
 #### Checkpoint and baseline
 
 A checkpoint records workspace files and metadata in a V2 scope; a baseline is its starting
-snapshot. `CheckpointStore` still uses hidden Git refs through `VcsCheckpointOps`. The retained
-reference utilities are in [Utils.ts][22]. Fork baselines and inherited history are frozen
+snapshot. [CheckpointStore][22] still uses hidden Git refs through `VcsCheckpointOps`. Fork baselines and inherited history are frozen
 separately from later execution.
 
 #### Checkpoint diff and rollback
@@ -287,13 +286,13 @@ See [composer context references](./composer-context-references.md) for the cont
 [11]: ../../apps/server/src/orchestration-v2/EventSink.ts
 [12]: ../../apps/server/src/orchestration-v2/EffectWorker.ts
 [14]: ../../apps/server/src/orchestration-v2/ProviderSessionManager.ts
-[15]: ../../apps/server/src/orchestration-v2/ProviderAdapter.ts
+[15]: ../../packages/provider-core/src/server/ProviderAdapter.ts
 [16]: ./providers.md
 [17]: ../../apps/server/src/orchestration-v2/Adapters/CodexAdapterV2.ts
 [18]: ../user/permission-modes.md
 [19]: ../../apps/server/src/orchestration-v2/CheckpointService.ts
 [20]: ../../apps/server/src/checkpointing/CheckpointDiffQuery.ts
-[22]: ../../apps/server/src/checkpointing/Utils.ts
+[22]: ../../apps/server/src/checkpointing/CheckpointStore.ts
 [23]: ../../apps/server/src/checkpointing/Diffs.ts
 [24]: ./overview.md
 [25]: ./provider-lifecycle.md
