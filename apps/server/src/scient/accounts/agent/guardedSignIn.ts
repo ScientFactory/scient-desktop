@@ -23,6 +23,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import type { PaperRequester } from "../../papers/paperAttempt.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import {
+  agentAccessOff,
   authorizationDecision,
   siteMatches as siteMatchesOrigin,
   signedInMomentsAgo,
@@ -52,6 +53,8 @@ export type SignInCaller =
       readonly scope: AccountSessionScope;
       readonly requester: Pick<PaperRequester, "accounts">;
     }
+  /** A local connector the user linked this sign-in to: signed in again, unattended, when it ends. */
+  | { readonly kind: "connector" }
   /** The user's own press, in the invocation's thread: they see the tab and finish what's left. */
   | {
       readonly kind: "person";
@@ -92,7 +95,8 @@ interface SignInRequest {
   readonly caller: SignInCaller;
 }
 
-const automatic = (caller: SignInCaller) => caller.kind === "page" || caller.kind === "paper";
+const automatic = (caller: SignInCaller) =>
+  caller.kind === "page" || caller.kind === "paper" || caller.kind === "connector";
 const userPress = (caller: SignInCaller) => caller.kind === "check" || caller.kind === "person";
 
 /** A person has fifteen minutes, looked at often enough to close a university's return at once. */
@@ -229,6 +233,9 @@ const mayType = Effect.fn("AccountsAgent.mayType")(function* (
       return account.controls.access !== "off";
     case "check":
       return account.controls.access !== "off";
+    case "connector":
+      // The user linked it to the connector; the connector already checked Off and scope.
+      return !agentAccessOff(agentAccess, account.controls.access);
   }
 });
 

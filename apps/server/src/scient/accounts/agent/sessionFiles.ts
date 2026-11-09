@@ -19,7 +19,7 @@ const fileError = () =>
     message: "Account session files could not be written.",
   });
 
-async function privateDirectory(directory: string) {
+export async function privateDirectory(directory: string) {
   await NodeFSP.mkdir(directory, { recursive: true, mode: 0o700 });
   const stat = await NodeFSP.lstat(directory);
   if (!stat.isDirectory() || stat.isSymbolicLink()) throw fileError();
@@ -111,6 +111,37 @@ export function credentialContents(
   return { files, usage: `source ${shellQuote(NodePath.join(directory, `${prefix}.env`))}` };
 }
 
+/** Replaces `directory/name` with an owner-only file, never following a link. */
+export async function writePrivateFile(
+  directory: string,
+  name: string,
+  contents: string | Uint8Array,
+) {
+  if (!/^[A-Za-z0-9_.-]+$/.test(name) || name === "." || name === "..") throw fileError();
+  const file = NodePath.join(directory, name);
+  const temporary = NodePath.join(directory, `.${NodeCrypto.randomUUID()}.tmp`);
+  const handle = await NodeFSP.open(
+    temporary,
+    NodeFS.constants.O_CREAT |
+      NodeFS.constants.O_EXCL |
+      NodeFS.constants.O_WRONLY |
+      NodeFS.constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    try {
+      await handle.writeFile(contents);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await NodeFSP.rename(temporary, file);
+  } finally {
+    await NodeFSP.rm(temporary, { force: true });
+  }
+  return file;
+}
+
 export class AccountSessionFiles extends Context.Service<
   AccountSessionFiles,
   {
@@ -148,31 +179,7 @@ export const makeSessionFiles = Effect.fn("AccountSessionFiles.make")(function* 
   ) {
     const target = yield* directory(threadId);
     return yield* Effect.tryPromise({
-      try: async () => {
-        if (!/^[A-Za-z0-9_.-]+$/.test(name) || name === "." || name === "..") throw fileError();
-        const file = NodePath.join(target, name);
-        const temporary = NodePath.join(target, `.${NodeCrypto.randomUUID()}.tmp`);
-        const handle = await NodeFSP.open(
-          temporary,
-          NodeFS.constants.O_CREAT |
-            NodeFS.constants.O_EXCL |
-            NodeFS.constants.O_WRONLY |
-            NodeFS.constants.O_NOFOLLOW,
-          0o600,
-        );
-        try {
-          try {
-            await handle.writeFile(contents);
-            await handle.sync();
-          } finally {
-            await handle.close();
-          }
-          await NodeFSP.rename(temporary, file);
-        } finally {
-          await NodeFSP.rm(temporary, { force: true });
-        }
-        return file;
-      },
+      try: () => writePrivateFile(target, name, contents),
       catch: fileError,
     });
   });
