@@ -1,12 +1,24 @@
 // @effect-diagnostics nodeBuiltinImport:off -- CmdStan, the model, its build and its draws are host files.
-import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodeProcess from "node:process";
+import * as NodeTimersPromises from "node:timers/promises";
+
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import type { ExecutionRunId } from "@scientfactory/execution";
+import * as Clock from "effect/Clock";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 
 import { pathModule } from "../compute/RuntimeDiscovery.ts";
+import {
+  ExecutionProcess,
+  layer as executionProcessLayer,
+} from "../execution/LocalExecutionProcess.ts";
 
 /** The default of CmdStan, cmdstanpy and cmdstanr alike. */
 const CHAINS = 4;
@@ -76,15 +88,9 @@ export function stanModelName(model: string, platform: NodeJS.Platform): string 
   return /^[A-Za-z]/u.test(name) ? name : `m_${name}`;
 }
 
-/** Where a model's C++ and program are kept between runs, away from the model's own path. */
-export function stanBuildFolder(
-  root: string,
-  model: string,
-  platform: NodeJS.Platform,
-  temporary: string = NodeOS.tmpdir(),
-): string {
-  const key = NodeCrypto.createHash("sha256").update(`${root}\0${model}`).digest("hex");
-  return pathModule(platform).join(temporary, "scient-stan", key.slice(0, 16));
+/** Every Stan build Scient keeps, one folder per distinct C++ and CmdStan. */
+function stanBuildsFolder(platform: NodeJS.Platform, temporary: string = NodeOS.tmpdir()): string {
+  return pathModule(platform).join(temporary, "scient-stan");
 }
 
 /** Why a model cannot run before anything starts, or null. */
@@ -235,36 +241,114 @@ function stancArgs(model: string, output: string, name: string, platform: NodeJS
 
 /**
  * Stop cannot reach a run before its steps start, so stanc gets 30 seconds here, far more than a
- * model takes. Past that the run's first step translates instead, where Stop works.
+ * model takes; then its process tree is stopped. The run waits at most a further grace for that.
  */
 const TRANSLATE_TIMEOUT_MS = 30_000;
+const STOP_GRACE_MS = 15_000;
+/** Only stanc's first message is shown, so only the start of what it prints is kept. */
+const MESSAGE_CHARACTERS = 64 * 1024;
+/** A build unused this long goes; each run that uses one marks it used. */
+const UNUSED_BUILD_MS = 30 * 24 * 60 * 60 * 1000;
+/** Make variables every build uses, which change the program and so its folder. */
+const MAKE_FLAGS = ["STAN_THREADS=true"];
 
-async function readIfPresentAsync(file: string): Promise<string | null> {
+async function readIfPresentAsync(file: string): Promise<Buffer | null> {
   try {
-    return await NodeFSP.readFile(file, "utf8");
+    return await NodeFSP.readFile(file);
   } catch {
     return null;
   }
 }
 
-/** Moves a translation into place when it differs from the one there, or null if it cannot. */
-async function promote(next: string, target: string): Promise<"same" | "changed" | null> {
-  const fresh = await readIfPresentAsync(next);
-  if (fresh === null) return null;
-  if (fresh === (await readIfPresentAsync(target))) return "same";
-  return NodeFSP.rename(next, target).then(
-    () => "changed" as const,
-    () => null,
-  );
+/** stanc's first message, which names the file and line where translation stopped. */
+function firstError(output: string): string {
+  const lines = output.split(/\r?\n/u).map((line) => line.trim());
+  const line = lines.find((text) => /error/iu.test(text)) ?? lines.find((text) => text !== "");
+  return (line ?? "stanc exited without saying why.").slice(0, 1000);
 }
 
+type Translated = { readonly code: number } | { readonly timedOut: true };
+
+/** Runs stanc with the process tree Run uses, keeping the start of what it prints. */
+function runStanc(input: {
+  readonly runId: ExecutionRunId;
+  readonly executable: string;
+  readonly args: ReadonlyArray<string>;
+  readonly cwd: string;
+  readonly environment: Readonly<Record<string, string>>;
+  readonly timeoutMs: number;
+}): Promise<{ readonly result: Translated; readonly output: string }> {
+  let output = "";
+  const program = Effect.scoped(
+    Effect.gen(function* () {
+      const processes = yield* ExecutionProcess;
+      const handle = yield* processes.start({
+        runId: input.runId,
+        executable: input.executable,
+        args: input.args,
+        cwd: input.cwd,
+        environment: input.environment,
+      });
+      const read = handle.output.pipe(
+        Stream.runForEach((chunk) =>
+          Effect.sync(() => {
+            output += chunk.text.slice(0, Math.max(0, MESSAGE_CHARACTERS - output.length));
+          }),
+        ),
+      );
+      const finished = yield* Effect.all([read, handle.exitCode], { concurrency: 2 }).pipe(
+        Effect.timeoutOption(input.timeoutMs),
+      );
+      if (Option.isSome(finished)) return { code: finished.value[1] } satisfies Translated;
+      yield* handle.cancel.pipe(Effect.ignore);
+      return { timedOut: true } satisfies Translated;
+    }),
+  ).pipe(
+    Effect.provide(executionProcessLayer.pipe(Layer.provideMerge(NodeServices.layer))),
+    Effect.catchCause(() => Effect.succeed({ code: -1 } satisfies Translated)),
+  );
+  // A tree that outlives every kill must not hold the run for good.
+  const deadline = NodeTimersPromises.setTimeout(
+    input.timeoutMs + STOP_GRACE_MS,
+    { timedOut: true } as const,
+    {
+      ref: false,
+    },
+  );
+  return Promise.race([Effect.runPromise(program), deadline]).then((result) => ({
+    result,
+    output,
+  }));
+}
+
+/** Folders unused for 30 days, and C++ a run left half-written a day ago. */
+async function pruneBuilds(builds: string, platform: NodeJS.Platform, now: number) {
+  const path = pathModule(platform);
+  const remove = async (folder: string, age: number) => {
+    const stats = await NodeFSP.stat(folder).catch(() => null);
+    if (stats !== null && now - stats.mtimeMs > age) {
+      await NodeFSP.rm(folder, { recursive: true, force: true }).catch(() => undefined);
+    }
+  };
+  const entries = await NodeFSP.readdir(builds).catch(() => []);
+  const incoming = await NodeFSP.readdir(path.join(builds, "incoming")).catch(() => []);
+  await Promise.all([
+    ...entries
+      .filter((entry) => entry !== "incoming")
+      .map((entry) => remove(path.join(builds, entry), UNUSED_BUILD_MS)),
+    ...incoming.map((entry) => remove(path.join(builds, "incoming", entry), 24 * 60 * 60 * 1000)),
+  ]);
+}
+
+export type StanTranslation = { readonly folder: string } | { readonly problem: string };
+
 /**
- * Translates the model into the build's C++, replacing it only when the C++ changed, so make
- * compiles exactly when the model or anything it includes changed. Its messages are left to the
- * run's first step. When it fails, the build's C++ and program are removed, so an earlier model
- * never runs as this one, and false tells `prepareStan` to translate in that step instead.
+ * Translates the model into C++, then keeps it in a folder named by that C++ and the CmdStan that
+ * compiles it. Nothing in such a folder is ever replaced, so its program can only come from its C++:
+ * a changed model or include gets a new folder, and a run never meets another's half-done build.
  */
 export async function translateStan(input: {
+  readonly runId: ExecutionRunId;
   readonly stanc: string;
   readonly root: string;
   readonly model: string;
@@ -272,40 +356,55 @@ export async function translateStan(input: {
   readonly platform: NodeJS.Platform;
   readonly temporary?: string;
   readonly timeoutMs?: number;
-}): Promise<boolean> {
+  readonly now?: number;
+}): Promise<StanTranslation> {
   const path = pathModule(input.platform);
   const name = stanModelName(input.model, input.platform);
-  const build = stanBuildFolder(input.root, input.model, input.platform, input.temporary);
-  await NodeFSP.mkdir(build, { recursive: true });
-  const target = path.join(build, `${name}.hpp`);
-  // Each attempt writes its own file, and the rename that promotes it is atomic. Two servers
-  // building the same model at once are not coordinated beyond that.
+  const builds = stanBuildsFolder(input.platform, input.temporary);
+  const incoming = path.join(builds, "incoming");
+  await NodeFSP.mkdir(incoming, { recursive: true });
   const unique = `${NodeProcess.pid}-${NodeCrypto.randomBytes(6).toString("hex")}`;
-  const next = path.join(build, `${name}.${unique}.next.hpp`);
-  const translated = await new Promise<boolean>((resolve) => {
-    const child = NodeChildProcess.spawn(
-      input.stanc,
-      stancArgs(input.model, next, name, input.platform),
-      {
-        cwd: path.dirname(input.model),
-        env: input.environment,
-        stdio: "ignore",
-        timeout: input.timeoutMs ?? TRANSLATE_TIMEOUT_MS,
-        windowsHide: true,
-      },
-    );
-    child.once("error", () => resolve(false));
-    child.once("exit", (code) => resolve(code === 0));
+  const next = path.join(incoming, `${name}.${unique}.hpp`);
+  const timeoutMs = input.timeoutMs ?? TRANSLATE_TIMEOUT_MS;
+  const { result, output } = await runStanc({
+    runId: input.runId,
+    executable: input.stanc,
+    args: stancArgs(input.model, next, name, input.platform),
+    cwd: path.dirname(input.model),
+    environment: input.environment,
+    timeoutMs,
   });
-  const promoted = translated ? await promote(next, target) : null;
+  const cpp = "code" in result && result.code === 0 ? await readIfPresentAsync(next) : null;
+  if (cpp === null) {
+    await NodeFSP.rm(next, { force: true });
+    return {
+      problem: `Stan could not translate the model: ${
+        "timedOut" in result
+          ? `stanc did not finish in ${Math.round(timeoutMs / 1000)} seconds.`
+          : firstError(output)
+      }`,
+    };
+  }
+  const read = (file: string) => readIfPresentAsync(path.join(input.root, file));
+  const [makefile, local] = await Promise.all([read("makefile"), read(path.join("make", "local"))]);
+  const key = NodeCrypto.createHash("sha256");
+  for (const part of [cpp, input.root, MAKE_FLAGS.join(" "), makefile ?? "", local ?? ""]) {
+    key.update(part).update("\0");
+  }
+  const folder = path.join(builds, key.digest("hex").slice(0, 32));
+  await NodeFSP.mkdir(folder, { recursive: true });
+  const hpp = path.join(folder, `${name}.hpp`);
+  // A link appears whole or not at all, and never replaces C++ already there, which is identical.
+  await NodeFSP.link(next, hpp).catch(async (error: NodeJS.ErrnoException) => {
+    if (error.code !== "EEXIST" && (await readIfPresentAsync(hpp)) === null) {
+      await NodeFSP.rename(next, hpp);
+    }
+  });
   await NodeFSP.rm(next, { force: true });
-  const program = path.join(build, `${name}${exe(input.platform)}`);
-  // make compares whole seconds on some systems, so new C++ written in the second the program was
-  // built could look older. The program goes, and make builds it again.
-  if (promoted === "changed") await NodeFSP.rm(program, { force: true });
-  if (promoted !== null) return true;
-  await Promise.all([target, program].map((file) => NodeFSP.rm(file, { force: true })));
-  return false;
+  const now = input.now ?? Effect.runSync(Clock.currentTimeMillis);
+  await NodeFSP.utimes(folder, now / 1000, now / 1000).catch(() => undefined);
+  await pruneBuilds(builds, input.platform, now);
+  return { folder };
 }
 
 interface StanStep {
@@ -317,39 +416,59 @@ interface StanStep {
 }
 
 /**
- * Checks the model where it is, then compiles, samples four chains, summarizes and diagnoses them.
- * Unless `translateStan` left fresh C++ (`translated`), the check writes the build's C++ itself, so
- * a model that does not translate fails there with stanc's message. The draws stay beside the model;
- * build output and sampler settings show only on failure.
+ * Moves a finished program into its folder unless one is there already, which is then identical.
+ * Its paths are Scient's own, as `stanMakeSafe` checks, and reach the shell only as arguments.
+ */
+function publishStep(
+  from: string,
+  to: string,
+  platform: NodeJS.Platform,
+  environment: Readonly<Record<string, string>>,
+) {
+  if (platform !== "win32") {
+    return {
+      executable: "/bin/sh",
+      args: ["-c", '[ -e "$1" ] || mv -f "$0" "$1"; [ -e "$1" ]', from, to],
+    };
+  }
+  const comSpec = environment[variableName(environment, "ComSpec")] ?? "cmd.exe";
+  return {
+    executable: comSpec,
+    args: [
+      "/d",
+      "/s",
+      "/c",
+      `(if not exist ${to} move /y ${from} ${to} >nul 2>nul) & if exist ${to} (exit /b 0) else (exit /b 1)`,
+    ],
+  };
+}
+
+/**
+ * Checks the model where it is, so stanc's warnings show with links; builds the program for the
+ * C++ `translateStan` kept, unless it is built already; samples four chains; then summarizes and
+ * diagnoses them. A build happens in a folder of its own and is moved into place only when make
+ * succeeds. Draws stay beside the model; build output and sampler settings show only on failure.
  */
 export function prepareStan(input: {
   readonly stanc: string;
   readonly root: string;
   readonly toolchain: StanToolchain;
   readonly model: string;
+  readonly folder: string;
   readonly staging: string;
   readonly cwd: string;
   readonly platform: NodeJS.Platform;
-  readonly temporary?: string;
   readonly threads?: number;
-  readonly translated: boolean;
 }): StanStep & { readonly before: ReadonlyArray<StanStep> } {
   const { model, platform, root } = input;
   const path = pathModule(platform);
   const name = stanModelName(model, platform);
-  const folder = path.dirname(model);
   const posix = (file: string) => file.replaceAll("\\", "/");
-  const build = stanBuildFolder(root, model, platform, input.temporary);
-  if (!stanMakeSafe(build, platform) || !stanMakeSafe(root, platform)) {
-    throw new Error(`make cannot build in ${build} from ${root}.`);
+  if (!stanMakeSafe(input.folder, platform) || !stanMakeSafe(root, platform)) {
+    throw new Error(`make cannot build in ${input.folder} from ${root}.`);
   }
-  NodeFS.mkdirSync(build, { recursive: true });
-  // Without a .stan beside the C++, CmdStan's makefile has no rule to translate, so it only compiles.
-  NodeFS.rmSync(path.join(build, `${name}.stan`), { force: true });
-  // The check rewrites the C++ then, which make might not see as newer than this program.
-  if (!input.translated)
-    NodeFS.rmSync(path.join(build, `${name}${exe(platform)}`), { force: true });
-  const draws = path.join(folder, `${path.basename(stemOf(model))}-draws`);
+  const program = path.join(input.folder, `${name}${exe(platform)}`);
+  const draws = path.join(path.dirname(model), `${path.basename(stemOf(model))}-draws`);
   NodeFS.mkdirSync(draws, { recursive: true });
   const chains = Array.from({ length: CHAINS }, (_, index) =>
     path.join(draws, `${name}_${index + 1}.csv`),
@@ -370,26 +489,31 @@ export function prepareStan(input: {
     environment: input.toolchain.environment,
     ...extra,
   });
-  const tool = (program: string) => path.join(root, "bin", `${program}${exe(platform)}`);
+  let build: ReadonlyArray<StanStep> = [];
+  if (!NodeFS.existsSync(program)) {
+    const unique = `${NodeProcess.pid}-${NodeCrypto.randomBytes(6).toString("hex")}`;
+    const own = path.join(input.folder, `build-${unique}`);
+    NodeFS.mkdirSync(own);
+    NodeFS.copyFileSync(path.join(input.folder, `${name}.hpp`), path.join(own, `${name}.hpp`));
+    const built = path.join(own, `${name}${exe(platform)}`);
+    const publish = publishStep(built, program, platform, input.toolchain.environment);
+    build = [
+      // No .stan beside the C++, so CmdStan's makefile has no rule to translate: it only compiles.
+      step(input.toolchain.make, ["-s", ...MAKE_FLAGS, posix(built)], {
+        cwd: root,
+        showOutput: "on-failure",
+      }),
+      step(publish.executable, publish.args, { showOutput: "on-failure" }),
+    ];
+  }
+  const tool = (binary: string) => path.join(root, "bin", `${binary}${exe(platform)}`);
   return {
     ...step(tool("diagnose"), chains),
     before: [
+      step(input.stanc, stancArgs(model, path.join(input.staging, `${name}.hpp`), name, platform)),
+      ...build,
       step(
-        input.stanc,
-        stancArgs(
-          model,
-          path.join(input.translated ? input.staging : build, `${name}.hpp`),
-          name,
-          platform,
-        ),
-      ),
-      step(
-        input.toolchain.make,
-        ["-s", "STAN_THREADS=true", posix(path.join(build, `${name}${exe(platform)}`))],
-        { cwd: root, showOutput: "on-failure" },
-      ),
-      step(
-        path.join(build, `${name}${exe(platform)}`),
+        program,
         [
           "sample",
           `num_chains=${CHAINS}`,

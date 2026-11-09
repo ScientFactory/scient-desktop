@@ -39,6 +39,7 @@ import {
   stanSetup,
   stanSourceProblem,
   translateStan,
+  type StanTranslation,
 } from "./StanRun.ts";
 
 const MAXIMUM_CAPTURED_BYTES = 64 * 1024 * 1024;
@@ -220,25 +221,24 @@ function prepareStanRun(
   environment: Readonly<Record<string, string>>,
   platform: NodeJS.Platform,
   context: AnalysisRunContext,
-  translated: boolean,
+  translation: StanTranslation | undefined,
 ) {
   const setup = stanSetup(stanc, environment, platform);
-  if ("problem" in setup) {
-    throw new AnalysisOperationError({
-      operation: "start",
-      reason: "runtime-missing",
-      message: setup.problem,
-    });
-  }
+  // A runtime-missing error is the one whose own message the run shows.
+  const fail = (message: string) =>
+    new AnalysisOperationError({ operation: "start", reason: "runtime-missing", message });
+  if ("problem" in setup) throw fail(setup.problem);
+  if (translation === undefined) throw fail("Stan could not translate the model before the run.");
+  if ("problem" in translation) throw fail(translation.problem);
   const plan = prepareStan({
     stanc,
     root: setup.root,
     toolchain: setup.toolchain,
     model: context.absoluteSourcePath,
+    folder: translation.folder,
     staging: context.artifactStagingDirectory,
     cwd: context.source.cwd,
     platform,
-    translated,
   });
   const started = <Step extends (typeof plan.before)[number]>(step: Step): Step => ({
     ...step,
@@ -252,12 +252,12 @@ function prepare(
   environment: Readonly<Record<string, string>>,
   platform: NodeJS.Platform,
   context: AnalysisRunContext,
-  translated: boolean,
+  translation: StanTranslation | undefined,
 ) {
   const executable = context.runtime.executablePath;
   if (executable === null) throw new Error(`${context.runtime.label} was not found.`);
   if (route.languageId === "stan")
-    return prepareStanRun(executable, environment, platform, context, translated);
+    return prepareStanRun(executable, environment, platform, context, translation);
   const { command } = chooseTool(route, [], executable, environment, platform)!;
   const file = context.absoluteSourcePath;
   const process = { cwd: context.source.cwd, environment };
@@ -403,8 +403,8 @@ export function makeRunTableAdapters(input: {
     const label = names.get(route.languageId) ?? route.label ?? route.languageId;
     const logs = batchLogsFor(route.languageId, input.platform);
     const baselines = new WeakMap<AnalysisRunContext, BatchLogBaseline>();
-    // Stan only: whether this run's model was translated into the build before its steps.
-    const translations = new WeakMap<AnalysisRunContext, boolean>();
+    // Stan only: the build folder this run's C++ went to, or why it did not translate.
+    const translations = new WeakMap<AnalysisRunContext, StanTranslation>();
     const missing =
       route.languageId === "sas" && input.platform === "darwin"
         ? "SAS has no version for Mac. It runs on Windows and Linux, or online through SAS OnDemand for Academics."
@@ -452,14 +452,15 @@ export function makeRunTableAdapters(input: {
               const stanc = context.runtime.executablePath;
               const setup = stanc === null ? null : stanSetup(stanc, environment, input.platform);
               if (stanc !== null && setup !== null && !("problem" in setup)) {
-                const translated = await translateStan({
+                const translation = await translateStan({
+                  runId: context.runId,
                   stanc,
                   root: setup.root,
                   model: context.absoluteSourcePath,
                   environment: setup.toolchain.environment,
                   platform: input.platform,
                 });
-                translations.set(context, translated);
+                translations.set(context, translation);
               }
               await capture.prepareRun?.(context);
             },
@@ -479,7 +480,7 @@ export function makeRunTableAdapters(input: {
             },
           }),
       prepare: (context) =>
-        prepare(route, environment, input.platform, context, translations.get(context) === true),
+        prepare(route, environment, input.platform, context, translations.get(context)),
     };
   });
 }

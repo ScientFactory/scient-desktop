@@ -491,11 +491,9 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
         );
         const model = NodePath.join(cwd, "models", "m.stan");
         const run: { prepared: ReturnType<typeof adapter.prepare> | null } = { prepared: null };
-        const program = () => {
-          const make = run.prepared?.before?.[1];
-          return make === undefined ? null : make.args.at(-1)!;
-        };
-        const sample = Effect.fn("live.stan.sample")(function* (translateFirst = true) {
+        const program = () =>
+          run.prepared?.before?.find((step) => step.args[0] === "sample")?.executable ?? null;
+        const sample = Effect.fn("live.stan.sample")(function* () {
           const staging = NodeFS.mkdtempSync(NodePath.join(cwd, ".staging-"));
           const context = {
             runId: ExecutionRunId.make("run-table-live"),
@@ -505,7 +503,7 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
             absoluteSourcePath: model,
             artifactStagingDirectory: staging,
           };
-          if (translateFirst) yield* Effect.promise(async () => adapter.prepareRun?.(context));
+          yield* Effect.promise(async () => adapter.prepareRun?.(context));
           run.prepared = adapter.prepare(context);
           for (const step of [...(run.prepared.before ?? []), run.prepared]) {
             const result = yield* runStep(step);
@@ -520,16 +518,35 @@ describe.runIf(NodeProcess.env.SCIENT_TEST_RUN_TABLE === "1")("the run table", (
           );
           return Number(/^"v",([^,]+),/mu.exec(summary)?.[1]);
         });
+        const hasMake = () => (run.prepared?.before ?? []).some((step) => step.cwd !== cwd);
         expect(yield* sample()).toBe(linked ? 105 : 6);
-        const built = NodeFS.statSync(program()!).mtimeMs;
+        expect(hasMake()).toBe(true);
+        const first = program()!;
+        // The same C++ again: the program it built is sampled, and nothing is compiled.
         expect(yield* sample()).toBe(linked ? 105 : 6);
-        expect(NodeFS.statSync(program()!).mtimeMs).toBe(built);
+        expect(hasMake()).toBe(false);
+        expect(program()).toBe(first);
+        // A changed include changes the C++, which gets a folder and a program of its own.
         write("models/f.stanfunctions", "real f() { return 20; }\n");
         expect(yield* sample()).toBe(linked ? 123 : 24);
-        expect(NodeFS.statSync(program()!).mtimeMs).toBeGreaterThan(built);
-        // Without the translation before the steps, the first step translates into the build.
-        write("models/f.stanfunctions", "real f() { return 30; }\n");
-        expect(yield* sample(false)).toBe(linked ? 133 : 34);
+        expect(hasMake()).toBe(true);
+        expect(program()).not.toBe(first);
+        expect(NodeFS.existsSync(first)).toBe(true);
+        // A model that no longer translates fails the run, and nothing earlier runs in its place.
+        write("models/f.stanfunctions", "real f() { return 20 }\n");
+        const staging = NodeFS.mkdtempSync(NodePath.join(cwd, ".staging-"));
+        const context = {
+          runId: ExecutionRunId.make("run-table-live"),
+          projectId: "live",
+          runtime: profile,
+          source: { cwd, relativePath: "models/m.stan", revision: "live" as never },
+          absoluteSourcePath: model,
+          artifactStagingDirectory: staging,
+        };
+        yield* Effect.promise(async () => adapter.prepareRun?.(context));
+        expect(() => adapter.prepare(context)).toThrow(
+          /^Stan could not translate the model: .*error/iu,
+        );
         NodeFS.rmSync(cwd, { recursive: true, force: true });
       }).pipe(Effect.provide(Live)),
   );

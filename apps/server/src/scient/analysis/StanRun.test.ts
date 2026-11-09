@@ -3,13 +3,14 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeProcess from "node:process";
 
+import { ExecutionRunId } from "@scientfactory/execution";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   cmdstanRoot,
   prepareStan,
-  stanBuildFolder,
   stanDataFile,
   stanMakeSafe,
   stanModelName,
@@ -226,40 +227,47 @@ describe("the toolchain", () => {
   });
 });
 
+/** A build folder holding a model's C++, as `translateStan` leaves it. */
+const builtFolder = (name: string) => {
+  const folder = temporaryFolder("scient-stan-build-");
+  NodeFS.writeFileSync(NodePath.join(folder, `${name}.hpp`), "// C++\n");
+  return folder;
+};
+
 describe("the run", () => {
-  const plan = (model: string, platform: NodeJS.Platform = "linux") => {
+  const plan = (model: string, folder = builtFolder(stanModelName(model, "linux"))) => {
     const { root, stanc } = cmdstan();
-    const temporary = temporaryFolder("scient-stan-build-");
     const staging = temporaryFolder("scient-stan-staging-");
     const prepared = prepareStan({
       stanc,
       root,
       toolchain: { make: "/usr/bin/make", environment: { PATH: "/usr/bin" } },
       model,
+      folder,
       staging,
       cwd: "/project",
-      platform,
-      temporary,
+      platform: "linux",
       threads: 18,
-      translated: true,
     });
-    return { prepared, root, stanc, temporary, staging };
+    return { prepared, root, stanc, folder, staging };
   };
 
-  it("checks, builds, samples four chains, summarizes and diagnoses, keeping the draws beside the model", () => {
-    const folder = temporaryFolder("scient stan model ");
-    const model = NodePath.join(folder, "eight schools.stan");
+  it("checks, builds in a folder of its own, samples four chains, summarizes and diagnoses", () => {
+    const project = temporaryFolder("scient stan model ");
+    const model = NodePath.join(project, "eight schools.stan");
     NodeFS.writeFileSync(model, EIGHT_SCHOOLS);
-    NodeFS.writeFileSync(NodePath.join(folder, "eight schools.data.json"), "{}");
-    const { prepared, root, stanc, temporary, staging } = plan(model);
-    const build = stanBuildFolder(root, model, "linux", temporary);
-    const draws = NodePath.join(folder, "eight schools-draws");
+    NodeFS.writeFileSync(NodePath.join(project, "eight schools.data.json"), "{}");
+    const { prepared, root, stanc, folder, staging } = plan(model);
+    const draws = NodePath.join(project, "eight schools-draws");
     const chains = [1, 2, 3, 4].map((chain) => NodePath.join(draws, `eight_schools_${chain}.csv`));
+    const [own] = NodeFS.readdirSync(folder).filter((entry) => entry.startsWith("build-"));
+    const built = NodePath.join(folder, own!, "eight_schools");
+    const program = NodePath.join(folder, "eight_schools");
     expect(prepared.before).toEqual([
       {
         executable: stanc,
         args: [
-          `--include-paths=${folder}`,
+          `--include-paths=${project}`,
           "--name=eight_schools_model",
           `--o=${NodePath.join(staging, "eight_schools.hpp")}`,
           model,
@@ -269,18 +277,25 @@ describe("the run", () => {
       },
       {
         executable: "/usr/bin/make",
-        args: ["-s", "STAN_THREADS=true", NodePath.join(build, "eight_schools")],
+        args: ["-s", "STAN_THREADS=true", built],
         cwd: root,
         environment: { PATH: "/usr/bin" },
         showOutput: "on-failure",
       },
       {
-        executable: NodePath.join(build, "eight_schools"),
+        executable: "/bin/sh",
+        args: ["-c", '[ -e "$1" ] || mv -f "$0" "$1"; [ -e "$1" ]', built, program],
+        cwd: "/project",
+        environment: { PATH: "/usr/bin" },
+        showOutput: "on-failure",
+      },
+      {
+        executable: program,
         args: [
           "sample",
           "num_chains=4",
           "data",
-          `file=${NodePath.join(folder, "eight schools.data.json")}`,
+          `file=${NodePath.join(project, "eight schools.data.json")}`,
           "output",
           `file=${NodePath.join(draws, "eight_schools.csv")}`,
           `profile_file=${NodePath.join(draws, "profile.csv")}`,
@@ -302,23 +317,53 @@ describe("the run", () => {
       executable: NodePath.join(root, "bin", "diagnose"),
       args: chains,
     });
-    // No .stan beside the C++, so make only compiles and never translates.
-    expect(NodeFS.readdirSync(build)).toEqual([]);
-    expect(NodeFS.existsSync(draws)).toBe(true);
-    expect(NodeFS.readdirSync(folder).filter((name) => name.endsWith(".hpp"))).toEqual([]);
+    // Its own folder holds only this C++: no .stan for make to translate, no older objects.
+    expect(NodeFS.readdirSync(NodePath.join(folder, own!))).toEqual(["eight_schools.hpp"]);
+    expect(NodeFS.readdirSync(project).filter((name) => name.endsWith(".hpp"))).toEqual([]);
+  });
+
+  it("samples the program already built from the same C++, building nothing", () => {
+    const model = NodePath.join(temporaryFolder("scient-stan-"), "a.stan");
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    const folder = builtFolder("a");
+    NodeFS.writeFileSync(NodePath.join(folder, "a"), "the program");
+    const { prepared } = plan(model, folder);
+    expect(prepared.before.map((step) => step.executable)).toEqual([
+      expect.stringMatching(/stanc$/u),
+      NodePath.join(folder, "a"),
+      expect.stringMatching(/stansummary$/u),
+    ]);
+    expect(NodeFS.readdirSync(folder).sort()).toEqual(["a", "a.hpp"]);
+  });
+
+  it("builds each time in a new folder, so objects a build left behind are never linked", () => {
+    const model = NodePath.join(temporaryFolder("scient-stan-"), "a.stan");
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    const folder = builtFolder("a");
+    // What an interrupted build or KEEP_OBJECT=true leaves: an object beside a build's C++.
+    const earlier = NodePath.join(folder, "build-1-000000000000");
+    NodeFS.mkdirSync(earlier);
+    NodeFS.writeFileSync(NodePath.join(earlier, "a.o"), "old object");
+    NodeFS.writeFileSync(NodePath.join(folder, "a.o"), "old object");
+    const first = plan(model, folder).prepared.before[1]!.args.at(-1)!;
+    const second = plan(model, folder).prepared.before[1]!.args.at(-1)!;
+    expect(new Set([first, second, NodePath.join(earlier, "a")]).size).toBe(3);
+    for (const target of [first, second]) {
+      expect(NodeFS.readdirSync(NodePath.dirname(target))).toEqual(["a.hpp"]);
+    }
   });
 
   it("samples a model that reads no data without a data argument", () => {
     const model = NodePath.join(temporaryFolder("scient-stan-"), "a.stan");
     NodeFS.writeFileSync(model, "parameters { real y; }\nmodel { y ~ normal(0, 1); }\n");
-    expect(plan(model).prepared.before[2]?.args).not.toContain("data");
+    expect(plan(model).prepared.before[3]?.args).not.toContain("data");
   });
 
   it("removes the last run's table and chains, which stansummary would not replace", () => {
-    const folder = temporaryFolder("scient-stan-");
-    const model = NodePath.join(folder, "a.stan");
+    const project = temporaryFolder("scient-stan-");
+    const model = NodePath.join(project, "a.stan");
     NodeFS.writeFileSync(model, "parameters { real y; }\nmodel { y ~ normal(0, 1); }\n");
-    const draws = NodePath.join(folder, "a-draws");
+    const draws = NodePath.join(project, "a-draws");
     NodeFS.mkdirSync(draws);
     for (const name of ["summary.csv", "a_1.csv", "a_4.csv", "notes.txt"])
       NodeFS.writeFileSync(NodePath.join(draws, name), "old");
@@ -349,25 +394,23 @@ const HOSTILE = [
 describe("a model in a folder whose name a shell or make would read", () => {
   it.each(HOSTILE)("hands %s only to stanc, as one argument, and never to make", (name) => {
     const { root, stanc } = cmdstan();
-    const temporary = temporaryFolder("scient-stan-build-");
-    const folder = NodePath.join(temporaryFolder("scient-stan-project-"), name);
-    NodeFS.mkdirSync(folder);
-    const model = NodePath.join(folder, "m.stan");
+    const project = NodePath.join(temporaryFolder("scient-stan-project-"), name);
+    NodeFS.mkdirSync(project);
+    const model = NodePath.join(project, "m.stan");
     NodeFS.writeFileSync(model, "parameters { real y; }\n");
     const prepared = prepareStan({
       stanc,
       root,
       toolchain: { make: "/usr/bin/make", environment: {} },
       model,
-      staging: temporary,
-      cwd: folder,
+      folder: builtFolder("m"),
+      staging: temporaryFolder("scient-stan-staging-"),
+      cwd: project,
       platform: "linux",
-      temporary,
-      translated: true,
     });
-    const [check, make] = prepared.before;
+    const [check, make, publish] = prepared.before;
     expect(check?.args.at(-1)).toBe(model);
-    for (const arg of make!.args) {
+    for (const arg of [...make!.args, ...publish!.args.slice(2)]) {
       expect(arg).not.toContain(name);
       expect(stanMakeSafe(arg.replace(/^[A-Z_]+=/u, ""), "linux"), arg).toBe(true);
     }
@@ -412,7 +455,7 @@ describe("a model in a folder whose name a shell or make would read", () => {
 
 /**
  * A stanc that writes the model and every `.stanfunctions` in its include folder to its output, so
- * the C++ changes exactly when the model or an included file does. Fails on a model saying "error".
+ * the C++ changes exactly when the model or an included file does. A model's words pick a failure.
  */
 const FAKE_STANC = `#!/bin/sh
 out=; dir=; model=
@@ -424,8 +467,10 @@ for arg in "$@"; do
     *) model="$arg" ;;
   esac
 done
-grep -q error "$model" && { echo "Syntax error in '$model', line 1" >&2; exit 1; }
-grep -q slow "$model" && sleep 5
+echo $$ > "$dir/stanc.pid"
+grep -q error "$model" && { echo "Syntax error in '$model', line 1, column 2" >&2; exit 1; }
+# Ignores the polite stop, as a stuck tool may.
+grep -q stuck "$model" && { trap '' TERM; while :; do sleep 1; done; }
 # 1.2 MB of warnings, beyond the 1 MiB a buffered child may print.
 grep -q noisy "$model" && head -c 1200000 /dev/zero | tr '\\0' w >&2
 echo "$out" >> "$dir/written.log"
@@ -434,125 +479,126 @@ exit 0
 `;
 
 // The stand-in stanc is a shell script, which needs a POSIX shell; Windows has none.
-describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to the build's C++", () => {
+describe.runIf(NodeFS.existsSync("/bin/sh"))("translating to C++ and keeping it by content", () => {
   const computer = () => {
     const { root } = cmdstan();
     const stanc = NodePath.join(root, "bin", "stanc");
     NodeFS.writeFileSync(stanc, FAKE_STANC);
     NodeFS.chmodSync(stanc, 0o755);
-    const temporary = temporaryFolder("scient-stan-build-");
-    const folder = temporaryFolder("scient stan model ");
-    const model = NodePath.join(folder, "m.stan");
-    const hpp = NodePath.join(stanBuildFolder(root, model, "linux", temporary), "m.hpp");
-    const translate = (timeoutMs?: number) =>
+    const temporary = temporaryFolder("scient-stan-builds-");
+    const project = temporaryFolder("scient stan model ");
+    const model = NodePath.join(project, "m.stan");
+    const translate = (options: { readonly timeoutMs?: number; readonly now?: number } = {}) =>
       translateStan({
+        runId: ExecutionRunId.make("run"),
         stanc,
         root,
         model,
         environment: { PATH: "/usr/bin:/bin" },
         platform: "linux",
         temporary,
-        ...(timeoutMs === undefined ? {} : { timeoutMs }),
+        ...options,
       });
-    // 2020-01-01, in seconds.
-    const old = 1_577_836_800;
-    const age = () => NodeFS.utimesSync(hpp, old, old);
-    const replaced = () => NodeFS.statSync(hpp).mtimeMs !== old * 1000;
-    const plan = (translated: boolean) =>
-      prepareStan({
-        stanc,
-        root,
-        toolchain: { make: "/usr/bin/make", environment: {} },
-        model,
-        staging: folder,
-        cwd: folder,
-        platform: "linux",
-        temporary,
-        translated,
-      });
-    return { folder, hpp, model, translate, age, replaced, plan };
+    const folderOf = async () => {
+      const translation = await translate();
+      if (!("folder" in translation)) throw new Error(JSON.stringify(translation));
+      return translation.folder;
+    };
+    const builds = NodePath.join(temporary, "scient-stan");
+    return { builds, folderOf, model, project, translate };
   };
 
-  it("keeps the C++ when nothing changed, so make does not compile again", async () => {
-    const { folder, hpp, model, translate, age, replaced } = computer();
+  it("keeps the same C++ in the same folder, so its program is reused", async () => {
+    const { builds, folderOf, model, project } = computer();
     NodeFS.writeFileSync(model, "functions {\n#include f.stanfunctions\n}\n");
-    NodeFS.writeFileSync(NodePath.join(folder, "f.stanfunctions"), "real f() { return 1; }\n");
-    await translate();
-    expect(NodeFS.readFileSync(hpp, "utf8")).toContain("return 1");
-    NodeFS.writeFileSync(NodePath.join(NodePath.dirname(hpp), "m"), "the program");
-    age();
-    await translate();
-    expect(replaced()).toBe(false);
-    expect(NodeFS.readdirSync(NodePath.dirname(hpp)).sort()).toEqual(["m", "m.hpp"]);
+    NodeFS.writeFileSync(NodePath.join(project, "f.stanfunctions"), "real f() { return 1; }\n");
+    const folder = await folderOf();
+    expect(NodeFS.readFileSync(NodePath.join(folder, "m.hpp"), "utf8")).toContain("return 1");
+    NodeFS.writeFileSync(NodePath.join(folder, "m"), "the program");
+    expect(await folderOf()).toBe(folder);
+    expect(NodeFS.readdirSync(folder).sort()).toEqual(["m", "m.hpp"]);
+    expect(NodeFS.readdirSync(NodePath.join(builds, "incoming"))).toEqual([]);
   });
 
-  it("replaces the C++ when only an included file changed", async () => {
-    const { folder, hpp, model, translate, age, replaced } = computer();
+  it("puts changed C++ in a new folder and leaves the old one as it was", async () => {
+    const { folderOf, model, project } = computer();
     NodeFS.writeFileSync(model, "functions {\n#include f.stanfunctions\n}\n");
-    NodeFS.writeFileSync(NodePath.join(folder, "f.stanfunctions"), "real f() { return 1; }\n");
-    await translate();
-    NodeFS.writeFileSync(NodePath.join(NodePath.dirname(hpp), "m"), "the program");
-    age();
-    NodeFS.writeFileSync(NodePath.join(folder, "f.stanfunctions"), "real f() { return 2; }\n");
-    await translate();
-    expect(replaced()).toBe(true);
-    expect(NodeFS.readFileSync(hpp, "utf8")).toContain("return 2");
-    // make may compare whole seconds, so the program is removed rather than left to look newer.
-    expect(NodeFS.readdirSync(NodePath.dirname(hpp))).toEqual(["m.hpp"]);
+    NodeFS.writeFileSync(NodePath.join(project, "f.stanfunctions"), "real f() { return 1; }\n");
+    const first = await folderOf();
+    NodeFS.writeFileSync(NodePath.join(first, "m"), "the program for return 1");
+    NodeFS.writeFileSync(NodePath.join(project, "f.stanfunctions"), "real f() { return 2; }\n");
+    const second = await folderOf();
+    expect(second).not.toBe(first);
+    expect(NodeFS.readdirSync(second)).toEqual(["m.hpp"]);
+    expect(NodeFS.readFileSync(NodePath.join(first, "m"), "utf8")).toBe("the program for return 1");
+    expect(NodeFS.readFileSync(NodePath.join(first, "m.hpp"), "utf8")).toContain("return 1");
   });
 
-  it("never lets an earlier model run when this one does not translate", async () => {
-    const { hpp, model, translate, plan } = computer();
-    NodeFS.writeFileSync(model, "parameters { real y; }\n");
-    expect(await translate()).toBe(true);
-    const program = NodePath.join(NodePath.dirname(hpp), "m");
-    NodeFS.writeFileSync(program, "the earlier model");
+  it("fails with stanc's first message when the model does not translate", async () => {
+    const { builds, model, translate } = computer();
     NodeFS.writeFileSync(model, "an error\n");
-    expect(await translate()).toBe(false);
-    expect(NodeFS.readdirSync(NodePath.dirname(hpp))).toEqual([]);
-    // The run's first step translates into the build, so it fails there or builds this model.
-    NodeFS.writeFileSync(program, "the earlier model");
-    expect(plan(false).before[0]?.args).toContain(`--o=${hpp}`);
-    expect(NodeFS.existsSync(program)).toBe(false);
-    expect(plan(true).before[0]?.args).not.toContain(`--o=${hpp}`);
+    expect(await translate()).toEqual({
+      problem: `Stan could not translate the model: Syntax error in '${model}', line 1, column 2`,
+    });
+    expect(NodeFS.readdirSync(builds).sort()).toEqual(["incoming"]);
+    expect(NodeFS.readdirSync(NodePath.join(builds, "incoming"))).toEqual([]);
   });
 
   it("takes a translation that prints more than a child's output buffer", async () => {
-    const { hpp, model, translate } = computer();
+    const { folderOf, model } = computer();
     NodeFS.writeFileSync(model, "// noisy\nparameters { real y; }\n");
-    expect(await translate()).toBe(true);
-    expect(NodeFS.readFileSync(hpp, "utf8")).toContain("noisy");
+    const folder = await folderOf();
+    expect(NodeFS.readFileSync(NodePath.join(folder, "m.hpp"), "utf8")).toContain("noisy");
   });
 
-  it("gives up on a translation past its time, and leaves nothing to build from", async () => {
-    const { hpp, model, translate } = computer();
-    NodeFS.writeFileSync(model, "parameters { real y; }\n");
-    await translate();
-    NodeFS.writeFileSync(model, "// slow\nparameters { real y; }\n");
-    expect(await translate(200)).toBe(false);
-    expect(NodeFS.existsSync(hpp)).toBe(false);
+  it("stops a stanc that ignores the polite stop, with its whole tree, and settles", async () => {
+    const { model, project, translate } = computer();
+    NodeFS.writeFileSync(model, "// stuck\nparameters { real y; }\n");
+    expect(await translate({ timeoutMs: 2000 })).toEqual({
+      problem: "Stan could not translate the model: stanc did not finish in 2 seconds.",
+    });
+    const pid = Number(NodeFS.readFileSync(NodePath.join(project, "stanc.pid"), "utf8"));
+    expect(() => NodeProcess.kill(pid, 0)).toThrow();
   });
 
-  it("writes each attempt to its own file, so two at once do not mix", async () => {
-    const { folder, hpp, model, translate } = computer();
+  it("lets two translations of one model at once share one folder and one C++", async () => {
+    const { builds, model, project, translate } = computer();
     NodeFS.writeFileSync(model, "parameters { real y; }\n");
-    expect(await Promise.all([translate(), translate()])).toEqual([true, true]);
-    const written = NodeFS.readFileSync(NodePath.join(folder, "written.log"), "utf8")
+    const [first, second] = await Promise.all([translate(), translate()]);
+    expect(first).toEqual(second);
+    const written = NodeFS.readFileSync(NodePath.join(project, "written.log"), "utf8")
       .trim()
       .split("\n");
     expect(new Set(written).size).toBe(2);
     for (const file of written) {
-      expect(NodePath.basename(file)).toMatch(/^m\.\d+-[0-9a-f]{12}\.next\.hpp$/u);
+      expect(NodePath.basename(file)).toMatch(/^m\.\d+-[0-9a-f]{12}\.hpp$/u);
     }
-    expect(NodeFS.readdirSync(NodePath.dirname(hpp))).toEqual(["m.hpp"]);
+    expect("folder" in first! && NodeFS.readdirSync(first.folder)).toEqual(["m.hpp"]);
+    expect(NodeFS.readdirSync(NodePath.join(builds, "incoming"))).toEqual([]);
+  });
+
+  it("removes builds unused for 30 days, keeping the one just used", async () => {
+    const { builds, folderOf, model, translate } = computer();
+    NodeFS.writeFileSync(model, "parameters { real y; }\n");
+    const folder = await folderOf();
+    const stale = NodePath.join(builds, "0123456789abcdef0123456789abcdef");
+    NodeFS.mkdirSync(stale);
+    const day = 24 * 60 * 60;
+    // 2026-11-09, in seconds.
+    const now = 1_794_182_400;
+    NodeFS.utimesSync(stale, now - 31 * day, now - 31 * day);
+    NodeFS.utimesSync(folder, now - 31 * day, now - 31 * day);
+    await translate({ now: now * 1000 });
+    expect(NodeFS.existsSync(stale)).toBe(false);
+    expect(NodeFS.existsSync(folder)).toBe(true);
   });
 
   it("never opens what a comment names, such as a pipe that would block", async () => {
-    const { folder, model, translate } = computer();
-    const pipe = NodePath.join(folder, "pipe.stanfunctions.fifo");
+    const { folderOf, model, project } = computer();
+    const pipe = NodePath.join(project, "pipe.stanfunctions.fifo");
     expect(NodeChildProcess.spawnSync("mkfifo", [pipe]).status).toBe(0);
     NodeFS.writeFileSync(model, `// #include ${NodePath.basename(pipe)}\nparameters { real y; }\n`);
-    await translate();
+    await folderOf();
     expect(stanSourceProblem(model, "linux", "/tmp")).toBeNull();
   });
 });

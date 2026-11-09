@@ -3,6 +3,7 @@ import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { AnalysisOperationError } from "@scientfactory/analysis";
 import { ExecutionRunId } from "@scientfactory/execution";
 import {
   COMPUTE_LANGUAGE_CATALOG,
@@ -21,7 +22,6 @@ import {
   makeRunTableAdapters,
   mathlibNeedsCache,
 } from "./RunTableAdapter.ts";
-import { stanBuildFolder } from "./StanRun.ts";
 
 const tool = (languageId: string, name: string, executable: string): FoundLanguageTool => ({
   languageId,
@@ -622,10 +622,16 @@ describe("a Stan model", () => {
     for (const part of parts) NodeFS.writeFileSync(NodePath.join(root, part), "");
     NodeFS.writeFileSync(NodePath.join(tools, "make"), "");
     const stanc = NodePath.join(root, "bin", "stanc");
+    // Writes the model as its C++, or fails as stanc does on a model saying "error".
+    NodeFS.writeFileSync(
+      stanc,
+      `#!/bin/sh\nfor a in "$@"; do case "$a" in --o=*) out="\${a#--o=}";; -*) ;; *) m="$a";; esac; done\ngrep -q error "$m" && { echo "Syntax error in '$m', line 2, column 3" >&2; exit 1; }\ncp "$m" "$out"\n`,
+    );
+    NodeFS.chmodSync(stanc, 0o755);
     const adapter = makeRunTableAdapters({
       tools: async () =>
         new Map([["stan", [{ ...tool("stan", "stanc", stanc), version: "2.40.0" }]]]),
-      environment: { PATH: tools },
+      environment: { PATH: `${tools}:/usr/bin:/bin` },
       platform: "linux",
     }).find((candidate) => candidate.kind === "stan")!;
     const model = (name: string, source: string) => {
@@ -633,45 +639,71 @@ describe("a Stan model", () => {
       NodeFS.writeFileSync(NodePath.join(folder, name), source);
     };
     const run = async (relativePath: string) => {
-      const absoluteSourcePath = NodePath.join(folder, relativePath);
-      made.push(stanBuildFolder(root, absoluteSourcePath, "linux"));
-      return adapter.prepare({
+      const context = {
         runId: ExecutionRunId.make("run"),
         projectId: "project",
         runtime: await inspect(adapter),
         source: { cwd: folder, relativePath, revision: "1" as never },
-        absoluteSourcePath,
+        absoluteSourcePath: NodePath.join(folder, relativePath),
         artifactStagingDirectory: NodePath.join(folder, ".staging"),
-      });
+      };
+      await adapter.prepareRun?.(context);
+      const prepared = adapter.prepare(context);
+      const sample = prepared.before?.find((step) => step.args[0] === "sample");
+      if (sample !== undefined) made.push(NodePath.dirname(sample.executable));
+      return prepared;
     };
     return { adapter, folder, model, root, run, stanc, tools };
   };
 
-  it("samples through the CmdStan its stanc belongs to, and leaves no C++ in the project", async () => {
-    const { folder, model, root, run, stanc, tools } = stanComputer();
-    model("models/a.stan", "parameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\n");
-    const prepared = await run("models/a.stan");
-    expect(prepared.before?.map((step) => step.executable)).toEqual([
-      stanc,
-      NodePath.join(tools, "make"),
-      expect.stringMatching(/scient-stan[\\/][0-9a-f]{16}[\\/]a$/u),
-      NodePath.join(root, "bin", "stansummary"),
-    ]);
-    expect(prepared.executable).toBe(NodePath.join(root, "bin", "diagnose"));
-    // Nothing translated the model before the steps, so the first step writes the build's C++.
-    const build = stanBuildFolder(root, NodePath.join(folder, "models", "a.stan"), "linux");
-    expect(prepared.before?.[0]?.args).toContain(`--o=${NodePath.join(build, "a.hpp")}`);
-    expect(prepared.before?.map((step) => step.showOutput)).toEqual([
-      undefined,
-      "on-failure",
-      "on-failure",
-      undefined,
-    ]);
-    expect(NodeFS.readdirSync(NodePath.join(folder, "models")).sort()).toEqual([
-      "a-draws",
-      "a.stan",
-    ]);
-  });
+  // The stand-in stanc is a shell script, which needs a POSIX shell; Windows has none.
+  it.runIf(NodeFS.existsSync("/bin/sh"))(
+    "samples through the CmdStan its stanc belongs to, and leaves no C++ in the project",
+    async () => {
+      const { folder, model, root, run, stanc, tools } = stanComputer();
+      model("models/a.stan", "parameters {\n  real y;\n}\nmodel {\n  y ~ normal(0, 1);\n}\n");
+      const prepared = await run("models/a.stan");
+      expect(prepared.before?.map((step) => step.executable)).toEqual([
+        stanc,
+        NodePath.join(tools, "make"),
+        "/bin/sh",
+        expect.stringMatching(/scient-stan[\\/][0-9a-f]{32}[\\/]a$/u),
+        NodePath.join(root, "bin", "stansummary"),
+      ]);
+      expect(prepared.executable).toBe(NodePath.join(root, "bin", "diagnose"));
+      expect(prepared.before?.[0]?.args).toContain(
+        `--o=${NodePath.join(folder, ".staging", "a.hpp")}`,
+      );
+      expect(prepared.before?.map((step) => step.showOutput)).toEqual([
+        undefined,
+        "on-failure",
+        "on-failure",
+        "on-failure",
+        undefined,
+      ]);
+      expect(NodeFS.readdirSync(NodePath.join(folder, "models")).sort()).toEqual([
+        "a-draws",
+        "a.stan",
+      ]);
+    },
+  );
+
+  it.runIf(NodeFS.existsSync("/bin/sh"))(
+    "fails the run with stanc's first message when the model does not translate",
+    async () => {
+      const { folder, model, run } = stanComputer();
+      model("a.stan", "parameters {\n  real y // error\n}\n");
+      const failed = await run("a.stan").then(
+        () => null,
+        (error: unknown) => error,
+      );
+      expect(failed).toBeInstanceOf(AnalysisOperationError);
+      expect(failed).toMatchObject({
+        reason: "runtime-missing",
+        message: `Stan could not translate the model: Syntax error in '${NodePath.join(folder, "a.stan")}', line 2, column 3`,
+      });
+    },
+  );
 
   it("says what to install when nothing samples", async () => {
     const missing = await inspect(adapterFor("stan", []));
