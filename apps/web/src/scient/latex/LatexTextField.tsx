@@ -12,6 +12,7 @@ import { afterEditorPaint } from "./afterEditorPaint";
 import { createEditorBackgroundTask } from "./editorBackgroundTask";
 import { installLatexTextSelectionSession } from "./latexTextSelectionSession";
 import { createLatexFieldJournal } from "./latexFieldJournal";
+import { SKIP_MIRRORED_DEFAULT } from "../writing/textareaDefaultValue";
 
 export const LatexDraftContext = createContext<{
   reportDraft: (id: string, pending: boolean) => void;
@@ -212,6 +213,7 @@ export function LatexTextField({
   };
   return (
     <textarea
+      {...SKIP_MIRRORED_DEFAULT}
       {...props}
       ref={field}
       value={draft}

@@ -133,14 +133,18 @@ Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.
 
 ## Typing beside documents
 
-Chat typing must not pay for an open document. Two Chromium costs reach every keystroke:
+Chat typing must not pay for an open document. Two Chromium costs reached every keystroke:
 
-- `Selection.isCollapsed` forces a synchronous layout; `anchorNode`, `rangeCount`, `getRangeAt`
-  and `Range.collapsed` do not. Handlers for document-wide `selectionchange` or `keyup` read the
-  range instead. PDF.js's own handlers needed a patch for this; see `UPSTREAM.md`.
+- When layout is pending, reading `Selection.isCollapsed` flushes it; `anchorNode`,
+  `rangeCount`, `getRangeAt` and `Range.collapsed` do not. Handlers for document-wide
+  `selectionchange` or `keyup` read the range instead. PDF.js's own handlers needed a patch for
+  this; see `UPSTREAM.md`.
 - React copies a controlled textarea's value into `defaultValue` after each change, replacing its
-  text node, and the app's `:has()` rules then restyle the whole document. Startup installs
-  `scient/writing/textareaDefaultValue.ts`, which skips a default equal to the shown value.
+  text node, and the app's `:has()` rules then restyle the whole document. Textareas whose owners
+  never use their native default or form reset spread `SKIP_MIRRORED_DEFAULT`
+  (`scient/writing/textareaDefaultValue.ts`); a default equal to their shown text is then
+  skipped. Ask in chat and the Visual LaTeX fields are marked. Other textareas keep the native
+  behaviour.
 
 Check with a production build, a long PDF, a source file and a Visual LaTeX document open,
 typing into the composer and into Ask in chat under CPU throttling. Event Timing and Long

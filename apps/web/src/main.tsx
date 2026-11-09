@@ -8,14 +8,14 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig";
 import { isElectron } from "./env";
 import { startAppServices } from "./appInit";
 import { AppRoot } from "./AppRoot";
-// SCIENT-FORK:START — one tooltip timing for the whole app; typing in a textarea restyles only it.
+// SCIENT-FORK:START — one tooltip timing for the whole app; marked textareas keep their text node.
 import { AppTooltipTiming } from "./scient/presentation/AppTooltipTiming";
-import { skipMirroredTextareaDefaults } from "./scient/writing/textareaDefaultValue";
+import { installMirroredDefaultSkip } from "./scient/writing/textareaDefaultValue";
 // SCIENT-FORK:END
 import { clearChunkReloadGuard, reloadOnceForChunkLoadError } from "./lib/chunkReloadGuard";
 
-// SCIENT-FORK:START — typing in a textarea restyles only it.
-skipMirroredTextareaDefaults();
+// SCIENT-FORK:START — typing in a marked textarea restyles only it.
+installMirroredDefaultSkip(document);
 // SCIENT-FORK:END
 const router = startAppServices();
 

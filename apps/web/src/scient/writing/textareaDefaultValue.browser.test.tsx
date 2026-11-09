@@ -3,12 +3,13 @@ import { expect, it } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
 import { render } from "../../../test/render";
-import { skipMirroredTextareaDefaults } from "./textareaDefaultValue";
+import { installMirroredDefaultSkip, SKIP_MIRRORED_DEFAULT } from "./textareaDefaultValue";
 
-function Draft() {
+function Draft({ marked }: { marked: boolean }) {
   const [value, setValue] = useState("");
   return (
     <textarea
+      {...(marked ? SKIP_MIRRORED_DEFAULT : {})}
       aria-label="Draft"
       value={value}
       onChange={(event) => setValue(event.currentTarget.value)}
@@ -16,9 +17,9 @@ function Draft() {
   );
 }
 
-it("keeps a controlled textarea's text node while typing", async () => {
-  using _defaults = { [Symbol.dispose]: skipMirroredTextareaDefaults() };
-  await using screen = await render(<Draft />);
+async function typeDraft(marked: boolean) {
+  using _skip = { [Symbol.dispose]: installMirroredDefaultSkip(document) };
+  await using screen = await render(<Draft marked={marked} />);
   const textarea = screen.container.querySelector("textarea")!;
   const mutations: MutationRecord[] = [];
   const observer = new MutationObserver((records) => mutations.push(...records));
@@ -27,16 +28,23 @@ it("keeps a controlled textarea's text node while typing", async () => {
 
   await userEvent.type(textarea, "variance");
 
-  expect(textarea.value).toBe("variance");
-  expect([...mutations, ...observer.takeRecords()]).toEqual([]);
+  return {
+    value: textarea.value,
+    defaultValue: textarea.defaultValue,
+    mutations: [...mutations, ...observer.takeRecords()].length,
+  };
+}
+
+it("keeps a marked textarea's text node while typing", async () => {
+  const typed = await typeDraft(true);
+
+  expect(typed.value).toBe("variance");
+  expect(typed.mutations).toBe(0);
 });
 
-it("still applies a default that differs from the shown text", () => {
-  using _defaults = { [Symbol.dispose]: skipMirroredTextareaDefaults() };
-  const textarea = document.createElement("textarea");
+it("leaves an unmarked textarea's default in step with its value", async () => {
+  const typed = await typeDraft(false);
 
-  textarea.defaultValue = "Initial draft";
-
-  expect(textarea.value).toBe("Initial draft");
-  expect(textarea.textContent).toBe("Initial draft");
+  expect(typed.value).toBe("variance");
+  expect(typed.defaultValue).toBe("variance");
 });
