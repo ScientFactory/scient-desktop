@@ -36,12 +36,11 @@ async function categoryLabelTransforms(spec: Record<string, unknown>) {
     theme: "light",
     title: "Chart",
   });
-  const xAxis = [...container.querySelectorAll("g.role-axis")].find(
-    (axis) => axis.getAttribute("aria-label")?.startsWith("X-axis") === true,
-  );
-  const transforms = [...(xAxis?.querySelectorAll("g.role-axis-label text") ?? [])].map(
-    (label) => label.getAttribute("transform") ?? "",
-  );
+  // Labels of every x axis, in drawing order.
+  const transforms = [...container.querySelectorAll("g.role-axis")]
+    .filter((axis) => axis.getAttribute("aria-label")?.startsWith("X-axis") === true)
+    .flatMap((axis) => [...axis.querySelectorAll("g.role-axis-label text")])
+    .map((label) => label.getAttribute("transform") ?? "");
   mounted.result.finalize();
   container.remove();
   return transforms;
@@ -73,5 +72,36 @@ describe("Vega-Lite category labels", () => {
     );
     expect(transforms).toHaveLength(LONG_NAMES.length);
     expect(transforms.every((transform) => transform.includes("rotate(30)"))).toBe(true);
+  });
+
+  it("keeps the angle a chart's config sets", async () => {
+    const transforms = await categoryLabelTransforms({
+      ...barChart(LONG_NAMES),
+      config: { axis: { labelAngle: 30 } },
+    });
+    expect(transforms).toHaveLength(LONG_NAMES.length);
+    expect(transforms.every((transform) => transform.includes("rotate(30)"))).toBe(true);
+  });
+
+  it("ignores a crowded number axis beside the categories", async () => {
+    const numbers = Array.from({ length: 60 }, (_, index) => ({ n: index * 1000, v: index }));
+    const { $schema, ...categories } = barChart(["A", "B", "C"]);
+    const transforms = await categoryLabelTransforms({
+      $schema,
+      hconcat: [
+        {
+          data: { values: numbers },
+          mark: "point",
+          encoding: {
+            x: { field: "n", type: "quantitative", axis: { labelOverlap: false, tickCount: 60 } },
+            y: { field: "v", type: "quantitative" },
+          },
+        },
+        categories,
+      ],
+    });
+    const categoryLabels = transforms.slice(-3);
+    expect(categoryLabels).toHaveLength(3);
+    expect(categoryLabels.every((transform) => !transform.includes("rotate"))).toBe(true);
   });
 });

@@ -233,9 +233,33 @@ export function createVegaResourceLoader(vega: typeof import("vega")): VegaResou
 export const X_CATEGORY_LABEL_ANGLES = [0, -45, -90] as const;
 export type XCategoryLabelAngle = (typeof X_CATEGORY_LABEL_ANGLES)[number];
 
+const X_LABEL_ANGLE_CONFIG_SCOPES = [
+  "axis",
+  "axisX",
+  "axisDiscrete",
+  "axisXDiscrete",
+  "axisBand",
+  "axisXBand",
+  "axisPoint",
+  "axisXPoint",
+] as const;
+
+/** Whether the chart's own config already sets the angle of its category labels. */
+export function authorSetsXLabelAngle(spec: unknown): boolean {
+  const config = isRecord(spec) ? spec.config : null;
+  return (
+    isRecord(config) &&
+    X_LABEL_ANGLE_CONFIG_SCOPES.some((scope) => {
+      const axis = config[scope];
+      return isRecord(axis) && axis.labelAngle != null;
+    })
+  );
+}
+
+/** `null` leaves category label angles to the chart and to Vega-Lite. */
 export function vegaLiteThemeConfig(
   theme: VegaLiteTheme,
-  xCategoryLabelAngle: XCategoryLabelAngle = 0,
+  xCategoryLabelAngle: XCategoryLabelAngle | null = 0,
 ): Record<string, unknown> {
   const dark = theme === "dark";
   const text = dark ? "#e5e5e5" : "#262626";
@@ -266,7 +290,7 @@ export function vegaLiteThemeConfig(
     },
     // Gridlines already carry the vertical scale.
     axisY: { domain: false, ticks: false },
-    axisXDiscrete: { labelAngle: xCategoryLabelAngle },
+    ...(xCategoryLabelAngle == null ? {} : { axisXDiscrete: { labelAngle: xCategoryLabelAngle } }),
     legend: {
       labelColor: secondaryText,
       labelFont: font,
@@ -352,19 +376,58 @@ function axisLabelBox(label: unknown): AxisLabelBox | null {
   return { fontSize: typeof fontSize === "number" ? fontSize : 11, x, x1, x2 };
 }
 
-/** The drawn labels of every horizontal axis, left to right, from a view's scenegraph. */
-export function horizontalAxisLabels(scene: unknown): ReadonlyArray<ReadonlyArray<AxisLabelBox>> {
+function sameAngle(left: unknown, right: number): boolean {
+  const turn = (degrees: number) => ((degrees % 360) + 360) % 360;
+  return turn(typeof left === "number" ? left : 0) === turn(right);
+}
+
+function isCategoryAxis(
+  view: Pick<View, "scale">,
+  scaleName: unknown,
+  labels: ReadonlyArray<unknown>,
+): boolean {
+  if (typeof scaleName === "string") {
+    try {
+      const type = (view.scale(scaleName) as { readonly type?: unknown } | undefined)?.type;
+      if (type != null) return type === "band" || type === "point";
+    } catch {
+      // A faceted chart keeps its scales inside each facet, out of the view's reach.
+    }
+  }
+  return (
+    labels.length > 0 &&
+    labels.every(
+      (label) => isRecord(label) && isRecord(label.datum) && typeof label.datum.value === "string",
+    )
+  );
+}
+
+/**
+ * The labels of every horizontal category axis drawn at `angle`, left to right. Number axes
+ * hide their own overlapping labels, and an axis at another angle has one the chart set itself.
+ */
+export function categoryAxisLabels(
+  view: Pick<View, "scale" | "scenegraph">,
+  angle: XCategoryLabelAngle,
+): ReadonlyArray<ReadonlyArray<AxisLabelBox>> {
   const axes: AxisLabelBox[][] = [];
   const visit = (mark: unknown): void => {
     if (!isRecord(mark)) return;
     for (const item of sceneChildren(mark)) {
       if (mark.role === "axis" && isRecord(item)) {
         if (item.orient !== "bottom" && item.orient !== "top") continue;
-        const labels = sceneChildren(item).find(
-          (child) => isRecord(child) && child.role === "axis-label",
+        const labels = sceneChildren(
+          sceneChildren(item).find((child) => isRecord(child) && child.role === "axis-label"),
         );
+        const scaleName = isRecord(item.datum) ? item.datum.scale : null;
+        if (
+          !isCategoryAxis(view, scaleName, labels) ||
+          !labels.every((label) => isRecord(label) && sameAngle(label.angle, angle))
+        ) {
+          continue;
+        }
         axes.push(
-          sceneChildren(labels)
+          labels
             .flatMap((label) => axisLabelBox(label) ?? [])
             .toSorted((left, right) => left.x - right.x),
         );
@@ -374,6 +437,7 @@ export function horizontalAxisLabels(scene: unknown): ReadonlyArray<ReadonlyArra
     }
   };
   // Vega's typings omit the scenegraph's root mark, which holds the drawn scene.
+  const scene: unknown = view.scenegraph();
   visit(isRecord(scene) ? scene.root : null);
   return axes;
 }
@@ -430,7 +494,8 @@ export async function mountVegaLiteView(input: {
     const tooltip = createScientVegaTooltipHandler(input.theme);
     // Label size is known only once drawn, so a chart whose labels touch is drawn again at the
     // next angle. Drawing takes a few milliseconds and the loader reuses fetched data.
-    for (const angle of X_CATEGORY_LABEL_ANGLES) {
+    const angles = authorSetsXLabelAngle(renderSpec) ? [null] : X_CATEGORY_LABEL_ANGLES;
+    for (const angle of angles) {
       result?.finalize();
       result = null;
       result = await runtime.default(input.container, renderSpec as VisualizationSpec, {
@@ -456,8 +521,9 @@ export async function mountVegaLiteView(input: {
         throw firstResourceFailure;
       }
       if (
+        angle == null ||
         angle === X_CATEGORY_LABEL_ANGLES.at(-1) ||
-        !axisLabelsCollide(horizontalAxisLabels(result.view.scenegraph()), angle)
+        !axisLabelsCollide(categoryAxisLabels(result.view, angle), angle)
       ) {
         break;
       }

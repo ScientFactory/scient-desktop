@@ -7,10 +7,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   applyScientVegaRuntimeDefaults,
+  authorSetsXLabelAngle,
   axisLabelsCollide,
+  categoryAxisLabels,
   createVegaResourceLoader,
   fetchVegaRemoteResource,
-  horizontalAxisLabels,
   MAX_VEGA_REMOTE_RESOURCE_BYTES,
   normalizedVegaLiteError,
   restoreVegaLiteViewState,
@@ -20,19 +21,24 @@ import {
   type XCategoryLabelAngle,
 } from "./vegaLiteRuntime";
 
-async function drawnCategoryLabels(categories: ReadonlyArray<string>, angle: XCategoryLabelAngle) {
-  const spec: TopLevelSpec = {
+function categoryBars(categories: ReadonlyArray<string>) {
+  return {
     data: { values: categories.map((category, index) => ({ category, value: index + 1 })) },
     mark: "bar",
     encoding: {
       x: { field: "category", type: "nominal" },
       y: { field: "value", type: "quantitative" },
     },
-    config: vegaLiteThemeConfig("light", angle),
-  };
-  const view = new View(parseVega(compile(spec).spec), { renderer: "none" });
+  } satisfies TopLevelSpec;
+}
+
+async function drawnCategoryLabels(spec: TopLevelSpec, angle: XCategoryLabelAngle) {
+  const view = new View(
+    parseVega(compile({ ...spec, config: vegaLiteThemeConfig("light", angle) }).spec),
+    { renderer: "none" },
+  );
   await view.runAsync();
-  const axes = horizontalAxisLabels(view.scenegraph());
+  const axes = categoryAxisLabels(view, angle);
   view.finalize();
   return axes;
 }
@@ -149,8 +155,88 @@ describe("Vega-Lite runtime policy", () => {
     expect(authored?.labelAngle).toBe(30);
   });
 
-  it("finds the horizontal axis labels of a drawn chart and tells when they touch", async () => {
-    const short = await drawnCategoryLabels(["A", "B", "C", "D"], 0);
+  it("leaves category labels alone when the chart's config sets their angle", async () => {
+    for (const scope of ["axis", "axisX", "axisDiscrete", "axisXBand"]) {
+      const spec = { ...categoryBars(["A", "B"]), config: { [scope]: { labelAngle: 30 } } };
+      expect(authorSetsXLabelAngle(spec)).toBe(true);
+      const view = new View(
+        parseVega(
+          compile({ ...spec, config: { ...vegaLiteThemeConfig("light", null), ...spec.config } })
+            .spec,
+        ),
+        { renderer: "none" },
+      );
+      await view.runAsync();
+      // Drawn at the chart's own 30 degrees.
+      expect(categoryAxisLabels(view, 30 as XCategoryLabelAngle)[0]).toHaveLength(2);
+      view.finalize();
+    }
+    expect(authorSetsXLabelAngle(categoryBars(["A"]))).toBe(false);
+    expect(
+      authorSetsXLabelAngle({ ...categoryBars(["A"]), config: { axisY: { labelAngle: 30 } } }),
+    ).toBe(false);
+    expect(vegaLiteThemeConfig("light", null)).not.toHaveProperty("axisXDiscrete");
+  });
+
+  it("judges only category axes, so a crowded number axis beside them changes nothing", async () => {
+    const numbers = Array.from({ length: 60 }, (_, index) => ({ n: index * 1000, v: index }));
+    const axes = await drawnCategoryLabels(
+      {
+        hconcat: [
+          {
+            data: { values: numbers },
+            mark: "point",
+            encoding: {
+              x: { field: "n", type: "quantitative", axis: { labelOverlap: false, tickCount: 60 } },
+              y: { field: "v", type: "quantitative" },
+            },
+          },
+          categoryBars(["A", "B", "C"]),
+        ],
+      },
+      0,
+    );
+    expect(axes).toHaveLength(1);
+    expect(axes[0]).toHaveLength(3);
+    expect(axisLabelsCollide(axes, 0)).toBe(false);
+  });
+
+  it("judges category axes inside facets, whose scales the view cannot reach", async () => {
+    const axes = await drawnCategoryLabels(
+      {
+        data: {
+          values: ["p", "q"].flatMap((group) =>
+            ["Oligodendrocyte precursors", "Astrocytes", "Microglia"].map((category) => ({
+              category,
+              group,
+              value: 1,
+            })),
+          ),
+        },
+        facet: { field: "group" },
+        resolve: { scale: { x: "independent" } },
+        spec: { mark: "bar", encoding: categoryBars([]).encoding },
+      } as unknown as TopLevelSpec,
+      0,
+    );
+    expect(axes).toHaveLength(2);
+    expect(axisLabelsCollide(axes, 0)).toBe(true);
+  });
+
+  it("skips an axis whose angle the chart set itself", async () => {
+    const authored = categoryBars(["Oligodendrocyte precursors", "Astrocytes", "Microglia"]);
+    const axes = await drawnCategoryLabels(
+      {
+        ...authored,
+        encoding: { ...authored.encoding, x: { ...authored.encoding.x, axis: { labelAngle: 30 } } },
+      },
+      0,
+    );
+    expect(axes).toHaveLength(0);
+  });
+
+  it("finds the category labels of a drawn chart and tells when they touch", async () => {
+    const short = await drawnCategoryLabels(categoryBars(["A", "B", "C", "D"]), 0);
     expect(short).toHaveLength(1);
     expect(short[0]?.map((label) => label.x)).toEqual(
       [...(short[0]?.map((label) => label.x) ?? [])].sort((a, b) => a - b),
@@ -159,7 +245,7 @@ describe("Vega-Lite runtime policy", () => {
     expect(axisLabelsCollide(short, 0)).toBe(false);
 
     const long = await drawnCategoryLabels(
-      ["Oligodendrocyte precursors", "Astrocytes", "Microglia", "Neurons"],
+      categoryBars(["Oligodendrocyte precursors", "Astrocytes", "Microglia", "Neurons"]),
       0,
     );
     expect(axisLabelsCollide(long, 0)).toBe(true);
@@ -167,7 +253,7 @@ describe("Vega-Lite runtime policy", () => {
     expect(
       axisLabelsCollide(
         await drawnCategoryLabels(
-          ["Oligodendrocyte precursors", "Astrocytes", "Microglia", "Neurons"],
+          categoryBars(["Oligodendrocyte precursors", "Astrocytes", "Microglia", "Neurons"]),
           -45,
         ),
         -45,
