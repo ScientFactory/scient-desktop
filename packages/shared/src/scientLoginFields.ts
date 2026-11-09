@@ -7,6 +7,8 @@ export interface LoginField {
   readonly usable: boolean;
   /** Name, id, placeholder and accessible label, where a code field says what it is. */
   readonly label?: string | undefined;
+  /** What a person reads for the box: placeholder, labels and title, without name or id. */
+  readonly text?: string | undefined;
   /** Name, else id. */
   readonly name?: string | undefined;
   readonly inputMode?: string | undefined;
@@ -75,14 +77,24 @@ function loginElementVisible(element: PageElement) {
  */
 export function detectLoginFields(fields: ReadonlyArray<LoginField>, rules: LoginFieldRules = {}) {
   const tokens = fields.map((field) => field.autocomplete.split(/\s+/));
-  // A box labelled as a code takes only a one-time code, even masked as a password.
-  const isCode = (field: LoginField, index: number) =>
-    tokens[index]?.includes("one-time-code") === true ||
-    (field.type !== "email" &&
-      !/^(user(name)?|login)$/i.test(field.name ?? "") &&
-      /otp|mfa|2fa|two.?factor|verification|one.?time|temporary|sms|\bcode\b|קוד/i.test(
-        field.label ?? "",
-      ));
+  // A box labelled as a code takes only a one-time code. A masked one needs explicit one-time
+  // evidence and no word of a password, since "Access code" can be a password too.
+  const isCode = (field: LoginField, index: number) => {
+    const marks = tokens[index] ?? [];
+    if (marks.includes("one-time-code")) return true;
+    if (marks.includes("current-password") || marks.includes("new-password")) return false;
+    if (field.type === "email" || /^(user(name)?|login)$/i.test(field.name ?? "")) return false;
+    const label = field.label ?? "";
+    if (field.type !== "password")
+      return /otp|mfa|2fa|two.?factor|verification|one.?time|temporary|sms|\bcode\b|קוד/i.test(
+        label,
+      );
+    return (
+      /otp|mfa|2fa|two.?factor|one.?time|(temporary|sms|verification).?code|קוד זמני/i.test(
+        label,
+      ) && !/password|passwort|kennwort|mot de passe|contraseña|סיסמ/i.test(field.text ?? "")
+    );
+  };
   const first = (...tests: ReadonlyArray<(field: LoginField, index: number) => boolean>) => {
     for (const test of tests) {
       const found = fields.findIndex((field, index) => field.usable && test(field, index));
@@ -196,19 +208,9 @@ export function collectLoginFields<Input extends PageInput>(
   inputs: ReadonlyArray<Input>,
   rules: LoginFieldRules = {},
 ) {
-  const fields = inputs.map((input) => ({
-    type: input.type,
-    autocomplete: input.autocomplete.toLowerCase(),
-    usable:
-      !input.disabled &&
-      !input.readOnly &&
-      input.type !== "hidden" &&
-      !input.closest("[hidden], [inert]") &&
-      loginElementVisible(input),
-    // What a person reads beside the box too: its labels, aria-labelledby and title.
-    label: [
-      input.name,
-      input.id,
+  const fields = inputs.map((input) => {
+    // What a person reads beside the box: placeholder, aria label, title, labels, labelledby.
+    const text = [
       input.placeholder,
       input.getAttribute("aria-label"),
       input.title,
@@ -222,13 +224,25 @@ export function collectLoginFields<Input extends PageInput>(
             }
           ).document.getElementById(id)?.textContent,
       ),
-    ].join(" "),
-    name: input.name || input.id,
-    inputMode: input.inputMode,
-    maxLength: input.maxLength,
-    minLength: input.minLength,
-    pattern: input.pattern,
-  }));
+    ].join(" ");
+    return {
+      type: input.type,
+      autocomplete: input.autocomplete.toLowerCase(),
+      usable:
+        !input.disabled &&
+        !input.readOnly &&
+        input.type !== "hidden" &&
+        !input.closest("[hidden], [inert]") &&
+        loginElementVisible(input),
+      label: [input.name, input.id, text].join(" "),
+      text,
+      name: input.name || input.id,
+      inputMode: input.inputMode,
+      maxLength: input.maxLength,
+      minLength: input.minLength,
+      pattern: input.pattern,
+    };
+  });
   return { inputs, ...detectLoginFields(fields, rules) };
 }
 

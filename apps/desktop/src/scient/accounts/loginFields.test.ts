@@ -78,6 +78,18 @@ describe("login field selection", () => {
         labelled("o_password hujicc-otp-password OTP code", "o_password"),
       ]),
     ).toEqual({ username: 0, password: -1, otp: 1, other: -1 });
+    // A password named an access code, or with "code" in its help, stays a password.
+    for (const [text, autocomplete] of [
+      ["Password (code sent if forgotten)", "current-password"],
+      ["Access code", ""],
+      ["Code d'accès", ""],
+    ])
+      expect(
+        detectLoginFields([
+          { ...field("text"), name: "username", label: "username" },
+          { ...field("password", autocomplete), name: "secret", label: `secret ${text}`, text },
+        ]),
+      ).toEqual({ username: 0, password: 1, otp: -1, other: -1 });
     for (const label of ["password Password", "password סיסמה"])
       expect(
         detectLoginFields([
