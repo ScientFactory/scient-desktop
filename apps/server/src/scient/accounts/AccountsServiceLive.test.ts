@@ -304,6 +304,35 @@ describe("AccountsService imported password dates", () => {
   );
 });
 
+describe("AccountsService imported date only", () => {
+  it.effect(
+    "adds a newer date to an unchanged password without touching its sign-in evidence",
+    () =>
+      Effect.gen(function* () {
+        const { service } = yield* makeHarness();
+        const value = syntheticValue();
+        const row = (date: string) =>
+          `name,url,username,password,password_changed\nSynthetic,https://login.example.com/,user,${value},${date}`;
+        yield* service.importPasswords({ format: "auto", content: row("") });
+        const { accountId } = (yield* service.snapshot).accounts[0]!;
+        yield* service.recordCheck(accountId, { state: "password-rejected" });
+        expect(
+          yield* service.importPasswords({
+            format: "auto",
+            content: row("2025-01-01T00:00:00.000Z"),
+          }),
+        ).toEqual({ created: 0, updated: 0, skipped: 1 });
+        yield* service.importPasswords({
+          format: "auto",
+          content: row("2024-01-01T00:00:00.000Z"),
+        });
+        const account = (yield* service.snapshot).accounts[0]!;
+        expect(account.signIn?.state).toBe("password-rejected");
+        expect(account.secrets["password"]?.changedAt).toBe("2025-01-01T00:00:00.000Z");
+      }),
+  );
+});
+
 describe("AccountsService profiles and evidence", () => {
   it.effect("keeps the same login imported into two profiles as two rows", () =>
     Effect.gen(function* () {

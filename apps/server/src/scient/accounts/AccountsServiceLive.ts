@@ -1660,9 +1660,23 @@ export const layer = Layer.effect(
                     (input.profileId === undefined || details.profileId === input.profileId) &&
                     current.password &&
                     Redacted.value(current.password) === entry.password &&
-                    (current.totp ? Redacted.value(current.totp) : undefined) === entry.totp &&
-                    (entry.changedAt === undefined || entry.changedAt === changedAt)
+                    (current.totp ? Redacted.value(current.totp) : undefined) === entry.totp
                   ) {
+                    // Same values: only a newer date is kept; its sign-in evidence stays as it is.
+                    const password = existing.summary.secrets["password"];
+                    if (password && entry.changedAt && (!changedAt || entry.changedAt > changedAt))
+                      yield* commit(
+                        replaceAccount({
+                          ...existing,
+                          summary: {
+                            ...existing.summary,
+                            secrets: {
+                              ...existing.summary.secrets,
+                              password: { ...password, changedAt: entry.changedAt },
+                            },
+                          },
+                        }),
+                      );
                     result.skipped++;
                     continue;
                   }
