@@ -11,6 +11,7 @@ import {
 } from "./managedRuntimeArtifact.ts";
 import {
   downloadManagedRuntime,
+  type ManagedRuntimeDownloadRetry,
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
   verifyManagedRuntimeChecksum,
@@ -38,6 +39,8 @@ export interface ManagedProviderRuntimeProgress {
   readonly stage: ManagedProviderRuntimeStage;
   readonly downloadedBytes?: number | undefined;
   readonly totalBytes?: number | undefined;
+  /** Set while the download waits to try again after a temporary failure. */
+  readonly retry?: ManagedRuntimeDownloadRetry | undefined;
 }
 
 export interface ManagedProviderRuntimeStateV1 {
@@ -679,6 +682,13 @@ export class ManagedProviderRuntime {
         signal,
         onProgress: (downloadedBytes, totalBytes) =>
           onProgress?.({ stage: "downloading", downloadedBytes, totalBytes }),
+        onRetry: (retry) =>
+          onProgress?.({
+            stage: "downloading",
+            downloadedBytes: 0,
+            totalBytes: artifact.size,
+            retry,
+          }),
       });
       onProgress?.({ stage: "verifying" });
       await this.#dependencies.verify(archivePath, artifact.checksum);

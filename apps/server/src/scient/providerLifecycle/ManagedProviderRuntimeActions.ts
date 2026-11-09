@@ -73,6 +73,14 @@ export function managedRuntimeInstallationFailureMessage(
     : summary;
 }
 
+/** Progress text while a download waits to try again after a temporary failure. */
+export function managedRuntimeRetryMessage(
+  providerName: string,
+  retry: NonNullable<ManagedProviderRuntimeProgress["retry"]>,
+): string {
+  return `Couldn't download ${providerName} (${retry.reason}). Trying again, ${retry.retry} of ${retry.retries}.`;
+}
+
 /** What `binary --version` prints when it exits 0 within five seconds. */
 export const readConfiguredRuntimeVersion = Effect.fn(
   "ManagedProviderRuntimeActions.readConfiguredRuntimeVersion",
@@ -657,13 +665,17 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
             const downloadAdvanced = downloadedBytes - lastReportedBytes >= 1024 * 1024;
             const downloadFinished =
               progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
-            if (!stageChanged && !downloadAdvanced && !downloadFinished) return;
+            const retry = progress.retry;
+            if (!stageChanged && !downloadAdvanced && !downloadFinished && !retry) return;
             lastStatus = progress.stage;
             lastReportedBytes = downloadedBytes;
             runFork(
               report({
                 status: progress.stage,
-                message: progressMessage(progress),
+                message: retry
+                  ? managedRuntimeRetryMessage(providerName, retry)
+                  : progressMessage(progress),
+                ...(retry ? { retrying: true } : {}),
                 ...(progress.downloadedBytes === undefined
                   ? {}
                   : { downloadedBytes: progress.downloadedBytes }),
