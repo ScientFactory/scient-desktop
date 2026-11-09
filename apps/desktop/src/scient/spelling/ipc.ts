@@ -131,6 +131,8 @@ export function spellingMenuItems(
   const spelling = contents.session === session.defaultSession ? documentSpelling : null;
   const items: Electron.MenuItemConstructorOptions[] = [];
   if (params.misspelledWord) {
+    // Retries a dictionary whose download failed, such as while offline.
+    if (spelling) suggester?.prepare(enabledCodes(spelling));
     const own = spelling
       ? (suggester?.suggest(params.misspelledWord, enabledCodes(spelling)) ?? [])
       : [];

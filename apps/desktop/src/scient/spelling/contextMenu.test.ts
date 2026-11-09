@@ -59,4 +59,9 @@ describe("languagesItem", () => {
       ["da", true],
     ]);
   });
+
+  it("keeps the last language on, since Electron would fall back to English", () => {
+    const item = languagesItem([{ code: "he", source: "system" }], ["he"], vi.fn());
+    expect(item.submenu).toEqual([expect.objectContaining({ checked: true, enabled: false })]);
+  });
 });

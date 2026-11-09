@@ -46,7 +46,10 @@ function languageName(code: string): string {
   }
 }
 
-/** The languages in use, each with why, and every other dictionary under More Languages. */
+/**
+ * The languages in use, each with why, and every other dictionary under More Languages. The last
+ * language cannot be turned off: Electron falls back to English for an empty list.
+ */
 export function languagesItem(
   languages: readonly SpellingLanguage[],
   available: readonly string[],
@@ -64,6 +67,7 @@ export function languagesItem(
         label: `${languageName(code)}${SOURCE_NOTE[source]}`,
         type: "checkbox",
         checked: true,
+        enabled: languages.length > 1,
         click: () => choose(code, false),
       })),
       ...(others.length > 0
