@@ -192,4 +192,24 @@ document on every transaction or frame:
   cost per transaction grows (slices grow with the loaded document);
 - toolbars searching the workspace on every render (only the active one does);
 - attribute writes to ProseMirror-owned blocks without pausing its DOM observer,
-  which makes it redraw the block.
+  which makes it redraw the block;
+- a layout pass for every `content-visibility` reveal. A reveal now starts one
+  only when the block's rendered size differs from its skipped size (Chromium
+  reports that resize before the reveal event);
+- republishing spacers from positions read back from layout, which drift by
+  fractions of a pixel: within the 1 px that needs no spacer, a pass keeps the
+  published value, so an unchanged layout publishes identical decorations;
+- comparing intrinsic sizes as strings, which never matched the style's
+  six-digit serialization and rewrote every block's style on every pass;
+- reading block origins across work slices: a block revealed between slices
+  moved the blocks read after it, misplacing whole pages until the next pass.
+
+Scrolling the 61-page synthetic manuscript at 4× CPU throttle, these took long
+frames from about 13 s to 3–5 s per 15 s, and at 1× from 5.5 s to under 0.4 s.
+
+Inserting or removing any top-level block still restyles every block's subtree
+(about 18,000 elements in that manuscript, about 50 ms at 1×). Chromium reports
+the blocks as affected by `:has()`. Deleting the app's `:has()` rules in place cut
+it to 18 ms, and deleting sibling and positional rules as well to 8 ms. The
+Tailwind variants that compile to `X:is(:where(G):has(A) *)` also make each
+rendered PDF page restyle the whole app.
