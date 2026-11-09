@@ -57,6 +57,10 @@ vi.mock("@effect/atom-react", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   useAtomValue: (value: unknown) => value,
 }));
+// The terminal-command step reads the desktop bridge, which a browser test does not have.
+vi.mock("../settings/CliCommandSettingsRow", () => ({
+  useDesktopCliCommand: () => ({ state: undefined, busy: false, run: () => {} }),
+}));
 vi.mock("../../onboarding/useProjectScans", () => ({
   useProjectScans: () => [
     {

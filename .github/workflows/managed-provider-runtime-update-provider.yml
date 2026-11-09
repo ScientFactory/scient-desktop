@@ -330,6 +330,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-cursor-origin \
             packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
@@ -416,6 +417,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-cursor-origin \
             packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
@@ -472,6 +474,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-cursor-origin \
             packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \
@@ -568,6 +571,7 @@ jobs:
             packages/source-control-azure-devops \
             packages/source-control-bitbucket \
             packages/source-control-core \
+            packages/source-control-cursor-origin \
             packages/source-control-definitions \
             packages/source-control-forgejo \
             packages/source-control-gitcafe \

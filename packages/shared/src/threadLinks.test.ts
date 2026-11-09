@@ -119,12 +119,14 @@ describe("thread links", () => {
     expect(threadLinkRefs("[a](<t3-thread://v2/there/t2>)", local)).toEqual([ref("there", "t2")]);
     for (const threadId of ["mcp:launch:qa(1)", "mcp:launch:qa)"]) {
       const thread = ref("there", threadId);
+      // SCIENT-FORK: Scient percent-encodes parentheses, so its links need no angle brackets;
+      // the angle-bracketed form T3 writes still reads (above).
+      const href = `t3-thread://v2/there/${threadId.replaceAll("(", "%28").replaceAll(")", "%29")}`;
       const link = formatThreadLink(thread, "Original");
-      expect(link).toBe(`[Original](<t3-thread://v2/there/${threadId}>)`);
-      expect(threadLinkRefs(link, local)).toEqual([thread]);
-      expect(relabelThreadLinks(link, local, () => "Renamed")).toBe(
-        `[Renamed](<t3-thread://v2/there/${threadId}>)`,
-      );
+      expect(link).toBe(`[Original](${href})`);
+      // Scient reads an encoded id both as written and decoded.
+      expect(threadLinkRefs(link, local)).toContainEqual(thread);
+      expect(relabelThreadLinks(link, local, () => "Renamed")).toBe(`[Renamed](${href})`);
       expect(relabelThreadLinks(link, local, () => undefined)).toBe("Original");
     }
   });
