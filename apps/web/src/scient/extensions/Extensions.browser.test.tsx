@@ -188,6 +188,7 @@ vi.mock("../../state/entities", () => ({
   useServerConfigs: () => new Map(),
 }));
 vi.mock("../../components/ProjectFavicon", () => ({ ProjectFavicon: () => null }));
+vi.mock("../analytics/client", () => ({ useScientAnalyticsView: () => {} }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_environmentId: string, scope: string) => {
     useStateVersion();

@@ -12,8 +12,9 @@ import { HttpClient, HttpClientResponse } from "effect/http";
 import * as yauzl from "yauzl";
 
 import * as ServerConfig from "../../config.ts";
+import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import * as PersonalSkills from "./PersonalSkills.ts";
-import { webSkillSource } from "./PersonalSkillSources.ts";
+import { publicSkillAddress, webSkillSource } from "./PersonalSkillSources.ts";
 import * as ScientSkillManagement from "./ScientSkillManagement.ts";
 import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
@@ -64,7 +65,38 @@ const offline = Layer.succeed(
   ),
 );
 
-const harness = (baseDir: string, home: string) => {
+interface Recorded {
+  readonly name: string;
+  readonly properties: Readonly<Record<string, unknown>> | undefined;
+}
+
+/** Analytics that keeps what it is given, so a test can read it back. */
+const recorder = () => {
+  const events: Recorded[] = [];
+  const layer = Layer.succeed(
+    AnalyticsService,
+    AnalyticsService.of({
+      recordOwners: () => Effect.void,
+      record: (name, properties) =>
+        Effect.sync(() => {
+          events.push({ name, properties });
+        }),
+      status: Effect.succeed({ available: true, consent: "product" }),
+      collectionEpoch: Effect.succeed(0),
+      flush: Effect.void,
+    }),
+  );
+  return { events, layer };
+};
+
+const harness = (
+  baseDir: string,
+  home: string,
+  options: {
+    readonly http?: Layer.Layer<HttpClient.HttpClient>;
+    readonly analytics?: Layer.Layer<AnalyticsService>;
+  } = {},
+) => {
   const config = ServerConfig.layerTest(process.cwd(), baseDir).pipe(
     Layer.provide(NodeServices.layer),
   );
@@ -75,7 +107,8 @@ const harness = (baseDir: string, home: string) => {
     Layer.provideMerge(ScientSkillSession.layer),
     Layer.provideMerge(PersonalSkills.layer),
     Layer.provideMerge(shared),
-    Layer.provide(offline),
+    Layer.provide(options.http ?? offline),
+    Layer.provide(options.analytics ?? Layer.empty),
     Layer.provide(Layer.succeed(HostProcess.HomeDirectory, home)),
     Layer.provide(Layer.succeed(HostProcess.Environment, {})),
   );
@@ -87,10 +120,13 @@ const harness = (baseDir: string, home: string) => {
  */
 const inScratch = <A, E>(
   body: (paths: { readonly home: string }) => Effect.Effect<A, E, ServerConfig.ServerConfig>,
+  options?: Parameters<typeof harness>[2],
 ) =>
   Effect.flatMap(Effect.promise(scratch), (base) => {
     const home = NodePath.join(base, "home");
-    return body({ home }).pipe(Effect.provide(harness(NodePath.join(base, "state"), home)));
+    return body({ home }).pipe(
+      Effect.provide(harness(NodePath.join(base, "state"), home, options)),
+    );
   });
 
 describe("PersonalSkills", () => {
@@ -348,6 +384,134 @@ describe("PersonalSkills", () => {
       }),
     ),
   );
+});
+
+describe("PersonalSkills analytics", () => {
+  it.live("counts each step with its outcome and failure, never a name, path or text", () => {
+    const analytics = recorder();
+    const shared = "https://github.com/acme/lab-skills/blob/main/notes/lab-notes.md";
+    const github = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url.startsWith("https://raw.githubusercontent.com/acme/lab-skills/")
+              ? new Response(document("lab-notes", "Keep lab notes the way our lab does."))
+              : new Response("missing", { status: 404 }),
+          ),
+        ),
+      ),
+    );
+    return inScratch(
+      ({ home }) =>
+        Effect.gen(function* () {
+          const personal = (yield* ScientSkillManagement.ScientSkillManagement).personal;
+          const folder = NodePath.join(home, "private-lab", "methods-style");
+          yield* Effect.promise(() =>
+            writeFiles(folder, { "SKILL.md": document("methods-style", "Write methods.") }),
+          );
+
+          const fromFolder = yield* personal.inspect({ type: "path", path: folder });
+          if (fromFolder.kind !== "skills") throw new Error("expected skills");
+          yield* personal.add({ stagingId: fromFolder.stagingId, keys: ["0"] });
+          yield* personal
+            .inspect({ type: "path", path: NodePath.join(home, "missing") })
+            .pipe(Effect.flip);
+          yield* personal
+            .save({ name: "Not A Name", files: { "SKILL.md": "x" } })
+            .pipe(Effect.flip);
+          const fromWeb = yield* personal.inspect({ type: "url", url: shared });
+          if (fromWeb.kind !== "skills") throw new Error("expected skills");
+          yield* personal.add({ stagingId: fromWeb.stagingId, keys: ["0"] });
+          yield* personal.remove("../outside").pipe(Effect.flip);
+
+          const used = analytics.events.map((event) => {
+            expect(event.name).toBe("feature.used");
+            const { durationMs, ...facts } = event.properties ?? {};
+            expect(typeof durationMs).toBe("number");
+            return facts;
+          });
+          expect(used).toEqual([
+            {
+              feature: "skills.personal.inspect",
+              trigger: "user",
+              variant: "folder",
+              found: 1,
+              ready: 1,
+              needsAgent: 0,
+              outcome: "ok",
+            },
+            {
+              feature: "skills.personal.add",
+              trigger: "user",
+              variant: "folder",
+              added: 1,
+              created: 1,
+              replaced: 0,
+              outcome: "ok",
+            },
+            {
+              feature: "skills.personal.inspect",
+              trigger: "user",
+              variant: "other",
+              outcome: "error",
+              failureClass: "not-found",
+            },
+            {
+              feature: "skills.personal.save",
+              trigger: "agent",
+              files: 1,
+              outcome: "error",
+              failureClass: "invalid-skill",
+            },
+            {
+              feature: "skills.personal.inspect",
+              trigger: "user",
+              variant: "web",
+              found: 1,
+              ready: 1,
+              needsAgent: 0,
+              publicSource: "github.com/acme/lab-skills/blob/main/notes/lab-notes.md",
+              outcome: "ok",
+            },
+            {
+              feature: "skills.personal.add",
+              trigger: "user",
+              variant: "web",
+              publicSource: "github.com/acme/lab-skills/blob/main/notes/lab-notes.md",
+              added: 1,
+              created: 1,
+              replaced: 0,
+              outcome: "ok",
+            },
+            {
+              feature: "skills.personal.remove",
+              trigger: "user",
+              outcome: "error",
+              failureClass: "not-found",
+            },
+          ]);
+          expect(JSON.stringify(analytics.events)).not.toContain(home);
+          expect(JSON.stringify(analytics.events)).not.toContain("methods-style");
+        }),
+      { http: github, analytics: analytics.layer },
+    );
+  });
+});
+
+describe("publicSkillAddress", () => {
+  it("names addresses on public code hosts only, without scheme, query or sign-in", () => {
+    expect(publicSkillAddress("https://github.com/acme/skills/tree/main/pdf/?tab=1#x")).toBe(
+      "github.com/acme/skills/tree/main/pdf",
+    );
+    expect(publicSkillAddress("https://www.huggingface.co/acme/skills")).toBe(
+      "huggingface.co/acme/skills",
+    );
+    expect(publicSkillAddress("https://lab.example.edu/skills/notes.md")).toBeUndefined();
+    expect(publicSkillAddress("https://me:secret@github.com/acme/skills")).toBeUndefined();
+    expect(publicSkillAddress("not an address")).toBeUndefined();
+  });
 });
 
 describe("webSkillSource", () => {

@@ -16,6 +16,7 @@ import {
   MAX_RESOURCE_BYTES,
   SKILL_DOCUMENT_FILE,
 } from "@scientfactory/scient-skills";
+import type { PersonalSkillFailure } from "@t3tools/contracts";
 
 /** Left out when a skill is copied in: system clutter and version control. */
 const JUNK = new Set([".DS_Store", "Thumbs.db", "desktop.ini", ".git", "__MACOSX", "node_modules"]);
@@ -29,6 +30,11 @@ const HISTORY_KEEP = 10;
 // @effect-diagnostics-next-line extendsNativeError:off -- plain async folder helpers; the service maps it to a typed error.
 export class SkillFolderError extends Error {
   override readonly name = "SkillFolderError";
+  readonly reason: PersonalSkillFailure;
+  constructor(message: string, reason: PersonalSkillFailure) {
+    super(message);
+    this.reason = reason;
+  }
 }
 
 export interface FolderFiles {
@@ -72,15 +78,18 @@ export async function readSkillFolder(root: string): Promise<FolderFiles> {
       }
       const stat = await NodeFSP.lstat(absolute);
       if (stat.size > MAX_RESOURCE_BYTES) {
-        throw new SkillFolderError(`${relative} is larger than the 1 MiB a skill file can be.`);
+        throw new SkillFolderError(
+          `${relative} is larger than the 1 MiB a skill file can be.`,
+          "too-large",
+        );
       }
       count += 1;
       total += stat.size;
       if (count > MAX_RELEASE_FILES) {
-        throw new SkillFolderError(`It has more than ${MAX_RELEASE_FILES} files.`);
+        throw new SkillFolderError(`It has more than ${MAX_RELEASE_FILES} files.`, "too-large");
       }
       if (total > MAX_RELEASE_BYTES) {
-        throw new SkillFolderError("It is larger than the 5 MiB a skill can be.");
+        throw new SkillFolderError("It is larger than the 5 MiB a skill can be.", "too-large");
       }
       files[relative] = new Uint8Array(await NodeFSP.readFile(absolute));
     }
@@ -246,7 +255,7 @@ export async function writeSkillFolder(input: {
     for (const [relative, bytes] of Object.entries(input.files)) {
       const destination = NodePath.join(staging, ...relative.split("/"));
       if (!destination.startsWith(staging + NodePath.sep)) {
-        throw new SkillFolderError(`${relative} is outside the skill.`);
+        throw new SkillFolderError(`${relative} is outside the skill.`, "unsafe");
       }
       await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
       await NodeFSP.writeFile(destination, bytes, { flag: "wx" });
@@ -282,7 +291,8 @@ export async function removeSkillFolder(input: {
   readonly stamp: string;
 }): Promise<void> {
   const target = NodePath.join(input.root, input.name);
-  if (!(await exists(target))) throw new SkillFolderError("That skill is not there anymore.");
+  if (!(await exists(target)))
+    throw new SkillFolderError("That skill is not there anymore.", "not-found");
   await remember(input.historyRoot, input.name, "removed", target, input.stamp);
   await pruneHistory(input.historyRoot, input.name);
 }
@@ -297,7 +307,8 @@ export async function restoreSkillFolder(input: {
   readonly name: string;
 }): Promise<HistoryKind> {
   const last = await latestHistory(input.historyRoot, input.name);
-  if (last === undefined) throw new SkillFolderError("There is no earlier version to go back to.");
+  if (last === undefined)
+    throw new SkillFolderError("There is no earlier version to go back to.", "no-history");
   const target = NodePath.join(input.root, input.name);
   const discarded = NodePath.join(
     input.root,

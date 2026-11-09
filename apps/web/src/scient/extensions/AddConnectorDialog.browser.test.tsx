@@ -1040,7 +1040,7 @@ describe("local connectors", () => {
     );
 
     await press("Finish with an agent");
-    expect(state.startChat).toHaveBeenCalledWith("finish pcr from class-notes");
+    expect(state.startChat).toHaveBeenCalledWith("finish pcr from class-notes", "finish");
   });
 
   it("reads pasted text as a skill", async () => {

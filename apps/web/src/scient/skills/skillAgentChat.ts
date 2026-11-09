@@ -8,10 +8,14 @@ import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 
 import { useNewThreadHandler } from "../../hooks/useHandleNewThread";
 import { useScratchProject } from "../../hooks/useScratchProject";
-import { useEnvironmentScope } from "../../state/session";
+import { readPreparedConnection, useEnvironmentScope } from "../../state/session";
+import { recordScientAnalytics } from "../analytics/client";
 
 /** Scient's built-in guide for writing skills, selected by name in the first message. */
 const AUTHORING = "$scient-skill-authoring";
+
+/** Why a chat about a skill was opened: finish rough material, rename one, improve or fix one. */
+export type SkillChatPurpose = "finish" | "rename" | "improve" | "fix";
 
 /**
  * Opens a new chat, outside any project, with a first message written for the user. The user
@@ -22,11 +26,23 @@ export function useSkillAgentChat(environmentId: EnvironmentId) {
   const { openScratchProject, scratchWorkspaceRootFor } = useScratchProject();
   const canOperate = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   if (!canOperate || scratchWorkspaceRootFor(environmentId) === null) return undefined;
-  return async (prompt: string): Promise<boolean> => {
-    const project = await openScratchProject(environmentId);
-    if (!project) return false;
-    const opened = await newThread(scopeProjectRef(project.environmentId, project.id), { prompt });
-    return opened !== null;
+  const record = (purpose: SkillChatPurpose, outcome: "ok" | "error") =>
+    recordScientAnalytics(readPreparedConnection(environmentId), {
+      name: "feature.used",
+      properties: { feature: "skills.personal.agent_chat", variant: purpose, outcome },
+    });
+  return async (prompt: string, purpose: SkillChatPurpose): Promise<boolean> => {
+    try {
+      const project = await openScratchProject(environmentId);
+      const opened = project
+        ? await newThread(scopeProjectRef(project.environmentId, project.id), { prompt })
+        : null;
+      record(purpose, opened ? "ok" : "error");
+      return opened !== null;
+    } catch (error) {
+      record(purpose, "error");
+      throw error;
+    }
   };
 }
 

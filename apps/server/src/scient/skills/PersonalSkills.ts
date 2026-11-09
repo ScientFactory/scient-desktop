@@ -22,17 +22,21 @@ import {
 import {
   type ImportableSkill,
   type PersonalSkillDetails,
+  type PersonalSkillFailure,
   type PersonalSkillInspection,
   type PersonalSkillSource,
   ScientSkillManagementError,
   type ScientSkillInventoryDiagnostic,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
@@ -40,6 +44,7 @@ import { HttpClient } from "effect/http";
 import * as yazl from "yazl";
 
 import * as ServerConfig from "../../config.ts";
+import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import {
   latestHistory,
   folderSignature,
@@ -127,6 +132,7 @@ const unavailable = (operation: string) =>
     new ScientSkillManagementError({
       operation,
       message: "Personal skills are unavailable in this server composition.",
+      reason: "unavailable",
     }),
   );
 
@@ -167,11 +173,12 @@ type SourcesFile = typeof SourcesFile.Type;
 interface Staged {
   readonly createdAt: number;
   readonly source: SkillSourceRecord;
+  readonly kind: SourceKind;
   readonly candidates: ReadonlyMap<string, StagedCandidate>;
 }
 
-const managementError = (operation: string, message: string) =>
-  new ScientSkillManagementError({ operation, message });
+const managementError = (operation: string, message: string, reason: PersonalSkillFailure) =>
+  new ScientSkillManagementError({ operation, message, reason });
 
 const messageOf = (cause: unknown, fallback: string) =>
   cause instanceof SkillFolderError ||
@@ -180,6 +187,37 @@ const messageOf = (cause: unknown, fallback: string) =>
     : cause instanceof Error && cause.name === "SkillDocumentError"
       ? cause.message
       : fallback;
+
+/** The failure code for an error from the folder helpers or skill checks. */
+const reasonOf = (cause: unknown, fallback: PersonalSkillFailure): PersonalSkillFailure =>
+  cause instanceof SkillFolderError
+    ? cause.reason
+    : cause instanceof Error &&
+        (cause.name === "SkillReleaseValidationError" || cause.name === "SkillDocumentError")
+      ? "invalid-skill"
+      : fallback;
+
+/** Where a skill came from, as analytics counts it. */
+type SourceKind =
+  | "folder"
+  | "zip"
+  | "skill-file"
+  | "document"
+  | "text"
+  | "web"
+  | ImportableSkill["app"]
+  | "other";
+
+/** What a step tells analytics about itself. */
+type Note = Record<string, string | number | boolean>;
+
+/** The note of the step running now; `observed` gives each call its own. */
+class StepNote extends Context.Service<StepNote, Note>()(
+  "t3/scient/skills/PersonalSkills/StepNote",
+) {}
+
+const ARCHIVE_NAME = /\.(zip|skill)$/iu;
+const DOCUMENT_NAME = /\.(md|markdown|txt)$/iu;
 
 const zipFolder = (name: string, files: Readonly<Record<string, Uint8Array>>) =>
   new Promise<Buffer>((resolve, reject) => {
@@ -202,6 +240,72 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
   // Other agents' folders are found from the home folder and environment Scient started with.
   const home = yield* HostProcess.HomeDirectory;
   const env = yield* HostProcess.Environment;
+  const analytics = Option.getOrUndefined(yield* Effect.serviceOption(AnalyticsService));
+  const otherApps: ReadonlyArray<readonly [ImportableSkill["app"], string, string]> = [
+    [
+      "claude",
+      "Claude Code",
+      NodePath.join(env.CLAUDE_CONFIG_DIR ?? NodePath.join(home, ".claude"), "skills"),
+    ],
+    ["codex", "Codex", NodePath.join(env.CODEX_HOME ?? NodePath.join(home, ".codex"), "skills")],
+    ["cursor", "Cursor", NodePath.join(home, ".cursor", "skills")],
+    ["agents", "Other agents", NodePath.join(home, ".agents", "skills")],
+  ];
+
+  const sourceKind = (source: PersonalSkillSource): Effect.Effect<SourceKind> => {
+    if (source.type === "url") return Effect.succeed("web");
+    if (source.type === "text") return Effect.succeed("text");
+    const path = NodePath.resolve(source.path);
+    const app = otherApps.find(([, , folder]) => path.startsWith(folder + NodePath.sep));
+    if (app) return Effect.succeed(app[0]);
+    const base = NodePath.basename(path);
+    if (base === SKILL_DOCUMENT_FILE) return Effect.succeed("skill-file");
+    if (ARCHIVE_NAME.test(base)) return Effect.succeed("zip");
+    if (DOCUMENT_NAME.test(base)) return Effect.succeed("document");
+    return Effect.promise((): Promise<SourceKind> =>
+      NodeFSP.stat(path).then(
+        (stat) => (stat.isDirectory() ? "folder" : "other"),
+        () => "other",
+      ),
+    );
+  };
+
+  /**
+   * Counts each call of a step as `feature.used` with its outcome and failure code. The step adds
+   * what it learns to its `StepNote`: fixed codes and counts, and a public address, never a name,
+   * path or text. A broken recorder never affects the step.
+   */
+  const observed =
+    (feature: string, facts: Note = {}) =>
+    <A, R>(
+      step: Effect.Effect<A, ScientSkillManagementError, R>,
+    ): Effect.Effect<A, ScientSkillManagementError, Exclude<R, StepNote>> => {
+      const note: Note = { ...facts };
+      const run = Effect.provideService(step, StepNote, note);
+      if (analytics === undefined) return run;
+      return Effect.flatMap(Clock.currentTimeMillis, (startedAt) =>
+        run.pipe(
+          Effect.onExit((exit) =>
+            Effect.flatMap(Clock.currentTimeMillis, (finishedAt) =>
+              analytics.record("feature.used", {
+                feature,
+                ...note,
+                ...(Exit.isSuccess(exit)
+                  ? { outcome: "ok" }
+                  : {
+                      outcome: Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "error",
+                      failureClass: Option.match(Cause.findErrorOption(exit.cause), {
+                        onNone: () => "unknown",
+                        onSome: (error) => error.reason ?? "unknown",
+                      }),
+                    }),
+                durationMs: finishedAt - startedAt,
+              }),
+            ).pipe(Effect.ignoreCause()),
+          ),
+        ),
+      );
+    };
   const root = NodePath.join(config.stateDir, "skills");
   const historyRoot = NodePath.join(config.stateDir, "skill-history");
   const draftsRoot = NodePath.join(config.stateDir, "skill-drafts");
@@ -328,12 +432,18 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
   }) {
     const release = yield* Effect.try({
       try: () => personalSkillReleaseFromFiles(input.name, input.files),
-      catch: (cause) => managementError("save", messageOf(cause, "That is not a valid skill.")),
+      catch: (cause) =>
+        managementError(
+          "save",
+          messageOf(cause, "That is not a valid skill."),
+          reasonOf(cause, "invalid-skill"),
+        ),
     });
     if ((yield* takenByOthers).has(input.name.toLowerCase())) {
       return yield* managementError(
         "save",
         `A skill built into Scient or a plugin is already named '${input.name}'. Choose another name.`,
+        "name-taken",
       );
     }
     // Limits are checked on the folder as it is now, before anything is written, so a save
@@ -343,12 +453,14 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
       return yield* managementError(
         "save",
         `You have ${MAX_PERSONAL_SKILLS} skills, the most Scient keeps. Remove one first.`,
+        "limit",
       );
     }
     if (usage.bytes + release.snapshotBytes > MAX_PERSONAL_SKILL_BYTES) {
       return yield* managementError(
         "save",
         "Your skills would pass the 100 MiB Scient keeps. Remove one or make this one smaller.",
+        "limit",
       );
     }
     const stamp = yield* historyStamp;
@@ -356,7 +468,11 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
       try: () =>
         writeSkillFolder({ root, historyRoot, name: input.name, files: input.files, stamp }),
       catch: (cause) =>
-        managementError("save", messageOf(cause, "Scient could not save the skill.")),
+        managementError(
+          "save",
+          messageOf(cause, "Scient could not save the skill."),
+          reasonOf(cause, "write-failed"),
+        ),
     });
     const sources = yield* readSources;
     const previous = sources[input.name];
@@ -403,6 +519,9 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
 
   const inspect: PersonalSkillsShape["inspect"] = Effect.fn("PersonalSkills.inspect")(
     function* (source) {
+      const note = yield* StepNote;
+      const kind = yield* sourceKind(source);
+      note.variant = kind;
       const stagingId = NodeCrypto.randomUUID();
       const work = NodePath.join(draftsRoot, stagingId);
       const result = yield* (
@@ -413,14 +532,23 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
             : fromText(source.text, source.name, work)
       ).pipe(Effect.provideService(HttpClient.HttpClient, http));
       if (result.kind === "none") {
+        note.found = 0;
         yield* Effect.promise(() => NodeFSP.rm(work, { recursive: true, force: true }));
         return { kind: "none" } as const;
+      }
+      const ready = result.candidates.filter((candidate) => candidate.status === "ready").length;
+      note.found = result.candidates.length;
+      note.ready = ready;
+      note.needsAgent = result.candidates.length - ready;
+      if (result.source.kind === "url" && result.source.publicAddress) {
+        note.publicSource = result.source.publicAddress;
       }
       const now = yield* Clock.currentTimeMillis;
       sweepStaged(now);
       staged.set(stagingId, {
         createdAt: now,
         source: result.source,
+        kind,
         candidates: new Map(result.candidates.map((candidate) => [candidate.key, candidate])),
       });
       const existing = new Set((yield* published).map((release) => release.name));
@@ -446,55 +574,94 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
         })),
       } satisfies PersonalSkillInspection;
     },
+    observed("skills.personal.inspect", { trigger: "user" }),
   );
 
-  const add: PersonalSkillsShape["add"] = Effect.fn("PersonalSkills.add")(function* (input) {
-    const entry = staged.get(input.stagingId);
-    if (entry === undefined) {
-      return yield* managementError("add", "That expired. Choose the file or address again.");
-    }
-    const added: string[] = [];
-    for (const key of input.keys) {
-      const candidate = entry.candidates.get(key);
-      if (candidate?.status !== "ready" || !candidate.name || !candidate.files) {
-        return yield* managementError("add", "That skill needs an agent to finish it first.");
+  const add: PersonalSkillsShape["add"] = Effect.fn("PersonalSkills.add")(
+    function* (input) {
+      const note = yield* StepNote;
+      const entry = staged.get(input.stagingId);
+      if (entry === undefined) {
+        return yield* managementError(
+          "add",
+          "That expired. Choose the file or address again.",
+          "expired",
+        );
       }
-      yield* store({
-        name: candidate.name,
-        files: candidate.files,
-        source: entry.source.label,
-        changedBy: "you",
-      });
-      added.push(candidate.name);
-    }
-    return added;
-  });
+      note.variant = entry.kind;
+      if (entry.source.kind === "url" && entry.source.publicAddress) {
+        note.publicSource = entry.source.publicAddress;
+      }
+      const added: string[] = [];
+      let created = 0;
+      for (const key of input.keys) {
+        const candidate = entry.candidates.get(key);
+        if (candidate?.status !== "ready" || !candidate.name || !candidate.files) {
+          return yield* managementError(
+            "add",
+            "That skill needs an agent to finish it first.",
+            "invalid-skill",
+          );
+        }
+        const saved = yield* store({
+          name: candidate.name,
+          files: candidate.files,
+          source: entry.source.label,
+          changedBy: "you",
+        });
+        added.push(candidate.name);
+        if (saved.created) created += 1;
+        note.added = added.length;
+        note.created = created;
+        note.replaced = added.length - created;
+      }
+      return added;
+    },
+    observed("skills.personal.add", { trigger: "user" }),
+  );
 
-  const save: PersonalSkillsShape["save"] = Effect.fn("PersonalSkills.save")(function* (input) {
-    if (!SKILL_NAME.test(input.name) || input.name.length > 64) {
-      return yield* managementError(
-        "save",
-        "A skill name is lowercase words joined by hyphens, at most 64 characters.",
+  const save: PersonalSkillsShape["save"] = Effect.fn("PersonalSkills.save")(
+    function* (input) {
+      const note = yield* StepNote;
+      note.files = Object.keys(input.files).length;
+      if (!SKILL_NAME.test(input.name) || input.name.length > 64) {
+        return yield* managementError(
+          "save",
+          "A skill name is lowercase words joined by hyphens, at most 64 characters.",
+          "invalid-skill",
+        );
+      }
+      const document = input.files[SKILL_DOCUMENT_FILE];
+      if (document === undefined) {
+        return yield* managementError("save", "Include SKILL.md.", "invalid-skill");
+      }
+      const draft = prepareSkillDocument(document, input.name);
+      if (draft.status === "needs-agent") {
+        return yield* managementError("save", draft.reason, "invalid-skill");
+      }
+      if (draft.name !== input.name) {
+        return yield* managementError(
+          "save",
+          `SKILL.md is named '${draft.name}'; set its name to '${input.name}' or save it under that name.`,
+          "invalid-skill",
+        );
+      }
+      const encoder = new TextEncoder();
+      const files = Object.fromEntries(
+        Object.entries(input.files).map(([path, text]) => [path, encoder.encode(text)]),
       );
-    }
-    const document = input.files[SKILL_DOCUMENT_FILE];
-    if (document === undefined) {
-      return yield* managementError("save", "Include SKILL.md.");
-    }
-    const draft = prepareSkillDocument(document, input.name);
-    if (draft.status === "needs-agent") return yield* managementError("save", draft.reason);
-    if (draft.name !== input.name) {
-      return yield* managementError(
-        "save",
-        `SKILL.md is named '${draft.name}'; set its name to '${input.name}' or save it under that name.`,
-      );
-    }
-    const encoder = new TextEncoder();
-    const files = Object.fromEntries(
-      Object.entries(input.files).map(([path, text]) => [path, encoder.encode(text)]),
-    );
-    return yield* store({ name: input.name, files, source: undefined, changedBy: "agent" });
-  });
+      const saved = yield* store({
+        name: input.name,
+        files,
+        source: undefined,
+        changedBy: "agent",
+      });
+      note.variant = saved.created ? "created" : "updated";
+      note.withheld = saved.withheld !== undefined;
+      return saved;
+    },
+    observed("skills.personal.save", { trigger: "agent" }),
+  );
 
   const requireSkill = Effect.fn("PersonalSkills.requireSkill")(function* (
     operation: string,
@@ -503,7 +670,7 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
     yield* refresh;
     const release = yield* releaseNamed(name);
     if (release === undefined) {
-      return yield* managementError(operation, `You have no skill named '${name}'.`);
+      return yield* managementError(operation, `You have no skill named '${name}'.`, "not-found");
     }
     return release;
   });
@@ -512,7 +679,12 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
     yield* requireSkill("read", name);
     const { files } = yield* Effect.tryPromise({
       try: () => readSkillFolder(NodePath.join(root, name)),
-      catch: (cause) => managementError("read", messageOf(cause, "That skill could not be read.")),
+      catch: (cause) =>
+        managementError(
+          "read",
+          messageOf(cause, "That skill could not be read."),
+          reasonOf(cause, "unreadable"),
+        ),
     });
     return Object.entries(files).map(([path, bytes]): SavedSkillFile => {
       try {
@@ -527,31 +699,47 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
     });
   });
 
-  const remove: PersonalSkillsShape["remove"] = Effect.fn("PersonalSkills.remove")(function* (
-    name,
-  ) {
-    // A broken folder can be removed too, so it is checked by name, not as a skill.
-    if (!isSkillFolderName(name)) {
-      return yield* managementError("remove", "That is not one of your skills.");
-    }
-    const stamp = yield* historyStamp;
-    yield* Effect.tryPromise({
-      try: () => removeSkillFolder({ root, historyRoot, name, stamp }),
-      catch: (cause) => managementError("remove", messageOf(cause, "Scient could not remove it.")),
-    });
-    yield* republishHeld;
-  }, serial);
+  const remove: PersonalSkillsShape["remove"] = Effect.fn("PersonalSkills.remove")(
+    function* (name) {
+      // A broken folder can be removed too, so it is checked by name, not as a skill.
+      if (!isSkillFolderName(name)) {
+        return yield* managementError("remove", "That is not one of your skills.", "not-found");
+      }
+      const stamp = yield* historyStamp;
+      yield* Effect.tryPromise({
+        try: () => removeSkillFolder({ root, historyRoot, name, stamp }),
+        catch: (cause) =>
+          managementError(
+            "remove",
+            messageOf(cause, "Scient could not remove it."),
+            reasonOf(cause, "write-failed"),
+          ),
+      });
+      yield* republishHeld;
+    },
+    serial,
+    observed("skills.personal.remove", { trigger: "user" }),
+  );
 
-  const undo: PersonalSkillsShape["undo"] = Effect.fn("PersonalSkills.undo")(function* (name) {
-    if (!isSkillFolderName(name)) {
-      return yield* managementError("undo", "That is not one of your skills.");
-    }
-    yield* Effect.tryPromise({
-      try: () => restoreSkillFolder({ root, historyRoot, name }),
-      catch: (cause) => managementError("undo", messageOf(cause, "Scient could not undo it.")),
-    });
-    yield* republishHeld;
-  }, serial);
+  const undo: PersonalSkillsShape["undo"] = Effect.fn("PersonalSkills.undo")(
+    function* (name) {
+      if (!isSkillFolderName(name)) {
+        return yield* managementError("undo", "That is not one of your skills.", "not-found");
+      }
+      yield* Effect.tryPromise({
+        try: () => restoreSkillFolder({ root, historyRoot, name }),
+        catch: (cause) =>
+          managementError(
+            "undo",
+            messageOf(cause, "Scient could not undo it."),
+            reasonOf(cause, "write-failed"),
+          ),
+      });
+      yield* republishHeld;
+    },
+    serial,
+    observed("skills.personal.undo", { trigger: "user" }),
+  );
 
   const exportZip: PersonalSkillsShape["exportZip"] = Effect.fn("PersonalSkills.export")(
     function* (name) {
@@ -559,27 +747,22 @@ const make = Effect.fn("PersonalSkills.make")(function* () {
       const bytes = yield* Effect.tryPromise({
         try: async () => zipFolder(name, (await readSkillFolder(NodePath.join(root, name))).files),
         catch: (cause) =>
-          managementError("export", messageOf(cause, "Scient could not export it.")),
+          managementError(
+            "export",
+            messageOf(cause, "Scient could not export it."),
+            reasonOf(cause, "unreadable"),
+          ),
       });
       return { fileName: `${name}.zip`, base64: bytes.toString("base64") };
     },
+    observed("skills.personal.export", { trigger: "user" }),
   );
 
   const importables: PersonalSkillsShape["importables"] = Effect.gen(function* () {
-    const places: ReadonlyArray<readonly [ImportableSkill["app"], string, string]> = [
-      [
-        "claude",
-        "Claude Code",
-        NodePath.join(env.CLAUDE_CONFIG_DIR ?? NodePath.join(home, ".claude"), "skills"),
-      ],
-      ["codex", "Codex", NodePath.join(env.CODEX_HOME ?? NodePath.join(home, ".codex"), "skills")],
-      ["cursor", "Cursor", NodePath.join(home, ".cursor", "skills")],
-      ["agents", "Other agents", NodePath.join(home, ".agents", "skills")],
-    ];
     const mine = new Set((yield* published).map((release) => release.name));
     return yield* Effect.promise(async () => {
       const found: ImportableSkill[] = [];
-      for (const [app, appLabel, folder] of places) {
+      for (const [app, appLabel, folder] of otherApps) {
         const entries = await NodeFSP.readdir(folder, { withFileTypes: true }).catch(() => []);
         for (const entry of entries) {
           if (!entry.isDirectory() || entry.name.startsWith(".")) continue;

@@ -42,6 +42,7 @@ import {
   listImportableSkills,
   undoPersonalSkill,
 } from "../skills/scientSkillsState";
+import { useScientAnalyticsView } from "../analytics/client";
 import { finishSkillPrompt, useSkillAgentChat } from "../skills/skillAgentChat";
 import { canAddCandidate, ImportableSkillRows, SkillCandidateRows } from "./AddSkillsRows";
 import { commandFailureMessage, ErrorNote } from "./ExtensionsFeedback";
@@ -238,6 +239,15 @@ export function AddLocalConnectorDialog({
   const [showImports, setShowImports] = useState(false);
   const [dragging, setDragging] = useState(false);
   const startChat = useSkillAgentChat(environmentId);
+  useScientAnalyticsView(
+    open
+      ? {
+          name: "feature.viewed",
+          properties: { feature: skillsFirst ? "add-skills" : "add-connector" },
+        }
+      : null,
+    environmentId,
+  );
   const [answers, setAnswers] = useState<Record<string, SetupAnswer>>(() =>
     entry ? initialAnswers(packageFields(entry), accounts) : {},
   );
@@ -327,7 +337,8 @@ export function AddLocalConnectorDialog({
 
   const finishWithAgent = async (candidate: PersonalSkillCandidate, sourceLabel: string) => {
     if (!startChat) return;
-    if (await startChat(finishSkillPrompt(candidate, sourceLabel))) onOpenChange(false);
+    const purpose = candidate.conflict ? "rename" : "finish";
+    if (await startChat(finishSkillPrompt(candidate, sourceLabel), purpose)) onOpenChange(false);
     else setError("Scient could not open a new chat.");
   };
 

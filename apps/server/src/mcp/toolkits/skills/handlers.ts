@@ -6,9 +6,11 @@ import {
 } from "@scientfactory/scient-skills";
 import type { ScientSkillManagementError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as PersonalSkills from "../../../scient/skills/PersonalSkills.ts";
+import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
 import { ScientSkillToolError, ScientSkillsToolkit, type ScientSkillListInput } from "./tools.ts";
 
 const compareStrings = (left: string, right: string): number =>
@@ -236,12 +238,31 @@ const readPersonalSkillForInvocation = Effect.fn("ScientSkillsToolkit.readPerson
   return { name: input.name, files: [...files] };
 });
 
+/**
+ * Which skill an agent loaded: the name of one built into Scient, otherwise only where it came
+ * from, since the user's, a project's and a plugin's skill names are theirs.
+ */
+export const loadedSkillFacts = (release: Pick<SkillRelease, "name" | "origin">) =>
+  release.origin === "scient"
+    ? { feature: "skills.load", variant: "scient", skill: release.name }
+    : { feature: "skills.load", variant: release.origin.split(":", 1)[0] ?? "other" };
+
 export const ScientSkillsToolkitHandlersLive = ScientSkillsToolkit.toLayer(
   Effect.gen(function* () {
     const personal = yield* PersonalSkills.PersonalSkills;
+    const analytics = Option.getOrUndefined(yield* Effect.serviceOption(AnalyticsService));
     return {
       scient_skills_list: listScientSkillsForInvocation,
-      scient_skill_load: loadScientSkillForInvocation,
+      scient_skill_load: (input) =>
+        loadScientSkillForInvocation(input).pipe(
+          Effect.tap((loaded) =>
+            analytics === undefined
+              ? Effect.void
+              : analytics
+                  .record("feature.used", loadedSkillFacts(loaded.skill))
+                  .pipe(Effect.ignoreCause()),
+          ),
+        ),
       scient_skill_read_resource: readScientSkillResourceForInvocation,
       scient_skill_save: (input) => savePersonalSkillForInvocation(personal, input),
       scient_skill_read: (input) => readPersonalSkillForInvocation(personal, input),

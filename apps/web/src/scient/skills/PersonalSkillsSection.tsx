@@ -25,7 +25,12 @@ import {
   undoPersonalSkill,
 } from "./scientSkillsState";
 import { SkillSettingsRow } from "./SkillSettingsRow";
-import { fixSkillPrompt, improveSkillPrompt, useSkillAgentChat } from "./skillAgentChat";
+import {
+  fixSkillPrompt,
+  improveSkillPrompt,
+  type SkillChatPurpose,
+  useSkillAgentChat,
+} from "./skillAgentChat";
 
 const PERSONAL_PROBLEMS = new Set([
   "personal-skill-invalid",
@@ -146,9 +151,9 @@ export function PersonalSkillsSection({
       });
   };
 
-  const ask = (prompt: string) => {
+  const ask = (prompt: string, purpose: SkillChatPurpose) => {
     if (!startChat) return;
-    void startChat(prompt).then((opened) => {
+    void startChat(prompt, purpose).then((opened) => {
       if (!opened) toastManager.add({ type: "error", title: "Could not open a new chat" });
     });
   };
@@ -222,7 +227,7 @@ export function PersonalSkillsSection({
                     </MenuTrigger>
                     <MenuPopup align="end">
                       {startChat ? (
-                        <MenuItem onClick={() => ask(improveSkillPrompt(skill.name))}>
+                        <MenuItem onClick={() => ask(improveSkillPrompt(skill.name), "improve")}>
                           Improve with an agent
                         </MenuItem>
                       ) : null}
@@ -257,7 +262,10 @@ export function PersonalSkillsSection({
             onFix={
               startChat && problem.path
                 ? () =>
-                    ask(fixSkillPrompt(folderName(problem.path!), problem.message, problem.path!))
+                    ask(
+                      fixSkillPrompt(folderName(problem.path!), problem.message, problem.path!),
+                      "fix",
+                    )
                 : undefined
             }
             onRemove={problem.path ? () => void removeSkill(folderName(problem.path!)) : undefined}

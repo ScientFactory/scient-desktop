@@ -17,13 +17,18 @@ import {
   SKILL_DOCUMENT_FILE,
   skillNameFrom,
 } from "@scientfactory/scient-skills";
-import { ScientSkillManagementError } from "@t3tools/contracts";
+import { type PersonalSkillFailure, ScientSkillManagementError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest } from "effect/http";
 
 import { openZipArchive } from "../../zipArchive.ts";
-import { findSkillFolders, materialFiles, readSkillFolder } from "./PersonalSkillFiles.ts";
+import {
+  findSkillFolders,
+  materialFiles,
+  readSkillFolder,
+  SkillFolderError,
+} from "./PersonalSkillFiles.ts";
 
 const MAX_ARCHIVE_BYTES = 50 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRIES = 5_000;
@@ -35,7 +40,12 @@ const ARCHIVE_FILE = /\.(zip|skill)$/iu;
 
 export type SkillSourceRecord =
   | { readonly kind: "file"; readonly label: string }
-  | { readonly kind: "url"; readonly label: string }
+  | {
+      readonly kind: "url";
+      readonly label: string;
+      /** Set when the download came from a public code host; see `publicSkillAddress`. */
+      readonly publicAddress?: string;
+    }
   | { readonly kind: "text"; readonly label: string };
 
 export interface StagedCandidate {
@@ -59,8 +69,8 @@ export type SkillSourceResult =
       readonly candidates: ReadonlyArray<StagedCandidate>;
     };
 
-const sourceError = (message: string) =>
-  new ScientSkillManagementError({ operation: "inspect", message });
+const sourceError = (message: string, reason: PersonalSkillFailure) =>
+  new ScientSkillManagementError({ operation: "inspect", message, reason });
 
 const NONE: SkillSourceResult = { kind: "none" };
 
@@ -147,6 +157,7 @@ const fromSkillFolder = (key: string, folder: string) =>
     catch: (cause) =>
       sourceError(
         `${NodePath.basename(folder)}: ${cause instanceof Error ? cause.message : "it could not be read."}`,
+        cause instanceof SkillFolderError ? cause.reason : "unreadable",
       ),
   });
 
@@ -217,7 +228,7 @@ const readText = (file: string) =>
       if (stat.size > MAX_TEXT_BYTES) throw new Error("too large");
       return decode(await NodeFSP.readFile(file));
     },
-    catch: () => sourceError("That file could not be read, or is larger than 1 MiB."),
+    catch: () => sourceError("That file could not be read, or is larger than 1 MiB.", "unreadable"),
   });
 
 /** Unpack an archive's regular files; links and clutter are left out. */
@@ -229,10 +240,10 @@ const unpack = Effect.fn("PersonalSkillSources.unpack")(function* (
   yield* Effect.scoped(
     Effect.gen(function* () {
       const archive = yield* openZipArchive(archivePath, () =>
-        sourceError("That archive could not be read."),
+        sourceError("That archive could not be read.", "unreadable"),
       );
       if (archive.entryCount > MAX_ARCHIVE_ENTRIES) {
-        return yield* sourceError("That archive has too many files.");
+        return yield* sourceError("That archive has too many files.", "too-large");
       }
       let total = 0;
       for (;;) {
@@ -243,7 +254,7 @@ const unpack = Effect.fn("PersonalSkillSources.unpack")(function* (
         if (((entry.externalFileAttributes >>> 16) & 0o170000) === 0o120000) continue;
         const destination = NodePath.join(target, name);
         if (!destination.startsWith(target + NodePath.sep)) {
-          return yield* sourceError("That archive has a file outside its folder.");
+          return yield* sourceError("That archive has a file outside its folder.", "unsafe");
         }
         if (name.endsWith("/")) {
           yield* Effect.promise(() => NodeFSP.mkdir(destination, { recursive: true }));
@@ -251,7 +262,7 @@ const unpack = Effect.fn("PersonalSkillSources.unpack")(function* (
         }
         total += entry.uncompressedSize;
         if (total > MAX_ARCHIVE_BYTES) {
-          return yield* sourceError("That archive is larger than 50 MiB unpacked.");
+          return yield* sourceError("That archive is larger than 50 MiB unpacked.", "too-large");
         }
         const readable = yield* archive.streamEntry(entry);
         yield* Effect.tryPromise({
@@ -262,7 +273,7 @@ const unpack = Effect.fn("PersonalSkillSources.unpack")(function* (
               NodeFS.createWriteStream(destination, { flags: "wx" }),
             );
           },
-          catch: () => sourceError("That archive could not be unpacked."),
+          catch: () => sourceError("That archive could not be unpacked.", "unreadable"),
         });
       }
     }),
@@ -295,7 +306,7 @@ export const fromPath = Effect.fn("PersonalSkillSources.fromPath")(function* (
 ) {
   const stat = yield* Effect.tryPromise({
     try: () => NodeFSP.stat(path),
-    catch: () => sourceError("Scient could not find that file or folder."),
+    catch: () => sourceError("Scient could not find that file or folder.", "not-found"),
   });
   const source: SkillSourceRecord = { kind: "file", label: NodePath.basename(path) };
   const done = (candidates: ReadonlyArray<StagedCandidate>): SkillSourceResult =>
@@ -325,7 +336,7 @@ export const fromText = Effect.fn("PersonalSkillSources.fromText")(function* (
       await NodeFSP.mkdir(work, { recursive: true });
       await NodeFSP.writeFile(materialPath, text);
     },
-    catch: () => sourceError("Scient could not keep the pasted text."),
+    catch: () => sourceError("Scient could not keep the pasted text.", "write-failed"),
   });
   return {
     kind: "skills",
@@ -391,6 +402,37 @@ export const webSkillSource = (address: string): WebSkillSource | undefined => {
   return undefined;
 };
 
+/** Code hosts whose files anyone can download, so an address on them names nothing private. */
+const PUBLIC_HOSTS = new Set([
+  "github.com",
+  "raw.githubusercontent.com",
+  "gist.github.com",
+  "gist.githubusercontent.com",
+  "gitlab.com",
+  "huggingface.co",
+  "codeberg.org",
+  "bitbucket.org",
+]);
+
+/**
+ * The host and path of an address on a public code host, without scheme, query or fragment, so
+ * analytics can count which shared skills people add. Scient downloads without signing in, so a
+ * download that worked was public.
+ */
+export const publicSkillAddress = (address: string): string | undefined => {
+  let url: URL;
+  try {
+    url = new URL(address);
+  } catch {
+    return undefined;
+  }
+  if (url.username || url.password) return undefined;
+  const host = url.hostname.toLowerCase().replace(/^www\./u, "");
+  if (!PUBLIC_HOSTS.has(host)) return undefined;
+  const value = `${host}${url.pathname.replace(/\/+$/u, "")}`;
+  return value.length <= 200 ? value : undefined;
+};
+
 /** A web address: a GitHub repository or folder, a `SKILL.md` or text file, or an archive. */
 export const fromUrl = Effect.fn("PersonalSkillSources.fromUrl")(function* (
   address: string,
@@ -404,6 +446,7 @@ export const fromUrl = Effect.fn("PersonalSkillSources.fromUrl")(function* (
     web.as === "archive"
       ? "That download is larger than 50 MiB."
       : "That file is larger than 1 MiB.",
+    "too-large",
   );
   const bytes = yield* Effect.gen(function* () {
     const response = yield* http.execute(HttpClientRequest.get(web.download));
@@ -412,6 +455,7 @@ export const fromUrl = Effect.fn("PersonalSkillSources.fromUrl")(function* (
         response.status === 404
           ? "Nothing was found at that address. If it is private, download it and add the file."
           : `That address answered with HTTP ${response.status}.`,
+        response.status === 404 ? "not-found" : "download-failed",
       );
     }
     if (Number(response.headers["content-length"] ?? "0") > limit) return yield* tooLarge;
@@ -431,17 +475,22 @@ export const fromUrl = Effect.fn("PersonalSkillSources.fromUrl")(function* (
     Effect.mapError((error) =>
       error._tag === "ScientSkillManagementError"
         ? error
-        : sourceError("Scient could not download that address."),
+        : sourceError("Scient could not download that address.", "download-failed"),
     ),
   );
-  const source: SkillSourceRecord = { kind: "url", label: address };
+  const publicAddress = publicSkillAddress(address);
+  const source: SkillSourceRecord = {
+    kind: "url",
+    label: address,
+    ...(publicAddress ? { publicAddress } : {}),
+  };
   const file = NodePath.join(work, web.fileName);
   yield* Effect.tryPromise({
     try: async () => {
       await NodeFSP.mkdir(work, { recursive: true });
       await NodeFSP.writeFile(file, bytes);
     },
-    catch: () => sourceError("Scient could not keep the download."),
+    catch: () => sourceError("Scient could not keep the download.", "write-failed"),
   });
   let candidates: ReadonlyArray<StagedCandidate>;
   if (web.as === "text") {
@@ -457,7 +506,7 @@ export const fromUrl = Effect.fn("PersonalSkillSources.fromUrl")(function* (
     const root = yield* archiveRoot(target);
     const inside = web.inside ? NodePath.join(root, ...web.inside.split("/")) : root;
     if (!inside.startsWith(root))
-      return yield* sourceError("That address is not inside its repository.");
+      return yield* sourceError("That address is not inside its repository.", "unsafe");
     const isFile = yield* Effect.promise(() =>
       NodeFSP.stat(inside).then(
         (stat) => stat.isFile(),
@@ -476,7 +525,7 @@ export const fromUrl = Effect.fn("PersonalSkillSources.fromUrl")(function* (
       : yield* fromFolder(inside);
   }
   if (candidates.length === 0) {
-    return yield* sourceError("Scient found no skill or notes at that address.");
+    return yield* sourceError("Scient found no skill or notes at that address.", "nothing-found");
   }
   return { kind: "skills", source, candidates } satisfies SkillSourceResult;
 });

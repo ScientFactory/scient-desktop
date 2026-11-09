@@ -613,7 +613,8 @@ route or tool name no longer exists.
 
 ## Privacy invariants
 
-Analytics must never include prompts, responses, file contents or paths, URLs, credential tokens, email
+Analytics must never include prompts, responses, file contents or paths, URLs (except a public skill
+source's host and path, see [personal skills](./scient-skills.md#personal-skills)), credential tokens, email
 addresses, provider account identifiers, or user-assigned device names. As in T3, this rests on what
 the code records: no call site passes free text. The wire check backs it up by dropping free-text
 keys and any value that looks like a path, link or email address. New upstream instrumentation is

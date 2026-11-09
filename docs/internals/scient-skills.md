@@ -124,6 +124,21 @@ receives. A save reaches agents from the next turn. The built-in
 `CODEX_HOME`, skipping `.system`), `~/.cursor/skills` and `~/.agents/skills`.
 Adding one copies it through the normal inspect and add path.
 
+**Analytics.** Each inspect, add, save, remove, undo and export records one
+`feature.used` (`skills.personal.<step>`) when it ends, with `trigger` (user or
+agent), `outcome`, `durationMs`, and on failure `failureClass`: the
+`reason` code every `ScientSkillManagementError` from these steps carries
+(`PersonalSkillFailure`). Inspect and add also record `variant`, where the skill
+came from (`folder`, `zip`, `skill-file`, `document`, `text`, `web`, or the
+other app's id when the path is in its skills folder), and counts found, ready
+and added; save records `created` or `updated`. A web source on a public code
+host adds `publicSource`, its host and path without scheme or query
+(`publicSkillAddress`); Scient downloads without signing in, so a download that
+worked was public. Skill names, paths and text are never recorded. Loading a
+skill records `skills.load` with the name only for Scient's own skills, and
+the web records opening the add dialog and each agent chat it starts
+(`skills.personal.agent_chat`: finish, rename, improve or fix).
+
 ### Add-on releases
 
 A plugin bundle lists Agent Skills directories in `scient.plugin.json`

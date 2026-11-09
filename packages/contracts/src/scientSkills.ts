@@ -169,11 +169,30 @@ export type ImportableSkill = typeof ImportableSkill.Type;
 export const ImportableSkillsResult = Schema.Struct({ skills: Schema.Array(ImportableSkill) });
 export type ImportableSkillsResult = typeof ImportableSkillsResult.Type;
 
+/** Why a step with personal skills failed, as a fixed code for counting failures. */
+export const PersonalSkillFailure = Schema.Literals([
+  "not-found",
+  "too-large",
+  "unreadable",
+  "unsafe",
+  "download-failed",
+  "nothing-found",
+  "invalid-skill",
+  "name-taken",
+  "limit",
+  "expired",
+  "no-history",
+  "write-failed",
+  "unavailable",
+]);
+export type PersonalSkillFailure = typeof PersonalSkillFailure.Type;
+
 export class ScientSkillManagementError extends Schema.TaggedError<ScientSkillManagementError>()(
   "ScientSkillManagementError",
   {
     operation: TrimmedNonEmptyString,
     message: TrimmedNonEmptyString,
+    reason: Schema.optional(PersonalSkillFailure),
   },
 ) {}
 
