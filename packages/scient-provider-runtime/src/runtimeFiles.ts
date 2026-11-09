@@ -175,6 +175,14 @@ export interface ManagedRuntimeDownloadRetry {
 
 interface ManagedRuntimeDownloadInput {
   readonly url: string;
+  /**
+   * A second copy of the same release. Any problem with one copy, a missing or
+   * damaged file included, moves straight to the other; Scient waits only
+   * before going back to a source that already failed.
+   */
+  readonly fallbackUrl?: string | undefined;
+  /** Checked after every try, so a damaged copy counts as that source failing. */
+  readonly checksum?: ManagedRuntimeChecksum | undefined;
   readonly destination: string;
   readonly allowedHosts: ReadonlyArray<string>;
   readonly expectedSize: number;
@@ -183,38 +191,98 @@ interface ManagedRuntimeDownloadInput {
   readonly onRetry?: (retry: ManagedRuntimeDownloadRetry) => void;
 }
 
+function describeSourceFailure(failure: Error): string {
+  if (!(failure instanceof TransientDownloadFailure)) return failure.message;
+  switch (failure.kind) {
+    case "status":
+      return `returned ${failure.reason}.`;
+    case "connection":
+      return `couldn't be reached (${failure.reason}).`;
+    case "stalled":
+      return "stopped sending data.";
+    case "cut-off":
+      return "cut the download off.";
+  }
+}
+
 /**
- * Downloads one reviewed artifact. A failure that is usually temporary gets a
- * few more tries over about a minute; cancellation, the overall time limit, a
- * size mismatch, a refused host and a local disk error stay final.
+ * Downloads one reviewed artifact, retrying temporary failures for about a
+ * minute. With a fallback copy, any failure of one copy moves to the other.
+ * Cancellation, the time limit and local disk errors always stay final.
  */
 export async function downloadManagedRuntime(input: ManagedRuntimeDownloadInput): Promise<void> {
+  const sources = input.fallbackUrl ? [input.url, input.fallbackUrl] : [input.url];
   const allowedHosts = new Set(input.allowedHosts.map((host) => host.toLowerCase()));
   const timeoutSignal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
   const waitSignal = AbortSignal.any([input.signal, timeoutSignal]);
-  for (let retry = 0; ; retry += 1) {
+  const lastFailure = new Map<string, Error>();
+  let usable = [...sources];
+  let round = [...usable];
+  let tries = 0;
+  for (let retry = 0; ;) {
+    const source = round.shift()!;
+    tries += 1;
+    let cause: unknown;
     try {
-      return await downloadOnce(input, allowedHosts, timeoutSignal);
-    } catch (cause) {
-      if (!(cause instanceof TransientDownloadFailure)) throw cause;
-      const baseDelay = RETRY_DELAYS_MS[retry];
-      if (baseDelay === undefined) {
-        throw new ManagedRuntimeFileError(exhaustedMessage(cause, retry + 1), { cause });
+      await downloadOnce(input, source, allowedHosts, timeoutSignal);
+      if (input.checksum) {
+        await verifyManagedRuntimeChecksum(input.destination, input.checksum).catch(
+          async (mismatch: unknown) => {
+            await NodeFSP.rm(input.destination, { force: true }).catch(() => undefined);
+            throw mismatch;
+          },
+        );
       }
-      const delayMs = cause.retryAfterMs ?? Math.round(baseDelay * (0.8 + Math.random() * 0.4));
-      input.onRetry?.({
-        retry: retry + 1,
-        retries: RETRY_DELAYS_MS.length,
-        reason: cause.reason,
-        delayMs,
-      });
-      await NodeTimersPromises.setTimeout(delayMs, undefined, { signal: waitSignal });
+      return;
+    } catch (caught) {
+      cause = caught;
     }
+    // With a second copy, a problem with this one only rules this copy out.
+    const ruledOut = cause instanceof ManagedRuntimeFileError && sources.length > 1;
+    if (!(cause instanceof TransientDownloadFailure) && !ruledOut) throw cause;
+    lastFailure.set(source, cause as Error);
+    if (ruledOut) {
+      usable = usable.filter((candidate) => candidate !== source);
+      round = round.filter((candidate) => candidate !== source);
+    }
+    if (usable.length > 0 && round.length > 0) continue;
+    const baseDelay = RETRY_DELAYS_MS[retry];
+    if (usable.length === 0 || baseDelay === undefined) {
+      if (sources.length === 1) {
+        throw new ManagedRuntimeFileError(
+          exhaustedMessage(cause as TransientDownloadFailure, tries),
+          { cause },
+        );
+      }
+      const details = sources
+        .map(
+          (candidate) =>
+            `${new URL(candidate).hostname} ${describeSourceFailure(lastFailure.get(candidate)!)}`,
+        )
+        .join(" ");
+      throw new ManagedRuntimeFileError(
+        `Scient couldn't download it from either source after ${tries} tries. ${details}`,
+        { cause },
+      );
+    }
+    const delayMs =
+      (cause instanceof TransientDownloadFailure ? cause.retryAfterMs : null) ??
+      Math.round(baseDelay * (0.8 + Math.random() * 0.4));
+    retry += 1;
+    input.onRetry?.({
+      retry,
+      retries: RETRY_DELAYS_MS.length,
+      reason: cause instanceof TransientDownloadFailure ? cause.reason : "download failed",
+      delayMs,
+    });
+    await NodeTimersPromises.setTimeout(delayMs, undefined, { signal: waitSignal });
+    round = [...usable];
   }
 }
 
 async function downloadOnce(
   input: ManagedRuntimeDownloadInput,
+  url: string,
   allowedHosts: ReadonlySet<string>,
   timeoutSignal: AbortSignal,
 ): Promise<void> {
@@ -238,7 +306,7 @@ async function downloadOnce(
 
   try {
     const response = await fetchWithAllowedRedirects({
-      url: input.url,
+      url,
       allowedHosts,
       signal,
     }).catch((cause: unknown) => {

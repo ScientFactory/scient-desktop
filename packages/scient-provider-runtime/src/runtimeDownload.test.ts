@@ -297,3 +297,67 @@ describe("transient managed runtime downloads", () => {
     expect(fetch).toHaveBeenCalledOnce();
   });
 });
+
+describe("downloads with Scient's own copy first", () => {
+  const mirror = "https://downloads.scientfactory.com/scient-agent/v0.1.0/synthetic";
+  const ok = () => new Response("ok", { headers: { "content-length": "2" } });
+  async function twoSources() {
+    const request = await input();
+    return {
+      ...request,
+      url: mirror,
+      fallbackUrl: request.url,
+      allowedHosts: [...request.allowedHosts, "downloads.scientfactory.com"],
+      checksum: {
+        algorithm: "sha256" as const,
+        digest: NodeCrypto.createHash("sha256").update("ok").digest("hex"),
+      },
+    };
+  }
+  const urls = (fetch: ReturnType<typeof vi.fn>) => fetch.mock.calls.map(([url]) => String(url));
+
+  it.each([
+    ["is down", () => new Response("busy", { status: 504 })],
+    ["is missing", () => new Response("missing", { status: 404 })],
+    ["is damaged", () => new Response("ko", { headers: { "content-length": "2" } })],
+  ])("moves to GitHub at once when Scient's copy %s", async (_case, firstResponse) => {
+    const request = await twoSources();
+    const fetch = vi.fn().mockResolvedValueOnce(firstResponse()).mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    vi.mocked(NodeTimersPromises.setTimeout).mockClear();
+    await downloadManagedRuntime(request);
+    expect(urls(fetch)).toEqual([mirror, request.fallbackUrl]);
+    expect(NodeTimersPromises.setTimeout).not.toHaveBeenCalled();
+    expect(await NodeFSP.readFile(request.destination, "utf8")).toBe("ok");
+  });
+
+  it("keeps trying only GitHub once Scient's copy is ruled out", async () => {
+    const request = await twoSources();
+    const fetch = vi
+      .fn()
+      .mockResolvedValueOnce(new Response("missing", { status: 404 }))
+      .mockResolvedValueOnce(new Response("busy", { status: 503 }))
+      .mockResolvedValueOnce(ok());
+    vi.stubGlobal("fetch", fetch);
+    await downloadManagedRuntime(request);
+    expect(urls(fetch)).toEqual([mirror, request.fallbackUrl, request.fallbackUrl]);
+  });
+
+  it("fails only when both copies fail, and names both", async () => {
+    const request = await twoSources();
+    const fetch = vi.fn().mockImplementation(async () => new Response("busy", { status: 504 }));
+    vi.stubGlobal("fetch", fetch);
+    const onRetry = vi.fn();
+    await expect(downloadManagedRuntime({ ...request, onRetry })).rejects.toThrow(
+      "Scient couldn't download it from either source after 10 tries. downloads.scientfactory.com returned HTTP 504. github.com returned HTTP 504.",
+    );
+    expect(onRetry).toHaveBeenCalledTimes(4);
+    expect(urls(fetch).slice(0, 4)).toEqual([
+      mirror,
+      request.fallbackUrl,
+      mirror,
+      request.fallbackUrl,
+    ]);
+    await expect(NodeFSP.stat(request.destination)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});

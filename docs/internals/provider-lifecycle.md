@@ -530,6 +530,15 @@ errors and local disk errors stay final. While waiting, the operation reports `r
 says Retrying; the final message says what failed in plain words. This exists because release hosts
 have outages: on 2026-11-09 GitHub returned 504 to anonymous release downloads for hours.
 
+A family can also name Scient's own copy of its releases (`mirrorUrlPrefix`; Scient Agent's is
+`downloads.scientfactory.com/scient-agent/v<version>/`, on Cloudflare R2). That copy is tried first
+and the official release second. Any problem with one copy, including a missing file, a wrong size
+or a digest mismatch, moves straight to the other without waiting; only both failing ends the
+download, and the message names both. The catalog still names only the official release, so older
+apps are unaffected. The release workflow uploads the copy, publication of a new catalog entry
+requires every copy to match its digest (`scripts/check-managed-runtime-mirror.ts --full`), and every
+scheduled catalog scan checks that the published release's copies are present at their sizes.
+
 Routine status refresh never deletes staging because a serialized mutation may still own it.
 Abandoned staging is reconciled when the next mutation acquires ownership. Cross-process mutation locks are reclaimed when their owner is gone or when the OS process start identity proves that its PID was reused. An overdue heartbeat alone does not revoke ownership: a suspended process can resume. If an older lock has no start identity or the OS identity cannot be read, a live PID remains busy until that process exits. Scient has no automatic override for that case; with every Scient instance closed, deleting the provider's `mutation.lock` under its runtime root clears it. A newly qualified artifact
 does not invalidate the currently activated healthy copy; replacement happens only after successful

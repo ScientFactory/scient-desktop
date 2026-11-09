@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 
 import {
   managedRuntimeArtifactReceipt,
+  managedRuntimeMirrorUrl,
   type ManagedRuntimeArtifact,
   type ManagedRuntimeArtifactReceipt,
 } from "./managedRuntimeArtifact.ts";
@@ -674,10 +675,17 @@ export class ManagedProviderRuntime {
         downloadedBytes: 0,
         totalBytes: artifact.size,
       });
+      const mirrorUrl = managedRuntimeMirrorUrl(artifact);
       await this.#dependencies.download({
-        url: artifact.url,
+        ...(mirrorUrl
+          ? {
+              url: mirrorUrl,
+              fallbackUrl: artifact.url,
+              checksum: artifact.checksum,
+              allowedHosts: [...artifact.allowedHosts, new URL(mirrorUrl).hostname],
+            }
+          : { url: artifact.url, allowedHosts: artifact.allowedHosts }),
         destination: archivePath,
-        allowedHosts: artifact.allowedHosts,
         expectedSize: artifact.size,
         signal,
         onProgress: (downloadedBytes, totalBytes) =>
