@@ -835,17 +835,42 @@ export async function importIntoMain(
   sourceProfileDirectory: string,
 ) {
   const fillMain = window.desktopBridge?.accounts?.fillMain;
-  // Without Main's sign-out record, an import could bring back a site the user left.
-  const snapshot = await readSnapshot(environmentId);
-  if (!fillMain || !snapshot) return null;
+  const rules = await outsideCopyRules(environmentId);
+  if (!fillMain || !rules) return null;
   const filled = await fillMain({
     environmentId,
     from: { importSourceId, sourceProfileDirectory },
-    mode: "fill-or-replace",
-    replaceAllowedSince: mainSignedOutSince(snapshot.accounts),
-    ...replaceGoogleIn(snapshot.accounts),
-    skipSites: mainSignOuts(snapshot),
+    ...rules,
   });
   if (filled) await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);
   return filled;
+}
+
+/** A sign-in made in a Chrome window, copied into Main by an import's rules. */
+export async function chromeSignInIntoMain(environmentId: EnvironmentId, url: string) {
+  const signIn = window.desktopBridge?.accounts?.chromeSignIn;
+  const rules = await outsideCopyRules(environmentId);
+  if (!signIn || !rules) return { outcome: "failed" } as const;
+  const result = await signIn({
+    environmentId,
+    profileId: DEFAULT_BROWSER_PROFILE_ID,
+    url,
+    main: rules,
+  });
+  if (result.outcome === "signed-in")
+    await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);
+  return result;
+}
+
+/** What a copy into Main from outside Scient may do; null without Main's record. */
+async function outsideCopyRules(environmentId: EnvironmentId) {
+  // Without Main's sign-out record, a copy could bring back a site the user left.
+  const snapshot = await readSnapshot(environmentId);
+  if (!snapshot) return null;
+  return {
+    mode: "fill-or-replace" as const,
+    replaceAllowedSince: mainSignedOutSince(snapshot.accounts),
+    ...replaceGoogleIn(snapshot.accounts),
+    skipSites: mainSignOuts(snapshot),
+  };
 }

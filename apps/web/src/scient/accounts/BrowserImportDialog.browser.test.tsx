@@ -16,6 +16,11 @@ const state = vi.hoisted(() => ({
   importCookies: vi.fn(),
   toast: vi.fn(),
   command: vi.fn(async () => ({ ok: true, value: { created: 2, updated: 1, skipped: 1 } })),
+  intoMain: vi.fn(),
+}));
+vi.mock("./mainFill", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./mainFill")>()),
+  chromeSignInIntoMain: state.intoMain,
 }));
 vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: { listBrowserImportSources: async () => state.sources },
@@ -173,4 +178,34 @@ it("imports a Chromium profile's saved passwords through the Accounts importer, 
     content: "synthetic csv",
     profileId: expect.stringMatching(/^profile-/),
   });
+});
+
+it("offers a Chrome window on Windows, where Chrome's and Edge's sign-ins can't be read", async () => {
+  state.sources = [
+    { id: "chrome", name: "Chrome", profiles: [], unavailable: "unsupportedPlatform" },
+    { id: "edge", name: "Edge", profiles: [], unavailable: "unsupportedPlatform" },
+  ];
+  state.intoMain.mockReset().mockReturnValue(new Promise(() => {}));
+  using _bridge = stubGlobal("desktopBridge", {
+    getLocalEnvironmentBootstraps: () => [],
+    accounts: {
+      sourceProfiles: async () => [],
+      chromeSignIn: vi.fn(),
+      chromeSignInBrowser: async () => ({ name: "Edge", canQuit: true }),
+    },
+  });
+  const environmentId = EnvironmentId.make("synthetic");
+  await using _screen = await render(
+    <BrowserImportDialog
+      environmentId={environmentId}
+      snapshot={snapshot}
+      canWrite
+      onClose={vi.fn()}
+    />,
+  );
+  await expect.element(page.getByText("No browsers found")).not.toBeInTheDocument();
+  await page.getByRole("button", { name: /Sign in in a Chrome window/ }).click();
+  await expect.element(page.getByRole("heading", { name: "Sign in in Edge" })).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
+  expect(state.intoMain).toHaveBeenCalledWith(environmentId, "https://accounts.google.com/");
 });

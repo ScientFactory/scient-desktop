@@ -558,6 +558,7 @@ import {
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,
+  WsAccountsRestoreKeptKeysRpc,
 } from "./scient/accountRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
@@ -2796,6 +2797,7 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,
+  WsAccountsRestoreKeptKeysRpc,
 );
 // SCIENT-FORK:END
 

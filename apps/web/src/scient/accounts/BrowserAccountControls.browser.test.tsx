@@ -89,7 +89,7 @@ it("withholds autofill from an older bridge and drops values after the tab navig
     />,
   );
   await expect
-    .element(page.getByRole("button", { name: "Fill sign-in", exact: true }))
+    .element(page.getByRole("button", { name: "Saved sign-ins for example.com" }))
     .not.toBeInTheDocument();
   Object.defineProperty(window, "desktopBridge", {
     configurable: true,
@@ -105,7 +105,8 @@ it("withholds autofill from an older bridge and drops values after the tab navig
       url="https://example.com/login"
     />,
   );
-  await page.getByRole("button", { name: "Fill sign-in", exact: true }).click();
+  await page.getByRole("button", { name: "Saved sign-ins for example.com" }).click();
+  await page.getByRole("button", { name: "Fill No username" }).click();
   await entered.promise;
   await screen.rerender(
     <BrowserAccountControls
@@ -123,7 +124,7 @@ it("withholds autofill from an older bridge and drops values after the tab navig
   expect(filled).toBe(false);
 });
 
-it("offers to save a typed sign-in, except on a tab where Scient's sign-in keeps it", async () => {
+it("offers to save a typed sign-in, except on Scient's own sign-in tab or with no username", async () => {
   setup();
   state.request = async () => ({ ok: true, value: { result: "new" } }) as never;
   const listeners = new Set<
@@ -176,7 +177,7 @@ it("offers to save a typed sign-in, except on a tab where Scient's sign-in keeps
       url="https://example.com/login"
     />
   );
-  const capture = () =>
+  const capture = (username = "synthetic") =>
     act(async () => {
       for (const listener of listeners)
         listener({
@@ -185,7 +186,7 @@ it("offers to save a typed sign-in, except on a tab where Scient's sign-in keeps
           url: "https://example.com",
           path: "/login",
           step: "password",
-          username: "synthetic",
+          username,
           password: "synthetic-password",
           usernameFrom: "form",
         });
@@ -204,6 +205,11 @@ it("offers to save a typed sign-in, except on a tab where Scient's sign-in keeps
   await expect.element(page.getByText("Save sign-in?").first()).not.toBeInTheDocument();
   state.snapshot = snapshot([]);
   await screen.rerender(controls("no-attempt"));
+  // A code typed on its own step has no username: not a sign-in to save.
+  await capture("");
+  await expect.element(page.getByText("Save sign-in?").first()).not.toBeInTheDocument();
   await capture();
   await expect.element(page.getByText("Save sign-in?").first()).toBeInTheDocument();
+  await expect.element(page.getByText("example.com · synthetic")).toBeVisible();
+  await expect.element(page.getByRole("button", { name: "Don't ask for this site" })).toBeVisible();
 });

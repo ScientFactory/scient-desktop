@@ -112,6 +112,7 @@ import { BrowserHome } from "~/scient/browser/BrowserHome";
 import { BrowserHistoryDialog } from "~/scient/browser/BrowserHistoryDialog";
 import { MenuItem } from "~/components/ui/menu";
 import { recordSiteVisit } from "~/scient/browser/browserShortcuts";
+import { useShowPreviewStartPage } from "~/scient/multiWindow/previewTabShown";
 // SCIENT-FORK:END
 
 interface Props {
@@ -258,6 +259,11 @@ export function PreviewView({
   const refreshDisabled = navStatus._tag === "Idle";
   const isUnreachable = navStatus._tag === "LoadFailed";
   const showEmptyState = shouldShowPreviewEmptyState(snapshot);
+  // SCIENT-FORK:START — a start page on screen hosts its tab here, so its first address loads here.
+  useShowPreviewStartPage(
+    visible && showEmptyState && !isServerTab ? (runtimeTabId ?? null) : null,
+  );
+  // SCIENT-FORK:END
   const serverStreamPending =
     isServerTab && !showEmptyState && !isUnreachable && serverFrameTabId !== runtimeTabId;
   const controller = desktopOverlay?.controller ?? "none";

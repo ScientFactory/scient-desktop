@@ -246,6 +246,9 @@ export function PreviewChromeRow({
                 }
               />
             </Tooltip>
+            {/* SCIENT-FORK:START — Scient Accounts: fill and capture stay anchored to this tab. */}
+            {accountsTab ? <BrowserAccountControls {...accountsTab} url={url} /> : null}
+            {/* SCIENT-FORK:END */}
             {onOpenInBrowser && !inputFocused ? (
               <InputGroupAddon align="inline-end">
                 {}
@@ -349,9 +352,6 @@ export function PreviewChromeRow({
             </TooltipPopup>
           </Tooltip>
         ) : null}
-        {/* SCIENT-FORK:START — Scient Accounts: fill and capture stay anchored to this tab. */}
-        {accountsTab ? <BrowserAccountControls {...accountsTab} url={url} /> : null}
-        {/* SCIENT-FORK:END */}
         {trailingActions}
       </form>
       <div
