@@ -5,10 +5,9 @@
  */
 export const SKIP_MIRRORED_DEFAULT = { "data-skip-mirrored-default": "" } as const;
 
-const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "defaultValue");
-
 /** Marked textareas ignore a default equal to the text they already show. */
 export function installMirroredDefaultSkip(document: Document): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "defaultValue");
   const skip = (event: FocusEvent) => {
     const textarea = event.target;
     if (
