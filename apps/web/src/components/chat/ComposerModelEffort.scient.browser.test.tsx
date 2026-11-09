@@ -45,7 +45,6 @@ function NativeColumn() {
           model: models[0]!.slug,
           modelOptions: options,
           onModelOptionsChange: (next) => setOptions(next ?? []),
-          planModeEnabled: false,
         }}
       />
     </div>

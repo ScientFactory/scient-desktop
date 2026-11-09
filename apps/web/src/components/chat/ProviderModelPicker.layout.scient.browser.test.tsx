@@ -72,7 +72,6 @@ function Picker({
               models,
               model: models[0]!.slug,
               modelOptions: options,
-              planModeEnabled: false,
               onModelOptionsChange: (next) => setOptions(next ?? []),
             }}
             runtimeMode="full-access"
