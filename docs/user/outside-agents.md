@@ -45,8 +45,9 @@ Only approve a sign-in you just started. To approve, enter a pairing code from
 browser already signed in to the environment with permission to manage access
 can approve without a code.
 
-Then choose what the agent may do. **Auto** is selected by default, or the
-closest lower mode allowed by your organization’s policy:
+Then choose what the agent may do. With a code, **Auto** is selected by default,
+or the closest lower mode allowed by your organization’s policy. Approving
+without a code starts at **Read only**:
 
 - **Read only** lets the agent read projects and threads and see
   the available providers and models. It cannot change anything.
