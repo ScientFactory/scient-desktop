@@ -77,7 +77,7 @@
   ],
   "analysisDiffSignals": [
     "@scientfactory/(analysis|compute|execution)",
-    "(/|~)scient/(analysis|artifacts|compute|execution|fileSurfaces|layout|previewPresentation)",
+    "(/|~)scient/(analysis|artifacts|compute(?!r)|execution|fileSurfaces|layout|previewPresentation)",
     "Compute(Session|Execution|Transport|Output)",
     "DuplexProcess",
     "analysis-artifact",

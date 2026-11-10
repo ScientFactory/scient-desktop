@@ -2118,6 +2118,7 @@ it.layer(
                 forceRefresh: Ref.update(manifestRefreshes, (count) => count + 1).pipe(
                   Effect.as(manifest),
                 ),
+                refreshOnDemand: Effect.succeed(manifest),
                 refreshInBackground: Effect.void,
               }),
             ),

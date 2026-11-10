@@ -72,6 +72,7 @@ import {
 export {
   OrchestrationV2ClaudeForkBoundaryEvidence,
   OrchestrationV2ForkInitialization,
+  ToolHostPermission,
 } from "./scient/orchestrationV2Fork.ts";
 // SCIENT-FORK:END
 import { ThreadGuestShare } from "./guestShare.ts";

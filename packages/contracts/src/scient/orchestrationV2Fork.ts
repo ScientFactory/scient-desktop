@@ -21,6 +21,10 @@ import {
   TurnItemId,
 } from "../baseSchemas.ts";
 import { ToolActivitySurface, ToolActivityIcon, ToolActivitySource } from "../providerRuntime.ts";
+
+/** A host privacy permission a tool call was refused for (macOS panes that grant computer control). */
+export const ToolHostPermission = Schema.Literals(["screen-recording", "accessibility"]);
+export type ToolHostPermission = typeof ToolHostPermission.Type;
 import type {
   OrchestrationV2TurnItemStatus as TurnItemStatus,
   OrchestrationV2ProviderRef as ProviderRef,
@@ -54,6 +58,7 @@ export const makeTurnItemBaseFields = (
     toolSurface: Schema.optional(ToolActivitySurface),
     toolIcon: Schema.optional(ToolActivityIcon),
     toolSource: Schema.optional(ToolActivitySource),
+    toolPermissionsNeeded: Schema.optional(Schema.Array(ToolHostPermission)),
     id: TurnItemId,
     threadId: ThreadId,
     runId: Schema.NullOr(RunId),
@@ -92,6 +97,7 @@ interface OrchestrationV2TurnItemBaseFields {
   readonly toolSurface: Schema.optional<typeof ToolActivitySurface>;
   readonly toolIcon: Schema.optional<typeof ToolActivityIcon>;
   readonly toolSource: Schema.optional<typeof ToolActivitySource>;
+  readonly toolPermissionsNeeded: Schema.optional<Schema.$Array<typeof ToolHostPermission>>;
   readonly id: typeof TurnItemId;
   readonly threadId: typeof ThreadId;
   readonly runId: Schema.NullOr<typeof RunId>;

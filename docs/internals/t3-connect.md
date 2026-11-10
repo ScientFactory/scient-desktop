@@ -1,10 +1,11 @@
 # T3 Connect
 
-> Inherited T3 architecture for maintainers. Scient does not currently operate
-> or publish T3 Connect, `app.t3.codes`, its relay, or its mobile distribution.
-> Preserve this document for upstream compatibility and source development; do
-> not use it as Scient setup guidance. See Scient's supported
-> [remote access](../user/remote-access.md).
+> Inherited T3 architecture for maintainers. Scient runs this stack as Scient
+> Connect (relay `relay.scientfactory.com`, hosted app `app.scientfactory.com`,
+> no mobile distribution yet); its values and deploys are in
+> [Scient Connect operations](../operations/scient-connect.md), and user setup
+> is in [remote access](../user/remote-access.md#scient-connect). T3 names
+> below (`t3-relay`, `t3code://`, T3 Chat) describe upstream's deployment.
 
 T3 Connect uses Clerk for cloud identity. The relay manages environment links,
 credentials for reaching environments, and managed tunnel allocations. After

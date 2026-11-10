@@ -624,8 +624,8 @@ The current committed alignment through
 Literal merge `3bce08006815ca295d8e60f2402606ad4d666f0d` has owned base
 `a3cc2496dac3b2356f69864b73468fe7fdba33e4` and the frozen official target as parents, retaining
 the 80 official commits after `33db45effd`. Scient keeps its package install for the server
-runtime. T3's agent sign-in approval through T3 Connect stays dormant until Scient Connect
-carries it. `@pierre/diffs` moves to 1.7.0-beta.3 with Scient's editor additions. No migrations.
+runtime. T3's agent sign-in approval runs through Scient Connect, which merged first.
+`@pierre/diffs` moves to 1.7.0-beta.3 with Scient's editor additions. No migrations.
 Release remains separate.
 
 The previous committed alignment through

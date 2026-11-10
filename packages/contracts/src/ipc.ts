@@ -1092,7 +1092,14 @@ export const DesktopMediaReadSchema = Schema.Struct({
 });
 export type DesktopMediaRead = typeof DesktopMediaReadSchema.Type;
 
-export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access", "microphone"]);
+export const SystemSettingsPaneSchema = Schema.Literals([
+  "full-disk-access",
+  "microphone",
+  // SCIENT-FORK:START — computer control asks for the panes that grant capture and input.
+  "screen-recording",
+  "accessibility",
+  // SCIENT-FORK:END
+]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 // SCIENT-FORK:START — Scient members live in ScientDesktopBridge (scient/desktopBridge.ts).

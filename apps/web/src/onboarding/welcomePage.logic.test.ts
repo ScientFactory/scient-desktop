@@ -7,7 +7,10 @@ import {
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, onTestFinished } from "vite-plus/test";
+// SCIENT-FORK:START — the phone-app switch.
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 
 import {
   cliTerminalStep,
@@ -254,6 +257,14 @@ describe("welcomeOffersPhone", () => {
         ...input,
       });
 
+    // SCIENT-FORK:START — no phone offer until Scient's phone app ships.
+    expect(offers({})).toBe(false);
+    const identity = SCIENT_DESKTOP_IDENTITY as { mobileAppEnabled: boolean };
+    identity.mobileAppEnabled = true;
+    onTestFinished(() => {
+      identity.mobileAppEnabled = false;
+    });
+    // SCIENT-FORK:END
     expect(offers({})).toBe(true);
     // There is no pairing-code fallback; without T3 Connect the page leaves the phone out.
     expect(offers({ cloud: false })).toBe(false);

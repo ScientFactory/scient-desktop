@@ -7,6 +7,7 @@ import { SET_RUNNING_WORK_CHANNEL } from "../../ipc/channels.ts";
 
 /** How many runs quitting would stop, as the app last reported. */
 let runningWork = 0;
+const idleListeners = new Set<() => void>();
 
 export const installRunningWorkReport = Effect.gen(function* () {
   const ipc = yield* DesktopIpc.DesktopIpc;
@@ -15,13 +16,26 @@ export const installRunningWorkReport = Effect.gen(function* () {
       channel: SET_RUNNING_WORK_CHANNEL,
       payload: Schema.Int,
       result: Schema.Void,
-      handler: (count) =>
-        Effect.sync(() => {
-          runningWork = count;
-        }),
+      handler: (count) => Effect.sync(() => reportRunningWork(count)),
     }),
   );
 });
+
+export function reportRunningWork(count: number): void {
+  runningWork = count;
+  if (count !== 0) return;
+  const listeners = [...idleListeners];
+  idleListeners.clear();
+  for (const listener of listeners) listener();
+}
+
+export const runningWorkCount = (): number => runningWork;
+
+/** Calls `listener` once no run is going: now, or when the app next reports none. */
+export function whenRunningWorkIdle(listener: () => void): void {
+  if (runningWork === 0) listener();
+  else idleListeners.add(listener);
+}
 
 /** Whether to go on quitting. Nothing keeps a run alive past Quit yet, so it asks first. */
 export function confirmQuitStopsRunningWork(): boolean {

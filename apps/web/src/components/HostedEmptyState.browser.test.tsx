@@ -123,7 +123,7 @@ it("adds every linked computer only after discovery finishes checking them", asy
   discovery.cloudEnabled = true;
   await using screen = await render(<HostedEmptyState />);
   expect(screen.container.textContent).toContain("Start Scient on the computer with your code.");
-  expect(screen.container.textContent).toContain("in that Scient installation");
+  expect(screen.container.textContent).toContain("open Settings → Sharing & access");
   expect(screen.container.textContent).not.toMatch(/npx t3|T3 Code/);
   expect(screen.container.querySelector('a[href*="t3.codes"]')).toBeNull();
 
@@ -165,7 +165,7 @@ it("offers owning-installation pairing and navigates to Connections without clou
   expect(screen.container.textContent).toContain(
     "Create a pairing link in Settings → Connections in that Scient installation",
   );
-  expect(screen.container.textContent).toContain("matching Scient release from the owner");
+  expect(screen.container.textContent).toContain("Download it from scientfactory.com");
   expect(screen.container.textContent).not.toMatch(/T3 Code|npx t3|Sign in/);
   expect(screen.container.querySelector('a[href*="t3.codes"]')).toBeNull();
   expect(discovery.register).not.toHaveBeenCalled();

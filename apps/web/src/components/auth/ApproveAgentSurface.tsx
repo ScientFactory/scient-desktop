@@ -123,7 +123,7 @@ export function ApproveAgentSurface() {
       <StandalonePage>
         <StandalonePageHeader
           context="Agent sign-in"
-          title="Connecting to T3 Connect"
+          title="Connecting to Scient Connect"
           description="One moment while your account loads."
         />
         <Spinner className="mt-6" size="lg" tone="muted" />
@@ -135,7 +135,7 @@ export function ApproveAgentSurface() {
     return (
       <Message
         title="Sign in to approve"
-        description="Sign in to T3 Connect with the account this environment is linked to."
+        description="Sign in to Scient Connect with the account this environment is linked to."
       >
         <div className="mt-6">
           <Button type="button" onClick={openSignIn}>

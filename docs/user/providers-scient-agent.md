@@ -138,6 +138,35 @@ Agent notices, retry progress and save failures appear in the conversation. Ques
 the agent's offered choices, editor text and timeout information; an expired question closes
 when the agent cancels it. Plain confirmation questions offer Yes and No.
 
+## Using your computer
+
+Scient Agent can see and use the other apps on the computer it runs on: it lists windows, takes
+screenshots, reads windows through accessibility, clicks and types, and uses the clipboard. It
+works in the background where it can, without moving your pointer or taking your focus. It follows
+the conversation's access setting like any other tool: with full access (the only mode Scient
+Agent has) it asks nothing extra. **Computer control** in the provider's settings turns it off;
+it is on by default.
+
+Each call shows in the conversation under the app it used, with the agent's screenshots.
+
+What the operating system asks for:
+
+- **macOS:** Scient needs **Screen & System Audio Recording** (to see windows) and
+  **Accessibility** (to read windows and act in them). macOS asks on behalf of Scient, not the
+  agent. The provider's settings, and any step macOS refused, show both with an **Allow** button:
+  it asks macOS, which lists Scient in the pane, then opens the pane so you only turn Scient on.
+  In Screen & System Audio Recording, use the top list; **System Audio Recording Only** does not
+  let the agent see windows. macOS can close Scient when you turn on screen recording, so while
+  runs are going Scient offers to open the pane once they finish; if macOS ends Scient, it opens
+  again by itself with your conversations as they were.
+- **Windows:** nothing to allow. The agent cannot act in windows of apps running as administrator
+  unless Scient does too.
+- **Linux (X11):** nothing to allow. Background input needs write access to `/dev/uinput`;
+  without it the agent briefly brings a window forward instead. Apps expose their controls when
+  the desktop's accessibility support (AT-SPI) is on.
+- **Linux (Wayland):** the first input shows your desktop's remote-control prompt. Released
+  agent builds cannot take screenshots on Wayland.
+
 ## Where it keeps things
 
 Scient Agent's settings, sign-ins, logs and caches are in a folder inside Scient's own data

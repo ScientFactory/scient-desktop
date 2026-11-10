@@ -2,7 +2,12 @@
 import * as NodeFS from "node:fs";
 import * as NodeNet from "node:net";
 
-import { T3_CONNECT_TROUBLESHOOTING_SECTIONS } from "@t3tools/contracts";
+import {
+  // SCIENT-FORK:START — Scient's help-page anchors.
+  SCIENT_CONNECT_TROUBLESHOOTING_ANCHORS,
+  // SCIENT-FORK:END
+  T3_CONNECT_TROUBLESHOOTING_SECTIONS,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
@@ -405,4 +410,24 @@ describe("T3 Connect troubleshooting links", () => {
       expect(anchors, section).toContain(section);
     }
   });
+
+  // SCIENT-FORK:START — the links open Scient's help page, so its headings must match too.
+  it("each section maps to a heading in Scient's help page", () => {
+    const guide = NodeFS.readFileSync(
+      new URL("../../../../docs/user/scient-connect-troubleshooting.md", import.meta.url),
+      "utf8",
+    );
+    const anchors = new Set(
+      [...guide.matchAll(/^#{2,3} (.+)$/gm)].map(([, heading]) =>
+        heading!
+          .toLowerCase()
+          .replace(/[^\p{L}\p{N} _-]/gu, "")
+          .replace(/ /g, "-"),
+      ),
+    );
+    for (const section of T3_CONNECT_TROUBLESHOOTING_SECTIONS) {
+      expect(anchors, section).toContain(SCIENT_CONNECT_TROUBLESHOOTING_ANCHORS[section]);
+    }
+  });
+  // SCIENT-FORK:END
 });

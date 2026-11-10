@@ -653,7 +653,10 @@ it.live(
 
       const onTunnel = yield* handoff("box.example.ts.net");
       const hosted = new URL(onTunnel.location);
-      expect(`${hosted.origin}${hosted.pathname}`).toBe("https://app.t3.codes/approve-agent");
+      // SCIENT-FORK: Scient Connect's hosted app approves the sign-in.
+      expect(`${hosted.origin}${hosted.pathname}`).toBe(
+        "https://app.scientfactory.com/approve-agent",
+      );
       expect(hosted.searchParams.get("environment")).toEqual(expect.any(String));
       hosted.searchParams.delete("environment");
       expect(hosted.searchParams.toString()).toBe(onTunnel.query);

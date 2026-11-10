@@ -342,7 +342,9 @@ describe("mobile context clipboard imports", () => {
 
   it("pastes a thread link as a chip only where the destination's agent reads its machine", async () => {
     const text = [
-      "https://app.t3.codes/threads/destination/local-thread",
+      // SCIENT-FORK:START — Scient Connect's hosted app.
+      "https://app.scientfactory.com/threads/destination/local-thread",
+      // SCIENT-FORK:END
       "<t3-thread://v2/source/foreign-thread>",
     ].join(" ");
     const result = await importComposerContextClipboard(

@@ -119,7 +119,9 @@ function resolveAppVariant(value: string | undefined): AppVariant {
 
 const variant = VARIANT_CONFIG[APP_VARIANT];
 // Copied thread links open the app. app.t3.codes/.well-known lists every variant's identifiers.
-const HOSTED_APP_HOST = "app.t3.codes";
+// SCIENT-FORK:START — Scient Connect's hosted app (matches DEFAULT_HOSTED_APP_URL).
+const HOSTED_APP_HOST = "app.scientfactory.com";
+// SCIENT-FORK:END
 const iosBundleIdentifier = isIosPersonalTeamBuild
   ? personalTeamBundleIdentifier!
   : variant.iosBundleIdentifier;
