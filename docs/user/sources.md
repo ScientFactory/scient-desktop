@@ -232,7 +232,7 @@ The results list what needs attention, most serious first:
 - **Notes**: a preprint that has a published version, and an entry nobody cites.
 
 **Apply** writes the registry's value into the `.bib` entry or the Library
-source; **Apply all** does this for every fix in the list. If the file or
+source; **Apply _N_ fixes** does this for every fix in the list. If the file or
 source changed since the check, the fix is refused and the check should be run
 again. **Open** goes to the source or the line in the file, and a notice or
 published version opens in your browser. **Ignore** hides a finding from later
