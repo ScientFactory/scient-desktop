@@ -838,7 +838,7 @@ const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
 
 const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
   description:
-    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections. Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts. Removal: scient_sources_remove per source.",
+    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections. Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
   parameters: Schema.Struct({ change: ScientSourcesBulkRequestChange }),
   success: ScientSourcesBulkResult,
   failure: ScientSourcesToolError,

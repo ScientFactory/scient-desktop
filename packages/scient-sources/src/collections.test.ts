@@ -425,4 +425,68 @@ describe("Scient source collections", () => {
     });
     expect(again.conflicts).toEqual([{ message: "This bulk edit was already undone." }]);
   });
+  it("changes nothing when the bulk edit receipt folder is unsafe", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const collectionId =
+      (await createScientSourceCollection({ root, name: "Methods", actor: "user" })).collection
+        ?.collectionId ?? "";
+    const outside = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-bulk-outside-"));
+    fixtures.push(outside);
+    await NodeFSP.symlink(outside, NodePath.join(root, ".scient/sources/bulk-edits"));
+
+    await expect(
+      bulkUpdateScientSources({
+        root,
+        change: { sourceIds, addTags: ["Bulk"], addToCollectionIds: [collectionId] },
+        actor: "user",
+      }),
+    ).rejects.toThrow("bulk-edits");
+    expect((await readScientSourceRecord(root, sourceIds[0] ?? ""))?.tags).toEqual([]);
+    expect((await readScientSourcesOrganization(root)).collections[0]?.sourceIds).toEqual([]);
+    expect(await NodeFSP.readdir(outside)).toEqual([]);
+  });
+
+  it("retries a bulk undo that failed part way, leaving what it already restored", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, type: "book" },
+      actor: "user",
+    });
+    const history = NodePath.join(root, ".scient/sources/history", second);
+    await NodeFSP.rename(history, `${history}-aside`);
+    await NodeFSP.writeFile(history, "");
+    const undo = () =>
+      bulkUpdateScientSources({
+        root,
+        change: { undoBatchId: bulk.undo?.batchId ?? "" },
+        actor: "user",
+      });
+
+    const failed = await undo();
+    expect(failed.sources.map((entry) => [entry.sourceId, entry.outcome])).toEqual([
+      [first, "updated"],
+      [second, "failed"],
+    ]);
+    const record = await readScientSourceRecord(root, first);
+    if (!record) throw new Error("Expected a source.");
+    await updateScientSourceMetadata({
+      root,
+      sourceId: first,
+      expectedRevision: record.revision,
+      metadata: { ...editableMetadataFromRecord(record), type: "thesis" },
+      actor: "user",
+    });
+    await NodeFSP.rm(history);
+    await NodeFSP.rename(`${history}-aside`, history);
+
+    const retried = await undo();
+    expect(retried.sources.map((entry) => [entry.sourceId, entry.outcome])).toEqual([
+      [second, "updated"],
+    ]);
+    expect((await readScientSourceRecord(root, first))?.type).toBe("thesis");
+    expect((await readScientSourceRecord(root, second))?.type).toBe("article");
+    expect((await undo()).conflicts).toEqual([{ message: "This bulk edit was already undone." }]);
+  });
 });
