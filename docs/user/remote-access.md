@@ -86,8 +86,8 @@ appears in Scient on your other devices and at
    under Scient Connect; select it to connect.
 
 On a server without a screen, run `scient connect` and open the printed link on
-any device to sign in. `scient connect status` shows whether other devices can
-reach the computer. When a connection fails, see
+any device to sign in. `scient connect status` checks the connection from that
+computer. When a connection fails, see
 [Scient Connect troubleshooting](./scient-connect-troubleshooting.md).
 
 How it works: Scient's relay at `relay.scientfactory.com` keeps your account's
@@ -99,8 +99,8 @@ any site behind Cloudflare. A computer that stays offline for a while loses its
 tunnel and gets a new one, at the same address, when it comes back.
 
 Each account can link a limited number of computers at once. **Settings →
-Sharing & access** shows how many are in use; remove one you no longer use to
-free a place.
+Sharing & access** shows how many are in use. To free a place, select **Manage
+tunnels**, then **Deregister** a computer you no longer use.
 
 A computer is reachable only while Scient runs on it: the desktop app, or
 `scient serve` on a server (see [headless server](background-service.md)). This

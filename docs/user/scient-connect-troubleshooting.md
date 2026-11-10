@@ -1,19 +1,19 @@
 # Scient Connect troubleshooting
 
-A Scient Connect connection goes through four parts, in this order:
+When a connection fails, open **Settings → Environments**, find the computer, and select
+**Details**. Then find the section below that matches the failure.
+
+**Details** shows the four parts of a connection, in order:
 
 1. **This device** reaches Scient Connect over the internet.
 2. **Scient Connect** checks your sign-in and the computer's link.
 3. **The computer's tunnel** (`cloudflared` on that computer) carries the request to it.
 4. **Scient on that computer** answers.
 
-When a connection fails, open **Settings → Environments**, find the computer, and select
-**Details**. The first part marked as failed is the cause. Find its section below.
-
-To see the computer's side, run `scient connect status` on it, or open **Settings → Sharing &
-access** there. Both check the computer's Scient Connect address from that computer and say why it
-fails. They cannot test another device's network; for a problem on one device, use **Details** on
-that device.
+To check the computer's side, open **Settings → Sharing & access** on that computer, or run
+`scient connect status` there. Both check its Scient Connect address from that computer and explain
+any failure. They cannot test another device's network: if only one device cannot connect, open
+**Details** on that device.
 
 ## The computer's tunnel is offline
 
@@ -40,8 +40,9 @@ looks online.
 
 Common causes:
 
-- **A Tailscale exit node.** All traffic goes through the exit node, and that network blocks port 7844. Turn the exit node off with `tailscale set --exit-node=`, or allow outbound port 7844 on
-  its network.
+- **A Tailscale exit node on a network that blocks port 7844.** The tunnel's traffic goes through
+  that network. Turn the exit node off with `tailscale set --exit-node=`, or allow outbound port 7844
+  on its network.
 - **A VPN.** Work VPNs often block unknown ports. Ask for port 7844 to be allowed, or use a direct
   route (below).
 - **A firewall or strict network.** Allow outbound TCP and UDP port 7844.
@@ -101,14 +102,14 @@ your account and the computer.
   Scient Connect and sign in again.
 - **This device is still loading its sign-in.** Wait a moment; Scient retries on its own. If it
   keeps waiting, reload or restart Scient on this device.
-- **Your account has as many computers as it can hold.** Remove one you no longer use in
-  **Settings → Sharing & access**, then restart Scient on the computer you want to add.
+- **Your account has reached its computer limit.** In **Settings → Sharing & access**, select
+  **Manage tunnels**, then **Deregister** a computer you no longer use. Restart Scient on the
+  computer you want to add.
 
 ## The clock is off
 
-Scient Connect signs requests with short-lived proofs. When the clock on this device or the computer
-is a few minutes wrong, Scient Connect rejects them. Turn on automatic date and time on both, then
-retry.
+Turn on automatic date and time on both devices, then retry. Scient Connect's signed requests
+expire quickly, so it rejects them when either clock is a few minutes wrong.
 
 ## The computer runs an older Scient
 
@@ -118,7 +119,7 @@ This device needs a newer Scient on the computer. [Update Scient](./updating.md)
 
 | Error                                               | Fix                                                                                                                                          |
 | --------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `environment_link_limit_exceeded` or a tunnel limit | Remove a computer you no longer use, then restart Scient on the computer you want to add.                                                    |
+| `environment_link_limit_exceeded` or a tunnel limit | In **Manage tunnels**, **Deregister** a computer you no longer use, then restart Scient on the computer you want to add.                     |
 | `auth_invalid` or `invalid_bearer`                  | Run `scient connect login`. If the sign-in was revoked, run `scient connect logout`, then `scient connect`. Restart Scient after signing in. |
 | Expired or invalid link proof                       | Check the computer's date and time, update Scient, then restart it.                                                                          |
 | HTTP 403 without a recognized error                 | Check proxies and firewall rules. Keep any Cloudflare Ray ID for a bug report.                                                               |
