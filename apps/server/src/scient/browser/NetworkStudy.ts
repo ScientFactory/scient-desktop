@@ -25,6 +25,14 @@ const hide = (value: string) => `<hidden ${value.length} chars>`;
 const maskValue = (name: string, value: string) =>
   SECRET_NAME.test(name) || SECRET_VALUE.test(value.trim()) ? hide(value) : value;
 
+/** Words that make a key, attribute or field name a secret's. */
+const SECRET_WORD =
+  /(token|secret|passw|pwd|session|sess_?id|sesskey|csrf|xsrf|auth|api[-_]?key|apikey|signature|bearer|cookie|nonce|otp|code_verifier)/iu;
+const URL_HEADER = /^(location|content-location|referer|origin|refresh|link)$/iu;
+const URL_IN_TEXT = /https?:\/\/[^\s"'<>`,;]+/gu;
+const JWT = /eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*/gu;
+const QUOTED_TOKEN = /(["'])([A-Za-z0-9+/_-]{40,}={0,2}|[A-Fa-f0-9]{32,})\1/gu;
+
 /** Query values named like secrets, or that look like tokens, are hidden. */
 export const maskUrl = (raw: string) => {
   if (!URL.canParse(raw)) return raw.slice(0, 2048);
@@ -37,14 +45,38 @@ export const maskUrl = (raw: string) => {
     const masked = maskValue(name, value);
     if (masked !== value) url.searchParams.set(name, masked);
   }
+  // Fragments carry tokens too (OAuth implicit flows).
+  if (url.hash.length > 1) {
+    const fragment = new URLSearchParams(url.hash.slice(1));
+    let changed = false;
+    for (const [name, value] of Array.from(fragment)) {
+      const masked = maskValue(name, value);
+      if (masked !== value) {
+        fragment.set(name, masked);
+        changed = true;
+      }
+    }
+    if (changed) url.hash = fragment.toString();
+  }
   return url.toString().slice(0, 2048);
 };
+
+/** URLs in text change only where something in them is hidden. */
+const maskUrlsIn = (text: string) =>
+  text.replace(URL_IN_TEXT, (url) => {
+    const masked = maskUrl(url);
+    return URL.canParse(url) && masked === new URL(url).toString().slice(0, 2048) ? url : masked;
+  });
 
 export const maskHeaders = (headers: Readonly<Record<string, string>>) =>
   Object.fromEntries(
     Object.entries(headers).map(([name, value]) => [
       name,
-      SECRET_HEADER.test(name) ? hide(value) : maskValue(name, value),
+      SECRET_HEADER.test(name)
+        ? hide(value)
+        : URL_HEADER.test(name)
+          ? maskUrlsIn(value)
+          : maskValue(name, value),
     ]),
   );
 
@@ -59,7 +91,74 @@ const maskJson = (value: unknown, key = ""): unknown => {
   return value;
 };
 
-/** JSON and form bodies with secret-looking fields hidden; other text as it is. */
+const attribute = (tag: string, name: string) =>
+  new RegExp(`\\s${name}\\s*=\\s*(["'])(.*?)\\1`, "iu").exec(tag)?.[2];
+
+/** One tag's values that belong to a secret: a password, or a field, meta or param named like one. */
+const maskTag = (tag: string) => {
+  const kind = /^<\s*([a-z]+)/iu.exec(tag)?.[1]?.toLowerCase() ?? "";
+  const label = ["name", "id", "property", "http-equiv", "itemprop"]
+    .map((name) => attribute(tag, name) ?? "")
+    .join(" ");
+  const secretField =
+    (kind === "input" && /type\s*=\s*["']?password/iu.test(tag)) || SECRET_WORD.test(label);
+  const valued = secretField && ["input", "meta", "param", "textarea"].includes(kind);
+  return tag.replace(
+    /(\s)([\w:.-]+)(\s*=\s*)(["'])(.*?)\4/gu,
+    (whole, space, name, eq, quote, value) =>
+      (valued && /^(value|content)$/iu.test(name)) ||
+      (SECRET_WORD.test(name) && !/^(name|id|class|for|type|href|src|action)$/iu.test(name)) ||
+      (kind === "input" && /^value$/iu.test(name) && SECRET_VALUE.test(value.trim()))
+        ? `${space}${name}${eq}${quote}${hide(value)}${quote}`
+        : whole,
+  );
+};
+
+/**
+ * HTML, XML, scripts and other text: secret-looking values hidden, the shape kept, since an agent
+ * studying a site needs the page's structure.
+ */
+const maskMarkup = (text: string) =>
+  maskUrlsIn(
+    text
+      .replace(/<[a-z][^<>]*>/giu, maskTag)
+      // `"sesskey": "…"`, `token = '…'`, `M.cfg.sesskey="…"` in inline scripts and config.
+      .replace(
+        /(["']?)([\w.$-]*?)\1(\s*[:=]\s*)(["'])((?:\\.|(?!\4)[^\\\n])*)\4/gu,
+        (whole, keyQuote, key, sep, quote, value) =>
+          SECRET_WORD.test(key) && value.length > 0
+            ? `${keyQuote}${key}${keyQuote}${sep}${quote}${hide(value)}${quote}`
+            : whole,
+      )
+      .replace(JWT, (token) => hide(token))
+      .replace(QUOTED_TOKEN, (_whole, quote, token) => `${quote}${hide(token)}${quote}`),
+  );
+
+/** Multipart fields named like secrets are hidden and files are left out; the parts stay. */
+const maskMultipart = (text: string, contentType: string) => {
+  const boundary = /boundary=(?:"([^"]+)"|([^;\s]+))/iu.exec(contentType);
+  const marker = boundary?.[1] ?? boundary?.[2];
+  if (marker === undefined) return "[a multipart body without its boundary is left out]";
+  return text
+    .split(`--${marker}`)
+    .map((part) => {
+      const split = part.search(/\r?\n\r?\n/u);
+      if (split === -1) return part;
+      const head = part.slice(0, split);
+      const gap = /\r?\n\r?\n/u.exec(part.slice(split))![0];
+      const body = part.slice(split + gap.length);
+      const ending = /\r?\n$/u.exec(body)?.[0] ?? "";
+      const value = body.slice(0, body.length - ending.length);
+      const name = /name="([^"]*)"/iu.exec(head)?.[1] ?? "";
+      const masked = /filename=/iu.test(head)
+        ? `<file ${value.length} bytes>`
+        : maskValue(name, value);
+      return `${head}${gap}${masked}${ending}`;
+    })
+    .join(`--${marker}`);
+};
+
+/** Bodies with secret-looking values hidden, by their format. */
 export const maskBody = (text: string, contentType: string) => {
   const type = contentType.toLowerCase();
   if (type.includes("json") || /^\s*[[{]/u.test(text)) {
@@ -74,7 +173,8 @@ export const maskBody = (text: string, contentType: string) => {
     for (const [name, value] of Array.from(params)) params.set(name, maskValue(name, value));
     return params.toString();
   }
-  return text;
+  if (type.includes("multipart/")) return maskMultipart(text, contentType);
+  return maskMarkup(text);
 };
 
 const isText = (contentType: string) =>
