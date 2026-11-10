@@ -834,7 +834,9 @@ jobs:
       - name: Exercise release-only workflow steps
         run: node scripts/release-smoke.ts
 
-  # SCIENT-FORK:START — Windows Overleaf evidence is mandatory, including exact queue reuse.
+  # SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory, including exact queue
+  # reuse. Accounts rides this job to reuse its install: a job of its own would wait for a runner
+  # and install again.
   overleaf_windows:
     name: Overleaf Windows
     needs: [release_notes]
@@ -898,6 +900,15 @@ jobs:
         timeout-minutes: 15
         working-directory: apps/server
         run: vp test bench --run --fileParallelism=false --maxWorkers=1 --testTimeout=600000 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) (10|50)$"
+      - name: Accounts and browser import tests on Windows
+        working-directory: apps/desktop
+        run: vp test run src/scient/accounts src/preview/BrowserImport
+      # Real Chrome and Edge windows: sign in to a local page, quit, read the profile back.
+      - name: Sign in in a Chrome and an Edge window on Windows
+        working-directory: apps/desktop
+        env:
+          SCIENT_CHROME_WINDOW_TEST: "1"
+        run: vp test run --testTimeout=120000 src/scient/accounts/chromeWindow.real.test.ts
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — tests only macOS can run (its Git, cloud-file flags, disk images, file

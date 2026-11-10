@@ -47,6 +47,16 @@ export interface DesktopLoginForm {
   readonly userEdited: boolean;
   readonly hasPassword: boolean;
   readonly hasValues: boolean;
+  /** The page's username box, then its second one: what each accepts. */
+  readonly boxes: ReadonlyArray<DesktopLoginBox>;
+}
+
+/** What a username box accepts: an email or not, and its own length and pattern limits. */
+export interface DesktopLoginBox {
+  readonly email: boolean;
+  readonly minLength: number;
+  readonly maxLength: number;
+  readonly pattern: string;
 }
 
 export interface DesktopSignInFill {
@@ -58,6 +68,8 @@ export interface DesktopSignInFill {
   /** Submit a complete sign-in after filling it. */
   readonly submit?: boolean;
   readonly username?: string;
+  /** Another saved username for the page's second box: an email beside an ID, or the reverse. */
+  readonly otherUsername?: string;
   readonly password?: string;
   readonly otp?: string;
 }
@@ -113,6 +125,32 @@ export interface DesktopFillMainInput {
   /** Sites the user signed out of in Main; never copied. */
   readonly skipSites: ReadonlyArray<string>;
 }
+
+/** A sign-in in a window of the person's own Chromium browser, then copied into a Scient profile. */
+export interface DesktopChromeSignInInput {
+  /** Omit for the primary local environment. */
+  readonly environmentId?: string;
+  readonly profileId: string;
+  /** An https page, or a loopback http one. */
+  readonly url: string;
+  /** Required for Main: what the copy may do, as for an import into Main. */
+  readonly main?: Pick<
+    DesktopFillMainInput,
+    "mode" | "replaceAllowedSince" | "replaceGoogle" | "skipSites"
+  >;
+}
+
+export type DesktopChromeSignInResult =
+  | { readonly outcome: "no-browser" }
+  /** `nothing`: the window held no sign-in when it closed. */
+  | { readonly outcome: "busy" | "failed" | "cancelled" | "nothing"; readonly browser?: string }
+  | {
+      readonly outcome: "signed-in";
+      readonly browser: string;
+      readonly sites: ReadonlyArray<string>;
+      /** Into Main: what the copy did to each site. */
+      readonly main?: DesktopFillMainResult;
+    };
 
 /**
  * A shareable profile's sign-ins in the desktop's own jar, for other computers. The app window
@@ -213,6 +251,18 @@ export interface DesktopAccountsBridge {
   readonly readSessions?: (
     input: DesktopReadSessionsInput,
   ) => Promise<DesktopReadSessionsResult | null>;
+  /**
+   * The browser a sign-in window opens in ("Chrome", "Edge"…), or null when none is installed.
+   * `canQuit`: Done can quit it; elsewhere the person closes the window themselves.
+   */
+  readonly chromeSignInBrowser?: () => Promise<{
+    readonly name: string;
+    readonly canQuit: boolean;
+  } | null>;
+  /** Resolves once the window closed and its sign-in was copied, or with why not. */
+  readonly chromeSignIn?: (input: DesktopChromeSignInInput) => Promise<DesktopChromeSignInResult>;
+  /** Done (`keep`) quits the open sign-in window, Cancel stops it. False when none is open. */
+  readonly endChromeSignIn?: (keep: boolean) => Promise<boolean>;
   /** Dev builds only: checks that session copies are exact on this platform; null if refused. */
   readonly qualifySessionCopy?: () => Promise<ReadonlyArray<DesktopQualifyCase> | null>;
 }

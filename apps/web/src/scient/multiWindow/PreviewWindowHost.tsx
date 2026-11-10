@@ -8,6 +8,7 @@ import { Button } from "~/components/ui/button";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { acquireDesktopTab } from "~/browser/desktopTabLifetime";
 import { consumePreviewTakeover, createPreviewHostClaim } from "./previewHostOwnership";
+import { usePreviewTabShownHere } from "./previewTabShown";
 import { desktopWindowLocks } from "./windowLocks";
 
 interface PreviewWindowTab {
@@ -51,10 +52,7 @@ function CoordinatedPreviewWindowHost({
   ...tab
 }: PreviewWindowTab & { readonly locks: LockManager; readonly children: ReactNode }) {
   const { runtimeTabId, tabId } = tab;
-  const displayed = useBrowserSurfaceStore((state) => {
-    const presentation = state.byTabId[runtimeTabId];
-    return presentation?.visible === true && presentation.rect !== null;
-  });
+  const displayed = usePreviewTabShownHere(runtimeTabId);
   // Instances are keyed by runtime tab id, so the claim never needs to follow a new one.
   const [claim] = useState(() => createPreviewHostClaim(runtimeTabId, locks));
   const role = useSyncExternalStore(claim.subscribe, claim.role);

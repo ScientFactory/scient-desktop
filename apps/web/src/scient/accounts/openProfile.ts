@@ -8,7 +8,7 @@ import { accountsState } from "./accountsState";
 
 const SNAPSHOT_WAIT_MS = 1_500;
 
-async function accountsSnapshot(threadRef: ScopedThreadRef) {
+export async function accountsSnapshot(threadRef: ScopedThreadRef) {
   const input = { environmentId: threadRef.environmentId, input: {} };
   const current = appAtomRegistry.get(accountsState.snapshot(input));
   if (AsyncResult.isSuccess(current)) return current.value;

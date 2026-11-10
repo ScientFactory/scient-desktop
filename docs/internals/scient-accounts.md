@@ -425,6 +425,21 @@ consumer's project. Activity names the plugin, variable and agent.
   stop every provider from starting. `keyLinks.ts` lets one follow an API-key account: providers read
   variables at start, so the value is copied in and copied again when the account changes.
   **Keys used by Scient** lists them by name in the client (`keysInUse`); values stay on the server.
+  Removing an agent deletes its settings, so `keptAgentKeys.ts` first keeps each key typed into
+  them (sensitive variables and secret fields) as an API-key account with `keptFrom` (agent kind,
+  setting), unless it is linked to an account (even one since deleted, which stays deleted) or the
+  same key is already kept. It runs inside the settings write that removes the agent, before its
+  secrets are deleted (`setRemovedAgentKeeper`); if keeping fails, the removal fails. Links of
+  agents that no longer exist are dropped after each settings change commits, so a failed removal
+  keeps them. Adding an agent of the same kind offers them back
+  (`accounts.keys.restoreKept`); a restored variable then follows its account. Both run once per
+  server, so a key changed in Accounts reaches linked variables whenever it changes. Cursor and
+  Antigravity keep their sign-in per instance id, which re-adding under the same name reuses; a
+  different name is a separate sign-in by design, so several accounts of one agent stay apart.
+- **One-time cards** (`request_secret` without the Accounts prefix) say on answer that the value went
+  to that agent only and isn't kept in Accounts. Agent copy sends API keys and tokens the user
+  creates to `scient_account_add`, and `request_secret` only to codes used once (2FA, pairing) or
+  tools that ask for a `secretRef`.
 - **Plain files** (`plainKeys.ts`): the page lists secrets in project `.env` files and shell profiles
   by name. Keeping one copies it into an API-key account and leaves the file alone.
 - Server sign-in and session-signing material is never moved.
@@ -715,7 +730,9 @@ its wire contract using the [analytics deployment procedure](product-analytics.m
 ### Provider-managed sign-ins
 
 Accounts also shows read-only “Managed in Claude” rows for connected `claudeai`
-MCP servers and “Managed in Codex” rows for accessible Codex apps. These come from
+MCP servers, “Managed in Codex” rows for accessible Codex apps, and “Managed in Droid” rows
+for Droid servers that hold Droid's own sign-in (`requiresAuth` with `hasAuthTokens`, as
+`signedIn`). Other agents don't report which of their connectors are signed in, so they have none. These come from
 Extensions' page-owned native inventory refresh and revision subscription; an
 installed plugin or an available app alone is not a sign-in. Apps shared by
 several plugins appear once per agent instance. Each row links to that agent's
