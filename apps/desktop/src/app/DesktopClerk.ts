@@ -25,6 +25,9 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
+// SCIENT-FORK:START clerk-sign-in-return
+import { installClerkSignInReturn } from "./ClerkSignInReturn.ts";
+// SCIENT-FORK:END clerk-sign-in-return
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 
 declare const __T3CODE_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
@@ -90,7 +93,7 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
 );
 
 function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean, userDataPath: string) {
-  return createClerkBridge({
+  const bridge = createClerkBridge({
     storage: openClerkTokenStorage(
       stateDir,
       (directory) => storage({ path: directory }),
@@ -103,6 +106,21 @@ function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean, user
       host: ElectronProtocol.DESKTOP_HOST,
     },
   });
+  // SCIENT-FORK:START clerk-sign-in-return
+  if (!bridge?.isPrimaryInstance) return bridge;
+  const stopSignInReturn = installClerkSignInReturn({
+    scheme: ElectronProtocol.getDesktopScheme(isDevelopment),
+    host: ElectronProtocol.DESKTOP_HOST,
+    isDevelopment,
+  });
+  return {
+    ...bridge,
+    cleanup: () => {
+      stopSignInReturn();
+      bridge.cleanup();
+    },
+  };
+  // SCIENT-FORK:END clerk-sign-in-return
 }
 
 /** @public */

@@ -13,7 +13,7 @@ tunnels, and the hosted app. This page is the Scient runbook. The inherited
 | Database   | PlanetScale org `scient`, Postgres `t3coderelay`, `us-east`, PS-5, no replicas | Reached through Cloudflare Hyperdrive                                                           |
 | Tunnels    | `<stage>-<digest>.scientusercontent.com`                                       | One Cloudflare tunnel per linked computer                                                       |
 | Hosted app | `https://app.scientfactory.com`                                                | Worker `scient-hosted-web`, static assets from `apps/web`                                       |
-| Sign-in    | Clerk app "Scient", development instance `live-osprey-129`                     | Google, Microsoft, GitHub, email                                                                |
+| Sign-in    | Clerk app "Scient", production instance on `clerk.scientfactory.com`           | Google, Microsoft, GitHub, email                                                                |
 | Logs       | Axiom org `scientfactory-mmof`, US East                                        | Datasets `t3-code-relay-traces-prod`, `t3-code-mobile-logs-prod`, `t3-code-mobile-metrics-prod` |
 
 Cloudflare account `7335fe148c17fc00c2e9cd48fc9162c6` holds the relay, tunnels, both zones, the
@@ -56,19 +56,34 @@ account, whether or not it is connected.
 
 ## Clerk
 
-The development instance has these settings (dashboard **Native applications** and the Backend
-API):
+The production instance serves `clerk.scientfactory.com` (Frontend API) and
+`accounts.scientfactory.com`; its DNS records are DNS-only CNAMEs in the `scientfactory.com` zone.
+Its settings (dashboard **Native applications** and the Backend API):
 
-- Redirect URLs `scient://app/` and `scient-next-dev://app/`; `allowed_origins`
-  `scient://app`, `scient-next-dev://app`, `https://app.scientfactory.com`.
+- Redirect URLs `scient://app/`, `scient-next-dev://app/`,
+  `http://127.0.0.1:34339/clerk/callback` and `http://127.0.0.1:34340/clerk/callback` (the
+  desktop's local return page, release and development); `allowed_origins` `scient://app`,
+  `scient-next-dev://app`, `https://app.scientfactory.com`.
 - JWT template `scient-relay` with `{"aud": "scient-connect-relay"}`.
 - OAuth application "Scient CLI": public, PKCE, redirect `http://127.0.0.1:34338/callback`,
   scopes `openid profile email offline_access`, device authorization grant on.
+- Support email `support@scientfactory.com`, a Google Workspace group that accepts outside mail.
 
-The development instance caps the app at 100 users, shows a "Development mode" badge, and uses
-Clerk's shared Google, Microsoft and GitHub credentials. Before a public launch, create the
-production instance on `scientfactory.com` with Scient's own OAuth apps, repeat the settings
-above, and put its `pk_live_` key in `.env.example` and the `scient-connect` environment.
+Scient owns the sign-in apps behind the social buttons; each uses the redirect
+`https://clerk.scientfactory.com/v1/oauth_callback`:
+
+| Provider  | App                                                                                       | Owner account / notes                                 |
+| --------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------------- |
+| Google    | Google Cloud project `scient-514315`, web client "Scient sign-in (Clerk)", in production  | `yaacov@scientfactory.com`                            |
+| GitHub    | OAuth app "Scient" (4008855) in the ScientFactory organization                            | Organization owners                                   |
+| Microsoft | Entra app "Scient" `2156acfa-475a-4c73-a87d-dd62ecb3a11d`, any tenant + personal accounts | `yaacov@scientfactory.com`; secret expires 2028-11-09 |
+
+Rotate the Microsoft secret before it expires: add a new one in Entra **Certificates & secrets**,
+paste it into Clerk's Microsoft connection, then delete the old one. Microsoft shows the app as
+unverified until publisher verification; some organizations block users from approving such apps.
+
+The old development instance `live-osprey-129` stays for local testing only; release builds use
+the production key in `.env.example`.
 
 ## Alerts
 
