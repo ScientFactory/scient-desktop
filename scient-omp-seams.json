@@ -226,6 +226,11 @@
       "purpose": "Retain external Oh My Pi attribution in the shared generated revision-10 analytics fixture, where any provider name is sent as the code passes it."
     },
     {
+      "path": "packages/scient-analytics/fixtures/contract-v11.json",
+      "anchor": "\"provider\": \"omp\"",
+      "purpose": "Retain external Oh My Pi attribution in the shared generated revision-11 analytics fixture with account and profile event coverage."
+    },
+    {
       "path": ".github/workflows/managed-provider-runtime-update-provider.yml",
       "anchor": "inputs.provider == 'omp'",
       "purpose": "Qualify Oh My Pi catalog candidates on every supported target with the server's RPC check."

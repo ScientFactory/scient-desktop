@@ -22,7 +22,7 @@ describe("capture and voice outcome metadata", () => {
     )!;
     expect(event.properties).toEqual({
       ...context,
-      contractRevision: "10",
+      contractRevision: "11",
       operationKind: "compute-artifact",
       trigger: "other",
       durationBucket: "unknown",
