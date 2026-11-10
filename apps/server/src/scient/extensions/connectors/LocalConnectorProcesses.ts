@@ -27,6 +27,8 @@ const STOPPED_CODE = -32001;
 const SIGN_IN_EXPIRED_MARKER = "SCIENT_SIGN_IN_EXPIRED";
 /** A replacement process answers the replayed handshake within this. */
 const RESTART_HANDSHAKE_MS = 30_000;
+/** Other calls running when a new sign-in is ready may finish within this before the swap. */
+const IN_FLIGHT_GRACE_MS = 30_000;
 
 export interface LocalConnectorIdentity {
   readonly connectorId: string;
@@ -115,6 +117,8 @@ interface Session {
   readonly internal: Map<string, Deferred.Deferred<JsonMessage>>;
   /** Done when the current process's error output has been read to its end. */
   stderrDone: Deferred.Deferred<void>;
+  /** Called once no call that reached the old process is left running. */
+  drained: (() => void) | undefined;
 }
 
 type Routed =
@@ -235,6 +239,8 @@ const channelStream = (
 
 export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(function* (options: {
   readonly onEvent: (event: LocalConnectorEvent) => Effect.Effect<void>;
+  /** How long other running calls may finish before a new sign-in swaps the process. */
+  readonly inFlightGraceMs?: number;
 }) {
   const duplex = yield* DuplexProcess;
   const clock = yield* Clock.Clock;
@@ -243,6 +249,14 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
   /** Bumped by `stop`, so a start that was still preparing when it ran does not register. */
   const generations = new Map<string, number>();
   let sequence = 0;
+
+  /** Calls the current process has and still owes, other than those waiting on a sign-in. */
+  const outstanding = (session: Session) => {
+    const unsent = new Set(session.held);
+    return [...session.inFlight.entries()].flatMap(([key, message]) =>
+      session.awaiting.has(key) || unsent.has(message) ? [] : [message],
+    );
+  };
 
   /** Delivers one message from the program; says whether it was its first answer. */
   const route = (session: Session, message: JsonMessage): Routed => {
@@ -263,7 +277,13 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       }
       session.inFlight.delete(key);
       session.retried.delete(key);
-      return deliver(session, message, key) ? { type: "ready" } : { type: "none" };
+      const first = deliver(session, message, key);
+      if (session.drained !== undefined && outstanding(session).length === 0) {
+        const drained = session.drained;
+        session.drained = undefined;
+        drained();
+      }
+      return first ? { type: "ready" } : { type: "none" };
     }
     deliver(session, message, undefined);
     return { type: "none" };
@@ -514,6 +534,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       held: undefined,
       internal: new Map(),
       stderrDone: yield* Deferred.make<void>(),
+      drained: undefined,
     };
     sessions.set(id, session);
     yield* watch(session);
@@ -618,6 +639,30 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       yield* release;
       return;
     }
+    // Other calls on the old process may have done something that can't be repeated: they finish
+    // first, within a bound, and are never sent again.
+    if (outstanding(session).length > 0) {
+      yield* Effect.promise(
+        () =>
+          new Promise<void>((resolve) => {
+            session.drained = resolve;
+          }),
+      ).pipe(Effect.timeoutOption(options.inFlightGraceMs ?? IN_FLIGHT_GRACE_MS));
+      session.drained = undefined;
+    }
+    const unknown = `${session.identity.displayName} restarted to sign in again while this call was running, so its outcome is unknown. Check whether it took effect before trying it again.`;
+    for (const message of outstanding(session)) {
+      const pending = idKey(message.id);
+      session.inFlight.delete(pending);
+      session.retried.delete(pending);
+      deliver(
+        session,
+        message.method === "tools/call"
+          ? toolError(message.id, unknown)
+          : rpcError(message.id, unknown),
+        pending,
+      );
+    }
     const replaced = yield* replaceProcess(session).pipe(Effect.result);
     if (replaced._tag === "Failure") {
       const message = `${session.identity.displayName} could not start again after signing in: ${replaced.failure.message}`;
@@ -625,11 +670,13 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       yield* stopSession(session, message);
       return;
     }
+    // Only the calls that found the session ended are sent again, then what waited, in order.
+    const retried = [...session.awaiting].flatMap((pending) => {
+      const message = session.inFlight.get(pending);
+      return message === undefined ? [] : [message];
+    });
     session.awaiting.clear();
-    // Everything the old process left unanswered goes first, then what waited, in order.
-    const waiting = new Set(session.held);
-    const unanswered = [...session.inFlight.values()].filter((message) => !waiting.has(message));
-    session.held = [...unanswered, ...waiting];
+    session.held = [...retried, ...(session.held ?? [])];
     yield* release;
   });
 

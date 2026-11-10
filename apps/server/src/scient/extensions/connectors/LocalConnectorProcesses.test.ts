@@ -37,7 +37,13 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   if (message.method === "initialize")
     send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
       capabilities: { tools: {} }, serverInfo: { name: "site", version: "1" } } });
-  else if (message.method === "tools/call")
+  else if (message.method === "tools/call" && message.params.name === "write") {
+    // Something that must not happen twice: recorded at once, answered late or never.
+    appendFileSync(process.env.WRITES_FILE, "write\\n");
+    if (message.params.arguments?.hang !== true)
+      setTimeout(() => send({ jsonrpc: "2.0", id: message.id,
+        result: { content: [{ type: "text", text: "written" }] } }), 300);
+  } else if (message.method === "tools/call")
     send({ jsonrpc: "2.0", id: message.id, result: session === "fresh"
       ? { content: [{ type: "text", text: "courses: 3" }] }
       : { isError: true, content: [{ type: "text", text: "SCIENT_SIGN_IN_EXPIRED: sent to the sign-in page" }] } });
@@ -51,8 +57,12 @@ const scratch = Effect.promise(async () => {
   await NodeFSP.writeFile(NodePath.join(root, "server.mjs"), SITE_SERVER);
   await NodeFSP.writeFile(NodePath.join(root, "session"), "old");
   await NodeFSP.writeFile(NodePath.join(root, "starts"), "");
+  await NodeFSP.writeFile(NodePath.join(root, "writes"), "");
   return root;
 });
+
+/** A request the agent never cancels. */
+const openSignal = () => new AbortController().signal;
 
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 
@@ -67,11 +77,15 @@ const readEvents = (response: Response) =>
 const textOf = (message: Record<string, unknown> | undefined) =>
   (message?.result as { content: Array<{ text: string }> } | undefined)?.content[0]?.text;
 
-const setup = Effect.fn("setup")(function* (signIn: (root: string) => LocalSignInHandler) {
+const setup = Effect.fn("setup")(function* (
+  signIn: (root: string) => LocalSignInHandler,
+  hostOptions: { readonly inFlightGraceMs?: number } = {},
+) {
   const root = yield* scratch;
   const events: LocalConnectorEvent[] = [];
   const host = yield* makeLocalConnectorHost({
     onEvent: (event) => Effect.sync(() => void events.push(event)),
+    ...hostOptions,
   });
   const identity = { connectorId: "con_site", displayName: "Site" };
   const start = Effect.succeed({
@@ -83,6 +97,7 @@ const setup = Effect.fn("setup")(function* (signIn: (root: string) => LocalSignI
       environment: {
         SESSION_FILE: NodePath.join(root, "session"),
         STARTS_FILE: NodePath.join(root, "starts"),
+        WRITES_FILE: NodePath.join(root, "writes"),
       },
     },
     hide: [],
@@ -96,7 +111,7 @@ const setup = Effect.fn("setup")(function* (signIn: (root: string) => LocalSignI
         method: "POST",
         sessionId,
         body: encode(message),
-        signal: new AbortController().signal,
+        signal: openSignal(),
       },
       start,
       handler,
@@ -117,10 +132,21 @@ const setup = Effect.fn("setup")(function* (signIn: (root: string) => LocalSignI
       method: "tools/call",
       params: { name: "courses", arguments: {} },
     }).pipe(Effect.flatMap(readEvents));
+  /** Starts a write and returns its answer still to be read. */
+  const startWrite = (id: number, hang = false) =>
+    post(sessionId, {
+      jsonrpc: "2.0",
+      id,
+      method: "tools/call",
+      params: { name: "write", arguments: { hang } },
+    });
+  const writes = Effect.promise(async () =>
+    (await NodeFSP.readFile(NodePath.join(root, "writes"), "utf8")).split("\n").filter(Boolean),
+  );
   const starts = Effect.promise(async () =>
     (await NodeFSP.readFile(NodePath.join(root, "starts"), "utf8")).split("\n").filter(Boolean),
   );
-  return { host, call, starts, events };
+  return { host, call, startWrite, writes, starts, events };
 });
 
 const layer = LocalDuplexProcess.layer.pipe(Layer.provideMerge(NodeServices.layer));
@@ -178,6 +204,46 @@ describe("signed-in local connectors", () => {
       yield* host.stop("con_site", "done");
     }).pipe(Effect.provide(layer)),
   );
+
+  const freshAfterSignIn = (root: string): LocalSignInHandler => ({
+    expired: () =>
+      Effect.promise(async () => {
+        await NodeFSP.writeFile(NodePath.join(root, "session"), "fresh");
+        return { retry: true } as const;
+      }),
+    stillExpired: Effect.succeed("still"),
+  });
+
+  it.live("lets a running call finish on the old process and never sends it again", () =>
+    Effect.gen(function* () {
+      const { call, startWrite, writes, starts, host } = yield* setup(freshAfterSignIn);
+      const writing = yield* startWrite(2);
+      // regression: the write was killed and replayed, so it happened twice.
+      const answered = yield* call(3);
+      expect(textOf(answered[0])).toBe("courses: 3");
+      expect(textOf((yield* readEvents(writing))[0])).toBe("written");
+      expect(yield* writes).toEqual(["write"]);
+      expect(yield* starts).toHaveLength(2);
+      yield* host.stop("con_site", "done");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.live(
+    "says a call cut off by the new sign-in has an unknown outcome, without replaying it",
+    () =>
+      Effect.gen(function* () {
+        const { call, startWrite, writes, host } = yield* setup(freshAfterSignIn, {
+          inFlightGraceMs: 200,
+        });
+        const writing = yield* startWrite(2, true);
+        expect(textOf((yield* call(3))[0])).toBe("courses: 3");
+        const [cut] = yield* readEvents(writing);
+        expect(cut).toMatchObject({ result: { isError: true } });
+        expect(textOf(cut)).toContain("its outcome is unknown");
+        expect(yield* writes).toEqual(["write"]);
+        yield* host.stop("con_site", "done");
+      }).pipe(Effect.provide(layer)),
+  );
 });
 
 describe("why a local connector stopped", () => {
@@ -209,7 +275,7 @@ describe("why a local connector stopped", () => {
             method: "initialize",
             params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "t" } },
           }),
-          signal: new AbortController().signal,
+          signal: openSignal(),
         },
         start,
       );
