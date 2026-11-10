@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off - Exercises the real loopback listener.
+import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
+import * as NodePath from "node:path";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { handlers, emit } = vi.hoisted(() => ({
@@ -24,6 +26,7 @@ import {
   isTopLevelNavigation,
   renderClerkSignInReturnPage,
 } from "./ClerkSignInReturn.ts";
+import { SCIENT_SYMBOL_SVG } from "./scientSymbolSvg.ts";
 
 const mainFrame = {};
 const navigate = { "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" };
@@ -69,6 +72,14 @@ describe("ClerkSignInReturn", () => {
     expect(isTopLevelNavigation({ "sec-fetch-dest": "iframe", "sec-fetch-mode": "navigate" })).toBe(
       false,
     );
+  });
+
+  it("keeps its copy of the Scient symbol identical to the web asset", () => {
+    const asset = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../../../web/src/assets/scient-symbol.svg"),
+      "utf8",
+    );
+    expect(SCIENT_SYMBOL_SVG).toBe(asset);
   });
 
   it("renders success and failure without the provider's details", () => {
