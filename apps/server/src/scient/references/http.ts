@@ -13,11 +13,11 @@ import {
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../../auth/http.ts";
-import { SourceIdentifierLookup } from "../sources/SourceIdentifierResolver.ts";
 import {
   checkReferences,
   isReferenceCheckError,
   listReferenceDocuments,
+  ReferenceIdentifierLookup,
 } from "./ReferenceCheck.ts";
 import { resolveReferenceFindings } from "./ReferenceResolution.ts";
 
@@ -51,6 +51,7 @@ export const scientReferencesHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "scientReferences",
   Effect.fnUntraced(function* (handlers) {
+    const resolveIdentifiers = yield* ReferenceIdentifierLookup;
     return yield* Effect.succeed(
       handlers
         .handle("documents", (args) =>
@@ -59,12 +60,9 @@ export const scientReferencesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("check", (args) =>
-          Effect.gen(function* () {
-            const resolveIdentifier = yield* SourceIdentifierLookup;
-            return yield* handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
-              checkReferences(args.payload, { resolveIdentifier }),
-            );
-          }),
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            checkReferences(args.payload, { resolveIdentifiers }),
+          ),
         )
         .handle("resolve", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>

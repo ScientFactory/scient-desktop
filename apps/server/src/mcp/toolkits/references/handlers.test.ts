@@ -15,17 +15,14 @@ import {
   workspaceScopeForTest,
 } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import {
-  SourceIdentifierLookup,
-  verifiableSourceIdentifier,
-  type ResolveSourceIdentifier,
-} from "../../../scient/sources/SourceIdentifierResolver.ts";
+  ReferenceIdentifierLookup,
+  type ResolveIdentifierBatch,
+} from "../../../scient/references/ReferenceCheck.ts";
 import { checkReferencesForInvocation, resolveReferencesForInvocation } from "./handlers.ts";
 
-const lookup: ResolveSourceIdentifier = async (identifiers) => {
-  const identifier = verifiableSourceIdentifier(identifiers);
-  if (!identifier) return null;
-  return {
-    status: "found",
+const lookup: ResolveIdentifierBatch = async (identifiers) =>
+  identifiers.map((identifier) => ({
+    status: "found" as const,
     identifier,
     retrievedAt: "2026-11-10T12:00:00.000Z",
     metadata: {
@@ -45,8 +42,7 @@ const lookup: ResolveSourceIdentifier = async (identifiers) => {
       language: null,
       url: null,
     },
-  };
-};
+  }));
 
 const withProject = <A, E, R>(root: string, effect: Effect.Effect<A, E, R>) =>
   Effect.gen(function* () {
@@ -68,7 +64,7 @@ const withProject = <A, E, R>(root: string, effect: Effect.Effect<A, E, R>) =>
         }),
       ),
       Effect.provideService(WorkspaceBindingResolver, resolver),
-      Effect.provideService(SourceIdentifierLookup, lookup),
+      Effect.provideService(ReferenceIdentifierLookup, lookup),
     );
   });
 

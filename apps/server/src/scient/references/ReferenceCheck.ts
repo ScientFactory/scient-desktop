@@ -27,20 +27,22 @@ import {
 } from "@scientfactory/scient-sources";
 import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
+import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
 
-import type {
-  ResolveSourceIdentifier,
-  SourceIdentifierResolution,
+import {
+  resolveSourceIdentifierBatch,
+  sourceIdentifierLabel,
+  sourceIdentifierRegistryName,
+  verifiableSourceIdentifier,
+  type SourceIdentifierResolution,
 } from "../sources/SourceIdentifierResolver.ts";
 import {
   BIBTEX_FIELD_FOR,
   describesDifferentWork,
   detailFindings,
-  identifierLabel,
   registryCitation,
   registryCreators,
-  registryName,
   registryStatusFindings,
   registryValue,
   SOURCE_FIELD_FOR,
@@ -60,14 +62,25 @@ export const isReferenceCheckError = Schema.is(ReferenceCheckError);
 const MAX_DOCUMENT_BYTES = 5 * 1024 * 1024;
 const MAX_IGNORE_BYTES = 1024 * 1024;
 const MAX_IGNORED_FINDINGS = 5_000;
-const LOOKUP_CONCURRENCY = 6;
+const LOOKUP_CHUNK = 24;
+const PARALLEL_CHUNKS = 2;
 /** Lookups not started by then count as unavailable, so a slow registry cannot hold a check open. */
 const LOOKUP_BUDGET_MS = 90_000;
 const DOCUMENT_EXTENSIONS = [".md", ".markdown", ".qmd", ".rmd", ".tex", ".ltx", ".bib"];
 const SKIPPED_DIRECTORIES = new Set(["node_modules", "__pycache__", "venv", "build", "dist"]);
 
+/** The shared resolver's batch lookup; each identifier resolves as its own work. */
+export type ResolveIdentifierBatch = (
+  identifiers: ReadonlyArray<ScientSourceIdentifier>,
+) => Promise<ReadonlyArray<SourceIdentifierResolution>>;
+
+export const ReferenceIdentifierLookup = Context.Reference<ResolveIdentifierBatch>(
+  "scient/references/ReferenceIdentifierLookup",
+  { defaultValue: () => (identifiers) => resolveSourceIdentifierBatch(identifiers) },
+);
+
 export interface ReferenceCheckOptions {
-  readonly resolveIdentifier: ResolveSourceIdentifier;
+  readonly resolveIdentifiers: ResolveIdentifierBatch;
   readonly now?: () => Date;
 }
 
@@ -239,7 +252,7 @@ function sourceSubject(record: ScientSourceRecord): Subject {
   };
   return {
     scopeKey: `library#${record.sourceId}`,
-    key: null,
+    key: record.citationKey ?? null,
     label: label(text(record.title)),
     location: null,
     sourceId: record.sourceId,
@@ -330,44 +343,6 @@ function cslSubjects(source: string, path: string): ReadonlyArray<Subject> {
   });
 }
 
-function lookupIdentifiers(
-  identifiers: ReadonlyArray<ScientSourceIdentifier>,
-): ReadonlyArray<ScientSourceIdentifier> {
-  const arxiv = identifiers.find((identifier) => identifier.scheme === "arxiv");
-  const hasDoi = identifiers.some((identifier) => identifier.scheme === "doi");
-  // arXiv registers every paper's DOI with DataCite, which doi.org answers.
-  return arxiv && !hasDoi
-    ? [...identifiers, { scheme: "doi", value: `10.48550/arXiv.${arxiv.value}` }]
-    : identifiers;
-}
-
-function lookupKey(identifiers: ReadonlyArray<ScientSourceIdentifier>): string | null {
-  for (const scheme of ["doi", "pmid"]) {
-    const found = identifiers.find((identifier) => identifier.scheme.toLowerCase() === scheme);
-    if (found) return normalizePersistentIdentifier(scheme, found.value);
-  }
-  return null;
-}
-
-function limiter(concurrency: number) {
-  let active = 0;
-  const waiting: Array<() => void> = [];
-  return <A>(run: () => Promise<A>) =>
-    new Promise<A>((resolve, reject) => {
-      const start = () => {
-        active++;
-        run()
-          .then(resolve, reject)
-          .finally(() => {
-            active--;
-            waiting.shift()?.();
-          });
-      };
-      if (active < concurrency) start();
-      else waiting.push(start);
-    });
-}
-
 function findingId(scope: string, subjectKey: string, kind: string, detail: string): string {
   return NodeCrypto.createHash("sha256")
     .update(JSON.stringify([scope, subjectKey, kind, detail.toLowerCase()]))
@@ -443,6 +418,15 @@ async function collectLibrary(root: string): Promise<Collected> {
   };
 }
 
+/** The Library key a citation names; Library keys are unique without regard to case. */
+function libraryKey(key: string, byKey: ReadonlyMap<string, ReadonlyArray<Subject>>): string {
+  const lower = key.toLowerCase();
+  for (const [listed, subjects] of byKey) {
+    if (subjects[0]!.sourceId !== null && listed.toLowerCase() === lower) return listed;
+  }
+  return key;
+}
+
 async function collectDocument(root: string, path: string): Promise<Collected> {
   const document = await readProjectText(root, path, "document");
   const kind = referenceDocumentKind(document.relativePath);
@@ -495,6 +479,23 @@ async function collectDocument(root: string, path: string): Promise<Collected> {
     }
   }
 
+  const citedLines = new Map<string, number>();
+  for (const citation of parsed.citations) {
+    if (!citedLines.has(citation.key)) citedLines.set(citation.key, citation.line);
+  }
+  const listedKeys = new Set(subjects.flatMap((subject) => (subject.key ? [subject.key] : [])));
+  const unlisted = [...citedLines.keys()].filter((key) => !listedKeys.has(key));
+  if (kind !== "bibtex" && unlisted.length > 0) {
+    // Citations can name Library sources by citation key, as Markdown [@key] inserts them.
+    const wanted = new Set(unlisted.map((key) => key.toLowerCase()));
+    const library = await listScientSourceRecords(root).catch(() => []);
+    subjects.push(
+      ...library
+        .filter((record) => record.citationKey && wanted.has(record.citationKey.toLowerCase()))
+        .map(sourceSubject),
+    );
+  }
+
   const bookkeeping: Array<Placed> = [];
   const byKey = new Map<string, Array<Subject>>();
   for (const subject of subjects) {
@@ -520,13 +521,10 @@ async function collectDocument(root: string, path: string): Promise<Collected> {
     );
     complete = false;
   }
-  const citedLines = new Map<string, number>();
-  for (const citation of parsed.citations) {
-    if (!citedLines.has(citation.key)) citedLines.set(citation.key, citation.line);
-  }
+  const isListed = (key: string) => byKey.has(key) || byKey.has(libraryKey(key, byKey));
   if (hasBibliography) {
     for (const [key, line] of citedLines) {
-      if (byKey.has(key)) continue;
+      if (isListed(key)) continue;
       bookkeeping.push({
         subject: null,
         draft: {
@@ -542,7 +540,7 @@ async function collectDocument(root: string, path: string): Promise<Collected> {
   const citesEverything = kind === "latex" && /\\nocite\s*\{\s*\*\s*\}/u.test(document.text);
   if (kind !== "bibtex" && citedLines.size > 0 && !citesEverything) {
     for (const [key, listed] of byKey) {
-      if (citedLines.has(key)) continue;
+      if (citedLines.has(key) || listed[0]!.sourceId !== null) continue;
       bookkeeping.push({
         subject: listed[0]!,
         draft: {
@@ -564,10 +562,7 @@ async function collectDocument(root: string, path: string): Promise<Collected> {
   };
 }
 
-type Outcome =
-  | { readonly status: "no-identifier" }
-  | { readonly status: "unavailable" }
-  | SourceIdentifierResolution;
+type Outcome = { readonly status: "no-identifier" } | SourceIdentifierResolution;
 
 function subjectFindings(subject: Subject, outcome: Outcome): ReadonlyArray<Placed> {
   const placed = (
@@ -579,7 +574,7 @@ function subjectFindings(subject: Subject, outcome: Outcome): ReadonlyArray<Plac
     findings.push(
       placed({
         kind: "identifier-not-found",
-        message: `${identifierLabel(outcome.identifier)} is not registered at ${registryName(outcome.identifier)}. Find the work's correct identifier before citing it.`,
+        message: `${sourceIdentifierLabel(outcome.identifier)} was not found at ${sourceIdentifierRegistryName(outcome.identifier)}. Find the work's correct identifier before citing it.`,
         detail: normalizePersistentIdentifier(outcome.identifier.scheme, outcome.identifier.value),
       }),
     );
@@ -598,7 +593,7 @@ function subjectFindings(subject: Subject, outcome: Outcome): ReadonlyArray<Plac
         placed(
           {
             kind: "identifier-mismatch",
-            message: `${identifierLabel(outcome.identifier)} belongs to a different work: ${registryCitation(metadata)}.`,
+            message: `${sourceIdentifierLabel(outcome.identifier)} belongs to a different work: ${registryCitation(metadata)}.`,
             detail: normalizePersistentIdentifier(
               outcome.identifier.scheme,
               outcome.identifier.value,
@@ -609,7 +604,7 @@ function subjectFindings(subject: Subject, outcome: Outcome): ReadonlyArray<Plac
       );
       return findings;
     }
-    for (const draft of registryStatusFindings(subject.claimed, metadata)) {
+    for (const draft of registryStatusFindings(subject.claimed, metadata, outcome.identifier)) {
       findings.push(placed(draft, registry));
     }
     for (const draft of detailFindings(subject.claimed, metadata, outcome.identifier)) {
@@ -658,23 +653,30 @@ export async function checkReferences(
     complete = false;
   }
 
-  const limit = limiter(LOOKUP_CONCURRENCY);
-  const lookups = new Map<string, Promise<Outcome>>();
-  const resolve = (identifiers: ReadonlyArray<ScientSourceIdentifier>): Promise<Outcome> => {
-    const key = lookupKey(identifiers);
-    if (key === null) return Promise.resolve({ status: "no-identifier" });
-    const existing = lookups.get(key);
-    if (existing) return existing;
-    const pending = limit(async (): Promise<Outcome> => {
-      if (now().getTime() - startedAt > LOOKUP_BUDGET_MS) return { status: "unavailable" };
-      const resolution = await options.resolveIdentifier(identifiers).catch(() => null);
-      return resolution ?? { status: "unavailable" };
-    });
-    lookups.set(key, pending);
-    return pending;
-  };
-  const outcomes = await Promise.all(
-    subjects.map((subject) => resolve(lookupIdentifiers(subject.claimed.identifiers))),
+  const keyOf = (identifier: ScientSourceIdentifier) => `${identifier.scheme}:${identifier.value}`;
+  const wanted = subjects.map((subject) => verifiableSourceIdentifier(subject.claimed.identifiers));
+  const distinct = [
+    ...new Map(
+      wanted.flatMap((identifier) => (identifier ? [[keyOf(identifier), identifier]] : [])),
+    ).values(),
+  ];
+  const chunks = Array.from({ length: Math.ceil(distinct.length / LOOKUP_CHUNK) }, (_, index) =>
+    distinct.slice(index * LOOKUP_CHUNK, (index + 1) * LOOKUP_CHUNK),
+  );
+  const answers = new Map<string, SourceIdentifierResolution>();
+  for (let start = 0; start < chunks.length; start += PARALLEL_CHUNKS) {
+    if (now().getTime() - startedAt > LOOKUP_BUDGET_MS) break;
+    const settled = await Promise.all(
+      chunks
+        .slice(start, start + PARALLEL_CHUNKS)
+        .map((chunk) => options.resolveIdentifiers(chunk).catch(() => [])),
+    );
+    for (const resolution of settled.flat()) answers.set(keyOf(resolution.identifier), resolution);
+  }
+  const outcomes = wanted.map((identifier): Outcome =>
+    identifier === null
+      ? { status: "no-identifier" }
+      : (answers.get(keyOf(identifier)) ?? { status: "unavailable", identifier }),
   );
 
   const placed: Array<Placed> = [...collected.bookkeeping];
@@ -693,7 +695,7 @@ export async function checkReferences(
       subject,
       draft: {
         kind: "same-work",
-        message: `This is the same work as ${first.key ?? first.label ?? "another entry"} (${identifierLabel(outcome.identifier)}).`,
+        message: `This is the same work as ${first.key ?? first.label ?? "another entry"} (${sourceIdentifierLabel(outcome.identifier)}).`,
         detail: work,
       },
       registry: null,
@@ -745,10 +747,7 @@ export async function checkReferences(
       : outcome.status === "no-identifier" || outcome.status === "unavailable"
         ? outcome.status
         : "ok";
-    const identifier =
-      outcome.status === "no-identifier" || outcome.status === "unavailable"
-        ? (lookupIdentifiers(subject.claimed.identifiers)[0] ?? null)
-        : outcome.identifier;
+    const identifier = outcome.status === "no-identifier" ? null : outcome.identifier;
     return {
       key: subject.key,
       label: subject.label,

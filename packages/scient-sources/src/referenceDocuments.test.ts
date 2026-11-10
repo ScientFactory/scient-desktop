@@ -22,7 +22,7 @@ describe("reference documents", () => {
         "  url = {https://doi.org/10.1000/ABC.123.},",
         "}",
         "@misc{arx, title = {Preprint}, eprint = {2101.00001v2}, archivePrefix = {arXiv}}",
-        "@book{nobook, title = {Only a title}}",
+        "@book{nobook, title = {Only a title}, isbn = {978-0-262-03384-8}}",
       ].join("\n"),
     );
     expect(document.parseError).toBeNull();
@@ -40,6 +40,7 @@ describe("reference documents", () => {
     expect(article!.identifiers).toEqual([{ scheme: "doi", value: "10.1000/ABC.123" }]);
     expect(missingBibtexFields(article!)).toEqual([]);
     expect(preprint!.identifiers).toEqual([{ scheme: "arxiv", value: "2101.00001" }]);
+    expect(book!.identifiers).toEqual([{ scheme: "isbn", value: "9780262033848" }]);
     expect(missingBibtexFields(book!)).toEqual(["author", "publisher", "year"]);
   });
 

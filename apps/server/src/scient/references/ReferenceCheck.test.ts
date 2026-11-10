@@ -13,9 +13,13 @@ import { addAgentSource } from "../sources/ScientSourcesCoordinator.ts";
 import {
   verifiableSourceIdentifier,
   type ResolvedSourceMetadata,
-  type ResolveSourceIdentifier,
+  type SourceIdentifierResolution,
 } from "../sources/SourceIdentifierResolver.ts";
-import { checkReferences, ReferenceCheckError } from "./ReferenceCheck.ts";
+import {
+  checkReferences,
+  ReferenceCheckError,
+  type ResolveIdentifierBatch,
+} from "./ReferenceCheck.ts";
 import { resolveReferenceFindings } from "./ReferenceResolution.ts";
 
 const now = () => new Date("2026-11-10T12:00:00.000Z");
@@ -62,25 +66,60 @@ const author = (familyName: string) => ({
   literalName: null,
 });
 
-/** A registry keyed by lowercase DOI; anything else is not registered. */
+/** A recorded registry keyed by scheme and identifier; anything else is not registered. */
 function registry(
   works: Readonly<Record<string, ResolvedSourceMetadata | "unavailable">>,
-): ResolveSourceIdentifier & { readonly asked: Array<string> } {
+): ResolveIdentifierBatch & { readonly asked: Array<string> } {
   const asked: Array<string> = [];
-  const lookup: ResolveSourceIdentifier = async (identifiers) => {
-    const identifier = verifiableSourceIdentifier(identifiers);
-    if (!identifier) return null;
-    asked.push(`${identifier.scheme}:${identifier.value}`);
-    const work = works[identifier.value.toLowerCase()];
-    if (work === "unavailable") return { status: "unavailable", identifier };
-    if (!work) return { status: "not-found", identifier };
-    return { status: "found", identifier, metadata: work, retrievedAt: now().toISOString() };
-  };
+  const lookup: ResolveIdentifierBatch = async (identifiers) =>
+    identifiers.map((input): SourceIdentifierResolution => {
+      const identifier = verifiableSourceIdentifier([input]) ?? input;
+      const key = `${identifier.scheme}:${identifier.value}`;
+      asked.push(key);
+      const work = works[key];
+      if (work === "unavailable") return { status: "unavailable", identifier };
+      if (!work) return { status: "not-found", identifier };
+      return { status: "found", identifier, metadata: work, retrievedAt: now().toISOString() };
+    });
   return Object.assign(lookup, { asked });
 }
 
 const kinds = (report: ScientReferenceCheckReport) =>
   report.findings.map((finding) => `${finding.key ?? finding.sourceId}:${finding.kind}`).sort();
+
+async function addLibrarySource(root: string) {
+  await addAgentSource({
+    root,
+    resolveIdentifier: async (identifiers) => {
+      const identifier = verifiableSourceIdentifier(identifiers);
+      return identifier ? { status: "unavailable", identifier } : null;
+    },
+    candidate: {
+      sourceKey: "smith",
+      type: "article",
+      customType: null,
+      title: "The effect of light on sleep",
+      creators: [author("Smith")],
+      issuedRaw: "2020",
+      issuedYear: 2020,
+      identifiers: [{ scheme: "doi", value: "10.1000/smith" }],
+      abstract: null,
+      containerTitle: "Journal of Sleep Research",
+      publisher: null,
+      volume: "12",
+      issue: null,
+      pages: "100-110",
+      language: null,
+      url: null,
+      tags: [],
+      externalReferences: [],
+      fieldProvenance: [],
+      pdfAvailable: false,
+      pdfFileName: null,
+      pdfAttachmentCount: 0,
+    },
+  });
+}
 
 const SMITH = metadata({
   title: "The effect of light on sleep",
@@ -92,26 +131,30 @@ const SMITH = metadata({
 });
 
 const works = {
-  "10.1000/smith": SMITH,
-  "10.1000/wrong": metadata({
+  "doi:10.1000/smith": SMITH,
+  "doi:10.1000/wrong": metadata({
     title: "Feeding behaviour of reef fish",
     creators: [author("Okafor")],
     issuedYear: 2015,
   }),
-  "10.1000/retracted": metadata({
+  "doi:10.1000/retracted": metadata({
     title: "RETRACTED: Vaccines and autism",
     creators: [author("Wakefield")],
     issuedYear: 1998,
     containerTitle: "The Lancet",
     updates: [{ type: "retraction", doi: "10.1000/notice", date: "2010-02-06", source: null }],
   }),
-  "10.48550/arxiv.2101.00001": metadata({
+  "arxiv:2101.00001": metadata({
+    type: "preprint",
     title: "Attention for everything",
     creators: [author("Lee")],
     issuedYear: 2021,
-    relations: [{ type: "is-preprint-of", idType: "doi", id: "10.1000/published" }],
+    identifiers: [
+      { scheme: "arxiv", value: "2101.00001" },
+      { scheme: "doi", value: "10.1000/published" },
+    ],
   }),
-  "10.1000/slow": "unavailable",
+  "doi:10.1000/slow": "unavailable",
 } as const;
 
 const BIB = `@article{smith2020,
@@ -149,7 +192,7 @@ describe("checkReferences", () => {
 
     const report = await checkReferences(
       { root: fixture.root, target: { kind: "file", path: "paper/main.tex" } },
-      { resolveIdentifier: lookup, now },
+      { resolveIdentifiers: lookup, now },
     );
 
     expect(report.files).toEqual(["paper/main.tex", "paper/refs.bib"]);
@@ -200,7 +243,7 @@ describe("checkReferences", () => {
       "DOI 10.1000/wrong belongs to a different work: “Feeding behaviour of reef fish” (Okafor, 2015).",
     );
     expect(lookup.asked.filter((asked) => asked === "doi:10.1000/smith")).toHaveLength(1);
-    expect(lookup.asked).toContain("doi:10.48550/arxiv.2101.00001");
+    expect(lookup.asked).toContain("arxiv:2101.00001");
     expect(
       Object.fromEntries(report.ledger.map((entry) => [entry.key, entry.status])),
     ).toMatchObject({
@@ -221,7 +264,7 @@ describe("checkReferences", () => {
     const target = { kind: "file", path: "refs.bib" } as const;
     const first = await checkReferences(
       { root: fixture.root, target },
-      { resolveIdentifier: registry(works), now },
+      { resolveIdentifiers: registry(works), now },
     );
     const yearFix = first.findings.find((finding) => finding.key === "smith2020")!.fix!;
     if (yearFix.kind !== "bibtex-field") throw new Error("Expected a .bib fix");
@@ -242,7 +285,7 @@ describe("checkReferences", () => {
     expect(bib).toContain("title = {Sleep in shift workers}, journal = {Sleep}, year = 2019");
     const second = await checkReferences(
       { root: fixture.root, target },
-      { resolveIdentifier: registry(works), now },
+      { resolveIdentifiers: registry(works), now },
     );
     expect(second.findings.some((finding) => finding.key === "smith2020")).toBe(false);
   });
@@ -255,7 +298,7 @@ describe("checkReferences", () => {
     );
     const report = await checkReferences(
       { root: fixture.root, target: { kind: "file", path: "refs.bib" } },
-      { resolveIdentifier: registry(works), now },
+      { resolveIdentifiers: registry(works), now },
     );
     const missing = report.findings.find((finding) => finding.kind === "missing-field");
     expect(missing?.message).toBe(
@@ -271,41 +314,11 @@ describe("checkReferences", () => {
 
   it("checks Library sources and applies a fix as a credited revision", async () => {
     await using fixture = await project();
-    await addAgentSource({
-      root: fixture.root,
-      resolveIdentifier: async (identifiers) => {
-        const identifier = verifiableSourceIdentifier(identifiers);
-        return identifier ? { status: "unavailable", identifier } : null;
-      },
-      candidate: {
-        sourceKey: "smith",
-        type: "article",
-        customType: null,
-        title: "The effect of light on sleep",
-        creators: [author("Smith")],
-        issuedRaw: "2020",
-        issuedYear: 2020,
-        identifiers: [{ scheme: "doi", value: "10.1000/smith" }],
-        abstract: null,
-        containerTitle: "Journal of Sleep Research",
-        publisher: null,
-        volume: "12",
-        issue: null,
-        pages: "100-110",
-        language: null,
-        url: null,
-        tags: [],
-        externalReferences: [],
-        fieldProvenance: [],
-        pdfAvailable: false,
-        pdfFileName: null,
-        pdfAttachmentCount: 0,
-      },
-    });
+    await addLibrarySource(fixture.root);
 
     const report = await checkReferences(
       { root: fixture.root, target: { kind: "library" } },
-      { resolveIdentifier: registry(works), now },
+      { resolveIdentifiers: registry(works), now },
     );
 
     const finding = report.findings[0]!;
@@ -325,13 +338,33 @@ describe("checkReferences", () => {
     expect(record).toMatchObject({ issuedYear: 2021, issuedRaw: "2021", updatedBy: "agent" });
   });
 
+  it("matches Markdown citations to Library sources by citation key", async () => {
+    await using fixture = await project();
+    await addLibrarySource(fixture.root);
+    const [record] = await listScientSourceRecords(fixture.root);
+    const key = record!.citationKey!;
+    await fixture.write("draft.md", `Light [@${key.toUpperCase()}] and [@missing].\n`);
+
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "file", path: "draft.md" } },
+      { resolveIdentifiers: registry(works), now },
+    );
+
+    expect(report.references).toBe(1);
+    expect(kinds(report)).toEqual(["missing:cited-not-listed", `${key}:details-differ`]);
+    expect(report.findings[1]).toMatchObject({
+      sourceId: record!.sourceId,
+      fix: { kind: "source-field", field: "issuedYear" },
+    });
+  });
+
   it("remembers ignored findings across checks until they are restored", async () => {
     await using fixture = await project();
     await fixture.write("refs.bib", BIB);
     const check = () =>
       checkReferences(
         { root: fixture.root, target: { kind: "file", path: "refs.bib" } },
-        { resolveIdentifier: registry(works), now },
+        { resolveIdentifiers: registry(works), now },
       );
     const first = await check();
     const ghost = first.findings.find((finding) => finding.key === "ghost")!;
@@ -365,7 +398,7 @@ describe("checkReferences", () => {
     );
     const report = await checkReferences(
       { root: fixture.root, target: { kind: "file", path: "notes/draft.md" } },
-      { resolveIdentifier: registry(works), now },
+      { resolveIdentifiers: registry(works), now },
     );
     expect(report.files).toEqual(["notes/draft.md", "refs.bib"]);
     expect(report.findings.find((finding) => finding.kind === "cited-not-listed")).toMatchObject({
@@ -376,7 +409,7 @@ describe("checkReferences", () => {
     await expect(
       checkReferences(
         { root: fixture.root, target: { kind: "file", path: "../outside.md" } },
-        { resolveIdentifier: registry(works), now },
+        { resolveIdentifiers: registry(works), now },
       ),
     ).rejects.toBeInstanceOf(ReferenceCheckError);
   });

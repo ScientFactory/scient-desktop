@@ -45,9 +45,9 @@ it("preserves automatic Sources writes independently of the Browser grant", () =
   const available = scientOperationCatalog
     .list()
     .filter((operation) => hasOperationCapabilities(operation, baseline));
-  // 3 document builds, 8 Overleaf tools (no grant of their own), 13 Sources tools and the Compute
-  // inventory, which any agent may read.
-  expect(available).toHaveLength(25);
+  // 3 document builds, 8 Overleaf tools (no grant of their own), 13 Sources tools, 2 reference
+  // check tools and the Compute inventory, which any agent may read.
+  expect(available).toHaveLength(27);
   const sources = Object.values(ScientSourcesToolkit.tools);
   expect(sources).toHaveLength(13);
   for (const tool of sources) {

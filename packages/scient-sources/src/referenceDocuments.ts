@@ -133,6 +133,10 @@ function referenceIdentifiers(
       ? eprint.replace(/^arxiv:/iu, "").replace(/v\d+$/u, "")
       : NEW_ARXIV_ID.exec(eprint)?.[1]) ?? ARXIV_PATTERN.exec(prose)?.[1];
   if (arxiv) identifiers.push({ scheme: "arxiv", value: arxiv });
+  const isbn =
+    fields.isbn?.split(/[,;]/u)[0]?.trim() ??
+    /\bISBN(?:-1[03])?:?\s*([0-9][0-9 -]{8,15}[0-9Xx])\b/u.exec(prose)?.[1];
+  if (isbn) identifiers.push({ scheme: "isbn", value: isbn.replace(/[\s-]+/gu, "") });
   return identifiers;
 }
 

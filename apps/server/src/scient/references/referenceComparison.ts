@@ -115,25 +115,10 @@ const firstPage = (pages: string) =>
     .replace(/^e/iu, "")
     .toLowerCase();
 
-const isArxivDoi = (identifier: ScientSourceIdentifier) =>
-  identifier.scheme === "doi" && identifier.value.toLowerCase().startsWith("10.48550/arxiv.");
-
-export function identifierLabel(identifier: ScientSourceIdentifier): string {
-  switch (identifier.scheme) {
-    case "doi":
-      return `DOI ${identifier.value}`;
-    case "pmid":
-      return `PMID ${identifier.value}`;
-    case "arxiv":
-      return `arXiv ${identifier.value}`;
-    default:
-      return `${identifier.scheme.toUpperCase()} ${identifier.value}`;
-  }
-}
-
-export function registryName(identifier: ScientSourceIdentifier): string {
-  return identifier.scheme === "pmid" ? "PubMed" : "doi.org";
-}
+/** Whether the registry record is an arXiv preprint, which knows no venue or published year. */
+const isArxivRecord = (identifier: ScientSourceIdentifier) =>
+  identifier.scheme === "arxiv" ||
+  (identifier.scheme === "doi" && identifier.value.toLowerCase().startsWith("10.48550/arxiv."));
 
 export function registryCitation(metadata: ResolvedSourceMetadata): string {
   const author = familyName(metadata);
@@ -184,6 +169,7 @@ const doiUrl = (doi: string) => `https://doi.org/${doi}`;
 export function registryStatusFindings(
   claimed: ClaimedReference,
   metadata: ResolvedSourceMetadata,
+  resolvedIdentifier: ScientSourceIdentifier,
 ): ReadonlyArray<FindingDraft> {
   const drafts: Array<FindingDraft> = [];
   const updates = metadata.updates ?? [];
@@ -215,19 +201,25 @@ export function registryStatusFindings(
       .filter((identifier) => identifier.scheme === "doi")
       .map((identifier) => identifier.value.toLowerCase()),
   );
-  const published = (metadata.relations ?? []).find(
-    (relation) =>
-      relation.type === "is-preprint-of" &&
-      (relation.idType === null || relation.idType === "doi") &&
-      !cited.has(relation.id.toLowerCase()),
-  );
-  if (published) {
+  // Crossref links a preprint to its article; arXiv records name the published DOI directly.
+  const publishedDoi =
+    (metadata.relations ?? []).find(
+      (relation) =>
+        relation.type === "is-preprint-of" &&
+        (relation.idType === null || relation.idType === "doi"),
+    )?.id ??
+    (isArxivRecord(resolvedIdentifier)
+      ? metadata.identifiers.find(
+          (identifier) => identifier.scheme === "doi" && !isArxivRecord(identifier),
+        )?.value
+      : undefined);
+  if (publishedDoi && !cited.has(publishedDoi.toLowerCase())) {
     drafts.push({
       kind: "published-version",
       message:
         "This is a preprint. A peer-reviewed version has been published; consider citing it.",
-      detail: published.id.toLowerCase(),
-      related: { label: "Published version", url: doiUrl(published.id) },
+      detail: publishedDoi.toLowerCase(),
+      related: { label: "Published version", url: doiUrl(publishedDoi) },
     });
   }
   return drafts;
@@ -242,7 +234,7 @@ export function detailFindings(
   const drafts: Array<FindingDraft> = [];
   // An arXiv record knows the preprint, not the venue or year a published version has.
   const preprintRecord =
-    isArxivDoi(resolvedIdentifier) &&
+    isArxivRecord(resolvedIdentifier) &&
     claimed.container !== null &&
     !/arxiv/iu.test(claimed.container);
   const resolvedTitle = metadata.title ? withoutRetractionPrefix(metadata.title) : null;

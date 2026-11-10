@@ -4,9 +4,9 @@ import * as Effect from "effect/Effect";
 import {
   checkReferences,
   isReferenceCheckError,
+  ReferenceIdentifierLookup,
 } from "../../../scient/references/ReferenceCheck.ts";
 import { resolveReferenceFindings } from "../../../scient/references/ReferenceResolution.ts";
-import { SourceIdentifierLookup } from "../../../scient/sources/SourceIdentifierResolver.ts";
 import { resolveScientSourcesProject } from "../sources/handlers.ts";
 import { ScientSourcesToolError } from "../sources/tools.ts";
 import { ScientReferencesToolkit } from "./tools.ts";
@@ -27,14 +27,14 @@ const attempt = <A>(run: () => Promise<A>) =>
 export const checkReferencesForInvocation = Effect.fn("ScientReferencesToolkit.check")(
   function* (input: { readonly path?: string }) {
     const { root } = yield* resolveScientSourcesProject();
-    const resolveIdentifier = yield* SourceIdentifierLookup;
+    const resolveIdentifiers = yield* ReferenceIdentifierLookup;
     return yield* attempt(() =>
       checkReferences(
         {
           root,
           target: input.path ? { kind: "file", path: input.path } : { kind: "library" },
         },
-        { resolveIdentifier },
+        { resolveIdentifiers },
       ),
     );
   },
