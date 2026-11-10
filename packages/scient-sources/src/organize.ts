@@ -158,6 +158,44 @@ export const ScientSourcesBulkChange = Schema.Struct({
 });
 export type ScientSourcesBulkChange = typeof ScientSourcesBulkChange.Type;
 
+/** Reverses one earlier bulk edit by the `undo.batchId` its result returned. */
+export const ScientSourcesBulkUndo = Schema.Struct({ undoBatchId: NonEmptyString });
+export type ScientSourcesBulkUndo = typeof ScientSourcesBulkUndo.Type;
+
+export const ScientSourcesBulkRequestChange = Schema.Union([
+  ScientSourcesBulkChange,
+  ScientSourcesBulkUndo,
+]);
+export type ScientSourcesBulkRequestChange = typeof ScientSourcesBulkRequestChange.Type;
+
+const BulkFields = Schema.Struct({
+  type: ScientSourceType,
+  customType: Schema.NullOr(Schema.String),
+  tags: Schema.Array(Schema.String),
+});
+export type ScientSourcesBulkFields = typeof BulkFields.Type;
+
+/** What one bulk edit changed, kept so it can be undone as a whole. */
+export const ScientSourcesBulkReceipt = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  batchId: NonEmptyString,
+  createdAt: NonEmptyString,
+  actor: ScientSourceActor,
+  sources: Schema.Array(
+    Schema.Struct({ sourceId: NonEmptyString, before: BulkFields, after: BulkFields }),
+  ),
+  collections: Schema.Array(
+    Schema.Struct({
+      collectionId: NonEmptyString,
+      addedSourceIds: Schema.Array(NonEmptyString),
+      removedSourceIds: Schema.Array(NonEmptyString),
+    }),
+  ),
+  undoneAt: Schema.optionalKey(NonEmptyString),
+  undoneBy: Schema.optionalKey(ScientSourceActor),
+});
+export type ScientSourcesBulkReceipt = typeof ScientSourcesBulkReceipt.Type;
+
 export const ScientSourcesBulkResult = Schema.Struct({
   sources: Schema.Array(
     Schema.Struct({
@@ -172,6 +210,18 @@ export const ScientSourcesBulkResult = Schema.Struct({
       collectionId: NonEmptyString,
       outcome: Schema.Literals(["updated", "unchanged", "not-found"]),
     }),
+  ),
+  // Present when the edit changed something; pass batchId as undoBatchId to reverse it.
+  undo: Schema.optionalKey(Schema.Struct({ batchId: NonEmptyString, sourceCount: Schema.Int })),
+  // Undo only: what it left as it was because of later changes.
+  conflicts: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        sourceId: Schema.optionalKey(NonEmptyString),
+        collectionId: Schema.optionalKey(NonEmptyString),
+        message: Schema.String,
+      }),
+    ),
   ),
 });
 export type ScientSourcesBulkResult = typeof ScientSourcesBulkResult.Type;

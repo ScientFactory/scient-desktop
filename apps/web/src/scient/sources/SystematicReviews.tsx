@@ -684,7 +684,7 @@ export function SystematicReviewsView(props: {
                       <span className="block truncate text-sm font-medium">{review.title}</span>
                       <span className="mt-0.5 block text-xs text-muted-foreground tabular-nums">
                         {review.searchCount === 1 ? "1 search" : `${review.searchCount} searches`}
-                        {` · ${review.prisma.screened - review.prisma.titleAbstract.pending} of ${review.prisma.screened} screened`}
+                        {` · ${review.prisma.screened} of ${review.prisma.screened + review.prisma.titleAbstract.maybe + review.prisma.titleAbstract.pending} screened`}
                         {` · ${review.prisma.included} included`}
                       </span>
                     </button>
@@ -762,6 +762,16 @@ export function SystematicReviewsView(props: {
                           sourceId,
                         },
                         "Decision was not undone",
+                      )
+                    }
+                    onRetrieval={(sourceId, outcome) =>
+                      reviews.change(
+                        {
+                          action: "record-retrieval",
+                          reviewId: detail.review.reviewId,
+                          reports: [{ sourceId, outcome }],
+                        },
+                        "Retrieval was not saved",
                       )
                     }
                   />

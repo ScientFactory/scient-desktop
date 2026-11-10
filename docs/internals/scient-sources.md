@@ -94,6 +94,7 @@ their own subtree:
 ├── text/sha256/<prefix>/    extracted PDF text, one JSON file per PDF hash
 ├── collections.json         collections and saved searches
 ├── reviews/<review-id>.json systematic reviews
+├── bulk-edits/<batch-id>.json what a bulk edit changed, for Undo
 ├── operations/              resumable import state
 ├── receipts/                terminal import evidence
 └── staging/                 bounded temporary copies
@@ -682,6 +683,15 @@ an agent.
   one retry on a stale revision, then membership changes. Each source is
   reported; one failure does not stop the rest. Bulk removal is the trash
   removal per source, with one Undo for the batch in the panel.
+- A bulk edit that changed something writes a receipt to
+  `.scient/sources/bulk-edits/<batch-id>.json` (latest 50 kept): each updated
+  source's type, custom type and tags before and after, and each collection's
+  exact added and removed members. The result's `undo.batchId` passed back as
+  `{ undoBatchId }` (HTTP and `scient_sources_bulk_update`) reverses it once,
+  credited to the actor: a type is restored only while it still has the bulk
+  value, tags and memberships are reversed as the recorded additions and
+  removals (restoring the original order when the tags are untouched), and
+  anything left as it is comes back in `conflicts`.
 
 ## Systematic reviews
 
@@ -700,7 +710,19 @@ lock.
   given). Overlap between searches, which the Library has already merged on
   import, plus records marked as duplicates are "duplicates removed"; results
   never brought in and records no longer in the Library are "removed for other
-  reasons". Identified minus removed always equals screened.
+  reasons". Identified minus removed always equals the records reaching
+  screening; `screened` counts only settled include or exclude decisions, and
+  maybe or undecided records are reported as pending.
+- Retrieval is its own append-only log (`retrieval`, optional so older files
+  decode): every report included at title and abstract is sought, and its
+  outcome is the latest `record-retrieval` entry (`sought`, `not-retrieved`,
+  `retrieved`). Without one, a full-text decision means retrieved, except a
+  full-text exclusion with the reason "Full text not available" (the older
+  default), which means not retrieved; no decision means retrieval pending.
+  The store keeps the two logs consistent: a full-text decision on a report
+  recorded as sought or not retrieved also records it as retrieved, and
+  recording sought or not retrieved reopens its full-text decision. Reports
+  assessed, excluded and included count only retrieved reports.
 - Screening is an append-only log; the latest entry per source and stage is
   the decision in force, so changes stay auditable; `clear-decision` appends a
   `cleared` entry that reopens the record without erasing its history. Full-text decisions apply only to records included at
@@ -709,8 +731,13 @@ lock.
   review, and logging the same database, query and date replaces that search.
 - Possible duplicates are pairs with the same normalized title (12 characters
   or more), ordered by when each entered the review; decided pairs are left
-  out. A review file that cannot be decoded is reported in the list's
-  `issues`, not fatal. Deleting is a soft delete that `restore-review` undoes.
+  out. A review file that cannot be decoded, or whose `reviewId` differs from
+  its file name, is reported in the list's `issues`, not fatal; reading or
+  changing it by ID fails instead. Writes go to the file that was read and
+  validated, never to an ID taken from its contents, and a new review is
+  created exclusively. Every directory from the project root to `reviews/` is
+  checked for symlinks before any read or write (`assertScientProjectDirectory`).
+  Deleting is a soft delete that `restore-review` undoes.
 - The built-in `systematic-review` skill tells agents how to use these tools
   and that agent screening is not independent dual screening.
 

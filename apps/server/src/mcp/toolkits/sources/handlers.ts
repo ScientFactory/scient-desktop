@@ -11,7 +11,7 @@ import {
   type ScientSourceCandidate,
   type ScientSourceEditableMetadata,
   type ScientSourceFilter,
-  type ScientSourcesBulkChange,
+  type ScientSourcesBulkRequestChange,
   type ScientSourcesOrganizeAction,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
@@ -352,7 +352,7 @@ export const organizeScientSourcesForInvocation = Effect.fn("ScientSourcesToolki
 );
 
 export const bulkUpdateScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.bulkUpdate")(
-  function* (input: { readonly change: ScientSourcesBulkChange }) {
+  function* (input: { readonly change: ScientSourcesBulkRequestChange }) {
     const { root } = yield* resolveScientSourcesProject();
     const result = yield* attempt(() =>
       bulkUpdateSources({ root, change: input.change, actor: "agent" }),

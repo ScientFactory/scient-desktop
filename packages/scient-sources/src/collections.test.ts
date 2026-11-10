@@ -20,8 +20,14 @@ import {
   saveScientSourceSearch,
   SCIENT_SOURCE_COLLECTIONS_FILE,
 } from "./collections.ts";
-import type { ScientSourceCandidate } from "./model.ts";
-import { importScientSource, readScientSourceRecord, removeScientSource } from "./store.ts";
+import { editableMetadataFromRecord } from "./editable.ts";
+import type { ScientSourceCandidate, ScientSourceType } from "./model.ts";
+import {
+  importScientSource,
+  readScientSourceRecord,
+  removeScientSource,
+  updateScientSourceMetadata,
+} from "./store.ts";
 
 const fixtures: string[] = [];
 
@@ -340,5 +346,83 @@ describe("Scient source collections", () => {
       outcome: "failed",
       message: "Enter the source type.",
     });
+  });
+  it("undoes a whole bulk edit, keeping a later change and reporting it", async () => {
+    const { root, sourceIds } = await project(["First", "Second", "Third"]);
+    const [first, second, third] = sourceIds as [string, string, string];
+    const edit = async (
+      sourceId: string,
+      fields: { readonly type?: ScientSourceType; readonly tags?: ReadonlyArray<string> },
+    ) => {
+      const record = await readScientSourceRecord(root, sourceId);
+      if (!record) throw new Error("Expected a source.");
+      await updateScientSourceMetadata({
+        root,
+        sourceId,
+        expectedRevision: record.revision,
+        metadata: { ...editableMetadataFromRecord(record), ...fields },
+        actor: "user",
+      });
+    };
+    await edit(first, { tags: ["RCT", "Adults"] });
+    await edit(second, { type: "book" });
+    await edit(third, { tags: ["Pilot", "RCT"] });
+    const collection = async (name: string, members: ReadonlyArray<string>) =>
+      (await createScientSourceCollection({ root, name, sourceIds: members, actor: "user" }))
+        .collection?.collectionId ?? "";
+    const kept = await collection("Kept", [first, third]);
+    const reading = await collection("Reading", [second]);
+    const members = async () =>
+      Object.fromEntries(
+        (await readScientSourcesOrganization(root)).collections.map((entry) => [
+          entry.name,
+          entry.sourceIds.toSorted(),
+        ]),
+      );
+    const fields = async (sourceId: string) => {
+      const record = await readScientSourceRecord(root, sourceId);
+      return [record?.type, record?.tags];
+    };
+
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: {
+        sourceIds,
+        addTags: ["Screened"],
+        removeTags: ["rct"],
+        type: "report",
+        addToCollectionIds: [reading],
+        removeFromCollectionIds: [kept],
+      },
+      actor: "user",
+    });
+    expect(bulk.undo?.sourceCount).toBe(3);
+    await edit(third, { type: "thesis", tags: ["Pilot", "Screened", "Later"] });
+
+    const undone = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: bulk.undo?.batchId ?? "" },
+      actor: "agent",
+    });
+    expect(await fields(first)).toEqual(["article", ["RCT", "Adults"]]);
+    expect(await fields(second)).toEqual(["book", []]);
+    expect(await fields(third)).toEqual(["thesis", ["Pilot", "Later", "RCT"]]);
+    expect((await readScientSourceRecord(root, first))?.updatedBy).toBe("agent");
+    expect(await members()).toEqual({
+      Kept: [first, third].toSorted(),
+      Reading: [second],
+    });
+    expect(undone.conflicts).toEqual([
+      {
+        sourceId: third,
+        message: "Its type was changed after the bulk edit, so the newer type was kept.",
+      },
+    ]);
+    const again = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: bulk.undo?.batchId ?? "" },
+      actor: "agent",
+    });
+    expect(again.conflicts).toEqual([{ message: "This bulk edit was already undone." }]);
   });
 });

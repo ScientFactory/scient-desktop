@@ -291,7 +291,11 @@ Command-click (Ctrl-click on Windows and Linux) a source. Then select more and
 use the bar at the top of the list to add or remove a tag, add them to or take
 them out of a collection, set their type, or move them to the Trash. Tag and
 type changes are saved as a new version of each source, so they appear in its
-history and can be restored like any other edit.
+history and can be restored like any other edit. **Undo** in the message that
+appears reverses the whole change: each source gets back its type, the tags
+that were added or removed, and its collections. A change someone made to a
+source since then is kept, and the message says what was kept. The latest 50
+bulk changes can be undone.
 
 Collections and saved searches are kept in `.scient/sources/collections.json`
 with the rest of the project's Library.
@@ -319,8 +323,17 @@ in a collection.
   from the review's list or type another). With the record focused, press I,
   M or E. **Skip** moves a record to the end; **Undo** in **Recent decisions**
   reopens one. Only records included at title and abstract reach full text.
-- **PRISMA** shows the flow diagram with every count, including what is still
-  awaiting a decision. **Copy as Mermaid** copies it for a Markdown document.
+  At full text, choose **Not retrieved** for a report you could not obtain:
+  it is counted as not retrieved, not as excluded. Deciding a report means you
+  retrieved it.
+- **PRISMA** shows the PRISMA 2020 flow: records screened and excluded,
+  reports sought for retrieval and not retrieved, reports assessed for
+  eligibility and excluded with their reasons, and studies included. Work not
+  done yet is shown separately as awaiting screening, retrieval or assessment;
+  a record marked **Maybe** is still awaiting. **Copy as Mermaid** copies it
+  for a Markdown document. In reviews made before retrieval was recorded, a
+  full-text exclusion with the reason "Full text not available" counts as not
+  retrieved.
 
 Choose **Edit review** from the review's actions to set its title, review
 question and the exclusion reasons offered when you exclude a record. Deleting a

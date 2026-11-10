@@ -68,6 +68,7 @@ function screening(onDecide: (...args: ReadonlyArray<unknown>) => Promise<unknow
       pending={false}
       onDecide={onDecide}
       onClear={async () => undefined}
+      onRetrieval={async () => undefined}
       onOpenSource={() => undefined}
       onRequestName={() => undefined}
     />

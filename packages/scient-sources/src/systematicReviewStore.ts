@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import { readScientSourcesOrganization } from "./collections.ts";
 import type { ScientSourceActor, ScientSourceRecord } from "./model.ts";
+import { assertScientProjectDirectory } from "./projectFiles.ts";
 import {
   listScientSourceRecords,
   SCIENT_SOURCES_DIRECTORY,
@@ -19,9 +20,12 @@ import {
   scientReviewDecisions,
   scientReviewPossibleDuplicates,
   scientReviewRecordIds,
+  scientReviewRetrievalOutcomes,
   scientReviewScreeningIds,
   ScientSystematicReview,
   SCIENT_REVIEW_DEFAULT_EXCLUSION_REASONS,
+  type ScientReviewRetrieval,
+  type ScientReviewScreening,
   type ScientSystematicReviewAction,
   type ScientSystematicReviewChangeResult,
   type ScientSystematicReviewDetail,
@@ -37,39 +41,60 @@ const {
   snapshot,
   readBoundedJson,
   atomicWriteJson,
+  atomicCreateJson,
   withOperationLock,
   assertSafeIdentifier,
 } = scientSourceStoreInternals;
 const validateReview = Schema.decodeSync(ScientSystematicReview);
 
+function reviewsDirectory(root: string): string {
+  return NodePath.join(root, SCIENT_SOURCE_REVIEWS_DIRECTORY);
+}
+
 function reviewPath(root: string, reviewId: string): string {
   assertSafeIdentifier(reviewId, "Review ID");
-  return NodePath.join(root, SCIENT_SOURCE_REVIEWS_DIRECTORY, `${reviewId}.json`);
+  return NodePath.join(reviewsDirectory(root), `${reviewId}.json`);
+}
+
+/** Every directory from the project root down is checked, so a symlinked ancestor is refused. */
+async function reviewsDirectoryExists(root: string): Promise<boolean> {
+  try {
+    await assertScientProjectDirectory(root, reviewsDirectory(root));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/** A review is stored under its own ID; a file naming another review is damaged, never followed. */
+async function readReviewEntry(root: string, fileName: string) {
+  const review = await readBoundedJson(
+    NodePath.join(reviewsDirectory(root), fileName),
+    MAX_REVIEW_BYTES,
+    ScientSystematicReview,
+  );
+  if (`${review.reviewId}.json` !== fileName) {
+    throw new Error(`${fileName} holds a different review.`);
+  }
+  return review;
 }
 
 async function readReviewFile(root: string, reviewId: string) {
   const filePath = reviewPath(root, reviewId);
+  if (!(await reviewsDirectoryExists(root))) return null;
   if ((await snapshot(filePath)) === "missing") return null;
-  return readBoundedJson(filePath, MAX_REVIEW_BYTES, ScientSystematicReview);
+  return readReviewEntry(root, `${reviewId}.json`);
 }
 
 async function readAllReviews(root: string) {
-  const directory = NodePath.join(root, SCIENT_SOURCE_REVIEWS_DIRECTORY);
-  const state = await snapshot(directory);
-  if (state === "missing") return { reviews: [], issues: [] };
-  if (state !== "directory") throw new Error("The systematic review store is unsafe.");
+  if (!(await reviewsDirectoryExists(root))) return { reviews: [], issues: [] };
   const reviews: ScientSystematicReview[] = [];
   const issues: string[] = [];
-  for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
+  for (const entry of await NodeFSP.readdir(reviewsDirectory(root), { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     try {
-      reviews.push(
-        await readBoundedJson(
-          NodePath.join(directory, entry.name),
-          MAX_REVIEW_BYTES,
-          ScientSystematicReview,
-        ),
-      );
+      reviews.push(await readReviewEntry(root, entry.name));
     } catch {
       issues.push(`${SCIENT_SOURCE_REVIEWS_DIRECTORY}/${entry.name} could not be read.`);
     }
@@ -130,6 +155,10 @@ export async function readScientSystematicReview(
   };
 }
 
+function recordedRetrieval(review: ScientSystematicReview) {
+  return new Map((review.retrieval ?? []).map((entry) => [entry.sourceId, entry.outcome]));
+}
+
 function newId(prefix: string): string {
   return `${prefix}_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
 }
@@ -164,6 +193,7 @@ function applyChange(input: {
       duplicates: [],
       distinctPairs: [],
       screening: [],
+      retrieval: [],
       exclusionReasons: [...SCIENT_REVIEW_DEFAULT_EXCLUSION_REASONS],
     };
     return { review, result: { outcome: "created", reviewId: review.reviewId } };
@@ -342,11 +372,7 @@ function applyChange(input: {
       const eligible = new Set(
         change.stage === "title-abstract"
           ? scientReviewScreeningIds(current, present)
-          : scientReviewScreeningIds(current, present).filter(
-              (sourceId) =>
-                scientReviewDecisions(current, "title-abstract").get(sourceId)?.decision ===
-                "include",
-            ),
+          : scientReviewRetrievalOutcomes(current, present).keys(),
       );
       const inForce = scientReviewDecisions(current, change.stage);
       const skipped: string[] = [];
@@ -390,7 +416,73 @@ function applyChange(input: {
           : {}),
       };
       if (entries.length === 0) return unchanged(extra);
-      return touched({ ...current, screening: [...current.screening, ...entries] }, extra);
+      // Assessing a report means it was retrieved, whatever was recorded before.
+      const recorded = recordedRetrieval(current);
+      const retrieved =
+        change.stage === "full-text"
+          ? entries
+              .filter((entry) => (recorded.get(entry.sourceId) ?? "retrieved") !== "retrieved")
+              .map((entry) => ({
+                sourceId: entry.sourceId,
+                outcome: "retrieved" as const,
+                recordedAt: now,
+                recordedBy: actor,
+              }))
+          : [];
+      return touched(
+        {
+          ...current,
+          screening: [...current.screening, ...entries],
+          ...(retrieved.length > 0
+            ? { retrieval: [...(current.retrieval ?? []), ...retrieved] }
+            : {}),
+        },
+        extra,
+      );
+    }
+    case "record-retrieval": {
+      const outcomes = scientReviewRetrievalOutcomes(current, present);
+      const fullText = scientReviewDecisions(current, "full-text");
+      const skipped: string[] = [];
+      const recorded: ScientReviewRetrieval[] = [];
+      const cleared: ScientReviewScreening[] = [];
+      for (const report of change.reports) {
+        const outcome = outcomes.get(report.sourceId);
+        const note = report.note?.trim();
+        if (outcome === undefined) {
+          skipped.push(report.sourceId);
+          continue;
+        }
+        if (outcome === report.outcome && !note) continue;
+        recorded.push({
+          sourceId: report.sourceId,
+          outcome: report.outcome,
+          ...(note ? { note } : {}),
+          recordedAt: now,
+          recordedBy: actor,
+        });
+        // A report that was not retrieved was not assessed, so its full-text decision is reopened.
+        const decision = fullText.get(report.sourceId);
+        if (report.outcome !== "retrieved" && decision) {
+          cleared.push({ ...decision, cleared: true, decidedAt: now, decidedBy: actor });
+        }
+      }
+      const extra =
+        skipped.length > 0
+          ? {
+              ...skippedField(skipped),
+              message: "Skipped sources are not included at title and abstract screening.",
+            }
+          : {};
+      if (recorded.length === 0) return unchanged(extra);
+      return touched(
+        {
+          ...current,
+          screening: [...current.screening, ...cleared],
+          retrieval: [...(current.retrieval ?? []), ...recorded],
+        },
+        extra,
+      );
     }
     case "clear-decision": {
       const previous = scientReviewDecisions(current, change.stage).get(change.sourceId);
@@ -452,11 +544,20 @@ export async function changeScientSystematicReview(input: {
       collectionMembers,
     });
     if (applied.review) {
-      await atomicWriteJson(
-        reviewPath(paths.root, applied.review.reviewId),
-        validateReview(applied.review),
-        MAX_REVIEW_BYTES,
-      );
+      await assertScientProjectDirectory(paths.root, reviewsDirectory(paths.root), {
+        create: true,
+      });
+      const next = validateReview(applied.review);
+      if (change.action === "create-review") {
+        if (
+          !(await atomicCreateJson(reviewPath(paths.root, next.reviewId), next, MAX_REVIEW_BYTES))
+        ) {
+          throw new Error("The new review could not be saved. Try again.");
+        }
+      } else {
+        // The destination is the file that was read and validated, never an ID from its contents.
+        await atomicWriteJson(reviewPath(paths.root, change.reviewId), next, MAX_REVIEW_BYTES);
+      }
     }
     return applied.result;
   });

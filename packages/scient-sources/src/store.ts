@@ -2424,6 +2424,7 @@ export const scientSourceStoreInternals = {
   snapshot,
   readBoundedJson,
   atomicWriteJson,
+  atomicCreateJson,
   withOperationLock,
   assertSafeIdentifier,
 };

@@ -331,13 +331,13 @@ The Library already merges records with the same DOI or PMID, and the flow count
 ## Screen
 
 - Title and abstract: judge each record against the criteria using only its title and abstract. Include when it may meet them; use maybe when you cannot tell, for example without an abstract; exclude only when it clearly fails one, with that criterion as the reason. Never infer an abstract you were not given.
-- Full text: only records included at title and abstract. Get and read the full text; exclude with the criterion it fails. Give maybe when the full text is unavailable, and say so.
+- Full text: only records included at title and abstract. Get and read the full text; exclude with the criterion it fails. When a report cannot be obtained, use \`record-retrieval\` with \`not-retrieved\` (not an exclusion), and say so; \`sought\` means retrieval is still in progress.
 - Screen in batches (\`screen\` takes up to 500 decisions) and read the result: \`skippedSourceIds\` were not applied. Your decisions are recorded as the agent's; the user can change any of them, and the latest decision counts.
 - Do not present agent screening as independent dual screening. If the protocol needs a second reviewer, say which decisions still need one.
 
 ## Report
 
-Read the review again before reporting. Give the PRISMA counts from the tool, not your own tally, and include \`prismaMermaid\` when the user wants the diagram in a document. State what is still pending (records awaiting a decision, maybes, missing full texts) and every search or decision the user should check.
+Read the review again before reporting. Give the PRISMA counts from the tool, not your own tally, and include \`prismaMermaid\` when the user wants the diagram in a document. State what is still pending (records awaiting screening, reports awaiting retrieval or assessment, maybes) and every search or decision the user should check.
 `;
 
 /**

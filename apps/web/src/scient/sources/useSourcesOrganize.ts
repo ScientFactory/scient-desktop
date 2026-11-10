@@ -109,6 +109,28 @@ export function useSourcesOrganize(input: {
       failureTitle,
     );
 
+  const undoBulk = async (batchId: string) => {
+    const result = await run(
+      () =>
+        bulkUpdateScientSources(input.environmentId, {
+          root: input.root,
+          change: { undoBatchId: batchId },
+        }),
+      "Changes were not undone",
+    );
+    const conflicts = result?.conflicts ?? [];
+    if (!result || conflicts.length === 0) return;
+    const undidNothing = result.sources.length === 0 && result.collections.length === 0;
+    toastManager.add({
+      type: "warning",
+      title: undidNothing ? "Changes were not undone" : "Some later changes were kept",
+      description:
+        conflicts.length === 1
+          ? conflicts[0]!.message
+          : `${conflicts[0]!.message} ${conflicts.length - 1} more were kept as well.`,
+    });
+  };
+
   const bulk = async (change: ScientSourcesBulkChange, failureTitle: string) => {
     const result = await run(
       () => bulkUpdateScientSources(input.environmentId, { root: input.root, change }),
@@ -116,6 +138,20 @@ export function useSourcesOrganize(input: {
     );
     const problem = result ? bulkResultSummary(result) : null;
     if (problem) toastManager.add({ type: "warning", title: failureTitle, description: problem });
+    const undo = result?.undo;
+    if (undo) {
+      const id = toastManager.add({
+        type: "success",
+        title: undo.sourceCount === 1 ? "Changed 1 source" : `Changed ${undo.sourceCount} sources`,
+        actionProps: {
+          children: "Undo",
+          onClick: () => {
+            toastManager.close(id);
+            void undoBulk(undo.batchId);
+          },
+        },
+      });
+    }
     return result;
   };
 

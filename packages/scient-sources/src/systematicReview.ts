@@ -47,6 +47,23 @@ export const ScientReviewScreening = Schema.Struct({
 });
 export type ScientReviewScreening = typeof ScientReviewScreening.Type;
 
+/** Full-text retrieval of a report included at title and abstract; `sought` is still in progress. */
+export const ScientReviewRetrievalOutcome = Schema.Literals([
+  "sought",
+  "not-retrieved",
+  "retrieved",
+]);
+export type ScientReviewRetrievalOutcome = typeof ScientReviewRetrievalOutcome.Type;
+
+export const ScientReviewRetrieval = Schema.Struct({
+  sourceId: NonEmptyString,
+  outcome: ScientReviewRetrievalOutcome,
+  note: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000))),
+  recordedAt: NonEmptyString,
+  recordedBy: ScientSourceActor,
+});
+export type ScientReviewRetrieval = typeof ScientReviewRetrieval.Type;
+
 export const ScientSystematicReview = Schema.Struct({
   formatVersion: Schema.Literal(1),
   reviewId: NonEmptyString,
@@ -70,6 +87,8 @@ export const ScientSystematicReview = Schema.Struct({
   distinctPairs: Schema.Array(Schema.Tuple([NonEmptyString, NonEmptyString])),
   // Append-only; the latest entry per source and stage is the decision in force.
   screening: Schema.Array(ScientReviewScreening),
+  // Append-only like screening. Files written before retrieval was recorded have none.
+  retrieval: Schema.optionalKey(Schema.Array(ScientReviewRetrieval)),
   exclusionReasons: Schema.Array(Reason).pipe(Schema.check(Schema.isMaxLength(50))),
 });
 export type ScientSystematicReview = typeof ScientSystematicReview.Type;
@@ -81,8 +100,10 @@ export const SCIENT_REVIEW_DEFAULT_EXCLUSION_REASONS = [
   "Wrong outcome",
   "Wrong study design",
   "Not primary research",
-  "Full text not available",
 ] as const;
+
+/** Older reviews recorded an unavailable report as this full-text exclusion reason. */
+const LEGACY_NOT_RETRIEVED_REASON = "full text not available";
 
 const DecisionEntry = Schema.Struct({
   sourceId: NonEmptyString,
@@ -160,6 +181,17 @@ export const ScientSystematicReviewAction = Schema.Union([
     ),
   }),
   Schema.Struct({
+    action: Schema.Literal("record-retrieval"),
+    reviewId: NonEmptyString,
+    reports: Schema.Array(
+      Schema.Struct({
+        sourceId: NonEmptyString,
+        outcome: ScientReviewRetrievalOutcome,
+        note: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000))),
+      }),
+    ).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+  }),
+  Schema.Struct({
     action: Schema.Literal("clear-decision"),
     reviewId: NonEmptyString,
     stage: ScientReviewStage,
@@ -180,6 +212,13 @@ export const ScientPrismaCounts = Schema.Struct({
     included: Count,
     excluded: Count,
     maybe: Count,
+    pending: Count,
+  }),
+  // sought = included at title and abstract; pending = sought with no retrieval outcome yet.
+  retrieval: Schema.Struct({
+    sought: Count,
+    notRetrieved: Count,
+    retrieved: Count,
     pending: Count,
   }),
   fullText: Schema.Struct({
@@ -273,19 +312,56 @@ export function scientReviewScreeningIds(
   );
 }
 
-/** Records waiting for a decision at a stage, in the order they entered the review. */
+/**
+ * The retrieval outcome of every report included at title and abstract. A full-text decision
+ * without a recorded outcome means the report was read, except the older "Full text not
+ * available" exclusion, which means it was not retrieved.
+ */
+export function scientReviewRetrievalOutcomes(
+  review: ScientSystematicReview,
+  presentSourceIds: ReadonlySet<string>,
+): ReadonlyMap<string, ScientReviewRetrievalOutcome> {
+  const recorded = new Map<string, ScientReviewRetrievalOutcome>();
+  for (const entry of review.retrieval ?? []) recorded.set(entry.sourceId, entry.outcome);
+  const titleAbstract = scientReviewDecisions(review, "title-abstract");
+  const fullText = scientReviewDecisions(review, "full-text");
+  const outcomes = new Map<string, ScientReviewRetrievalOutcome>();
+  for (const sourceId of scientReviewScreeningIds(review, presentSourceIds)) {
+    if (titleAbstract.get(sourceId)?.decision !== "include") continue;
+    const decision = fullText.get(sourceId);
+    outcomes.set(
+      sourceId,
+      recorded.get(sourceId) ??
+        (!decision
+          ? "sought"
+          : decision.decision === "exclude" &&
+              decision.reason?.toLocaleLowerCase() === LEGACY_NOT_RETRIEVED_REASON
+            ? "not-retrieved"
+            : "retrieved"),
+    );
+  }
+  return outcomes;
+}
+
+/**
+ * Records waiting for a decision at a stage, in the order they entered the review. At full text
+ * that is every sought or retrieved report without a decision; reports not retrieved wait for
+ * nothing.
+ */
 export function scientReviewPendingIds(
   review: ScientSystematicReview,
   stage: ScientReviewStage,
   presentSourceIds: ReadonlySet<string>,
 ): ReadonlyArray<string> {
-  const screening = scientReviewScreeningIds(review, presentSourceIds);
   const decided = scientReviewDecisions(review, stage);
-  if (stage === "title-abstract") return screening.filter((sourceId) => !decided.has(sourceId));
-  const titleAbstract = scientReviewDecisions(review, "title-abstract");
-  return screening.filter(
-    (sourceId) => titleAbstract.get(sourceId)?.decision === "include" && !decided.has(sourceId),
-  );
+  if (stage === "title-abstract") {
+    return scientReviewScreeningIds(review, presentSourceIds).filter(
+      (sourceId) => !decided.has(sourceId),
+    );
+  }
+  return [...scientReviewRetrievalOutcomes(review, presentSourceIds)]
+    .filter(([sourceId, outcome]) => outcome !== "not-retrieved" && !decided.has(sourceId))
+    .map(([sourceId]) => sourceId);
 }
 
 /** PRISMA 2020 flow counts. Duplicates the Library merged on import count as removed duplicates. */
@@ -321,16 +397,21 @@ export function scientPrismaCounts(
     ids: ReadonlyArray<string>,
     decision: ScientReviewDecision,
   ) => ids.filter((sourceId) => decisions.get(sourceId)?.decision === decision).length;
-  const assessed = screening.filter(
-    (sourceId) => titleAbstract.get(sourceId)?.decision === "include",
-  );
+  const outcomes = scientReviewRetrievalOutcomes(review, presentSourceIds);
+  const withOutcome = (outcome: ScientReviewRetrievalOutcome) =>
+    [...outcomes].filter(([, value]) => value === outcome).map(([sourceId]) => sourceId);
+  const retrieved = withOutcome("retrieved");
   const reasons = new Map<string, number>();
-  for (const sourceId of assessed) {
+  for (const sourceId of retrieved) {
     const entry = fullText.get(sourceId);
     if (entry?.decision !== "exclude") continue;
     const reason = entry.reason ?? "No reason given";
     reasons.set(reason, (reasons.get(reason) ?? 0) + 1);
   }
+  const titleAbstractIncluded = count(titleAbstract, screening, "include");
+  const titleAbstractExcluded = count(titleAbstract, screening, "exclude");
+  const fullTextIncluded = count(fullText, retrieved, "include");
+  const fullTextExcluded = count(fullText, retrieved, "exclude");
   return {
     identified: {
       databases: [...byDatabase.values()].reduce((total, value) => total + value, 0),
@@ -341,23 +422,30 @@ export function scientPrismaCounts(
       duplicates: searchRecordCount - fromSearches.size + markedDuplicates.size,
       other: notBroughtIn + missing,
     },
-    screened: screening.length,
+    // Only settled decisions; maybe and undecided records are still awaiting screening.
+    screened: titleAbstractIncluded + titleAbstractExcluded,
     titleAbstract: {
-      included: assessed.length,
-      excluded: count(titleAbstract, screening, "exclude"),
+      included: titleAbstractIncluded,
+      excluded: titleAbstractExcluded,
       maybe: count(titleAbstract, screening, "maybe"),
       pending: screening.filter((sourceId) => !titleAbstract.has(sourceId)).length,
     },
+    retrieval: {
+      sought: outcomes.size,
+      notRetrieved: withOutcome("not-retrieved").length,
+      retrieved: retrieved.length,
+      pending: withOutcome("sought").length,
+    },
     fullText: {
-      assessed: assessed.length,
-      excluded: count(fullText, assessed, "exclude"),
+      assessed: fullTextIncluded + fullTextExcluded,
+      excluded: fullTextExcluded,
       excludedByReason: [...reasons]
         .map(([reason, value]) => ({ reason, count: value }))
         .toSorted((left, right) => right.count - left.count),
-      maybe: count(fullText, assessed, "maybe"),
-      pending: assessed.filter((sourceId) => !fullText.has(sourceId)).length,
+      maybe: count(fullText, retrieved, "maybe"),
+      pending: retrieved.filter((sourceId) => !fullText.has(sourceId)).length,
     },
-    included: count(fullText, assessed, "include"),
+    included: fullTextIncluded,
   };
 }
 
@@ -417,6 +505,8 @@ export function scientPrismaMermaid(prisma: ScientPrismaCounts): string {
   const reasons = prisma.fullText.excludedByReason.map(
     (entry) => `${entry.reason} (n = ${entry.count})`,
   );
+  const awaiting = (stage: string, count: number) =>
+    count > 0 ? [`Awaiting ${stage} (n = ${count})`] : [];
   return [
     "flowchart TD",
     `  identified[${mermaidLabel([
@@ -431,26 +521,28 @@ export function scientPrismaMermaid(prisma: ScientPrismaCounts): string {
       `Duplicates (n = ${prisma.removedBeforeScreening.duplicates})`,
       `Other reasons (n = ${prisma.removedBeforeScreening.other})`,
     ])}]`,
-    `  screened[${mermaidLabel([`Records screened (n = ${prisma.screened})`])}]`,
-    `  excludedTa[${mermaidLabel([
-      `Records excluded (n = ${prisma.titleAbstract.excluded})`,
-      ...(prisma.titleAbstract.pending + prisma.titleAbstract.maybe > 0
-        ? [`Awaiting decision (n = ${prisma.titleAbstract.pending + prisma.titleAbstract.maybe})`]
-        : []),
+    `  screened[${mermaidLabel([
+      `Records screened (n = ${prisma.screened})`,
+      ...awaiting("screening", prisma.titleAbstract.pending + prisma.titleAbstract.maybe),
     ])}]`,
-    `  assessed[${mermaidLabel([`Reports assessed for eligibility (n = ${prisma.fullText.assessed})`])}]`,
-    `  excludedFt[${mermaidLabel([
-      `Reports excluded (n = ${prisma.fullText.excluded})`,
-      ...reasons,
-      ...(prisma.fullText.pending + prisma.fullText.maybe > 0
-        ? [`Awaiting decision (n = ${prisma.fullText.pending + prisma.fullText.maybe})`]
-        : []),
+    `  excludedTa[${mermaidLabel([`Records excluded (n = ${prisma.titleAbstract.excluded})`])}]`,
+    `  sought[${mermaidLabel([
+      `Reports sought for retrieval (n = ${prisma.retrieval.sought})`,
+      ...awaiting("retrieval", prisma.retrieval.pending),
     ])}]`,
+    `  notRetrieved[${mermaidLabel([`Reports not retrieved (n = ${prisma.retrieval.notRetrieved})`])}]`,
+    `  assessed[${mermaidLabel([
+      `Reports assessed for eligibility (n = ${prisma.fullText.assessed})`,
+      ...awaiting("assessment", prisma.fullText.pending + prisma.fullText.maybe),
+    ])}]`,
+    `  excludedFt[${mermaidLabel([`Reports excluded (n = ${prisma.fullText.excluded})`, ...reasons])}]`,
     `  included[${mermaidLabel([`Studies included in review (n = ${prisma.included})`])}]`,
     "  identified --> removed",
     "  identified --> screened",
     "  screened --> excludedTa",
-    "  screened --> assessed",
+    "  screened --> sought",
+    "  sought --> notRetrieved",
+    "  sought --> assessed",
     "  assessed --> excludedFt",
     "  assessed --> included",
   ].join("\n");

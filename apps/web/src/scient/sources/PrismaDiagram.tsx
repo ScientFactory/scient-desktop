@@ -53,8 +53,8 @@ function Row(props: { readonly main: ReactNode; readonly side?: ReactNode }) {
 /** The PRISMA 2020 flow for one review, drawn from the same counts agents read. */
 export function PrismaDiagram(props: { readonly prisma: ScientPrismaCounts }) {
   const { prisma } = props;
-  const awaitingTitleAbstract = prisma.titleAbstract.pending + prisma.titleAbstract.maybe;
-  const awaitingFullText = prisma.fullText.pending + prisma.fullText.maybe;
+  const awaitingScreening = prisma.titleAbstract.pending + prisma.titleAbstract.maybe;
+  const awaitingAssessment = prisma.fullText.pending + prisma.fullText.maybe;
   return (
     <figure className="space-y-1.5" aria-label="PRISMA flow diagram">
       <Row
@@ -85,31 +85,45 @@ export function PrismaDiagram(props: { readonly prisma: ScientPrismaCounts }) {
       />
       <Down />
       <Row
-        main={<Box title="Records screened" count={prisma.screened} />}
-        side={
-          <Box title="Records excluded" count={prisma.titleAbstract.excluded}>
-            {awaitingTitleAbstract > 0 ? (
-              <Line label="Awaiting decision" count={awaitingTitleAbstract} />
+        main={
+          <Box title="Records screened" count={prisma.screened}>
+            {awaitingScreening > 0 ? (
+              <Line label="Awaiting screening" count={awaitingScreening} />
             ) : null}
           </Box>
         }
+        side={<Box title="Records excluded" count={prisma.titleAbstract.excluded} />}
       />
       <Down />
       <Row
-        main={<Box title="Reports assessed for eligibility" count={prisma.fullText.assessed} />}
+        main={
+          <Box title="Reports sought for retrieval" count={prisma.retrieval.sought}>
+            {prisma.retrieval.pending > 0 ? (
+              <Line label="Awaiting retrieval" count={prisma.retrieval.pending} />
+            ) : null}
+          </Box>
+        }
+        side={<Box title="Reports not retrieved" count={prisma.retrieval.notRetrieved} />}
+      />
+      <Down />
+      <Row
+        main={
+          <Box title="Reports assessed for eligibility" count={prisma.fullText.assessed}>
+            {awaitingAssessment > 0 ? (
+              <Line label="Awaiting assessment" count={awaitingAssessment} />
+            ) : null}
+          </Box>
+        }
         side={
           <Box title="Reports excluded" count={prisma.fullText.excluded}>
             {prisma.fullText.excludedByReason.map((entry) => (
               <Line key={entry.reason} label={entry.reason} count={entry.count} />
             ))}
-            {awaitingFullText > 0 ? (
-              <Line label="Awaiting decision" count={awaitingFullText} />
-            ) : null}
           </Box>
         }
       />
       <Down />
-      <Row main={<Box title="Studies included" count={prisma.included} />} />
+      <Row main={<Box title="Studies included in review" count={prisma.included} />} />
     </figure>
   );
 }
