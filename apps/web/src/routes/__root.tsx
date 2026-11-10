@@ -32,6 +32,9 @@ import { OverleafNewProjectDialogHost } from "../scient/overleaf/OverleafNewProj
 import { BrowserProviderUpdateNotification } from "../scient/providerConnection/BrowserProviderUpdateNotification";
 // SCIENT-FORK:END
 import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+// SCIENT-FORK:START — the Share link dialog.
+import { ShareLinkDialogHost } from "../scient/cloud/ShareLinkDialog";
+// SCIENT-FORK:END
 import { UseInAnotherAppDialogHost } from "../components/mcp/UseInAnotherAppDialog";
 import { AddProjectToMachineDialogHost } from "../components/AddProjectToMachineDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
@@ -222,6 +225,9 @@ function RootRouteBranch() {
       <ProviderSignInPageCoordinator />
       {/* SCIENT-FORK:END */}
       <GuestShareDialogHost />
+      {/* SCIENT-FORK:START — the Share link dialog. */}
+      <ShareLinkDialogHost />
+      {/* SCIENT-FORK:END */}
       <ProjectCloneToastCoordinator />
       <AddProjectToMachineDialogHost />
       <UseInAnotherAppDialogHost />
