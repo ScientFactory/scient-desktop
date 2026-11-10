@@ -53,6 +53,57 @@ describe("Scient release machinery", () => {
     );
   });
 
+  it("keeps rehearsals on rehearsal branches and out of publication", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const preflight = workflow.split(/^  preflight:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+    const publish = workflow.split(/^  publish:\n/mu)[1] ?? "";
+
+    assert.include(preflight, '[[ "$GITHUB_REF_NAME" == release-rehearsal/* ]]');
+    assert.include(publish, "needs.preflight.outputs.rehearsal != 'true'");
+    // Only publication may hold a write token; a rehearsal stops at the assembled candidate.
+    assert.notInclude(workflow.split(/^  publish:\n/mu)[0] ?? "", "contents: write");
+  });
+
+  it("packages the remote server only with every target's monitor and SyncTeX runtime", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const serverAssetJob =
+      workflow.split(/^  build_server_asset:\n/mu)[1]?.split(/^  \w+:\n/mu)[0] ?? "";
+
+    assert.include(serverAssetJob, '"synctex-runtime-$key"');
+    assert.include(serverAssetJob, '"resource-monitor-$key" --uploaded');
+    assert.include(serverAssetJob, "for key in darwin-arm64 darwin-x64 linux-x64 win32-x64; do");
+    assert.include(serverAssetJob, 'echo "Missing the $key resource monitor." >&2');
+    assert.include(serverAssetJob, 'echo "Missing the $key SyncTeX runtime." >&2');
+    assert(
+      serverAssetJob.indexOf("Missing the $key SyncTeX runtime.") <
+        serverAssetJob.indexOf("node scripts/package-scient-server.ts"),
+    );
+  });
+
+  it("restores cached macOS native runtimes anywhere but saves them only from main", () => {
+    const workflow = NodeFS.readFileSync(
+      NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
+      "utf8",
+    );
+    const saveStep =
+      workflow.split(/^ {6}- name: Save macOS native runtimes\n/mu)[1]?.split(/^ {6}- /mu)[0] ?? "";
+
+    assert.include(saveStep, "github.ref == 'refs/heads/main'");
+    assert(saveStep.length > 0);
+    // The packer verifies each supplied runtime's receipt and every file before staging it.
+    assert.include(workflow, '--voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime"');
+    assert.include(
+      workflow,
+      '--synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime"',
+    );
+  });
+
   it("pins every release-owned action to an immutable commit", () => {
     for (const workflowName of [
       "promote-release.yml",

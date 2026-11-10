@@ -32,19 +32,25 @@ on:
         required: true
         default: false
         type: boolean
+      rehearsal:
+        description: "Stable only: sign and assemble everything from a release-rehearsal/* branch without publishing"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   contents: read
   actions: read
 
 concurrency:
-  group: scient-${{ inputs.channel || 'stable' }}-release
+  group: scient-${{ inputs.rehearsal && 'rehearsal' || inputs.channel || 'stable' }}-release
   cancel-in-progress: false
 
 env:
   SCIENT_DESKTOP_CANONICAL_REPOSITORY: ScientFactory/scient-desktop
   SCIENT_DESKTOP_BETA_REPOSITORY: ScientFactory/scient-desktop-beta
   RELEASE_CHANNEL: ${{ inputs.channel || 'stable' }}
+  RELEASE_REHEARSAL: ${{ inputs.rehearsal == true }}
 
 jobs:
   beta-inventory:
@@ -92,6 +98,7 @@ jobs:
       allow_unsigned_windows: ${{ steps.meta.outputs.allow_unsigned_windows }}
       release_notes_base64: ${{ steps.meta.outputs.release_notes_base64 }}
       macos_profile_required: ${{ steps.macos_signing.outputs.profile_required }}
+      rehearsal: ${{ steps.meta.outputs.rehearsal }}
     steps:
       - name: Require the channel's source branch
         shell: bash
@@ -99,10 +106,15 @@ jobs:
           set -euo pipefail
           expected_ref="release/stable"
           [[ "$RELEASE_CHANNEL" == "beta" ]] && expected_ref="main"
-          [[ "$GITHUB_REF_NAME" == "$expected_ref" ]] || {
+          if [[ "$RELEASE_REHEARSAL" == "true" ]]; then
+            [[ "$GITHUB_REF_NAME" == release-rehearsal/* ]] || {
+              echo "Run a rehearsal from a release-rehearsal/* branch, not $GITHUB_REF_NAME." >&2
+              exit 1
+            }
+          elif [[ "$GITHUB_REF_NAME" != "$expected_ref" ]]; then
             echo "Run $RELEASE_CHANNEL from $expected_ref, not $GITHUB_REF_NAME." >&2
             exit 1
-          }
+          fi
           [[ "$RELEASE_CHANNEL" == "stable" || "$RELEASE_CHANNEL" == "beta" ]] || exit 1
 
       - name: Checkout exact release head
@@ -197,7 +209,9 @@ jobs:
             exit 1
           fi
 
+      # A rehearsal's branch commit is neither on main nor qualified; it never publishes.
       - name: Verify exact source and channel release-note policy
+        if: env.RELEASE_REHEARSAL != 'true'
         shell: bash
         env:
           RELEASE_VERSION: ${{ steps.inputs.outputs.version }}
@@ -223,6 +237,7 @@ jobs:
           node scripts/scient-release-preflight.ts "${args[@]}"
 
       - name: Require successful CI for the exact main commit
+        if: env.RELEASE_REHEARSAL != 'true'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -272,6 +287,8 @@ jobs:
           echo "source_tree=$(git rev-parse "$SOURCE_SHA^{tree}")" >> "$GITHUB_OUTPUT"
           echo "publish_release=$PUBLISH_RELEASE" >> "$GITHUB_OUTPUT"
           echo "allow_unsigned_windows=$ALLOW_UNSIGNED_WINDOWS" >> "$GITHUB_OUTPUT"
+          echo "rehearsal=$RELEASE_REHEARSAL" >> "$GITHUB_OUTPUT"
+          [[ "$RELEASE_REHEARSAL" != "true" ]] || : > "$RUNNER_TEMP/scient-release-notes.md"
           release_notes_base64="$(base64 < "$RUNNER_TEMP/scient-release-notes.md" | tr -d '\n')"
           echo "release_notes_base64=$release_notes_base64" >> "$GITHUB_OUTPUT"
 
@@ -372,17 +389,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # macOS packaging builds its own SyncTeX, so a release holds no extra macOS runner.
         include:
-          - label: macOS arm64
-            runner: macos-26
-            platform: mac
-            arch: arm64
-            key: darwin-arm64
-          - label: macOS x64
-            runner: macos-15-intel
-            platform: mac
-            arch: x64
-            key: darwin-x64
           - label: Linux x64
             runner: ubuntu-24.04
             platform: linux
@@ -468,12 +476,14 @@ jobs:
           path: native/synctex-runtime/${{ matrix.key }}/*
           if-no-files-found: error
 
+  # Each leg starts at once. macOS builds its own native runtimes; Linux and Windows set up
+  # while their prerequisites build, then wait only for their own.
   build_desktop:
     name: Package ${{ matrix.label }}
-    needs: [preflight, build_wsl_node_pty, build_synctex_runtime]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_wsl_node_pty.result == 'success' && needs.build_synctex_runtime.result == 'success' }}
+    needs: preflight
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -507,10 +517,17 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             resource_key: win32-x64
     steps:
+      # Compute recipe sealing reads each recipe's last commit, so keep history but fetch
+      # only the blobs this checkout needs.
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
           fetch-depth: 0
+          filter: blob:none
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
       # SCIENT-FORK:START — Scient Connect's public ids come from .env.example.
       - name: Load Scient Connect public config
         shell: bash
@@ -529,10 +546,11 @@ jobs:
           SCIENT_MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.SCIENT_MACOS_PROVISIONING_PROFILE_BASE64 }}
           T3CODE_CLERK_PASSKEY_RP_DOMAINS: ${{ vars.T3CODE_CLERK_PASSKEY_RP_DOMAINS }}
         run: python3 .github/scripts/stage-macos-connect-profile.py
+      # On macOS, restoring the whole dependency cache is slower than installing the filtered set.
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: ${{ matrix.platform != 'mac' }}
           run-install: false
 
       # pnpm validates the lockfile and policy before reusing this result. A missing
@@ -603,33 +621,6 @@ jobs:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
 
-      - name: Download WSL native dependency
-        if: matrix.platform == 'win'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild
-
-      - name: Download target SyncTeX runtime
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: synctex-runtime-${{ matrix.resource_key }}
-          path: synctex-runtime/current
-
-      - name: Download WSL SyncTeX runtime
-        if: matrix.platform == 'win'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: synctex-runtime-linux-x64
-          path: synctex-runtime/wsl
-
-      - name: Download Windows native prerequisites
-        if: matrix.platform == 'win'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          name: windows-native-${{ matrix.arch }}
-          path: windows-native
-
       - name: Install pinned Windows cross compiler
         if: matrix.platform == 'win'
         uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283
@@ -671,6 +662,106 @@ jobs:
           else
             cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target "${{ matrix.rust_target }}"
           fi
+
+      - name: Collect resource monitor
+        shell: bash
+        run: |
+          binary=scient-resource-monitor
+          [[ "${{ matrix.platform }}" == "win" ]] && binary=scient-resource-monitor.exe
+          source="native/resource-monitor/target/${{ matrix.rust_target }}/release/$binary"
+          mkdir -p "resource-monitor/${{ matrix.resource_key }}"
+          cp "$source" "resource-monitor/${{ matrix.resource_key }}/$binary"
+
+      # The server asset needs only these monitors, so it starts without waiting for installers.
+      # A rerun replaces the monitor an earlier failed attempt uploaded from the same source.
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: resource-monitor-${{ matrix.resource_key }}
+          path: resource-monitor/${{ matrix.resource_key }}/*
+          if-no-files-found: error
+          overwrite: true
+
+      # The pinned whisper.cpp and SyncTeX builds, by the scripts that pin them and this runner's
+      # toolchain. The packer verifies each receipt and every file before staging them.
+      - name: Identify macOS native runtime toolchain
+        if: matrix.platform == 'mac'
+        id: native_toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          toolchain="$ImageOS-$(xcrun --show-sdk-version)-$(xcrun clang --version | sed -n 1p)"
+          echo "id=$(printf '%s' "$toolchain" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - name: Restore macOS native runtimes
+        if: matrix.platform == 'mac'
+        id: native_cache
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: native-runtimes
+          key: macos-native-runtimes-v1-${{ matrix.arch }}-${{ steps.native_toolchain.outputs.id }}-${{ hashFiles('scripts/stage-whisper-runtime.ts', 'scripts/lib/whisper-runtime-receipt.ts', 'scripts/stage-synctex-runtime.ts') }}
+      - name: Build macOS native runtimes
+        if: matrix.platform == 'mac' && steps.native_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage-whisper-runtime.ts --platform mac --arch "${{ matrix.arch }}" --output native-runtimes/whisper-runtime --verbose
+          node scripts/stage-synctex-runtime.ts --platform mac --arch "${{ matrix.arch }}" --output native-runtimes/synctex-runtime --verbose
+      # Only trusted main writes this cache; other refs restore from it.
+      - name: Save macOS native runtimes
+        if: matrix.platform == 'mac' && steps.native_cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: native-runtimes
+          key: ${{ steps.native_cache.outputs.cache-primary-key }}
+      - name: Upload macOS SyncTeX runtime
+        if: matrix.platform == 'mac'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: synctex-runtime-${{ matrix.resource_key }}
+          path: native-runtimes/synctex-runtime/*
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Wait for this target's native prerequisites
+        if: matrix.platform != 'mac'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          wait_for() { bash .github/scripts/wait-for-job.sh "$@"; }
+          wait_for "Build native prerequisites / ${{ matrix.label }}" "synctex-runtime-${{ matrix.resource_key }}"
+          if [[ "${{ matrix.platform }}" == "win" ]]; then
+            wait_for "Build WSL node-pty" wsl-node-pty-x64
+            wait_for "Build native prerequisites / Linux x64" synctex-runtime-linux-x64
+          fi
+
+      - name: Download WSL native dependency
+        if: matrix.platform == 'win'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: wsl-node-pty-x64
+          path: wsl-prebuild
+
+      - name: Download target SyncTeX runtime
+        if: matrix.platform != 'mac'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: synctex-runtime-${{ matrix.resource_key }}
+          path: synctex-runtime/current
+
+      - name: Download WSL SyncTeX runtime
+        if: matrix.platform == 'win'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: synctex-runtime-linux-x64
+          path: synctex-runtime/wsl
+
+      - name: Download Windows native prerequisites
+        if: matrix.platform == 'win'
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          name: windows-native-${{ matrix.arch }}
+          path: windows-native
 
       - name: Prepare Azure Trusted Signing
         if: matrix.platform == 'win'
@@ -747,14 +838,21 @@ jobs:
             --arch "$RELEASE_ARCH"
             --build-version "$RELEASE_VERSION"
             --verbose
-            --synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/current"
           )
+          if [[ "$RELEASE_PLATFORM" == "mac" ]]; then
+            args+=(--synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime")
+            args+=(--voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime")
+          else
+            args+=(--synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/current")
+          fi
           signed=false
           key_path=""
           cleanup_key() { [[ -z "$key_path" ]] || rm -f "$key_path"; }
           trap cleanup_key EXIT
           has_all() { for value in "$@"; do [[ -n "$value" ]] || return 1; done; }
           if [[ "$RELEASE_PLATFORM" == "mac" ]]; then
+            # The updater ZIP: level 5 measured 2.5x faster than the default 7 for 0.7% more bytes.
+            export ELECTRON_BUILDER_COMPRESSION_LEVEL=5
             if has_all "$CSC_LINK" "$CSC_KEY_PASSWORD" "$APPLE_API_KEY" "$APPLE_API_KEY_ID" "$APPLE_API_ISSUER"; then
               key_path="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY_ID}.p8"
               printf '%s' "$APPLE_API_KEY" > "$key_path"
@@ -855,32 +953,22 @@ jobs:
           retention-days: 1
           compression-level: 1
 
-      - name: Collect resource monitor
-        shell: bash
-        run: |
-          binary=scient-resource-monitor
-          [[ "${{ matrix.platform }}" == "win" ]] && binary=scient-resource-monitor.exe
-          source="native/resource-monitor/target/${{ matrix.rust_target }}/release/$binary"
-          mkdir -p "resource-monitor/${{ matrix.resource_key }}"
-          cp "$source" "resource-monitor/${{ matrix.resource_key }}/$binary"
-
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: release-publish/*
           if-no-files-found: error
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: resource-monitor-${{ matrix.resource_key }}
-          path: resource-monitor/${{ matrix.resource_key }}/*
-          if-no-files-found: error
+          # Installers and updater archives are already compressed.
+          compression-level: 0
 
+  # Starts with the release and waits only for the Windows package, not the slowest Mac.
   verify_windows_desktop:
     name: Verify exact Windows native payload
-    needs: [preflight, build_desktop]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_desktop.result == 'success' }}
+    needs: preflight
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: windows-2025
-    timeout-minutes: 15
+    # Like the server asset, outlasts a queued producer; the wait has no deadline of its own.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -889,6 +977,11 @@ jobs:
         with:
           node-version-file: package.json
           run-install: false
+      - name: Wait for the Windows package
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/scripts/wait-for-job.sh "Package Windows x64" verify-win-x64
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: verify-win-x64
@@ -919,12 +1012,14 @@ jobs:
             if ($signature.Status -ne "Valid") { throw "Invalid Windows signature: $($signature.Status)" }
           }
 
+  # Needs every target's resource monitor and SyncTeX runtime, not their installers.
   build_server_asset:
     name: Package exact remote server asset
-    needs: [preflight, build_desktop]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.build_desktop.result == 'success' }}
+    needs: preflight
+    if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Long enough to outlast a macOS runner queue; it only waits while the packages build.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -959,6 +1054,22 @@ jobs:
         run: |
           node scripts/update-release-package-versions.ts "$RELEASE_VERSION"
           vp run --filter t3 build
+      - name: Wait for every target's native runtimes
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          for target in "macOS arm64:darwin-arm64" "macOS x64:darwin-x64" "Linux x64:linux-x64" "Windows x64:win32-x64"; do
+            label="${target%%:*}"
+            key="${target##*:}"
+            if [[ "$label" == macOS* ]]; then
+              bash .github/scripts/wait-for-job.sh "Package $label" "synctex-runtime-$key" --uploaded
+            else
+              bash .github/scripts/wait-for-job.sh "Build native prerequisites / $label" "synctex-runtime-$key"
+            fi
+            bash .github/scripts/wait-for-job.sh "Package $label" "resource-monitor-$key" --uploaded
+          done
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: resource-monitor-*
@@ -973,6 +1084,16 @@ jobs:
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
           set -euo pipefail
+          for key in darwin-arm64 darwin-x64 linux-x64 win32-x64; do
+            compgen -G "resource-monitors/resource-monitor-$key/scient-resource-monitor*" >/dev/null || {
+              echo "Missing the $key resource monitor." >&2
+              exit 1
+            }
+            [[ -f "synctex-runtimes/synctex-runtime-$key/synctex" || -f "synctex-runtimes/synctex-runtime-$key/synctex.exe" ]] || {
+              echo "Missing the $key SyncTeX runtime." >&2
+              exit 1
+            }
+          done
           for dir in resource-monitors/resource-monitor-*; do
             key="${dir##*/resource-monitor-}"
             mkdir -p "apps/server/dist/resource-monitor/$key"
@@ -1094,7 +1215,8 @@ jobs:
           name: scient-release-v${{ needs.preflight.outputs.version }}
           path: release-assets/*
           if-no-files-found: error
-          retention-days: 30
+          retention-days: ${{ needs.preflight.outputs.rehearsal == 'true' && 7 || 30 }}
+          compression-level: 0
       - name: Record release candidate handoff
         shell: bash
         env:
@@ -1131,7 +1253,7 @@ jobs:
 
   publish:
     name: Publish GitHub release
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.assemble.result == 'success' && needs.preflight.outputs.publish_release == 'true' }}
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.assemble.result == 'success' && needs.preflight.outputs.publish_release == 'true' && needs.preflight.outputs.rehearsal != 'true' }}
     needs: [preflight, assemble]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
