@@ -1,11 +1,15 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
+import { registryContactEmail } from "../sources/metadataHttp.ts";
+import type { ResearchKeys } from "../sources/SourceIdentifierResolver.ts";
 
 const MAX_PDF_BYTES = 200 * 1024 * 1024;
 const OPENALEX = "https://api.openalex.org";
+const UNPAYWALL = "https://api.unpaywall.org";
 
 const decodeDoi = (doi: string) => {
   try {
@@ -45,6 +49,18 @@ const Work = Schema.Struct({
   locations: Schema.optional(Schema.Array(Location)),
 });
 const decodeWork = Schema.decodeUnknownOption(Schema.fromJsonString(Work));
+const UnpaywallRecord = Schema.Struct({
+  oa_locations: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        url_for_pdf: Schema.optional(Schema.NullOr(Schema.String)),
+        url: Schema.optional(Schema.NullOr(Schema.String)),
+        version: Schema.optional(Schema.NullOr(Schema.String)),
+      }),
+    ),
+  ),
+});
+const decodeUnpaywall = Schema.decodeUnknownOption(Schema.fromJsonString(UnpaywallRecord));
 const Handle = Schema.Struct({
   values: Schema.Array(Schema.Struct({ data: Schema.Struct({ value: Schema.Unknown }) })),
 });
@@ -80,15 +96,44 @@ export interface Paper {
   }>;
 }
 
-const getText = (http: HttpClient.HttpClient, url: string) =>
-  http.execute(HttpClientRequest.get(url, { headers: { accept: "application/json" } })).pipe(
-    Effect.flatMap((response) =>
-      response.status === 200 ? Effect.asSome(response.text) : Effect.succeedNone,
-    ),
-    Effect.timeoutOption("15 seconds"),
-    Effect.map((text) => Option.getOrUndefined(Option.flatten(text))),
-    Effect.orElseSucceed(() => undefined),
+const getText = (
+  http: HttpClient.HttpClient,
+  url: string,
+  urlParams: Record<string, string | Redacted.Redacted<string>> = {},
+) =>
+  http
+    .execute(HttpClientRequest.get(url, { headers: { accept: "application/json" }, urlParams }))
+    .pipe(
+      Effect.flatMap((response) =>
+        response.status === 200 ? Effect.asSome(response.text) : Effect.succeedNone,
+      ),
+      Effect.timeoutOption("15 seconds"),
+      Effect.map((text) => Option.getOrUndefined(Option.flatten(text))),
+      Effect.orElseSucceed(() => undefined),
+    );
+
+const publishedFirst = (copies: Paper["openAccess"]) =>
+  copies.toSorted(
+    (a, b) =>
+      Number(b.version === "published") - Number(a.version === "published") ||
+      Number("pdfUrl" in b) - Number("pdfUrl" in a),
   );
+
+/** Unpaywall's free copies of a DOI; it asks for the caller's email instead of a key. */
+const unpaywallCopies = Effect.fn("Papers.unpaywallCopies")(function* (
+  http: HttpClient.HttpClient,
+  doi: string,
+  email: Redacted.Redacted<string>,
+) {
+  const text = yield* getText(http, `${UNPAYWALL}/v2/${encodeURI(doi)}`, { email });
+  const record = text === undefined ? Option.none() : decodeUnpaywall(text);
+  if (Option.isNone(record)) return [];
+  return (record.value.oa_locations ?? []).flatMap((location): Paper["openAccess"] => {
+    const version = versionOf(location.version);
+    if (location.url_for_pdf) return [{ pdfUrl: location.url_for_pdf, version }];
+    return location.url ? [{ pageUrl: location.url, version }] : [];
+  });
+});
 
 function paperFrom(
   work: typeof Work.Type,
@@ -116,11 +161,7 @@ function paperFrom(
       (resolvedDoi
         ? `https://doi.org/${resolvedDoi}`
         : (work.primary_location?.landing_page_url ?? "")),
-    openAccess: copies.toSorted(
-      (a, b) =>
-        Number(b.version === "published") - Number(a.version === "published") ||
-        Number("pdfUrl" in b) - Number("pdfUrl" in a),
-    ),
+    openAccess: publishedFirst(copies),
   };
 }
 
@@ -140,22 +181,38 @@ export const articleAddress = Effect.fn("Papers.articleAddress")(function* (doi:
 });
 
 /** What OpenAlex knows about the paper a DOI or link names. */
-export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (input: {
-  readonly doi?: string | undefined;
-  readonly url?: string | undefined;
-}) {
+export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (
+  input: {
+    readonly doi?: string | undefined;
+    readonly url?: string | undefined;
+  },
+  keys: ResearchKeys = {},
+) {
   const http = yield* HttpClient.HttpClient;
   const doi = doiIn(input.doi) ?? doiIn(input.url);
+  // The Library's registry contact email goes to OpenAlex as mailto and stands in for Unpaywall's.
+  const contact = registryContactEmail();
   if (doi) {
-    const text = yield* getText(http, `${OPENALEX}/works/doi:${encodeURI(doi)}`);
+    const text = yield* getText(http, `${OPENALEX}/works/doi:${encodeURI(doi)}`, {
+      ...(keys.openAlex ? { api_key: keys.openAlex } : {}),
+      ...(contact ? { mailto: contact } : {}),
+    });
     const work = text === undefined ? Option.none() : decodeWork(text);
-    return Option.isSome(work)
+    const paper = Option.isSome(work)
       ? paperFrom(work.value, doi, input.url)
       : ({
           doi,
           landingUrl: input.url ?? `https://doi.org/${doi}`,
           openAccess: [{ pageUrl: input.url ?? `https://doi.org/${doi}`, version: "published" }],
         } satisfies Paper);
+    // OpenAlex is unreachable, or knows no free copy: Unpaywall may still have one.
+    const missingCopies = Option.isNone(work) || paper.openAccess.length === 0;
+    const email = keys.unpaywallEmail ?? (contact ? Redacted.make(contact) : undefined);
+    if (!missingCopies || !email) return paper;
+    const more = yield* unpaywallCopies(http, doi, email);
+    return more.length === 0
+      ? paper
+      : { ...paper, openAccess: publishedFirst([...more, ...paper.openAccess]) };
   }
   const arxiv = arxivIn(input.url);
   if (arxiv)

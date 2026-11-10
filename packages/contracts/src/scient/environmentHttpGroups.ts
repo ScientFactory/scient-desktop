@@ -40,6 +40,8 @@ import {
   ScientSourceAttachmentPreviewResult,
   ScientSourcesFullTextSearchRequest,
   ScientSourcesFullTextSearchResult,
+  ScientSourceSavePageRequest,
+  ScientSourceSavePageResult,
   ScientSourceDetailRequest,
   ScientSourceDetailResult,
   ScientSourceJournalIconRequest,
@@ -52,6 +54,8 @@ import {
   ScientSourceNoteUpdateResult,
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
+  ScientSourcesAddByIdentifierRequest,
+  ScientSourcesAddByIdentifierResult,
   ScientSourceRestoreRequest,
   ScientSourceRestoreResult,
   ScientSourceRevertRequest,
@@ -63,10 +67,18 @@ import {
   ScientSourcesTrashRequest,
   ScientSourceTrashListing,
   ScientSourcesAdvanceImportRequest,
+  ScientSourcesBulkResult,
+  ScientSourcesBulkUpdateRequest,
+  ScientSourcesOrganizeRequest,
+  ScientSourcesOrganizeResult,
   ScientSourcesBeginImportRequest,
   ScientSourcesCancelImportRequest,
   ScientSourcesRetryImportRequest,
   ScientSourcesDiscardStagedRequest,
+  ScientSourcesExportRequest,
+  ScientSourcesExportResult,
+  ScientSourcesFileImportRequest,
+  ScientSourcesFileImportResult,
   ScientSourcesDiscardStagedResult,
   ScientSourcesLocalPdfUploadRequest,
   ScientSourcesLocalPdfUploadResult,
@@ -81,6 +93,10 @@ import {
   ZoteroLibraryRequest,
   ZoteroScopedImportRequest,
   ZoteroStatusRequest,
+  ScientSourcesZoteroRefreshRequest,
+  ScientSourcesZoteroSendRequest,
+  ScientSourceZoteroRefreshResult,
+  ScientSourceZoteroSendResult,
 } from "../scientSources.ts";
 import {
   ScientManagedBibliographyStatus,
@@ -305,6 +321,14 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
+      HttpApiEndpoint.post("savePage", "/api/scient/sources/pages/save", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceSavePageRequest,
+        success: ScientSourceSavePageResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
       HttpApiEndpoint.post("journalIcon", "/api/scient/sources/journal-icon", {
         headers: OptionalBearerHeaders,
         payload: ScientSourceJournalIconRequest,
@@ -345,10 +369,34 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
+      HttpApiEndpoint.post("organize", "/api/scient/sources/organize", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesOrganizeRequest,
+        success: ScientSourcesOrganizeResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("addByIdentifier", "/api/scient/sources/identifiers/add", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesAddByIdentifierRequest,
+        success: ScientSourcesAddByIdentifierResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
       HttpApiEndpoint.post("trash", "/api/scient/sources/trash", {
         headers: OptionalBearerHeaders,
         payload: ScientSourcesTrashRequest,
         success: ScientSourceTrashListing,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("bulkUpdate", "/api/scient/sources/bulk-update", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesBulkUpdateRequest,
+        success: ScientSourcesBulkResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )
@@ -441,6 +489,22 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
+      HttpApiEndpoint.post("fileImport", "/api/scient/sources/files/import", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesFileImportRequest,
+        success: ScientSourcesFileImportResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("export", "/api/scient/sources/export", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesExportRequest,
+        success: ScientSourcesExportResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
       HttpApiEndpoint.post("beginImport", "/api/scient/sources/import/begin", {
         headers: OptionalBearerHeaders,
         payload: ScientSourcesBeginImportRequest,
@@ -453,6 +517,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ZoteroScopedImportRequest,
         success: ScientSourceImportOperation,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("zoteroRefresh", "/api/scient/sources/zotero/refresh", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesZoteroRefreshRequest,
+        success: ScientSourceZoteroRefreshResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("zoteroSend", "/api/scient/sources/zotero/send", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesZoteroSendRequest,
+        success: ScientSourceZoteroSendResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

@@ -409,6 +409,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "reinstall"],
   },
   {
+    id: "word-citation-style",
+    title: "Citation style",
+    to: "/settings/documents",
+    targetId: "word-citation-style",
+    searchTerms: ["citation", "references", "bibliography", "csl", "apa", "vancouver", "word"],
+  },
+  {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",
     title: "Keep worktrees with local changes",

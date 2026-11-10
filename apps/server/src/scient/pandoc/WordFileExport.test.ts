@@ -35,6 +35,36 @@ import {
   PNG_BYTES_ALT,
 } from "./pandocTestSupport.ts";
 import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testkit.ts";
+import { initializeScientProject } from "@scientfactory/project-init";
+import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
+import { importScientSource } from "@scientfactory/scient-sources/store";
+
+const libraryCandidate: ScientSourceCandidate = {
+  sourceKey: "A",
+  type: "article",
+  customType: null,
+  title: "Notes on the analytical engine",
+  creators: [
+    { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
+  ],
+  issuedRaw: "1843",
+  issuedYear: 1843,
+  identifiers: [],
+  abstract: null,
+  containerTitle: null,
+  publisher: null,
+  volume: null,
+  issue: null,
+  pages: null,
+  language: null,
+  url: null,
+  tags: [],
+  externalReferences: [],
+  fieldProvenance: [],
+  pdfAvailable: false,
+  pdfFileName: null,
+  pdfAttachmentCount: 0,
+};
 
 const binary = pandocBinaryForTests();
 
@@ -141,6 +171,56 @@ const run = <A, E>(
   }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped);
 
 describe("WordFileExport", () => {
+  it.live("cites Library sources in the chosen style unless the document names its own", () => {
+    const seen: Array<WordConversionInput> = [];
+    return run(
+      ({ service, project, revisionOf }) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(async () => {
+            await initializeScientProject({ root: project });
+            await importScientSource({
+              root: project,
+              operationId: "operation-1",
+              candidate: libraryCandidate,
+            });
+          });
+          const report = NodePath.join(project, "notes", "report.md");
+          NodeFS.writeFileSync(report, "# Report\n\nSee [@lovelace1843notes].\n");
+          const request = {
+            cwd: project,
+            relativePath: "notes/report.md",
+            revision: yield* revisionOf("notes/report.md"),
+          };
+          yield* service.export({ ...request, citationStyle: "apa" });
+          expect(
+            seen[0]?.fallbackCitations?.flatMap((citation) =>
+              citation._tag === "bibliographic" ? [citation.key] : [],
+            ),
+          ).toEqual(["lovelace1843notes"]);
+          expect(seen[0]?.cslStyle).toContain("American Psychological Association");
+
+          NodeFS.writeFileSync(report, "---\ncsl: vancouver\n---\nSee [@lovelace1843notes].\n");
+          yield* service.export({
+            ...request,
+            revision: yield* revisionOf("notes/report.md"),
+            citationStyle: "apa",
+          });
+          expect(seen[1]?.cslStyle).toContain("Vancouver");
+
+          NodeFS.writeFileSync(report, "---\ncsl: nature\n---\nSee [@lovelace1843notes].\n");
+          const produced = yield* service.export({
+            ...request,
+            revision: yield* revisionOf("notes/report.md"),
+          });
+          expect(seen[2]?.cslStyle).toBeNull();
+          expect(produced.warnings.map((warning) => warning.message).join("\n")).toContain(
+            "Citation style “nature”",
+          );
+        }),
+      { seen },
+    );
+  });
+
   it.live("sends captured Mermaid PNG bytes to the Word converter", () => {
     const seen: Array<WordConversionInput> = [];
     return run(

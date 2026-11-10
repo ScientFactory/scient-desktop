@@ -38,6 +38,7 @@ import * as LatexTexDirectory from "./latex/latexTexDirectory.ts";
 import * as LatexSyncTex from "./latex/LatexSyncTex.ts";
 import * as LatexTikzPreview from "./latex/LatexTikzPreview.ts";
 import { scientSourcesHttpApiLayer } from "./sources/http.ts";
+import * as RegistryContact from "./sources/RegistryContact.ts";
 import { scientReferencesHttpApiLayer } from "./references/http.ts";
 import { scientLatexHttpApiLayer } from "./latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./markdown/http.ts";
@@ -129,6 +130,7 @@ export function makeScientRouteServices<
       ConversationImporterLive.layer.pipe(Layer.provide(ConversationImportCommit.layer)),
     ),
   );
+  const RegistryContactLive = RegistryContact.layer.pipe(Layer.provide(ServerSettingsLayerLive));
   const ScientificRuntimePreferencesLive = ScientificRuntimePreferences.layer.pipe(
     Layer.provide(ServerSettingsLayerLive),
     Layer.provide(LocalAnalysisStore.layer),
@@ -207,6 +209,7 @@ export function makeScientRouteServices<
       Layer.provide(DataTables.layer),
       Layer.provide(NotebookStore.layer),
       Layer.provide(ScientificRuntimePreferencesLive),
+      Layer.provide(RegistryContactLive),
       Layer.provide(ScientLatexServicesLive),
       Layer.provide(OverleafSyncLive),
       // The Overleaf service saves a folder's editors through the editor-save request.

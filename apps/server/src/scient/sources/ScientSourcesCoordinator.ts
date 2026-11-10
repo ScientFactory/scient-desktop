@@ -7,8 +7,6 @@ import {
   applyResolvedSourceMetadata,
   creatorDisplayName,
   resolveSourceIdentifier,
-  sourceIdentifierLabel as identifierLabel,
-  sourceIdentifierRegistryName as registryName,
   titlesAgree,
   type ResolveSourceIdentifier,
 } from "./SourceIdentifierResolver.ts";
@@ -20,6 +18,8 @@ import {
   refreshExistingSourceCandidate,
 } from "./LocalPdfSourceAdapter.ts";
 import {
+  sourceIdentifierLabel as identifierLabel,
+  sourceIdentifierRegistryName as registryName,
   abstractDocumentFromSections,
   changedEditableMetadataFields,
   editableMetadataFromRecord,
@@ -43,6 +43,11 @@ import {
   type ZoteroConnection,
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
+import {
+  bulkUpdateScientSources,
+  organizeScientSources,
+  readScientSourcesOrganization,
+} from "@scientfactory/scient-sources/collections";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   cancelSourceImportOperation,
@@ -86,6 +91,13 @@ import {
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
+import {
+  beginBibliographyFileImport,
+  discardBibliographyFileImport,
+  fileImportVerification,
+  getBibliographyFileImportCandidate,
+} from "./BibliographyFileAdapter.ts";
+import { recordZoteroSync } from "./ZoteroSync.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
@@ -191,6 +203,13 @@ function normalizeSourceRecordForRead(record: ScientSourceRecord): ScientSourceR
 
 export async function getScientSourcesOverview(root: string) {
   const overview = await inspectScientSources(root);
+  const organization =
+    overview.projectState === "initialized"
+      ? await readScientSourcesOrganization(
+          root,
+          new Set(overview.records.map((record) => record.sourceId)),
+        )
+      : null;
   void scheduleSourceFullTextIndexing(root);
   return {
     ...overview,
@@ -199,7 +218,16 @@ export async function getScientSourcesOverview(root: string) {
       sourceId: record.sourceId,
       diagnostics: sourceMetadataDiagnostics(record),
     })),
+    ...(organization ? { organization } : {}),
   };
+}
+
+export async function organizeSources(input: Parameters<typeof organizeScientSources>[0]) {
+  return organizeScientSources(input);
+}
+
+export async function bulkUpdateSources(input: Parameters<typeof bulkUpdateScientSources>[0]) {
+  return bulkUpdateScientSources(input);
 }
 
 export async function getScientSourceDetail(input: {
@@ -301,35 +329,47 @@ export async function addAgentSource(
         ? null
         : await (input.resolveIdentifier ?? resolveSourceIdentifier)(input.candidate.identifiers);
       if (resolution?.status === "not-found") {
+        const missing = resolution.named ?? resolution.identifier;
         return {
           outcome: "identifier-not-found",
-          identifier: resolution.identifier,
-          message: `The ${identifierLabel(resolution.identifier)} does not exist at ${registryName(resolution.identifier)}. Check the identifier; do not guess.`,
+          identifier: missing,
+          message: `The ${identifierLabel(missing)} does not exist at ${registryName(missing)}. Check the identifier; do not guess.`,
         };
       }
+      // A catalogue's record fills in the work while its registry cannot be reached.
+      const record =
+        resolution?.status === "found"
+          ? resolution
+          : resolution?.status === "unavailable" && resolution.catalogue
+            ? {
+                status: "found" as const,
+                identifier: resolution.identifier,
+                ...resolution.catalogue,
+              }
+            : null;
       if (
-        resolution?.status === "found" &&
+        record &&
         input.claimedTitle &&
-        resolution.metadata.title &&
-        !titlesAgree(input.claimedTitle, resolution.metadata.title)
+        record.metadata.title &&
+        !titlesAgree(input.claimedTitle, record.metadata.title)
       ) {
         return {
           outcome: "identifier-mismatch",
-          identifier: resolution.identifier,
+          identifier: record.identifier,
           resolved: {
-            title: resolution.metadata.title,
-            creators: resolution.metadata.creators
+            title: record.metadata.title,
+            creators: record.metadata.creators
               .slice(0, 3)
               .flatMap((creator) => creatorDisplayName(creator) ?? []),
-            issuedYear: resolution.metadata.issuedYear,
-            containerTitle: resolution.metadata.containerTitle,
+            issuedYear: record.metadata.issuedYear,
+            containerTitle: record.metadata.containerTitle,
           },
-          message: `The ${identifierLabel(resolution.identifier)} belongs to a work with a different title. Check whether the identifier or the title is wrong; do not guess. If the resolved work is the one meant, add it again without a title.`,
+          message: `The ${identifierLabel(record.identifier)} belongs to a work with a different title. Check whether the identifier or the title is wrong; do not guess. If the resolved work is the one meant, add it again without a title.`,
         };
       }
       const verification: ScientSourceVerification | null = exactDuplicate
         ? null
-        : resolution === null
+        : resolution === null || (resolution.status === "found" && resolution.catalogueOnly)
           ? { state: "unverified" }
           : resolution.status === "found"
             ? {
@@ -338,10 +378,9 @@ export async function addAgentSource(
                 checkedAt: resolution.retrievedAt,
               }
             : { state: "unchecked", identifier: resolution.identifier };
-      const resolved =
-        resolution?.status === "found"
-          ? applyResolvedSourceMetadata(input.candidate, resolution)
-          : input.candidate;
+      const resolved = record
+        ? applyResolvedSourceMetadata(input.candidate, record)
+        : input.candidate;
       const candidate = input.enrich ? await enrichScientSourceCandidate(resolved) : resolved;
       const candidateWithPdfName =
         input.pdfPath && input.pdfFileName
@@ -856,7 +895,7 @@ async function importZoteroOperationItem(input: {
     input.zotero,
     input.operation.adapter === "zotero-web" ? "web" : "local",
   );
-  const { candidate, files } = await zoteroImportMaterial(transport, input.itemKey);
+  const { candidate, material, files } = await zoteroImportMaterial(transport, input.itemKey);
   try {
     const [primary, ...extra] = files;
     const result = await importScientSourceOperationItem({
@@ -880,6 +919,14 @@ async function importZoteroOperationItem(input: {
         actor: input.operation.actor,
       });
       record = attached.record;
+    }
+    if (result.outcome === "imported" && record) {
+      await recordZoteroSync({
+        root: input.root,
+        record,
+        material,
+        attachmentKeys: files.map((file) => file.attachmentKey),
+      });
     }
     return { ...result, record };
   } finally {
@@ -915,16 +962,27 @@ export async function advanceSourceImport(
               zotero: input.zotero ?? localOnlyZoteroAccess,
             });
           }
-          const { candidate, pdfPath, expectedPdf } = await getLocalPdfImportMaterial(
-            root,
-            pending.itemKey,
-          );
+          const { candidate, pdfPath, expectedPdf } =
+            operation.adapter === "file"
+              ? {
+                  candidate: await getBibliographyFileImportCandidate(
+                    root,
+                    input.operationId,
+                    pending.itemKey,
+                  ),
+                  pdfPath: null,
+                  expectedPdf: undefined,
+                }
+              : await getLocalPdfImportMaterial(root, pending.itemKey);
           return importScientSourceOperationItem({
             root,
             operationId: input.operationId,
             candidate,
             actor: operation.actor,
             intake: operation.intake,
+            ...(operation.adapter === "file"
+              ? { verification: fileImportVerification(candidate) }
+              : {}),
             ...(pdfPath ? { pdfPath } : {}),
             ...(expectedPdf ? { expectedPdf } : {}),
             allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
@@ -943,6 +1001,14 @@ export async function advanceSourceImport(
       });
       if (operation.adapter === "local-files") {
         await discardLocalPdfImportMaterial(root, pending.itemKey);
+      }
+      // Failed entries keep the staged file so they can be retried.
+      if (
+        operation.adapter === "file" &&
+        updated.state !== "running" &&
+        !updated.items.some((item) => item.state === "failed")
+      ) {
+        await discardBibliographyFileImport(root, input.operationId);
       }
       return updated;
     } catch (error) {
@@ -968,6 +1034,7 @@ export async function cancelSourceImport(input: {
     const operation = await readSourceImportOperation(root, input.operationId);
     if (!operation) throw new Error("The source import operation was not found.");
     const cancelled = await cancelSourceImportOperation(root, input.operationId);
+    if (operation.adapter === "file") await discardBibliographyFileImport(root, input.operationId);
     if (operation.adapter === "local-files") {
       await Promise.all(
         operation.items
@@ -986,4 +1053,23 @@ export async function retrySourceImport(input: {
 }) {
   const root = await canonicalizeScientSourceRoot(input.root);
   return retryFailedSourceImportOperationItems(root, input.operationId, input.itemKeys);
+}
+
+/** Begins a reference-file import and runs it to the end, for callers without a progress view. */
+export async function importBibliographyFile(
+  input: Parameters<typeof beginBibliographyFileImport>[0],
+  observer?: SourceImportObserver,
+) {
+  const begun = await beginBibliographyFileImport(input);
+  let operation = begun.operation;
+  while (
+    operation?.state === "running" &&
+    operation.items.some((item) => item.state === "pending")
+  ) {
+    operation = await advanceSourceImport(
+      { root: input.root, operationId: operation.operationId },
+      observer,
+    );
+  }
+  return { operation, report: begun.report };
 }

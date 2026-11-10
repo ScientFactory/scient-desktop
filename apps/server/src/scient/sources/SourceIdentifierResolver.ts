@@ -4,8 +4,11 @@ import * as NodeTimersPromises from "node:timers/promises";
 
 import {
   isbn13,
+  canonicalConnectorIdentifier,
   isValidIsbn,
   isWellFormedArxivId,
+  isWellFormedOpenAlexWorkId,
+  isWellFormedSemanticScholarId,
   isWellFormedDoi,
   isWellFormedPmid,
   normalizePersistentIdentifier,
@@ -21,9 +24,15 @@ import {
 } from "@scientfactory/scient-sources";
 import * as Context from "effect/Context";
 import * as Predicate from "effect/Predicate";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { ARXIV_IDS_PER_REQUEST, lookupArxivIds } from "./ArxivIdentifierLookup.ts";
+import {
+  lookupOpenAlexWork,
+  lookupSemanticScholarPaper,
+  type FollowIdentifier,
+} from "./ConnectorIdentifierLookup.ts";
 import { ISBNS_PER_REQUEST, lookupIsbns } from "./IsbnIdentifierLookup.ts";
 import { METADATA_USER_AGENT, requestMetadata, type MetadataRequest } from "./metadataHttp.ts";
 import { runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
@@ -352,8 +361,14 @@ function metadataFromPubmed(pmid: string, summary: PubmedSummary): ResolvedSourc
 /** The registry whose record supplied resolved metadata, as recorded in field provenance. */
 export type RegistryOrigin = Extract<
   ScientSourceFieldProvenance["origin"],
-  "doi" | "pubmed" | "arxiv" | "open-library" | "google-books"
+  "doi" | "pubmed" | "arxiv" | "open-library" | "google-books" | "openalex" | "semantic-scholar"
 >;
+
+/** What a catalogue (OpenAlex, Semantic Scholar) says of a work, which no registry has checked. */
+export interface CatalogueRecord {
+  readonly metadata: ResolvedSourceMetadata;
+  readonly origin: Extract<RegistryOrigin, "openalex" | "semantic-scholar">;
+}
 
 export type SourceIdentifierResolution =
   | {
@@ -363,17 +378,31 @@ export type SourceIdentifierResolution =
       readonly retrievedAt: string;
       /** Absent for DOI and PMID, whose registry follows from the scheme. */
       readonly origin?: RegistryOrigin;
+      /** Only a catalogue has the work: it exists there, but is not registry-verified. */
+      readonly catalogueOnly?: true;
     }
-  | { readonly status: "not-found"; readonly identifier: ScientSourceIdentifier }
-  | { readonly status: "unavailable"; readonly identifier: ScientSourceIdentifier };
+  | {
+      readonly status: "not-found";
+      readonly identifier: ScientSourceIdentifier;
+      /** The registry identifier a catalogue named for it, which its registry does not have. */
+      readonly named?: ScientSourceIdentifier;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly identifier: ScientSourceIdentifier;
+      /** The catalogue's record while the registry it names cannot be reached. */
+      readonly catalogue?: CatalogueRecord & { readonly retrievedAt: string };
+    };
 
 export type IdentifierLookup =
   | {
       readonly status: "found";
       readonly metadata: ResolvedSourceMetadata;
       readonly origin?: RegistryOrigin;
+      readonly catalogueOnly?: true;
     }
-  | { readonly status: "not-found" | "unavailable" };
+  | { readonly status: "not-found"; readonly named?: ScientSourceIdentifier }
+  | { readonly status: "unavailable"; readonly catalogue?: CatalogueRecord };
 type Lookup = IdentifierLookup;
 
 /** Spaces requests to one registry; lookups default to each registry's shared lane. */
@@ -395,12 +424,17 @@ async function lookupDoi(doi: string, request: MetadataRequest): Promise<Lookup>
   return { status: "found", metadata: metadataFromCsl(csl, doi) };
 }
 
-async function lookupPmid(pmid: string, request: MetadataRequest): Promise<Lookup> {
+async function lookupPmid(
+  pmid: string,
+  request: MetadataRequest,
+  keys: ResearchKeys = {},
+): Promise<Lookup> {
   const parameters = new URLSearchParams({
     db: "pubmed",
     id: pmid,
     retmode: "json",
     tool: "scient_desktop",
+    ...(keys.ncbi ? { api_key: Redacted.value(keys.ncbi) } : {}),
   });
   const response = await runWithNcbiRequestLimit(() =>
     request(new URL(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?${parameters}`), {
@@ -426,15 +460,21 @@ interface IdentifierScheme {
     values: ReadonlyArray<string>,
     request: MetadataRequest,
     pace: RequestPace | undefined,
+    keys: ResearchKeys,
   ) => Promise<ReadonlyMap<string, Lookup>>;
 }
 
 const one =
-  (lookup: (value: string, request: MetadataRequest) => Promise<Lookup>) =>
-  async (values: ReadonlyArray<string>, request: MetadataRequest) =>
+  (lookup: (value: string, request: MetadataRequest, keys: ResearchKeys) => Promise<Lookup>) =>
+  async (
+    values: ReadonlyArray<string>,
+    request: MetadataRequest,
+    _pace: RequestPace | undefined,
+    keys: ResearchKeys,
+  ) =>
     new Map(
       await Promise.all(
-        values.map(async (value) => [value, await lookup(value, request)] as const),
+        values.map(async (value) => [value, await lookup(value, request, keys)] as const),
       ),
     );
 
@@ -448,14 +488,63 @@ const IDENTIFIER_SCHEMES: Readonly<Record<SourceAddIdentifierScheme, IdentifierS
     lookup: lookupArxivIds,
   },
   isbn: { wellFormed: isValidIsbn, perRequest: ISBNS_PER_REQUEST, lookup: lookupIsbns },
+  openalex: {
+    wellFormed: isWellFormedOpenAlexWorkId,
+    perRequest: 1,
+    lookup: catalogue(lookupOpenAlexWork),
+  },
+  s2: {
+    wellFormed: isWellFormedSemanticScholarId,
+    perRequest: 1,
+    lookup: catalogue(lookupSemanticScholarPaper),
+  },
 };
 
+function catalogue(lookup: typeof lookupOpenAlexWork) {
+  return async (
+    values: ReadonlyArray<string>,
+    request: MetadataRequest,
+    pace: RequestPace | undefined,
+    keys: ResearchKeys,
+  ) =>
+    new Map(
+      await Promise.all(
+        values.map(
+          async (value) =>
+            [
+              value,
+              await lookup(value, request, keys, followRegistry(request, keys, pace), pace),
+            ] as const,
+        ),
+      ),
+    );
+}
+
+/** A catalogue entry's registry record, through the same lookups as any identifier. */
+function followRegistry(
+  request: MetadataRequest,
+  keys: ResearchKeys,
+  pace: RequestPace | undefined,
+): FollowIdentifier {
+  return async (scheme, value) => {
+    const canonical = canonicalIdentifier(scheme, value);
+    if (!IDENTIFIER_SCHEMES[scheme].wellFormed(canonical)) return { status: "not-found" };
+    const answers = await IDENTIFIER_SCHEMES[scheme].lookup([canonical], request, pace, keys);
+    return answers.get(canonical) ?? { status: "unavailable" };
+  };
+}
+
 function canonicalIdentifier(scheme: SourceAddIdentifierScheme, value: string): string {
+  if (scheme === "openalex" || scheme === "s2")
+    return canonicalConnectorIdentifier(scheme, value) ?? value.trim();
   const normalized = normalizePersistentIdentifier(scheme, value).slice(scheme.length + 1);
   return scheme === "isbn" ? (isbn13(normalized) ?? normalized) : normalized;
 }
 
-/** The identifier a source is checked against: DOI, then PMID, then arXiv ID, then ISBN. */
+/**
+ * The identifier a source is checked against: DOI, then PMID, arXiv ID, ISBN, and last an
+ * OpenAlex or Semantic Scholar ID, which is followed to its registry.
+ */
 export function verifiableSourceIdentifier(
   identifiers: ReadonlyArray<ScientSourceIdentifier>,
 ): ScientSourceIdentifier | null {
@@ -468,34 +557,22 @@ export function verifiableSourceIdentifier(
   return null;
 }
 
-const SCHEME_LABELS: Record<SourceAddIdentifierScheme, { label: string; registry: string }> = {
-  doi: { label: "DOI", registry: "doi.org" },
-  pmid: { label: "PMID", registry: "PubMed" },
-  arxiv: { label: "arXiv ID", registry: "arXiv" },
-  isbn: { label: "ISBN", registry: "Open Library or Google Books" },
-};
-
-function schemeLabels(identifier: ScientSourceIdentifier) {
-  const scheme = identifier.scheme as SourceAddIdentifierScheme;
-  return SCHEME_LABELS[scheme] ?? { label: identifier.scheme, registry: "its registry" };
-}
-
-/** "DOI 10.1000/x", for messages to people and agents. */
-export function sourceIdentifierLabel(identifier: ScientSourceIdentifier): string {
-  return `${schemeLabels(identifier).label} ${identifier.value}`;
-}
-
-/** The registry an identifier is checked against, for messages to people and agents. */
-export function sourceIdentifierRegistryName(identifier: ScientSourceIdentifier): string {
-  return schemeLabels(identifier).registry;
-}
-
 export interface SourceIdentifierResolverOptions {
   readonly request?: MetadataRequest;
   readonly now?: () => Date;
   readonly deadlineMs?: number;
   /** Replaces the per-registry request spacing, so tests do not wait on it. */
   readonly pace?: RequestPace;
+  readonly keys?: ResearchKeys;
+}
+
+/** The user's keys from Accounts for registries that take one; each is optional. */
+export interface ResearchKeys {
+  readonly openAlex?: Redacted.Redacted<string>;
+  readonly semanticScholar?: Redacted.Redacted<string>;
+  readonly ncbi?: Redacted.Redacted<string>;
+  /** Unpaywall takes an email address instead of a key. */
+  readonly unpaywallEmail?: Redacted.Redacted<string>;
 }
 
 async function lookupBeforeDeadline(
@@ -508,7 +585,7 @@ async function lookupBeforeDeadline(
   );
   return Promise.race([
     IDENTIFIER_SCHEMES[scheme]
-      .lookup(values, options.request ?? requestMetadata, options.pace)
+      .lookup(values, options.request ?? requestMetadata, options.pace, options.keys ?? {})
       .catch(() => unavailable),
     NodeTimersPromises.setTimeout(options.deadlineMs ?? LOOKUP_DEADLINE_MS, unavailable, {
       ref: false,
@@ -521,13 +598,23 @@ function resolutionFrom(
   outcome: Lookup,
   now: () => Date,
 ): SourceIdentifierResolution {
-  if (outcome.status !== "found") return { status: outcome.status, identifier };
+  if (outcome.status === "not-found")
+    return { status: "not-found", identifier, ...(outcome.named ? { named: outcome.named } : {}) };
+  if (outcome.status === "unavailable")
+    return {
+      status: "unavailable",
+      identifier,
+      ...(outcome.catalogue
+        ? { catalogue: { ...outcome.catalogue, retrievedAt: now().toISOString() } }
+        : {}),
+    };
   return {
     status: "found",
     identifier,
     metadata: outcome.metadata,
     retrievedAt: now().toISOString(),
     ...(outcome.origin ? { origin: outcome.origin } : {}),
+    ...(outcome.catalogueOnly ? { catalogueOnly: true } : {}),
   };
 }
 
@@ -600,11 +687,15 @@ export async function resolveSourceIdentifierBatch(
 
 export type ResolveSourceIdentifier = (
   identifiers: ReadonlyArray<ScientSourceIdentifier>,
+  keys?: ResearchKeys,
 ) => Promise<SourceIdentifierResolution | null>;
 
 export const SourceIdentifierLookup = Context.Reference<ResolveSourceIdentifier>(
   "scient/sources/SourceIdentifierLookup",
-  { defaultValue: () => (identifiers) => resolveSourceIdentifier(identifiers) },
+  {
+    defaultValue: () => (identifiers, keys) =>
+      resolveSourceIdentifier(identifiers, keys ? { keys } : {}),
+  },
 );
 
 const TITLE_STOPWORDS = new Set([
@@ -736,6 +827,38 @@ const REGISTRY_SOURCE_FIELDS = {
     language: "language",
     url: "canonicalVolumeLink",
     identifiers: "industryIdentifiers",
+  },
+  openalex: {
+    type: "type",
+    title: "title",
+    creators: "authorships",
+    issuedRaw: "publication_year",
+    issuedYear: "publication_year",
+    abstract: null,
+    containerTitle: "primary_location.source",
+    publisher: null,
+    volume: "biblio.volume",
+    issue: "biblio.issue",
+    pages: "biblio",
+    language: "language",
+    url: "id",
+    identifiers: "id",
+  },
+  "semantic-scholar": {
+    type: null,
+    title: "title",
+    creators: "authors",
+    issuedRaw: "publicationDate",
+    issuedYear: "year",
+    abstract: null,
+    containerTitle: "journal",
+    publisher: null,
+    volume: "journal.volume",
+    issue: null,
+    pages: "journal.pages",
+    language: null,
+    url: "paperId",
+    identifiers: "paperId",
   },
 } as const satisfies Record<RegistryOrigin, Record<string, string | null>>;
 type RegistryField = keyof (typeof REGISTRY_SOURCE_FIELDS)["doi"];

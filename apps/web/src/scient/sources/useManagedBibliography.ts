@@ -9,6 +9,7 @@ import { useEffect, useState } from "react";
 import { useStableCallback } from "~/hooks/useStableCallback";
 
 import { syncScientBibliography } from "./client";
+import { publishLibraryVersion } from "./librarySourceRequest";
 
 /**
  * The server rewrites the managed files after every Library write; this reads
@@ -35,13 +36,16 @@ export function useManagedBibliography(input: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the managed files live on the server; a Library change there is what makes them worth reading again
   useEffect(() => {
     if (libraryVersion === null) return;
+    publishLibraryVersion(input.root, libraryVersion);
     let current = true;
-    syncScientBibliography(input.environmentId, { root: input.root }).then(
-      (value) => {
-        if (current) setStatus({ context, value });
-      },
-      () => undefined,
-    );
+    Promise.resolve()
+      .then(() => syncScientBibliography(input.environmentId, { root: input.root }))
+      .then(
+        (value) => {
+          if (current) setStatus({ context, value });
+        },
+        () => undefined,
+      );
     return () => {
       current = false;
     };
