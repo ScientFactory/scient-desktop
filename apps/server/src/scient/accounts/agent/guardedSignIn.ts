@@ -102,6 +102,8 @@ const userPress = (caller: SignInCaller) => caller.kind === "check" || caller.ki
 /** A person has fifteen minutes, looked at often enough to close a university's return at once. */
 const PERSON = { waitMs: 15 * 60_000, lookGapMs: 400 };
 const MOST_PENDING = 4;
+/** A connector's session that ends sooner than this after a sign-in is not signed in again. */
+const CONNECTOR_SIGN_IN_PAUSE_MS = 2 * 60_000;
 
 type Invocation = AgentInvocationContext["Service"];
 
@@ -308,7 +310,13 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
       outcome: "limited",
       message: "The site is limiting access from this network. Try again in an hour.",
     } satisfies SignInAttempt;
-  if (automatic(caller) && signedInMomentsAgo(account, now))
+  const endedTooSoon =
+    caller.kind === "connector"
+      ? // A connector retries each call once; only a session that ends right away is a loop.
+        account.signIn?.state === "signed-in" &&
+        now - Date.parse(account.signIn.at) < CONNECTOR_SIGN_IN_PAUSE_MS
+      : signedInMomentsAgo(account, now);
+  if (automatic(caller) && endedTooSoon)
     return {
       outcome: "failed",
       message: `${account.name} signed in moments ago, so something keeps ending it. Scient won't repeat it by itself.`,
