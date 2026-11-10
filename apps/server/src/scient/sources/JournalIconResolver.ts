@@ -15,6 +15,8 @@ import {
 import { parse, type DefaultTreeAdapterMap } from "parse5";
 import { getDomain } from "tldts";
 
+import { withRegistryContact } from "./metadataHttp.ts";
+
 const ICON_REQUEST_TIMEOUT_MS = 2_000;
 const MAX_ICON_BYTES = 128 * 1024;
 const MAX_ICON_DOCUMENT_BYTES = 512 * 1024;
@@ -440,7 +442,7 @@ async function defaultResolveLandingUrl(record: ScientSourceRecord): Promise<URL
   try {
     const encodedDoi = doi.split("/").map(encodeURIComponent).join("/");
     const response = await requestPublicHttps(
-      new URL(`https://api.crossref.org/works/${encodedDoi}`),
+      withRegistryContact(new URL(`https://api.crossref.org/works/${encodedDoi}`)),
       MAX_CROSSREF_BYTES,
       0,
       "application/json",

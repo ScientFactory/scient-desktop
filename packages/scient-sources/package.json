@@ -12,6 +12,10 @@
       "types": "./src/collections.ts",
       "import": "./src/collections.ts"
     },
+    "./bibtex": {
+      "types": "./src/bibtex.ts",
+      "import": "./src/bibtex.ts"
+    },
     "./full-text": {
       "types": "./src/fullText.ts",
       "import": "./src/fullText.ts"
@@ -23,6 +27,10 @@
     "./material-selection": {
       "types": "./src/materialSelection.ts",
       "import": "./src/materialSelection.ts"
+    },
+    "./project-files": {
+      "types": "./src/projectFiles.ts",
+      "import": "./src/projectFiles.ts"
     },
     "./store": {
       "types": "./src/store.ts",

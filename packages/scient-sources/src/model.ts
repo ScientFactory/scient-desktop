@@ -101,6 +101,7 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "open-library",
     "google-books",
     "openalex",
+    "semantic-scholar",
   ]),
   sourceField: NullableText,
   sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),

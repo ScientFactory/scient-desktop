@@ -1,9 +1,48 @@
-import type { ScientSourceIdentifier } from "./model.ts";
+import * as Schema from "effect/Schema";
+
+import { CONNECTOR_IDENTIFIER_SCHEMES, detectConnectorIdentifier } from "./connectorIdentifiers.ts";
+import { ScientSourceIdentifier, ScientSourceVerification } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
 
+/** Most identifiers one add accepts; registry rate limits make larger batches slow. */
+export const MAX_SOURCE_IDENTIFIER_BATCH = 50;
+
 /** Schemes a person or agent can add a source by; each resolves against its registry. */
-export const SOURCE_ADD_IDENTIFIER_SCHEMES = ["doi", "pmid", "arxiv", "isbn"] as const;
+export const SOURCE_ADD_IDENTIFIER_SCHEMES = [
+  "doi",
+  "pmid",
+  "arxiv",
+  "isbn",
+  ...CONNECTOR_IDENTIFIER_SCHEMES,
+] as const;
 export type SourceAddIdentifierScheme = (typeof SOURCE_ADD_IDENTIFIER_SCHEMES)[number];
+
+const SCHEME_NAMES: Readonly<
+  Record<SourceAddIdentifierScheme, { readonly label: string; readonly registry: string }>
+> = {
+  doi: { label: "DOI", registry: "doi.org" },
+  pmid: { label: "PMID", registry: "PubMed" },
+  arxiv: { label: "arXiv ID", registry: "arXiv" },
+  isbn: { label: "ISBN", registry: "Open Library or Google Books" },
+  openalex: { label: "OpenAlex work", registry: "OpenAlex" },
+  s2: { label: "Semantic Scholar paper", registry: "Semantic Scholar" },
+};
+
+function schemeNames(scheme: string) {
+  return (
+    SCHEME_NAMES[scheme as SourceAddIdentifierScheme] ?? { label: scheme, registry: "its registry" }
+  );
+}
+
+/** "DOI 10.1000/x", for messages to people and agents. */
+export function sourceIdentifierLabel(identifier: ScientSourceIdentifier): string {
+  return `${schemeNames(identifier.scheme).label} ${identifier.value}`;
+}
+
+/** The registry an identifier is checked against, for messages to people and agents. */
+export function sourceIdentifierRegistryName(identifier: ScientSourceIdentifier): string {
+  return schemeNames(identifier.scheme).registry;
+}
 
 const DOI_BODY = /^10\.\d{4,9}\/\S+$/u;
 const ARXIV_NEW = /^\d{4}\.\d{4,5}$/u;
@@ -91,9 +130,9 @@ function isbnIdentifier(raw: string): ScientSourceIdentifier | null {
 }
 
 /**
- * Reads one DOI, PMID, arXiv ID or ISBN written in any common form: a bare value, a
- * "scheme:" prefix, or a doi.org, PubMed or arXiv link. Returns null when the text is
- * not exactly one identifier.
+ * Reads one DOI, PMID, arXiv ID, ISBN, OpenAlex work or Semantic Scholar paper written in any
+ * common form: a bare value, a "scheme:" prefix, or a link. Returns null when the text is not
+ * exactly one identifier.
  */
 export function detectSourceIdentifier(text: string): ScientSourceIdentifier | null {
   const value = trimTrailingPunctuation(text.trim().replace(/^<|>$/gu, ""));
@@ -126,7 +165,7 @@ export function detectSourceIdentifier(text: string): ScientSourceIdentifier | n
     if (digits.length >= 10) return isbnIdentifier(value);
     if (!value.includes("-") && isWellFormedPmid(digits)) return identifier("pmid", digits);
   }
-  return null;
+  return detectConnectorIdentifier(value);
 }
 
 export interface SourceIdentifierListEntry {
@@ -187,3 +226,22 @@ export function parseSourceIdentifierList(text: string): ReadonlyArray<SourceIde
       return true;
     });
 }
+
+/** What happened to one entry of an add by identifier. */
+export const ScientSourceIdentifierAddItem = Schema.Struct({
+  input: Schema.String,
+  identifier: Schema.NullOr(ScientSourceIdentifier),
+  outcome: Schema.Literals([
+    "imported",
+    "duplicate",
+    "unrecognized",
+    "identifier-not-found",
+    "unavailable",
+  ]),
+  /** The new source, or the existing one a duplicate matches. */
+  sourceId: Schema.NullOr(Schema.String),
+  title: Schema.NullOr(Schema.String),
+  verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  message: Schema.NullOr(Schema.String),
+});
+export type ScientSourceIdentifierAddItem = typeof ScientSourceIdentifierAddItem.Type;

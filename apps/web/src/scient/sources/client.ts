@@ -1,4 +1,5 @@
 import {
+  addEnvironmentScientSourcesByIdentifier,
   advanceEnvironmentScientSourcesImport,
   beginEnvironmentLocalSourceImport,
   beginEnvironmentZoteroImport,
@@ -201,6 +202,15 @@ export async function readScientSourceJournalIcon(
   if (!result.icon) return null;
   const url = resolveAssetUrl(connection.httpBaseUrl, result.icon.relativeUrl);
   return url ? { ...result.icon, url } : null;
+}
+
+export function addScientSourcesByIdentifier(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly entries: ReadonlyArray<string> },
+) {
+  return runtime.runPromise(
+    addEnvironmentScientSourcesByIdentifier({ prepared: prepared(environmentId), ...input }),
+  );
 }
 
 export function readZoteroStatus(environmentId: EnvironmentId, connection?: ZoteroConnection) {
