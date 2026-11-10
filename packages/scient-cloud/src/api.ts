@@ -334,8 +334,15 @@ export const cloudPaths = {
   /** GET accepts the person or any of their enrolled computers (take-over import reads it). */
   thread: (env: string, thread: string) => `/v1/threads/${seg(env)}/${seg(thread)}`,
   threadLease: (env: string, thread: string) => `/v1/threads/${seg(env)}/${seg(thread)}/lease`,
-  /** GET accepts the person or any of their enrolled computers, for referenced blobs only. */
-  blob: (sha256: string) => `/v1/blobs/${seg(sha256)}`,
+  /**
+   * GET accepts the person or any of their enrolled computers, for referenced blobs only.
+   * Computers name the conversation that uses the file on `HEAD` and `PUT`; a file is readable
+   * only while a stored conversation of the same user refers to it.
+   */
+  blob: (sha256: string, usedBy?: ThreadRef) =>
+    `/v1/blobs/${seg(sha256)}${
+      usedBy === undefined ? "" : `?env=${seg(usedBy.env)}&thread=${seg(usedBy.thread)}`
+    }`,
   shares: () => "/v1/shares",
   share: (id: string) => `/v1/shares/${seg(id)}`,
   shareObject: (id: string, version: number, object: string) =>
