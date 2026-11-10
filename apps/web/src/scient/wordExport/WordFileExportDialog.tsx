@@ -1,5 +1,8 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useEffect, useRef, useState } from "react";
+
+import { useLocalStorage } from "~/hooks/useLocalStorage";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -17,6 +20,7 @@ import { exportWordFile, exportWordLatex, prepareWordFileDiagrams } from "./clie
 import { captureWordDiagrams } from "./captureDiagrams";
 import { PandocInstallStatus } from "./PandocInstallControl";
 import { usePandocTool } from "./usePandocTool";
+import { WORD_CITATION_STYLE_STORAGE_KEY, normalizeWordCitationStyle } from "./wordCitationStyle";
 
 function errorMessage(cause: unknown): string {
   return cause instanceof Error && cause.message.length > 0
@@ -44,6 +48,12 @@ export function WordFileExportDialog(props: {
   const startedRef = useRef(false);
   const runningRef = useRef(false);
   const tool = usePandocTool(environmentId);
+  const [storedCitationStyle] = useLocalStorage(
+    WORD_CITATION_STYLE_STORAGE_KEY,
+    "default",
+    Schema.String,
+  );
+  const citationStyle = normalizeWordCitationStyle(storedCitationStyle);
   const refreshTool = tool.refresh;
 
   const run = async () => {
@@ -69,6 +79,7 @@ export function WordFileExportDialog(props: {
                   diagramCapture: await captureWordDiagrams(
                     await prepareWordFileDiagrams(environmentId, { cwd, relativePath, revision }),
                   ),
+                  ...(citationStyle === "default" ? {} : { citationStyle }),
                 })
               : await exportWordLatex(environmentId, {
                   cwd,

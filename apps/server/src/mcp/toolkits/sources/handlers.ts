@@ -28,6 +28,14 @@ import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
+import type { BibliographyFormat } from "@scientfactory/scient-sources/bibliography";
+import {
+  bibliographyFileErrorMessage,
+  exportBibliography,
+  readBibliographyFile,
+  resolveProjectBibliographyFile,
+  writeProjectBibliographyFile,
+} from "../../../scient/sources/BibliographyFileAdapter.ts";
 import { keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
 import {
   addScientSourcesByIdentifier,
@@ -43,6 +51,7 @@ import {
   addAgentSource,
   attachSourcePdf,
   bulkUpdateSources,
+  importBibliographyFile,
   detachSourcePdf,
   organizeSources,
   prepareAgentProjectPdf,
@@ -828,6 +837,106 @@ const saveScientSourcePageForInvocation = Effect.fn("ScientSourcesToolkit.savePa
   },
 );
 
+export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesToolkit.importFile")(
+  function* (input: { readonly relativePath: string; readonly format?: BibliographyFormat }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const observeImport = yield* makeSourceImportAnalytics("agent");
+    const { operation, report } = yield* Effect.tryPromise({
+      try: async () => {
+        const file = await resolveProjectBibliographyFile(root, input.relativePath);
+        return importBibliographyFile(
+          {
+            root,
+            operationId: `agent_file_${NodeCrypto.randomUUID()}`,
+            fileName: file.fileName,
+            text: await readBibliographyFile(file.absolutePath),
+            actor: "agent",
+            ...(input.format ? { format: input.format } : {}),
+          },
+          observeImport,
+        );
+      },
+      catch: (error) =>
+        toolError(
+          "operation-failed",
+          bibliographyFileErrorMessage(error, "The reference file could not be imported."),
+        ),
+    });
+    const items = operation?.items ?? [];
+    const importedIds = items.flatMap((item) =>
+      item.state === "imported" && item.sourceId ? [item.sourceId] : [],
+    );
+    const records =
+      importedIds.length > 0 ? yield* attempt(() => listScientSourceRecords(root)) : [];
+    const keys = new Map(records.map((record) => [record.sourceId, record.citationKey ?? null]));
+    return {
+      format: report.format,
+      entryCount: report.entryCount,
+      importedCount: importedIds.length,
+      imported: importedIds
+        .slice(0, 100)
+        .map((sourceId) => ({ sourceId, citationKey: keys.get(sourceId) ?? null })),
+      alreadyInLibrary:
+        report.alreadyInLibrary + items.filter((item) => item.state === "skipped").length,
+      failed: items.flatMap((item) =>
+        item.state === "failed"
+          ? [
+              {
+                line: null,
+                citationKey: null,
+                reason: item.message ?? "This entry could not be imported.",
+              },
+            ]
+          : [],
+      ),
+      remaining: report.remaining,
+      unreadable: report.unreadable,
+      notKept: report.notKept,
+      withoutCitationKey: report.withoutCitationKey,
+    };
+  },
+);
+
+export const exportScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.export")(
+  function* (input: {
+    readonly relativePath: string;
+    readonly format: BibliographyFormat;
+    readonly sourceIds?: ReadonlyArray<string>;
+    readonly includeNotes?: boolean;
+    readonly overwrite?: boolean;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const exported = yield* attempt(() =>
+      exportBibliography({
+        root,
+        format: input.format,
+        ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
+        includeNotes: input.includeNotes ?? false,
+      }),
+    );
+    const written = yield* Effect.tryPromise({
+      try: () =>
+        writeProjectBibliographyFile({
+          root,
+          relativePath: input.relativePath,
+          content: exported.content,
+          overwrite: input.overwrite ?? false,
+        }),
+      catch: (error) =>
+        toolError(
+          "operation-failed",
+          bibliographyFileErrorMessage(error, "The export file could not be written."),
+        ),
+    });
+    return {
+      outcome: written.outcome,
+      relativePath: written.relativePath,
+      sourceCount: exported.sourceCount,
+      missingSourceIds: exported.missingSourceIds,
+    };
+  },
+);
+
 const handlers = {
   scient_sources_list: listScientSourcesForInvocation,
   scient_sources_get: getScientSourceForInvocation,
@@ -847,6 +956,8 @@ const handlers = {
   scient_sources_collections: readScientSourceCollectionsForInvocation,
   scient_sources_organize: organizeScientSourcesForInvocation,
   scient_sources_bulk_update: bulkUpdateScientSourcesForInvocation,
+  scient_sources_import_file: importScientSourcesFileForInvocation,
+  scient_sources_export: exportScientSourcesForInvocation,
 } satisfies Parameters<typeof ScientSourcesToolkit.toLayer>[0];
 
 export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(handlers);

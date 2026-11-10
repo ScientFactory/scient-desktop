@@ -30,6 +30,10 @@ import {
   ZoteroImportScope,
   ZoteroLibraryPage,
 } from "@scientfactory/scient-sources";
+import {
+  BibliographyFormatSchema,
+  BibliographyImportReport,
+} from "@scientfactory/scient-sources/bibliography";
 import * as Schema from "effect/Schema";
 import * as Multipart from "effect/http/Multipart";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
@@ -310,6 +314,45 @@ export const ScientSourcesLocalPdfUploadResult = Schema.Struct({
   item: ScientSourcePreflightItem,
 });
 export type ScientSourcesLocalPdfUploadResult = typeof ScientSourcesLocalPdfUploadResult.Type;
+
+export const ScientSourcesFileImportRequest = Schema.Struct({
+  root: NonEmptyString,
+  operationId: NonEmptyString,
+  file: Multipart.SingleFileSchema,
+}).pipe(
+  HttpApiSchema.asMultipart({
+    maxParts: 3,
+    maxFieldSize: 16 * 1024,
+    maxFileSize: 32 * 1024 * 1024,
+    maxTotalSize: 32 * 1024 * 1024 + 64 * 1024,
+  }),
+);
+export type ScientSourcesFileImportRequest = typeof ScientSourcesFileImportRequest.Type;
+
+export const ScientSourcesFileImportResult = Schema.Struct({
+  operation: Schema.NullOr(ScientSourceImportOperation),
+  report: BibliographyImportReport,
+});
+export type ScientSourcesFileImportResult = typeof ScientSourcesFileImportResult.Type;
+
+export const ScientSourcesExportRequest = Schema.Struct({
+  root: NonEmptyString,
+  format: BibliographyFormatSchema,
+  sourceIds: Schema.optionalKey(
+    Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(20_000))),
+  ),
+  includeNotes: Schema.optionalKey(Schema.Boolean),
+});
+export type ScientSourcesExportRequest = typeof ScientSourcesExportRequest.Type;
+
+export const ScientSourcesExportResult = Schema.Struct({
+  format: BibliographyFormatSchema,
+  fileName: NonEmptyString,
+  content: Schema.String,
+  sourceCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  missingSourceIds: Schema.Array(NonEmptyString),
+});
+export type ScientSourcesExportResult = typeof ScientSourcesExportResult.Type;
 
 export const ScientSourcesDiscardStagedRequest = ScientSourcesPreflightRequest;
 export type ScientSourcesDiscardStagedRequest = typeof ScientSourcesDiscardStagedRequest.Type;

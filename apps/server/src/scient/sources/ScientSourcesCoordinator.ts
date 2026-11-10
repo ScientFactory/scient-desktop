@@ -91,6 +91,12 @@ import {
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
+import {
+  beginBibliographyFileImport,
+  discardBibliographyFileImport,
+  fileImportVerification,
+  getBibliographyFileImportCandidate,
+} from "./BibliographyFileAdapter.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
@@ -936,16 +942,27 @@ export async function advanceSourceImport(
               zotero: input.zotero ?? localOnlyZoteroAccess,
             });
           }
-          const { candidate, pdfPath, expectedPdf } = await getLocalPdfImportMaterial(
-            root,
-            pending.itemKey,
-          );
+          const { candidate, pdfPath, expectedPdf } =
+            operation.adapter === "file"
+              ? {
+                  candidate: await getBibliographyFileImportCandidate(
+                    root,
+                    input.operationId,
+                    pending.itemKey,
+                  ),
+                  pdfPath: null,
+                  expectedPdf: undefined,
+                }
+              : await getLocalPdfImportMaterial(root, pending.itemKey);
           return importScientSourceOperationItem({
             root,
             operationId: input.operationId,
             candidate,
             actor: operation.actor,
             intake: operation.intake,
+            ...(operation.adapter === "file"
+              ? { verification: fileImportVerification(candidate) }
+              : {}),
             ...(pdfPath ? { pdfPath } : {}),
             ...(expectedPdf ? { expectedPdf } : {}),
             allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
@@ -964,6 +981,14 @@ export async function advanceSourceImport(
       });
       if (operation.adapter === "local-files") {
         await discardLocalPdfImportMaterial(root, pending.itemKey);
+      }
+      // Failed entries keep the staged file so they can be retried.
+      if (
+        operation.adapter === "file" &&
+        updated.state !== "running" &&
+        !updated.items.some((item) => item.state === "failed")
+      ) {
+        await discardBibliographyFileImport(root, input.operationId);
       }
       return updated;
     } catch (error) {
@@ -989,6 +1014,7 @@ export async function cancelSourceImport(input: {
     const operation = await readSourceImportOperation(root, input.operationId);
     if (!operation) throw new Error("The source import operation was not found.");
     const cancelled = await cancelSourceImportOperation(root, input.operationId);
+    if (operation.adapter === "file") await discardBibliographyFileImport(root, input.operationId);
     if (operation.adapter === "local-files") {
       await Promise.all(
         operation.items
@@ -1007,4 +1033,23 @@ export async function retrySourceImport(input: {
 }) {
   const root = await canonicalizeScientSourceRoot(input.root);
   return retryFailedSourceImportOperationItems(root, input.operationId, input.itemKeys);
+}
+
+/** Begins a reference-file import and runs it to the end, for callers without a progress view. */
+export async function importBibliographyFile(
+  input: Parameters<typeof beginBibliographyFileImport>[0],
+  observer?: SourceImportObserver,
+) {
+  const begun = await beginBibliographyFileImport(input);
+  let operation = begun.operation;
+  while (
+    operation?.state === "running" &&
+    operation.items.some((item) => item.state === "pending")
+  ) {
+    operation = await advanceSourceImport(
+      { root: input.root, operationId: operation.operationId },
+      observer,
+    );
+  }
+  return { operation, report: begun.report };
 }

@@ -65,6 +65,11 @@ import { PandocSettingsRow } from "../wordExport/PandocSettingsRow";
 import { pandocToolSummary } from "../wordExport/pandocToolModel";
 import { usePandocTool, type PandocToolController } from "../wordExport/usePandocTool";
 import {
+  WORD_CITATION_STYLE_STORAGE_KEY,
+  WORD_CITATION_STYLES,
+  normalizeWordCitationStyle,
+} from "../wordExport/wordCitationStyle";
+import {
   DEFAULT_NEW_DOCUMENT_COMPILER,
   NEW_DOCUMENT_COMPILER_STORAGE_KEY,
   DEFAULT_NEW_DOCUMENT_LANGUAGE,
@@ -92,6 +97,7 @@ const SEARCH_TARGET_FORMATS: Readonly<Record<string, DocumentFormat>> = {
   "latex-compilation": "latex",
   "markdown-open-in": "markdown",
   "word-export": "word",
+  "word-citation-style": "word",
 };
 
 const MARKDOWN_VIEWS = [
@@ -421,6 +427,11 @@ function WordPanel(props: {
   readonly hidden: boolean;
   readonly pandoc: PandocToolController | null;
 }) {
+  const [citationStyle, setCitationStyle] = useLocalStorage(
+    WORD_CITATION_STYLE_STORAGE_KEY,
+    "default",
+    Schema.String,
+  );
   return (
     <SettingsSourcePanel
       id="documents-word"
@@ -432,6 +443,19 @@ function WordPanel(props: {
       ) : (
         <OfflineToolRow id="word-export" title="Pandoc" />
       )}
+      <SettingsRow
+        id="word-citation-style"
+        title="Citation style"
+        description="For Markdown exported to Word. A document's own csl setting comes first."
+        control={
+          <OptionSelect
+            label="Citation style"
+            value={normalizeWordCitationStyle(citationStyle)}
+            groups={[WORD_CITATION_STYLES]}
+            onChange={setCitationStyle}
+          />
+        }
+      />
     </SettingsSourcePanel>
   );
 }
