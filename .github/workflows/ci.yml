@@ -789,11 +789,12 @@ jobs:
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
+      # SCIENT-FORK: hosted macOS restores setup-vp's 1.5 GB cache slower than it installs this.
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=@t3tools/scripts...
@@ -940,11 +941,12 @@ jobs:
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
+      # Restoring setup-vp's 1.5 GB macOS cache took longer than installing without it.
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: false
       - name: Install
         run: vp install
