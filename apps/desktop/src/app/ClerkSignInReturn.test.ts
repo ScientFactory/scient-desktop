@@ -23,6 +23,7 @@ vi.mock("electron", () => ({
 
 import {
   CLERK_ATTEMPT_PARAM,
+  CLERK_OPEN_CHANNEL,
   CLERK_REDIRECT_URL_CHANNEL,
   clerkDeepLinkForCallback,
   clerkSignInReturnUrl,
@@ -54,6 +55,7 @@ const createBridge = (scheme: string) => () => {
     attempt += 1;
     return `${scheme}://app/?${CLERK_ATTEMPT_PARAM}=attempt-${attempt}`;
   });
+  ipcMain.handle(CLERK_OPEN_CHANNEL, (_event: unknown, url: unknown) => `opened ${String(url)}`);
   ipcMain.handle("clerk:other", () => "other");
   return { cleanup: vi.fn(() => ipcMain.removeHandler(CLERK_REDIRECT_URL_CHANNEL)) };
 };
@@ -135,21 +137,42 @@ describe("ClerkSignInReturn", () => {
     expect(emit).toHaveBeenCalledTimes(1);
   });
 
-  it("ignores callbacks for other attempts and keeps waiting", async () => {
+  it("forwards each issued attempt once and ignores the rest", async () => {
     install();
     const first = await redirectUrl();
     const second = await redirectUrl();
-    const stale = await visit(`${first}&rotating_token_nonce=old`);
-    expect(stale.body).toContain("Sign-in didn't finish");
     const forged = await visit(`${clerkSignInReturnUrl(true)}?rotating_token_nonce=forged`);
     expect(forged.body).toContain("Sign-in didn't finish");
+    const unknown = await visit(
+      `${clerkSignInReturnUrl(true)}?${CLERK_ATTEMPT_PARAM}=attempt-9&rotating_token_nonce=x`,
+    );
+    expect(unknown.body).toContain("Sign-in didn't finish");
     expect(emit).not.toHaveBeenCalled();
 
-    await visit(`${second}&rotating_token_nonce=new`);
-    expect(emit).toHaveBeenCalledWith(
+    // Another window's attempt still reaches the bridge, which decides which one it awaits.
+    expect((await visit(`${first}&rotating_token_nonce=one`)).body).toContain("You're signed in");
+    expect(emit).toHaveBeenLastCalledWith(
       "open-url",
       expect.anything(),
-      `scient-next-dev://app/?${CLERK_ATTEMPT_PARAM}=attempt-2&rotating_token_nonce=new`,
+      `scient-next-dev://app/?${CLERK_ATTEMPT_PARAM}=attempt-1&rotating_token_nonce=one`,
+    );
+    expect((await visit(`${first}&rotating_token_nonce=again`)).body).toContain(
+      "Sign-in didn't finish",
+    );
+    await visit(`${second}&rotating_token_nonce=two`);
+    expect(emit).toHaveBeenLastCalledWith(
+      "open-url",
+      expect.anything(),
+      `scient-next-dev://app/?${CLERK_ATTEMPT_PARAM}=attempt-2&rotating_token_nonce=two`,
+    );
+    expect(emit).toHaveBeenCalledTimes(2);
+    await expect(visit(`${second}&rotating_token_nonce=late`)).rejects.toThrow();
+  });
+
+  it("passes the browser-open call through to the library", async () => {
+    install();
+    expect(await handlers.get(CLERK_OPEN_CHANNEL)!(windowEvent, "https://accounts.example")).toBe(
+      "opened https://accounts.example",
     );
   });
 

@@ -10,10 +10,12 @@ import { SCIENT_SYMBOL_SVG } from "./scientSymbolSvg.ts";
 /** @clerk/electron's IPC channel for the OAuth redirect URL and its attempt parameter (0.1.10). */
 export const CLERK_REDIRECT_URL_CHANNEL = "clerk:oauth-transport:get-redirect-url";
 export const CLERK_ATTEMPT_PARAM = "__clerk_oauth_attempt";
+/** @clerk/electron's IPC channel that opens the browser; its callback timeout starts here. */
+export const CLERK_OPEN_CHANNEL = "clerk:oauth-transport:open";
 const CLERK_SIGN_IN_RETURN_PATH = "/clerk/callback";
 const RELEASE_PORT = 34339;
 const DEVELOPMENT_PORT = 34340;
-// Outlasts @clerk/electron's 180 s callback timeout, which starts later, when the browser opens.
+// Restarted whenever the browser opens, so it outlasts @clerk/electron's 180 s callback timeout.
 const LISTEN_MS = 300_000;
 
 const clerkSignInReturnPort = (isDevelopment: boolean) =>
@@ -98,9 +100,9 @@ const writeReturnPage = (response: NodeHttp.ServerResponse, success: boolean) =>
 
 /**
  * Create the Clerk bridge with a local return page for browser sign-in. @clerk/electron's own
- * redirect handler still runs and tags each sign-in with an attempt id; the browser lands on
- * 127.0.0.1 with that id, and only a callback for the current attempt reaches the bridge as the
- * scient://app/ deep link it waits for. When the port is taken, sign-in uses the deep link.
+ * handlers still run: each sign-in keeps its attempt id, the browser lands on 127.0.0.1 with it,
+ * and each attempt's callback reaches the bridge once, as the scient://app/ deep link the bridge
+ * waits for and checks. When the port is taken, sign-in uses the deep link.
  */
 export function createClerkBridgeWithSignInReturn<Bridge extends { cleanup(): void }>(
   createBridge: () => Bridge,
@@ -112,10 +114,93 @@ export function createClerkBridgeWithSignInReturn<Bridge extends { cleanup(): vo
     return createBridge();
   }
 
+  let server: NodeHttp.Server | null = null;
+  let binding: Promise<boolean> | null = null;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let disposed = false;
+  // Attempts the bridge has issued and not yet received; without attempt ids, any one callback.
+  const attempts = new Set<string>();
+  let acceptAnyAttempt = false;
+
+  /** Stop accepting callbacks; returns the listener so the caller decides how to close it. */
+  const release = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    attempts.clear();
+    acceptAnyAttempt = false;
+    binding = null;
+    const current = server;
+    server = null;
+    current?.close();
+    return current;
+  };
+  const stop = () => release()?.closeAllConnections();
+  const arm = () => {
+    if (!server) return;
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(stop, LISTEN_MS);
+    timer.unref();
+  };
+
+  const ensureListening = (): Promise<boolean> => {
+    if (disposed) return Promise.resolve(false);
+    if (server) return Promise.resolve(true);
+    if (binding) return binding;
+    const next = NodeHttp.createServer((request, response) => {
+      const deepLink =
+        request.method === "GET" && isTopLevelNavigation(request.headers)
+          ? clerkDeepLinkForCallback(request.url ?? "/", input.scheme, input.host)
+          : null;
+      if (!deepLink || server !== next) {
+        response.writeHead(404).end();
+        return;
+      }
+      const params = new URL(deepLink).searchParams;
+      const attempt = params.get(CLERK_ATTEMPT_PARAM);
+      if (!acceptAnyAttempt && (attempt === null || !attempts.delete(attempt))) {
+        // Not an attempt this bridge issued, or one already received: keep waiting.
+        writeReturnPage(response, false);
+        return;
+      }
+      if (acceptAnyAttempt || attempts.size === 0) {
+        // Nothing else to wait for: stop listening, then close once the page is sent.
+        release();
+        response.on("close", () => next.closeAllConnections());
+      }
+      writeReturnPage(response, params.get("__clerk_status") !== "failed");
+      app.emit("open-url", { preventDefault: () => {} }, deepLink);
+    });
+    const current: Promise<boolean> = new Promise((resolve) => {
+      next.once("error", () => {
+        if (binding === current) binding = null;
+        resolve(false);
+      });
+      next.listen(clerkSignInReturnPort(input.isDevelopment), "127.0.0.1", () => {
+        // Cleanup, or a stop, while binding: this listener is no longer wanted.
+        if (disposed || binding !== current) {
+          next.close();
+          resolve(false);
+          return;
+        }
+        binding = null;
+        server = next;
+        arm();
+        resolve(true);
+      });
+    });
+    binding = current;
+    return current;
+  };
+
   let libraryRedirectUrl: RedirectUrlHandler | null = null;
   const handle = ipcMain.handle;
   ipcMain.handle = (channel, listener) => {
     if (channel === CLERK_REDIRECT_URL_CHANNEL) libraryRedirectUrl = listener;
+    else if (channel === CLERK_OPEN_CHANNEL)
+      handle.call(ipcMain, channel, (event, ...args) => {
+        arm();
+        return listener(event, ...args);
+      });
     else handle.call(ipcMain, channel, listener);
   };
   let bridge: Bridge;
@@ -127,74 +212,13 @@ export function createClerkBridgeWithSignInReturn<Bridge extends { cleanup(): vo
   const redirectUrl = libraryRedirectUrl as RedirectUrlHandler | null;
   if (!redirectUrl) return bridge;
 
-  let server: NodeHttp.Server | null = null;
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  let expectedAttempt: string | null = null;
-  // Bumped by every stop, so a listener that finishes binding after a stop closes itself.
-  let generation = 0;
-  let disposed = false;
-
-  /** Stop accepting callbacks; returns the listener so the caller decides how to close it. */
-  const release = () => {
-    generation += 1;
-    if (timer) clearTimeout(timer);
-    timer = null;
-    expectedAttempt = null;
-    const current = server;
-    server = null;
-    current?.close();
-    return current;
-  };
-  const stop = () => release()?.closeAllConnections();
-
-  const listen = (attempt: string | null) =>
-    new Promise<boolean>((resolve) => {
-      stop();
-      if (disposed) {
-        resolve(false);
-        return;
-      }
-      const listening = generation;
-      const next = NodeHttp.createServer((request, response) => {
-        const deepLink =
-          request.method === "GET" && isTopLevelNavigation(request.headers)
-            ? clerkDeepLinkForCallback(request.url ?? "/", input.scheme, input.host)
-            : null;
-        if (!deepLink || server !== next) {
-          response.writeHead(404).end();
-          return;
-        }
-        const params = new URL(deepLink).searchParams;
-        if (expectedAttempt !== null && params.get(CLERK_ATTEMPT_PARAM) !== expectedAttempt) {
-          // An older or forged sign-in: keep waiting for the current one.
-          writeReturnPage(response, false);
-          return;
-        }
-        // The current sign-in's callback: stop listening, then close once the page is sent.
-        release();
-        response.on("close", () => next.closeAllConnections());
-        writeReturnPage(response, params.get("__clerk_status") !== "failed");
-        app.emit("open-url", { preventDefault: () => {} }, deepLink);
-      });
-      next.once("error", () => resolve(false));
-      next.listen(clerkSignInReturnPort(input.isDevelopment), "127.0.0.1", () => {
-        if (disposed || listening !== generation) {
-          next.close();
-          resolve(false);
-          return;
-        }
-        server = next;
-        expectedAttempt = attempt;
-        timer = setTimeout(stop, LISTEN_MS);
-        timer.unref();
-        resolve(true);
-      });
-    });
-
   ipcMain.handle(CLERK_REDIRECT_URL_CHANNEL, async (event, ...args) => {
     const deepLinkUrl = String(await redirectUrl(event, ...args));
+    if (!(await ensureListening()) || !server) return deepLinkUrl;
     const attempt = new URL(deepLinkUrl).searchParams.get(CLERK_ATTEMPT_PARAM);
-    if (!(await listen(attempt))) return deepLinkUrl;
+    if (attempt === null) acceptAnyAttempt = true;
+    else attempts.add(attempt);
+    arm();
     const returnUrl = new URL(clerkSignInReturnUrl(input.isDevelopment));
     returnUrl.search = new URL(deepLinkUrl).search;
     return returnUrl.href;
