@@ -690,7 +690,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Suggest next prompt",
     to: "/settings/labs",
     scope: "environment",
-    searchTerms: ["beta tab autocomplete predict next message claude codex ghost text"],
+    searchTerms: [
+      "beta tab autocomplete predict next message claude codex scient agent ghost text",
+    ],
   },
   {
     id: "simlock-hosts",
