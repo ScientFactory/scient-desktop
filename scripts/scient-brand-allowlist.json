@@ -18,6 +18,18 @@
     "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
   },
   {
+    "path": "apps/web/src/components/auth/ApproveAgentSurface.tsx",
+    "rules": ["t3-connect"],
+    "kind": "dormant-cloud",
+    "reason": "T3 Connect agent approval on the hosted web app. /approve-agent redirects away unless the app is hosted with cloud public configuration, which Scient builds leave unset."
+  },
+  {
+    "path": "packages/client-runtime/src/state/connectMcpApproval.ts",
+    "rules": ["t3-connect"],
+    "kind": "dormant-cloud",
+    "reason": "Switched-off T3 Connect cloud surface: unreachable while SCIENT_DESKTOP_IDENTITY.cloudEnabled is false. It names the T3-operated relay service it would connect to."
+  },
+  {
     "path": "apps/server/src/relay/",
     "rules": ["inherited-brand", "bare-t3", "t3-connect", "t3-command"],
     "kind": "dormant-cloud",
