@@ -461,7 +461,8 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
         ...(addsLibrary ? { library: true } : {}),
       };
       queue.items.set(existing.itemId, joined);
-      queue.filers.set(existing.itemId, requester);
+      // A named source outranks the Library, so a redundant Library request keeps its filer.
+      if (addsSource || existing.source === undefined) queue.filers.set(existing.itemId, requester);
       return joined;
     }
     if (existing) return existing;
