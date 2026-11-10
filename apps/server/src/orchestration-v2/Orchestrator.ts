@@ -1433,6 +1433,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   // SCIENT-FORK:START — Scient Cloud lease guard; absent where the cloud state is not mounted.
   const cloudLeaseGuard = yield* Effect.serviceOption(CloudLeaseGuard);
+  const continuedElsewhere = (threadId: ThreadId) =>
+    Option.isNone(cloudLeaseGuard)
+      ? Effect.succeed(false)
+      : cloudLeaseGuard.value.movedTo(threadId).pipe(Effect.map((moved) => moved !== undefined));
+  const continuedElsewhereRefusal = (command: OrchestrationV2ServerCommand) =>
+    new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: new Error(
+        "This conversation continued on another computer. Take it back to keep working here.",
+      ),
+    });
   // SCIENT-FORK:END
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
@@ -2150,6 +2162,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
+      // SCIENT-FORK:START — Scient Cloud: a thread continued on another computer starts nothing.
+      if (yield* continuedElsewhere(threadId)) return;
+      // SCIENT-FORK:END
       // SCIENT-FORK:START terminal-queue-promotion-fence
       yield* holdLatestTerminalBeforePromotion(threadId);
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
@@ -6580,6 +6595,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     providerInitiated?: Extract<OrchestrationV2ServerCommand, { type: "provider-work.admit" }>,
   ) {
     let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+    // SCIENT-FORK:START — Scient Cloud: a thread continued on another computer takes no new work.
+    if (yield* continuedElsewhere(command.threadId)) {
+      // Wakes and completions are accepted unchanged so their senders stop retrying.
+      if (command.notification !== undefined || command.delegatedCompletion !== undefined) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: projection.thread,
+        });
+        return;
+      }
+      return yield* continuedElsewhereRefusal(command);
+    }
+    // SCIENT-FORK:END
     if (command.manualContinuationOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
       const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -10930,6 +10963,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
+    // SCIENT-FORK:START — Scient Cloud: a thread continued on another computer takes no new work.
+    if (yield* continuedElsewhere(command.threadId))
+      return yield* continuedElsewhereRefusal(command);
+    // SCIENT-FORK:END
     const projection = yield* loadProjectionForCommand(
       command,
       [
@@ -15565,24 +15602,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (Option.isSome(existingReceipt)) {
       return yield* replayCommandReceipt(command, existingReceipt.value);
     }
-
-    // SCIENT-FORK:START — Scient Cloud: refuse a new turn on a thread another computer continued.
-    if (
-      command.type === "message.dispatch" &&
-      command.notification === undefined &&
-      command.delegatedCompletion === undefined &&
-      Option.isSome(cloudLeaseGuard) &&
-      (yield* cloudLeaseGuard.value.movedTo(command.threadId)) !== undefined
-    ) {
-      return yield* new OrchestratorDispatchError({
-        commandId: command.commandId,
-        commandType: command.type,
-        cause: new Error(
-          "This conversation continued on another computer. Take it back to keep working here.",
-        ),
-      });
-    }
-    // SCIENT-FORK:END
 
     // Recheck under the lock; the user may have raised modes since sender preflight.
     const limit = yield* DispatchModeLimit;
