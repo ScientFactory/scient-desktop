@@ -1,5 +1,6 @@
 import type { ScientLatexBuildFailureClass } from "@t3tools/contracts";
-import type { FailureOwner } from "@scientfactory/analytics";
+import type { FailureCategory, FailureOwner } from "@scientfactory/analytics";
+import type { ComputeCaptureReason } from "../scient/compute/ComputeCaptureStatus.ts";
 
 /**
  * Who a failure belongs to, decided where the typed failure is still in hand. Only these closed
@@ -7,10 +8,10 @@ import type { FailureOwner } from "@scientfactory/analytics";
  */
 export interface FailureAttribution {
   readonly failureOwner: FailureOwner;
-  readonly failureCategory: string;
+  readonly failureCategory: FailureCategory;
 }
 
-const PYTHON_ERRORS: Readonly<Record<string, string>> = {
+const PYTHON_ERRORS: Readonly<Record<string, FailureCategory>> = {
   ModuleNotFoundError: "missing-dependency",
   ImportError: "missing-dependency",
   MemoryError: "out-of-memory",
@@ -63,7 +64,7 @@ const PYTHON_ERRORS: Readonly<Record<string, string>> = {
   ValidationError: "data",
 };
 
-const OWNER_OF_CATEGORY: Readonly<Record<string, FailureOwner>> = {
+const OWNER_OF_CATEGORY: Partial<Record<FailureCategory, FailureOwner>> = {
   "missing-dependency": "environment",
   "out-of-memory": "environment",
   permission: "environment",
@@ -153,7 +154,12 @@ export function latexBuildAttribution(
     : { failureOwner: LATEX_OWNERS[failureClass], failureCategory: failureClass };
 }
 
-const CAPTURE_OWNERS: Readonly<Record<string, FailureOwner>> = {
+const CAPTURE_OWNERS: Readonly<Record<ComputeCaptureReason, FailureOwner>> = {
+  "scan-timeout": "scient",
+  "scan-entry-limit": "scient",
+  "scan-depth-limit": "scient",
+  "scan-unreadable": "environment",
+  "observation-unavailable": "scient",
   "output-limit": "scient",
   "image-limit": "scient",
   "unsafe-image": "code",
@@ -166,10 +172,12 @@ const CAPTURE_OWNERS: Readonly<Record<string, FailureOwner>> = {
 };
 
 /** A rejected figure or table: Scient's limits and storage, or a file the code made. */
-export function captureRejectionAttribution(reason: string | undefined): FailureAttribution {
+export function captureRejectionAttribution(
+  reason: ComputeCaptureReason | undefined,
+): FailureAttribution {
   return reason === undefined
     ? { failureOwner: "unknown", failureCategory: "unknown" }
-    : { failureOwner: CAPTURE_OWNERS[reason] ?? "unknown", failureCategory: reason };
+    : { failureOwner: CAPTURE_OWNERS[reason], failureCategory: reason };
 }
 
 const TOOL_CANCELLED = /(^|_)(interrupt|interrupted|cancel|cancelled|canceled|aborted)($|_)/u;
@@ -185,7 +193,9 @@ const TOOL_SCIENT =
  * A Scient tool call's error code. A caller passing a bad selector or session is the caller's
  * input, not a Scient failure; a timeout stays unknown because the page or Scient can cause it.
  */
-export function toolFailureAttribution(errorCode: string | undefined): FailureAttribution {
+export function toolFailureAttribution(errorCode: string | undefined): {
+  readonly failureOwner: FailureOwner;
+} {
   const code = errorCode ?? "unknown";
   const owner: FailureOwner = TOOL_CANCELLED.test(code)
     ? "cancelled"
@@ -198,5 +208,5 @@ export function toolFailureAttribution(errorCode: string | undefined): FailureAt
           : TOOL_SCIENT.test(code)
             ? "scient"
             : "unknown";
-  return { failureOwner: owner, failureCategory: code };
+  return { failureOwner: owner };
 }

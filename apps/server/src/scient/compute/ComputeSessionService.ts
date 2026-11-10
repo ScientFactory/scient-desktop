@@ -1094,7 +1094,8 @@ const make = Effect.gen(function* () {
       result === null
         ? null
         : result.status === "failed"
-          ? result.outcome === "failed"
+          ? // A failed admission also records outcome "failed", but the runtime never accepted it.
+            result.startedAt !== null || result.diagnostics.length > 0
             ? { kind: "runtime-reported", errorName: result.diagnostics[0]?.errorName }
             : { kind: "not-admitted" }
           : result.status === "lost"

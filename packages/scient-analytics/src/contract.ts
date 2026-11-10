@@ -100,6 +100,59 @@ const FAILURE_OWNERS = [
 ] as const;
 export type FailureOwner = (typeof FAILURE_OWNERS)[number];
 
+/** The closed reasons a failure is filed under; an error's own name is never one of them. */
+const FAILURE_CATEGORIES = [
+  // Compute runs
+  "code-error",
+  "syntax",
+  "assertion",
+  "data",
+  "filesystem",
+  "permission",
+  "network",
+  "missing-dependency",
+  "out-of-memory",
+  "interrupted",
+  "exited",
+  "runtime-reported",
+  "dispatch",
+  "runtime-start",
+  "app-restart",
+  "runtime-connection",
+  "runtime-exited",
+  // Run file
+  "nonzero-exit",
+  "not-started",
+  "failed-after-exit",
+  // LaTeX builds
+  "compile_error",
+  "missing_package",
+  "missing_engine",
+  "no_output",
+  "timeout",
+  "sources_changed",
+  "publish",
+  "workspace",
+  "internal",
+  // Figure and table capture
+  "scan-timeout",
+  "scan-entry-limit",
+  "scan-depth-limit",
+  "scan-unreadable",
+  "observation-unavailable",
+  "output-limit",
+  "image-limit",
+  "unsafe-image",
+  "invalid-image",
+  "image-changed",
+  "missing-resource",
+  "resource-mismatch",
+  "persistence-failed",
+  "artifact-collection-failed",
+  "unknown",
+] as const;
+export type FailureCategory = (typeof FAILURE_CATEGORIES)[number];
+
 /** The kinds of program an agent runs in its own terminal, read locally from the command. */
 const COMMAND_CATEGORIES = [
   "python",
@@ -145,7 +198,11 @@ function attributionProperties(input: Readonly<Record<string, unknown>>) {
     ...(property(input, "failureOwner") === undefined
       ? {}
       : { failureOwner: closedCategory(property(input, "failureOwner"), FAILURE_OWNERS) }),
-    ...optionalProperties(input, { failureCategory: "identifier" }),
+    ...(property(input, "failureCategory") === undefined
+      ? {}
+      : {
+          failureCategory: closedCategory(property(input, "failureCategory"), FAILURE_CATEGORIES),
+        }),
   };
 }
 

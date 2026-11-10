@@ -2110,6 +2110,40 @@ describe("compute run attribution", () => {
   );
 });
 
+describe("compute run dispatch attribution", () => {
+  it.effect("blames Scient, not the code, when the runtime never accepts a run", () =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({
+        analytics: f.service,
+        transformChannel: (channel) => ({
+          ...channel,
+          execute: () =>
+            Effect.fail(
+              new ComputeTransportError({ operation: "execute", message: "Bridge refused" }),
+            ),
+        }),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit("print(1)", "refused-run");
+          yield* waitForExecution(ComputeExecutionId.make("refused-run"), "failed");
+        }),
+      );
+      const failed = f.events.find(
+        (event) =>
+          event.name === "scient.operation.failed" &&
+          event.properties?.operationKind === "compute-run",
+      );
+      expect(failed?.properties).toMatchObject({
+        failureOwner: "scient",
+        failureCategory: "dispatch",
+      });
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
 describe("compute session startup", () => {
   it.effect(
     "does not release host capacity or acknowledge shutdown after process cleanup fails",

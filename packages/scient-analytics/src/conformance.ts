@@ -278,7 +278,7 @@ export function buildAnalyticsConformanceFixture() {
     fixtureCase("attribution-hostile", "scient.operation.failed", {
       operationKind: "compute-run",
       failureOwner: "PRIVATE-CONTENT",
-      failureCategory: "ZeroDivisionError: division by zero",
+      failureCategory: "PrivatePatientStudyError",
       actor: "someone@example.invalid",
       entry: "/private/fixture.py",
     }),
