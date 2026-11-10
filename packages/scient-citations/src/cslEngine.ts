@@ -73,6 +73,11 @@ function createRenderer(style: ScientReferenceStyleId): BibliographyEntryRendere
   return Object.assign(render, { seen: new Set<string>() });
 }
 
+/** The bundled CSL style XML, for Pandoc's `--csl`. */
+export function bundledCslStyle(style: ScientReferenceStyleId): string {
+  return bundledStyles[style];
+}
+
 export function renderCslBibliographyEntry(item: CslItem, style: ScientReferenceStyleId): string {
   let render = renderersByStyle.get(style);
   if (render && !render.seen.has(item.id) && render.seen.size >= MAX_SOURCES_PER_ENGINE) {
