@@ -73,7 +73,7 @@ export const SCIENT_PAPERS_AWARENESS = buildScientPapersAwareness(
 
 /** Included with Library access, so literature work starts in the Library rather than on the web. */
 const buildScientLibraryAwareness = (tools: ScientToolProjection): string => `## Scient Library
-The project's Library holds its references. For literature or citation work, start with \`${tools.name("scient_sources_list")}\` (its \`total\` is the Library's size) and \`${tools.name("scient_sources_search")}\` for the text of its PDFs, before web search. Add works by DOI, PMID, arXiv ID or ISBN with \`${tools.name("scient_sources_add")}\` (\`identifierList\` for several); each is checked at its registry. \`${tools.name("scient_sources_bibliography")}\` reports the managed \`references.bib\` and \`references.json\`; cite with their keys.${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
+Start literature or citation work in the project's Library, before web search: \`${tools.name("scient_sources_list")}\` (\`total\` is its size), \`${tools.name("scient_sources_search")}\` (PDF text), \`${tools.name("scient_sources_add")}\` by DOI, PMID, arXiv ID or ISBN (\`identifierList\` for several). Cite with keys from the \`references.bib\` that \`${tools.name("scient_sources_bibliography")}\` manages.${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
 
 export const SCIENT_LIBRARY_AWARENESS = buildScientLibraryAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
