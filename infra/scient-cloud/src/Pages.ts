@@ -127,29 +127,11 @@ export const sharePage = Effect.fn("Pages.sharePage")(function* (pathname: strin
 });
 
 /**
- * The untrusted-content origin. Its page holds no data; it renders HTML a parent posts to it
- * in a nested sandboxed frame. Parents embed it with `sandbox="allow-scripts"`.
+ * The untrusted-content origin. Its page holds no data: readers frame it with
+ * `sandbox="allow-scripts"`, wait for `ready`, then post one `render` whose HTML it writes into
+ * itself. Same protocol as `packages/scient-cloud`'s content-frame module (stream R).
  */
-const FRAME_SCRIPT = `
-const frame = document.getElementById("content");
-addEventListener("message", (event) => {
-  const data = event.data;
-  if (!data || data.type !== "scient-render" || typeof data.html !== "string") return;
-  frame.srcdoc = data.html;
-});
-new ResizeObserver(() => {
-  parent.postMessage({ type: "scient-frame-size", height: document.documentElement.scrollHeight }, "*");
-}).observe(document.documentElement);
-parent.postMessage({ type: "scient-frame-ready" }, "*");
-`;
-
-const FRAME_HTML = `<!doctype html>
-<html lang="en"><head><meta charset="utf-8">
-<style>html,body{margin:0;height:100%}iframe{border:0;width:100%;height:100%;display:block}</style>
-</head><body>
-<iframe id="content" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer"></iframe>
-<script>${FRAME_SCRIPT}</script>
-</body></html>`;
+const FRAME_HTML = `<!doctype html><meta charset="utf-8"><title>Shared content</title><script>(function(){if(window.parent===window)return;function r(e){var d=e.data;if(e.source!==window.parent||!d||d.type!=="scient-content-frame:render"||typeof d.html!=="string")return;window.removeEventListener("message",r);document.open();document.write(d.html);document.close();}window.addEventListener("message",r);window.parent.postMessage({type:"scient-content-frame:ready"},"*");})();</script>`;
 
 export const contentFrame = (config: CloudSettings) => {
   const ancestors = [config.pageOrigin, ...config.appOrigins].join(" ");
@@ -173,6 +155,8 @@ export const contentFrame = (config: CloudSettings) => {
         "media-src data: blob:",
         "frame-src 'self'",
         "connect-src 'none'",
+        // Isolated even if a page frames it without the sandbox attribute.
+        "sandbox allow-scripts allow-popups allow-popups-to-escape-sandbox",
         "form-action 'none'",
         "base-uri 'none'",
         `frame-ancestors ${ancestors}${local}`,
