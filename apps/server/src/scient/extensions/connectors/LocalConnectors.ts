@@ -221,6 +221,8 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
 
   /** Every key value a running copy may hold, per connector, for redacting echoes. */
   const started = new Map<string, Set<string>>();
+  /** Every session cookie value a running copy may hold, kept across new sign-ins. */
+  const startedCookies = new Map<string, Set<string>>();
   /** The Accounts revision and key values each connector last started with, per project. */
   const authorized = new Map<
     string,
@@ -987,9 +989,12 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       );
       const values = Object.values(built.secrets);
       const known = started.get(record.connectorId) ?? new Set<string>();
-      // Cookies too, and earlier ones stay: a program may echo a session it held before.
-      for (const value of [...values, ...session.hide]) known.add(value);
+      for (const value of values) known.add(value);
       started.set(record.connectorId, known);
+      // Earlier cookies stay: a program may echo a session it held before.
+      const cookies = startedCookies.get(record.connectorId) ?? new Set<string>();
+      for (const value of session.hide) cookies.add(value);
+      startedCookies.set(record.connectorId, cookies);
       const entry = authorizationKey(record.connectorId, location?.projectId);
       const joined = values.join("\u0000");
       const before = authorized.get(entry);
@@ -1198,6 +1203,8 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     discard,
     /** Key values the last start used, so the proxy redacts them if the program echoes one. */
     secretsFor: (connectorId: string) => [...(started.get(connectorId) ?? [])],
+    /** Session cookie values every start handed the program, read live for each answer. */
+    cookiesFor: (connectorId: string) => [...(startedCookies.get(connectorId) ?? [])],
     stillAuthorized,
   };
 });

@@ -31,21 +31,43 @@ const MIN_BASE64_RUN = Math.ceil((MIN_CREDENTIAL_LENGTH * 4) / 3) - 3;
 export const isProtectableCredential = (value: string): boolean =>
   value.length >= MIN_CREDENTIAL_LENGTH;
 
+/** A signed-in connector's cookie values this short or longer are hidden, as whole tokens. */
+const MIN_COOKIE_LENGTH = 6;
+
 /** The credentials one exchange applied or held, as matched against decoded text. */
 export interface CredentialSet {
   readonly secrets: ReadonlyArray<string>;
   /** The same secrets as latin1 byte strings, for matching decoded base64. */
   readonly secretBytes: ReadonlyArray<string>;
+  /** Session cookie values: shorter than keys, so matched only as whole tokens, never in words. */
+  readonly tokens: ReadonlyArray<string>;
 }
 
-export const credentialSet = (secrets: Iterable<string | undefined>): CredentialSet => {
+export const credentialSet = (
+  secrets: Iterable<string | undefined>,
+  tokens: Iterable<string> = [],
+): CredentialSet => {
   const unique = [
     ...new Set([...secrets].filter((secret): secret is string => secret !== undefined)),
   ];
   return {
     secrets: unique,
     secretBytes: unique.map((secret) => Buffer.from(secret, "utf8").toString("latin1")),
+    tokens: [...new Set(tokens)].filter((token) => token.length >= MIN_COOKIE_LENGTH),
   };
+};
+
+const isWordChar = (code: number) =>
+  (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+
+/** Whether `token` appears in `text` with no letter or digit right before or after it. */
+const containsToken = (text: string, token: string) => {
+  for (let at = text.indexOf(token); at !== -1; at = text.indexOf(token, at + 1)) {
+    const before = at === 0 ? -1 : text.charCodeAt(at - 1);
+    const after = at + token.length >= text.length ? -1 : text.charCodeAt(at + token.length);
+    if ((before === -1 || !isWordChar(before)) && (after === -1 || !isWordChar(after))) return true;
+  }
+  return false;
 };
 
 const containsAny = (text: string, values: ReadonlyArray<string>) =>
@@ -150,8 +172,11 @@ const base64Carries = (text: string, credentials: CredentialSet): boolean => {
 
 /** Whether decoded text carries a credential in any supported encoding. */
 const isTainted = (text: string, credentials: CredentialSet): boolean => {
-  if (credentials.secrets.length === 0 || text.length === 0) return false;
+  if ((credentials.secrets.length === 0 && credentials.tokens.length === 0) || text.length === 0)
+    return false;
   for (const variant of decodedVariants(text)) {
+    if (credentials.tokens.some((token) => containsToken(variant, token))) return true;
+    if (credentials.secrets.length === 0) continue;
     if (containsAny(variant, credentials.secrets)) return true;
     if (base64Carries(variant, credentials)) return true;
   }
@@ -410,6 +435,7 @@ const safelyRedactJson = (
 };
 
 export interface RedactionContext {
+  /** Read for each event, so credentials a running exchange gains are covered too. */
   readonly credentials: CredentialSet;
   /** Top-level ids of the request the agent sent (`agentRequestIds`); empty for GET streams. */
   readonly agentIds: ReadonlySet<string>;

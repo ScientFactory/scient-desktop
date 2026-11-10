@@ -38,8 +38,8 @@ const encodeCookies = Schema.encodeSync(Schema.fromJsonString(AccountCookies));
 
 /** Connectors' sign-ins are no agent's run: they act under their own identity. */
 const CONNECTOR_THREAD = ThreadId.make("scient-connector-sessions");
-/** Values shorter than this are not worth hiding; they would mangle ordinary words. */
-const MIN_HIDDEN = 8;
+/** Cookie values this long are hidden (as whole tokens, so ordinary words stay intact). */
+const MIN_HIDDEN = 6;
 
 export interface ConnectorSessionTarget {
   readonly connectorId: string;

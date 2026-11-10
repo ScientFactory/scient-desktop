@@ -205,8 +205,15 @@ const lastLine = (text: string) => {
   )?.slice(0, 300);
 };
 
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+
+/** Keys go wherever they appear; shorter values (cookies) only as whole tokens. */
 const hidden = (text: string, hide: ReadonlyArray<string>) =>
-  hide.reduce((current, secret) => current.replaceAll(secret, "[hidden]"), text);
+  hide.reduce((current, secret) => {
+    if (secret.length >= 16) return current.replaceAll(secret, "[hidden]");
+    const whole = new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(secret)}(?![A-Za-z0-9])`, "gu");
+    return current.replace(whole, "[hidden]");
+  }, text);
 
 const channelStream = (
   onCancel: () => void,

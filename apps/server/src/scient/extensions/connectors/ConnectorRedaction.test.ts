@@ -10,6 +10,7 @@ import {
   redactEventStream,
   redactJsonStream,
   redactJsonText,
+  redactString,
   requestIdToken,
   SSE_KEEPALIVE,
   SSE_KEEPALIVE_INTERVAL_MS,
@@ -320,5 +321,18 @@ describe("SSE re-rendering", () => {
 
   it("ends the stream with a Scient error for non-JSON data", async () => {
     expect(await sse([`data: plain ${TOKEN}\n\n`, 'data: {"later":true}\n\n'])).toBe(REFUSAL_EVENT);
+  });
+});
+
+describe("session cookie values", () => {
+  it("are hidden as whole tokens from 6 characters, never inside other words", () => {
+    const credentials = credentialSet([], ["s6k9xq", "ab12"]);
+    expect(redactString("session s6k9xq", credentials)).toBe(REDACTED);
+    expect(redactString("sid=s6k9xq;", credentials)).toBe(REDACTED);
+    expect(redactString("s6k9xq%20", credentials)).toBe(REDACTED);
+    // Ordinary short output stays: inside a word, or a value below the cookie minimum.
+    expect(redactString("xs6k9xqy and lab12x and ab12", credentials)).toBe(
+      "xs6k9xqy and lab12x and ab12",
+    );
   });
 });

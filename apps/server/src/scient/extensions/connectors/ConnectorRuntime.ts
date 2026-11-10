@@ -90,6 +90,7 @@ import {
   agentRequestIds,
   requestIdToken,
   credentialSet,
+  type CredentialSet,
   type RedactionContext,
   isProtectableCredential,
   MIN_CREDENTIAL_LENGTH,
@@ -170,6 +171,8 @@ type SendOutcome =
       readonly type: "response";
       readonly response: Response;
       readonly secrets: ReadonlyArray<string | undefined>;
+      /** The current credentials, for an exchange that can gain some while it streams. */
+      readonly live?: () => CredentialSet;
     }
   | { readonly type: "lost"; readonly message: string }
   | { readonly type: "failed"; readonly message: string }
@@ -737,6 +740,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       response,
       // A program may echo its own key back; agents never receive one long enough to matter.
       secrets: localConnectors.secretsFor(record.connectorId).filter(isProtectableCredential),
+      // A new sign-in during the exchange adds cookies; each answer is checked against all of them.
+      live: () =>
+        credentialSet(
+          localConnectors.secretsFor(record.connectorId).filter(isProtectableCredential),
+          localConnectors.cookiesFor(record.connectorId),
+        ),
     } satisfies SendOutcome;
   });
 
@@ -2370,7 +2379,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       const body = response.body;
       // Ids the agent itself sent may be echoed back unchanged even if tainted.
       const redaction: RedactionContext = {
-        credentials: credentialSet(outcome.secrets),
+        get credentials() {
+          return outcome.live?.() ?? credentialSet(outcome.secrets);
+        },
         agentIds:
           request.body === undefined
             ? new Set()

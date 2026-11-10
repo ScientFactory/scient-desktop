@@ -3261,72 +3261,116 @@ describe("connectors agents make and fix", () => {
       }).pipe(Effect.provide(testLayer)),
   );
 
-  it.live(
-    "keeps a signed-in connector's cookies from agents and stops it when the sign-in goes",
-    () =>
-      Effect.gen(function* () {
-        const COOKIE = "portal-session-0123456789abcdef";
-        const SITE = "https://portal.example.edu";
-        const sign = { revoked: false, removed: [] as string[] };
-        const files = yield* Effect.promise(() =>
-          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-portal-session-")),
-        );
-        const account = {
-          accountId: "acc_portal0001",
-          name: "Portal",
-          details: { kind: "website", sites: [SITE] },
-        } as unknown as AccountSummary;
-        const signInSessions: ConnectorSessionsShape = {
-          accountsFor: () => Effect.succeed([account]),
-          account: () => Effect.succeed(sign.revoked ? undefined : account),
-          prepare: () =>
-            sign.revoked
-              ? Effect.fail({ reason: "needs-user", message: "Portal is turned off." })
-              : Effect.promise(async () => {
-                  const cookies = NodePath.join(files, "cookies.json");
-                  await NodeFSP.writeFile(cookies, JSON.stringify([{ name: "s", value: COOKIE }]));
-                  return { environment: { SCIENT_SIGN_IN_COOKIES: cookies }, hide: [COOKIE] };
-                }),
-          signInAgain: () => Effect.fail({ reason: "needs-user", message: "Sign in." }),
-          allowed: () => Effect.succeed(!sign.revoked),
-          remove: (connectorId) => Effect.sync(() => void sign.removed.push(connectorId)),
-        };
-        const harness = yield* makeHarness({ signInSessions });
-        const folder = NodePath.join(harness.config.stateDir, "..", "portal-bundle");
-        yield* writeConnectorFolder(folder, {
-          version: "1.0.0",
-          keyRequired: false,
-          meta: { signIn: { site: SITE } },
-        });
-        yield* Effect.promise(() =>
-          NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), ECHO_SESSION_SERVER),
-        );
-        const added = yield* harness.runtime.add({
-          target: { type: "local-bundle", path: folder, settings: {}, keys: {} },
-        });
-        const connectorId = added.connector.connectorId;
-        expect(added.connector.local?.signIn).toMatchObject({ state: "linked" });
-        harness.delivered.add(connectorId);
-        const opened = yield* harness.proxy(connectorId, initialize(1));
-        const session = opened.headers.get("mcp-session-id")!;
-        yield* readEvents(opened);
-        const called = yield* readEvents(
-          yield* harness.proxy(connectorId, toolCall(2), { session }),
-        );
-        // regression: a connector echoing its session cookie must not hand it to the agent.
-        expect(JSON.stringify(called)).not.toContain(COOKIE);
-        expect(JSON.stringify(called)).toContain("[redacted by Scient]");
+  it.live("keeps a signed-in connector's short cookie from agents", () =>
+    Effect.gen(function* () {
+      const portal = yield* signedInPortal(["s6k9xq"]);
+      const called = yield* portal.call(2);
+      // regression: cookies used the 16-character key minimum, so a 6-character one got through.
+      expect(JSON.stringify(called)).not.toContain("s6k9xq");
+      expect(JSON.stringify(called)).toContain("[redacted by Scient]");
+    }).pipe(Effect.provide(testLayer)),
+  );
 
-        // The user turns the sign-in off: running copies stop and the session files go.
-        sign.revoked = true;
-        const after = yield* harness.proxy(connectorId, toolCall(3), { session });
-        expect(after.status).toBe(404);
-        expect(sign.removed).toEqual([connectorId]);
-      }).pipe(Effect.provide(testLayer)),
+  it.live("hides the cookies of a new sign-in in the retried answer", () =>
+    Effect.gen(function* () {
+      const portal = yield* signedInPortal(["old-session-value-1"], ["fresh-session-value-2"]);
+      const called = yield* portal.call(2);
+      expect(portal.state.signIns).toBe(1);
+      // regression: the answer was checked against the cookies from before the new sign-in.
+      expect(JSON.stringify(called)).not.toContain("fresh-session-value-2");
+      expect(JSON.stringify(called)).toContain("[redacted by Scient]");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("stops a signed-in connector and drops its session when the sign-in is revoked", () =>
+    Effect.gen(function* () {
+      const portal = yield* signedInPortal(["portal-session-0123456789abcdef"]);
+      yield* portal.call(2);
+      portal.state.revoked = true;
+      const after = yield* portal.harness.proxy(portal.connectorId, toolCall(3), {
+        session: portal.session,
+      });
+      // regression: running copies kept using the revoked sign-in's cookies.
+      expect(after.status).toBe(404);
+      expect(portal.state.removed).toEqual([portal.connectorId]);
+    }).pipe(Effect.provide(testLayer)),
   );
 });
 
-/** Echoes the session cookie it was handed, as a careless connector might. */
+/**
+ * A signed-in local connector over Accounts stand-ins: its session holds `cookies`, and a new
+ * sign-in hands it `renewed`. Returns an open agent session.
+ */
+const signedInPortal = Effect.fn("signedInPortal")(function* (
+  cookies: ReadonlyArray<string>,
+  renewed: ReadonlyArray<string> = cookies,
+) {
+  const SITE = "https://portal.example.edu";
+  const state = {
+    cookies: [...cookies],
+    revoked: false,
+    removed: [] as string[],
+    signIns: 0,
+  };
+  const files = yield* Effect.promise(() =>
+    NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-portal-session-")),
+  );
+  const write = Effect.promise(async () => {
+    const file = NodePath.join(files, "cookies.json");
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify(state.cookies.map((value, index) => ({ name: `c${index}`, value }))),
+    );
+    return { environment: { SCIENT_SIGN_IN_COOKIES: file }, hide: [...state.cookies] };
+  });
+  const account = {
+    accountId: "acc_portal0001",
+    name: "Portal",
+    details: { kind: "website", sites: [SITE] },
+  } as unknown as AccountSummary;
+  const signInSessions: ConnectorSessionsShape = {
+    accountsFor: () => Effect.succeed([account]),
+    account: () => Effect.succeed(state.revoked ? undefined : account),
+    prepare: () =>
+      state.revoked
+        ? Effect.fail({ reason: "needs-user", message: "Portal is turned off." })
+        : write,
+    signInAgain: () =>
+      Effect.suspend(() => {
+        state.signIns += 1;
+        state.cookies = [...renewed];
+        return write;
+      }),
+    allowed: () => Effect.succeed(!state.revoked),
+    remove: (connectorId) => Effect.sync(() => void state.removed.push(connectorId)),
+  };
+  const harness = yield* makeHarness({ signInSessions });
+  const folder = NodePath.join(harness.config.stateDir, "..", "portal-bundle");
+  yield* writeConnectorFolder(folder, {
+    version: "1.0.0",
+    keyRequired: false,
+    meta: { signIn: { site: SITE } },
+  });
+  yield* Effect.promise(() =>
+    NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), ECHO_SESSION_SERVER),
+  );
+  const added = yield* harness.runtime.add({
+    target: { type: "local-bundle", path: folder, settings: {}, keys: {} },
+  });
+  const connectorId = added.connector.connectorId;
+  harness.delivered.add(connectorId);
+  const opened = yield* harness.proxy(connectorId, initialize(1));
+  const session = opened.headers.get("mcp-session-id")!;
+  yield* readEvents(opened);
+  const call = (id: number) =>
+    harness.proxy(connectorId, toolCall(id), { session }).pipe(Effect.flatMap(readEvents));
+  return { harness, connectorId, session, state, call };
+});
+
+/**
+ * Echoes the session cookies it was handed, as a careless connector might; a session whose cookie
+ * starts with `old-` has ended, which it reports as the template does.
+ */
 const ECHO_SESSION_SERVER = `
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
@@ -3337,9 +3381,10 @@ createInterface({ input: process.stdin }).on("line", (line) => {
     send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
       capabilities: { tools: {} }, serverInfo: { name: "portal", version: "1" } } });
   else if (message.method === "tools/call") {
-    const cookies = JSON.parse(readFileSync(process.env.SCIENT_SIGN_IN_COOKIES, "utf8"));
-    send({ jsonrpc: "2.0", id: message.id, result: { content: [
-      { type: "text", text: "session " + cookies[0].value }] } });
+    const values = JSON.parse(readFileSync(process.env.SCIENT_SIGN_IN_COOKIES, "utf8")).map((c) => c.value);
+    send({ jsonrpc: "2.0", id: message.id, result: values[0].startsWith("old-")
+      ? { isError: true, content: [{ type: "text", text: "SCIENT_SIGN_IN_EXPIRED: sent to the sign-in page" }] }
+      : { content: [{ type: "text", text: "session " + values.join(" ") }] } });
   } else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
 });
 `;
