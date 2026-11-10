@@ -13,7 +13,8 @@ export interface DocumentLease<T> {
   readonly release: (options?: { readonly discard?: boolean }) => void;
   /**
    * The reader is hidden but kept, holding `viewBytes()` more for its drawn pages. Its document and
-   * view then count as kept, the most recently left; past the limits `evict` asks the reader to go.
+   * view then count as kept, the most recently left. Past the limits, documents kept without a
+   * reader go first; then `evict` asks the hidden reader left longest ago to go.
    * False when it cannot be kept: no key, not open yet, or larger than all kept may be.
    */
   readonly park: (evict: () => void, viewBytes: () => number) => boolean;
@@ -80,7 +81,13 @@ export function createDocumentCache(limits: DocumentCacheLimits) {
       count += 1;
       bytes += size;
     }
-    for (const { key, entry, size } of kept) {
+    // A hidden reader holds its document too, so documents kept alone go first, oldest first; a
+    // reader that reopens its document at once (its URL renewed) then never costs a hidden view.
+    const byWorth = [
+      ...kept.filter(({ entry }) => !entry.parked),
+      ...kept.filter(({ entry }) => entry.parked),
+    ];
+    for (const { key, entry, size } of byWorth) {
       if (count <= limits.count && bytes <= limits.bytes) break;
       count -= 1;
       bytes -= size;

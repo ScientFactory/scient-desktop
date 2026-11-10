@@ -217,29 +217,50 @@ describe("documentCache", () => {
     expect(cache.idleKeys()).toEqual([]);
   });
 
-  it("counts a hidden reader as the document left last, and asks the oldest past the limits to go", async () => {
+  it("asks the hidden reader left longest ago to go past the limits", async () => {
     const { cache, open, disposed } = setup({ count: 2, bytes: 100 });
     const evicted: string[] = [];
-    const a = open("a");
-    await a.value;
-    expect(
-      a.park(
-        () => evicted.push("a"),
-        () => 20,
-      ),
-    ).toBe(true);
-    const b = open("b");
-    await b.value;
-    b.release();
-    expect(cache.idleKeys()).toEqual(["b"]);
-    // c, left last, is one too many: the hidden reader of a, left first, is asked to go.
-    const c = open("c");
-    await c.value;
-    c.release();
+    const hide = (name: string) => {
+      const lease = open(name);
+      return lease.value.then(() => {
+        expect(
+          lease.park(
+            () => evicted.push(name),
+            () => 20,
+          ),
+        ).toBe(true);
+        return lease;
+      });
+    };
+    const a = await hide("a");
+    await hide("b");
+    // c, hidden last, is one too many: the hidden reader of a, left first, is asked to go.
+    await hide("c");
     expect(evicted).toEqual(["a"]);
     a.release();
     expect(disposed).toEqual(["a"]);
-    expect(cache.idleKeys()).toEqual(["b", "c"]);
+    expect(cache.idleKeys()).toEqual([]);
+  });
+
+  // regression: a PDF reader reopens its document once its URL is renewed; for that moment the
+  // document counted as left, one too many, and the oldest hidden view was dropped.
+  it("lets documents kept without a reader go before a hidden reader", async () => {
+    const { cache, open, disposed } = setup({ count: 2, bytes: 100 });
+    const evicted: string[] = [];
+    for (const name of ["a", "b"]) {
+      const lease = open(name);
+      await lease.value;
+      lease.park(
+        () => evicted.push(name),
+        () => 20,
+      );
+    }
+    const c = open("c");
+    await c.value;
+    c.release();
+    expect(evicted).toEqual([]);
+    expect(disposed).toEqual(["c"]);
+    expect(cache.idleKeys()).toEqual([]);
   });
 
   it("keeps a hidden reader's document at its age when the reader goes", async () => {
