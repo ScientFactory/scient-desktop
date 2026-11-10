@@ -1,0 +1,192 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Share builds hash attachment bytes and draw the redaction id key with Node's crypto.
+import * as NodeCrypto from "node:crypto";
+
+import { canonicalSnapshotContent } from "@scientfactory/conversation";
+import { CloudConversation, type SnapshotSidecar } from "@scientfactory/scient-cloud/api";
+import {
+  type ConversationAttachment,
+  type ConversationSnapshotV1,
+  type ScientCloudShareBuild,
+  type ScientCloudShareBuildRequest,
+  ScientCloudError,
+} from "@t3tools/contracts";
+import * as Context from "effect/Context";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
+
+import { AccountsService } from "../accounts/AccountsService.ts";
+import { ConversationSnapshotService } from "../conversationExport/ConversationSnapshotService.ts";
+import { Redactor, redactSection } from "./shareRedaction.ts";
+
+/** A built share; `blobs` carry local file paths the HTTP layer turns into signed URLs. */
+export interface BuiltShare extends Omit<ScientCloudShareBuild, "blobs"> {
+  readonly blobs: ReadonlyArray<
+    Omit<ScientCloudShareBuild["blobs"][number], "relativeUrl"> & { readonly path: string }
+  >;
+}
+
+const TEXT_ATTACHMENT = /^(?:text\/|application\/(?:json|xml|x-yaml|yaml|toml|x-sh|javascript))/u;
+/** Text attachments above this are carried unsearched, like binary ones. */
+const SEARCHED_TEXT_MAX_BYTES = 8 * 1024 * 1024;
+
+export class ShareBuilder extends Context.Service<
+  ShareBuilder,
+  {
+    readonly build: (
+      request: ScientCloudShareBuildRequest,
+    ) => Effect.Effect<BuiltShare, ScientCloudError>;
+  }
+>()("t3/scient/cloud/ShareBuilder") {}
+
+const encodeConversation = Schema.encodeEffect(Schema.fromJsonString(CloudConversation));
+
+const sha256Hex = (bytes: Uint8Array) =>
+  NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+
+const shareError = (reason: ScientCloudError["reason"], message: string) =>
+  new ScientCloudError({ reason, message });
+
+const make = Effect.gen(function* () {
+  const snapshots = yield* ConversationSnapshotService;
+  const fileSystem = yield* FileSystem.FileSystem;
+  const accounts = yield* Effect.serviceOption(AccountsService);
+  const idKey = new Uint8Array(NodeCrypto.randomBytes(32));
+
+  const savedSecrets = Effect.gen(function* () {
+    const service = Option.getOrUndefined(accounts);
+    if (service?.redactionValues === undefined) return [];
+    const values = yield* service.redactionValues;
+    return values.map(Redacted.value);
+  });
+
+  const build = Effect.fn("ShareBuilder.build")(function* (request: ScientCloudShareBuildRequest) {
+    const captured = yield* snapshots
+      .capture({
+        threadId: request.threadId,
+        selection: {
+          workLog: request.workLog,
+          reasoning: request.reasoning,
+          throughMessageId: null,
+        },
+      })
+      .pipe(
+        Effect.mapError((error) =>
+          error._tag === "ConversationThreadNotFoundError"
+            ? shareError("thread-not-found", "This conversation no longer exists.")
+            : error._tag === "ScientConversationExportError" && error.reason === "too-large"
+              ? shareError("too-large", error.message)
+              : shareError("cloud-unavailable", "This conversation could not be read for sharing."),
+        ),
+      );
+    const redactor = new Redactor({
+      savedSecrets: yield* savedSecrets,
+      keep: request.keep,
+      idKey,
+      scope: request.threadId,
+    });
+    const excluded = new Set<string>(request.excludeMessageIds);
+    const source = captured.snapshot;
+
+    // Text attachments that hold a secret are left out (the person can keep each one).
+    let binaryNotSearched = 0;
+    const leftOut = new Set<string>();
+    const carried = new Map<string, { path: string; bytes: Uint8Array }>();
+    for (const message of source.messages) {
+      if (excluded.has(message.id)) continue;
+      for (const attachment of message.attachments) {
+        const path = captured.attachmentFiles.get(attachment.localId);
+        if (!attachment.available || path === undefined || carried.has(attachment.localId))
+          continue;
+        const bytes = yield* fileSystem.readFile(path).pipe(Effect.orElseSucceed(() => null));
+        if (bytes === null) continue;
+        const searchable =
+          TEXT_ATTACHMENT.test(attachment.mimeType) && bytes.byteLength <= SEARCHED_TEXT_MAX_BYTES;
+        if (!searchable) binaryNotSearched += 1;
+        if (
+          searchable &&
+          redactor.holdsSecret(new TextDecoder().decode(bytes)) &&
+          redactor.excludeItem(
+            { field: "attachment", itemId: attachment.localId },
+            `Attachment with a secret: ${attachment.name}`,
+          )
+        ) {
+          leftOut.add(attachment.localId);
+          continue;
+        }
+        carried.set(attachment.localId, { path, bytes });
+      }
+    }
+
+    const withoutLeftOut = (attachments: ReadonlyArray<ConversationAttachment>) =>
+      attachments.map((attachment) =>
+        leftOut.has(attachment.localId) ? { ...attachment, available: false } : attachment,
+      );
+    const messages = source.messages
+      .filter((message) => !excluded.has(message.id))
+      .map((message, index) => ({
+        ...message,
+        n: index + 1,
+        attachments: withoutLeftOut(message.attachments),
+      }));
+    const redactedContent = {
+      ...source,
+      thread: redactSection(redactor, "thread", source.thread),
+      messages: redactSection(redactor, "messages", messages),
+      reasoning: redactSection(redactor, "reasoning", source.reasoning),
+      workLog: redactSection(redactor, "workLog", source.workLog),
+      proposedPlans: redactSection(redactor, "proposedPlans", source.proposedPlans),
+      questionAnswers: redactSection(redactor, "questionAnswers", source.questionAnswers),
+    };
+    const digest = sha256Hex(new TextEncoder().encode(canonicalSnapshotContent(redactedContent)));
+    const snapshot: ConversationSnapshotV1 = {
+      ...redactedContent,
+      contentDigest: `sha256:${digest}`,
+    };
+
+    const byLocalId = new Map(
+      messages.flatMap((message) => message.attachments).map((a) => [a.localId, a] as const),
+    );
+    const blobs: Array<BuiltShare["blobs"][number]> = [];
+    const sidecarAttachments: Array<NonNullable<SnapshotSidecar["attachments"]>[number]> = [];
+    for (const [localId, file] of carried) {
+      const attachment = byLocalId.get(localId);
+      if (attachment === undefined) continue;
+      const sha256 = sha256Hex(file.bytes);
+      sidecarAttachments.push({ localId, sha256, bytes: file.bytes.byteLength });
+      blobs.push({
+        localId,
+        sha256,
+        bytes: file.bytes.byteLength,
+        name: attachment.name,
+        mimeType: attachment.mimeType,
+        path: file.path,
+      });
+    }
+    const document: CloudConversation = {
+      snapshot,
+      ...(sidecarAttachments.length === 0 ? {} : { sidecar: { attachments: sidecarAttachments } }),
+    };
+    const report = redactor.report();
+    return {
+      documentJson: yield* encodeConversation(document).pipe(
+        Effect.mapError(() => shareError("cloud-unavailable", "This share could not be prepared.")),
+      ),
+      contentDigest: snapshot.contentDigest,
+      redactions: report.redactions,
+      kept: report.kept,
+      coverage: {
+        savedSecretsSearched: redactor.savedSecretCount,
+        binaryAttachmentsNotSearched: binaryNotSearched,
+      },
+      blobs,
+    } satisfies BuiltShare;
+  });
+
+  return ShareBuilder.of({ build });
+});
+
+export const layer = Layer.effect(ShareBuilder, make);
