@@ -17,12 +17,23 @@ export function resolveScientReleaseInputs(input: {
   readonly latestStableVersion: string;
   readonly betaTags: readonly string[];
   readonly date: string;
+  /** A rehearsal builds, signs and assembles the Stable shape from a branch and never publishes. */
+  readonly rehearsal?: boolean;
+  readonly runNumber?: string;
 }) {
   if (input.channel !== "stable" && input.channel !== "beta") {
     throw new Error("Release channel must be stable or beta.");
   }
   const beta = input.channel === "beta";
-  const sourceSha = input.sourceSha.trim().toLowerCase() || (beta ? input.workflowSha : "");
+  const rehearsal = input.rehearsal === true;
+  if (rehearsal && beta) throw new Error("A rehearsal builds the Stable shape; choose stable.");
+  if (rehearsal && (input.publishRelease || input.allowUnsignedWindows)) {
+    throw new Error(
+      "A rehearsal never publishes; leave publish_release and allow_unsigned_windows off.",
+    );
+  }
+  const sourceSha =
+    input.sourceSha.trim().toLowerCase() || (beta || rehearsal ? input.workflowSha : "");
   if (!/^[0-9a-f]{40}$/u.test(sourceSha)) {
     throw new Error("source_sha must be a full 40-character commit SHA.");
   }
@@ -30,6 +41,12 @@ export function resolveScientReleaseInputs(input: {
     throw new Error("source_sha must equal the exact workflow commit.");
   }
   let version = input.version.trim().replace(/^v/u, "");
+  if (rehearsal && !version) {
+    if (!/^[1-9]\d*$/u.test(input.runNumber ?? ""))
+      throw new Error("Rehearsal needs a run number.");
+    // Below every real release, so a rehearsal can never look newer than shipped Scient.
+    version = `0.0.${input.runNumber}`;
+  }
   const betaVersions = input.betaTags.map((tag) => tag.replace(/^v/u, ""));
   for (const candidate of betaVersions) assertScientReleaseChannelVersion(candidate, "beta");
   const latestBeta = betaVersions.toSorted(compareSemverVersions).at(-1);
@@ -82,6 +99,8 @@ if (import.meta.main) {
     latestStableVersion: process.env.LATEST_STABLE_VERSION ?? "",
     betaTags,
     date: process.env.RELEASE_DATE ?? "",
+    rehearsal: process.env.RELEASE_REHEARSAL === "true",
+    runNumber: process.env.GITHUB_RUN_NUMBER ?? "",
   });
   const output = Object.entries(result)
     .map(([key, value]) => `${key}=${value}\n`)

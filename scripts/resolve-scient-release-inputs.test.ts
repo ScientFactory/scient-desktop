@@ -79,6 +79,27 @@ describe("Scient release dispatch policy", () => {
     expect(() => resolveScientReleaseInputs({ ...stable, sourceSha: "" })).toThrow("40-character");
   });
 
+  it("lets a rehearsal build only the Stable shape and never publish", () => {
+    const rehearsal = { ...base, channel: "stable", rehearsal: true, runNumber: "412" };
+    expect(resolveScientReleaseInputs(rehearsal)).toEqual({
+      version: "0.0.412",
+      source_sha: sha,
+      publish_release: false,
+      allow_unsigned_windows: false,
+      latest_beta_version: "",
+    });
+    expect(() => resolveScientReleaseInputs({ ...rehearsal, publishRelease: true })).toThrow(
+      "never publishes",
+    );
+    expect(() => resolveScientReleaseInputs({ ...rehearsal, allowUnsignedWindows: true })).toThrow(
+      "never publishes",
+    );
+    expect(() => resolveScientReleaseInputs({ ...rehearsal, channel: "beta" })).toThrow(
+      "Stable shape",
+    );
+    expect(() => resolveScientReleaseInputs({ ...rehearsal, runNumber: "" })).toThrow("run number");
+  });
+
   it("rejects wrong sources, channel/version mismatches and regressions before packaging", () => {
     expect(() => resolveScientReleaseInputs({ ...base, sourceSha: "b".repeat(40) })).toThrow(
       "exact workflow commit",
