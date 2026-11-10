@@ -59,8 +59,14 @@ It first uses metadata embedded in the file. When the PDF contains one clear
 DOI or explicitly labelled PMID, Scient can use that identifier to retrieve
 better bibliographic metadata or an abstract from PubMed, Crossref, or Europe
 PMC. It does not use fuzzy title matching, OCR, or an AI model to invent
-missing facts. A PDF remains importable when metadata cannot be resolved; the
-unknown fields stay visible for correction.
+missing facts. The date a PDF file was made is not taken as the publication
+date; only a publication date the publisher embedded counts. A PDF remains
+importable when metadata cannot be resolved; the unknown fields stay visible
+for correction.
+
+To get faster, more reliable answers from Crossref, OpenAlex and Unpaywall, add
+a contact email in **Settings ▸ Documents ▸ Library**. Scient sends it only to
+those services, and sends no email while the field is empty.
 
 For remote projects, the selected PDFs are transferred to the selected project
 environment. Metadata services receive only the exact public identifier used
