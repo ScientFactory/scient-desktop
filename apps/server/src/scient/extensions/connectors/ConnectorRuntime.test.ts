@@ -3203,6 +3203,43 @@ describe("connectors agents make and fix", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live("never copies through a link out of the chat's folder", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const outside = NodePath.join(harness.config.stateDir, "..", "elsewhere");
+      const chat = NodePath.join(harness.config.stateDir, "..", "chat-linked");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(outside, "open-works"), { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(outside, "open-works", "keep.txt"), "mine");
+        await NodeFSP.mkdir(chat, { recursive: true });
+        await NodeFSP.symlink(outside, NodePath.join(chat, "connectors"));
+      });
+      // regression: copy wrote (and replaced) folders at the link's other end.
+      const refused = yield* harness.runtime
+        .copyForAgent({ workingFolder: chat, name: "Open Works" })
+        .pipe(Effect.flip);
+      expect(refused.message).toContain("is a link to another folder");
+
+      // A linked folder in a real connectors folder is skipped, never removed or written.
+      const second = NodePath.join(harness.config.stateDir, "..", "chat-second");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.join(second, "connectors"), { recursive: true });
+        await NodeFSP.symlink(
+          NodePath.join(outside, "open-works"),
+          NodePath.join(second, "connectors", "open-works"),
+        );
+      });
+      const copied = yield* harness.runtime.copyForAgent({
+        workingFolder: second,
+        name: "Open Works",
+      });
+      expect(copied.folder).toBe(NodePath.join(second, "connectors", "open-works-2"));
+      expect(
+        yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(outside, "open-works"))),
+      ).toEqual(["keep.txt"]);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live(
     "writes the connector-authoring template, which starts and lists its tools with no key",
     () =>

@@ -240,9 +240,20 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     // Never over someone's files: an earlier copy of this connector is replaced, else the
     // first free name (`name`, `name-2`, …) is used.
     const base = NodePath.join(input.workingFolder, "connectors", slug(displayName));
+    // Only inside the chat's own folder: never through a link to somewhere else.
+    const linked = yield* Effect.promise(async () => {
+      const connectors = NodePath.dirname(base);
+      const info = await NodeFSP.lstat(connectors).catch(() => undefined);
+      return info?.isSymbolicLink() === true;
+    });
+    if (linked)
+      return yield* invalid(
+        `${NodePath.dirname(base)} is a link to another folder. Scient writes copies only inside this chat's folder.`,
+      );
     const target = yield* Effect.promise(async () => {
       for (let turn = 1; turn <= MAX_COPY_NAMES; turn++) {
         const candidate = turn === 1 ? base : `${base}-${turn}`;
+        if ((await NodeFSP.lstat(candidate).catch(() => undefined))?.isSymbolicLink()) continue;
         const entries = await NodeFSP.readdir(candidate).catch(() => [] as string[]);
         if (entries.length === 0) return candidate;
         const marker = await NodeFSP.readFile(NodePath.join(candidate, COPY_MARKER), "utf8").catch(
@@ -260,8 +271,12 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
       );
     yield* Effect.tryPromise({
       try: async () => {
-        await NodeFSP.rm(target, { recursive: true, force: true });
         await NodeFSP.mkdir(NodePath.dirname(target), { recursive: true });
+        const home = await NodeFSP.realpath(input.workingFolder);
+        const parent = await NodeFSP.realpath(NodePath.dirname(target));
+        if (parent !== home && !parent.startsWith(home + NodePath.sep))
+          throw new Error("outside the chat folder");
+        await NodeFSP.rm(target, { recursive: true, force: true });
         if (record?.local !== undefined) {
           await NodeFSP.cp(record.local.directory, target, {
             recursive: true,
