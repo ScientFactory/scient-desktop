@@ -19,6 +19,7 @@ import {
   verifyComputerRequest,
   verifyEnrollmentProof,
 } from "@scientfactory/scient-cloud/computer-jws";
+import { CONTENT_FRAME_PATH } from "@scientfactory/scient-cloud/content-frame";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -765,7 +766,7 @@ export const handle = Effect.fn("Api.handle")(
   function* (request: Request) {
     const config = yield* CloudConfig;
     const url = new URL(request.url);
-    if (url.pathname === "/frame" && url.host === hostOf(config.contentOrigin)) {
+    if (url.pathname === CONTENT_FRAME_PATH && url.host === hostOf(config.contentOrigin)) {
       return contentFrame(config);
     }
     if (url.pathname.startsWith("/s/") && url.host === hostOf(config.pageOrigin)) {

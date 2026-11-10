@@ -1,4 +1,5 @@
 import { ShareId } from "@scientfactory/scient-cloud/api";
+import { CONTENT_FRAME_HTML } from "@scientfactory/scient-cloud/content-frame";
 import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -126,17 +127,11 @@ export const sharePage = Effect.fn("Pages.sharePage")(function* (pathname: strin
   return new Response(body, { status: 200, headers: pageHeaders(config, page.value.indexable) });
 });
 
-/**
- * The untrusted-content origin. Its page holds no data: readers frame it with
- * `sandbox="allow-scripts"`, wait for `ready`, then post one `render` whose HTML it writes into
- * itself. Same protocol as `packages/scient-cloud`'s content-frame module (stream R).
- */
-const FRAME_HTML = `<!doctype html><meta charset="utf-8"><title>Shared content</title><script>(function(){if(window.parent===window)return;function r(e){var d=e.data;if(e.source!==window.parent||!d||d.type!=="scient-content-frame:render"||typeof d.html!=="string")return;window.removeEventListener("message",r);document.open();document.write(d.html);document.close();}window.addEventListener("message",r);window.parent.postMessage({type:"scient-content-frame:ready"},"*");})();</script>`;
-
+/** The untrusted-content origin. Its page holds no data; readers frame it with `sandbox="allow-scripts"`. */
 export const contentFrame = (config: CloudSettings) => {
   const ancestors = [config.pageOrigin, ...config.appOrigins].join(" ");
   const local = config.allowLocalhostOrigins ? " http://localhost:* http://127.0.0.1:*" : "";
-  return new Response(FRAME_HTML, {
+  return new Response(CONTENT_FRAME_HTML, {
     status: 200,
     headers: {
       "content-type": "text/html; charset=utf-8",
