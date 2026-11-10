@@ -967,7 +967,8 @@ jobs:
     needs: preflight
     if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: windows-2025
-    timeout-minutes: 45
+    # Like the server asset, outlasts a queued producer; the wait has no deadline of its own.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -978,7 +979,6 @@ jobs:
           run-install: false
       - name: Wait for the Windows package
         shell: bash
-        timeout-minutes: 40
         env:
           GH_TOKEN: ${{ github.token }}
         run: bash .github/scripts/wait-for-job.sh "Package Windows x64" verify-win-x64

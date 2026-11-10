@@ -98,6 +98,9 @@ describe("Scient release dispatch policy", () => {
       "Stable shape",
     );
     expect(() => resolveScientReleaseInputs({ ...rehearsal, runNumber: "" })).toThrow("run number");
+    expect(() => resolveScientReleaseInputs({ ...rehearsal, version: "99.0.0" })).toThrow(
+      "sets its own version",
+    );
   });
 
   it("rejects wrong sources, channel/version mismatches and regressions before packaging", () => {

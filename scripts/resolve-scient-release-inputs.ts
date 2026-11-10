@@ -41,7 +41,8 @@ export function resolveScientReleaseInputs(input: {
     throw new Error("source_sha must equal the exact workflow commit.");
   }
   let version = input.version.trim().replace(/^v/u, "");
-  if (rehearsal && !version) {
+  if (rehearsal) {
+    if (version) throw new Error("A rehearsal sets its own version; leave version blank.");
     if (!/^[1-9]\d*$/u.test(input.runNumber ?? ""))
       throw new Error("Rehearsal needs a run number.");
     // Below every real release, so a rehearsal can never look newer than shipped Scient.
