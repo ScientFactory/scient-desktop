@@ -155,6 +155,7 @@ export interface AnnotatedPdfSummary {
     readonly sourceId: string;
     readonly attachmentId: string;
     readonly title: string | null;
+    readonly citationKey?: string;
   }>;
 }
 
@@ -260,6 +261,7 @@ async function summarize(
             sourceId: record.sourceId,
             attachmentId: attachment.attachmentId,
             title: record.title,
+            ...(record.citationKey ? { citationKey: record.citationKey } : {}),
           })),
       ),
     });

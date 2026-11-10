@@ -163,7 +163,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(51);
+      expect(scientTools).toHaveLength(56);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "scient_account_add",
         "scient_account_browser_session",
@@ -173,6 +173,11 @@ it.live(
         "scient_account_request",
         "scient_account_sign_in",
         "scient_accounts_list",
+        "scient_annotations_add",
+        "scient_annotations_read",
+        "scient_annotations_remove",
+        "scient_annotations_restore",
+        "scient_annotations_update",
         "scient_compute_control",
         "scient_compute_inventory",
         "scient_compute_output",

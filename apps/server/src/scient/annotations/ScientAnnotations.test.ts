@@ -127,7 +127,12 @@ describe("ScientAnnotations", () => {
         quote: "Deep sleep doubled recall",
       });
       expect(added.pdf.sources).toEqual([
-        { sourceId, attachmentId: expect.any(String), title: "Sleep and memory" },
+        {
+          sourceId,
+          attachmentId: expect.any(String),
+          title: "Sleep and memory",
+          citationKey: "anon2024sleep",
+        },
       ]);
       const annotationId = added.annotation.annotationId;
 
