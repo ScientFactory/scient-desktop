@@ -111,7 +111,8 @@ export const ScientAnnotationMutationAgentResult = Schema.Struct({
 const ScientAnnotationsReadTool = Tool.make("scient_annotations_read", {
   description:
     "Read the highlights and notes people and agents made on PDFs in this project, grouped by PDF, with the quoted text, pages and any Source the PDF belongs to (with its citation key). " +
-    "Give a sourceId or pdfRelativePath for one PDF, or neither for the whole project; query searches quotes and notes. Use this before quoting or summarising what the user marked.",
+    "Give a sourceId or pdfRelativePath for one PDF, or neither for the whole project; query searches quotes and notes. Use this before quoting or summarising what the user marked. " +
+    "To quote a passage in a document, cite it with its Source's key: [@key, p. N] in Markdown or \\cite[p.~N]{key} in LaTeX.",
   parameters: Schema.Struct({
     ...PdfChoice,
     query: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),

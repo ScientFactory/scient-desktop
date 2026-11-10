@@ -291,6 +291,7 @@ export function ScientSourcesPanel(props: {
     environmentId: props.environmentId,
     root: props.root,
     records: sources.overview?.records ?? null,
+    onImported: () => void sources.refreshOverview(),
   });
   const getPaper = useAccountCommand(accountsState.paperForSource, props.environmentId);
   const requestPapers = useAccountCommand(accountsState.requestPapers, props.environmentId);
@@ -1390,7 +1391,7 @@ export function ScientSourcesPanel(props: {
         <ManagedBibliographyNotice
           files={bibliography.status.files}
           replacing={bibliography.replacing}
-          onReplace={(name) => void bibliography.replace(name)}
+          onResolve={(name, action) => void bibliography.resolve(name, action)}
         />
       ) : null}
       {addingByIdentifier ? (

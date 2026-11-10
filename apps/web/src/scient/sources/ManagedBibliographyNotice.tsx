@@ -17,7 +17,10 @@ function changeSummary(file: ScientManagedBibliographyFileStatus): string {
 export function ManagedBibliographyNotice(props: {
   readonly files: ReadonlyArray<ScientManagedBibliographyFileStatus>;
   readonly replacing: boolean;
-  readonly onReplace: (name: ScientManagedBibliographyFileStatus["name"]) => void;
+  readonly onResolve: (
+    name: ScientManagedBibliographyFileStatus["name"],
+    action: "replace" | "import",
+  ) => void;
 }) {
   const attention = props.files.filter(
     (file) => file.state === "edited" || file.state === "unmanaged",
@@ -31,11 +34,21 @@ export function ManagedBibliographyNotice(props: {
             <span className="min-w-0 flex-1">
               {file.name} was edited outside Scient{changeSummary(file)}. Your edits are kept.
             </span>
+            {file.changes && file.changes.added.length > 0 ? (
+              <Button
+                size="xs"
+                variant="outline"
+                disabled={props.replacing}
+                onClick={() => props.onResolve(file.name, "import")}
+              >
+                Import new entries
+              </Button>
+            ) : null}
             <Button
               size="xs"
-              variant="outline"
+              variant="ghost"
               disabled={props.replacing}
-              onClick={() => props.onReplace(file.name)}
+              onClick={() => props.onResolve(file.name, "replace")}
             >
               Use Library version
             </Button>

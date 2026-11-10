@@ -513,6 +513,73 @@ the user or an agent restores the Library version. The project file is written
 before the copy, so an interrupted write is adopted on the next sync instead
 of reported as an edit. Nothing is written for a project without a Library.
 
+`importEdited` sends an edited file through the ordinary reference-file import
+(`importBibliographyFile`). Only when the edit added entries and every added
+key is then in the Library, with nothing changed or removed, is the file
+written again; otherwise it stays edited for the person to decide.
+
+## Citing
+
+Documents cite by key. In Markdown, typing `[@` opens a list of Library
+sources (`prosemirror/libraryCitation.ts`, ranked by
+`sources/libraryCitations.ts`) and inserts the existing Pandoc `citation`
+node; the LaTeX citation dialog appends Library sources after the document's
+own `.bib` entries. A citation opens its source through
+`librarySourceRequest.ts`, which the Library panel acts on once loaded.
+
+A deliberate key rename goes through `updateScientSource`, which then rewrites
+the key in project Markdown citations (outside code) and LaTeX `\cite`-family
+key lists (`renameCitationKeyInDocument`); `citationKeyRenamedIn` lists the
+files. Nothing else changes a key, so a key a document uses stays frozen.
+
+`scient_sources_cite` (`LibraryCitation.ts`) runs the shared reference check
+(`checkReferences` with a Library `sourceIds` target) on the sources about to
+be cited and reports identifier, retraction, notice, published-version and
+registry-detail findings next to the citation it returns; it never withholds
+the citation.
+
+Markdown Word export passes a CSL style to Pandoc: the document's `csl:`
+front matter (a bundled `apa` or `vancouver`, or a project `.csl` file), else
+the request's `citationStyle` from Settings, else Pandoc's default. Library
+sources are the lowest-precedence references (`fallbackCitations`), after the
+document's front matter and named bibliographies. Export only reads records.
+
+## Annotations
+
+Highlights and notes on project PDFs live in `.scient/annotations/v1/`, one
+`<sha256>.json` per PDF, owned by `apps/server/src/scient/annotations/`
+(`annotationStore.ts` for the file and its pure command logic,
+`ScientAnnotations.ts` for the service the HTTP routes and the
+`scient_annotations_*` tools share). Keying by the PDF's bytes means a Source
+attachment and the same file elsewhere in the project share annotations, and a
+changed file starts clean rather than showing marks on the wrong text. The file
+records the project paths where the PDF was annotated as hints only.
+
+An annotation stores the reader's `PdfTarget` text selector and extractor, not
+its document identity, so stored records hold no absolute paths. It needs a
+highlight or a note. Every change names the revision it was made on; a stale
+change returns the current record. Removal is a tombstone that restore undoes,
+and the last ten revisions of each annotation are kept so `revert` can bring
+an earlier note back as a new revision. Each record credits `createdBy` and
+`updatedBy` (`user` or `agent`). A file that does not decode is never written
+over and is reported, not hidden, in listings. Writes are serialized per PDF
+inside the server process, like the Sources store.
+
+The reader paints annotations per rendered page with the CSS Custom Highlight
+API. Stored offsets are kept when they still select the stored quote;
+otherwise the quote is searched on its page with its context, then alone, and
+shown only when it occurs once. A create names the PDF path and is refused
+(`material-changed`) when the file's bytes are no longer the ones the reader
+loaded. An agent's quote is anchored server-side against the Sources full text
+when it is complete, otherwise against a fresh pdf.js extraction in the same
+text-layer profile, after folding case, whitespace, compatibility characters
+and line-end hyphens; repeats are reported as ambiguous with their pages.
+
+"Quote in my document" inserts into the Markdown or LaTeX editor of the same
+project that was focused last in the window, using the PDF's Source citation
+key (`[@key, p. N]`, `\cite[p.~N]{key}`), and copies Markdown when no editor
+can take it. Page numbers are PDF page indices, not printed page labels.
+
 ## Reference check
 
 `apps/server/src/scient/references/` checks a document or the Library against
@@ -842,11 +909,10 @@ Library's normal PDF import.
 ## Deliberate exclusions
 
 This slice does not implement two-way Zotero sync, Zotero group libraries,
-uploading PDFs to Zotero, attaching PDFs named
-in a reference file's `file` field, source merging,
-automatic possible-duplicate merging, multi-source
-bibliographies, arbitrary CSL style installation, annotations, evidence claims,
-OCR of scanned PDFs, fuzzy metadata search, mobile UI, or a separate Studio route.
+uploading PDFs to Zotero, attaching PDFs named in a reference file's `file`
+field, source merging, automatic possible-duplicate merging, multi-source
+bibliographies, arbitrary CSL style installation, evidence claims, OCR of
+scanned PDFs, fuzzy metadata search, mobile UI, or a separate Studio route.
 Later source systems should add adapters into the same domain and store rather
 than add provider-shaped fields to the host application.
 
