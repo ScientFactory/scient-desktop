@@ -22,6 +22,7 @@
     "test": "vp test run"
   },
   "dependencies": {
+    "@scientfactory/annotations": "workspace:*",
     "@scientfactory/project-init": "workspace:*",
     "effect": "catalog:",
     "parse5": "7.3.0"

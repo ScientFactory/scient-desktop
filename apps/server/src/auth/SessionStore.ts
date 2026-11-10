@@ -19,6 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
+import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../config.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -375,6 +376,13 @@ export class SessionStore extends Context.Service<
       readonly replaceActiveForSubjectAndMethod?: boolean;
     }) => Effect.Effect<IssuedSession, SessionCredentialInternalError>;
     readonly verify: (token: string) => Effect.Effect<VerifiedSession, SessionCredentialError>;
+    /** Recheck an authenticated request before a delayed durable effect. */
+    readonly checkActive: (sessionId: AuthSessionId) => Effect.Effect<void, SessionCredentialError>;
+    /** Short publication critical section, ordered with all local session revocations. */
+    readonly withActiveSession: <A, E, R>(
+      sessionId: AuthSessionId,
+      operation: Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | SessionCredentialError, R>;
     readonly issueWebSocketToken: (
       sessionId: AuthSessionId,
       input?: {
@@ -479,6 +487,7 @@ export const make = Effect.gen(function* () {
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironmentIdentity;
   const secretStore = yield* ServerSecretStore.ServerSecretStore;
   const authSessions = yield* AuthSessions.AuthSessionRepository;
+  const publicationFence = yield* Semaphore.make(1);
   const signingSecret = yield* secretStore.getOrCreateRandom(SIGNING_SECRET_NAME, 32);
   const connectedSessionsRef = yield* Ref.make(new Map<AuthSessionId, number>());
   const changesPubSub = yield* PubSub.unbounded<SessionCredentialChange>();
@@ -675,7 +684,10 @@ export const make = Effect.gen(function* () {
         input?.replaceActiveForSubjectAndMethod
           ? authSessions.createReplacingActive({ session: sessionRecord, revokedAt: issuedAt })
           : authSessions.create(sessionRecord).pipe(Effect.as([] as ReadonlyArray<AuthSessionId>))
-      ).pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })));
+      ).pipe(
+        publicationFence.withPermits(1),
+        Effect.mapError((cause) => new SessionCredentialIssueError({ sessionId, cause })),
+      );
       if (replacedSessionIds.length > 0) {
         yield* Ref.update(connectedSessionsRef, (current) => {
           const next = new Map(current);
@@ -915,7 +927,10 @@ export const make = Effect.gen(function* () {
           sessionId,
           revokedAt,
         })
-        .pipe(Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })));
+        .pipe(
+          publicationFence.withPermits(1),
+          Effect.mapError((cause) => new SessionRevocationError({ sessionId, cause })),
+        );
       if (revoked) {
         yield* Ref.update(connectedSessionsRef, (current) => {
           const next = new Map(current);
@@ -938,6 +953,7 @@ export const make = Effect.gen(function* () {
         revokedAt,
       })
       .pipe(
+        publicationFence.withPermits(1),
         Effect.mapError(
           (cause) => new OtherSessionsRevocationError({ currentSessionId: sessionId, cause }),
         ),
@@ -962,11 +978,33 @@ export const make = Effect.gen(function* () {
     return revokedSessionIds.length;
   });
 
+  const checkActive = Effect.fn("SessionStore.checkActive")(function* (sessionId: AuthSessionId) {
+    const observedAt = yield* DateTime.now;
+    const row = yield* authSessions
+      .getById({ sessionId })
+      .pipe(
+        Effect.mapError((cause) => new SessionCredentialVerificationError({ sessionId, cause })),
+      );
+    if (Option.isNone(row)) return yield* new UnknownSessionTokenError({ sessionId });
+    if (row.value.revokedAt !== null)
+      return yield* new SessionTokenRevokedError({ sessionId, revokedAt: row.value.revokedAt });
+    if (row.value.expiresAt.epochMilliseconds <= observedAt.epochMilliseconds)
+      return yield* new SessionTokenExpiredError({
+        sessionId,
+        expiresAt: row.value.expiresAt,
+        observedAt,
+      });
+  });
+  const withActiveSession: SessionStore["Service"]["withActiveSession"] = (sessionId, operation) =>
+    checkActive(sessionId).pipe(Effect.andThen(operation), publicationFence.withPermits(1));
+
   return SessionStore.of({
     cookieName,
     legacyCookieName,
     issue,
     verify,
+    checkActive,
+    withActiveSession,
     issueWebSocketToken,
     verifyWebSocketToken,
     listActive,

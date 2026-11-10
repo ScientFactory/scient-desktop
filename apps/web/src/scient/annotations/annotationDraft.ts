@@ -1,15 +1,16 @@
 import * as Schema from "effect/Schema";
-import { ScientPassageCommand, type ScientSavedPassage } from "@scientfactory/scient-sources";
+import { AnnotationCommand, type AnnotationRecord } from "@scientfactory/annotations";
+import { randomUUID } from "../../lib/utils";
 
 const Draft = Schema.Struct({
   note: Schema.String.check(Schema.isMaxLength(8000)),
-  command: Schema.optionalKey(ScientPassageCommand),
+  command: Schema.optionalKey(AnnotationCommand),
   attempt: Schema.optionalKey(Schema.Boolean),
 });
 export type AnnotationNoteDraft = typeof Draft.Type;
 const decodeDraft = Schema.decodeUnknownSync(Draft);
 
-export function readAnnotationNoteDraft(key: string): AnnotationNoteDraft | null {
+export function readDocumentNoteDraft(key: string): AnnotationNoteDraft | null {
   try {
     const raw = localStorage.getItem(key);
     if (!raw) return null;
@@ -19,7 +20,7 @@ export function readAnnotationNoteDraft(key: string): AnnotationNoteDraft | null
   }
 }
 
-export function writeAnnotationNoteDraft(key: string, draft: AnnotationNoteDraft | null): boolean {
+export function writeDocumentNoteDraft(key: string, draft: AnnotationNoteDraft | null): boolean {
   try {
     if (draft) localStorage.setItem(key, JSON.stringify(draft));
     else localStorage.removeItem(key);
@@ -29,17 +30,17 @@ export function writeAnnotationNoteDraft(key: string, draft: AnnotationNoteDraft
   }
 }
 
-type NoteCommand = Exclude<ScientPassageCommand, { action: "remove" }>;
+type NoteCommand = Exclude<AnnotationCommand, { action: "remove" | "restore" }>;
 
 /** One editor, one serialized writer. An uncertain request keeps its exact command. */
-export function createAnnotationNoteSession(options: {
+export function createDocumentNoteSession(options: {
   key: string;
   note: string;
   command?: NoteCommand;
   baseline?: string;
   attempt?: boolean;
-  save: (command: NoteCommand) => Promise<ScientSavedPassage>;
-  onSaved: (passage: ScientSavedPassage, note: string) => void;
+  save: (command: NoteCommand) => Promise<AnnotationRecord>;
+  onSaved: (passage: AnnotationRecord, note: string) => void;
   onBusy: (busy: boolean) => void;
   onError: (message: string) => void;
 }) {
@@ -53,7 +54,7 @@ export function createAnnotationNoteSession(options: {
   let leaving = false;
   function persist() {
     if (
-      !writeAnnotationNoteDraft(options.key, {
+      !writeDocumentNoteDraft(options.key, {
         note,
         attempt: !!pending,
         ...((pending ?? command) ? { command: (pending ?? command)! } : {}),
@@ -80,7 +81,7 @@ export function createAnnotationNoteSession(options: {
       return Promise.resolve(false);
     }
     // Emptying a note does not silently remove it or invent a highlight.
-    if (!pending && !note.trim()) {
+    if (!pending && !note.trim() && !(command.action === "edit" && command.highlighted)) {
       persist();
       return Promise.resolve(false);
     }
@@ -94,16 +95,18 @@ export function createAnnotationNoteSession(options: {
           baseline = passage.note;
           pending = undefined;
           command = {
-            action: "update",
-            passageId: passage.passageId,
+            action: "edit",
+            operationId: randomUUID(),
+            highlighted: passage.highlighted,
+            annotationId: passage.annotationId,
             expectedRevision: passage.revision,
             note,
           };
-          if (note === baseline) writeAnnotationNoteDraft(options.key, null);
+          if (note === baseline) writeDocumentNoteDraft(options.key, null);
           else persist();
           options.onSaved(passage, note);
           if (cancelled) return note === baseline;
-        } while (note !== baseline && note.trim());
+        } while (note !== baseline && (note.trim() || command?.highlighted));
         return note === baseline;
       } catch (error) {
         persist();
@@ -141,7 +144,7 @@ export function createAnnotationNoteSession(options: {
     discard() {
       cancelled = true;
       clearTimeout(timer);
-      writeAnnotationNoteDraft(options.key, null);
+      writeDocumentNoteDraft(options.key, null);
     },
   };
 }

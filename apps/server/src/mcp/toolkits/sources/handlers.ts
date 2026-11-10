@@ -1,4 +1,5 @@
 import * as NodeCrypto from "node:crypto";
+import { makeAnnotationCoordinator } from "../../../scient/annotations/AnnotationCoordinator.ts";
 
 import {
   normalizeScientSourceEditableMetadata,
@@ -584,7 +585,40 @@ export const readScientSourcePassagesForInvocation = Effect.fn("ScientSourcesToo
     const { root } = yield* resolveScientSourcesProject();
     const record = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
     if (!record) return yield* toolError("not-found", "The source was not found in this project.");
-    const all = activeSourcePassages(record);
+    const invocation = yield* McpInvocationContext.McpInvocationContext;
+    const runPromise = Effect.runPromiseWith(
+      yield* Effect.context<
+        McpInvocationContext.McpInvocationContext | ProjectionSnapshotQuery.ProjectionSnapshotQuery
+      >(),
+    );
+    const coordinator = makeAnnotationCoordinator({
+      previewRoot: process.env.SCIENT_ANNOTATIONS_PREVIEW_ROOT,
+      authority: {
+        principal: invocation.providerInstanceId,
+        generation: invocation.providerSessionId,
+        check: async () => {
+          if ((await runPromise(resolveScientSourcesProject())).root !== root)
+            throw new Error("The current project changed.");
+        },
+        publish: async () => {
+          throw new Error("This projection is read-only.");
+        },
+      },
+    });
+    const canonical = yield* attempt(() =>
+      coordinator.document(
+        {
+          root,
+          target: { kind: "source", sourceId: input.sourceId },
+        },
+        false,
+      ),
+    );
+    // Preserve the existing read tool without exposing a second annotation writer.
+    const all =
+      canonical.enabled && !canonical.needsMigration
+        ? canonical.annotations.filter((annotation) => !annotation.deletedAt)
+        : activeSourcePassages(record);
     const offset = Number.isSafeInteger(input.offset) ? Math.max(0, input.offset ?? 0) : 0;
     const limit = Number.isSafeInteger(input.limit)
       ? Math.min(5, Math.max(1, input.limit ?? 5))

@@ -2,6 +2,7 @@
 // @effect-diagnostics globalDate:off -- Portable records and receipts use interoperable ISO timestamps.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 
 import {
@@ -136,15 +137,44 @@ async function readBoundedJson<S extends Schema.ConstraintDecoder<unknown>>(
   maximumBytes: number,
   schema: S,
 ): Promise<S["Type"]> {
-  const stats = await NodeFSP.lstat(filePath);
-  if (!stats.isFile() || stats.isSymbolicLink()) {
-    throw new Error(`${NodePath.basename(filePath)} is not a safe regular file.`);
-  }
-  if (stats.size > maximumBytes) {
-    throw new Error(`${NodePath.basename(filePath)} exceeds the safe size limit.`);
-  }
-  const value: unknown = JSON.parse(await NodeFSP.readFile(filePath, "utf8"));
+  const value: unknown = JSON.parse(await readBoundedText(filePath, maximumBytes));
   return Schema.decodeUnknownSync(schema)(value);
+}
+
+async function readBoundedText(filePath: string, maximumBytes: number): Promise<string> {
+  const handle = await NodeFSP.open(
+    filePath,
+    NodeFS.constants.O_RDONLY | NodeFS.constants.O_NOFOLLOW,
+  );
+  try {
+    const stats = await handle.stat();
+    if (!stats.isFile() || stats.size > maximumBytes)
+      throw new Error(`${NodePath.basename(filePath)} is not a bounded regular file.`);
+    const bytes = Buffer.alloc(stats.size + 1);
+    let length = 0;
+    while (length < bytes.length) {
+      const read = await handle.read(bytes, length, bytes.length - length, length);
+      if (!read.bytesRead) break;
+      length += read.bytesRead;
+    }
+    if (length !== stats.size) throw new Error("The record changed during reading.");
+    return bytes.subarray(0, length).toString("utf8");
+  } finally {
+    await handle.close();
+  }
+}
+
+function decodeSourceForAnnotationMigration(content: string): ScientSourceRecord {
+  const raw: unknown = JSON.parse(content);
+  if (
+    typeof raw === "object" &&
+    raw !== null &&
+    "formatVersion" in raw &&
+    raw.formatVersion === 1 &&
+    "savedPassages" in raw
+  )
+    return decodeScientSourceRecord({ ...raw, formatVersion: 2 });
+  return decodePersistedScientSourceRecord(raw);
 }
 
 /** Central version boundary for durable source records. Add migrations here, never at callers. */
@@ -514,6 +544,11 @@ export async function mutateScientSourcePassage(input: {
   return withOperationLock(`${paths.root}:source-write`, async () => {
     const current = await readSourceRecordFromPaths(paths, input.sourceId);
     const passages = current.savedPassages ?? [];
+    if (
+      (await snapshot(NodePath.join(paths.root, ".scient/evidence/v1/imports/legacy-v1"))) !==
+      "missing"
+    )
+      throw new Error("Annotations now belong to documents. Reopen the PDF in the current reader.");
     const existing = passages.find((passage) => passage.passageId === command.passageId);
     const now = new Date().toISOString();
     let passage: ScientSavedPassage;
@@ -602,6 +637,93 @@ export async function mutateScientSourcePassage(input: {
     await persistSourceRevision(paths, current, next);
     return { outcome, passage };
   });
+}
+
+/**
+ * Compatibility cleanup after an independently retained annotation import.
+ * Preserve source-level notes, all metadata, and the complete old Source revision.
+ */
+export async function retireScientEmbeddedPassages(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly expectedPassages: readonly ScientSavedPassage[];
+  readonly publish: <A>(run: () => Promise<A>) => Promise<A>;
+}): Promise<void> {
+  const paths = await sourceStorePaths(input.root);
+  await withOperationLock(paths.root + ":source-write", () =>
+    input.publish(async () => {
+      const file = sourceRecordPath(paths, input.sourceId);
+      const original = await readBoundedText(file, MAX_RECORD_BYTES);
+      const current = decodeSourceForAnnotationMigration(original);
+      if (current.sourceId !== input.sourceId || current.projectId !== paths.identity.projectId)
+        throw new Error("The legacy Source belongs to another owner.");
+      if (current.formatVersion === 1 && !current.savedPassages) return;
+      if (JSON.stringify(current.savedPassages ?? []) !== JSON.stringify(input.expectedPassages))
+        throw new Error("Legacy annotations changed during migration. Both copies were preserved.");
+      const { savedPassages: _legacy, ...metadata } = current;
+      const next: ScientSourceRecord = {
+        ...metadata,
+        formatVersion: 1,
+        revision: current.revision + 1,
+        updatedAt: new Date().toISOString(),
+      };
+      if (JSON.parse(original).formatVersion === 1 && current.savedPassages) {
+        // The exact unsafe experimental row is already preserved in the committed import archive.
+        // Do not put it back into the ordinary Source history decoder.
+        await atomicWriteJson(file, next, MAX_RECORD_BYTES);
+      } else await persistSourceRevision(paths, current, next);
+    }),
+  );
+}
+
+/** Bounded, validated originals for the document-store migration, never a live rewrite. */
+export async function readScientAnnotationMigrationSnapshots(root: string) {
+  const paths = await sourceStorePaths(root);
+  const records: ScientSourceRecord[] = [];
+  const snapshots: { sourceId: string; content: string }[] = [];
+  if ((await snapshot(paths.records)) === "missing") return { records, snapshots };
+  if (
+    (await snapshot(paths.records)) !== "directory" ||
+    (await NodeFSP.realpath(paths.records)) !== paths.records
+  )
+    throw new Error("The Sources record directory is unsafe.");
+  const names = await NodeFSP.readdir(paths.records);
+  if (names.length > 10_000) throw new Error("Too many Sources for a bounded migration.");
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const content = await readBoundedText(NodePath.join(paths.records, name), MAX_RECORD_BYTES);
+    const record = decodeSourceForAnnotationMigration(content);
+    if (record.projectId !== paths.identity.projectId || name !== record.sourceId + ".json")
+      throw new Error("A Source does not belong to this project.");
+    records.push(record);
+    snapshots.push({ sourceId: record.sourceId, content });
+  }
+  for (const record of records) {
+    const directory = NodePath.join(paths.history, record.sourceId);
+    if ((await snapshot(directory)) === "missing") continue;
+    if (
+      (await snapshot(directory)) !== "directory" ||
+      (await NodeFSP.realpath(directory)) !== directory
+    )
+      throw new Error("Source revision history must be a real project directory.");
+    const files = await NodeFSP.readdir(directory);
+    if (files.length > 10_000) throw new Error("Source history exceeds its safe migration limit.");
+    for (const name of files) {
+      if (!/^[0-9]+\.json$/u.test(name)) continue;
+      const file = NodePath.join(directory, name);
+      const content = await readBoundedText(file, MAX_RECORD_BYTES);
+      const previous = decodeSourceForAnnotationMigration(content);
+      if (previous.projectId !== paths.identity.projectId || previous.sourceId !== record.sourceId)
+        throw new Error("Source history belongs to another owner; migration stopped.");
+      snapshots.push({
+        sourceId: NodeCrypto.createHash("sha256")
+          .update(record.sourceId + ":" + name)
+          .digest("hex"),
+        content,
+      });
+    }
+  }
+  return { records, snapshots };
 }
 
 export async function updateScientSourceReview(input: {

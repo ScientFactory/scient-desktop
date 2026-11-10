@@ -36,8 +36,10 @@ import {
   type ReactNode,
 } from "react";
 
-const SourcePassages = lazy(() =>
-  import("./SourcePassages").then((module) => ({ default: module.SourcePassages })),
+const DocumentAnnotations = lazy(() =>
+  import("../annotations/DocumentAnnotations").then((module) => ({
+    default: module.DocumentAnnotations,
+  })),
 );
 
 import { Button } from "../../components/ui/button";
@@ -880,13 +882,13 @@ export function ScientSourcesPanel(props: {
       <SourceDetails
         passageControls={
           <Suspense fallback={null}>
-            <SourcePassages
+            <DocumentAnnotations
               key={selectedRecord.sourceId}
               environmentId={props.environmentId}
               root={props.root}
-              sourceId={selectedRecord.sourceId}
+              target={{ kind: "source", sourceId: selectedRecord.sourceId }}
+              title={selectedRecord.title ?? "Untitled source"}
               runtime={null}
-              onRecordChange={sources.acceptSourceRecord}
             />
           </Suspense>
         }

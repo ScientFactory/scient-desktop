@@ -211,6 +211,10 @@
       "types": "./src/state/scientSourcesHttp.ts",
       "default": "./src/state/scientSourcesHttp.ts"
     },
+    "./state/scient-annotations": {
+      "types": "./src/state/scientAnnotationsHttp.ts",
+      "default": "./src/state/scientAnnotationsHttp.ts"
+    },
     "./state/scient-analytics": {
       "types": "./src/state/scientAnalyticsHttp.ts",
       "default": "./src/state/scientAnalyticsHttp.ts"

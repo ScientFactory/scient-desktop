@@ -94,6 +94,7 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient onboarding](./internals/scient-onboarding.md)
 - [Scient skills core](./internals/scient-skills.md)
 - [Scient Sources foundation](./internals/scient-sources.md)
+- [Document annotations: Phase 2A candidate and qualification](./internals/scient-document-annotations.md)
 - [Scient thread queue and upstream retirement seam](./internals/scient-thread-queue.md)
 - [Scient voice architecture](./internals/scient-voice.md)
 - [Custom model connections](./internals/custom-models.md)

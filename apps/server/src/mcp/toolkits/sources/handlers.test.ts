@@ -2,6 +2,9 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeCrypto from "node:crypto";
+import { openAnnotationStore } from "@scientfactory/annotations/store";
+import { migrateLegacyAnnotations } from "../../../scient/annotations/migrateLegacyAnnotations.ts";
 
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { SCIENT_SOURCE_RECORDS_DIRECTORY } from "@scientfactory/scient-sources/store";
@@ -205,6 +208,81 @@ afterEach(async () => {
 });
 
 describe("Scient Sources MCP handlers", () => {
+  it.effect(
+    "projects canonical annotations through the existing bounded read tool after migration",
+    () =>
+      Effect.gen(function* () {
+        const root = yield* Effect.promise(() => fixture("scient-canonical-mcp-"));
+        const previous = process.env.SCIENT_ANNOTATIONS_PREVIEW_ROOT;
+        process.env.SCIENT_ANNOTATIONS_PREVIEW_ROOT = root;
+        try {
+          yield* Effect.promise(async () => {
+            await writeSource(root, {
+              sourceId: "source_canonical",
+              title: "Canonical",
+              hasPdf: true,
+            });
+            const relativePath = ".scient/sources/files/sha256/aa/" + "a".repeat(64) + ".pdf";
+            const path = await writeProjectPdf(root, relativePath, "canonical fixture");
+            const bytes = await NodeFSP.readFile(path);
+            const store = await openAnnotationStore(root, {
+              principal: "qa",
+              generation: "qa",
+              check: async () => {},
+              publish: (f) => f(),
+            });
+            await migrateLegacyAnnotations(store);
+            const resource = (await store.resourceFor(relativePath, true))!;
+            await store.mutate({
+              action: "create",
+              operationId: "op",
+              annotationId: "canonical-note",
+              resourceId: resource.resourceId,
+              note: "Independent note",
+              highlighted: false,
+              capture: {
+                profile: "pdf-native-area-v1",
+                material: {
+                  sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+                  byteLength: bytes.length,
+                },
+                pages: [
+                  {
+                    page: 1,
+                    viewBox: [0, 0, 600, 800],
+                    rotation: 0,
+                    userUnit: 1,
+                    rectangles: [[1, 1, 10, 10]],
+                  },
+                ],
+              },
+            });
+          });
+          const threadId = ThreadId.make("thread-canonical");
+          const projectId = ProjectId.make("project-canonical");
+          const result = yield* provideContext(
+            readScientSourcePassagesForInvocation({ sourceId: "source_canonical" }),
+            {
+              invocation: makeInvocation(threadId),
+              query: makeQuery({
+                project: makeProject(projectId, root),
+                thread: makeThread({ threadId, projectId, worktreePath: root }),
+              }),
+            },
+          );
+          expect(result.total).toBe(1);
+          expect(result.passages[0]).toMatchObject({
+            annotationId: "canonical-note",
+            note: "Independent note",
+            bodyFormat: "plain-text",
+          });
+          expect(yield* encodeUnknownJson(result)).not.toContain(root);
+        } finally {
+          if (previous === undefined) delete process.env.SCIENT_ANNOTATIONS_PREVIEW_ROOT;
+          else process.env.SCIENT_ANNOTATIONS_PREVIEW_ROOT = previous;
+        }
+      }),
+  );
   it.effect(
     "reads bounded saved passages from the active worktree and rejects missing grants",
     () =>

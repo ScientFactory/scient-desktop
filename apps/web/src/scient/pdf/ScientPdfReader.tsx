@@ -55,9 +55,13 @@ import {
 } from "./pdfReaderModel";
 import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderSessionStore";
 import { useScientPdfReader } from "./useScientPdfReader";
-import type { SourcePassageContext } from "../sources/SourcePassages";
-const SourcePassages = lazy(() =>
-  import("../sources/SourcePassages").then((module) => ({ default: module.SourcePassages })),
+import type { SourceAnnotationContext } from "../annotations/context";
+import type { DocumentAnnotationsProps } from "../annotations/DocumentAnnotations";
+import { workspacePdfSource } from "./pdfSource";
+const DocumentAnnotations = lazy(() =>
+  import("../annotations/DocumentAnnotations").then((module) => ({
+    default: module.DocumentAnnotations,
+  })),
 );
 
 import "pdfjs-dist/legacy/web/pdf_viewer.css";
@@ -140,14 +144,70 @@ function PdfPasswordPrompt(props: {
   );
 }
 
-export function ScientPdfReader(props: {
-  readonly sourcePassages?: SourcePassageContext;
+type ReaderProps = {
+  readonly sourcePassages?: SourceAnnotationContext;
   readonly actions?: PdfSourceActions;
   readonly refreshKey?: number;
   readonly resolver?: PdfSourceResolver;
   readonly source: PdfSourceDescriptor;
   readonly syncNavigation?: PdfSyncNavigation;
-}) {
+};
+type AnnotationContext = Omit<DocumentAnnotationsProps, "runtime" | "title">;
+export function ScientPdfReader(props: ReaderProps) {
+  const [retained, setRetained] = useState<
+    Parameters<NonNullable<DocumentAnnotationsProps["onOpenAnnotatedVersion"]>>[0] | null
+  >(null);
+  const environmentId =
+    props.sourcePassages?.environmentId ?? EnvironmentId.make(props.source.authority);
+  const documentKey = pdfReaderSessionDocumentKey(props.source);
+  // A source change resets the wrapper, while an annotated revision keeps its resource identity.
+  const [retainedFor, setRetainedFor] = useState(documentKey);
+  if (retainedFor !== documentKey) {
+    setRetainedFor(documentKey);
+    setRetained(null);
+  }
+  const openRetained: NonNullable<DocumentAnnotationsProps["onOpenAnnotatedVersion"]> = setRetained;
+  if (retained)
+    return (
+      <div className="flex h-full min-h-0 flex-col">
+        <div className="flex items-center justify-between px-3 py-1 text-xs text-muted-foreground">
+          <span>Annotated version</span>
+          <button
+            type="button"
+            className="rounded px-2 py-1 hover:bg-muted hover:text-foreground"
+            onClick={() => setRetained(null)}
+          >
+            Return to current PDF
+          </button>
+        </div>
+        <div className="min-h-0 flex-1">
+          <ResolvedScientPdfReader
+            key={retained.resourceId + retained.relativePath}
+            source={workspacePdfSource({
+              environmentId,
+              workspaceRoot: retained.workspaceRoot,
+              relativePath: retained.relativePath,
+              fileName: props.source.fileName,
+            })}
+            {...(props.actions ? { actions: props.actions } : {})}
+            annotationContext={{
+              environmentId,
+              root: retained.workspaceRoot,
+              target: { kind: "resource", resourceId: retained.resourceId },
+            }}
+          />
+        </div>
+      </div>
+    );
+  return <ResolvedScientPdfReader {...props} onOpenAnnotatedVersion={openRetained} />;
+}
+
+function ResolvedScientPdfReader(
+  props: ReaderProps & {
+    annotationContext?: AnnotationContext;
+    onOpenAnnotatedVersion?: DocumentAnnotationsProps["onOpenAnnotatedVersion"];
+  },
+) {
   const resolver = props.resolver ?? webPdfSourceResolver;
   const asset = resolver.useResolve(props.source);
   const previousRefreshKey = useRef(props.refreshKey);
@@ -157,12 +217,45 @@ export function ScientPdfReader(props: {
     asset.refresh();
   }, [asset.refresh, props.refreshKey]);
   if (asset._tag === "Failure") {
+    const context: AnnotationContext | undefined =
+      props.annotationContext ??
+      (props.sourcePassages
+        ? {
+            environmentId: props.sourcePassages.environmentId,
+            root: props.sourcePassages.root,
+            target: {
+              kind: "source",
+              sourceId: props.sourcePassages.sourceId,
+              ...(props.sourcePassages.attachmentId
+                ? { attachmentId: props.sourcePassages.attachmentId }
+                : {}),
+            },
+          }
+        : props.source._tag === "workspace-pdf"
+          ? {
+              environmentId: EnvironmentId.make(props.source.authority),
+              root: props.source.workspaceRoot,
+              target: { kind: "file", relativePath: props.source.relativePath },
+            }
+          : undefined);
     return (
       <div className="scient-pdf-reader">
         <div className="scient-pdf-state-card text-destructive">
           <FileText className="size-6" aria-hidden="true" />
           <h2>Unable to open PDF</h2>
           <p>Scient could not create an authorized preview for this file.</p>
+          {context ? (
+            <Suspense fallback={null}>
+              <DocumentAnnotations
+                {...context}
+                title={props.source.title}
+                runtime={null}
+                {...(props.onOpenAnnotatedVersion
+                  ? { onOpenAnnotatedVersion: props.onOpenAnnotatedVersion }
+                  : {})}
+              />
+            </Suspense>
+          ) : null}
         </div>
       </div>
     );
@@ -188,13 +281,19 @@ export function ScientPdfReader(props: {
       refreshSource={asset.refresh}
       actions={props.actions ?? webPdfSourceActions}
       {...(props.sourcePassages ? { sourcePassages: props.sourcePassages } : {})}
+      {...(props.annotationContext ? { annotationContext: props.annotationContext } : {})}
+      {...(props.onOpenAnnotatedVersion
+        ? { onOpenAnnotatedVersion: props.onOpenAnnotatedVersion }
+        : {})}
       {...(props.syncNavigation === undefined ? {} : { syncNavigation: props.syncNavigation })}
     />
   );
 }
 
 function LoadedScientPdfReader(props: {
-  readonly sourcePassages?: SourcePassageContext;
+  readonly annotationContext?: AnnotationContext;
+  readonly onOpenAnnotatedVersion?: DocumentAnnotationsProps["onOpenAnnotatedVersion"];
+  readonly sourcePassages?: SourceAnnotationContext;
   readonly actions: PdfSourceActions;
   readonly documentKey: string;
   readonly source: PdfSourceDescriptor;
@@ -485,11 +584,46 @@ function LoadedScientPdfReader(props: {
         >
           <Search />
         </ReaderButton>
-        {props.sourcePassages ? (
+        {props.annotationContext ? (
           <Suspense fallback={null}>
-            <SourcePassages
+            <DocumentAnnotations
+              {...props.annotationContext}
+              title={props.source.title}
+              runtime={state.phase === "ready" ? reader.runtimeRef.current : null}
+            />
+          </Suspense>
+        ) : props.sourcePassages?.attachmentId ? (
+          <Suspense fallback={null}>
+            <DocumentAnnotations
               key={`${props.sourcePassages.environmentId}:${props.sourcePassages.root}:${props.sourcePassages.sourceId}:${props.sourcePassages.attachmentId}`}
-              {...props.sourcePassages}
+              environmentId={props.sourcePassages.environmentId}
+              root={props.sourcePassages.root}
+              target={{
+                kind: "source",
+                sourceId: props.sourcePassages.sourceId,
+                attachmentId: props.sourcePassages.attachmentId,
+              }}
+              title={props.source.title}
+              {...(props.onOpenAnnotatedVersion
+                ? { onOpenAnnotatedVersion: props.onOpenAnnotatedVersion }
+                : {})}
+              {...(props.sourcePassages.onAskScient
+                ? { onAskScient: props.sourcePassages.onAskScient }
+                : {})}
+              runtime={state.phase === "ready" ? reader.runtimeRef.current : null}
+            />
+          </Suspense>
+        ) : props.source._tag === "workspace-pdf" ? (
+          <Suspense fallback={null}>
+            <DocumentAnnotations
+              key={props.documentKey}
+              environmentId={EnvironmentId.make(props.source.authority)}
+              root={props.source.workspaceRoot}
+              target={{ kind: "file", relativePath: props.source.relativePath }}
+              title={props.source.title}
+              {...(props.onOpenAnnotatedVersion
+                ? { onOpenAnnotatedVersion: props.onOpenAnnotatedVersion }
+                : {})}
               runtime={state.phase === "ready" ? reader.runtimeRef.current : null}
             />
           </Suspense>

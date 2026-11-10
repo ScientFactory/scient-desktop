@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { EnvironmentId } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Duration from "effect/Duration";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -82,6 +84,80 @@ const failingSessionLookupCredentialLayer = Layer.effect(
 );
 
 it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
+  it.effect.each(["revoke", "revokeAllExcept", "replace"] as const)(
+    "orders durable publication with %s and rejects any later publication",
+    (kind) =>
+      Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const issued = yield* sessions.issue({
+          subject: "publication-test",
+          method: "bearer-access-token",
+        });
+        const administrator = yield* sessions.issue({ subject: "administrator" });
+        const started = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const order: string[] = [];
+        const publication = yield* sessions
+          .withActiveSession(
+            issued.sessionId,
+            Effect.gen(function* () {
+              yield* Deferred.succeed(started, undefined);
+              yield* Deferred.await(release);
+              order.push("committed");
+            }),
+          )
+          .pipe(Effect.forkScoped({ startImmediately: true }));
+        yield* Deferred.await(started);
+        const revocation =
+          kind === "revoke"
+            ? sessions.revoke(issued.sessionId).pipe(Effect.asVoid)
+            : kind === "revokeAllExcept"
+              ? sessions.revokeAllExcept(administrator.sessionId).pipe(Effect.asVoid)
+              : sessions
+                  .issue({
+                    subject: "publication-test",
+                    method: "bearer-access-token",
+                    replaceActiveForSubjectAndMethod: true,
+                  })
+                  .pipe(Effect.asVoid);
+        const revoking = yield* revocation.pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              order.push("revoked");
+            }),
+          ),
+          Effect.forkScoped({ startImmediately: true }),
+        );
+        expect(order).toEqual([]);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(publication);
+        yield* Fiber.join(revoking);
+        expect(order).toEqual(["committed", "revoked"]);
+        const error = yield* Effect.flip(
+          sessions.withActiveSession(
+            issued.sessionId,
+            Effect.sync(() => {
+              order.push("must not commit");
+            }),
+          ),
+        );
+        expect(error._tag).toBe("SessionTokenRevokedError");
+        expect(order).toEqual(["committed", "revoked"]);
+      }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
+
+  it.effect("rechecks expiry even for a connected session before publication", () =>
+    Effect.gen(function* () {
+      const sessions = yield* SessionStore.SessionStore;
+      const issued = yield* sessions.issue({ ttl: Duration.seconds(1) });
+      yield* sessions.markConnected(issued.sessionId);
+      yield* TestClock.adjust(Duration.seconds(2));
+      const error = yield* Effect.flip(
+        sessions.withActiveSession(issued.sessionId, Effect.succeed("not committed")),
+      );
+      expect(error._tag).toBe("SessionTokenExpiredError");
+    }).pipe(Effect.provide(makeSessionStoreLayer())),
+  );
   it.effect("keys remote cookies by environment identity instead of state directory", () =>
     Effect.gen(function* () {
       const cookieName = (stateDir: string, environmentId: EnvironmentId) =>

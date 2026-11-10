@@ -1,6 +1,7 @@
 import { PermissionFlag, version } from "pdfjs-dist/legacy/build/pdf.mjs";
 import type { PDFPageView } from "pdfjs-dist/types/web/pdf_page_view";
 import type { ScientPdfRuntime } from "../pdfRuntime";
+import type { AnnotationCapture, PdfAreaCapture } from "@scientfactory/annotations";
 import {
   capturePdfPassage,
   passageText,
@@ -15,6 +16,184 @@ import {
 } from "./pdfPassageModel";
 
 const materialCache = new WeakMap<ScientPdfRuntime, Promise<PassageMaterial>>();
+/** Deliberate area capture in native PDF coordinates; independent of any text layer. */
+export function beginPdfAreaSelection(
+  runtime: ScientPdfRuntime,
+  onCapture: (capture: PdfAreaCapture) => void,
+  onCancel: () => void,
+  onError: (message: string) => void,
+): () => void {
+  const overlays: HTMLElement[] = [];
+  let disposed = false;
+  let capturing = false;
+  const cancel = () => {
+    if (!disposed) {
+      clear();
+      onCancel();
+    }
+  };
+  const clear = () => {
+    disposed = true;
+    for (const overlay of overlays) overlay.remove();
+    document.removeEventListener("keydown", keyboard);
+    runtime.viewer.container.removeEventListener("scroll", cancel);
+    runtime.eventBus.off("scalechanging", cancel);
+    runtime.eventBus.off("rotationchanging", cancel);
+  };
+  const keyboard = (event: KeyboardEvent) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      clear();
+      onCancel();
+    }
+  };
+  document.addEventListener("keydown", keyboard);
+  runtime.viewer.container.addEventListener("scroll", cancel, { passive: true });
+  runtime.eventBus.on("scalechanging", cancel);
+  runtime.eventBus.on("rotationchanging", cancel);
+  const current = runtime.viewer.currentPageNumber;
+  const view = pageView(runtime, current);
+  if (!view?.pdfPage || !view.div.isConnected) {
+    clear();
+    onError("Wait for the page to finish loading.");
+    return clear;
+  }
+  const overlay = document.createElement("div");
+  overlay.tabIndex = 0;
+  overlay.role = "application";
+  overlay.ariaLabel =
+    "Select PDF area. Drag, or use arrows to move, Shift and arrows to resize. Enter confirms; Escape cancels.";
+  overlay.style.cssText =
+    "position:absolute;inset:0;z-index:10;cursor:crosshair;touch-action:none;background:rgba(100,116,139,.03)";
+  const box = document.createElement("div");
+  box.style.cssText =
+    "position:absolute;pointer-events:none;border:1px solid #64748b;background:rgba(100,116,139,.08)";
+  overlay.append(box);
+  view.div.append(overlay);
+  overlays.push(overlay);
+  let region = {
+    x: view.div.clientWidth * 0.15,
+    y: view.div.clientHeight * 0.15,
+    width: view.div.clientWidth * 0.5,
+    height: view.div.clientHeight * 0.15,
+  };
+  const paint = () => {
+    box.style.left = region.x + "px";
+    box.style.top = region.y + "px";
+    box.style.width = region.width + "px";
+    box.style.height = region.height + "px";
+  };
+  paint();
+  let start: { x: number; y: number } | null = null;
+  const point = (event: PointerEvent) => {
+    const bounds = overlay.getBoundingClientRect();
+    return {
+      x: Math.max(
+        0,
+        Math.min(
+          overlay.clientWidth,
+          ((event.clientX - bounds.left) * overlay.clientWidth) / bounds.width,
+        ),
+      ),
+      y: Math.max(
+        0,
+        Math.min(
+          overlay.clientHeight,
+          ((event.clientY - bounds.top) * overlay.clientHeight) / bounds.height,
+        ),
+      ),
+    };
+  };
+  const capture = async () => {
+    if (region.width < 3 || region.height < 3 || disposed || capturing) return;
+    capturing = true;
+    const corners = [
+      view.viewport.convertToPdfPoint(
+        (region.x * view.viewport.width) / overlay.clientWidth,
+        (region.y * view.viewport.height) / overlay.clientHeight,
+      ),
+      view.viewport.convertToPdfPoint(
+        ((region.x + region.width) * view.viewport.width) / overlay.clientWidth,
+        ((region.y + region.height) * view.viewport.height) / overlay.clientHeight,
+      ),
+    ];
+    const bounds = view.pdfPage!.view;
+    const rectangle = [
+      Math.max(bounds[0]!, Math.min(corners[0]![0]!, corners[1]![0]!)),
+      Math.max(bounds[1]!, Math.min(corners[0]![1]!, corners[1]![1]!)),
+      Math.min(bounds[2]!, Math.max(corners[0]![0]!, corners[1]![0]!)),
+      Math.min(bounds[3]!, Math.max(corners[0]![1]!, corners[1]![1]!)),
+    ] as const;
+    try {
+      const material = await readPassageMaterial(runtime);
+      if (disposed) return;
+      const geometry = pageGeometry(runtime, current);
+      clear();
+      onCapture({
+        profile: "pdf-native-area-v1",
+        material,
+        pages: [{ ...geometry, rectangles: [rectangle] }],
+      });
+    } catch (error) {
+      if (!disposed) {
+        clear();
+        onError(error instanceof Error ? error.message : "This area could not be saved.");
+      }
+    }
+  };
+  overlay.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    start = point(event);
+    overlay.setPointerCapture(event.pointerId);
+    region = { ...start, width: 0, height: 0 };
+    paint();
+  });
+  overlay.addEventListener("pointermove", (event) => {
+    if (!start) return;
+    const end = point(event);
+    region = {
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(start.x - end.x),
+      height: Math.abs(start.y - end.y),
+    };
+    paint();
+  });
+  overlay.addEventListener("pointerup", (event) => {
+    if (!start) return;
+    start = null;
+    overlay.releasePointerCapture(event.pointerId);
+    void capture();
+  });
+  overlay.addEventListener("pointercancel", () => {
+    clear();
+    onCancel();
+  });
+  overlay.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void capture();
+      return;
+    }
+    if (!event.key.startsWith("Arrow")) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const dx = event.key === "ArrowLeft" ? -10 : event.key === "ArrowRight" ? 10 : 0;
+    const dy = event.key === "ArrowUp" ? -10 : event.key === "ArrowDown" ? 10 : 0;
+    if (event.shiftKey) {
+      region.width = Math.max(3, Math.min(overlay.clientWidth - region.x, region.width + dx));
+      region.height = Math.max(3, Math.min(overlay.clientHeight - region.y, region.height + dy));
+    } else {
+      region.x = Math.max(0, Math.min(overlay.clientWidth - region.width, region.x + dx));
+      region.y = Math.max(0, Math.min(overlay.clientHeight - region.height, region.y + dy));
+    }
+    paint();
+  });
+  overlay.focus();
+  return clear;
+}
 const MAX_MATERIAL_BYTES = 100 * 1024 * 1024;
 const MAX_PAGE_CHARACTERS = 250_000;
 const MAX_PAGE_NODES = 50_000;
@@ -280,9 +459,28 @@ export async function captureSelectedPdfPassage(
 
 export async function verifyCapturedPdfPassage(
   runtime: ScientPdfRuntime,
-  capture: PdfPassageCapture,
+  capture: AnnotationCapture,
 ) {
   const material = await readPassageMaterial(runtime);
+  if (capture.profile === "pdf-native-area-v1") {
+    if (
+      material.sha256 !== capture.material.sha256 ||
+      material.byteLength !== capture.material.byteLength
+    )
+      return { _tag: "NotExact", reason: "material-changed" } as const;
+    for (const saved of capture.pages) {
+      if (saved.page > runtime.document.numPages)
+        return { _tag: "NotExact", reason: "page-missing" } as const;
+      const page = await runtime.document.getPage(saved.page);
+      if (
+        JSON.stringify(page.view) !== JSON.stringify(saved.viewBox) ||
+        page.rotate !== saved.rotation ||
+        page.userUnit !== saved.userUnit
+      )
+        return { _tag: "NotExact", reason: "page-geometry-changed" } as const;
+    }
+    return { _tag: "Exact" } as const;
+  }
   const pages: PassagePage[] = [];
   if (material.sha256 === capture.material.sha256) {
     for (const page of capture.pages) {
@@ -296,7 +494,7 @@ export async function verifyCapturedPdfPassage(
 /** Temporary marks use native PDF coordinates, never saved screen pixels. */
 export function showCapturedPdfPassage(
   runtime: ScientPdfRuntime,
-  capture: PdfPassageCapture,
+  capture: AnnotationCapture,
   options?: {
     navigate?: boolean;
     onActivate?: (bounds: DOMRect) => void;
@@ -314,7 +512,7 @@ export function showCapturedPdfPassage(
     clear();
     for (const page of capture.pages) {
       const view = pageView(runtime, page.page);
-      const layer = view?.textLayer?.div;
+      const layer = view?.textLayer?.div ?? view?.canvas;
       if (!view || !layer?.isConnected) continue;
       const layerBounds = layer.getBoundingClientRect();
       const parentBounds = view.div.getBoundingClientRect();

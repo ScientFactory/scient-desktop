@@ -1,6 +1,6 @@
 import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import type { ScientPassageCapture } from "@scientfactory/scient-sources";
+import type { PdfTextCapture } from "@scientfactory/annotations";
 
 // Exact PDF.js extraction profile, shared with the bounded saved-passage schema.
 export const PDF_PASSAGE_PROFILE = "pdfjs-text-layer-utf16-eol-v1";
@@ -26,7 +26,7 @@ export interface PassageSelection extends PassagePage {
   readonly rectangles: ReadonlyArray<PdfRectangle>;
 }
 
-export type PdfPassageCapture = ScientPassageCapture;
+export type PdfPassageCapture = PdfTextCapture;
 
 export type PassageRefusal =
   | "empty-selection"

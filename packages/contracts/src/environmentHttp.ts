@@ -1,6 +1,16 @@
 import * as Context from "effect/Context";
 import type * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
+import { AssetCreateUrlResult } from "./assets.ts";
+import {
+  AnnotationDocumentRequest,
+  AnnotationDocumentResult,
+  AnnotationPrepareRequest,
+  AnnotationMutationRequest,
+  AnnotationMutation,
+  AnnotationMaterialRequest,
+  AnnotationMaterialResult,
+} from "./scientAnnotations.ts";
 import * as HttpApi from "effect/unstable/httpapi/HttpApi";
 import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
@@ -182,6 +192,7 @@ export const EnvironmentInternalErrorReason = Schema.Literals([
   "scient_project_inspection_failed",
   "scient_project_initialization_failed",
   "scient_sources_operation_failed",
+  "scient_annotations_operation_failed",
   "scient_latex_build_failed",
   "scient_latex_navigation_failed",
   "scient_latex_toolchain_failed",
@@ -1082,6 +1093,39 @@ export class EnvironmentScientThreadQueueHttpApi extends HttpApiGroup.make("scie
   ) {}
 // SCIENT-FORK:END
 
+export class EnvironmentScientAnnotationsHttpApi extends HttpApiGroup.make("scientAnnotations")
+  .add(
+    HttpApiEndpoint.post("open", "/api/scient/annotations/open", {
+      headers: OptionalBearerHeaders,
+      payload: AnnotationDocumentRequest,
+      success: AnnotationDocumentResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("prepare", "/api/scient/annotations/prepare", {
+      headers: OptionalBearerHeaders,
+      payload: AnnotationPrepareRequest,
+      success: AnnotationDocumentResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("mutate", "/api/scient/annotations/mutate", {
+      headers: OptionalBearerHeaders,
+      payload: AnnotationMutationRequest,
+      success: AnnotationMutation,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("material", "/api/scient/annotations/material", {
+      headers: OptionalBearerHeaders,
+      payload: AnnotationMaterialRequest,
+      success: AnnotationMaterialResult,
+      error: EnvironmentHttpCommonError,
+    }).middleware(EnvironmentAuthenticatedAuth),
+  ) {}
 export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentMetadataHttpApi)
   .add(EnvironmentAuthHttpApi)
@@ -1089,6 +1133,7 @@ export class EnvironmentHttpApi extends HttpApi.make("environment")
   .add(EnvironmentPullRequestsHttpApi)
   .add(EnvironmentScientProjectHttpApi)
   .add(EnvironmentScientSourcesHttpApi)
+  .add(EnvironmentScientAnnotationsHttpApi)
   .add(EnvironmentScientMarkdownHttpApi)
   .add(EnvironmentScientAnalyticsHttpApi)
   .add(EnvironmentScientLatexHttpApi)

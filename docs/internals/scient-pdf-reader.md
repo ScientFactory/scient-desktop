@@ -106,8 +106,9 @@ layout from replacing a valid saved viewport.
 
 Existing PDF annotations and interactive forms render, but PDF.js annotation
 editing is disabled. Scient annotation identity, provenance, persistence, and
-cross-artifact behavior remain a later product layer. This reader exposes a
-stable document/page navigation seam without inventing that data model early.
+cross-artifact behavior are supplied by the separate, explicitly gated
+[Phase 2A annotation candidate](scient-document-annotations.md). Existing PDF
+embedded annotations are not rewritten by that layer.
 
 OCR is likewise out of scope. The reader samples only the opening pages for text
 and describes that limited observation rather than declaring the whole document
@@ -189,10 +190,11 @@ geometry, and cold timings, not document text. Use licensed, non-sensitive
 fixtures; the supplied module is executable code. Matching outputs on a small
 corpus do not certify arbitrary PDFs, OCR quality, or extractor-version stability.
 
-Expand real-corpus coverage and validate selection, geometry, recovery,
-accessibility, and performance before proposing persistent data. Workspace
-authority and durable operations must reuse their separately reviewed foundation;
-this reader proof does not accept those architecture decisions. Update this
+The standalone probe still persists nothing. The gated annotation layer now
+reuses its native capture adapter and the canonical annotations schema; it adds
+durable ownership and operation tests without certifying arbitrary text selection.
+Expand real-corpus selection, geometry, recovery, accessibility and performance
+qualification before activation. The probe does not accept architecture decisions. Update this
 section whenever the proof, extraction profile, limits, or persistence boundary
 changes. Public Help should not advertise this development-only experiment.
 

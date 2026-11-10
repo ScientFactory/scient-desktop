@@ -12,6 +12,7 @@ import {
   ScientSourceType,
 } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
+import { AnnotationRecord } from "@scientfactory/annotations";
 import { Tool, Toolkit } from "effect/unstable/ai";
 
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -369,7 +370,9 @@ export const ScientSourcePassagesTool = Tool.make("scient_sources_passages", {
     limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 5 }))),
   }),
   success: Schema.Struct({
-    passages: Schema.Array(ScientSavedPassage).check(Schema.isMaxLength(5)),
+    passages: Schema.Array(Schema.Union([ScientSavedPassage, AnnotationRecord])).check(
+      Schema.isMaxLength(5),
+    ),
     total: Schema.Int,
     nextOffset: Schema.NullOr(Schema.Int),
   }),

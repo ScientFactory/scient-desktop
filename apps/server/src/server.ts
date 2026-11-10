@@ -169,6 +169,7 @@ import * as LatexToolchain from "./scient/latex/LatexToolchain.ts";
 import * as LatexSyncTex from "./scient/latex/LatexSyncTex.ts";
 import { scientProjectHttpApiLayer } from "./scientProject/http.ts";
 import { scientSourcesHttpApiLayer } from "./scient/sources/http.ts";
+import { scientAnnotationsHttpApiLayer } from "./scient/annotations/http.ts";
 import { scientLatexHttpApiLayer } from "./scient/latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./scient/markdown/http.ts";
 import { scientThreadQueueHttpApiLayer } from "./scient/threadQueue/http.ts";
@@ -639,6 +640,7 @@ export const makeRoutesLayer = Layer.mergeAll(
       Layer.provide(pullRequestHttpApiLayer),
       Layer.provide(scientProjectHttpApiLayer),
       Layer.provide(scientSourcesHttpApiLayer),
+      Layer.provide(scientAnnotationsHttpApiLayer),
       Layer.provide(scientAnalyticsHttpApiLayer),
       Layer.provide(scientLatexHttpApiLayer),
       Layer.provide(scientMarkdownHttpApiLayer),
