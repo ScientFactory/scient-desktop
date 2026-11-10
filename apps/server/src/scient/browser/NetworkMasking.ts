@@ -3,6 +3,7 @@
  * the request is hidden however it is written. Best effort: values named like secrets are hidden
  * by parsing each format, and a format Scient cannot parse is left out. All work is linear.
  */
+import { characterEntities } from "character-entities";
 
 /** Values Scient knows are secret for one request, hidden wherever they appear. */
 export interface MaskContext {
@@ -12,7 +13,9 @@ export interface MaskContext {
 }
 
 /** A body with its secrets hidden, or why it is left out. */
-export type CheckedBody = { readonly text: string } | { readonly leftOut: "unparsed" | "too-deep" };
+export type CheckedBody =
+  | { readonly text: string }
+  | { readonly leftOut: "unparsed" | "too-deep" | "too-costly" };
 
 const SECRET_HEADER = /^(cookie|set-cookie|authorization|proxy-authorization)$/iu;
 const URL_HEADER = /^(location|content-location|referer|origin|refresh|link)$/iu;
@@ -56,10 +59,8 @@ const VOID_ELEMENTS = new Set([
   "track",
   "wbr",
 ]);
-/** Known secrets shorter than this would mangle ordinary text. */
+/** Known values of fewer characters are not hidden. */
 const MIN_KNOWN = 4;
-/** A base64 run this long or longer that spells a known secret is hidden. */
-const MIN_BASE64_FORM = 6;
 /** A known value cut off at the end of a shortened text is hidden once this much of it shows. */
 const MIN_CUT_SHOWN = 3;
 /** Elements named like secrets nested deeper than this leave the body out. */
@@ -91,60 +92,122 @@ const hexValue = (code: number) =>
         : -1;
 const codesOf = (chars: string) => new Set(Array.from(chars, (char) => char.charCodeAt(0)));
 
-// Known values. Each character of a known value may be written raw, percent- or form-encoded,
-// JSON- or JavaScript-escaped, or as an HTML character reference, in any mix.
+// Known values. Each one is searched for in five written forms, each read left to right by one
+// Aho-Corasick automaton, so the work is linear in the text whatever the values are: raw (with
+// base64 and base64url), percent-encoded, form-encoded, JSON- or JavaScript-escaped, and as
+// HTML character references.
 
-const NAMED_REFERENCES = new Map<string, number>([
-  ["amp", 38],
-  ["AMP", 38],
-  ["lt", 60],
-  ["LT", 60],
-  ["gt", 62],
-  ["GT", 62],
-  ["quot", 34],
-  ["QUOT", 34],
-  ["apos", 39],
-  ["sol", 47],
-  ["bsol", 92],
-  ["equals", 61],
-  ["plus", 43],
-  ["period", 46],
-  ["comma", 44],
-  ["colon", 58],
-  ["semi", 59],
-  ["excl", 33],
-  ["quest", 63],
-  ["num", 35],
-  ["dollar", 36],
-  ["percnt", 37],
-  ["lpar", 40],
-  ["rpar", 41],
-  ["ast", 42],
-  ["midast", 42],
-  ["commat", 64],
-  ["lsqb", 91],
-  ["lbrack", 91],
-  ["rsqb", 93],
-  ["rbrack", 93],
-  ["Hat", 94],
-  ["lowbar", 95],
-  ["UnderBar", 95],
-  ["grave", 96],
-  ["DiacriticalGrave", 96],
-  ["lcub", 123],
-  ["lbrace", 123],
-  ["verbar", 124],
-  ["vert", 124],
-  ["VerticalLine", 124],
-  ["rcub", 125],
-  ["rbrace", 125],
-  ["Tab", 9],
-  ["NewLine", 10],
-  ["nbsp", 160],
-  ["NonBreakingSpace", 160],
+/** Named references browsers also read without their semicolon (the HTML legacy list). */
+const LEGACY_REFERENCES = new Set([
+  "AElig",
+  "AMP",
+  "Aacute",
+  "Acirc",
+  "Agrave",
+  "Aring",
+  "Atilde",
+  "Auml",
+  "COPY",
+  "Ccedil",
+  "ETH",
+  "Eacute",
+  "Ecirc",
+  "Egrave",
+  "Euml",
+  "GT",
+  "Iacute",
+  "Icirc",
+  "Igrave",
+  "Iuml",
+  "LT",
+  "Ntilde",
+  "Oacute",
+  "Ocirc",
+  "Ograve",
+  "Oslash",
+  "Otilde",
+  "Ouml",
+  "QUOT",
+  "REG",
+  "THORN",
+  "Uacute",
+  "Ucirc",
+  "Ugrave",
+  "Uuml",
+  "Yacute",
+  "aacute",
+  "acirc",
+  "acute",
+  "aelig",
+  "agrave",
+  "amp",
+  "aring",
+  "atilde",
+  "auml",
+  "brvbar",
+  "ccedil",
+  "cedil",
+  "cent",
+  "copy",
+  "curren",
+  "deg",
+  "divide",
+  "eacute",
+  "ecirc",
+  "egrave",
+  "eth",
+  "euml",
+  "frac12",
+  "frac14",
+  "frac34",
+  "gt",
+  "iacute",
+  "icirc",
+  "iexcl",
+  "igrave",
+  "iquest",
+  "iuml",
+  "laquo",
+  "lt",
+  "macr",
+  "micro",
+  "middot",
+  "nbsp",
+  "not",
+  "ntilde",
+  "oacute",
+  "ocirc",
+  "ograve",
+  "ordf",
+  "ordm",
+  "oslash",
+  "otilde",
+  "ouml",
+  "para",
+  "plusmn",
+  "pound",
+  "quot",
+  "raquo",
+  "reg",
+  "sect",
+  "shy",
+  "sup1",
+  "sup2",
+  "sup3",
+  "szlig",
+  "thorn",
+  "times",
+  "uacute",
+  "ucirc",
+  "ugrave",
+  "uml",
+  "uuml",
+  "yacute",
+  "yen",
+  "yuml",
 ]);
-/** References browsers read without their semicolon. */
-const LEGACY_REFERENCES = ["amp", "AMP", "lt", "LT", "gt", "GT", "quot", "QUOT", "nbsp"];
+/** The longest named reference, `CounterClockwiseContourIntegral`. */
+const MAX_REFERENCE_NAME = 31;
 const SHORT_ESCAPES = new Map<number, number>([
   [34, 34],
   [39, 39],
@@ -157,13 +220,16 @@ const SHORT_ESCAPES = new Map<number, number>([
   [116, 9],
 ]);
 
-/** One written character: the code point it stands for and where it ends. */
+/** One written character: what it stands for and where it ends (-1 when none starts here). */
 interface Unit {
-  readonly point: number;
+  readonly text: string;
   readonly end: number;
 }
 
-const NO_UNIT: Unit = { point: -1, end: -1 };
+const NO_UNIT: Unit = { text: "", end: -1 };
+
+const pointUnit = (point: number, end: number): Unit =>
+  point > 0x10ffff ? NO_UNIT : { text: String.fromCodePoint(point), end };
 
 const hexRun = (text: string, from: number, max: number) => {
   let value = 0;
@@ -177,7 +243,7 @@ const hexRun = (text: string, from: number, max: number) => {
   return { value, end: at, digits: at - from };
 };
 
-/** An HTML character reference at `at`: decimal or hex with any zeros, or named. */
+/** An HTML character reference at `at`: decimal or hex with any zeros, or any named one. */
 const referenceAt = (text: string, at: number): Unit => {
   if (text.charCodeAt(at + 1) === 35) {
     let p = at + 2;
@@ -193,15 +259,18 @@ const referenceAt = (text: string, at: number): Unit => {
       p += 1;
     }
     if (p === start) return NO_UNIT;
-    return { point: value, end: text.charCodeAt(p) === 59 ? p + 1 : p };
+    return pointUnit(value, text.charCodeAt(p) === 59 ? p + 1 : p);
   }
   let p = at + 1;
-  while (p < text.length && p - at <= 32 && isAlnum(text.charCodeAt(p))) p += 1;
-  const named = NAMED_REFERENCES.get(text.slice(at + 1, p));
-  if (text.charCodeAt(p) === 59 && named !== undefined) return { point: named, end: p + 1 };
-  for (const legacy of LEGACY_REFERENCES)
-    if (text.startsWith(legacy, at + 1))
-      return { point: NAMED_REFERENCES.get(legacy)!, end: at + 1 + legacy.length };
+  while (p < text.length && p - at <= MAX_REFERENCE_NAME && isAlnum(text.charCodeAt(p))) p += 1;
+  const name = text.slice(at + 1, p);
+  if (text.charCodeAt(p) === 59 && Object.hasOwn(characterEntities, name))
+    return { text: characterEntities[name]!, end: p + 1 };
+  for (let length = name.length; length >= 2; length -= 1) {
+    const legacy = name.slice(0, length);
+    if (LEGACY_REFERENCES.has(legacy))
+      return { text: characterEntities[legacy]!, end: at + 1 + length };
+  }
   return NO_UNIT;
 };
 
@@ -216,7 +285,7 @@ const percentByte = (text: string, at: number) => {
 const percentAt = (text: string, at: number): Unit => {
   const lead = percentByte(text, at);
   if (lead < 0) return NO_UNIT;
-  if (lead < 0x80) return { point: lead, end: at + 3 };
+  if (lead < 0x80) return pointUnit(lead, at + 3);
   const count = lead >= 0xf0 && lead < 0xf8 ? 3 : lead >= 0xe0 ? 2 : lead >= 0xc0 ? 1 : -1;
   if (count < 0) return NO_UNIT;
   let point = lead & (0x3f >> count);
@@ -225,172 +294,248 @@ const percentAt = (text: string, at: number): Unit => {
     if (next < 0x80 || next > 0xbf) return NO_UNIT;
     point = point * 64 + (next & 0x3f);
   }
-  return { point, end: at + (count + 1) * 3 };
+  return pointUnit(point, at + (count + 1) * 3);
 };
 
-/** A JSON or JavaScript escape at `at`: `\uXXXX` (pairs too), `\u{X}`, `\xXX` or a short one. */
+/** A JSON or JavaScript escape at `at`: `\uXXXX`, `\u{X}`, `\xXX` or a short one. */
 const escapeAt = (text: string, at: number): Unit => {
   const kind = text.charCodeAt(at + 1);
   if (kind === 117) {
     if (text.charCodeAt(at + 2) === 123) {
       const run = hexRun(text, at + 3, 6);
       return run.digits > 0 && text.charCodeAt(run.end) === 125
-        ? { point: run.value, end: run.end + 1 }
+        ? pointUnit(run.value, run.end + 1)
         : NO_UNIT;
     }
-    const high = hexRun(text, at + 2, 4);
-    if (high.digits !== 4) return NO_UNIT;
-    if (high.value >= 0xd800 && high.value <= 0xdbff && text.startsWith("\\u", high.end)) {
-      const low = hexRun(text, high.end + 2, 4);
-      if (low.digits === 4 && low.value >= 0xdc00 && low.value <= 0xdfff)
-        return {
-          point: 0x10000 + (high.value - 0xd800) * 0x400 + (low.value - 0xdc00),
-          end: low.end,
-        };
-    }
-    return { point: high.value, end: high.end };
+    // A surrogate pair is two escapes, read as two code units.
+    const unit = hexRun(text, at + 2, 4);
+    return unit.digits === 4 ? { text: String.fromCharCode(unit.value), end: unit.end } : NO_UNIT;
   }
   if (kind === 120) {
     const run = hexRun(text, at + 2, 2);
-    return run.digits === 2 ? { point: run.value, end: run.end } : NO_UNIT;
+    return run.digits === 2 ? pointUnit(run.value, run.end) : NO_UNIT;
   }
   const short = SHORT_ESCAPES.get(kind);
-  return short === undefined ? NO_UNIT : { point: short, end: at + 2 };
+  return short === undefined ? NO_UNIT : { text: String.fromCharCode(short), end: at + 2 };
 };
 
-/** The encoded character starting at `at`, if one starts there. */
-const encodedAt = (text: string, at: number): Unit => {
-  const code = text.charCodeAt(at);
-  if (code === 37) return percentAt(text, at);
-  if (code === 38) return referenceAt(text, at);
-  if (code === 92) return escapeAt(text, at);
-  if (code === 43) return { point: 32, end: at + 1 };
-  return NO_UNIT;
-};
-
-const STARTS_ENCODING = codesOf("%&\\+");
-
-interface KnownValue {
-  readonly raw: string;
-  readonly points: ReadonlyArray<number>;
-  /** Whether the value itself holds characters that start an encoding. */
-  readonly special: boolean;
-  readonly base64: ReadonlyArray<string>;
+/** How one written form reads the text: which character starts an encoding, and how. */
+interface Reading {
+  readonly starts: ReadonlySet<number>;
+  readonly read: (text: string, at: number) => Unit;
 }
 
-/** Base64 and base64url of the value at each of the three byte alignments, without the edges. */
-const base64Forms = (value: string) => {
-  const bytes = Buffer.from(value, "utf8");
-  const forms = new Set<string>();
-  for (let shift = 0; shift < 3; shift += 1) {
-    const encoded = Buffer.concat([Buffer.alloc(shift), bytes]).toString("base64");
-    const form = encoded.slice(
-      Math.ceil((8 * shift) / 6),
-      Math.floor((8 * (shift + bytes.length)) / 6),
-    );
-    if (form.length < MIN_BASE64_FORM) continue;
-    forms.add(form);
-    forms.add(form.replaceAll("+", "-").replaceAll("/", "_"));
+const READINGS: ReadonlyArray<Reading> = [
+  { starts: codesOf("%"), read: percentAt },
+  {
+    starts: codesOf("%+"),
+    read: (text, at) =>
+      text.charCodeAt(at) === 43 ? { text: " ", end: at + 1 } : percentAt(text, at),
+  },
+  { starts: codesOf("\\"), read: escapeAt },
+  { starts: codesOf("&"), read: referenceAt },
+];
+
+/** A dictionary automaton over UTF-16 code units, built once per set of known values. */
+interface Automaton {
+  readonly next: ReadonlyArray<Map<number, number>>;
+  readonly fail: Int32Array;
+  readonly depth: Int32Array;
+  /** The length of the longest pattern that ends in this state, or 0. */
+  readonly match: Int32Array;
+  /** The hidden value's length shown for that pattern. */
+  readonly shown: Int32Array;
+  readonly longest: number;
+}
+
+const buildAutomaton = (
+  patterns: ReadonlyArray<{ readonly text: string; readonly shown: number }>,
+): Automaton => {
+  const next: Array<Map<number, number>> = [new Map()];
+  const depths = [0];
+  const ends = [0];
+  let longest = 0;
+  for (const pattern of patterns) {
+    let state = 0;
+    for (let index = 0; index < pattern.text.length; index += 1) {
+      const code = pattern.text.charCodeAt(index);
+      let child = next[state]!.get(code);
+      if (child === undefined) {
+        child = next.length;
+        next.push(new Map());
+        depths.push(depths[state]! + 1);
+        ends.push(0);
+        next[state]!.set(code, child);
+      }
+      state = child;
+    }
+    ends[state] = Math.max(ends[state]!, pattern.shown);
+    longest = Math.max(longest, pattern.text.length);
   }
-  return [...forms];
+  const fail = new Int32Array(next.length);
+  const match = new Int32Array(next.length);
+  const shown = new Int32Array(next.length);
+  const queue = [...next[0]!.values()];
+  for (let head = 0; head < queue.length; head += 1) {
+    const state = queue[head]!;
+    const ownEnd = ends[state]!;
+    match[state] = ownEnd > 0 ? depths[state]! : match[fail[state]!]!;
+    shown[state] = ownEnd > 0 ? ownEnd : shown[fail[state]!]!;
+    for (const [code, child] of next[state]!) {
+      let back = fail[state]!;
+      while (back !== 0 && !next[back]!.has(code)) back = fail[back]!;
+      fail[child] = next[back]!.get(code) ?? 0;
+      queue.push(child);
+    }
+  }
+  return { next, fail, depth: Int32Array.from(depths), match, shown, longest };
 };
 
-const knownValues = (secrets: ReadonlyArray<string>): ReadonlyArray<KnownValue> =>
-  [...new Set(secrets)]
-    .filter((secret) => secret.length >= MIN_KNOWN)
-    .sort((a, b) => b.length - a.length)
-    .map((raw) => ({
-      raw,
-      points: Array.from(raw, (char) => char.codePointAt(0)!),
-      special: Array.from(raw).some((char) => STARTS_ENCODING.has(char.charCodeAt(0))),
-      base64: base64Forms(raw),
-    }));
+/** Character comparisons one masking call may make before it gives up. */
+const KNOWN_WORK_BUDGET = 32 * 1024 * 1024;
+
+class TooCostly {
+  readonly reason = "too-costly";
+}
 
 /**
- * Where a written form of `value` starting at `at` ends, or -1. Each character is read one way:
- * an encoding that stands for the expected character wins, else the raw character. With `cut`,
- * a text that ends partway through the value matches once enough of it shows.
+ * Feeds the text through one automaton as one reading writes it, collecting the spans
+ * (start, end, shown length) where a known value is written.
  */
-const matchEnd = (text: string, at: number, value: KnownValue, cut: boolean) => {
-  let p = at;
-  for (let index = 0; index < value.points.length; index += 1) {
-    if (p >= text.length) return cut && index >= MIN_CUT_SHOWN ? p : -1;
-    const expected = value.points[index]!;
-    const encoded = encodedAt(text, p);
-    if (encoded.point === expected) {
-      p = encoded.end;
-      continue;
-    }
-    const literal = text.codePointAt(p)!;
-    if (literal !== expected) return -1;
-    p += literal > 0xffff ? 2 : 1;
-  }
-  return p;
-};
-
-const hideWritten = (text: string, value: KnownValue, cut: boolean) => {
-  const first = value.raw.charCodeAt(0);
-  const out: string[] = [];
-  let last = 0;
+const scan = (
+  text: string,
+  automaton: Automaton,
+  reading: Reading | undefined,
+  cut: boolean,
+  spans: number[],
+  work: { left: number },
+) => {
+  const size = automaton.longest + 1;
+  const starts = new Int32Array(size);
+  let state = 0;
+  let fed = 0;
   let at = 0;
+  const feed = (code: number, start: number, end: number) => {
+    let steps = 1;
+    while (state !== 0 && !automaton.next[state]!.has(code)) {
+      state = automaton.fail[state]!;
+      steps += 1;
+    }
+    work.left -= steps;
+    if (work.left < 0) throw new TooCostly();
+    state = automaton.next[state]!.get(code) ?? 0;
+    starts[fed % size] = start;
+    fed += 1;
+    const length = automaton.match[state]!;
+    if (length > 0) spans.push(starts[(fed - length) % size]!, end, automaton.shown[state]!);
+  };
   while (at < text.length) {
     const code = text.charCodeAt(at);
-    if (code === first || STARTS_ENCODING.has(code)) {
-      let end = matchEnd(text, at, value, cut);
-      if (end === -1 && value.special && text.startsWith(value.raw, at))
-        end = at + value.raw.length;
-      if (end !== -1) {
-        out.push(text.slice(last, at), hide(value.raw));
-        last = end;
-        at = end;
-        continue;
-      }
+    const unit = reading?.starts.has(code) === true ? reading.read(text, at) : NO_UNIT;
+    if (unit.end === -1) {
+      feed(code, at, at + 1);
+      at += 1;
+      continue;
     }
-    at += 1;
+    for (let index = 0; index < unit.text.length; index += 1)
+      feed(unit.text.charCodeAt(index), at, unit.end);
+    at = unit.end;
   }
-  if (last === 0) return text;
+  if (!cut) return;
+  const depth = automaton.depth[state]!;
+  if (depth >= MIN_CUT_SHOWN) spans.push(starts[(fed - depth) % size]!, text.length, depth);
+};
+
+/** The text with every span hidden; overlapping spans are hidden as one. */
+const hideSpans = (text: string, spans: number[]) => {
+  if (spans.length === 0) return text;
+  const order = Array.from({ length: spans.length / 3 }, (_, index) => index * 3).sort(
+    (a, b) => spans[a]! - spans[b]! || spans[b + 1]! - spans[a + 1]!,
+  );
+  const out: string[] = [];
+  let last = 0;
+  let index = 0;
+  while (index < order.length) {
+    const first = order[index]!;
+    const start = spans[first]!;
+    let end = spans[first + 1]!;
+    let shown = spans[first + 2]!;
+    index += 1;
+    while (index < order.length && spans[order[index]!]! < end) {
+      const other = order[index]!;
+      end = Math.max(end, spans[other + 1]!);
+      shown = Math.max(shown, spans[other + 2]!);
+      index += 1;
+    }
+    out.push(text.slice(last, start), `<hidden ${shown} chars>`);
+    last = end;
+  }
   out.push(text.slice(last));
   return out.join("");
 };
 
-const hideBase64 = (text: string, value: KnownValue, cut: boolean) => {
-  let result = text;
-  for (const form of value.base64) {
-    if (result.includes(form)) result = result.replaceAll(form, hide(value.raw));
-    if (!cut) continue;
-    // A text cut off partway through the form.
-    for (let at = Math.max(0, result.length - form.length + 1); at < result.length; at += 1) {
-      if (result.length - at < MIN_BASE64_FORM) break;
-      if (result.charCodeAt(at) === form.charCodeAt(0) && form.startsWith(result.slice(at))) {
-        result = `${result.slice(0, at)}${hide(value.raw)}`;
-        break;
-      }
-    }
+/**
+ * Base64 and base64url of the value: on its own (with and without padding) and inside longer
+ * data at each of the three byte alignments, without the characters it shares with its
+ * neighbours.
+ */
+const base64Forms = (value: string) => {
+  const bytes = Buffer.from(value, "utf8");
+  const forms = new Set<string>();
+  const add = (form: string) => {
+    if (form.length === 0) return;
+    forms.add(form);
+    forms.add(form.replaceAll("+", "-").replaceAll("/", "_"));
+  };
+  const whole = bytes.toString("base64");
+  add(whole);
+  add(whole.replace(/=+$/u, ""));
+  for (let shift = 0; shift < 3; shift += 1) {
+    const encoded = Buffer.concat([Buffer.alloc(shift), bytes]).toString("base64");
+    add(encoded.slice(Math.ceil((8 * shift) / 6), Math.floor((8 * (shift + bytes.length)) / 6)));
   }
-  return result;
+  return [...forms];
 };
 
+/** Hides known values, or says the text is too costly to check (`undefined`). */
+export type KnownMask = (text: string, cut?: boolean) => string | undefined;
+
 /**
- * Hides every known secret in text Scient is about to show: raw, percent- or form-encoded,
- * JSON-escaped, as HTML references, or as standard or URL-safe base64 at any alignment. It
- * searches the text for the value's written forms and never decodes the text. `cut` marks a
- * text that was shortened, so a value cut off at its end is hidden too.
+ * Hides every known value of 4 or more characters, raw, percent- or form-encoded, JSON-escaped,
+ * as HTML references, or as base64 at any alignment, by searching for those forms (the text is
+ * never decoded). Shorter values would garble pages and protect nothing. `cut` marks a shortened
+ * text, so a value cut off at its end is hidden too.
  */
-export const knownMasker = (secrets: ReadonlyArray<string>) => {
-  const values = knownValues(secrets);
-  return (text: string, cut = false) => {
-    let result = text;
-    for (const value of values) {
-      result = hideWritten(result, value, cut);
-      result = hideBase64(result, value, cut);
+export const knownMasker = (
+  secrets: ReadonlyArray<string>,
+  options: { readonly workBudget?: number } = {},
+): KnownMask => {
+  const values = [...new Set(secrets)].filter((secret) => Array.from(secret).length >= MIN_KNOWN);
+  if (values.length === 0) return (text) => text;
+  const written = buildAutomaton(values.map((value) => ({ text: value, shown: value.length })));
+  const raw = buildAutomaton(
+    values.flatMap((value) => [
+      { text: value, shown: value.length },
+      ...base64Forms(value).map((form) => ({ text: form, shown: value.length })),
+    ]),
+  );
+  return (text, cut = false) => {
+    const spans: number[] = [];
+    const work = { left: options.workBudget ?? KNOWN_WORK_BUDGET };
+    try {
+      scan(text, raw, undefined, cut, spans, work);
+      for (const reading of READINGS) scan(text, written, reading, cut, spans, work);
+    } catch (error) {
+      if (error instanceof TooCostly) return undefined;
+      throw error;
     }
-    return result;
+    return hideSpans(text, spans);
   };
 };
 
-/** Every known secret in `text` hidden, in any of the forms `knownMasker` searches for. */
+/** Every known secret in `text` hidden; a text too costly to check is hidden whole. */
 export const maskKnown = (text: string, context: MaskContext | undefined) =>
-  context === undefined ? text : knownMasker(context.secrets)(text);
+  context === undefined ? text : (knownMasker(context.secrets)(text) ?? hide(text));
 
 // Best effort, by name, for values Scient does not know.
 
@@ -678,8 +823,8 @@ const decodeReferences = (value: string) => {
   let at = value.indexOf("&");
   while (at !== -1) {
     const unit = referenceAt(value, at);
-    if (unit.point >= 0 && unit.point <= 0x10ffff) {
-      out.push(value.slice(last, at), String.fromCodePoint(unit.point));
+    if (unit.end !== -1) {
+      out.push(value.slice(last, at), unit.text);
       last = unit.end;
     }
     at = value.indexOf("&", Math.max(last, at + 1));
@@ -987,18 +1132,19 @@ const checkBodyAt = (
 
 /**
  * A body with its secrets hidden, parsed by its format, or why it is left out: a format Scient
- * cannot parse, or nesting past the limits. Known secrets in the context are hidden too; `cut`
- * marks a body shortened to its limit.
+ * cannot parse, nesting past the limits, or more work than the budget. Known secrets in the
+ * context are hidden too; `cut` marks a body shortened to its limit.
  */
 export const checkBody = (
   text: string,
   contentType: string,
   context?: MaskContext,
-  cut = false,
+  options: { readonly cut?: boolean; readonly workBudget?: number } = {},
 ): CheckedBody => {
   const checked = checkBodyAt(text, contentType, context?.base, 0);
   if (!("text" in checked) || context === undefined) return checked;
-  return { text: knownMasker(context.secrets)(checked.text, cut) };
+  const masked = knownMasker(context.secrets, options)(checked.text, options.cut);
+  return masked === undefined ? { leftOut: "too-costly" } : { text: masked };
 };
 
 /** A body with its secrets hidden, or `undefined` when it is left out. */
@@ -1037,7 +1183,7 @@ export const maskHeaders = (headers: Readonly<Record<string, string>>, context?:
       else if (header === "refresh") masked = maskRefresh(value, base);
       else if (URL_HEADER.test(name)) masked = maskText(value);
       else masked = maskValue(name, value);
-      return [known(name), known(masked)];
+      return [known(name) ?? hide(name), known(masked) ?? hide(value)];
     }),
   );
 };

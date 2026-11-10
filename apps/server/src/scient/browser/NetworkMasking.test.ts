@@ -8,7 +8,7 @@ import {
   maskKnown,
   maskUrl,
 } from "./NetworkMasking.ts";
-import { adversarialMaskingInputs } from "./NetworkMasking.test-fixtures.ts";
+import { adversarialMaskingInputs, longKnownValue } from "./NetworkMasking.test-fixtures.ts";
 
 describe("network study masking", () => {
   it("hides cookies, authorization and token-looking values, and keeps the rest readable", () => {
@@ -157,7 +157,14 @@ describe("network study masking", () => {
   });
 
   it("hides a known secret in every listed encoding, in URLs, headers and bodies", () => {
-    const secrets = ["short-secret", `p@ss w+rd/é&"'<>~`, "pw🔑key-42"];
+    const secrets = [
+      "short-secret",
+      `p@ss w+rd/é&"'<>~`,
+      "pw🔑key-42",
+      "abcd",
+      "café-secret",
+      "Ω-secret",
+    ];
     const context = { secrets, base: "https://app.test/" };
     for (const secret of secrets) {
       const forms = writtenForms(secret);
@@ -197,7 +204,7 @@ describe("network study masking", () => {
     }
     // A text cut at its limit hides a value cut off at its end.
     const known = knownMasker(secrets);
-    expect(known("ends with short-sec", true)).toBe("ends with <hidden 12 chars>");
+    expect(known("ends with short-sec", true)).toBe("ends with <hidden 9 chars>");
     expect(known("ends with short-sec")).toBe("ends with short-sec");
   });
 
@@ -212,6 +219,37 @@ describe("network study masking", () => {
     const masked = maskBody(deepHtml, "text/html")!;
     expect(masked).not.toContain("deep-pass");
     expect(masked.startsWith("<div><div>")).toBe(true);
+  });
+
+  it("hides known values from 4 characters, base64 too, and leaves shorter ones alone", () => {
+    const known = knownMasker(["abcd", "en", "1"]);
+    for (const written of ["YWJjZA==", "YWJjZA", "x=YWJjZA==&y", "LmFiY2Q=", "Li5hYmNk"])
+      expect(known(written), written).not.toMatch(/YWJjZ|YWJj|FiY2|hYmNk/u);
+    expect(known("abcd")).toBe("<hidden 4 chars>");
+    expect(known("en, 1 and 12 stay")).toBe("en, 1 and 12 stay");
+  });
+
+  it("hides known values written with any named HTML reference", () => {
+    const context = { secrets: ["café-secret", "Ω-secret"] };
+    const page = maskBody("<p>caf&eacute;-secret and &Omega;-secret</p>", "text/html", context)!;
+    expect(page).toBe("<p><hidden 11 chars> and <hidden 8 chars></p>");
+    expect(maskBody("caf&eacute-secret", "text/plain", context)).toBe("<hidden 11 chars>");
+  });
+
+  it("matches long known values in linear work, and leaves out a body past its budget", () => {
+    const text = "a".repeat(64 * 1024);
+    const context = { secrets: [`${"a".repeat(4095)}b`, longKnownValue] };
+    // Five readings of the text, each at most two steps a character.
+    const linear = checkBody(text, "text/plain", context, { workBudget: 10 * text.length });
+    expect(linear).toEqual({ text });
+    const repeated = longKnownValue.repeat(64);
+    expect(
+      checkBody(repeated, "text/plain", context, { workBudget: 10 * repeated.length }),
+    ).toEqual({ text: "<hidden 1024 chars>".repeat(64) });
+    expect(checkBody(text, "text/plain", context, { workBudget: 1000 })).toEqual({
+      leftOut: "too-costly",
+    });
+    expect(knownMasker(context.secrets, { workBudget: 10 })(text)).toBeUndefined();
   });
 
   it("masks every worst-case 64 KB input without failing", () => {
@@ -238,6 +276,8 @@ const writtenForms = (secret: string): ReadonlyArray<readonly [string, string]> 
     "/": "&sol;",
     "@": "&commat;",
     "+": "&plus;",
+    é: "&eacute;",
+    Ω: "&Omega;",
   };
   const units = (point: number) => {
     const text = String.fromCodePoint(point);

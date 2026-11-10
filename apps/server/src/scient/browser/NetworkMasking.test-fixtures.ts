@@ -1,6 +1,11 @@
 /** Worst-case inputs for `NetworkMasking`, shared by its test and its benchmark. */
 import { maskBody, maskHeaders, maskUrl } from "./NetworkMasking.ts";
 
+/** A 1,024-character known value. */
+export const longKnownValue = Array.from({ length: 1024 }, (_, index) =>
+  String.fromCharCode(97 + (index % 26)),
+).join("");
+
 export const adversarialMaskingInputs = (): ReadonlyArray<readonly [string, () => unknown]> => {
   const size = 64 * 1024;
   const fill = (unit: string) => unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
@@ -15,7 +20,18 @@ export const adversarialMaskingInputs = (): ReadonlyArray<readonly [string, () =
     ],
     base: "https://app.test/",
   };
+  /** Long known values whose prefixes the text repeats, which a naive matcher retries at every step. */
+  const long = {
+    secrets: [`${"a".repeat(4095)}b`, longKnownValue],
+    base: "https://app.test/",
+  };
   return [
+    ["long value, repeated prefix", () => maskBody(fill("a"), "text/plain", long)],
+    [
+      "1 KB value, repeated prefix",
+      () => maskBody(fill(longKnownValue.slice(0, 1023)), "text/plain", long),
+    ],
+    ["long values, references", () => maskBody(fill("&#97;"), "text/html", long)],
     ["letters", () => maskBody(fill("a"), "text/plain", context)],
     ["open quote", () => maskBody(`"${fill("a")}`, "text/plain", context)],
     ["quoted keys", () => maskBody(fill(`"a":`), "text/plain", context)],
