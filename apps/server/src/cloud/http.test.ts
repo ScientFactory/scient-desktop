@@ -38,6 +38,18 @@ import * as CloudLink from "./CloudLink.ts";
 import * as ConnectHttp from "./http.ts";
 import * as ConnectReachability from "./ConnectReachability.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
+// SCIENT-FORK:START — these cases cover builds with Scient Connect off; one turns it on.
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+
+const scientIdentity = SCIENT_DESKTOP_IDENTITY as { cloudEnabled: boolean };
+const builtCloudEnabled = scientIdentity.cloudEnabled;
+beforeEach(() => {
+  scientIdentity.cloudEnabled = false;
+});
+afterEach(() => {
+  scientIdentity.cloudEnabled = builtCloudEnabled;
+});
+// SCIENT-FORK:END
 import * as ManagedPolicy from "../policy/ManagedPolicy.ts";
 
 const DESKTOP_BOOTSTRAP_TOKEN = "test-desktop-bootstrap-token";
@@ -337,6 +349,14 @@ it("keeps Scient cloud integration disabled unless explicitly opted in", () => {
     }),
   ).toBe(true);
   expect(ConnectHttp.isScientCloudIntegrationDisabled({})).toBe(true);
+  // SCIENT-FORK:START — a build with Scient Connect on needs no opt-in.
+  scientIdentity.cloudEnabled = true;
+  try {
+    expect(ConnectHttp.isScientCloudIntegrationDisabled({ NODE_ENV: "production" })).toBe(false);
+  } finally {
+    scientIdentity.cloudEnabled = false;
+  }
+  // SCIENT-FORK:END
 });
 
 const withHealthHandler = async <A>(

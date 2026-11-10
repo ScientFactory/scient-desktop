@@ -996,6 +996,9 @@ export const layerClientApi = HttpApiBuilder.group(
             available: t3Chat.available,
             link,
             ...(maxTunnelsOverride === null ? {} : { maxTunnelsOverride }),
+            // SCIENT-FORK:START — clients show the relay's default cap instead of a built-in constant.
+            defaultMaxTunnels: tunnelLimits.defaultMaxTunnels,
+            // SCIENT-FORK:END
           };
         }, mapRelayCommonApiErrors("not_authorized")),
       )

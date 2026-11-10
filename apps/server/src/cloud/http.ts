@@ -24,14 +24,18 @@ import { canLinkHere } from "./linkChecks.ts";
 import type { RelayRequestError } from "./relayResponse.ts";
 import { traceRelayRequest } from "./traceRelayRequest.ts";
 
-// SCIENT-FORK:START — inherited cloud routes stay dormant without explicit owner opt-in.
+// SCIENT-FORK:START — cloud routes follow Scient Connect's identity switch or an explicit opt-in.
 export const isScientCloudIntegrationDisabled = (
   env: Readonly<Record<string, string | undefined>> = process.env,
 ) => {
   const explicitCloudOptIn =
     env.SCIENT_NEXT_CLOUD_ENABLED === "true" ||
     (env.NODE_ENV === "test" && env.SCIENT_NEXT_CLOUD_ROUTE_TEST === "true");
-  return SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled && !explicitCloudOptIn;
+  return (
+    SCIENT_DESKTOP_IDENTITY.safetyEnvelopeEnabled &&
+    !SCIENT_DESKTOP_IDENTITY.cloudEnabled &&
+    !explicitCloudOptIn
+  );
 };
 
 const cloudIntegrationDisabled = () =>
