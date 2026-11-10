@@ -54,6 +54,7 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { toastManager } from "../../components/ui/toast";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { useZoteroSync, ZoteroRefreshDialog } from "./ZoteroSync";
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { initializeScientProjectForOpening } from "../../lib/scientProjectInitialization";
 import { readLocalApi } from "../../localApi";
@@ -254,6 +255,16 @@ export function ScientSourcesPanel(props: {
   }) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const zoteroSync = useZoteroSync({
+    environmentId: props.environmentId,
+    root: props.root,
+    onChanged: async () => {
+      await sources.refreshOverview();
+    },
+  });
+  const hasZoteroSources = (sources.overview?.records ?? []).some((record) =>
+    record.externalReferences.some((reference) => reference.system === "zotero"),
+  );
   const bibliography = useManagedBibliography({
     environmentId: props.environmentId,
     root: props.root,
@@ -1006,6 +1017,7 @@ export function ScientSourcesPanel(props: {
             });
           }}
           onRemove={() => moveToTrash(selectedRecord)}
+          onSendToZotero={() => void zoteroSync.sendToZotero(selectedRecord.sourceId)}
           onOpenHistory={() => setHistorySourceId(selectedRecord.sourceId)}
           onGetPdf={async () => {
             const doi = selectedRecord.identifiers.find(
@@ -1160,6 +1172,12 @@ export function ScientSourcesPanel(props: {
                   <ZoteroMark />
                   Import from Zotero
                 </MenuItem>
+                {hasZoteroSources ? (
+                  <MenuItem onClick={() => void zoteroSync.startRefresh()}>
+                    <RefreshCw />
+                    Refresh from Zotero
+                  </MenuItem>
+                ) : null}
               </MenuPopup>
             </Menu>
           </div>
@@ -1186,6 +1204,14 @@ export function ScientSourcesPanel(props: {
         <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
       ) : null}
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
+      <ZoteroRefreshDialog
+        state={zoteroSync.refresh}
+        resolving={zoteroSync.resolving}
+        onClose={zoteroSync.closeRefresh}
+        onResolve={(sourceId, field, side) =>
+          void zoteroSync.resolveConflict(sourceId, field, side)
+        }
+      />
       {bibliography.status ? (
         <ManagedBibliographyNotice
           files={bibliography.status.files}

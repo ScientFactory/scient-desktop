@@ -20,6 +20,7 @@ import {
   Pencil,
   RefreshCw,
   Trash2,
+  Upload,
 } from "lucide-react";
 import {
   useEffect,
@@ -614,6 +615,7 @@ export function SourceDetails(props: {
   readonly onRefreshMetadata: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
   readonly onOpenHistory?: () => void;
+  readonly onSendToZotero?: () => void;
   readonly onGetPdf?: () => Promise<void>;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
@@ -740,6 +742,12 @@ export function SourceDetails(props: {
               <MenuItem onClick={props.onOpenHistory}>
                 <History />
                 History
+              </MenuItem>
+            ) : null}
+            {props.onSendToZotero ? (
+              <MenuItem onClick={props.onSendToZotero}>
+                <Upload />
+                Send to Zotero
               </MenuItem>
             ) : null}
             <MenuSeparator />

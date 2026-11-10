@@ -23,6 +23,12 @@ import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspace
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
 import { SourceIdentifierLookup } from "../../../scient/sources/SourceIdentifierResolver.ts";
 import {
+  browseZoteroForInvocation,
+  importZoteroForInvocation,
+  refreshZoteroForInvocation,
+  sendToZoteroForInvocation,
+} from "./zoteroHandlers.ts";
+import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
   type ScientSourceAddInput as ScientSourceAddInputType,
@@ -673,6 +679,10 @@ const handlers = {
   scient_sources_search: searchScientSourcesForInvocation,
   scient_sources_read_text: readScientSourceTextForInvocation,
   scient_sources_quote_check: checkScientSourceQuotesForInvocation,
+  scient_sources_zotero_browse: browseZoteroForInvocation,
+  scient_sources_zotero_import: importZoteroForInvocation,
+  scient_sources_zotero_refresh: refreshZoteroForInvocation,
+  scient_sources_zotero_send: sendToZoteroForInvocation,
 } satisfies Parameters<typeof ScientSourcesToolkit.toLayer>[0];
 
 export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(handlers);

@@ -17,6 +17,8 @@ import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import { zoteroKeyLookup } from "./ZoteroAccountKey.ts";
+import { ZoteroTransports } from "./ZoteroConnections.ts";
+import { refreshZoteroSources, sendSourcesToZotero } from "./ZoteroSync.ts";
 import {
   advanceSourceImport,
   beginLocalPdfImport,
@@ -76,7 +78,10 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const observeImport = yield* makeSourceImportAnalytics("user");
     startManagedBibliographySync();
-    const zotero = { webKey: yield* zoteroKeyLookup({ actor: "user" }) };
+    const zotero = {
+      ...(yield* ZoteroTransports),
+      webKey: yield* zoteroKeyLookup({ actor: "user" }),
+    };
     return yield* Effect.succeed(
       handlers
         .handle("overview", (args) =>
@@ -238,6 +243,26 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("beginScopedImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             beginZoteroScopedImport({ ...args.payload, zotero }),
+          ),
+        )
+        .handle("zoteroRefresh", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            refreshZoteroSources({
+              root: args.payload.root,
+              ...(args.payload.sourceIds ? { sourceIds: args.payload.sourceIds } : {}),
+              ...(args.payload.connection ? { connection: args.payload.connection } : {}),
+              choices: {
+                useZotero: new Set(args.payload.useZotero ?? []),
+                keepLocal: new Set(args.payload.keepLocal ?? []),
+              },
+              actor: "user",
+              zotero,
+            }),
+          ),
+        )
+        .handle("zoteroSend", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            sendSourcesToZotero({ ...args.payload, actor: "user", zotero }),
           ),
         )
         .handle("advanceImport", (args) =>

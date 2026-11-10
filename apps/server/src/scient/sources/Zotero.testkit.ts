@@ -70,7 +70,9 @@ export function fakeZoteroTransport(
   };
 }
 
+/** Zotero on this computer, open and answering from `local`. */
 export const fakeZoteroAccess = (local: ZoteroTransport): ZoteroAccess => ({
   webKey: async () => null,
   local,
+  inspectLocal: async () => ({ state: "ready", apiVersion: 3, message: "Ready." }),
 });
