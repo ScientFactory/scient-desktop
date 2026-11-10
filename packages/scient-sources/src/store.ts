@@ -231,6 +231,15 @@ async function atomicCreateJson(
   }
 }
 
+const SOURCE_WRITE_LOCK_SUFFIX = ":source-write";
+const recordChangeListeners = new Set<(root: string) => void>();
+
+/** Called after every source write settles, with the canonical project root. */
+export function onScientSourceRecordsChanged(listener: (root: string) => void): () => void {
+  recordChangeListeners.add(listener);
+  return () => recordChangeListeners.delete(listener);
+}
+
 async function withOperationLock<A>(key: string, run: () => Promise<A>): Promise<A> {
   const previous = operationLocks.get(key) ?? Promise.resolve();
   let release: (() => void) | undefined;
@@ -245,6 +254,10 @@ async function withOperationLock<A>(key: string, run: () => Promise<A>): Promise
   } finally {
     release?.();
     if (operationLocks.get(key) === tail) operationLocks.delete(key);
+    if (key.endsWith(SOURCE_WRITE_LOCK_SUFFIX)) {
+      const root = key.slice(0, -SOURCE_WRITE_LOCK_SUFFIX.length);
+      for (const listener of recordChangeListeners) listener(root);
+    }
   }
 }
 
@@ -470,6 +483,42 @@ export async function updateScientSourceMetadata(input: {
       : updated;
     await persistSourceRevision(paths, current, next);
     return { outcome: "updated", record: next, duplicate, validationIssues };
+  });
+}
+
+/**
+ * Gives every source written before citation keys existed a generated key, oldest
+ * first so earlier sources keep the unsuffixed key. Each assignment is a revision.
+ */
+export async function assignMissingScientSourceCitationKeys(root: string): Promise<number> {
+  const paths = await sourceStorePaths(root);
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const records = await listScientSourceRecordsFromPaths(paths);
+    const missing = records
+      .filter((record) => !record.citationKey)
+      .toSorted(
+        (left, right) =>
+          left.importedAt.localeCompare(right.importedAt) ||
+          left.sourceId.localeCompare(right.sourceId),
+      );
+    if (missing.length === 0) return 0;
+    const taken = takenCitationKeys(records);
+    const updatedAt = new Date().toISOString();
+    for (const current of missing) {
+      const citationKey = assignCitationKey({ ...current, taken });
+      taken.add(citationKeyComparisonValue(citationKey));
+      await persistSourceRevision(paths, current, {
+        ...current,
+        citationKey,
+        revision: current.revision + 1,
+        fieldProvenance: [
+          ...current.fieldProvenance,
+          { field: "citationKey", origin: "derived", sourceField: null },
+        ],
+        updatedAt,
+      });
+    }
+    return missing.length;
   });
 }
 

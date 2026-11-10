@@ -38,6 +38,7 @@ import {
   updateSourceNote,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
+import { startManagedBibliographySync, syncManagedBibliography } from "./ManagedBibliography.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
   "ScientSourcesOperationError",
@@ -68,6 +69,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   "scientSources",
   Effect.fnUntraced(function* (handlers) {
     const observeImport = yield* makeSourceImportAnalytics("user");
+    startManagedBibliographySync();
     return yield* Effect.succeed(
       handlers
         .handle("overview", (args) =>
@@ -215,6 +217,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("retryImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             retrySourceImport(args.payload),
+          ),
+        )
+        .handle("syncBibliography", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            syncManagedBibliography(args.payload.root, args.payload),
           ),
         ),
     );

@@ -31,6 +31,7 @@ import {
   updateScientSource,
   updateSourceNote,
 } from "../../../scient/sources/ScientSourcesCoordinator.ts";
+import { syncManagedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientSourcesToolError>[0]["code"];
 
@@ -202,6 +203,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         ? all
         : all.filter((record) =>
             [
+              record.citationKey ?? null,
               record.title,
               creatorName(record),
               record.issuedYear,
@@ -223,6 +225,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
       records: page.map((record) => ({
         sourceId: record.sourceId,
         revision: record.revision,
+        ...(record.citationKey ? { citationKey: record.citationKey } : {}),
         type: record.type,
         title: record.title,
         creator: creatorName(record),
@@ -493,6 +496,15 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
   },
 );
 
+const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolkit.bibliography")(
+  function* (input: {
+    readonly replaceEdited?: ReadonlyArray<"references.bib" | "references.json">;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() => syncManagedBibliography(root, input));
+  },
+);
+
 const handlers = {
   scient_sources_list: listScientSourcesForInvocation,
   scient_sources_get: getScientSourceForInvocation,
@@ -502,6 +514,7 @@ const handlers = {
   scient_sources_add: addScientSourceForInvocation,
   scient_sources_attach_pdf: attachScientSourcePdfForInvocation,
   scient_sources_detach_pdf: detachScientSourcePdfForInvocation,
+  scient_sources_bibliography: syncScientBibliographyForInvocation,
 } satisfies Parameters<typeof ScientSourcesToolkit.toLayer>[0];
 
 export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(handlers);

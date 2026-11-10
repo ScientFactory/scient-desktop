@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 
 import type {
+  ScientManagedBibliographySyncRequest,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
@@ -561,6 +562,34 @@ export const retryEnvironmentScientSourcesImport = Effect.fn(
           root: input.root,
           operationId: input.operationId,
           itemKeys: input.itemKeys,
+        },
+      }),
+  });
+});
+
+export const syncEnvironmentScientBibliography = Effect.fn(
+  "clientRuntime.state.syncEnvironmentScientBibliography",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: ScientManagedBibliographySyncRequest["root"];
+  readonly replaceEdited?: ScientManagedBibliographySyncRequest["replaceEdited"];
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.syncBibliography(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) =>
+      client.syncBibliography({
+        headers,
+        payload: {
+          root: input.root,
+          ...(input.replaceEdited ? { replaceEdited: input.replaceEdited } : {}),
         },
       }),
   });

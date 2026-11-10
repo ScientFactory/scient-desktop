@@ -63,6 +63,10 @@ import {
   ZoteroStatusRequest,
 } from "../scientSources.ts";
 import {
+  ScientManagedBibliographyStatus,
+  ScientManagedBibliographySyncRequest,
+} from "../scientBibliography.ts";
+import {
   ScientLatexBuildRequest,
   ScientLatexArtworkRequest,
   ScientLatexArtworkResult,
@@ -394,6 +398,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesRetryImportRequest,
         success: ScientSourceImportOperation,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("syncBibliography", "/api/scient/sources/bibliography/sync", {
+        headers: OptionalBearerHeaders,
+        payload: ScientManagedBibliographySyncRequest,
+        success: ScientManagedBibliographyStatus,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
