@@ -118,6 +118,16 @@ export const ScientAnnotationsDocumentResult = Schema.Union([
     status: Schema.Literal("available"),
     material: PdfMaterial,
     annotations: Schema.Array(ScientPdfAnnotation),
+    /** Library sources with these bytes attached, for citing a quote. */
+    sources: Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          sourceId: NonEmptyString,
+          title: Schema.NullOr(Schema.String),
+          citationKey: Schema.optionalKey(NonEmptyString),
+        }),
+      ),
+    ),
   }),
   /** Not a Scient project, or not a PDF Scient can read. */
   Schema.Struct({ status: Schema.Literal("unavailable") }),

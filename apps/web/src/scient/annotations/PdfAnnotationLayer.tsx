@@ -1,5 +1,9 @@
 import type { PdfSourceDescriptor, PdfTarget } from "@scientfactory/document-artifacts";
-import type { ScientPdfAnnotation, ScientPdfAnnotationAnchor } from "@t3tools/contracts";
+import {
+  scientAnnotationQuote,
+  type ScientPdfAnnotation,
+  type ScientPdfAnnotationAnchor,
+} from "@t3tools/contracts";
 import {
   createContext,
   useEffect,
@@ -21,6 +25,7 @@ import {
   updateAnnotation,
   type AnnotatedPdf,
 } from "./annotationState";
+import { quoteInDocument } from "./documentQuoteTargets";
 import { paintPdfAnnotations, type PdfAnnotationPainter } from "./pdfAnnotationPaint";
 import { useDocumentAnnotations } from "./useDocumentAnnotations";
 
@@ -52,7 +57,8 @@ export function PdfAnnotationLayer(props: {
   readonly children: ReactNode;
 }) {
   const { container, ready, runtimeRef } = props;
-  const { pdf, annotations } = useDocumentAnnotations(props.source);
+  const { pdf, annotations, citationKey } = useDocumentAnnotations(props.source);
+  const fileName = props.source?.fileName ?? "document.pdf";
   const painterRef = useRef<PdfAnnotationPainter | null>(null);
   const annotationsRef = useRef(annotations);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps annotationsRef holding the latest annotations for a painter created later
@@ -113,6 +119,14 @@ export function PdfAnnotationLayer(props: {
           bounds={open.bounds}
           draft={open._tag === "draft" ? open.anchor : null}
           annotation={saved}
+          onQuote={(annotation) =>
+            void quoteInDocument(pdf.root, {
+              quote: scientAnnotationQuote(annotation),
+              pages: annotation.anchor.selector.pages.map((page) => page.page),
+              citationKey,
+              fileName,
+            })
+          }
           onClose={() => setOpen(null)}
         />
       ) : null}
@@ -125,6 +139,7 @@ function AnnotationNotePopover(props: {
   readonly bounds: DOMRect;
   readonly draft: ScientPdfAnnotationAnchor | null;
   readonly annotation: ScientPdfAnnotation | null;
+  readonly onQuote: (annotation: ScientPdfAnnotation) => void;
   readonly onClose: () => void;
 }) {
   const { annotation, draft, pdf, onClose } = props;
@@ -153,7 +168,7 @@ function AnnotationNotePopover(props: {
         anchor={{ getBoundingClientRect: () => props.bounds }}
         side="bottom"
         align="start"
-        width="sm"
+        width="md"
         padding="tight"
         initialFocus
       >
@@ -188,9 +203,24 @@ function AnnotationNotePopover(props: {
             ) : (
               <span />
             )}
-            <Button type="button" variant="ghost" size="compact" onClick={() => finish(true)}>
-              Done
-            </Button>
+            <div className="flex items-center gap-1">
+              {annotation ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="compact"
+                  onClick={() => {
+                    finish(true);
+                    props.onQuote(annotation);
+                  }}
+                >
+                  Quote in my document
+                </Button>
+              ) : null}
+              <Button type="button" variant="ghost" size="compact" onClick={() => finish(true)}>
+                Done
+              </Button>
+            </div>
           </div>
         </div>
       </PopoverPopup>
