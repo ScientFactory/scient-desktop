@@ -739,6 +739,10 @@ export const AccountPaperForSourceResult = Schema.Union([
   }),
 ]);
 
+/** Which version of the work a PDF is; "unknown" when its repository did not say. */
+export const PaperVersion = Schema.Literals(["published", "accepted", "preprint", "unknown"]);
+export type PaperVersion = typeof PaperVersion.Type;
+
 export const PaperItemState = Schema.Literals([
   "waiting",
   "saved",
@@ -756,6 +760,8 @@ export const PaperAsked = Schema.Struct({
   source: Schema.optional(
     Schema.Struct({ sourceId: TrimmedNonEmptyString, expectedRevision: Schema.Int }),
   ),
+  /** For the Library: the saved PDF goes on the paper's Source, which is added when missing. */
+  library: Schema.optional(Schema.Boolean),
 });
 export type PaperAsked = typeof PaperAsked.Type;
 
@@ -775,7 +781,10 @@ export const PaperItem = Schema.Struct({
   route: Schema.optional(Schema.Literals(["saved-before", "open-access", ...PaperRoute.literals])),
   /** False for an accepted manuscript or preprint. */
   published: Schema.optional(Schema.Boolean),
+  version: Schema.optional(PaperVersion),
   path: Schema.optional(Schema.String),
+  /** The Library source the PDF went on. */
+  sourceId: Schema.optional(TrimmedNonEmptyString),
   message: Schema.optional(Schema.String),
   /** What this paper waits on, while it is "needs-you". */
   needed: Schema.optional(Schema.Struct(PaperNeed)),

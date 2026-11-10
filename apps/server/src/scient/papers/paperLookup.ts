@@ -49,8 +49,20 @@ const Handle = Schema.Struct({
   values: Schema.Array(Schema.Struct({ data: Schema.Struct({ value: Schema.Unknown }) })),
 });
 const decodeHandle = Schema.decodeUnknownOption(Schema.fromJsonString(Handle));
+export type PaperVersion = "published" | "accepted" | "preprint" | "unknown";
+
+const versionOf = (value: string | null | undefined): PaperVersion =>
+  value === "publishedVersion"
+    ? "published"
+    : value === "acceptedVersion"
+      ? "accepted"
+      : value === "submittedVersion"
+        ? "preprint"
+        : "unknown";
+
 export interface Paper {
   readonly doi?: string;
+  readonly arxiv?: string;
   readonly title?: string;
   readonly year?: number;
   readonly firstAuthor?: string;
@@ -64,7 +76,7 @@ export interface Paper {
     readonly pdfUrl?: string;
     /** No direct PDF address is known; the article page names it. */
     readonly pageUrl?: string;
-    readonly published: boolean;
+    readonly version: PaperVersion;
   }>;
 }
 
@@ -85,10 +97,10 @@ function paperFrom(
 ): Paper {
   const resolvedDoi = doiIn(work.doi ?? undefined) ?? doi;
   const copies = (work.locations ?? []).flatMap((location): Paper["openAccess"] => {
-    const published = location.version === "publishedVersion";
+    const version = versionOf(location.version);
     if (!location.is_oa) return [];
-    if (location.pdf_url) return [{ pdfUrl: location.pdf_url, published }];
-    return location.landing_page_url ? [{ pageUrl: location.landing_page_url, published }] : [];
+    if (location.pdf_url) return [{ pdfUrl: location.pdf_url, version }];
+    return location.landing_page_url ? [{ pageUrl: location.landing_page_url, version }] : [];
   });
   const first = Number(work.biblio?.first_page);
   const last = Number(work.biblio?.last_page);
@@ -106,7 +118,8 @@ function paperFrom(
         : (work.primary_location?.landing_page_url ?? "")),
     openAccess: copies.toSorted(
       (a, b) =>
-        Number(b.published) - Number(a.published) || Number("pdfUrl" in b) - Number("pdfUrl" in a),
+        Number(b.version === "published") - Number(a.version === "published") ||
+        Number("pdfUrl" in b) - Number("pdfUrl" in a),
     ),
   };
 }
@@ -138,20 +151,24 @@ export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (input: {
     const work = text === undefined ? Option.none() : decodeWork(text);
     return Option.isSome(work)
       ? paperFrom(work.value, doi, input.url)
-      : {
+      : ({
           doi,
           landingUrl: input.url ?? `https://doi.org/${doi}`,
-          openAccess: [{ pageUrl: input.url ?? `https://doi.org/${doi}`, published: true }],
-        };
+          openAccess: [{ pageUrl: input.url ?? `https://doi.org/${doi}`, version: "published" }],
+        } satisfies Paper);
   }
   const arxiv = arxivIn(input.url);
   if (arxiv)
     return {
+      arxiv,
       landingUrl: `https://arxiv.org/abs/${arxiv}`,
-      openAccess: [{ pdfUrl: `https://arxiv.org/pdf/${arxiv}`, published: false }],
-    };
+      openAccess: [{ pdfUrl: `https://arxiv.org/pdf/${arxiv}`, version: "preprint" }],
+    } satisfies Paper;
   return input.url
-    ? { landingUrl: input.url, openAccess: [{ pageUrl: input.url, published: true }] }
+    ? ({
+        landingUrl: input.url,
+        openAccess: [{ pageUrl: input.url, version: "published" }],
+      } satisfies Paper)
     : undefined;
 });
 

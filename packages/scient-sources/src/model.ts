@@ -67,7 +67,7 @@ export type ScientSourceExternalReference = typeof ScientSourceExternalReference
 
 export const ScientSourceOrigin = Schema.Struct({
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper"]),
   operationId: NonEmptyString,
   // Older records may still say "pending"; nothing gates on it any more.
   review: Schema.Literals(["none", "pending"]),
@@ -97,12 +97,21 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "europe-pmc",
     "derived",
     "user",
+    "openalex",
   ]),
   sourceField: NullableText,
   sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),
   retrievedAt: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceFieldProvenance = typeof ScientSourceFieldProvenance.Type;
+
+/** How a downloaded PDF was reached, and which version of the work it is. */
+export const ScientSourceAttachmentRetrieval = Schema.Struct({
+  route: Schema.Literals(["open-access", "publisher", "university", "library"]),
+  /** "unknown" is a free copy whose repository did not say which version it holds. */
+  version: Schema.Literals(["published", "accepted", "preprint", "unknown"]),
+});
+export type ScientSourceAttachmentRetrieval = typeof ScientSourceAttachmentRetrieval.Type;
 
 export const ScientSourceAttachment = Schema.Struct({
   attachmentId: NonEmptyString,
@@ -113,6 +122,7 @@ export const ScientSourceAttachment = Schema.Struct({
   byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   relativePath: NonEmptyString,
   importedAt: NonEmptyString,
+  retrieval: Schema.optionalKey(ScientSourceAttachmentRetrieval),
 });
 export type ScientSourceAttachment = typeof ScientSourceAttachment.Type;
 

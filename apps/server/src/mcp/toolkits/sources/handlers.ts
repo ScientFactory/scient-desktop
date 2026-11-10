@@ -253,7 +253,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       abstractTruncated,
       note: record.note ?? null,
       attachments: record.attachments.map(
-        ({ attachmentId, kind, fileName, mediaType, sha256, byteLength, importedAt }) => ({
+        ({
           attachmentId,
           kind,
           fileName,
@@ -261,6 +261,16 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
           sha256,
           byteLength,
           importedAt,
+          retrieval,
+        }) => ({
+          attachmentId,
+          kind,
+          fileName,
+          mediaType,
+          sha256,
+          byteLength,
+          importedAt,
+          ...(retrieval ? { retrieval } : {}),
         }),
       ),
     };

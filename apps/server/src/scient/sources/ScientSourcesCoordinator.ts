@@ -26,12 +26,15 @@ import {
   sourceMetadataDiagnostics,
   assessSourceDuplicate,
   scientSourceSummaryFromRecord,
+  type ScientSourceActor,
+  type ScientSourceAttachmentRetrieval,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
   type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
+  type ScientSourceOrigin,
   type ScientSourceRecord,
   type ScientSourceVerification,
   type ZoteroImportScope,
@@ -213,6 +216,10 @@ export async function addAgentSource(
     readonly resolveIdentifier?: ResolveSourceIdentifier;
     /** The title the agent asserted; PDF-derived and filename titles are not claims. */
     readonly claimedTitle?: string | null;
+    /** A downloaded paper is added for whoever asked for it. */
+    readonly actor?: ScientSourceActor;
+    readonly intake?: ScientSourceOrigin["intake"];
+    readonly pdfRetrieval?: ScientSourceAttachmentRetrieval;
   },
   observer?: SourceImportObserver,
 ): Promise<AgentSourceAddResult> {
@@ -281,9 +288,10 @@ export async function addAgentSource(
         root: input.root,
         operationId: `agent_${NodeCrypto.randomUUID()}`,
         candidate: candidateWithPdfName,
-        actor: "agent",
-        intake: input.pdfPath ? "local-pdf" : "identifier",
+        actor: input.actor ?? "agent",
+        intake: input.intake ?? (input.pdfPath ? "local-pdf" : "identifier"),
         ...(verification ? { verification } : {}),
+        ...(input.pdfRetrieval ? { pdfRetrieval: input.pdfRetrieval } : {}),
         allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
         ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
         ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),

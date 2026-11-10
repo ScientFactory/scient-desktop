@@ -112,6 +112,15 @@ because the registry could not be reached, or missing. After an agent changes a
 source, its details say "Edited by agent". You can edit or remove these sources
 like any other.
 
+When you ask an agent to get papers for your library, it fetches them with
+`scient_paper_get` or `scient_papers_queue` and files each PDF on the paper's
+source. A paper that is not in Sources yet is added from its DOI's registry
+record, the same check as above. Scient prefers the published version and falls
+back to a free accepted manuscript or preprint; the source's details then say
+"PDF is a preprint" or "PDF is the accepted manuscript". Each PDF also records
+how it arrived: a free copy, the publisher, your university sign-in, or your
+library's link.
+
 The conversation's [permission mode](permission-modes.md) and provider approval
 flow still apply to writes. Sources tools stay scoped to the current project:
 they do not grant arbitrary host file paths, change Zotero, or turn uncertain
