@@ -411,7 +411,11 @@ Neither removal nor detaching a PDF deletes PDF files. Permanent deletion
 (one trashed source, or the whole trash) deletes the trash entries and their
 revision history, then deletes every content-addressed PDF that no live or
 trashed record refers to. It deletes no file at all while any record or trash
-entry cannot be read, since that record might refer to it. Revert and history
+entry cannot be read, since that record might refer to it. Deleting one
+trashed source takes the revision the caller saw and compares it under the
+same write lock that deletes, returning `stale` when the source was restored,
+edited or removed again in between; emptying the whole trash takes no
+revision. Revert and history
 listing do not keep PDFs alive: a revert whose revision names a deleted file
 leaves that attachment out and reports `missingAttachmentCount`.
 
@@ -422,11 +426,13 @@ reverted identifiers belong to another live source) without writing. Each
 source keeps its first revision and the most recent ones, 50 including the
 current record; older revisions are pruned after each write.
 
-Listing reads every record file independently. A file that is not valid JSON,
-does not decode, belongs to another project or does not match its file name is
-skipped and reported in the overview's `unreadableRecords` with its
-project-relative path; the UI shows one quiet line naming the files. Reading a
-single source by ID still fails for that source alone.
+Listing reads every record file independently. A `.json` entry that is not a
+regular file (a symlink, for example) is never followed. It, and a file that is
+not valid JSON, does not decode, belongs to another project or does not match
+its file name, is skipped and reported in the overview's `unreadableRecords`
+with its project-relative path; the UI shows one quiet line naming the files.
+The trash listing reports its own entries the same way. Reading a single source
+by ID still fails for that source alone.
 
 The UI moves a source to the trash straight from the row's secondary-click
 menu or the details page and offers Undo in the confirmation toast; the trash
