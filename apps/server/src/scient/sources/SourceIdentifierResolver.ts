@@ -394,6 +394,12 @@ export type RegistryOrigin = Extract<
   "doi" | "pubmed" | "arxiv" | "open-library" | "google-books" | "openalex" | "semantic-scholar"
 >;
 
+/** What a catalogue (OpenAlex, Semantic Scholar) says of a work, which no registry has checked. */
+export interface CatalogueRecord {
+  readonly metadata: ResolvedSourceMetadata;
+  readonly origin: Extract<RegistryOrigin, "openalex" | "semantic-scholar">;
+}
+
 export type SourceIdentifierResolution =
   | {
       readonly status: "found";
@@ -402,17 +408,31 @@ export type SourceIdentifierResolution =
       readonly retrievedAt: string;
       /** Absent for DOI and PMID, whose registry follows from the scheme. */
       readonly origin?: RegistryOrigin;
+      /** Only a catalogue has the work: it exists there, but is not registry-verified. */
+      readonly catalogueOnly?: true;
     }
-  | { readonly status: "not-found"; readonly identifier: ScientSourceIdentifier }
-  | { readonly status: "unavailable"; readonly identifier: ScientSourceIdentifier };
+  | {
+      readonly status: "not-found";
+      readonly identifier: ScientSourceIdentifier;
+      /** The registry identifier a catalogue named for it, which its registry does not have. */
+      readonly named?: ScientSourceIdentifier;
+    }
+  | {
+      readonly status: "unavailable";
+      readonly identifier: ScientSourceIdentifier;
+      /** The catalogue's record while the registry it names cannot be reached. */
+      readonly catalogue?: CatalogueRecord & { readonly retrievedAt: string };
+    };
 
 export type IdentifierLookup =
   | {
       readonly status: "found";
       readonly metadata: ResolvedSourceMetadata;
       readonly origin?: RegistryOrigin;
+      readonly catalogueOnly?: true;
     }
-  | { readonly status: "not-found" | "unavailable" };
+  | { readonly status: "not-found"; readonly named?: ScientSourceIdentifier }
+  | { readonly status: "unavailable"; readonly catalogue?: CatalogueRecord };
 type Lookup = IdentifierLookup;
 
 /** Spaces requests to one registry; lookups default to each registry's shared lane. */
@@ -608,13 +628,23 @@ function resolutionFrom(
   outcome: Lookup,
   now: () => Date,
 ): SourceIdentifierResolution {
-  if (outcome.status !== "found") return { status: outcome.status, identifier };
+  if (outcome.status === "not-found")
+    return { status: "not-found", identifier, ...(outcome.named ? { named: outcome.named } : {}) };
+  if (outcome.status === "unavailable")
+    return {
+      status: "unavailable",
+      identifier,
+      ...(outcome.catalogue
+        ? { catalogue: { ...outcome.catalogue, retrievedAt: now().toISOString() } }
+        : {}),
+    };
   return {
     status: "found",
     identifier,
     metadata: outcome.metadata,
     retrievedAt: now().toISOString(),
     ...(outcome.origin ? { origin: outcome.origin } : {}),
+    ...(outcome.catalogueOnly ? { catalogueOnly: true } : {}),
   };
 }
 

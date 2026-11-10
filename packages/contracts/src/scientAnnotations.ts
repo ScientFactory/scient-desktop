@@ -143,8 +143,8 @@ export type ScientAnnotationsSourceResult = typeof ScientAnnotationsSourceResult
 
 export const ScientAnnotationMutationRequest = Schema.Struct({
   root: NonEmptyString,
-  /** The PDF the reader shows; a create is refused when its bytes are no longer `material`. */
-  relativePath: NonEmptyString,
+  /** The PDF the reader shows. Needed to create: a create is refused when its bytes are no longer `material`. */
+  relativePath: Schema.optionalKey(NonEmptyString),
   material: PdfMaterial,
   command: ScientAnnotationCommand,
 });

@@ -12,6 +12,7 @@ import {
   openAccessPdf,
   paperFileName,
 } from "./paperLookup.ts";
+import { setRegistryContactEmail } from "../sources/metadataHttp.ts";
 
 describe("paper lookup", () => {
   it("finds a DOI in links and citations, without trailing punctuation", () => {
@@ -121,7 +122,7 @@ describe("lookUpPaper", () => {
           params: Object.fromEntries(
             [...request.urlParams].map(([key, value]) => [
               key,
-              Redacted.isRedacted(value) ? Redacted.value(value) : value,
+              Redacted.isRedacted(value) ? `redacted:${Redacted.value(value)}` : value,
             ]),
           ),
         });
@@ -143,17 +144,31 @@ describe("lookUpPaper", () => {
       ).pipe(Effect.provide(layer));
       expect(asked[0]).toEqual({
         url: `https://api.openalex.org/works/doi:${doi}`,
-        params: { api_key: "oa-key" },
+        params: { api_key: "redacted:oa-key" },
       });
       expect(asked[1]).toEqual({
         url: `https://api.unpaywall.org/v2/${doi}`,
-        params: { email: "me@example.org" },
+        params: { email: "redacted:me@example.org" },
       });
       expect(paper?.openAccess).toEqual([
         { pageUrl: "https://journal.example/x", version: "published" },
         { pdfUrl: "https://repo.example/accepted.pdf", version: "accepted" },
       ]);
     }),
+  );
+
+  it.effect(
+    "sends the Library's contact email to OpenAlex and, without its own, to Unpaywall",
+    () =>
+      Effect.gen(function* () {
+        setRegistryContactEmail("lab@example.org");
+        const { asked, layer } = registries(new Response(null, { status: 503 }));
+        yield* lookUpPaper({ doi }).pipe(Effect.provide(layer));
+        expect(asked.map(({ params }) => params)).toEqual([
+          { mailto: "redacted:lab@example.org" },
+          { email: "redacted:lab@example.org" },
+        ]);
+      }).pipe(Effect.ensuring(Effect.sync(() => setRegistryContactEmail(null)))),
   );
 
   it.effect("asks no one else without an Unpaywall email", () =>

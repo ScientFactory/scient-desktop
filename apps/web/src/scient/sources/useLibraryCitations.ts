@@ -9,7 +9,8 @@ import { libraryCitationCandidates, type LibraryCitationCandidate } from "./libr
  * first read is pending. A new `refresh` value reads the Library again.
  */
 export function useLibraryCitations(input: {
-  readonly environmentId: EnvironmentId;
+  /** Null reads nothing, for a document without an environment. */
+  readonly environmentId: EnvironmentId | null;
   readonly root: string;
   readonly refresh: string;
 }): ReadonlyArray<LibraryCitationCandidate> | null {
@@ -23,10 +24,12 @@ export function useLibraryCitations(input: {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the Library lives on the server; this reads it for the open document's project
   useEffect(() => {
+    const environmentId = input.environmentId;
+    if (environmentId === null) return;
     let current = true;
     // A disconnected environment throws before any request; it just has no Library yet.
     Promise.resolve()
-      .then(() => readScientSources(input.environmentId, input.root))
+      .then(() => readScientSources(environmentId, input.root))
       .then(
         (overview) => {
           if (!current) return;

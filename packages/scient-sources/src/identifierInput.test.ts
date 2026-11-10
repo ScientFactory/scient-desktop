@@ -58,6 +58,7 @@ describe("parseSourceIdentifierList", () => {
           "PMID 31452104, arXiv:1706.03762; 0-262-03384-4",
           "2401.01234 2401.05678",
           "Smith et al. 2020",
+          "Smith et al. 2020",
           "",
         ].join("\n"),
       ),

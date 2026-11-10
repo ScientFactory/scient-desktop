@@ -28,12 +28,26 @@ import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
+import type { BibliographyFormat } from "@scientfactory/scient-sources/bibliography";
+import {
+  bibliographyFileErrorMessage,
+  exportBibliography,
+  readBibliographyFile,
+  resolveProjectBibliographyFile,
+  writeProjectBibliographyFile,
+} from "../../../scient/sources/BibliographyFileAdapter.ts";
 import { keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
 import {
   addScientSourcesByIdentifier,
   SourceIdentifierBatchLookup,
   summarizeIdentifierAdd,
 } from "../../../scient/sources/SourceIdentifierAdd.ts";
+import {
+  browseZoteroForInvocation,
+  importZoteroForInvocation,
+  refreshZoteroForInvocation,
+  sendToZoteroForInvocation,
+} from "./zoteroHandlers.ts";
 import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
@@ -44,6 +58,7 @@ import {
   checkSourceIdentifier,
   attachSourcePdf,
   bulkUpdateSources,
+  importBibliographyFile,
   detachSourcePdf,
   organizeSources,
   prepareAgentProjectPdf,
@@ -57,6 +72,7 @@ import {
   readSourceText,
   searchSourceFullText,
 } from "../../../scient/sources/SourceFullText.ts";
+import { saveWebPageSource } from "../../../scient/sources/SourceWebPage.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientSourcesToolError>[0]["code"];
 
@@ -832,6 +848,138 @@ const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesToolkit.che
   },
 );
 
+const saveScientSourcePageForInvocation = Effect.fn("ScientSourcesToolkit.savePage")(
+  function* (input: {
+    readonly url: string;
+    readonly title?: string;
+    readonly passage?: string;
+    readonly meta?: ReadonlyArray<{ readonly name: string; readonly content: string }>;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const resolveIdentifier = yield* keyedIdentifierLookup();
+    const observeImport = yield* makeSourceImportAnalytics("agent");
+    const result = yield* attempt(() =>
+      saveWebPageSource(
+        {
+          root,
+          page: {
+            url: input.url,
+            title: input.title ?? null,
+            selection: input.passage ?? null,
+            meta: input.meta ?? [],
+          },
+          actor: "agent",
+          resolveIdentifier,
+        },
+        observeImport,
+      ),
+    );
+    return result.outcome === "not-added"
+      ? { ...result, sourceId: null, revision: null, passageSaved: false }
+      : result;
+  },
+);
+
+export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesToolkit.importFile")(
+  function* (input: { readonly relativePath: string; readonly format?: BibliographyFormat }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const observeImport = yield* makeSourceImportAnalytics("agent");
+    const { operation, report } = yield* Effect.tryPromise({
+      try: async () => {
+        const file = await resolveProjectBibliographyFile(root, input.relativePath);
+        return importBibliographyFile(
+          {
+            root,
+            operationId: `agent_file_${NodeCrypto.randomUUID()}`,
+            fileName: file.fileName,
+            text: await readBibliographyFile(file.absolutePath),
+            actor: "agent",
+            ...(input.format ? { format: input.format } : {}),
+          },
+          observeImport,
+        );
+      },
+      catch: (error) =>
+        toolError(
+          "operation-failed",
+          bibliographyFileErrorMessage(error, "The reference file could not be imported."),
+        ),
+    });
+    const items = operation?.items ?? [];
+    const importedIds = items.flatMap((item) =>
+      item.state === "imported" && item.sourceId ? [item.sourceId] : [],
+    );
+    const records =
+      importedIds.length > 0 ? yield* attempt(() => listScientSourceRecords(root)) : [];
+    const keys = new Map(records.map((record) => [record.sourceId, record.citationKey ?? null]));
+    return {
+      format: report.format,
+      entryCount: report.entryCount,
+      importedCount: importedIds.length,
+      imported: importedIds
+        .slice(0, 100)
+        .map((sourceId) => ({ sourceId, citationKey: keys.get(sourceId) ?? null })),
+      alreadyInLibrary:
+        report.alreadyInLibrary + items.filter((item) => item.state === "skipped").length,
+      failed: items.flatMap((item) =>
+        item.state === "failed"
+          ? [
+              {
+                line: null,
+                citationKey: null,
+                reason: item.message ?? "This entry could not be imported.",
+              },
+            ]
+          : [],
+      ),
+      remaining: report.remaining,
+      unreadable: report.unreadable,
+      notKept: report.notKept,
+      withoutCitationKey: report.withoutCitationKey,
+    };
+  },
+);
+
+export const exportScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.export")(
+  function* (input: {
+    readonly relativePath: string;
+    readonly format: BibliographyFormat;
+    readonly sourceIds?: ReadonlyArray<string>;
+    readonly includeNotes?: boolean;
+    readonly overwrite?: boolean;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const exported = yield* attempt(() =>
+      exportBibliography({
+        root,
+        format: input.format,
+        ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
+        includeNotes: input.includeNotes ?? false,
+      }),
+    );
+    const written = yield* Effect.tryPromise({
+      try: () =>
+        writeProjectBibliographyFile({
+          root,
+          relativePath: input.relativePath,
+          content: exported.content,
+          overwrite: input.overwrite ?? false,
+        }),
+      catch: (error) =>
+        toolError(
+          "operation-failed",
+          bibliographyFileErrorMessage(error, "The export file could not be written."),
+        ),
+    });
+    return {
+      outcome: written.outcome,
+      relativePath: written.relativePath,
+      sourceCount: exported.sourceCount,
+      missingSourceIds: exported.missingSourceIds,
+    };
+  },
+);
+
 const handlers = {
   scient_sources_list: listScientSourcesForInvocation,
   scient_sources_get: getScientSourceForInvocation,
@@ -848,9 +996,16 @@ const handlers = {
   scient_sources_search: searchScientSourcesForInvocation,
   scient_sources_read_text: readScientSourceTextForInvocation,
   scient_sources_quote_check: checkScientSourceQuotesForInvocation,
+  scient_sources_save_page: saveScientSourcePageForInvocation,
+  scient_sources_zotero_browse: browseZoteroForInvocation,
+  scient_sources_zotero_import: importZoteroForInvocation,
+  scient_sources_zotero_refresh: refreshZoteroForInvocation,
+  scient_sources_zotero_send: sendToZoteroForInvocation,
   scient_sources_collections: readScientSourceCollectionsForInvocation,
   scient_sources_organize: organizeScientSourcesForInvocation,
   scient_sources_bulk_update: bulkUpdateScientSourcesForInvocation,
+  scient_sources_import_file: importScientSourcesFileForInvocation,
+  scient_sources_export: exportScientSourcesForInvocation,
 } satisfies Parameters<typeof ScientSourcesToolkit.toLayer>[0];
 
 export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(handlers);

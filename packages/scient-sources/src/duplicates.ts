@@ -3,19 +3,25 @@ import type {
   ScientSourceDuplicateAssessment,
   ScientSourceRecord,
 } from "./model.ts";
+import { canonicalConnectorIdentifier } from "./connectorIdentifiers.ts";
 import { normalizePersistentIdentifier, sourceMetadataKey } from "./normalize.ts";
 
 type SourceMetadata = Pick<ScientSourceRecord, "creators" | "identifiers" | "issuedYear" | "title">;
 
 // These schemes identify one scholarly work. Container-level identifiers such
 // as ISSN and ISBN are still preserved as metadata, but they must never prove
-// that two articles or chapters are the same work.
-const WORK_LEVEL_IDENTIFIER_SCHEMES = new Set(["arxiv", "doi", "pmcid", "pmid"]);
+// that two articles or chapters are the same work. OpenAlex and Semantic Scholar IDs name one
+// work in their catalogue.
+const WORK_LEVEL_IDENTIFIER_SCHEMES = new Set(["arxiv", "doi", "pmcid", "pmid", "openalex", "s2"]);
 
 function workLevelIdentifierKey(scheme: string, value: string): string | null {
   const normalizedScheme = scheme.trim().toLowerCase();
   if (!WORK_LEVEL_IDENTIFIER_SCHEMES.has(normalizedScheme)) return null;
-  return normalizePersistentIdentifier(normalizedScheme, value);
+  const canonical =
+    normalizedScheme === "openalex" || normalizedScheme === "s2"
+      ? (canonicalConnectorIdentifier(normalizedScheme, value) ?? value)
+      : value;
+  return normalizePersistentIdentifier(normalizedScheme, canonical);
 }
 
 export function assessSourceMetadataDuplicate(input: {

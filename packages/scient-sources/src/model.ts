@@ -67,7 +67,7 @@ export type ScientSourceExternalReference = typeof ScientSourceExternalReference
 
 export const ScientSourceOrigin = Schema.Struct({
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper", "file", "web"]),
   operationId: NonEmptyString,
   // Older records may still say "pending"; nothing gates on it any more.
   review: Schema.Literals(["none", "pending"]),
@@ -125,6 +125,8 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "google-books",
     "openalex",
     "semantic-scholar",
+    "file",
+    "web-page",
   ]),
   sourceField: NullableText,
   sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),
@@ -277,6 +279,23 @@ export const ScientSourceEditableMetadata = Schema.Struct({
   tags: BoundedTags,
 });
 export type ScientSourceEditableMetadata = typeof ScientSourceEditableMetadata.Type;
+
+/**
+ * What Zotero held for one source when Scient last read it, kept apart from the record.
+ * Refresh compares against it to tell Zotero's changes from local edits.
+ */
+export const ScientSourceZoteroSync = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  sourceId: NonEmptyString,
+  libraryId: NonEmptyString,
+  itemKey: NonEmptyString,
+  itemVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  syncedAt: NonEmptyString,
+  metadata: ScientSourceEditableMetadata,
+  note: Schema.NullOr(Schema.String),
+  attachmentKeys: Schema.Array(NonEmptyString),
+});
+export type ScientSourceZoteroSync = typeof ScientSourceZoteroSync.Type;
 
 export const ScientSourceMetadataValidationIssue = Schema.Struct({
   field: NonEmptyString,
@@ -473,9 +492,9 @@ export const ScientSourceImportOperation = Schema.Struct({
   formatVersion: Schema.Literal(1),
   operationId: NonEmptyString,
   projectId: NonEmptyString,
-  adapter: Schema.Literals(["zotero", "local-files", "agent", "zotero-web"]),
+  adapter: Schema.Literals(["zotero", "local-files", "agent", "zotero-web", "file"]),
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "file"]),
   state: Schema.Literals(["running", "cancelled", "completed"]),
   createdAt: NonEmptyString,
   updatedAt: NonEmptyString,
@@ -524,6 +543,67 @@ export type ZoteroConnectionState = typeof ZoteroConnectionState.Type;
 /** Zotero on this computer (local API) or the user's library on zotero.org (key from Accounts). */
 export const ZoteroConnection = Schema.Literals(["local", "web"]);
 export type ZoteroConnection = typeof ZoteroConnection.Type;
+
+/** Fields a Zotero refresh compares; the citation key never changes from Zotero. */
+export const ScientSourceZoteroRefreshField = Schema.Literals([
+  "type",
+  "customType",
+  "title",
+  "creators",
+  "issuedRaw",
+  "issuedYear",
+  "identifiers",
+  "abstract",
+  "containerTitle",
+  "publisher",
+  "volume",
+  "issue",
+  "pages",
+  "language",
+  "url",
+  "tags",
+  "note",
+]);
+export type ScientSourceZoteroRefreshField = typeof ScientSourceZoteroRefreshField.Type;
+
+/** A field edited here that Zotero also changed; the value here was kept. */
+export const ScientSourceZoteroConflict = Schema.Struct({
+  field: ScientSourceZoteroRefreshField,
+  local: Schema.String,
+  zotero: Schema.String,
+});
+export type ScientSourceZoteroConflict = typeof ScientSourceZoteroConflict.Type;
+
+export const ScientSourceZoteroRefreshItem = Schema.Struct({
+  sourceId: NonEmptyString,
+  title: NullableText,
+  outcome: Schema.Literals(["updated", "unchanged", "missing", "stale", "failed"]),
+  changedFields: Schema.Array(NonEmptyString),
+  addedPdfCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  conflicts: Schema.Array(ScientSourceZoteroConflict),
+  message: NullableText,
+});
+export type ScientSourceZoteroRefreshItem = typeof ScientSourceZoteroRefreshItem.Type;
+
+export const ScientSourceZoteroRefreshResult = Schema.Struct({
+  connection: ZoteroConnection,
+  items: Schema.Array(ScientSourceZoteroRefreshItem),
+});
+export type ScientSourceZoteroRefreshResult = typeof ScientSourceZoteroRefreshResult.Type;
+
+export const ScientSourceZoteroSendItem = Schema.Struct({
+  sourceId: NonEmptyString,
+  title: NullableText,
+  outcome: Schema.Literals(["created", "updated", "unchanged", "changed-in-zotero", "failed"]),
+  itemKey: NullableText,
+  message: NullableText,
+});
+export type ScientSourceZoteroSendItem = typeof ScientSourceZoteroSendItem.Type;
+
+export const ScientSourceZoteroSendResult = Schema.Struct({
+  items: Schema.Array(ScientSourceZoteroSendItem),
+});
+export type ScientSourceZoteroSendResult = typeof ScientSourceZoteroSendResult.Type;
 
 export const ZoteroConnectionStatus = Schema.Struct({
   state: ZoteroConnectionState,
