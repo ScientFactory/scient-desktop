@@ -139,6 +139,11 @@ function braceEnd(text: string, open: number): number {
   return -1;
 }
 
+// Environments whose content is copied as is.
+const LATEX_VERBATIM_START = /^\\begin\{(verbatim\*?|lstlisting|minted)\}/u;
+// A brace right after a command name or a closing bracket is that command's argument, not a group.
+const LATEX_ARGUMENT_BEFORE = /[A-Za-z}\]*@]/u;
+
 function rewriteSizeGroups(text: string, counter: { found: boolean }): string {
   let out = "";
   let inMath = false;
@@ -151,8 +156,23 @@ function rewriteSizeGroups(text: string, counter: { found: boolean }): string {
       index = end - 1;
       continue;
     }
+    if (char === "\\" && !isEscaped(text, index)) {
+      const verbatim = LATEX_VERBATIM_START.exec(text.slice(index));
+      if (verbatim !== null) {
+        const close = `\\end{${verbatim[1]}}`;
+        const end = text.indexOf(close, index);
+        const stop = end < 0 ? text.length : end + close.length;
+        out += text.slice(index, stop);
+        index = stop - 1;
+        continue;
+      }
+      const next = text[index + 1];
+      if (next === "(" || next === "[") inMath = true;
+      else if (next === ")" || next === "]") inMath = false;
+    }
     if (char === "$" && !isEscaped(text, index)) inMath = !inMath;
-    if (char === "{" && !inMath && !isEscaped(text, index)) {
+    const standalone = index === 0 || !LATEX_ARGUMENT_BEFORE.test(text[index - 1] ?? "");
+    if (char === "{" && standalone && !inMath && !isEscaped(text, index)) {
       const command = LATEX_SIZE_COMMAND.exec(text.slice(index + 1));
       const end = command === null ? -1 : braceEnd(text, index);
       if (command !== null && end >= 0) {

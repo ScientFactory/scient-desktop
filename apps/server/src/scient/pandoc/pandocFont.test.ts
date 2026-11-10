@@ -36,6 +36,32 @@ describe("rewriteLatexSizeGroups", () => {
     }
   });
 
+  it("leaves a size command inside a command argument alone", () => {
+    for (const source of [
+      "\\textbf{\\large x}",
+      "\\section{\\large Title}",
+      "\\newcommand{\\a}{\\small z}",
+      "\\begin{tabular}{l}\\\\[2pt]\\end{tabular}",
+    ]) {
+      expect(rewriteLatexSizeGroups(source)).toBe(source);
+    }
+  });
+
+  it("does not touch verbatim environments or bracket math", () => {
+    for (const source of [
+      "\\begin{verbatim}{\\large x}\\end{verbatim}",
+      "\\begin{lstlisting}\n{\\large x}\n\\end{lstlisting}",
+      "\\[ a {\\large b} \\]",
+      "\\( a {\\large b} \\)",
+    ]) {
+      expect(rewriteLatexSizeGroups(source)).toBe(source);
+    }
+  });
+
+  it("still rewrites a group after bracket math", () => {
+    expect(rewriteLatexSizeGroups("\\[ a \\] {\\large x}")).toContain(carrier("large", "x"));
+  });
+
   it("does not match a longer command that starts with a size name", () => {
     const source = "{\\largesse text}";
     expect(rewriteLatexSizeGroups(source)).toBe(source);

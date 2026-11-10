@@ -18,6 +18,7 @@ import { Schema } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 
 import {
+  MARKDOWN_FONT_FAMILIES,
   MARKDOWN_FONT_SIZES,
   MARKDOWN_FONT_SPAN_CLOSE,
   markdownFontSpanOpen,
@@ -246,7 +247,11 @@ const fontSizeSpec: MarkSpec = {
   parseDOM: [
     {
       tag: "span[data-scient-font-size]",
-      getAttrs: (element) => ({ size: element.getAttribute("data-scient-font-size") }),
+      // Pasted HTML is untrusted: only a known size name becomes a mark.
+      getAttrs: (element) => {
+        const size = element.getAttribute("data-scient-font-size");
+        return MARKDOWN_FONT_SIZES.some(({ name }) => name === size) ? { size } : false;
+      },
     },
   ],
   toDOM: (mark) => [
@@ -264,7 +269,10 @@ const fontFamilySpec: MarkSpec = {
   parseDOM: [
     {
       tag: "span[data-scient-font-family]",
-      getAttrs: (element) => ({ family: element.getAttribute("data-scient-font-family") }),
+      getAttrs: (element) => {
+        const family = element.getAttribute("data-scient-font-family");
+        return MARKDOWN_FONT_FAMILIES.some((name) => name === family) ? { family } : false;
+      },
     },
   ],
   toDOM: (mark) => [
