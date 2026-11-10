@@ -26,8 +26,14 @@ The Worker behind conversation copies, take-over and shared links. Scient-owned;
   wrapped by `SCIENT_CLOUD_KEK` (AES-GCM, chunked, bound to the object's key). Shared-link objects
   are stored as received (ciphertext when the link is encrypted).
 - A file (`/v1/blobs/:sha256`) is readable only while a stored conversation of the same user names
-  it; computers name it with `?env=&thread=` on `HEAD`/`PUT`. Deleting the conversation (or the
-  computer) deletes files nothing else uses.
+  it; computers name it with `?env=&thread=` on `HEAD`/`PUT`. Deleting the conversation (or all
+  of a computer's copies) deletes files nothing else uses.
+- Stop syncing (`DELETE /v1/computers/:env`) only unlinks the computer: it can no longer sign or
+  upload, uploads already on their way are cancelled, and its copies stay readable. Deleting them
+  is separate: `DELETE /v1/computers/:env/threads` (all of them) or `DELETE /v1/threads/:env/:t`.
+- Bodies are bounded before they are held: uploads must send `content-length` within the user's
+  `maxSnapshotBytes` / `maxBlobBytes` and are read into one buffer of that size, hashed as they
+  arrive; JSON bodies are capped at 64 KiB (reports 8 KiB).
 - `GET /v1/threads/:env/:thread` and the lease response return the stored gzip with
   `content-encoding: gzip`; `fetch` hands callers the JSON.
 

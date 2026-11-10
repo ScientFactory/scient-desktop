@@ -75,6 +75,10 @@ export const call = Effect.fn("Testing.call")(function* (
     );
   }
   const hasBody = method !== "GET" && method !== "HEAD";
+  // Clients send the length (fetch does for sized bodies); `new Request` does not add it.
+  if (hasBody && headers["content-length"] === undefined) {
+    headers["content-length"] = String(body.length);
+  }
   const request = new Request(`${ORIGIN}${path}`, {
     method,
     headers,

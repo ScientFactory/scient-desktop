@@ -64,7 +64,9 @@ export const migrate = Effect.gen(function* () {
     CREATE TABLE IF NOT EXISTS reservations (
       id TEXT PRIMARY KEY,
       bytes INTEGER NOT NULL,
-      created_at INTEGER NOT NULL
+      created_at INTEGER NOT NULL,
+      env TEXT,
+      thread TEXT
     )
   `;
   yield* sql`
@@ -98,7 +100,13 @@ export const migrate = Effect.gen(function* () {
     )
   `;
   yield* sql`CREATE INDEX IF NOT EXISTS blob_refs_thread ON blob_refs (env, thread)`;
-  yield* sql`CREATE TABLE IF NOT EXISTS shares (id TEXT PRIMARY KEY, bytes INTEGER NOT NULL)`;
+  yield* sql`
+    CREATE TABLE IF NOT EXISTS shares (
+      id TEXT PRIMARY KEY,
+      bytes INTEGER NOT NULL,
+      revision INTEGER NOT NULL DEFAULT 0
+    )
+  `;
 });
 
 interface ThreadRow {
@@ -149,6 +157,8 @@ const reserve = Effect.fn("UserStore.reserve")(function* (input: {
   readonly replacing: number;
   readonly limits: BaseLimits;
   readonly now: number;
+  /** The conversation a computer upload is for; removing it or its computer cancels the upload. */
+  readonly ref?: ThreadRef;
 }) {
   const sql = yield* SqlClient.SqlClient;
   const { used, reserved } = yield* usage(input.now);
@@ -157,9 +167,35 @@ const reserve = Effect.fn("UserStore.reserve")(function* (input: {
   }
   const id = randomId();
   yield* sql`
-    INSERT INTO reservations (id, bytes, created_at) VALUES (${id}, ${input.bytes}, ${input.now})
+    INSERT INTO reservations (id, bytes, created_at, env, thread)
+    VALUES (${id}, ${input.bytes}, ${input.now}, ${input.ref?.env ?? null},
+      ${input.ref?.thread ?? null})
   `;
   return id;
+});
+
+const requireEnrolled = Effect.fn("UserStore.requireEnrolled")(function* (env: string) {
+  const sql = yield* SqlClient.SqlClient;
+  const rows = yield* sql<{ readonly env: string }>`SELECT env FROM computers WHERE env = ${env}`;
+  if (rows.length === 0) return yield* failWith("unauthorized", "This computer is not enrolled.");
+});
+
+/**
+ * Spends a computer upload's reservation. Stopping sync or deleting the conversation while the
+ * bytes were on their way cancels it, so an upload that began before never lands after.
+ */
+const spendUpload = Effect.fn("UserStore.spendUpload")(function* (
+  reservation: string,
+  env: string,
+) {
+  const sql = yield* SqlClient.SqlClient;
+  yield* requireEnrolled(env);
+  const spent = yield* sql<{ readonly id: string }>`
+    DELETE FROM reservations WHERE id = ${reservation} RETURNING id
+  `;
+  if (spent.length === 0) {
+    return yield* failWith("not_found", "This copy was removed while it was uploading.");
+  }
 });
 
 /** Object keys a deletion leaves to remove from the bucket. */
@@ -179,6 +215,7 @@ const removeThreads = Effect.fn("UserStore.removeThreads")(function* (
   const sql = yield* SqlClient.SqlClient;
   const keys: Array<string> = [];
   for (const row of rows) {
+    yield* sql`DELETE FROM reservations WHERE env = ${row.env} AND thread = ${row.thread}`;
     yield* sql`DELETE FROM threads WHERE env = ${row.env} AND thread = ${row.thread}`;
     yield* sql`DELETE FROM blob_refs WHERE env = ${row.env} AND thread = ${row.thread}`;
     if (row.object_key) keys.push(row.object_key);
@@ -296,18 +333,32 @@ export const makeUserApi = (userId: string, run: RunSql) => {
         }),
       ),
 
-    /** Forgets the computer and deletes its cloud copies; returns bucket keys to delete. */
+    /**
+     * Stops syncing: the computer can no longer upload or sign, and uploads on their way are
+     * cancelled. Its copies stay readable; `deleteComputerCopies` removes them.
+     */
     removeComputer: (env: string) =>
       run(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`DELETE FROM computers WHERE env = ${env}`;
+          yield* sql`DELETE FROM reservations WHERE env = ${env}`;
+        }),
+      ),
+
+    /** Deletes every copy the computer made; returns bucket keys to delete. */
+    deleteComputerCopies: (env: string) =>
+      run(
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`DELETE FROM reservations WHERE env = ${env}`;
           const rows = yield* sql<ThreadRow>`SELECT * FROM threads WHERE env = ${env}`;
           return yield* removeThreads(rows);
         }),
       ),
 
-    computerKey: (env: string) =>
+    /** The computer's key and the user's limits (which bound the body it may send). */
+    computerAuth: (env: string, defaults: BaseLimits) =>
       run(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
@@ -315,9 +366,14 @@ export const makeUserApi = (userId: string, run: RunSql) => {
             SELECT public_key FROM computers WHERE env = ${env}
           `;
           if (!rows[0]) return yield* failWith("unauthorized", "This computer is not enrolled.");
-          return JSON.parse(rows[0].public_key) as Ed25519PublicJwk;
+          return {
+            publicKey: JSON.parse(rows[0].public_key) as Ed25519PublicJwk,
+            limits: yield* effectiveLimits(defaults),
+          };
         }),
       ),
+
+    effectiveLimits: (defaults: BaseLimits) => run(effectiveLimits(defaults)),
 
     /** Single use of a verified computer token's `jti`. */
     consumeJti: (input: { readonly env: string; readonly jti: string; readonly now: number }) =>
@@ -374,6 +430,7 @@ export const makeUserApi = (userId: string, run: RunSql) => {
       run(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
+          yield* requireEnrolled(input.env);
           const limits = yield* effectiveLimits(input.defaults);
           const row = yield* getThreadRow(input.env, input.thread);
           if (row && (row.moved_to !== null || input.meta.generation < row.generation)) {
@@ -408,6 +465,7 @@ export const makeUserApi = (userId: string, run: RunSql) => {
             replacing: row?.bytes ?? 0,
             limits,
             now: input.now,
+            ref: { env: input.env, thread: input.thread } as ThreadRef,
           });
           return {
             status: "upload" as const,
@@ -417,7 +475,10 @@ export const makeUserApi = (userId: string, run: RunSql) => {
         }),
       ),
 
-    /** Records the stored copy; returns the replaced object to delete. A lease taken meanwhile wins. */
+    /**
+     * Records the stored copy; returns the replaced object to delete. A lease taken, the
+     * conversation deleted or the computer removed meanwhile wins.
+     */
     commitThreadPut: (input: {
       readonly env: string;
       readonly thread: string;
@@ -430,7 +491,7 @@ export const makeUserApi = (userId: string, run: RunSql) => {
       run(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          yield* sql`DELETE FROM reservations WHERE id = ${input.reservation}`;
+          yield* spendUpload(input.reservation, input.env);
           const row = yield* getThreadRow(input.env, input.thread);
           if (row && (row.moved_to !== null || input.meta.generation < row.generation)) {
             return yield* failWith(
@@ -569,6 +630,7 @@ export const makeUserApi = (userId: string, run: RunSql) => {
       run(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
+          yield* requireEnrolled(input.ref.env);
           const limits = yield* effectiveLimits(input.defaults);
           const existing = yield* sql<{ readonly sha: string }>`
             SELECT sha FROM blobs WHERE sha = ${input.sha}
@@ -589,6 +651,7 @@ export const makeUserApi = (userId: string, run: RunSql) => {
             replacing: 0,
             limits,
             now: input.now,
+            ref: input.ref,
           });
           return {
             status: "upload" as const,
@@ -609,7 +672,7 @@ export const makeUserApi = (userId: string, run: RunSql) => {
       run(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          yield* sql`DELETE FROM reservations WHERE id = ${input.reservation}`;
+          yield* spendUpload(input.reservation, input.ref.env);
           const inserted = yield* sql<{ readonly sha: string }>`
             INSERT INTO blobs (sha, object_key, bytes)
             VALUES (${input.sha}, ${input.objectKey}, ${input.bytes})
@@ -697,17 +760,23 @@ export const makeUserApi = (userId: string, run: RunSql) => {
         }),
       ),
 
+    /**
+     * Takes the share's own total after one of its writes. Writes can report out of order, so
+     * only a newer `revision` replaces the total: usage ends equal to what the share stores.
+     */
     commitShareWrite: (input: {
       readonly id: string;
       readonly reservation: string;
-      readonly delta: number;
+      readonly totalBytes: number;
+      readonly revision: number;
     }) =>
       run(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
           yield* sql`DELETE FROM reservations WHERE id = ${input.reservation}`;
           yield* sql`
-            UPDATE shares SET bytes = MAX(0, bytes + ${input.delta}) WHERE id = ${input.id}
+            UPDATE shares SET bytes = ${input.totalBytes}, revision = ${input.revision}
+            WHERE id = ${input.id} AND revision < ${input.revision}
           `;
         }),
       ),

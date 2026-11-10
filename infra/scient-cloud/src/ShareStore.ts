@@ -37,7 +37,8 @@ export const migrate = Effect.gen(function* () {
       card TEXT,
       created_at INTEGER NOT NULL,
       current_version INTEGER,
-      revoked INTEGER NOT NULL DEFAULT 0
+      revoked INTEGER NOT NULL DEFAULT 0,
+      revision INTEGER NOT NULL DEFAULT 0
     )
   `;
   yield* sql`
@@ -73,6 +74,7 @@ interface ShareRow {
   readonly created_at: number;
   readonly current_version: number | null;
   readonly revoked: number;
+  readonly revision: number;
 }
 
 const notFound = () => failWith("not_found", "This shared link does not exist or has ended.");
@@ -240,7 +242,10 @@ export const makeShareApi = (
         }),
       ),
 
-    /** Returns the replaced key to delete (if any) and the change in stored bytes. */
+    /**
+     * Returns the replaced key to delete (if any) and the bytes the share now stores, numbered
+     * by `revision` so the owner's usage can apply totals in order.
+     */
     commitPut: (input: {
       readonly owner: string;
       readonly version: number;
@@ -273,9 +278,14 @@ export const makeShareApi = (
             ON CONFLICT (version, name) DO UPDATE SET
               object_key = excluded.object_key, bytes = excluded.bytes
           `;
+          const [state] = yield* sql<{ readonly revision: number; readonly total: number }>`
+            UPDATE share SET revision = revision + 1
+            RETURNING revision, (SELECT COALESCE(SUM(bytes), 0) FROM objects) AS total
+          `;
           return {
             replacedKey: replaced?.object_key ?? null,
-            delta: input.bytes - (replaced?.bytes ?? 0),
+            totalBytes: Number(state?.total ?? 0),
+            revision: Number(state?.revision ?? 0),
           };
         }),
       ),

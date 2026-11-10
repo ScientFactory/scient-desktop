@@ -12,7 +12,6 @@ import {
   type ThreadMeta,
 } from "@scientfactory/scient-cloud/api";
 import {
-  bodySha256,
   computerJwsCryptoLayer,
   readComputerAuthorization,
   readComputerTokenIdentity,
@@ -27,7 +26,6 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Jwt from "effect/jose/Jwt";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import { sha256 } from "@noble/hashes/sha2.js";
 import { bytesToHex } from "@noble/hashes/utils.js";
 
 import {
@@ -38,15 +36,17 @@ import {
   newWrappedDataKey,
   unwrapDataKey,
 } from "./AtRest.ts";
+import { EMPTY_UPLOAD, readJsonBody, readUpload, type Upload } from "./Body.ts";
 import { CloudError, cloudError, errorBody, errorStatus, failWith } from "./CloudError.ts";
 import { Objects } from "./Objects.ts";
 import { contentFrame, sharePage } from "./Pages.ts";
 import { CloudConfig, PeopleAuth, Shares, Users } from "./Services.ts";
 import type { AccessCheck } from "./ShareStore.ts";
-import { LimitsOverride } from "./UserStore.ts";
+import { LimitsOverride, type BaseLimits } from "./UserStore.ts";
 
-/** Workers refuse larger request bodies; reject before reading. */
-const MAX_REQUEST_BYTES = 100 * 1024 * 1024;
+/** JSON requests are small; a report is a reason of at most 2000 characters. */
+const MAX_JSON_BYTES = 64 * 1024;
+const MAX_REPORT_BYTES = 8 * 1024;
 const GZIP_MAGIC = [0x1f, 0x8b];
 
 /** Bytes stored as-is for the client; the runtime must not compress them again. */
@@ -70,15 +70,18 @@ const noContent = () => new Response(null, { status: 204 });
 
 const now = Clock.currentTimeMillis;
 
-const decodeJson = <S extends Schema.Top & { readonly DecodingServices: never }>(schema: S) => {
+const decodeJson = <S extends Schema.Top & { readonly DecodingServices: never }>(
+  schema: S,
+  maxBytes = MAX_JSON_BYTES,
+) => {
   const decode = Schema.decodeUnknownEffect(schema);
   return (request: Request) =>
-    Effect.tryPromise({
-      try: () => request.json(),
-      catch: () => cloudError("invalid_request", "The request body is not JSON."),
-    }).pipe(
-      Effect.flatMap(decode),
-      Effect.mapError(() => cloudError("invalid_request", "The request body is not valid.")),
+    readJsonBody(request, maxBytes).pipe(
+      Effect.flatMap((body) =>
+        decode(body).pipe(
+          Effect.mapError(() => cloudError("invalid_request", "The request body is not valid.")),
+        ),
+      ),
     );
 };
 
@@ -86,22 +89,10 @@ const readEnrollRequest = decodeJson(EnrollComputerRequest);
 const readLeaseRequest = decodeJson(LeaseRequest);
 const readCreateShareRequest = decodeJson(CreateShareRequest);
 const readPatchShareRequest = decodeJson(PatchShareRequest);
-const readShareReportRequest = decodeJson(ShareReportRequest);
+const readShareReportRequest = decodeJson(ShareReportRequest, MAX_REPORT_BYTES);
 const readLimitsOverride = decodeJson(Schema.NullOr(LimitsOverride));
 const decodeThreadRef = Schema.decodeUnknownOption(ThreadRef);
 const isShareObjectName = Schema.is(ShareObjectName);
-
-const readBody = Effect.fn("Api.readBody")(function* (request: Request) {
-  const declared = Number(request.headers.get("content-length") ?? "0");
-  if (declared > MAX_REQUEST_BYTES) {
-    return yield* failWith("too_large", "The request body is too large.");
-  }
-  const bytes = new Uint8Array(yield* Effect.promise(() => request.arrayBuffer()));
-  if (bytes.length > MAX_REQUEST_BYTES) {
-    return yield* failWith("too_large", "The request body is too large.");
-  }
-  return bytes;
-});
 
 const bearer = (request: Request) => {
   const header = request.headers.get("authorization");
@@ -120,15 +111,23 @@ const optionalUser = (request: Request) =>
     ? Effect.undefined
     : requireUser(request).pipe(Effect.map((userId): string | undefined => userId));
 
-/** Verifies the computer token over the exact body, then spends its `jti`. */
+/**
+ * Verifies the computer token over the exact body, then spends its `jti`. `readBody` reads the
+ * body once the computer is known to be enrolled, bounded by its user's limits.
+ */
 const requireComputer = Effect.fn("Api.requireComputer")(
-  function* (request: Request, body: Uint8Array) {
+  function* (
+    request: Request,
+    readBody: (limits: BaseLimits) => Effect.Effect<Upload, CloudError> = () =>
+      Effect.succeed(EMPTY_UPLOAD),
+  ) {
     const token = readComputerAuthorization(request.headers.get("authorization"));
     if (token === undefined) return yield* failWith("unauthorized", "Missing computer token.");
     const config = yield* CloudConfig;
     const identity = yield* readComputerTokenIdentity(token);
     const user = (yield* Users).get(identity.userId);
-    const publicKey = yield* user.computerKey(identity.environmentId);
+    const { publicKey, limits } = yield* user.computerAuth(identity.environmentId, config.limits);
+    const body = yield* readBody(limits);
     const claims = yield* verifyComputerRequest({
       token,
       publicKey,
@@ -137,14 +136,14 @@ const requireComputer = Effect.fn("Api.requireComputer")(
       audience: config.apiOrigin,
       method: request.method,
       target: requestTarget(new URL(request.url)),
-      bodySha256: yield* bodySha256(body),
+      bodySha256: Base64Url.encode(body.sha256),
     }).pipe(Effect.provide(computerJwsCryptoLayer));
     yield* user.consumeJti({
       env: identity.environmentId,
       jti: claims.jti,
       now: yield* now,
     });
-    return { userId: identity.userId, env: identity.environmentId, user };
+    return { userId: identity.userId, env: identity.environmentId, user, body };
   },
   Effect.catchTags({
     ComputerJwsError: (error) =>
@@ -156,13 +155,13 @@ const requireComputer = Effect.fn("Api.requireComputer")(
 const requireReader = (request: Request) =>
   readComputerAuthorization(request.headers.get("authorization")) === undefined
     ? requireUser(request)
-    : requireComputer(request, new Uint8Array(0)).pipe(Effect.map((computer) => computer.userId));
+    : requireComputer(request).pipe(Effect.map((computer) => computer.userId));
 
 /** A person, or the computer named by the path. */
 const requireUserOrComputer = (request: Request, env: string) =>
   readComputerAuthorization(request.headers.get("authorization")) === undefined
     ? requireUser(request)
-    : requireComputer(request, new Uint8Array(0)).pipe(
+    : requireComputer(request).pipe(
         Effect.flatMap((computer) =>
           computer.env === env
             ? Effect.succeed(computer.userId)
@@ -263,8 +262,10 @@ const putThread = Effect.fn("Api.putThread")(function* (
   env: string,
   thread: string,
 ) {
-  const body = yield* readBody(request);
-  const computer = yield* requireComputer(request, body);
+  const computer = yield* requireComputer(request, (limits) =>
+    readUpload(request, limits.maxSnapshotBytes),
+  );
+  const body = computer.body.bytes;
   if (computer.env !== env) {
     return yield* failWith("forbidden", "A computer can only upload its own conversations.");
   }
@@ -341,17 +342,19 @@ const blobRef = (url: URL, env: string) => {
 };
 
 const headBlob = Effect.fn("Api.headBlob")(function* (request: Request, sha: string) {
-  const computer = yield* requireComputer(request, new Uint8Array(0));
+  const computer = yield* requireComputer(request);
   const ref = yield* blobRef(new URL(request.url), computer.env);
   const exists = yield* computer.user.blobHead(sha, ref);
   return new Response(null, { status: exists ? 200 : 404 });
 });
 
 const putBlob = Effect.fn("Api.putBlob")(function* (request: Request, sha: string) {
-  const body = yield* readBody(request);
-  const computer = yield* requireComputer(request, body);
+  const computer = yield* requireComputer(request, (limits) =>
+    readUpload(request, limits.maxBlobBytes),
+  );
+  const body = computer.body.bytes;
   const ref = yield* blobRef(new URL(request.url), computer.env);
-  if (bytesToHex(sha256(body)) !== sha) {
+  if (bytesToHex(computer.body.sha256) !== sha) {
     return yield* failWith("invalid_request", "The file does not match its SHA-256.");
   }
   const { user } = computer;
@@ -461,9 +464,10 @@ const putShareObject = Effect.fn("Api.putShareObject")(function* (
   const userId = yield* requireUser(request);
   const version = yield* parseVersion(versionText);
   const name = yield* parseObjectName(nameText);
-  const body = yield* readBody(request);
   const share = yield* ownedShare(userId, id);
   const user = (yield* Users).get(userId);
+  const { maxSnapshotBytes } = yield* user.effectiveLimits((yield* CloudConfig).limits);
+  const body = (yield* readUpload(request, maxSnapshotBytes)).bytes;
   const begun = yield* share.beginPut({ owner: userId, version, name, now: yield* now });
   const reservation = yield* user.beginShareWrite({
     id,
@@ -492,7 +496,12 @@ const putShareObject = Effect.fn("Api.putShareObject")(function* (
         Effect.andThen(user.release(reservation), objects.delete([begun.objectKey])),
       ),
     );
-  yield* user.commitShareWrite({ id, reservation, delta: committed.delta });
+  yield* user.commitShareWrite({
+    id,
+    reservation,
+    totalBytes: committed.totalBytes,
+    revision: committed.revision,
+  });
   if (committed.replacedKey !== null) yield* objects.delete([committed.replacedKey]);
   return noContent();
 });
@@ -560,7 +569,7 @@ const reportShare = Effect.fn("Api.reportShare")(function* (request: Request, id
 const limits = Effect.fn("Api.limits")(function* (request: Request) {
   const config = yield* CloudConfig;
   const userId = readComputerAuthorization(request.headers.get("authorization"))
-    ? (yield* requireComputer(request, new Uint8Array(0))).userId
+    ? (yield* requireComputer(request)).userId
     : yield* optionalUser(request);
   if (userId === undefined) return json(200, config.limits);
   return json(200, yield* (yield* Users).get(userId).limits(config.limits, yield* now));
@@ -622,7 +631,17 @@ const routes: ReadonlyArray<readonly [method: string, pattern: RegExp, handler: 
     (request, env) =>
       Effect.gen(function* () {
         const userId = yield* requireUserOrComputer(request, env!);
-        yield* deleteObjects(yield* (yield* Users).get(userId).removeComputer(env!));
+        yield* (yield* Users).get(userId).removeComputer(env!);
+        return noContent();
+      }),
+  ],
+  [
+    "DELETE",
+    /^\/v1\/computers\/([^/]+)\/threads$/u,
+    (request, env) =>
+      Effect.gen(function* () {
+        const userId = yield* requireUserOrComputer(request, env!);
+        yield* deleteObjects(yield* (yield* Users).get(userId).deleteComputerCopies(env!));
         return noContent();
       }),
   ],
@@ -631,7 +650,7 @@ const routes: ReadonlyArray<readonly [method: string, pattern: RegExp, handler: 
     /^\/v1\/computers\/([^/]+)\/moved$/u,
     (request, env) =>
       Effect.gen(function* () {
-        const computer = yield* requireComputer(request, new Uint8Array(0));
+        const computer = yield* requireComputer(request);
         if (computer.env !== env) return yield* failWith("forbidden", "Not this computer.");
         const since = parseSince(new URL(request.url).searchParams.get("since"));
         return json(200, { threads: yield* computer.user.movedSince(env, since) });

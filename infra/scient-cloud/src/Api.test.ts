@@ -12,10 +12,13 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as Local from "./Local.ts";
+import { memoryObjects, type Objects } from "./Objects.ts";
+import { Shares, Users } from "./Services.ts";
 import {
   call,
   enroll,
@@ -36,7 +39,10 @@ const people = new Map<string, Local.LocalPerson>([
 ]);
 
 const cloud = (
-  options: { readonly freeBytes?: number; readonly objects?: Map<string, Uint8Array> } = {},
+  options: {
+    readonly freeBytes?: number;
+    readonly objects?: Map<string, Uint8Array> | Objects["Service"];
+  } = {},
 ) =>
   Layer.mergeAll(
     Local.layer({
@@ -291,6 +297,98 @@ describe("sync", () => {
       expect((yield* call("HEAD", blobPath, { computer })).status).toBe(404);
     }).pipe(Effect.provide(cloud())),
   );
+
+  it.effect("keeps copies when a computer stops syncing; deleting them is separate", () =>
+    Effect.gen(function* () {
+      const computer = yield* setup;
+      const bytes = new TextEncoder().encode("figure bytes");
+      const sha = yield* sha256Hex(bytes);
+      const usedBy = { env: computer.environmentId, thread: ThreadId.make("t1") };
+      yield* call("PUT", cloudPaths.blob(sha, usedBy), { computer, body: bytes });
+      const body = gzip("{}");
+      yield* putThread(computer, "t1", body);
+
+      expect(
+        (yield* call("DELETE", cloudPaths.computer("env-a"), { person: "ada-token" })).status,
+      ).toBe(204);
+      // The computer is unlinked...
+      expect((yield* putThread(computer, "t2", body)).status).toBe(401);
+      // ...and its copies are still there to read.
+      const read = yield* call("GET", cloudPaths.thread("env-a", "t1"), { person: "ada-token" });
+      expect(yield* readBytes(read)).toEqual(body);
+      expect((yield* call("GET", cloudPaths.blob(sha), { person: "ada-token" })).status).toBe(200);
+
+      expect(
+        (yield* call("DELETE", cloudPaths.computerThreads("env-a"), { person: "ada-token" }))
+          .status,
+      ).toBe(204);
+      expect(
+        (yield* call("GET", cloudPaths.thread("env-a", "t1"), { person: "ada-token" })).status,
+      ).toBe(404);
+      expect((yield* call("GET", cloudPaths.blob(sha), { person: "ada-token" })).status).toBe(404);
+    }).pipe(Effect.provide(cloud())),
+  );
+
+  it.effect("does not let an upload begun before the computer was removed land after it", () => {
+    const store = new Map<string, Uint8Array>();
+    const base = memoryObjects(store);
+    const latch = () => {
+      let resolve = () => {};
+      const promise = new Promise<void>((done) => (resolve = done));
+      return { promise, resolve: () => resolve() };
+    };
+    const putStarted = latch();
+    const gate = latch();
+    const objects: Objects["Service"] = {
+      ...base,
+      put: (key, body, length) =>
+        Effect.promise(() => {
+          putStarted.resolve();
+          return gate.promise;
+        }).pipe(Effect.andThen(base.put(key, body, length))),
+    };
+    return Effect.gen(function* () {
+      const computer = yield* setup;
+      const upload = yield* Effect.forkChild(putThread(computer, "t1", gzip("{}")));
+      yield* Effect.promise(() => putStarted.promise);
+      expect(
+        (yield* call("DELETE", cloudPaths.computer("env-a"), { person: "ada-token" })).status,
+      ).toBe(204);
+      gate.resolve();
+      expect((yield* Fiber.join(upload)).status).toBe(401);
+      const index = yield* readJson(
+        yield* call("GET", cloudPaths.threads(), { person: "ada-token" }),
+      );
+      expect(index.threads).toEqual([]);
+      expect(store.size).toBe(0);
+    }).pipe(Effect.provide(cloud({ objects })));
+  });
+
+  it.effect("refuses bodies past their limits before holding them", () =>
+    Effect.gen(function* () {
+      const computer = yield* setup;
+      const body = gzip("{}");
+      const upload = (length: number) =>
+        call("PUT", cloudPaths.thread("env-a", "t1"), {
+          computer,
+          body,
+          headers: {
+            [THREAD_META_HEADER]: encodeThreadMetaHeader(meta()),
+            "content-length": String(length),
+          },
+        });
+      const declaredTooLarge = yield* upload(9 * MiB);
+      expect(declaredTooLarge.status).toBe(413);
+      expect((yield* readJson(declaredTooLarge)).error).toBe("too_large");
+      // More bytes than declared are never written past the buffer.
+      expect((yield* upload(body.length - 1)).status).toBe(400);
+
+      const report = yield* call("POST", cloudPaths.publicShareReport("A".repeat(22)), {
+        body: { reason: "x".repeat(10 * 1024) },
+      });
+      expect(report.status).toBe(413);
+    }).pipe(Effect.provide(cloud())),
+  );
 });
 
 const publishShare = (access: object, extra: object = {}) =>
@@ -319,6 +417,46 @@ const publishShare = (access: object, extra: object = {}) =>
   });
 
 describe("shares", () => {
+  it.effect(
+    "keeps usage equal to a link's stored bytes when replacements report out of order",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(NOW);
+        const created = yield* readJson(
+          yield* call("POST", cloudPaths.shares(), {
+            person: "ada-token",
+            body: {
+              source: { env: "env-a", thread: "t1" },
+              encrypted: true,
+              access: { mode: "link" },
+              indexable: false,
+            },
+          }),
+        );
+        const id = created.id as string;
+        const share = (yield* Shares).get(id);
+        const user = (yield* Users).get("user_ada");
+        const write = (bytes: number) =>
+          Effect.gen(function* () {
+            const input = { owner: "user_ada", version: 1, name: "snapshot", now: NOW };
+            const begun = yield* share.beginPut(input);
+            return yield* share.commitPut({ ...input, objectKey: begun.objectKey, bytes });
+          });
+        const report = (written: { readonly totalBytes: number; readonly revision: number }) =>
+          user.commitShareWrite({ id, reservation: "-", ...written });
+
+        yield* report(yield* write(100));
+        const larger = yield* write(200);
+        const smaller = yield* write(50);
+        yield* report(smaller);
+        yield* report(larger);
+        const limits = yield* readJson(
+          yield* call("GET", cloudPaths.limits(), { person: "ada-token" }),
+        );
+        expect(limits.usedBytes).toBe(50);
+      }).pipe(Effect.provide(cloud())),
+  );
+
   it.effect("applies link, people and me access", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
