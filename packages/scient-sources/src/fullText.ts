@@ -207,50 +207,67 @@ export type FullTextQuoteLocation =
   | { readonly _tag: "NotFound" };
 
 interface JoinedPages {
+  readonly pages: ReadonlyArray<FullTextPageText>;
   readonly text: string;
   readonly starts: ReadonlyArray<number>;
 }
 
-function joinPages(pages: ReadonlyArray<FullTextPageText>): JoinedPages {
-  const starts: number[] = [];
-  let text = "";
+// Joins consecutive pages with a line break, which is not a stored character:
+// a match that spans it is never exact.
+const PAGE_BREAK = "\n";
+
+/**
+ * Pages a quote may span: consecutive page numbers, each with text. A missing,
+ * unread or empty page ends a run, so text on either side never becomes adjacent.
+ */
+function pageRuns(pages: ReadonlyArray<FullTextPageText>): ReadonlyArray<JoinedPages> {
+  const runs: FullTextPageText[][] = [];
+  let previous: number | null = null;
   for (const page of pages) {
-    starts.push(text.length);
-    text += page.text;
+    if (page.text.trim().length === 0) {
+      previous = null;
+      continue;
+    }
+    if (previous === null || page.page !== previous + 1) runs.push([]);
+    runs.at(-1)!.push(page);
+    previous = page.page;
   }
-  return { text, starts };
+  return runs.map((run) => {
+    const starts: number[] = [];
+    let text = "";
+    for (const page of run) {
+      if (starts.length > 0) text += PAGE_BREAK;
+      starts.push(text.length);
+      text += page.text;
+    }
+    return { pages: run, text, starts };
+  });
 }
 
-function rangesFor(
-  pages: ReadonlyArray<FullTextPageText>,
-  joined: JoinedPages,
-  start: number,
-  end: number,
-): FullTextRange[] {
+function rangesFor(joined: JoinedPages, start: number, end: number): FullTextRange[] {
   const ranges: FullTextRange[] = [];
-  for (let index = 0; index < pages.length; index += 1) {
+  for (const [index, page] of joined.pages.entries()) {
     const pageStart = joined.starts[index]!;
-    const pageEnd = pageStart + pages[index]!.text.length;
+    const pageEnd = pageStart + page.text.length;
     const from = Math.max(start, pageStart);
     const to = Math.min(end, pageEnd);
-    if (from < to)
-      ranges.push({ page: pages[index]!.page, start: from - pageStart, end: to - pageStart });
+    if (from < to) ranges.push({ page: page.page, start: from - pageStart, end: to - pageStart });
   }
   return ranges;
 }
 
 function found(
-  pages: ReadonlyArray<FullTextPageText>,
   joined: JoinedPages,
   match: "exact" | "normalized",
   start: number,
   end: number,
 ): FullTextQuoteLocation {
   const { context } = SCIENT_SOURCE_FULL_TEXT_LIMITS;
+  const ranges = rangesFor(joined, start, end);
   return {
     _tag: "Found",
-    match,
-    ranges: rangesFor(pages, joined, start, end),
+    match: ranges.length > 1 ? "normalized" : match,
+    ranges,
     text: joined.text.slice(start, end),
     prefix: joined.text.slice(Math.max(0, start - context), start),
     suffix: joined.text.slice(end, end + context),
@@ -258,33 +275,36 @@ function found(
 }
 
 /**
- * Finds a quote in stored page text, across page boundaries. A verbatim match
- * wins; otherwise both sides are folded. A repeated quote is ambiguous, never
- * guessed.
+ * Finds a quote in stored page text, across the boundary of consecutive
+ * readable pages. A verbatim match within a page is exact; otherwise both
+ * sides are folded. A repeated quote is ambiguous, never guessed.
  */
 export function locateFullTextQuote(
   input: ReadonlyArray<FullTextPageText>,
   quote: string,
 ): FullTextQuoteLocation {
-  const pages = input.toSorted((left, right) => left.page - right.page);
-  const joined = joinPages(pages);
   if (quote.trim().length === 0) return { _tag: "NotFound" };
-  const exact = occurrences(joined.text, quote, 2);
+  const runs = pageRuns(input.toSorted((left, right) => left.page - right.page));
+  const exact = runs.flatMap((run) => occurrences(run.text, quote, 2).map((at) => ({ run, at })));
   if (exact.length > 1) return { _tag: "Ambiguous", match: "exact" };
-  if (exact.length === 1) return found(pages, joined, "exact", exact[0]!, exact[0]! + quote.length);
+  if (exact.length === 1) {
+    const [{ run, at }] = exact as [(typeof exact)[number]];
+    return found(run, "exact", at, at + quote.length);
+  }
 
-  // Pages are folded as one text so spacing and hyphenation that cross a page
+  // A run is folded as one text so spacing and hyphenation that cross a page
   // boundary fold the same way they would inside a page.
-  const folded = foldText(joined.text, "quote");
   const needle = foldText(quote, "quote").text;
-  const matches = occurrences(folded.text, needle, 2);
+  const matches = runs.flatMap((run) => {
+    const folded = foldText(run.text, "quote");
+    return occurrences(folded.text, needle, 2).map((at) => ({ run, folded, at }));
+  });
   if (matches.length > 1) return { _tag: "Ambiguous", match: "normalized" };
   if (matches.length === 0) return { _tag: "NotFound" };
-  const startUnit = matches[0]!;
-  const lastUnit = startUnit + needle.length - 1;
-  const start = folded.origin[startUnit]!;
-  const lastOrigin = folded.origin[lastUnit]!;
-  return found(pages, joined, "normalized", start, lastOrigin + unitWidth(joined.text, lastOrigin));
+  const { run, folded, at } = matches[0]!;
+  const start = folded.origin[at]!;
+  const lastOrigin = folded.origin[at + needle.length - 1]!;
+  return found(run, "normalized", start, lastOrigin + unitWidth(run.text, lastOrigin));
 }
 
 const STOPWORDS = new Set(

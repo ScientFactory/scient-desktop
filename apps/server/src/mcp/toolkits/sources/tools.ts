@@ -992,7 +992,7 @@ const ScientSourceSavePageTool = Tool.make("scient_sources_save_page", {
   description:
     "Save a web page to this project's Library after the user asks, keeping a passage from it in the source's note. " +
     "Pass the page's meta tags (citation_*, dc.*, prism.*, og:*) as read from the page, for example with preview_evaluate. " +
-    "A DOI, PMID or arXiv ID the page states is checked against its registry and its metadata is used; otherwise the page is saved as a web page. " +
+    "A DOI, PMID or arXiv ID the page states is checked against its registry and its metadata is used when the page's citation title agrees; otherwise the page is saved as a web page. " +
     "Saving the same page again adds only a new passage. For a PDF, use scient_paper_get or scient_sources_add with pdfRelativePath.",
   parameters: Schema.Struct({
     url: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(4_096))),

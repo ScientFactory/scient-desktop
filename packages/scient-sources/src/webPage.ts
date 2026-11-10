@@ -219,15 +219,41 @@ export function webPageCandidate(
   };
 }
 
-/** The selected passage as note text, or null when nothing worth keeping was selected. */
-export function webPagePassage(selection: string | null): string | null {
+/** The title the page's bibliographic tags state, as opposed to the tab's title. */
+export function webPageBibliographicTitle(page: ScientSourceWebPage): string | null {
+  return firstMeta(page, "citation_title", "dc.title");
+}
+
+/** A candidate for the page itself, without the identifiers it states. */
+export function webPageOnlyCandidate(
+  page: ScientSourceWebPage,
+  sourceKey: string,
+): ScientSourceCandidate {
+  const candidate = webPageCandidate(page, sourceKey);
+  return {
+    ...candidate,
+    type: "web",
+    identifiers: [],
+    fieldProvenance: candidate.fieldProvenance.filter(
+      (entry) => !entry.field.startsWith("identifiers."),
+    ),
+  };
+}
+
+/**
+ * The selected passage as note text, headed by the page it was selected on,
+ * or null when nothing worth keeping was selected.
+ */
+export function webPagePassage(selection: string | null, url: string): string | null {
   const passage = selection
     ?.split(/\n\s*\n/u)
     .map((paragraph) => paragraph.replace(/\s+/gu, " ").trim())
     .filter(Boolean)
     .join("\n\n");
   if (!passage) return null;
-  return passage.length > PASSAGE_LIMIT ? `${passage.slice(0, PASSAGE_LIMIT).trimEnd()}…` : passage;
+  const kept =
+    passage.length > PASSAGE_LIMIT ? `${passage.slice(0, PASSAGE_LIMIT).trimEnd()}…` : passage;
+  return `Selected on the web page ${url.trim()}:\n${kept}`;
 }
 
 /** The note with the passage added below what it already says; null when it already holds it. */

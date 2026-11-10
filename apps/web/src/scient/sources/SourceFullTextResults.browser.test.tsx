@@ -74,22 +74,39 @@ describe("Library full-text results", () => {
     expect(onOpenHit).toHaveBeenCalledWith(hit);
   });
 
-  it("shows only passages from sources the Library's filters keep", async () => {
+  it("searches only the sources the Library's filters keep, again when they change", async () => {
     const { answer } = setup();
-    await using screen = await render(
+    const results = (sourceIds: ReadonlyArray<string>) => (
       <SourceFullTextResults
         environmentId={environmentId}
         root="/project"
         query="antibiotics"
         metadataMatchCount={0}
-        sourceIds={new Set(["source-2"])}
+        sourceIds={sourceIds}
         onOpenHit={vi.fn()}
-      />,
+      />
     );
-    await vi.waitFor(() => expect(mocks.searchScientSourcesFullText).toHaveBeenCalledTimes(1));
+    await using screen = await render(results(["source-1"]));
+    await vi.waitFor(() =>
+      expect(mocks.searchScientSourcesFullText).toHaveBeenCalledWith(environmentId, {
+        root: "/project",
+        query: "antibiotics",
+        sourceIds: ["source-1"],
+      }),
+    );
     answer.resolve({ hits: [hit], status });
+    await expect.element(screen.getByText("Early antibiotics trial")).toBeVisible();
+
+    mocks.searchScientSourcesFullText.mockResolvedValue({ hits: [], status });
+    await screen.rerender(results(["source-2"]));
+    await vi.waitFor(() =>
+      expect(mocks.searchScientSourcesFullText).toHaveBeenLastCalledWith(environmentId, {
+        root: "/project",
+        query: "antibiotics",
+        sourceIds: ["source-2"],
+      }),
+    );
     await expect.element(page.getByText("No matching sources were found.")).toBeVisible();
-    expect(screen.container.textContent).not.toContain("Early antibiotics trial");
   });
 
   it("says nothing matched only after the full-text search has answered", async () => {
