@@ -86,17 +86,22 @@ describe("Scient release machinery", () => {
     );
   });
 
-  it("restores the cached voice runtime anywhere but saves it only from main", () => {
+  it("restores cached macOS native runtimes anywhere but saves them only from main", () => {
     const workflow = NodeFS.readFileSync(
       NodePath.join(import.meta.dirname, "../.github/workflows/release.yml"),
       "utf8",
     );
     const saveStep =
-      workflow.split(/^ {6}- name: Save voice runtime\n/mu)[1]?.split(/^ {6}- /mu)[0] ?? "";
+      workflow.split(/^ {6}- name: Save macOS native runtimes\n/mu)[1]?.split(/^ {6}- /mu)[0] ?? "";
 
     assert.include(saveStep, "github.ref == 'refs/heads/main'");
-    // The packer verifies the supplied runtime's receipt and every file before staging it.
+    assert(saveStep.length > 0);
+    // The packer verifies each supplied runtime's receipt and every file before staging it.
     assert.include(workflow, '--voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime"');
+    assert.include(
+      workflow,
+      '--synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime"',
+    );
   });
 
   it("pins every release-owned action to an immutable commit", () => {

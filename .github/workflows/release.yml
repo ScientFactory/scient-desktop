@@ -389,17 +389,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # macOS packaging builds its own SyncTeX, so a release holds no extra macOS runner.
         include:
-          - label: macOS arm64
-            runner: macos-26
-            platform: mac
-            arch: arm64
-            key: darwin-arm64
-          - label: macOS x64
-            runner: macos-15-intel
-            platform: mac
-            arch: x64
-            key: darwin-x64
           - label: Linux x64
             runner: ubuntu-24.04
             platform: linux
@@ -485,13 +476,14 @@ jobs:
           path: native/synctex-runtime/${{ matrix.key }}/*
           if-no-files-found: error
 
-  # Each leg sets up while the native prerequisites build, then waits only for its own.
+  # Each leg starts at once. macOS builds its own native runtimes; Linux and Windows set up
+  # while their prerequisites build, then wait only for their own.
   build_desktop:
     name: Package ${{ matrix.label }}
     needs: preflight
     if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 40
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -689,46 +681,49 @@ jobs:
           if-no-files-found: error
           overwrite: true
 
-      # The pinned whisper.cpp build, by the scripts that pin it and this runner's toolchain.
-      # The packer verifies its receipt and every file before staging it.
-      - name: Identify voice runtime toolchain
-        if: matrix.platform != 'win'
-        id: voice_toolchain
+      # The pinned whisper.cpp and SyncTeX builds, by the scripts that pin them and this runner's
+      # toolchain. The packer verifies each receipt and every file before staging them.
+      - name: Identify macOS native runtime toolchain
+        if: matrix.platform == 'mac'
+        id: native_toolchain
         shell: bash
         run: |
           set -euo pipefail
-          if [[ "${{ matrix.platform }}" == "mac" ]]; then
-            toolchain="$ImageOS-$(xcrun --show-sdk-version)-$(xcrun clang --version | sed -n 1p)"
-          else
-            toolchain="$ImageOS-$(cc --version | sed -n 1p)-$(cmake --version | sed -n 1p)"
-          fi
+          toolchain="$ImageOS-$(xcrun --show-sdk-version)-$(xcrun clang --version | sed -n 1p)"
           echo "id=$(printf '%s' "$toolchain" | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
-      - name: Restore voice runtime
-        if: matrix.platform != 'win'
-        id: voice_cache
+      - name: Restore macOS native runtimes
+        if: matrix.platform == 'mac'
+        id: native_cache
         uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: native-runtimes/whisper-runtime
-          key: voice-runtime-v1-${{ matrix.platform }}-${{ matrix.arch }}-${{ steps.voice_toolchain.outputs.id }}-${{ hashFiles('scripts/stage-whisper-runtime.ts', 'scripts/lib/whisper-runtime-receipt.ts') }}
-      - name: Build voice runtime
-        if: matrix.platform != 'win' && steps.voice_cache.outputs.cache-hit != 'true'
-        run: >-
-          node scripts/stage-whisper-runtime.ts
-          --platform ${{ matrix.platform }}
-          --arch ${{ matrix.arch }}
-          --output native-runtimes/whisper-runtime
-          --verbose
+          path: native-runtimes
+          key: macos-native-runtimes-v1-${{ matrix.arch }}-${{ steps.native_toolchain.outputs.id }}-${{ hashFiles('scripts/stage-whisper-runtime.ts', 'scripts/lib/whisper-runtime-receipt.ts', 'scripts/stage-synctex-runtime.ts') }}
+      - name: Build macOS native runtimes
+        if: matrix.platform == 'mac' && steps.native_cache.outputs.cache-hit != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node scripts/stage-whisper-runtime.ts --platform mac --arch "${{ matrix.arch }}" --output native-runtimes/whisper-runtime --verbose
+          node scripts/stage-synctex-runtime.ts --platform mac --arch "${{ matrix.arch }}" --output native-runtimes/synctex-runtime --verbose
       # Only trusted main writes this cache; other refs restore from it.
-      - name: Save voice runtime
-        if: matrix.platform != 'win' && steps.voice_cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
+      - name: Save macOS native runtimes
+        if: matrix.platform == 'mac' && steps.native_cache.outputs.cache-hit != 'true' && github.ref == 'refs/heads/main'
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          path: native-runtimes/whisper-runtime
-          key: ${{ steps.voice_cache.outputs.cache-primary-key }}
+          path: native-runtimes
+          key: ${{ steps.native_cache.outputs.cache-primary-key }}
+      - name: Upload macOS SyncTeX runtime
+        if: matrix.platform == 'mac'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: synctex-runtime-${{ matrix.resource_key }}
+          path: native-runtimes/synctex-runtime/*
+          if-no-files-found: error
+          overwrite: true
 
       - name: Wait for this target's native prerequisites
+        if: matrix.platform != 'mac'
         shell: bash
-        timeout-minutes: 40
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -748,6 +743,7 @@ jobs:
           path: wsl-prebuild
 
       - name: Download target SyncTeX runtime
+        if: matrix.platform != 'mac'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: synctex-runtime-${{ matrix.resource_key }}
@@ -842,9 +838,13 @@ jobs:
             --arch "$RELEASE_ARCH"
             --build-version "$RELEASE_VERSION"
             --verbose
-            --synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/current"
           )
-          [[ "$RELEASE_PLATFORM" == "win" ]] || args+=(--voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime")
+          if [[ "$RELEASE_PLATFORM" == "mac" ]]; then
+            args+=(--synctex-runtime "$GITHUB_WORKSPACE/native-runtimes/synctex-runtime")
+            args+=(--voice-runtime "$GITHUB_WORKSPACE/native-runtimes/whisper-runtime")
+          else
+            args+=(--synctex-runtime "$GITHUB_WORKSPACE/synctex-runtime/current")
+          fi
           signed=false
           key_path=""
           cleanup_key() { [[ -z "$key_path" ]] || rm -f "$key_path"; }
@@ -1018,7 +1018,8 @@ jobs:
     needs: preflight
     if: ${{ !cancelled() && needs.preflight.result == 'success' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    # Long enough to outlast a macOS runner queue; it only waits while the packages build.
+    timeout-minutes: 240
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
@@ -1055,7 +1056,6 @@ jobs:
           vp run --filter t3 build
       - name: Wait for every target's native runtimes
         shell: bash
-        timeout-minutes: 40
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -1063,7 +1063,11 @@ jobs:
           for target in "macOS arm64:darwin-arm64" "macOS x64:darwin-x64" "Linux x64:linux-x64" "Windows x64:win32-x64"; do
             label="${target%%:*}"
             key="${target##*:}"
-            bash .github/scripts/wait-for-job.sh "Build native prerequisites / $label" "synctex-runtime-$key"
+            if [[ "$label" == macOS* ]]; then
+              bash .github/scripts/wait-for-job.sh "Package $label" "synctex-runtime-$key" --uploaded
+            else
+              bash .github/scripts/wait-for-job.sh "Build native prerequisites / $label" "synctex-runtime-$key"
+            fi
             bash .github/scripts/wait-for-job.sh "Package $label" "resource-monitor-$key" --uploaded
           done
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8

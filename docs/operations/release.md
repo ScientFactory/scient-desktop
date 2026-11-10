@@ -32,17 +32,19 @@ the stable scheduler and production gate.
   green on the exact source SHA. Release jobs verify that exact CI provenance,
   then perform native build, signing, manifest, checksum, and distribution work.
 - Desktop builds cache the Windows dependency store, compiled resource
-  monitor and, on macOS and Linux, the pinned whisper.cpp runtime. They omit unused
-  Claude SDK platform executables and package only the target Windows `node-pty`
-  architecture. These optimizations do not relax the exact-source CI, signing,
-  assembly, or publication gates. The whisper.cpp cache is keyed by its pinning
-  scripts and the runner's toolchain, written only by `main`, and the packer
-  verifies its receipt and every file before staging it.
-- Jobs wait only for the inputs they use. Each packaging leg sets up while the
-  native prerequisites build, then waits for its own target's. The remote server
-  asset starts once every target's SyncTeX runtime and resource monitor exist,
-  and fails if any is missing; Windows payload verification starts once the
-  Windows package exists. Assembly still requires every job to succeed.
+  monitor and, on macOS, the pinned whisper.cpp and SyncTeX runtimes. They omit
+  unused Claude SDK platform executables and package only the target Windows
+  `node-pty` architecture. These optimizations do not relax the exact-source CI,
+  signing, assembly, or publication gates. The macOS runtime cache is keyed by the
+  pinning scripts and the runner's toolchain, written only by `main`, and the
+  packer verifies each receipt and every file before staging it.
+- Jobs wait only for the inputs they use. Each macOS package builds its own native
+  runtimes, so a release holds two macOS runners, not four. Linux and Windows
+  packages set up while their prerequisites build, then wait for their own
+  target's. The remote server asset starts once every target's SyncTeX runtime
+  and resource monitor exist, and fails if any is missing; Windows payload
+  verification starts once the Windows package exists. Assembly still requires
+  every job to succeed.
 - The macOS updater ZIP uses 7-Zip Deflate level 5 rather than electron-builder's
   default 7: about 2.5 times faster for under 1% more bytes. Its blockmap and
   updater manifests are generated from the archive as before.
