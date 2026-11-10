@@ -3,6 +3,8 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import * as Schema from "effect/Schema";
+
 export type ScientProjectFilePublication =
   | { readonly outcome: "written" }
   /** The file no longer held the expected text; another writer's bytes were left in place. */
@@ -40,10 +42,26 @@ async function linkNoClobber(source: string, target: string): Promise<boolean> {
   }
 }
 
+/** Publication failed after the old file was moved aside and it could not go back in place. */
+export class ScientProjectFilePublicationError extends Schema.TaggedError<ScientProjectFilePublicationError>()(
+  "ScientProjectFilePublicationError",
+  {
+    filePath: Schema.String,
+    /** Where the file's previous text is kept. */
+    recoveryPath: Schema.String,
+    cause: Schema.Defect(),
+  },
+) {
+  override get message(): string {
+    return `${this.filePath} could not be written; its previous text is kept in ${this.recoveryPath}.`;
+  }
+}
+
 /**
  * Writes `contents` only while the file still holds `expected` (`null`: no file).
  * Rename alone would overwrite a save made after the read, so the old file is moved
  * aside and checked; another version goes back in place (or is kept beside it).
+ * The moved-aside file is deleted only once it is no longer the only copy.
  */
 export async function publishScientProjectFile(input: {
   readonly filePath: string;
@@ -56,6 +74,8 @@ export async function publishScientProjectFile(input: {
   const id = NodeCrypto.randomUUID();
   const temporary = NodePath.join(directory, `.${name}.${id}.tmp`);
   const displaced = NodePath.join(directory, `.${name}.${id}.replaced`);
+  const keptPath = NodePath.join(directory, `${name}.kept-${id.slice(0, 8)}`);
+  let holdsOnlyCopy = false;
   try {
     await NodeFSP.writeFile(temporary, input.contents, {
       encoding: "utf8",
@@ -74,22 +94,41 @@ export async function publishScientProjectFile(input: {
       if (isNodeError(error, "ENOENT")) return { outcome: "changed", keptPath: null };
       throw error;
     }
-    const previous = await NodeFSP.readFile(displaced, "utf8");
-    if (previous !== input.expected) {
-      if (await linkNoClobber(displaced, input.filePath)) {
-        return { outcome: "changed", keptPath: null };
+    holdsOnlyCopy = true;
+    try {
+      const previous = await NodeFSP.readFile(displaced, "utf8");
+      if (previous !== input.expected) {
+        if (await linkNoClobber(displaced, input.filePath)) {
+          holdsOnlyCopy = false;
+          return { outcome: "changed", keptPath: null };
+        }
+        await NodeFSP.rename(displaced, keptPath);
+        holdsOnlyCopy = false;
+        return { outcome: "changed", keptPath };
       }
-      const keptPath = NodePath.join(directory, `${name}.kept-${id.slice(0, 8)}`);
-      await NodeFSP.rename(displaced, keptPath);
-      return { outcome: "changed", keptPath };
+      const written = await linkNoClobber(temporary, input.filePath);
+      holdsOnlyCopy = false;
+      return written ? { outcome: "written" } : { outcome: "changed", keptPath: null };
+    } catch (error) {
+      if (await linkNoClobber(displaced, input.filePath).catch(() => false)) {
+        holdsOnlyCopy = false;
+        throw error;
+      }
+      const recoveryPath = await NodeFSP.rename(displaced, keptPath).then(
+        () => keptPath,
+        () => displaced,
+      );
+      holdsOnlyCopy = recoveryPath === displaced;
+      throw new ScientProjectFilePublicationError({
+        filePath: input.filePath,
+        recoveryPath,
+        cause: error,
+      });
     }
-    return (await linkNoClobber(temporary, input.filePath))
-      ? { outcome: "written" }
-      : { outcome: "changed", keptPath: null };
   } finally {
     await Promise.all([
       NodeFSP.rm(temporary, { force: true }),
-      NodeFSP.rm(displaced, { force: true }),
+      holdsOnlyCopy ? undefined : NodeFSP.rm(displaced, { force: true }),
     ]);
   }
 }

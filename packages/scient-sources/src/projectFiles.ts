@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 export {
   publishScientProjectFile,
   scientProjectFilePublicationHooks,
+  ScientProjectFilePublicationError,
   type ScientProjectFilePublication,
 } from "./projectFilePublication.ts";
 

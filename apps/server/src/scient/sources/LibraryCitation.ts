@@ -7,11 +7,15 @@ import {
   type ScientReferenceFindingKind,
   type ScientReferenceStatus,
 } from "@scientfactory/scient-sources";
-import { publishScientProjectFile } from "@scientfactory/scient-sources/project-files";
+import {
+  publishScientProjectFile,
+  ScientProjectFilePublicationError,
+} from "@scientfactory/scient-sources/project-files";
 import {
   canonicalizeScientSourceRoot,
   listScientSourceRecords,
 } from "@scientfactory/scient-sources/store";
+import * as Schema from "effect/Schema";
 
 import {
   checkReferences,
@@ -21,6 +25,7 @@ import {
 import { renameCitationKeyInDocument } from "./citationKeyRename.ts";
 import { syncManagedBibliography } from "./ManagedBibliography.ts";
 
+const isPublicationError = Schema.is(ScientProjectFilePublicationError);
 const MAX_RENAMED_DOCUMENT_BYTES = 16 * 1024 * 1024;
 const MAX_RENAME_DOCUMENTS = 20_000;
 /** What matters before citing one source; document-level findings belong to a full check. */
@@ -118,6 +123,9 @@ async function renameInDocument(
       mode: stats.mode & 0o777,
     });
     if (published.outcome === "written") return "renamed";
+    if (published.keptPath !== null) {
+      return `Changed while Scient renamed the key; that version is kept in ${NodePath.basename(published.keptPath)}.`;
+    }
   }
   return "The file kept changing while Scient renamed the key.";
 }
@@ -144,8 +152,10 @@ export async function renameCitationKeyInProject(
   for (const relativePath of paths) {
     const kind = documentKind(relativePath)!;
     const absolutePath = NodePath.join(base, ...relativePath.split("/"));
-    const outcome = await renameInDocument(absolutePath, kind, from, to).catch(
-      () => "The file could not be written.",
+    const outcome = await renameInDocument(absolutePath, kind, from, to).catch((error: unknown) =>
+      isPublicationError(error)
+        ? `The file could not be written; its previous text is kept in ${NodePath.basename(error.recoveryPath)}.`
+        : "The file could not be written.",
     );
     if (outcome === "renamed") renamedIn.push(relativePath);
     else if (outcome !== "unchanged") notRenamed.push({ path: relativePath, reason: outcome });

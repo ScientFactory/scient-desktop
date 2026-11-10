@@ -527,7 +527,10 @@ Project files are published with `publishScientProjectFile`
 without replacing one created meanwhile, and an existing file is moved aside
 and checked against what the sync read; a save that landed in between goes back
 in place (or is kept beside the file as `<name>.kept-<id>`) and the file reports
-as `edited`. The copies folder is reached only through real folders
+as `edited`. If writing fails after the move, the moved-aside text goes back in
+place, or stays as `<name>.kept-<id>` and the error
+(`ScientProjectFilePublicationError.recoveryPath`) names it; it is deleted only
+once another copy is in place. The copies folder is reached only through real folders
 (`assertScientProjectDirectory`); a link anywhere on that path makes both files
 `unmanaged`.
 
