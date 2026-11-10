@@ -30,6 +30,9 @@ function tab(input: {
   } as unknown as Electron.WebContents;
 }
 
+const pdfResponse = (body: string) =>
+  new Response(body, { headers: { "content-type": "application/pdf" } });
+
 const withTab = (contents: Electron.WebContents) =>
   Effect.provide(
     Layer.mock(PreviewManager)({
@@ -71,17 +74,61 @@ describe("reading a browser tab for the Library", () => {
       const report = { title: null, selection: null, meta: [], contentType: "application/pdf" };
       const url = "https://journal.example/content/paper%201.pdf";
       const pdf = yield* readLibraryPage("tab-1").pipe(
-        withTab(tab({ url, report, response: new Response("%PDF-1.7\nbody") })),
+        withTab(tab({ url, report, response: pdfResponse("%PDF-1.7\nbody") })),
       );
       expect(pdf).toMatchObject({ _tag: "pdf", url, fileName: "paper 1.pdf" });
       const html = yield* readLibraryPage("tab-1").pipe(
-        withTab(tab({ url, report, response: new Response("<html>Sign in</html>") })),
+        withTab(tab({ url, report, response: pdfResponse("<html>Sign in</html>") })),
       );
       expect(html).toBeNull();
+      const relabelled = yield* readLibraryPage("tab-1").pipe(
+        withTab(
+          tab({
+            url,
+            report,
+            response: new Response("%PDF-1.7\nbody", { headers: { "content-type": "text/html" } }),
+          }),
+        ),
+      );
+      expect(relabelled).toBeNull();
       const local = yield* readLibraryPage("tab-1").pipe(
         withTab(tab({ url: "file:///etc/passwd", report })),
       );
       expect(local).toBeNull();
+    }),
+  );
+
+  it.effect("stops reading a PDF without a declared length once it passes the size limit", () =>
+    Effect.gen(function* () {
+      const chunk = new Uint8Array(1024 * 1024);
+      let pulled = 0;
+      let cancelled = false;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(controller) {
+            pulled += 1;
+            if (pulled > 200) controller.close();
+            else controller.enqueue(chunk);
+          },
+          cancel() {
+            cancelled = true;
+          },
+        },
+        { highWaterMark: 0 },
+      );
+      const report = { title: null, selection: null, meta: [], contentType: "application/pdf" };
+      const pdf = yield* readLibraryPage("tab-1").pipe(
+        withTab(
+          tab({
+            url: "https://journal.example/large.pdf",
+            report,
+            response: new Response(body, { headers: { "content-type": "application/pdf" } }),
+          }),
+        ),
+      );
+      expect(pdf).toBeNull();
+      expect(cancelled).toBe(true);
+      expect(pulled).toBeLessThanOrEqual(102);
     }),
   );
 

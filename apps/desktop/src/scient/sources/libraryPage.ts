@@ -12,6 +12,7 @@ import { PREVIEW_LIBRARY_PAGE_CHANNEL } from "../../ipc/channels.ts";
 import * as PreviewManager from "../../preview/Manager.ts";
 
 const MAX_PDF_BYTES = 100 * 1024 * 1024;
+const PDF_MEDIA_TYPES = new Set(["application/pdf", "application/x-pdf"]);
 
 /** Runs in the page: what it says about itself, bounded before it crosses the process boundary. */
 const LIBRARY_PAGE_SCRIPT = `(() => {
@@ -59,6 +60,41 @@ export function libraryPdfFileName(url: string): string {
 const isPdf = (bytes: Uint8Array) =>
   bytes.length >= 5 && new TextDecoder().decode(bytes.subarray(0, 5)) === "%PDF-";
 
+/** A PDF response's bytes, read within the size budget; null as soon as it is not a PDF or too large. */
+async function readPdfResponse(response: Response): Promise<Uint8Array | null> {
+  const mediaType = (response.headers.get("content-type") ?? "").split(";")[0]!.trim();
+  const declared = Number(response.headers.get("content-length") ?? "0");
+  if (
+    !response.ok ||
+    !response.body ||
+    !PDF_MEDIA_TYPES.has(mediaType.toLowerCase()) ||
+    declared > MAX_PDF_BYTES
+  ) {
+    await response.body?.cancel().catch(() => undefined);
+    return null;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let length = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    length += value.byteLength;
+    if (length > MAX_PDF_BYTES) {
+      await reader.cancel().catch(() => undefined);
+      return null;
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(length);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return isPdf(bytes) ? bytes : null;
+}
+
 /**
  * Reads a tab for "Save to Library". The address comes from the tab, never
  * from the page; a PDF is fetched again through the tab's own session, so a
@@ -82,16 +118,12 @@ export const readLibraryPage = Effect.fn("scient.sources.readLibraryPage")(funct
   if (Option.isNone(report)) return null;
   if (report.value.contentType === "application/pdf") {
     const data = yield* Effect.tryPromise({
-      try: async () => {
-        const response = await tab.session.fetch(url);
-        if (!response.ok) return null;
-        const declared = Number(response.headers.get("content-length") ?? "0");
-        if (declared > MAX_PDF_BYTES) return null;
-        const bytes = new Uint8Array(await response.arrayBuffer());
-        return bytes.length <= MAX_PDF_BYTES && isPdf(bytes) ? bytes : null;
-      },
+      try: async (signal) => readPdfResponse(await tab.session.fetch(url, { signal })),
       catch: () => "unreadable" as const,
-    }).pipe(Effect.orElseSucceed(() => null));
+    }).pipe(
+      Effect.timeout("2 minutes"),
+      Effect.orElseSucceed(() => null),
+    );
     if (!data) return null;
     return Option.getOrNull(
       decodeLibraryPage({ _tag: "pdf", url, fileName: libraryPdfFileName(url), data }),
