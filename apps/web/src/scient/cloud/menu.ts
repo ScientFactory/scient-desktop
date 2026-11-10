@@ -1,14 +1,13 @@
 import type { ContextMenuItem, ScopedThreadRef } from "@t3tools/contracts";
 
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
-
 import { openShareLinkDialog } from "./shareDialogState";
+import { hasCloudAccount } from "./useCloudAccount";
 
 export type ShareLinkMenuId = "share-link";
 
 /** "Share link…" beside "Share with guest", where this build has Scient Cloud. */
 export function shareLinkMenuItems(): ReadonlyArray<ContextMenuItem<ShareLinkMenuId>> {
-  return hasCloudPublicConfig() ? [{ id: "share-link", label: "Share link…", icon: "link" }] : [];
+  return hasCloudAccount() ? [{ id: "share-link", label: "Share link…", icon: "link" }] : [];
 }
 
 export function handleShareLinkMenuAction(

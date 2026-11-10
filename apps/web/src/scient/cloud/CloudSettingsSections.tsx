@@ -12,7 +12,6 @@ import {
   SelectValue,
 } from "~/components/ui/select";
 import { Switch } from "~/components/ui/switch";
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useThreadShells } from "~/state/entities";
 
@@ -21,13 +20,13 @@ import { deleteCloudCopies, turnOffCloudCopy, turnOnCloudCopy } from "./serverCl
 import { openShareLinkDialog } from "./shareDialogState";
 import { readShareKey } from "./shareKeys";
 import { expiryChoice, EXPIRY_CHOICES, expiresAtFor, type ExpiryChoice } from "./shareOptions";
-import { useCloudAccount } from "./useCloudAccount";
+import { hasCloudAccount, useCloudAccount } from "./useCloudAccount";
 import { useCloudStatus } from "./useCloudStatus";
 import { useCloudList } from "./useCloudList";
 
 /** Settings → Sharing & access: the computer's cloud copy and the person's shared links. */
 export function CloudSettingsSections({ environmentId }: { environmentId: EnvironmentId | null }) {
-  if (!hasCloudPublicConfig()) return null;
+  if (!hasCloudAccount()) return null;
   return <CloudSettingsSignedIn environmentId={environmentId} />;
 }
 

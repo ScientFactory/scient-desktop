@@ -13,7 +13,6 @@ import { AppRouteModal, AppRouteModalClose } from "~/components/AppRouteModal";
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { WorkspacePageContainer } from "~/components/WorkspacePageContainer";
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -23,7 +22,7 @@ import { CloudApiError, type CloudApi } from "./cloudApi";
 const isCloudApiError = Schema.is(CloudApiError);
 import { SnapshotConversationView } from "./SnapshotConversationView";
 import { useContinueHere } from "./useContinueHere";
-import { useCloudAccount } from "./useCloudAccount";
+import { hasCloudAccount, useCloudAccount } from "./useCloudAccount";
 
 function ReaderFrame({
   title,
@@ -81,7 +80,7 @@ function SignedIn({
   back?: boolean;
   children: (account: { api: CloudApi; userId: string }) => ReactNode;
 }) {
-  if (!hasCloudPublicConfig()) {
+  if (!hasCloudAccount()) {
     return (
       <ReaderFrame title={title} back={back}>
         <Notice>Cloud copies need Scient Connect, which this build doesn't include.</Notice>

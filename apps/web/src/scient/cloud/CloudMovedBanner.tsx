@@ -5,11 +5,10 @@ import { type ReactNode, useState } from "react";
 
 import type { ComposerBannerStackItem } from "~/components/chat/ComposerBannerStack";
 import { Button } from "~/components/ui/button";
-import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { useEnvironments } from "~/state/environments";
 import { buildThreadRouteParams } from "~/threadRoutes";
 
-import { useCloudAccount } from "./useCloudAccount";
+import { hasCloudAccount, useCloudAccount } from "./useCloudAccount";
 import { useCloudList } from "./useCloudList";
 import { useCloudStatus } from "./useCloudStatus";
 import { useContinueHere } from "./useContinueHere";
@@ -46,7 +45,7 @@ export function useCloudThreadBanner(
         </>
       ),
       description: "New messages go to that computer now. This conversation stays as it was here.",
-      ...(hasCloudPublicConfig()
+      ...(hasCloudAccount()
         ? { actions: <TakeBackButton environmentId={thread.environmentId} threadId={thread.id} /> }
         : {}),
     },
@@ -60,7 +59,7 @@ function ComputerName({ environmentId }: { environmentId: EnvironmentId }) {
     (environment) => environment.environmentId === environmentId,
   )?.label;
   if (label !== undefined) return label;
-  return hasCloudPublicConfig() ? (
+  return hasCloudAccount() ? (
     <CloudComputerName environmentId={environmentId} />
   ) : (
     "another computer"
