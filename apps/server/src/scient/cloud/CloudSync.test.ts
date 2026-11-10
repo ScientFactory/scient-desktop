@@ -69,6 +69,7 @@ const harness = Effect.gen(function* () {
   const blobChecks: string[] = [];
   let onBlobCheck = () => {};
   const deletes: ThreadId[] = [];
+  let deleteAllCalls = 0;
   const putFailures: CloudApiError[] = [];
   let moved: MovedThreadsResponse["threads"] = [];
   let enabled = true;
@@ -87,6 +88,7 @@ const harness = Effect.gen(function* () {
       return Effect.succeed({ status: "stored" as const });
     },
     deleteThread: (_userId, threadId) => Effect.sync(() => void deletes.push(threadId)),
+    deleteAllThreads: () => Effect.sync(() => void deleteAllCalls++),
     hasBlob: (_userId, sha256) =>
       Effect.sync(() => {
         blobChecks.push(sha256);
@@ -146,6 +148,7 @@ const harness = Effect.gen(function* () {
     digests,
     puts,
     deletes,
+    deleteAllCalls: () => deleteAllCalls,
     putFailures,
     files,
     reads,
@@ -281,6 +284,18 @@ describe("CloudSync", () => {
       yield* h.sync.tick;
       expect(h.deletes).toEqual([THREAD]);
       expect((yield* h.store.get).threads[THREAD]).toBeUndefined();
+    }),
+  );
+
+  it.effect("deletes every copy in one call and forgets them", () =>
+    Effect.gen(function* () {
+      const h = yield* harness;
+      yield* h.sync.tick;
+      expect((yield* h.store.get).threads[THREAD]).toBeDefined();
+      yield* h.sync.deleteCopies;
+      expect(h.deleteAllCalls()).toBe(1);
+      expect(h.deletes).toEqual([]);
+      expect((yield* h.store.get).threads).toEqual({});
     }),
   );
 

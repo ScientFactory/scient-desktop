@@ -484,10 +484,8 @@ export const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const state = yield* store.get;
       if (state.userId === null) return;
-      for (const threadId of Object.keys(state.threads) as ThreadId[]) {
-        yield* api.deleteThread(state.userId, threadId);
-        yield* forget(threadId);
-      }
+      yield* api.deleteAllThreads(state.userId);
+      for (const threadId of Object.keys(state.threads) as ThreadId[]) yield* forget(threadId);
       dirty.clear();
     }),
   );

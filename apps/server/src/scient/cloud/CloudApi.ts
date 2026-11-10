@@ -83,6 +83,8 @@ export interface CloudApiShape {
     readonly gzip: Uint8Array;
   }) => Effect.Effect<ThreadPutResponse, CloudApiError>;
   readonly deleteThread: (userId: string, threadId: ThreadId) => Effect.Effect<void, CloudApiError>;
+  /** Deletes every copy this computer made, in one call; the computer stays enrolled. */
+  readonly deleteAllThreads: (userId: string) => Effect.Effect<void, CloudApiError>;
   /** HEAD and PUT name the conversation that uses the file; the cloud keeps it while one does. */
   readonly hasBlob: (
     userId: string,
@@ -277,6 +279,13 @@ const make = Effect.gen(function* () {
           () => Effect.void,
         ),
       );
+    }),
+    deleteAllThreads: Effect.fn("CloudApi.deleteAllThreads")(function* (userId) {
+      yield* send({
+        userId,
+        method: "DELETE",
+        path: cloudPaths.computerThreads(yield* environmentId),
+      });
     }),
     hasBlob: Effect.fn("CloudApi.hasBlob")(function* (userId, sha256, usedBy) {
       const env = yield* environmentId;
