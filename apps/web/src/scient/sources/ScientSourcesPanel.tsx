@@ -18,6 +18,7 @@ import {
   FileUp,
   FileText,
   Folder,
+  Hash,
   Library,
   LoaderCircle,
   Info,
@@ -56,6 +57,7 @@ import { initializeScientProjectForOpening } from "../../lib/scientProjectInitia
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { AddByIdentifier } from "./AddByIdentifier";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceJournalIcon } from "./SourceJournalIcon";
@@ -294,6 +296,7 @@ export function ScientSourcesPanel(props: {
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
   const [editingSource, setEditingSource] = useState(false);
   const [importOutcome, setImportOutcome] = useState<ScientSourcesImportOutcome | null>(null);
+  const [addingByIdentifier, setAddingByIdentifier] = useState(false);
   const panelContext = `${props.environmentId}\0${props.root}`;
   const [recentSourcesStore] = useState(() =>
     createRecentSourcesStore(readRecentSourceAdds(panelContext)),
@@ -1108,6 +1111,10 @@ export function ScientSourcesPanel(props: {
                   <ZoteroMark />
                   Import from Zotero
                 </MenuItem>
+                <MenuItem onClick={() => setAddingByIdentifier(true)}>
+                  <Hash />
+                  Add by identifier
+                </MenuItem>
               </MenuPopup>
             </Menu>
           </div>
@@ -1132,6 +1139,30 @@ export function ScientSourcesPanel(props: {
       ) : null}
       {sources.error ? (
         <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
+      ) : null}
+      {addingByIdentifier ? (
+        <AddByIdentifier
+          environmentId={props.environmentId}
+          root={props.root}
+          onClose={() => setAddingByIdentifier(false)}
+          onAdded={(results) => {
+            const added = results.flatMap((item) =>
+              item.outcome === "imported" && item.sourceId ? [item.sourceId] : [],
+            );
+            if (added.length > 0) {
+              setRecentlyAddedSourceIds(rememberRecentSourceAdds(panelContext, added));
+              toastManager.add({
+                type: "success",
+                title: added.length === 1 ? "Added 1 source" : `Added ${added.length} sources`,
+              });
+            }
+            void sources.refreshOverview();
+          }}
+          onOpenSource={(sourceId) => {
+            setEditingSource(false);
+            setSelectedSourceId(sourceId);
+          }}
+        />
       ) : null}
       {sources.operation ? (
         <ImportSummary
