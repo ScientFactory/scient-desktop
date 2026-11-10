@@ -4,6 +4,7 @@ import {
   beginEnvironmentLocalSourceImport,
   beginEnvironmentZoteroImport,
   beginEnvironmentZoteroScopedImport,
+  bulkUpdateEnvironmentScientSources,
   cancelEnvironmentScientSourcesImport,
   retryEnvironmentScientSourcesImport,
   discardEnvironmentLocalSourcePdfs,
@@ -15,6 +16,7 @@ import {
   getEnvironmentZoteroStatus,
   listEnvironmentZoteroLibrary,
   listEnvironmentZoteroCollections,
+  organizeEnvironmentScientSources,
   preflightEnvironmentZoteroImport,
   refreshEnvironmentScientSourceMetadata,
   removeEnvironmentScientSource,
@@ -27,6 +29,8 @@ import {
   updateEnvironmentScientSourceMetadata,
   updateEnvironmentScientSourceNote,
   uploadEnvironmentLocalSourcePdf,
+  importEnvironmentScientSourcesFile,
+  exportEnvironmentScientSources,
 } from "@t3tools/client-runtime/state/scient-sources";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type {
@@ -36,6 +40,9 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourcesBulkUpdateRequest,
+  ScientSourcesOrganizeRequest,
+  ScientSourcesExportRequest,
   ScientSourceRestoreRequest,
   ScientSourceRevertRequest,
   ScientSourceRevisionsRequest,
@@ -102,6 +109,24 @@ export function removeScientSource(
 ) {
   return runtime.runPromise(
     removeEnvironmentScientSource({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function organizeScientSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesOrganizeRequest,
+) {
+  return runtime.runPromise(
+    organizeEnvironmentScientSources({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function bulkUpdateScientSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesBulkUpdateRequest,
+) {
+  return runtime.runPromise(
+    bulkUpdateEnvironmentScientSources({ prepared: prepared(environmentId), ...input }),
   );
 }
 
@@ -321,6 +346,30 @@ export function retrySourcesImport(
 ) {
   return runtime.runPromise(
     retryEnvironmentScientSourcesImport({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function importScientSourcesFile(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly operationId: string; readonly file: File },
+) {
+  return runtime.runPromise(
+    importEnvironmentScientSourcesFile({
+      prepared: prepared(environmentId),
+      root: input.root,
+      operationId: input.operationId,
+      file: input.file,
+      fileName: input.file.name,
+    }),
+  );
+}
+
+export function exportScientSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesExportRequest,
+) {
+  return runtime.runPromise(
+    exportEnvironmentScientSources({ prepared: prepared(environmentId), ...input }),
   );
 }
 

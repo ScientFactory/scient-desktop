@@ -11,6 +11,7 @@ import {
 } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
+import { BibliographyImportReport } from "./bibliography/index.ts";
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
 import { resolveScientProjectFile } from "./projectFiles.ts";
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
@@ -38,7 +39,7 @@ import {
   type ScientSourceActor,
   type ScientSourceAttachment,
   type ScientSourceAttachmentRetrieval,
-  type ScientSourceCandidate,
+  ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
   type ScientSourceDuplicateKind,
   type ScientSourceEditableMetadata,
@@ -1233,9 +1234,9 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
 export async function createSourceImportOperation(input: {
   readonly root: string;
   readonly operationId: string;
-  readonly adapter: "zotero" | "zotero-web" | "local-files";
+  readonly adapter: "zotero" | "zotero-web" | "local-files" | "file";
   readonly actor?: "user" | "agent";
-  readonly intake?: "zotero" | "local-pdf" | "identifier";
+  readonly intake?: "zotero" | "local-pdf" | "identifier" | "file";
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides?: ReadonlyArray<string>;
 }): Promise<ScientSourceImportOperation> {
@@ -1723,6 +1724,68 @@ export async function removeScientSourceStagedMaterial(
   ]);
 }
 
+const MAX_STAGED_FILE_IMPORT_BYTES = 64 * 1024 * 1024;
+
+/** Candidates read from one reference file, held until their import operation settles. */
+const ScientSourceStagedFileImport = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  operationId: Schema.String.check(Schema.isNonEmpty()),
+  fileName: Schema.String,
+  report: BibliographyImportReport,
+  candidates: Schema.Array(ScientSourceCandidate).pipe(
+    Schema.check(Schema.isMaxLength(SCIENT_SOURCE_IMPORT_ITEM_LIMIT)),
+  ),
+});
+export type ScientSourceStagedFileImport = typeof ScientSourceStagedFileImport.Type;
+const decodeStagedFileImport = Schema.decodeSync(ScientSourceStagedFileImport);
+
+function stagedFileImportPath(
+  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  operationId: string,
+): string {
+  assertSafeIdentifier(operationId, "Operation ID");
+  return NodePath.join(paths.staging, "files", `${operationId}.json`);
+}
+
+export async function writeScientSourceStagedFileImport(
+  root: string,
+  staged: ScientSourceStagedFileImport,
+): Promise<void> {
+  const paths = await sourceStorePaths(root);
+  const decoded = decodeStagedFileImport(staged);
+  await atomicWriteJson(
+    stagedFileImportPath(paths, decoded.operationId),
+    decoded,
+    MAX_STAGED_FILE_IMPORT_BYTES,
+  );
+}
+
+export async function readScientSourceStagedFileImport(
+  root: string,
+  operationId: string,
+): Promise<ScientSourceStagedFileImport | null> {
+  const paths = await sourceStorePaths(root);
+  const filePath = stagedFileImportPath(paths, operationId);
+  if ((await snapshot(filePath)) === "missing") return null;
+  const staged = await readBoundedJson(
+    filePath,
+    MAX_STAGED_FILE_IMPORT_BYTES,
+    ScientSourceStagedFileImport,
+  );
+  if (staged.operationId !== operationId) {
+    throw new Error("The staged file import identity is inconsistent.");
+  }
+  return staged;
+}
+
+export async function removeScientSourceStagedFileImport(
+  root: string,
+  operationId: string,
+): Promise<void> {
+  const paths = await sourceStorePaths(root);
+  await NodeFSP.rm(stagedFileImportPath(paths, operationId), { force: true });
+}
+
 async function stagePdf(input: {
   readonly paths: Awaited<ReturnType<typeof sourceStorePaths>>;
   readonly operationId: string;
@@ -2128,3 +2191,13 @@ export function sourceAttachmentAbsolutePath(
   }
   return resolved;
 }
+
+/** For sibling project-store modules (collections, reviews) that share this store's safety rules. */
+export const scientSourceStoreInternals = {
+  sourceStorePaths,
+  snapshot,
+  readBoundedJson,
+  atomicWriteJson,
+  withOperationLock,
+  assertSafeIdentifier,
+};

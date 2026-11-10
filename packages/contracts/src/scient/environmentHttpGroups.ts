@@ -65,10 +65,18 @@ import {
   ScientSourcesTrashRequest,
   ScientSourceTrashListing,
   ScientSourcesAdvanceImportRequest,
+  ScientSourcesBulkResult,
+  ScientSourcesBulkUpdateRequest,
+  ScientSourcesOrganizeRequest,
+  ScientSourcesOrganizeResult,
   ScientSourcesBeginImportRequest,
   ScientSourcesCancelImportRequest,
   ScientSourcesRetryImportRequest,
   ScientSourcesDiscardStagedRequest,
+  ScientSourcesExportRequest,
+  ScientSourcesExportResult,
+  ScientSourcesFileImportRequest,
+  ScientSourcesFileImportResult,
   ScientSourcesDiscardStagedResult,
   ScientSourcesLocalPdfUploadRequest,
   ScientSourcesLocalPdfUploadResult,
@@ -347,6 +355,14 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
+      HttpApiEndpoint.post("organize", "/api/scient/sources/organize", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesOrganizeRequest,
+        success: ScientSourcesOrganizeResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
       HttpApiEndpoint.post("addByIdentifier", "/api/scient/sources/identifiers/add", {
         headers: OptionalBearerHeaders,
         payload: ScientSourcesAddByIdentifierRequest,
@@ -359,6 +375,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesTrashRequest,
         success: ScientSourceTrashListing,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("bulkUpdate", "/api/scient/sources/bulk-update", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesBulkUpdateRequest,
+        success: ScientSourcesBulkResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )
@@ -447,6 +471,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesDiscardStagedRequest,
         success: ScientSourcesDiscardStagedResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("fileImport", "/api/scient/sources/files/import", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesFileImportRequest,
+        success: ScientSourcesFileImportResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("export", "/api/scient/sources/export", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesExportRequest,
+        success: ScientSourcesExportResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

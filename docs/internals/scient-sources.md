@@ -91,6 +91,7 @@ their own subtree:
 ├── files/sha256/<prefix>/   content-addressed PDF copies
 ├── history/<source-id>/     kept prior revisions (first one plus the latest 49)
 ├── trash/<source-id>.json   removed sources, whole, until restored or deleted
+├── collections.json         collections and saved searches
 ├── operations/              resumable import state
 ├── receipts/                terminal import evidence
 └── staging/                 bounded temporary copies
@@ -98,7 +99,8 @@ their own subtree:
 
 There is deliberately no canonical mutable manifest. An overview is derived
 from validated records and operations. The overview contract returns bounded
-summaries only; complete abstracts, tags, provenance, and revision evidence are
+summaries only (tags included, so the list can filter by them); complete
+abstracts, provenance, and revision evidence are
 loaded through a direct source-ID detail endpoint when a researcher opens an
 item. Journal artwork uses the same direct record lookup, so rendering one row
 does not repeatedly decode the rest of a large ledger. Source-PDF preview keeps
@@ -446,6 +448,71 @@ the user or an agent restores the Library version. The project file is written
 before the copy, so an interrupted write is adopted on the next sync instead
 of reported as an edit. Nothing is written for a project without a Library.
 
+## Collections, saved searches and bulk edit
+
+`packages/scient-sources/src/collections.ts` owns
+`.scient/sources/collections.json`; `organize.ts` holds its schemas and the
+one filter model (text, tags, collection, type, PDF) that the panel list,
+saved searches and `scient_sources_list` all compile through
+`compileScientSourceFilter`, so a search means the same thing to a person and
+an agent.
+
+- Collections are stored apart from records and never rewrite them. Members
+  are source IDs; a removed source keeps its membership and is only hidden, so
+  restoring it from the trash restores its collections too. Reads project
+  members onto the sources that exist.
+- Names are unique per project without regard to case. Creating a name that
+  exists returns that collection and adds the given sources, so a repeated
+  agent request is harmless. Deleting a collection or saved search marks it
+  deleted (the latest 50 are kept) so it can be restored.
+- Every change goes through `organizeScientSources` (one action union shared by
+  the `organize` HTTP endpoint and `scient_sources_organize`) under one write
+  lock, credited with `updatedBy`.
+- A collections file that cannot be decoded is reported as an `issue` on the
+  overview and hides collections, but never breaks the source list; writes
+  refuse instead of overwriting it.
+- `bulkUpdateScientSources` applies tag (case-insensitive, existing spelling
+  kept) and type changes as ordinary metadata revisions, one per source with
+  one retry on a stale revision, then membership changes. Each source is
+  reported; one failure does not stop the rest. Bulk removal is the trash
+  removal per source, with one Undo for the batch in the panel.
+
+## Reference files
+
+`packages/scient-sources/src/bibliography/` reads and writes BibTeX/BibLaTeX,
+RIS, CSL-JSON and EndNote XML as pure functions with no new dependency (a
+small XML reader handles EndNote). Every parser yields format-neutral entries
+that keep the citation key (normalized by `citationKeys.ts`), the project note
+and, per entry, the source fields that have no Scient field (`notKept`).
+Entries that cannot be parsed are skipped with their line, so one damaged
+entry does not lose the file. `planBibliographyImport` turns a parse into
+candidates: it drops empty entries, repeats within the file (same content or
+same work-level identifier) and entries already in the Library, and only then
+takes the first `SCIENT_SOURCE_IMPORT_ITEM_LIMIT` new ones. Importing the same
+file again therefore continues a large file instead of re-processing the first
+batch. Field provenance is `file` with `sourceField` `<format>:<field>`.
+
+The server adapter (`BibliographyFileAdapter.ts`) bounds a file to 32 MB,
+falls back to Windows-1252 when a file is not valid UTF-8, stages the batch as
+one JSON file under `.scient/sources/staging/files/<operationId>.json` with its
+report, and starts an ordinary durable operation (`adapter`/`intake` `file`).
+Advancing reads candidates from that stage; the stage is removed when the
+operation settles without failures or is cancelled, and kept for retry while
+failed items remain. File imports record verification `unchecked` with their
+DOI or PMID, or `unverified` without one: the identifiers are the file's, not
+the registry's. Agents import a project-relative file with
+`scient_sources_import_file`, which runs the same operation to completion;
+files inside `.scient/sources` are refused. Adapter error messages are written
+for people, while filesystem errors (which can carry host paths) are replaced
+before they reach a model.
+
+Export (`exportBibliography`) writes the Library or a selection under each
+record's citation key; a record without one gets a free key from the same
+rules for that file only. Project notes are excluded unless requested.
+`scient_sources_export` writes a project file atomically, refuses `.scient/`
+and paths outside the project, and replaces an existing file only with
+`overwrite`.
+
 ## Zotero boundary
 
 The adapter uses Zotero's read-only local API v3 at the fixed loopback endpoint
@@ -527,7 +594,8 @@ rather than a larger in-process map.
 
 ## Deliberate exclusions
 
-This slice does not implement Zotero write-back or sync, source merging,
+This slice does not implement Zotero write-back or sync, attaching PDFs named
+in a reference file's `file` field, source merging,
 automatic possible-duplicate merging, multi-source
 bibliographies, arbitrary CSL style installation, annotations, evidence claims,
 OCR, fuzzy metadata search, mobile UI, or a separate Studio route.

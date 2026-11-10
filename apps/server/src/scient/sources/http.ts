@@ -21,6 +21,7 @@ import { zoteroKeyLookup } from "./ZoteroAccountKey.ts";
 import {
   advanceSourceImport,
   beginLocalPdfImport,
+  bulkUpdateSources,
   beginZoteroImport,
   beginZoteroScopedImport,
   cancelSourceImport,
@@ -32,6 +33,7 @@ import {
   inspectZoteroConnection,
   listZoteroCollections,
   listZoteroLibrary,
+  organizeSources,
   preflightZoteroImport,
   refreshScientSourceMetadata,
   deleteSourcesPermanently,
@@ -46,6 +48,11 @@ import {
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
 import { addScientSourcesByIdentifier } from "./SourceIdentifierAdd.ts";
+import {
+  beginBibliographyFileImport,
+  exportBibliography,
+  readBibliographyFile,
+} from "./BibliographyFileAdapter.ts";
 import { startManagedBibliographySync, syncManagedBibliography } from "./ManagedBibliography.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
@@ -180,6 +187,16 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             removeSource(args.payload),
           ),
         )
+        .handle("organize", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            organizeSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("bulkUpdate", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            bulkUpdateSources({ ...args.payload, actor: "user" }),
+          ),
+        )
         .handle("addByIdentifier", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, async () => ({
             results: await addScientSourcesByIdentifier(
@@ -255,6 +272,22 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("localDiscard", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             discardLocalPdfSources(args.payload),
+          ),
+        )
+        .handle("fileImport", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, async () =>
+            beginBibliographyFileImport({
+              root: args.payload.root,
+              operationId: args.payload.operationId,
+              fileName: args.payload.file.name,
+              text: await readBibliographyFile(args.payload.file.path),
+              actor: "user",
+            }),
+          ),
+        )
+        .handle("export", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            exportBibliography(args.payload),
           ),
         )
         .handle("beginImport", (args) =>

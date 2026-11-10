@@ -85,7 +85,7 @@ describe("Scient source model", () => {
 
     expect(summary).toMatchObject({ sourceId: "source_123", title: "A careful study" });
     expect(summary).not.toHaveProperty("abstract");
-    expect(summary).not.toHaveProperty("tags");
+    expect(summary.tags).toEqual(["reviewed"]);
     expect(summary).not.toHaveProperty("fieldProvenance");
     expect(JSON.stringify(summary).length).toBeLessThan(JSON.stringify(detail).length / 10);
   });

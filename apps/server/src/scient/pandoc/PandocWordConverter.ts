@@ -6,6 +6,7 @@
 import {
   SCIENT_WORD_CONVERSION_TIMEOUT_MS,
   type DocumentBundle,
+  type DocumentCitation,
   type DocumentWarning,
 } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
@@ -111,6 +112,8 @@ export interface WordConversionInput {
   readonly imageSnapshot?: ReadonlyMap<string, CapturedWorkspaceImage>;
   /** A CSL style for the bibliography; Pandoc's built-in Chicago author-date otherwise. */
   readonly cslStyle?: string | null;
+  /** References for keys nothing else resolves, such as the project's Library. */
+  readonly fallbackCitations?: ReadonlyArray<DocumentCitation>;
   /** Saved, project-allowlisted BibTeX bytes; Pandoc reads them from stdin. */
   readonly bibliographySources?: ReadonlyArray<{
     readonly format: "bibtex";
@@ -366,6 +369,9 @@ const make = Effect.gen(function* () {
           for (const [key, reference] of bibliographyFromCitations(entries)) {
             if (!bibliography.has(key)) bibliography.set(key, reference);
           }
+        }
+        for (const [key, reference] of bibliographyFromCitations(input.fallbackCitations ?? [])) {
+          if (!bibliography.has(key)) bibliography.set(key, reference);
         }
         const citations = applyCitations(document.blocks, bibliography);
         const security = yield* securePandocDocument(document, {
