@@ -197,6 +197,21 @@ function segmentEntries(segment: string): ReadonlyArray<SourceIdentifierListEntr
   return embedded.length > 0 ? embedded : [{ input: segment, identifier: null }];
 }
 
+// A comma or semicolon followed by a DOI, link or scheme prefix separates two identifiers
+// even without a space; other commas and semicolons may belong to an old DOI.
+const LIST_BOUNDARY =
+  /[,;](?=\s*(?:https?:\/\/|(?:dx\.)?doi\.org\/|10\.\d{4,9}\/|(?:doi|pmid|arxiv|isbn(?:-1[03])?)[:\s]))/iu;
+
+function partEntries(part: string): ReadonlyArray<SourceIdentifierListEntry> {
+  const whole = detectSourceIdentifier(part);
+  if (whole) return [{ input: part, identifier: whole }];
+  return part
+    .split(/[,;\t]+/u)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .flatMap(segmentEntries);
+}
+
 /**
  * Splits pasted text (one per line, or separated by commas or semicolons) into identifiers.
  * Repeats collapse to the first; unreadable parts are kept once so they can be reported.
@@ -205,18 +220,10 @@ export function parseSourceIdentifierList(text: string): ReadonlyArray<SourceIde
   const seen = new Set<string>();
   return text
     .split(/[\r\n]+/u)
-    .map((line) => line.trim())
+    .flatMap((line) => line.split(LIST_BOUNDARY))
+    .map((part) => part.trim())
     .filter(Boolean)
-    .flatMap((line) => {
-      // Some old DOIs contain ";" or ",", so a line that is one identifier is never split.
-      const whole = detectSourceIdentifier(line);
-      if (whole) return [{ input: line, identifier: whole }];
-      return line
-        .split(/[,;\t]+/u)
-        .map((segment) => segment.trim())
-        .filter(Boolean)
-        .flatMap(segmentEntries);
-    })
+    .flatMap(partEntries)
     .filter((entry) => {
       const key = entry.identifier
         ? normalizePersistentIdentifier(entry.identifier.scheme, entry.identifier.value)

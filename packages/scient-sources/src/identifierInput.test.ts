@@ -73,17 +73,21 @@ describe("parseSourceIdentifierList", () => {
     ]);
   });
 
-  it("keeps a DOI that contains a semicolon whole", () => {
+  it("splits lists without spaces but keeps a DOI that contains a semicolon whole", () => {
     expect(
-      parseSourceIdentifierList("10.1002/(SICI)1097-4636(199706)35:4<487::AID-JBM9>3.0.CO;2-B"),
+      parseSourceIdentifierList(
+        [
+          "10.1000/alpha,10.1000/beta",
+          "10.1000/gamma;PMID:12345",
+          "10.1002/(SICI)1097-4636(199706)35:4<487::AID-JBM9>3.0.CO;2-B",
+        ].join("\n"),
+      ).map((entry) => entry.identifier),
     ).toEqual([
-      {
-        input: "10.1002/(SICI)1097-4636(199706)35:4<487::AID-JBM9>3.0.CO;2-B",
-        identifier: {
-          scheme: "doi",
-          value: "10.1002/(sici)1097-4636(199706)35:4<487::aid-jbm9>3.0.co;2-b",
-        },
-      },
+      { scheme: "doi", value: "10.1000/alpha" },
+      { scheme: "doi", value: "10.1000/beta" },
+      { scheme: "doi", value: "10.1000/gamma" },
+      { scheme: "pmid", value: "12345" },
+      { scheme: "doi", value: "10.1002/(sici)1097-4636(199706)35:4<487::aid-jbm9>3.0.co;2-b" },
     ]);
   });
 

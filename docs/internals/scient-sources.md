@@ -339,12 +339,16 @@ email.
 `resolveSourceIdentifierBatch` resolves many identifiers, each as its own work,
 grouping them per registry: arXiv and Open Library answer many per request, DOI
 and PMID lookups run four at a time so none waits out its deadline in the NCBI
-lane, and each request has the 6.5-second deadline. `SourceIdentifierAdd.ts`
+lane, and each request has the 6.5-second deadline. At the deadline an ISBN
+group keeps the books already found and starts no more Google Books requests;
+only the ISBNs still waiting are unavailable. `SourceIdentifierAdd.ts`
 uses it for adds by identifier: `scient_sources_add` with `identifierList` (up
 to 50 entries in any common spelling, outcome `batch` with one result per
 entry) and the user's **Add by identifier** (`POST
 /api/scient/sources/identifiers/add`). Text is read by `detectSourceIdentifier`
-and `parseSourceIdentifierList` in `packages/scient-sources`. An identifier
+and `parseSourceIdentifierList` in `packages/scient-sources`; a comma or
+semicolon splits a list even without a space when a DOI, link or scheme prefix
+follows it, and otherwise stays part of an old DOI. An identifier
 already in the Library (a work-level identifier, or the ISBN of an existing
 book) is reported as a duplicate without a lookup. Only a found identifier is
 added, verified and credited to its actor; not found, unavailable and
