@@ -40,6 +40,11 @@ function frames(framed: Uint8Array) {
   return { header: framed.subarray(0, headerEnd), frames: out };
 }
 
+/** Compares bytes directly: `toEqual` walks multi-MiB arrays element by element. */
+function sameBytes(left: Uint8Array, right: Uint8Array): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
 async function rejection(promise: Promise<unknown>): Promise<string> {
   const error = await promise.then(
     () => undefined,
@@ -63,7 +68,7 @@ describe("share crypto", () => {
       const plain = bytes(length);
       const framed = await encryptShareObject(key, snapshot, plain);
       expect(frames(framed).frames).toHaveLength(count);
-      expect(await decryptShareObject(key, snapshot, framed)).toEqual(plain);
+      expect(sameBytes(await decryptShareObject(key, snapshot, framed), plain)).toBe(true);
     }
   });
 
@@ -82,7 +87,7 @@ describe("share crypto", () => {
     const output = await new Response(
       input.pipeThrough(decryptShareStream(key, snapshot)),
     ).arrayBuffer();
-    expect(new Uint8Array(output)).toEqual(plain);
+    expect(sameBytes(new Uint8Array(output), plain)).toBe(true);
   });
 
   it("rejects truncation, reordering, swaps, a wrong key and tag tampering", async () => {
