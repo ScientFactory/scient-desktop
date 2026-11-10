@@ -81,9 +81,21 @@ first because refreshed fields can replace manual corrections. Scient blocks
 conflicting exact identifiers and asks before accepting a possible duplicate
 as a separate source.
 
-Use **Remove from Sources** from the source actions to remove the project-owned
-record. Scient asks for confirmation. Removing it never changes Zotero, and an
-imported PDF is retained when another source in the project still uses it.
+Use **Move to Trash** from the source actions to remove a source. Choose
+**Undo** in the message that appears to put it straight back, or open the
+trash button at the top of the Library later to restore it. Its PDFs stay in
+the project while it is in the trash. **Empty trash** deletes the sources in
+it for good, with their saved versions and any PDF no other source uses.
+Removing a source never changes Zotero.
+
+Every change to a source is kept as a version. Choose **History** from the
+source actions to see who changed what and when, and **Restore** an earlier
+version; restoring saves it as the newest version, so nothing is lost. Scient
+keeps the first version and the latest 49 of each source. A PDF removed from a
+source stays available to restore until the trash is emptied.
+
+If a source's file in the project cannot be read, the Library still lists the
+others and says which file it skipped.
 
 ## Copy a formatted reference
 
@@ -100,7 +112,9 @@ unknown values.
 
 In a project conversation, an agent can search and read the same project-owned
 library, maintain source notes, update metadata, attach or detach a project PDF,
-remove a source, or add a new one.
+move a source to the trash and restore it, restore an earlier version, or add a
+new one. Everything an agent changes is credited to it and can be undone the
+same way as your own changes.
 
 Before an agent adds a source, Scient looks up its DOI at doi.org or its PMID in
 PubMed. If the identifier does not exist, or it belongs to a paper with a
@@ -111,6 +125,15 @@ that an agent added it and whether its identifier was verified, not yet checked
 because the registry could not be reached, or missing. After an agent changes a
 source, its details say "Edited by agent". You can edit or remove these sources
 like any other.
+
+When you ask an agent to get papers for your library, it fetches them with
+`scient_paper_get` or `scient_papers_queue` and files each PDF on the paper's
+source. A paper that is not in Sources yet is added from its DOI's registry
+record, the same check as above. Scient prefers the published version and falls
+back to a free accepted manuscript or preprint; the source's details then say
+"PDF is a preprint" or "PDF is the accepted manuscript". Each PDF also records
+how it arrived: a free copy, the publisher, your university sign-in, or your
+library's link.
 
 The conversation's [permission mode](permission-modes.md) and provider approval
 flow still apply to writes. Sources tools stay scoped to the current project:

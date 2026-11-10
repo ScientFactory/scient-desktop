@@ -1,12 +1,18 @@
 import * as Effect from "effect/Effect";
 
 import type {
+  ScientManagedBibliographySyncRequest,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
+  ScientSourceRestoreRequest,
+  ScientSourceRevertRequest,
+  ScientSourceRevisionsRequest,
+  ScientSourcesPermanentDeletionRequest,
+  ScientSourcesTrashRequest,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 
@@ -291,6 +297,98 @@ export const bulkUpdateEnvironmentScientSources = Effect.fn(
     group: "scientSources",
     request: ({ client, headers }) =>
       client.bulkUpdate({ headers, payload: { root: input.root, change: input.change } }),
+  });
+});
+
+export const listEnvironmentScientSourceTrash = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientSourceTrash",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourcesTrashRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.trash(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.trash({ headers, payload }),
+  });
+});
+
+export const restoreEnvironmentScientSource = Effect.fn(
+  "clientRuntime.state.restoreEnvironmentScientSource",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceRestoreRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.restore(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.restore({ headers, payload }),
+  });
+});
+
+export const deleteEnvironmentScientSourcesPermanently = Effect.fn(
+  "clientRuntime.state.deleteEnvironmentScientSourcesPermanently",
+)(function* (
+  input: { readonly prepared: PreparedConnection } & ScientSourcesPermanentDeletionRequest,
+) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.deletePermanently(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.deletePermanently({ headers, payload }),
+  });
+});
+
+export const listEnvironmentScientSourceRevisions = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientSourceRevisions",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceRevisionsRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.revisions(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.revisions({ headers, payload }),
+  });
+});
+
+export const revertEnvironmentScientSource = Effect.fn(
+  "clientRuntime.state.revertEnvironmentScientSource",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceRevertRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.revert(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.revert({ headers, payload }),
   });
 });
 
@@ -608,6 +706,34 @@ export const retryEnvironmentScientSourcesImport = Effect.fn(
           root: input.root,
           operationId: input.operationId,
           itemKeys: input.itemKeys,
+        },
+      }),
+  });
+});
+
+export const syncEnvironmentScientBibliography = Effect.fn(
+  "clientRuntime.state.syncEnvironmentScientBibliography",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: ScientManagedBibliographySyncRequest["root"];
+  readonly replaceEdited?: ScientManagedBibliographySyncRequest["replaceEdited"];
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.syncBibliography(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) =>
+      client.syncBibliography({
+        headers,
+        payload: {
+          root: input.root,
+          ...(input.replaceEdited ? { replaceEdited: input.replaceEdited } : {}),
         },
       }),
   });

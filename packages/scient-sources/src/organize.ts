@@ -183,6 +183,7 @@ export const EMPTY_SCIENT_SOURCES_ORGANIZATION: ScientSourcesOrganization = {
 
 export interface ScientSourceFilterable {
   readonly sourceId: string;
+  readonly citationKey?: string | undefined;
   readonly type: ScientSourceType;
   readonly title: string | null;
   readonly creators: ReadonlyArray<ScientSourceCreator>;
@@ -202,6 +203,7 @@ export interface ScientSourceFilterable {
 
 export function scientSourceSearchText(source: ScientSourceFilterable): string {
   return [
+    source.citationKey,
     source.title,
     source.containerTitle,
     source.issuedYear === null ? null : String(source.issuedYear),

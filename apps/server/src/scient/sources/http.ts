@@ -34,12 +34,18 @@ import {
   organizeSources,
   preflightZoteroImport,
   refreshScientSourceMetadata,
+  deleteSourcesPermanently,
+  listSourceRevisions,
+  listSourceTrash,
   removeSource,
+  restoreSource,
   retrySourceImport,
+  revertSource,
   updateScientSource,
   updateSourceNote,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
+import { startManagedBibliographySync, syncManagedBibliography } from "./ManagedBibliography.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
   "ScientSourcesOperationError",
@@ -70,6 +76,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   "scientSources",
   Effect.fnUntraced(function* (handlers) {
     const observeImport = yield* makeSourceImportAnalytics("user");
+    startManagedBibliographySync();
     return yield* Effect.succeed(
       handlers
         .handle("overview", (args) =>
@@ -169,6 +176,31 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             bulkUpdateSources({ ...args.payload, actor: "user" }),
           ),
         )
+        .handle("trash", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listSourceTrash(args.payload),
+          ),
+        )
+        .handle("restore", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            restoreSource(args.payload),
+          ),
+        )
+        .handle("deletePermanently", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            deleteSourcesPermanently(args.payload),
+          ),
+        )
+        .handle("revisions", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listSourceRevisions(args.payload),
+          ),
+        )
+        .handle("revert", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            revertSource(args.payload),
+          ),
+        )
         .handle("zoteroStatus", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () => inspectZoteroConnection()),
         )
@@ -227,6 +259,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("retryImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             retrySourceImport(args.payload),
+          ),
+        )
+        .handle("syncBibliography", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            syncManagedBibliography(args.payload.root, args.payload),
           ),
         ),
     );

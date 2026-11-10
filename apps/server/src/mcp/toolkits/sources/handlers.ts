@@ -16,8 +16,13 @@ import {
 import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
 import { resolveScientSourceInputPdf } from "@scientfactory/scient-sources/store";
 import {
+  deleteScientSourcesPermanently,
   listScientSourceRecords,
+  listScientSourceRevisions,
   readScientSourceRecord,
+  readScientSourceTrashEntries,
+  restoreScientSource,
+  revertScientSource,
 } from "@scientfactory/scient-sources/store";
 import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
@@ -40,6 +45,12 @@ import {
   updateScientSource,
   updateSourceNote,
 } from "../../../scient/sources/ScientSourcesCoordinator.ts";
+import { syncManagedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
+import {
+  checkSourceQuotes,
+  readSourceText,
+  searchSourceFullText,
+} from "../../../scient/sources/SourceFullText.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientSourcesToolError>[0]["code"];
 
@@ -205,17 +216,26 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly type?: ScientSourceType;
     readonly hasPdf?: boolean;
     readonly savedSearchId?: string;
+    readonly inTrash?: boolean;
     readonly offset?: number;
     readonly limit?: number;
   }) {
     const { root } = yield* resolveScientSourcesProject();
-    const all = yield* attempt(() => listScientSourceRecords(root));
+    const trash = input.inTrash
+      ? new Map(
+          (yield* attempt(() => readScientSourceTrashEntries(root))).map((entry) => [
+            entry.record.sourceId,
+            entry,
+          ]),
+        )
+      : null;
+    const all = trash
+      ? [...trash.values()].map((entry) => entry.record)
+      : yield* attempt(() => listScientSourceRecords(root));
     const narrowsByOrganization =
       input.collectionId !== undefined || input.savedSearchId !== undefined;
     const organization = narrowsByOrganization
-      ? yield* attempt(() =>
-          readScientSourcesOrganization(root, new Set(all.map((record) => record.sourceId))),
-        )
+      ? yield* attempt(() => readScientSourcesOrganization(root))
       : { collections: [], savedSearches: [] };
     const saved = input.savedSearchId
       ? organization.savedSearches.find((search) => search.searchId === input.savedSearchId)
@@ -245,6 +265,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
       records: page.map((record) => ({
         sourceId: record.sourceId,
         revision: record.revision,
+        ...(record.citationKey ? { citationKey: record.citationKey } : {}),
         type: record.type,
         title: record.title,
         creator: creatorName(record),
@@ -254,6 +275,12 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         hasPdf: record.attachments.some((attachment) => attachment.kind === "pdf"),
         addedBy: record.origin?.actor ?? "user",
         ...(record.verification ? { verification: record.verification.state } : {}),
+        ...(trash?.has(record.sourceId)
+          ? {
+              removedAt: trash.get(record.sourceId)!.removedAt,
+              removedBy: trash.get(record.sourceId)!.removedBy,
+            }
+          : {}),
         ...(record.tags.length > 0 ? { tags: record.tags } : {}),
       })),
       total: matching.length,
@@ -316,6 +343,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
     const { root } = yield* resolveScientSourcesProject();
     const record = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
     if (!record) return yield* toolError("not-found", "The source was not found in this project.");
+    const revisions = yield* attempt(() => listScientSourceRevisions(root, input.sourceId));
     const maximumAbstractCharacters = 50_000;
     const abstract = record.abstract;
     const abstractTruncated = abstract !== null && abstract.length > maximumAbstractCharacters;
@@ -324,8 +352,9 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       abstract: abstractTruncated ? abstract.slice(0, maximumAbstractCharacters) : abstract,
       abstractTruncated,
       note: record.note ?? null,
+      revisions: revisions ?? [],
       attachments: record.attachments.map(
-        ({ attachmentId, kind, fileName, mediaType, sha256, byteLength, importedAt }) => ({
+        ({
           attachmentId,
           kind,
           fileName,
@@ -333,6 +362,16 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
           sha256,
           byteLength,
           importedAt,
+          retrieval,
+        }) => ({
+          attachmentId,
+          kind,
+          fileName,
+          mediaType,
+          sha256,
+          byteLength,
+          importedAt,
+          ...(retrieval ? { retrieval } : {}),
         }),
       ),
     };
@@ -395,19 +434,85 @@ export const updateScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.u
 );
 
 export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.remove")(
-  function* (input: { readonly sourceId: string; readonly expectedRevision: number }) {
+  function* (input: {
+    readonly sourceId: string;
+    readonly expectedRevision: number;
+    readonly permanent?: boolean;
+  }) {
     const { root } = yield* resolveScientSourcesProject();
+    if (input.permanent) {
+      const trashed = (yield* attempt(() => readScientSourceTrashEntries(root))).find(
+        (entry) => entry.sourceId === input.sourceId,
+      );
+      if (!trashed) {
+        return { outcome: "not-found" as const, sourceId: input.sourceId, revision: null };
+      }
+      if (trashed.record.revision !== input.expectedRevision) {
+        return {
+          outcome: "stale" as const,
+          sourceId: input.sourceId,
+          revision: trashed.record.revision,
+        };
+      }
+      const deleted = yield* attempt(() =>
+        deleteScientSourcesPermanently({ root, sourceIds: [input.sourceId] }),
+      );
+      return {
+        outcome: deleted.deletedSourceIds.includes(input.sourceId)
+          ? ("deleted" as const)
+          : ("not-found" as const),
+        sourceId: input.sourceId,
+        revision: null,
+      };
+    }
     const result = yield* attempt(() =>
       removeSource({
         root,
         sourceId: input.sourceId,
         expectedRevision: input.expectedRevision,
+        actor: "agent",
       }),
     );
     return {
       outcome: result.outcome,
       sourceId: result.sourceId,
       revision: result.revision,
+      ...(result.restorable ? { restorable: true } : {}),
+    };
+  },
+);
+
+export const restoreScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.restore")(
+  function* (input: { readonly sourceId: string }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const result = yield* attempt(() =>
+      restoreScientSource({ root, sourceId: input.sourceId, actor: "agent" }),
+    );
+    return {
+      outcome: result.outcome,
+      sourceId: result.sourceId,
+      revision: result.record?.revision ?? null,
+      matchingSourceIds: result.matchingSourceIds,
+    };
+  },
+);
+
+export const revertScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.revert")(
+  function* (input: {
+    readonly sourceId: string;
+    readonly expectedRevision: number;
+    readonly toRevision: number;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const current = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
+    if (!current) return yield* toolError("not-found", "The source was not found in this project.");
+    const result = yield* attempt(() => revertScientSource({ root, ...input, actor: "agent" }));
+    return {
+      outcome: result.outcome,
+      sourceId: result.record.sourceId,
+      revision: result.record.revision,
+      missingAttachmentCount: result.missingAttachmentCount,
+      matchingSourceIds: result.matchingSourceIds,
     };
   },
 );
@@ -559,9 +664,66 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
       sourceId: result.record?.sourceId ?? input.sourceId,
       attachmentId: result.attachmentId,
       revision: result.record?.revision ?? null,
-      removedAttachmentCount: result.removedAttachmentCount,
-      retainedAttachmentCount: result.retainedAttachmentCount,
     };
+  },
+);
+
+const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolkit.bibliography")(
+  function* (input: {
+    readonly replaceEdited?: ReadonlyArray<"references.bib" | "references.json">;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() => syncManagedBibliography(root, input));
+  },
+);
+
+const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search")(
+  function* (input: {
+    readonly query: string;
+    readonly sourceIds?: ReadonlyArray<string>;
+    readonly limit?: number;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() =>
+      searchSourceFullText({
+        root,
+        query: input.query,
+        limit: Math.min(25, Math.max(1, input.limit ?? 10)),
+        ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
+      }),
+    );
+  },
+);
+
+const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit.readText")(
+  function* (input: {
+    readonly sourceId: string;
+    readonly attachmentId?: string;
+    readonly fromPage?: number;
+    readonly maxCharacters?: number;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() =>
+      readSourceText({
+        root,
+        sourceId: input.sourceId,
+        ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
+        fromPage: Math.max(1, input.fromPage ?? 1),
+        maxCharacters: Math.min(60_000, Math.max(1_000, input.maxCharacters ?? 20_000)),
+      }),
+    );
+  },
+);
+
+const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesToolkit.checkQuotes")(
+  function* (input: {
+    readonly quotes: ReadonlyArray<{ readonly quote: string; readonly sourceId?: string }>;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const results = yield* attempt(() =>
+      checkSourceQuotes({ root, quotes: input.quotes.slice(0, 25) }),
+    );
+    return { results };
   },
 );
 
@@ -571,9 +733,15 @@ const handlers = {
   scient_sources_note_update: updateScientSourceNoteForInvocation,
   scient_sources_update: updateScientSourceForInvocation,
   scient_sources_remove: removeScientSourceForInvocation,
+  scient_sources_restore: restoreScientSourceForInvocation,
+  scient_sources_revert: revertScientSourceForInvocation,
   scient_sources_add: addScientSourceForInvocation,
   scient_sources_attach_pdf: attachScientSourcePdfForInvocation,
   scient_sources_detach_pdf: detachScientSourcePdfForInvocation,
+  scient_sources_bibliography: syncScientBibliographyForInvocation,
+  scient_sources_search: searchScientSourcesForInvocation,
+  scient_sources_read_text: readScientSourceTextForInvocation,
+  scient_sources_quote_check: checkScientSourceQuotesForInvocation,
   scient_sources_collections: readScientSourceCollectionsForInvocation,
   scient_sources_organize: organizeScientSourcesForInvocation,
   scient_sources_bulk_update: bulkUpdateScientSourcesForInvocation,

@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./client", () => ({
   organizeScientSources: mocks.organizeScientSources,
   bulkUpdateScientSources: mocks.bulkUpdateScientSources,
+  restoreScientSource: vi.fn(),
 }));
 
 type SourceSummary = ScientSourcesOverviewResult["records"][number];

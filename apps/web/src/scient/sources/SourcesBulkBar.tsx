@@ -3,19 +3,10 @@ import {
   scientSourceTagKey,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
-import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
+import type { EnvironmentId, ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { FolderIcon, ShapesIcon, TagIcon, Trash2, X } from "lucide-react";
 import { useState } from "react";
 
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../../components/ui/alert-dialog";
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
 import {
@@ -26,6 +17,8 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../components/ui/menu";
+import { toastManager } from "../../components/ui/toast";
+import { restoreScientSource } from "./client";
 import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
@@ -37,6 +30,63 @@ const BULK_TYPES = (Object.keys(SCIENT_SOURCE_TYPE_LABELS) as ScientSourceType[]
   (type) => type !== "other",
 );
 
+/** One toast for a bulk move to Trash; Undo restores every source it moved. */
+export function announceSourcesMovedToTrash(input: {
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+  readonly sourceIds: ReadonlyArray<string>;
+  readonly notRemoved: number;
+  readonly onRestored: () => Promise<unknown>;
+}) {
+  if (input.notRemoved > 0) {
+    toastManager.add({
+      type: "warning",
+      title:
+        input.notRemoved === 1
+          ? "1 source was not moved to Trash"
+          : `${input.notRemoved} sources were not moved to Trash`,
+      description: "They changed while you worked. Review them, then try again.",
+    });
+  }
+  if (input.sourceIds.length === 0) return;
+  const id = toastManager.add({
+    type: "success",
+    title:
+      input.sourceIds.length === 1
+        ? "Moved 1 source to Trash"
+        : `Moved ${input.sourceIds.length} sources to Trash`,
+    actionProps: {
+      children: "Undo",
+      onClick: () => {
+        toastManager.close(id);
+        void restoreAll(input).then(input.onRestored);
+      },
+    },
+  });
+}
+
+async function restoreAll(input: {
+  readonly environmentId: EnvironmentId;
+  readonly root: string;
+  readonly sourceIds: ReadonlyArray<string>;
+}) {
+  let failed = 0;
+  for (const sourceId of input.sourceIds) {
+    const restored = await restoreScientSource(input.environmentId, {
+      root: input.root,
+      sourceId,
+    }).catch(() => null);
+    if (restored?.outcome !== "restored") failed += 1;
+  }
+  if (failed > 0) {
+    toastManager.add({
+      type: "error",
+      title: failed === 1 ? "1 source was not restored" : `${failed} sources were not restored`,
+      description: "Open the Trash to restore it.",
+    });
+  }
+}
+
 /** Replaces the search row while sources are selected. */
 export function SourcesBulkBar(props: {
   readonly organize: SourcesOrganize;
@@ -46,7 +96,6 @@ export function SourcesBulkBar(props: {
   readonly onRemove: (records: ReadonlyArray<SourceSummary>) => Promise<void>;
 }) {
   const { organize } = props;
-  const [confirmingRemoval, setConfirmingRemoval] = useState(false);
   const [removing, setRemoving] = useState(false);
   const selected = props.records.filter((record) => organize.selection.has(record.sourceId));
   const sourceIds = selected.map((record) => record.sourceId);
@@ -178,9 +227,15 @@ export function SourcesBulkBar(props: {
         type="button"
         size="icon-xs"
         variant="ghost-destructive"
-        aria-label={`Remove ${count} selected sources`}
+        aria-label={`Move ${count} selected sources to Trash`}
         disabled={busy || count === 0}
-        onClick={() => setConfirmingRemoval(true)}
+        onClick={() => {
+          setRemoving(true);
+          void props.onRemove(selected).finally(() => {
+            setRemoving(false);
+            organize.clearSelection();
+          });
+        }}
       >
         <Trash2 />
       </Button>
@@ -193,40 +248,6 @@ export function SourcesBulkBar(props: {
       >
         <X />
       </Button>
-      <AlertDialog
-        open={confirmingRemoval}
-        onOpenChange={(open) => (!removing ? setConfirmingRemoval(open) : undefined)}
-      >
-        <AlertDialogPopup>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {count === 1 ? "Remove 1 source?" : `Remove ${count} sources?`}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              They are removed from Sources and from every collection.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" disabled={removing} />}>
-              Cancel
-            </AlertDialogClose>
-            <Button
-              variant="destructive"
-              disabled={removing}
-              onClick={() => {
-                setRemoving(true);
-                void props.onRemove(selected).finally(() => {
-                  setRemoving(false);
-                  setConfirmingRemoval(false);
-                  organize.clearSelection();
-                });
-              }}
-            >
-              Remove
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogPopup>
-      </AlertDialog>
     </div>
   );
 }
