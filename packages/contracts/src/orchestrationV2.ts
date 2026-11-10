@@ -1143,6 +1143,8 @@ export const OrchestrationV2ProviderThreadNativeMetadata = Schema.Struct({
   /** Driver-validated continuation state; a native id alone does not grant resume authority. */
   resumeCursor: Schema.optional(Schema.Unknown),
   modelSelection: Schema.optional(ModelSelection),
+  /** Last bound native workspace; a pooled session's cwd belongs to its opening thread. */
+  cwd: Schema.optional(TrimmedNonEmptyString),
   title: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   updatedAt: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   itemIdentityVersion: Schema.optional(Schema.Literal(2)),

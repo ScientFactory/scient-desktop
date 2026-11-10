@@ -464,6 +464,14 @@ describe("OpenCode 2 through the orchestrator", () => {
         projection.runs.map((run) => run.status),
         ["completed", "completed"],
       );
+      // SCIENT-FORK:START — the binding records the folder the moved session now runs in.
+      assert.equal(
+        projection.providerThreads.find(
+          (providerThread) => providerThread.id === projection.thread.activeProviderThreadId,
+        )?.nativeMetadata?.cwd,
+        after,
+      );
+      // SCIENT-FORK:END
     }).pipe(Effect.scoped),
   );
 

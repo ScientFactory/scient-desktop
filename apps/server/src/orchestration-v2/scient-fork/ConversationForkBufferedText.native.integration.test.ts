@@ -595,6 +595,10 @@ it.live.each(
           frame: { id: 5, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
         },
         { type: "emit_inbound", frame: { id: 5, result: { status: "unsubscribed" } } },
+        {
+          type: "emit_inbound",
+          frame: { method: "thread/closed", params: { threadId: nativeThreadId } },
+        },
       ];
       const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
         makeCodexReplayTranscript({
