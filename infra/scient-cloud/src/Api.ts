@@ -371,13 +371,15 @@ const putBlob = Effect.fn("Api.putBlob")(function* (request: Request, sha: strin
       exit._tag === "Failure" ? user.release(begun.reservation) : Effect.void,
     ),
   );
-  const duplicate = yield* user.commitBlobPut({
-    sha,
-    ref,
-    reservation: begun.reservation,
-    objectKey: begun.objectKey,
-    bytes: body.length,
-  });
+  const duplicate = yield* user
+    .commitBlobPut({
+      sha,
+      ref,
+      reservation: begun.reservation,
+      objectKey: begun.objectKey,
+      bytes: body.length,
+    })
+    .pipe(Effect.tapError(() => deleteObjects([begun.objectKey])));
   if (duplicate !== null) yield* deleteObjects([duplicate]);
   return json(200, { status: "stored" });
 });

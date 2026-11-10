@@ -551,7 +551,11 @@ export const makeUserApi = (userId: string, run: RunSql) => {
       run(
         Effect.gen(function* () {
           const row = yield* getThreadRow(env, thread);
-          return row ? yield* removeThreads([row]) : [];
+          if (row) return yield* removeThreads([row]);
+          // A first copy still on its way has no row yet; cancel it so it never lands.
+          const sql = yield* SqlClient.SqlClient;
+          yield* sql`DELETE FROM reservations WHERE env = ${env} AND thread = ${thread}`;
+          return [];
         }),
       ),
 

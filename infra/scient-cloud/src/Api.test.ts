@@ -329,39 +329,43 @@ describe("sync", () => {
     }).pipe(Effect.provide(cloud())),
   );
 
-  it.effect("does not let an upload begun before the computer was removed land after it", () => {
+  /** Object storage whose writes wait until the test opens the gate. */
+  const gatedObjects = () => {
     const store = new Map<string, Uint8Array>();
     const base = memoryObjects(store);
-    const latch = () => {
-      let resolve = () => {};
-      const promise = new Promise<void>((done) => (resolve = done));
-      return { promise, resolve: () => resolve() };
-    };
-    const putStarted = latch();
-    const gate = latch();
+    let started = () => {};
+    let open = () => {};
+    const putStarted = new Promise<void>((done) => (started = done));
+    const gate = new Promise<void>((done) => (open = done));
     const objects: Objects["Service"] = {
       ...base,
       put: (key, body, length) =>
         Effect.promise(() => {
-          putStarted.resolve();
-          return gate.promise;
+          started();
+          return gate;
         }).pipe(Effect.andThen(base.put(key, body, length))),
     };
+    return { store, objects, putStarted, open };
+  };
+
+  it.effect.each([
+    { name: "the computer was removed", path: cloudPaths.computer("env-a"), status: 401 },
+    { name: "its first copy was deleted", path: cloudPaths.thread("env-a", "t1"), status: 404 },
+  ])("does not let an upload begun before $name land after it", (removal) => {
+    const gated = gatedObjects();
     return Effect.gen(function* () {
       const computer = yield* setup;
       const upload = yield* Effect.forkChild(putThread(computer, "t1", gzip("{}")));
-      yield* Effect.promise(() => putStarted.promise);
-      expect(
-        (yield* call("DELETE", cloudPaths.computer("env-a"), { person: "ada-token" })).status,
-      ).toBe(204);
-      gate.resolve();
-      expect((yield* Fiber.join(upload)).status).toBe(401);
+      yield* Effect.promise(() => gated.putStarted);
+      expect((yield* call("DELETE", removal.path, { person: "ada-token" })).status).toBe(204);
+      gated.open();
+      expect((yield* Fiber.join(upload)).status).toBe(removal.status);
       const index = yield* readJson(
         yield* call("GET", cloudPaths.threads(), { person: "ada-token" }),
       );
       expect(index.threads).toEqual([]);
-      expect(store.size).toBe(0);
-    }).pipe(Effect.provide(cloud({ objects })));
+      expect(gated.store.size).toBe(0);
+    }).pipe(Effect.provide(cloud({ objects: gated.objects })));
   });
 
   it.effect("refuses bodies past their limits before holding them", () =>
