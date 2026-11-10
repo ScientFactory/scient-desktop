@@ -265,8 +265,8 @@ function ThreadLink({
 }) {
   return (
     <Link
-      to="/cloud/$environmentId/$threadId"
-      params={{ environmentId: row.environmentId, threadId: row.threadId }}
+      to="/cloud/$computerId/$conversationId"
+      params={{ computerId: row.environmentId, conversationId: row.threadId }}
       className="flex min-w-0 items-baseline gap-3 rounded-md px-2 py-1.5 text-sm hover:bg-accent focus-visible:outline-2 focus-visible:outline-ring"
     >
       <span className="min-w-0 flex-1 truncate">{row.title}</span>
@@ -297,7 +297,7 @@ function groupByProject(rows: ReadonlyArray<ThreadIndexRow>) {
   return [...groups.entries()];
 }
 
-/** `/cloud/$environmentId/$threadId`: one copied conversation, read-only. */
+/** `/cloud/$computerId/$conversationId`: one copied conversation, read-only. */
 export function CloudConversationPage({
   environmentId,
   threadId,

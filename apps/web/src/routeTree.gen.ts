@@ -67,7 +67,7 @@ import { Route as ChatSettingsSkillsExternalRouteImport } from './routes/_chat.s
 import { Route as ChatSettingsScientificComputingLanguageIdRouteImport } from './routes/_chat.settings.scientific-computing_.$languageId'
 import { Route as ChatSettingsExtensionsInstalledRouteImport } from './routes/_chat.settings.extensions_.installed'
 import { Route as ChatSettingsExtensionsAllRouteImport } from './routes/_chat.settings.extensions_.all'
-import { Route as ChatCloudEnvironmentIdThreadIdRouteImport } from './routes/_chat.cloud.$environmentId.$threadId'
+import { Route as ChatCloudComputerIdConversationIdRouteImport } from './routes/_chat.cloud.$computerId.$conversationId'
 import { Route as ChatSettingsExtensionsStoreInstanceIdRouteImport } from './routes/_chat.settings.extensions_.store.$instanceId'
 import { Route as ChatSettingsExtensionsCategoryCategoryRouteImport } from './routes/_chat.settings.extensions_.category.$category'
 import { Route as ChatSettingsExtensionsItemServerSplatRouteImport } from './routes/_chat.settings.extensions_.item.server.$'
@@ -380,10 +380,10 @@ const ChatSettingsExtensionsAllRoute =
     path: '/extensions/all',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
-const ChatCloudEnvironmentIdThreadIdRoute =
-  ChatCloudEnvironmentIdThreadIdRouteImport.update({
-    id: '/cloud/$environmentId/$threadId',
-    path: '/cloud/$environmentId/$threadId',
+const ChatCloudComputerIdConversationIdRoute =
+  ChatCloudComputerIdConversationIdRouteImport.update({
+    id: '/cloud/$computerId/$conversationId',
+    path: '/cloud/$computerId/$conversationId',
     getParentRoute: () => ChatRoute,
   } as any)
 const ChatSettingsExtensionsStoreInstanceIdRoute =
@@ -490,7 +490,7 @@ export interface FileRoutesByFullPath {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/cloud/': typeof ChatCloudIndexRoute
-  '/cloud/$environmentId/$threadId': typeof ChatCloudEnvironmentIdThreadIdRoute
+  '/cloud/$computerId/$conversationId': typeof ChatCloudComputerIdConversationIdRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -558,7 +558,7 @@ export interface FileRoutesByTo {
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/cloud': typeof ChatCloudIndexRoute
-  '/cloud/$environmentId/$threadId': typeof ChatCloudEnvironmentIdThreadIdRoute
+  '/cloud/$computerId/$conversationId': typeof ChatCloudComputerIdConversationIdRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -628,7 +628,7 @@ export interface FileRoutesById {
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
   '/_chat/cloud/': typeof ChatCloudIndexRoute
-  '/_chat/cloud/$environmentId/$threadId': typeof ChatCloudEnvironmentIdThreadIdRoute
+  '/_chat/cloud/$computerId/$conversationId': typeof ChatCloudComputerIdConversationIdRoute
   '/_chat/settings/extensions_/all': typeof ChatSettingsExtensionsAllRoute
   '/_chat/settings/extensions_/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/_chat/settings/scientific-computing_/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -698,7 +698,7 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
     | '/cloud/'
-    | '/cloud/$environmentId/$threadId'
+    | '/cloud/$computerId/$conversationId'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
     | '/settings/scientific-computing/$languageId'
@@ -766,7 +766,7 @@ export interface FileRouteTypes {
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
     | '/cloud'
-    | '/cloud/$environmentId/$threadId'
+    | '/cloud/$computerId/$conversationId'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
     | '/settings/scientific-computing/$languageId'
@@ -835,7 +835,7 @@ export interface FileRouteTypes {
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
     | '/_chat/cloud/'
-    | '/_chat/cloud/$environmentId/$threadId'
+    | '/_chat/cloud/$computerId/$conversationId'
     | '/_chat/settings/extensions_/all'
     | '/_chat/settings/extensions_/installed'
     | '/_chat/settings/scientific-computing_/$languageId'
@@ -1272,11 +1272,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsExtensionsAllRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
-    '/_chat/cloud/$environmentId/$threadId': {
-      id: '/_chat/cloud/$environmentId/$threadId'
-      path: '/cloud/$environmentId/$threadId'
-      fullPath: '/cloud/$environmentId/$threadId'
-      preLoaderRoute: typeof ChatCloudEnvironmentIdThreadIdRouteImport
+    '/_chat/cloud/$computerId/$conversationId': {
+      id: '/_chat/cloud/$computerId/$conversationId'
+      path: '/cloud/$computerId/$conversationId'
+      fullPath: '/cloud/$computerId/$conversationId'
+      preLoaderRoute: typeof ChatCloudComputerIdConversationIdRouteImport
       parentRoute: typeof ChatRoute
     }
     '/_chat/settings/extensions_/store/$instanceId': {
@@ -1461,7 +1461,7 @@ interface ChatRouteChildren {
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
   ChatCloudIndexRoute: typeof ChatCloudIndexRoute
-  ChatCloudEnvironmentIdThreadIdRoute: typeof ChatCloudEnvironmentIdThreadIdRoute
+  ChatCloudComputerIdConversationIdRoute: typeof ChatCloudComputerIdConversationIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -1474,7 +1474,8 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
   ChatCloudIndexRoute: ChatCloudIndexRoute,
-  ChatCloudEnvironmentIdThreadIdRoute: ChatCloudEnvironmentIdThreadIdRoute,
+  ChatCloudComputerIdConversationIdRoute:
+    ChatCloudComputerIdConversationIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
