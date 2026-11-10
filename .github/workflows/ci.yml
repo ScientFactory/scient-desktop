@@ -832,7 +832,9 @@ jobs:
         uses: ./.github/actions/setup-ci-deps
 
       - name: Exercise release-only workflow steps
-        run: node scripts/release-smoke.ts
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_macos_connect_profile.py'
+          node scripts/release-smoke.ts
 
   # SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory, including exact queue
   # reuse. Accounts rides this job to reuse its install: a job of its own would wait for a runner
