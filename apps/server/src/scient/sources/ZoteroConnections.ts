@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import type { ZoteroConnection, ZoteroConnectionStatus } from "@scientfactory/scient-sources";
+import * as Context from "effect/Context";
 
 import type { ZoteroKeyLookup } from "./ZoteroAccountKey.ts";
 import type { ZoteroTransport } from "./ZoteroLibraryReader.ts";
@@ -29,6 +30,12 @@ export interface ZoteroAccess {
 
 export const localOnlyZoteroAccess: ZoteroAccess = { webKey: async () => null };
 
+/** The transports behind Zotero access; replaced with recorded ones in tests. */
+export const ZoteroTransports = Context.Reference<Omit<ZoteroAccess, "webKey">>(
+  "scient/sources/ZoteroTransports",
+  { defaultValue: () => ({}) },
+);
+
 const ZOTERO_KEY_MISSING_MESSAGE =
   "Add your Zotero API key in Accounts to use your library on zotero.org.";
 
@@ -37,10 +44,14 @@ const checkedAccounts = new Map<
   { readonly at: number; readonly account: ZoteroWebAccount }
 >();
 
-async function checkWebKey(apiKey: string, http: ZoteroWebHttp): Promise<ZoteroWebAccountResult> {
+async function checkWebKey(
+  apiKey: string,
+  http: ZoteroWebHttp,
+  fresh = false,
+): Promise<ZoteroWebAccountResult> {
   const digest = NodeCrypto.createHash("sha256").update(apiKey).digest("hex");
   const cached = checkedAccounts.get(digest);
-  if (cached && Date.now() - cached.at < ACCOUNT_CHECK_TTL_MS) {
+  if (!fresh && cached && Date.now() - cached.at < ACCOUNT_CHECK_TTL_MS) {
     return { state: "ready", account: cached.account };
   }
   const result = await inspectZoteroWebKey(apiKey, http);
@@ -81,11 +92,15 @@ export async function inspectZotero(
   return web?.state === "ready" ? web : local;
 }
 
-async function zoteroWebLibrary(access: ZoteroAccess): Promise<ZoteroWebLibrary> {
+/** `fresh` checks the key's permissions again, as a write must. */
+export async function zoteroWebLibrary(
+  access: ZoteroAccess,
+  options: { readonly fresh?: boolean } = {},
+): Promise<ZoteroWebLibrary> {
   const apiKey = await access.webKey();
   if (!apiKey) throw new Error(ZOTERO_KEY_MISSING_MESSAGE);
   const http = access.http ?? nodeZoteroWebHttp;
-  const result = await checkWebKey(apiKey, http);
+  const result = await checkWebKey(apiKey, http, options.fresh);
   if (result.state === "unreachable") throw new Error("Scient could not reach zotero.org.");
   if (result.state === "rejected" || !result.account.canRead) {
     throw new Error("zotero.org refused the Zotero key in Accounts.");

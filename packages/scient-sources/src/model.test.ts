@@ -85,7 +85,7 @@ describe("Scient source model", () => {
 
     expect(summary).toMatchObject({ sourceId: "source_123", title: "A careful study" });
     expect(summary).not.toHaveProperty("abstract");
-    expect(summary).not.toHaveProperty("tags");
+    expect(summary.tags).toEqual(["reviewed"]);
     expect(summary).not.toHaveProperty("fieldProvenance");
     expect(JSON.stringify(summary).length).toBeLessThan(JSON.stringify(detail).length / 10);
   });
@@ -145,6 +145,24 @@ describe("Scient source model", () => {
       ).toMatchObject({ kind: "same-identifier", matchingSourceIds: ["source_123"] });
     },
   );
+
+  it.each([
+    ["openalex", "https://openalex.org/W2741809807", "W2741809807"],
+    ["s2", "corpusid:13756489", "CorpusId:13756489"],
+  ])("knows the same %s work without its authors or year", (scheme, given, stored) => {
+    const sparse = { creators: [], issuedRaw: null, issuedYear: null, externalReferences: [] };
+    expect(
+      assessSourceDuplicate({
+        candidate: {
+          ...candidate,
+          ...sparse,
+          sourceKey: "DIFFERENT",
+          identifiers: [{ scheme, value: given }],
+        },
+        existing: [record({ ...sparse, identifiers: [{ scheme, value: stored }] })],
+      }),
+    ).toMatchObject({ kind: "same-identifier", matchingSourceIds: ["source_123"] });
+  });
 
   // regression: 4e05b272c1 feat(sources): complete reference intake workflows
   it.each(["issn", "isbn", "journal-id"])(

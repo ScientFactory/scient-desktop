@@ -20,6 +20,7 @@ import {
   Pencil,
   RefreshCw,
   Trash2,
+  Upload,
 } from "lucide-react";
 import {
   useEffect,
@@ -605,6 +606,8 @@ function MetadataRefreshConfirmation(props: {
 export function SourceDetails(props: {
   readonly record: SourceRecord;
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
+  /** Editable tags and collections; without it the tags are shown read-only. */
+  readonly organize?: ReactNode;
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onSaveNote: (
@@ -614,12 +617,15 @@ export function SourceDetails(props: {
   readonly onRefreshMetadata: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
   readonly onOpenHistory?: () => void;
+  readonly onSendToZotero?: () => void;
   readonly onGetPdf?: () => Promise<void>;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  /** The Source's highlights and notes, shown after its reference. */
+  readonly annotations?: ReactNode;
 }) {
   const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
@@ -742,6 +748,12 @@ export function SourceDetails(props: {
                 History
               </MenuItem>
             ) : null}
+            {props.onSendToZotero ? (
+              <MenuItem onClick={props.onSendToZotero}>
+                <Upload />
+                Send to Zotero
+              </MenuItem>
+            ) : null}
             <MenuSeparator />
             <MenuItem
               variant="destructive"
@@ -849,13 +861,16 @@ export function SourceDetails(props: {
             </DetailsSection>
           ) : null}
 
-          {tags.length > 0 ? (
-            <DetailsSection title="Tags">
-              <SourceTags tags={tags} />
-            </DetailsSection>
-          ) : null}
+          {props.organize ??
+            (tags.length > 0 ? (
+              <DetailsSection title="Tags">
+                <SourceTags tags={tags} />
+              </DetailsSection>
+            ) : null)}
 
           <SourceReference record={record} />
+
+          {props.annotations}
 
           {sourceNote.section}
 

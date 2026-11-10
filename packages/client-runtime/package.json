@@ -339,6 +339,10 @@
       "types": "./src/state/scientLatexHttp.ts",
       "default": "./src/state/scientLatexHttp.ts"
     },
+    "./state/scient-annotations": {
+      "types": "./src/state/scientAnnotationsHttp.ts",
+      "default": "./src/state/scientAnnotationsHttp.ts"
+    },
     "./state/scient-pdf-edits": {
       "types": "./src/state/scientPdfEditsHttp.ts",
       "default": "./src/state/scientPdfEditsHttp.ts"

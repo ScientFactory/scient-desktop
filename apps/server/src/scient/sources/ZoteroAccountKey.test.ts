@@ -86,7 +86,7 @@ describe("Zotero key from Accounts", () => {
     expect(zoteroAccountFor(snapshot([elsewhere]), { actor: "user" })?.name).toBe("elsewhere");
   });
 
-  it.effect("records the use without the key value", () =>
+  it.effect("records the use once per stretch of work, without the key value", () =>
     Effect.gen(function* () {
       const used: unknown[] = [];
       const key = yield* readZoteroApiKey(
@@ -98,7 +98,17 @@ describe("Zotero key from Accounts", () => {
         { actor: "user" },
       );
 
+      const again = yield* readZoteroApiKey(
+        {
+          snapshot: Effect.succeed(snapshot([apiKeyAccount("zotero")])),
+          resolveSecrets: () => Effect.succeed({ token: Redacted.make("secret-zotero-key") }),
+          recordUse: (entry) => Effect.sync(() => void used.push(entry)),
+        },
+        { actor: "user" },
+      );
+
       expect(Option.map(key, Redacted.value)).toEqual(Option.some("secret-zotero-key"));
+      expect(Option.isSome(again)).toBe(true);
       expect(JSON.stringify(used)).not.toContain("secret-zotero-key");
       expect(used).toEqual([expect.objectContaining({ action: "request" })]);
     }),
