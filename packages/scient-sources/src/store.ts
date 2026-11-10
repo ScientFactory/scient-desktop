@@ -318,6 +318,9 @@ function projectRelativePath(paths: SourceStorePaths, filePath: string): string 
   return NodePath.relative(paths.root, filePath).split(NodePath.sep).join("/");
 }
 
+/** Symlinks and other non-regular entries are reported, never followed. */
+const UNSAFE_ENTRY_MESSAGE = "The entry is not a safe regular file.";
+
 function issueMessage(error: unknown): string {
   return error instanceof SyntaxError
     ? "The file is not valid JSON."
@@ -774,9 +777,13 @@ async function scanTrash(paths: SourceStorePaths): Promise<{
   const entries: ScientSourceTrashEntry[] = [];
   const issues: ScientSourceStoreIssue[] = [];
   for (const file of await NodeFSP.readdir(paths.trash, { withFileTypes: true })) {
-    if (!file.isFile() || !file.name.endsWith(".json")) continue;
+    if (!file.name.endsWith(".json")) continue;
     const sourceId = file.name.slice(0, -".json".length);
     const filePath = NodePath.join(paths.trash, file.name);
+    if (!file.isFile()) {
+      issues.push({ path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE });
+      continue;
+    }
     try {
       const entry = await readTrashEntry(paths, sourceId);
       // A live record with the same ID means a removal stopped before deleting it.
@@ -883,17 +890,57 @@ export async function deleteScientSourcesPermanently(input: {
   return withOperationLock(`${paths.root}:source-write`, async () => {
     const { entries } = await scanTrash(paths);
     const selected = input.sourceIds ? new Set(input.sourceIds) : null;
-    const deleted = entries.filter((entry) => !selected || selected.has(entry.sourceId));
-    for (const entry of deleted) {
-      await NodeFSP.rm(trashEntryPath(paths, entry.sourceId), { force: true });
-      await NodeFSP.rm(NodePath.dirname(sourceHistoryPath(paths, entry.sourceId, 1)), {
-        recursive: true,
-        force: true,
-      });
-    }
-    const removedFileCount = deleted.length > 0 ? await collectUnreferencedSourceFiles(paths) : 0;
-    return { deletedSourceIds: deleted.map((entry) => entry.sourceId), removedFileCount };
+    return deleteTrashEntries(
+      paths,
+      entries.filter((entry) => !selected || selected.has(entry.sourceId)),
+    );
   });
+}
+
+export type ScientTrashedSourceDeletionResult =
+  | { readonly outcome: "deleted"; readonly sourceId: string; readonly removedFileCount: number }
+  | { readonly outcome: "stale"; readonly sourceId: string; readonly revision: number }
+  | { readonly outcome: "not-found"; readonly sourceId: string };
+
+/**
+ * Deletes one trashed source for good only if it is still the revision the caller saw. The
+ * comparison runs under the same lock as the deletion, so a restore, edit and second removal in
+ * between can never let an old request delete the newer record.
+ */
+export async function deleteTrashedScientSource(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+}): Promise<ScientTrashedSourceDeletionResult> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const entry = (await scanTrash(paths)).entries.find(
+      (candidate) => candidate.sourceId === input.sourceId,
+    );
+    if (!entry) return { outcome: "not-found", sourceId: input.sourceId };
+    if (entry.record.revision !== input.expectedRevision) {
+      return { outcome: "stale", sourceId: input.sourceId, revision: entry.record.revision };
+    }
+    const { removedFileCount } = await deleteTrashEntries(paths, [entry]);
+    return { outcome: "deleted", sourceId: input.sourceId, removedFileCount };
+  });
+}
+
+/** Caller holds the source-write lock. */
+async function deleteTrashEntries(
+  paths: SourceStorePaths,
+  entries: ReadonlyArray<ScientSourceTrashEntry>,
+): Promise<ScientSourcePermanentDeletionResult> {
+  for (const entry of entries) {
+    await NodeFSP.rm(trashEntryPath(paths, entry.sourceId), { force: true });
+    await NodeFSP.rm(NodePath.dirname(sourceHistoryPath(paths, entry.sourceId, 1)), {
+      recursive: true,
+      force: true,
+    });
+  }
+  const removedFileCount = entries.length > 0 ? await collectUnreferencedSourceFiles(paths) : 0;
+  return { deletedSourceIds: entries.map((entry) => entry.sourceId), removedFileCount };
 }
 
 /** Caller holds the source-write lock, so no import can be between staging a PDF and its record. */
@@ -1116,8 +1163,12 @@ async function scanScientSourceRecords(paths: SourceStorePaths): Promise<{
   const records: ScientSourceRecord[] = [];
   const issues: ScientSourceStoreIssue[] = [];
   for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    if (!entry.name.endsWith(".json")) continue;
     const filePath = NodePath.join(paths.records, entry.name);
+    if (!entry.isFile()) {
+      issues.push({ path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE });
+      continue;
+    }
     try {
       const record = await readBoundedSourceRecord(filePath);
       if (record.projectId !== paths.identity.projectId) {

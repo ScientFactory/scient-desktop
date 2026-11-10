@@ -26,6 +26,8 @@ import {
   ScientSourcesOrganizeAction,
   ScientSourcesOrganizeResult,
   ScientSourceFilter,
+  ScientReferenceFindingKind,
+  ScientReferenceStatus,
 } from "@scientfactory/scient-sources";
 import {
   isTrimmedUnadvertised,
@@ -213,7 +215,8 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
     "Replace one Source's metadata and tags after the user explicitly asks. metadata is the complete new record, not a patch: " +
     "read the source first, keep every field you are not changing, and pass its current revision. " +
     "If the read says abstractTruncated, do not replace from it; tell the user. If stale, read it again and redo the change on what you read. " +
-    "Changed fields are recorded as set by the agent; attachments stay as they are. Changing identifiers clears the source's identifier check.",
+    "Changed fields are recorded as set by the agent; attachments stay as they are. Changing identifiers clears the source's identifier check. " +
+    "A new citationKey is a deliberate rename: project Markdown and LaTeX citations follow it, and citationKeyRenamedIn lists the files changed.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -236,6 +239,7 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
       reason: NonEmptyString,
     }),
     validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
+    citationKeyRenamedIn: Schema.optionalKey(Schema.Array(NonEmptyString)),
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -515,9 +519,11 @@ const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
     "Documents cite sources by citationKey from these files (Markdown front matter `bibliography: references.bib`, LaTeX `\\bibliography{references}`). " +
     "A file edited by hand is kept and reported as edited, with the keys added, changed or removed; " +
     "unmanaged means a file Scient did not write is in the way, and Scient never writes over it. " +
+    "To keep hand edits, pass importEdited to import their new entries into the Library (changed entries stay as the Library has them). " +
     "Pass replaceEdited only when the user wants the Library version back.",
   parameters: Schema.Struct({
     replaceEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
+    importEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
   }),
   success: ScientManagedBibliographyStatus,
   failure: ScientSourcesToolError,
@@ -1022,6 +1028,51 @@ const ScientSourceSavePageTool = Tool.make("scient_sources_save_page", {
   .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, sourceOperation("sources.page.save", true));
 
+const ScientSourcesCiteTool = Tool.make("scient_sources_cite", {
+  description:
+    "Cite Library sources in a document. Pass source IDs or citation keys; get the citation to write " +
+    "([@a; @b] for Markdown, \\cite{a,b} for LaTeX) after each source is checked against its registry " +
+    "(identifier resolves to the same work, no retraction or notice). Problems are reported, never blocking: " +
+    "tell the user about them. The keys resolve from references.bib, which this keeps current; a document needs " +
+    "`bibliography: references.bib` (Markdown front matter) or \\bibliography{references} (LaTeX) to compile them.",
+  parameters: Schema.Struct({
+    sources: Schema.Array(NonEmptyString).pipe(
+      Schema.check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+    ),
+    format: Schema.optionalKey(Schema.Literals(["markdown", "latex"])),
+  }),
+  success: Schema.Struct({
+    citation: Schema.String,
+    sources: Schema.Array(
+      Schema.Struct({
+        sourceId: NonEmptyString,
+        citationKey: NonEmptyString,
+        title: NullableText,
+        status: ScientReferenceStatus,
+        problems: Schema.Array(
+          Schema.Struct({
+            kind: Schema.Union([
+              ScientReferenceFindingKind,
+              Schema.Literals(["not-checked", "no-identifier"]),
+            ]),
+            message: NonEmptyString,
+          }),
+        ),
+      }),
+    ),
+    notFound: Schema.Array(Schema.String),
+    bibliography: Schema.Literals(["current", "edited", "unmanaged", "absent"]),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Cite Library sources")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, sourceOperation("sources.cite", true));
+
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,
   ScientSourceGetTool,
@@ -1035,6 +1086,7 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,
   ScientSourcesBibliographyTool,
+  ScientSourcesCiteTool,
   ScientSourcesSearchTool,
   ScientSourceReadTextTool,
   ScientSourceQuoteCheckTool,

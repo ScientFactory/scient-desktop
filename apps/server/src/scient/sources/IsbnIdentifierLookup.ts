@@ -6,6 +6,7 @@ import { createSerialRequestLane } from "./NcbiRequestLane.ts";
 import { creatorsFromDisplayNames as creators } from "./registryCreators.ts";
 import type {
   IdentifierLookup,
+  LookupProgress,
   RequestPace,
   ResolvedSourceMetadata,
 } from "./SourceIdentifierResolver.ts";
@@ -176,13 +177,16 @@ async function lookupGoogleBooks(
   isbn: string,
   request: MetadataRequest,
   pace: RequestPace,
+  signal: AbortSignal | undefined,
 ): Promise<CatalogAnswer> {
   const parameters = new URLSearchParams({ q: `isbn:${isbn}`, maxResults: "5" });
   const response = await pace(() =>
-    request(new URL(`https://www.googleapis.com/books/v1/volumes?${parameters}`), {
-      Accept: "application/json",
-      "User-Agent": METADATA_USER_AGENT,
-    }),
+    signal?.aborted
+      ? Promise.resolve(null)
+      : request(new URL(`https://www.googleapis.com/books/v1/volumes?${parameters}`), {
+          Accept: "application/json",
+          "User-Agent": METADATA_USER_AGENT,
+        }),
   ).catch(() => null);
   if (!response || response.status < 200 || response.status >= 300) {
     return { status: "unavailable" };
@@ -225,6 +229,7 @@ export async function lookupIsbns(
   isbns: ReadonlyArray<string>,
   request: MetadataRequest,
   pace?: RequestPace,
+  progress?: LookupProgress,
 ): Promise<ReadonlyMap<string, IdentifierLookup>> {
   const openLibrary = await lookupOpenLibrary(
     isbns,
@@ -232,14 +237,27 @@ export async function lookupIsbns(
     pace ?? runWithOpenLibraryRequestLimit,
   );
   const results = new Map<string, IdentifierLookup>();
+  const settle = (isbn: string, lookup: IdentifierLookup) => {
+    results.set(isbn, lookup);
+    progress?.answer(isbn, lookup);
+  };
   for (const isbn of isbns) {
     const first = openLibrary.get(isbn) ?? { status: "unavailable" };
     if (first.status === "found") {
-      results.set(isbn, { status: "found", origin: "open-library", metadata: first.metadata });
-      continue;
+      settle(isbn, { status: "found", origin: "open-library", metadata: first.metadata });
     }
-    const second = await lookupGoogleBooks(isbn, request, pace ?? runWithGoogleBooksRequestLimit);
-    results.set(
+  }
+  for (const isbn of isbns) {
+    if (results.has(isbn)) continue;
+    if (progress?.signal.aborted) break;
+    const first = openLibrary.get(isbn) ?? { status: "unavailable" };
+    const second = await lookupGoogleBooks(
+      isbn,
+      request,
+      pace ?? runWithGoogleBooksRequestLimit,
+      progress?.signal,
+    );
+    settle(
       isbn,
       second.status === "found"
         ? { status: "found", origin: "google-books", metadata: second.metadata }

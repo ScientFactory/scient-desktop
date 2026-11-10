@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The test controls the native unref'ed lookup deadline.
+import * as NodeTimersPromises from "node:timers/promises";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
@@ -7,6 +9,8 @@ import {
   resolveSourceIdentifierBatch,
   type RequestPace,
 } from "./SourceIdentifierResolver.ts";
+
+vi.mock("node:timers/promises", { spy: true });
 
 const pace: RequestPace = (run) => run();
 const ISBN = "9780300102864";
@@ -211,6 +215,30 @@ describe("ISBN identifiers", () => {
       ["isbn", "unavailable"],
       ["doi", "not-found"],
       ["isbn", "found"],
+    ]);
+  });
+
+  it("keeps books already found when another ISBN's fallback is still waiting at the deadline", async () => {
+    const deadline = Promise.withResolvers<null>();
+    using _deadline = vi.spyOn(NodeTimersPromises, "setTimeout").mockReturnValue(deadline.promise);
+    const fallbackStarted = Promise.withResolvers<void>();
+    const request: MetadataRequest = async (url) => {
+      if (url.host === "openlibrary.org") {
+        return { status: 200, body: JSON.stringify({ [`ISBN:${ISBN}`]: OPEN_LIBRARY_BOOK }), url };
+      }
+      fallbackStarted.resolve();
+      return new Promise(() => undefined);
+    };
+    const pending = resolveSourceIdentifierBatch(
+      [ISBN, "9780262033848", "9780131103627"].map((value) => ({ scheme: "isbn", value })),
+      { request, pace },
+    );
+    await fallbackStarted.promise;
+    deadline.resolve(null);
+    expect((await pending).map((resolution) => resolution.status)).toEqual([
+      "found",
+      "unavailable",
+      "unavailable",
     ]);
   });
 });

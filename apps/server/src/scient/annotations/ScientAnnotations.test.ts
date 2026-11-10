@@ -141,6 +141,13 @@ describe("ScientAnnotations", () => {
         outcome: "unchanged",
         annotation: { annotationId },
       });
+      const opened = yield* annotations.forDocument({
+        root,
+        relativePath: added.pdf.paths[0]!,
+      });
+      expect(opened.status === "available" && opened.sources).toEqual([
+        { sourceId, title: "Sleep and memory", citationKey: "anon2024sleep" },
+      ]);
       const onSource = yield* annotations.forSource({ root, sourceId });
       expect(onSource.attachments[0]!.annotations.map((a) => a.note)).toEqual(["Main result"]);
 

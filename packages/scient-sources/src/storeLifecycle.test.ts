@@ -12,6 +12,7 @@ import type { ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
 import {
   attachScientSourcePdf,
   deleteScientSourcesPermanently,
+  deleteTrashedScientSource,
   detachScientSourcePdf,
   importScientSource,
   inspectScientSources,
@@ -226,6 +227,59 @@ describe("Scient source trash", () => {
     await expect(
       NodeFSP.readFile(sourceAttachmentAbsolutePath(root, removed.attachments[0]!), "utf8"),
     ).resolves.toBe("%PDF-1.7\nown\n");
+  });
+  it("never follows a symlinked record, reports it and keeps every PDF", async () => {
+    const root = await project();
+    const linked = await add(root, "A", "10.1000/a", "linked");
+    const removed = await add(root, "B", "10.1000/b");
+    const recordPath = NodePath.join(
+      root,
+      SCIENT_SOURCE_RECORDS_DIRECTORY,
+      `${linked.sourceId}.json`,
+    );
+    const moved = NodePath.join(root, "moved-record.json");
+    await NodeFSP.rename(recordPath, moved);
+    await NodeFSP.symlink(moved, recordPath);
+    await removeScientSource({ root, sourceId: removed.sourceId, expectedRevision: 1 });
+
+    expect((await inspectScientSources(root)).unreadableRecords).toEqual([
+      {
+        path: `.scient/sources/records/${linked.sourceId}.json`,
+        message: "The entry is not a safe regular file.",
+      },
+    ]);
+    await expect(deleteScientSourcesPermanently({ root })).resolves.toEqual({
+      deletedSourceIds: [removed.sourceId],
+      removedFileCount: 0,
+    });
+    await expect(
+      NodeFSP.readFile(sourceAttachmentAbsolutePath(root, linked.attachments[0]!), "utf8"),
+    ).resolves.toBe("%PDF-1.7\nlinked\n");
+  });
+
+  it("deletes one trashed source only at the revision the request saw", async () => {
+    const root = await project();
+    const record = await add(root, "A", "10.1000/a", "a");
+    await removeScientSource({ root, sourceId: record.sourceId, expectedRevision: 1 });
+    const seen = (await listScientSourceTrash(root)).entries[0]!.revision;
+    // Between the request and its deletion: restore, edit and remove again.
+    const restored = await restoreScientSource({ root, sourceId: record.sourceId });
+    const edited = await retitle(root, restored.record!, "Newer title");
+    await removeScientSource({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: edited.revision,
+    });
+
+    await expect(
+      deleteTrashedScientSource({ root, sourceId: record.sourceId, expectedRevision: seen }),
+    ).resolves.toEqual({ outcome: "stale", sourceId: record.sourceId, revision: edited.revision });
+    expect((await listScientSourceTrash(root)).entries).toMatchObject([
+      { sourceId: record.sourceId, revision: edited.revision, title: "Newer title" },
+    ]);
+    await expect(
+      NodeFSP.readFile(sourceAttachmentAbsolutePath(root, record.attachments[0]!), "utf8"),
+    ).resolves.toBe("%PDF-1.7\na\n");
   });
 });
 

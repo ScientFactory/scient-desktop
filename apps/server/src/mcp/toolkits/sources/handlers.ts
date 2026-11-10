@@ -2,6 +2,8 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  citationKeyValidationMessage,
+  takenCitationKeys,
   compileScientSourceFilter,
   normalizeScientSourceEditableMetadata,
   scientSourceTagCounts,
@@ -16,7 +18,7 @@ import {
 import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
 import { resolveScientSourceInputPdf } from "@scientfactory/scient-sources/store";
 import {
-  deleteScientSourcesPermanently,
+  deleteTrashedScientSource,
   listScientSourceRecords,
   listScientSourceRevisions,
   readScientSourceRecord,
@@ -65,10 +67,12 @@ import {
   organizeSources,
   prepareAgentProjectPdf,
   removeSource,
+  syncManagedBibliographyWithImports,
   updateScientSource,
   updateSourceNote,
 } from "../../../scient/sources/ScientSourcesCoordinator.ts";
-import { syncManagedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
+import { citeLibrarySources } from "../../../scient/sources/LibraryCitation.ts";
+import { ReferenceIdentifierLookup } from "../../../scient/references/ReferenceCheck.ts";
 import {
   checkSourceQuotes,
   readSourceText,
@@ -440,6 +444,16 @@ export const updateScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.u
     readonly allowPossibleMetadataMatch?: boolean;
   }) {
     const { root } = yield* resolveScientSourcesProject();
+    const citationKey = input.metadata.citationKey?.trim();
+    if (citationKey) {
+      const records = yield* attempt(() => listScientSourceRecords(root));
+      const current = records.find((record) => record.sourceId === input.sourceId);
+      const message =
+        current?.citationKey === citationKey
+          ? null
+          : citationKeyValidationMessage(citationKey, takenCitationKeys(records, input.sourceId));
+      if (message) return yield* toolError("operation-failed", message);
+    }
     const result = yield* attempt(() =>
       updateScientSource({
         root,
@@ -456,6 +470,7 @@ export const updateScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.u
       revision: result.record.revision,
       duplicate: result.duplicate,
       validationIssues: result.validationIssues,
+      ...(result.citationKeyRenamedIn ? { citationKeyRenamedIn: result.citationKeyRenamedIn } : {}),
     };
   },
 );
@@ -468,28 +483,17 @@ export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
   }) {
     const { root } = yield* resolveScientSourcesProject();
     if (input.permanent) {
-      const trashed = (yield* attempt(() => readScientSourceTrashEntries(root))).find(
-        (entry) => entry.sourceId === input.sourceId,
-      );
-      if (!trashed) {
-        return { outcome: "not-found" as const, sourceId: input.sourceId, revision: null };
-      }
-      if (trashed.record.revision !== input.expectedRevision) {
-        return {
-          outcome: "stale" as const,
-          sourceId: input.sourceId,
-          revision: trashed.record.revision,
-        };
-      }
       const deleted = yield* attempt(() =>
-        deleteScientSourcesPermanently({ root, sourceIds: [input.sourceId] }),
+        deleteTrashedScientSource({
+          root,
+          sourceId: input.sourceId,
+          expectedRevision: input.expectedRevision,
+        }),
       );
       return {
-        outcome: deleted.deletedSourceIds.includes(input.sourceId)
-          ? ("deleted" as const)
-          : ("not-found" as const),
+        outcome: deleted.outcome,
         sourceId: input.sourceId,
-        revision: null,
+        revision: deleted.outcome === "stale" ? deleted.revision : null,
       };
     }
     const result = yield* attempt(() =>
@@ -779,9 +783,13 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
 const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolkit.bibliography")(
   function* (input: {
     readonly replaceEdited?: ReadonlyArray<"references.bib" | "references.json">;
+    readonly importEdited?: ReadonlyArray<"references.bib" | "references.json">;
   }) {
     const { root } = yield* resolveScientSourcesProject();
-    return yield* attempt(() => syncManagedBibliography(root, input));
+    const observeImport = yield* makeSourceImportAnalytics("agent");
+    return yield* attempt(() =>
+      syncManagedBibliographyWithImports({ root, ...input, actor: "agent" }, observeImport),
+    );
   },
 );
 
@@ -985,6 +993,20 @@ export const exportScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.
   },
 );
 
+const citeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.cite")(function* (input: {
+  readonly sources: ReadonlyArray<string>;
+  readonly format?: "markdown" | "latex";
+}) {
+  const { root } = yield* resolveScientSourcesProject();
+  const resolveIdentifiers = yield* ReferenceIdentifierLookup;
+  return yield* attempt(() =>
+    citeLibrarySources(
+      { root, sources: input.sources, format: input.format ?? "markdown" },
+      { resolveIdentifiers },
+    ),
+  );
+});
+
 const handlers = {
   scient_sources_list: listScientSourcesForInvocation,
   scient_sources_get: getScientSourceForInvocation,
@@ -998,6 +1020,7 @@ const handlers = {
   scient_sources_attach_pdf: attachScientSourcePdfForInvocation,
   scient_sources_detach_pdf: detachScientSourcePdfForInvocation,
   scient_sources_bibliography: syncScientBibliographyForInvocation,
+  scient_sources_cite: citeScientSourcesForInvocation,
   scient_sources_search: searchScientSourcesForInvocation,
   scient_sources_read_text: readScientSourceTextForInvocation,
   scient_sources_quote_check: checkScientSourceQuotesForInvocation,

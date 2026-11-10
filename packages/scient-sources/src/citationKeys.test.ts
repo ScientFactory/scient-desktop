@@ -6,6 +6,7 @@ import {
   generateCitationKeyBase,
   isValidCitationKey,
   normalizeImportedCitationKey,
+  renameCitationKeyInDocument,
   uniqueCitationKey,
 } from "./citationKeys.ts";
 
@@ -92,5 +93,41 @@ describe("citation keys", () => {
     expect(assignCitationKey({ ...metadata, preferred: "{}", taken: new Set() })).toBe(
       "lovelace1843notes",
     );
+  });
+});
+
+describe("citation key rename in documents", () => {
+  it("renames Markdown citations and leaves e-mail, longer keys and code alone", () => {
+    const text = [
+      "As [@old; -@old, p. 3] and @old said, unlike @older or [@old.x].",
+      "Mail old@old.org. Inline `[@old]` stays.",
+      "```",
+      "[@old]",
+      "```",
+      "End [see @old].",
+      "",
+    ].join("\n");
+    expect(renameCitationKeyInDocument("markdown", text, "old", "new")).toBe(
+      [
+        "As [@new; -@new, p. 3] and @new said, unlike @older or [@old.x].",
+        "Mail old@old.org. Inline `[@old]` stays.",
+        "```",
+        "[@old]",
+        "```",
+        "End [see @new].",
+        "",
+      ].join("\n"),
+    );
+  });
+
+  it("renames keys inside LaTeX cite commands only", () => {
+    expect(
+      renameCitationKeyInDocument(
+        "latex",
+        "See \\citep[p.~2]{a, old,b} and \\textcite{old}; \\label{old} and \\cite{older}.",
+        "old",
+        "new",
+      ),
+    ).toBe("See \\citep[p.~2]{a, new,b} and \\textcite{new}; \\label{old} and \\cite{older}.");
   });
 });

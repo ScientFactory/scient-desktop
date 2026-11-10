@@ -339,12 +339,16 @@ email.
 `resolveSourceIdentifierBatch` resolves many identifiers, each as its own work,
 grouping them per registry: arXiv and Open Library answer many per request, DOI
 and PMID lookups run four at a time so none waits out its deadline in the NCBI
-lane, and each request has the 6.5-second deadline. `SourceIdentifierAdd.ts`
+lane, and each request has the 6.5-second deadline. At the deadline an ISBN
+group keeps the books already found and starts no more Google Books requests;
+only the ISBNs still waiting are unavailable. `SourceIdentifierAdd.ts`
 uses it for adds by identifier: `scient_sources_add` with `identifierList` (up
 to 50 entries in any common spelling, outcome `batch` with one result per
 entry) and the user's **Add by identifier** (`POST
 /api/scient/sources/identifiers/add`). Text is read by `detectSourceIdentifier`
-and `parseSourceIdentifierList` in `packages/scient-sources`. An identifier
+and `parseSourceIdentifierList` in `packages/scient-sources`; a comma or
+semicolon splits a list even without a space when a DOI, link or scheme prefix
+follows it, and otherwise stays part of an old DOI. An identifier
 already in the Library (a work-level identifier, or the ISBN of an existing
 book) is reported as a duplicate without a lookup. Only a found identifier is
 added, verified and credited to its actor; not found, unavailable and
@@ -411,7 +415,11 @@ Neither removal nor detaching a PDF deletes PDF files. Permanent deletion
 (one trashed source, or the whole trash) deletes the trash entries and their
 revision history, then deletes every content-addressed PDF that no live or
 trashed record refers to. It deletes no file at all while any record or trash
-entry cannot be read, since that record might refer to it. Revert and history
+entry cannot be read, since that record might refer to it. Deleting one
+trashed source takes the revision the caller saw and compares it under the
+same write lock that deletes, returning `stale` when the source was restored,
+edited or removed again in between; emptying the whole trash takes no
+revision. Revert and history
 listing do not keep PDFs alive: a revert whose revision names a deleted file
 leaves that attachment out and reports `missingAttachmentCount`.
 
@@ -422,11 +430,13 @@ reverted identifiers belong to another live source) without writing. Each
 source keeps its first revision and the most recent ones, 50 including the
 current record; older revisions are pruned after each write.
 
-Listing reads every record file independently. A file that is not valid JSON,
-does not decode, belongs to another project or does not match its file name is
-skipped and reported in the overview's `unreadableRecords` with its
-project-relative path; the UI shows one quiet line naming the files. Reading a
-single source by ID still fails for that source alone.
+Listing reads every record file independently. A `.json` entry that is not a
+regular file (a symlink, for example) is never followed. It, and a file that is
+not valid JSON, does not decode, belongs to another project or does not match
+its file name, is skipped and reported in the overview's `unreadableRecords`
+with its project-relative path; the UI shows one quiet line naming the files.
+The trash listing reports its own entries the same way. Reading a single source
+by ID still fails for that source alone.
 
 The UI moves a source to the trash straight from the row's secondary-click
 menu or the details page and offers Undo in the confirmation toast; the trash
@@ -509,6 +519,73 @@ the user or an agent restores the Library version. The project file is written
 before the copy, so an interrupted write is adopted on the next sync instead
 of reported as an edit. Nothing is written for a project without a Library.
 
+`importEdited` sends an edited file through the ordinary reference-file import
+(`importBibliographyFile`). Only when the edit added entries and every added
+key is then in the Library, with nothing changed or removed, is the file
+written again; otherwise it stays edited for the person to decide.
+
+## Citing
+
+Documents cite by key. In Markdown, typing `[@` opens a list of Library
+sources (`prosemirror/libraryCitation.ts`, ranked by
+`sources/libraryCitations.ts`) and inserts the existing Pandoc `citation`
+node; the LaTeX citation dialog appends Library sources after the document's
+own `.bib` entries. A citation opens its source through
+`librarySourceRequest.ts`, which the Library panel acts on once loaded.
+
+A deliberate key rename goes through `updateScientSource`, which then rewrites
+the key in project Markdown citations (outside code) and LaTeX `\cite`-family
+key lists (`renameCitationKeyInDocument`); `citationKeyRenamedIn` lists the
+files. Nothing else changes a key, so a key a document uses stays frozen.
+
+`scient_sources_cite` (`LibraryCitation.ts`) runs the shared reference check
+(`checkReferences` with a Library `sourceIds` target) on the sources about to
+be cited and reports identifier, retraction, notice, published-version and
+registry-detail findings next to the citation it returns; it never withholds
+the citation.
+
+Markdown Word export passes a CSL style to Pandoc: the document's `csl:`
+front matter (a bundled `apa` or `vancouver`, or a project `.csl` file), else
+the request's `citationStyle` from Settings, else Pandoc's default. Library
+sources are the lowest-precedence references (`fallbackCitations`), after the
+document's front matter and named bibliographies. Export only reads records.
+
+## Annotations
+
+Highlights and notes on project PDFs live in `.scient/annotations/v1/`, one
+`<sha256>.json` per PDF, owned by `apps/server/src/scient/annotations/`
+(`annotationStore.ts` for the file and its pure command logic,
+`ScientAnnotations.ts` for the service the HTTP routes and the
+`scient_annotations_*` tools share). Keying by the PDF's bytes means a Source
+attachment and the same file elsewhere in the project share annotations, and a
+changed file starts clean rather than showing marks on the wrong text. The file
+records the project paths where the PDF was annotated as hints only.
+
+An annotation stores the reader's `PdfTarget` text selector and extractor, not
+its document identity, so stored records hold no absolute paths. It needs a
+highlight or a note. Every change names the revision it was made on; a stale
+change returns the current record. Removal is a tombstone that restore undoes,
+and the last ten revisions of each annotation are kept so `revert` can bring
+an earlier note back as a new revision. Each record credits `createdBy` and
+`updatedBy` (`user` or `agent`). A file that does not decode is never written
+over and is reported, not hidden, in listings. Writes are serialized per PDF
+inside the server process, like the Sources store.
+
+The reader paints annotations per rendered page with the CSS Custom Highlight
+API. Stored offsets are kept when they still select the stored quote;
+otherwise the quote is searched on its page with its context, then alone, and
+shown only when it occurs once. A create names the PDF path and is refused
+(`material-changed`) when the file's bytes are no longer the ones the reader
+loaded. An agent's quote is anchored server-side against the Sources full text
+when it is complete, otherwise against a fresh pdf.js extraction in the same
+text-layer profile, after folding case, whitespace, compatibility characters
+and line-end hyphens; repeats are reported as ambiguous with their pages.
+
+"Quote in my document" inserts into the Markdown or LaTeX editor of the same
+project that was focused last in the window, using the PDF's Source citation
+key (`[@key, p. N]`, `\cite[p.~N]{key}`), and copies Markdown when no editor
+can take it. Page numbers are PDF page indices, not printed page labels.
+
 ## Reference check
 
 `apps/server/src/scient/references/` checks a document or the Library against
@@ -587,8 +664,8 @@ lock.
   never brought in and records no longer in the Library are "removed for other
   reasons". Identified minus removed always equals screened.
 - Screening is an append-only log; the latest entry per source and stage is
-  the decision in force, so changes stay auditable and `clear-decision`
-  reopens a record. Full-text decisions apply only to records included at
+  the decision in force, so changes stay auditable; `clear-decision` appends a
+  `cleared` entry that reopens the record without erasing its history. Full-text decisions apply only to records included at
   title and abstract. Every entry records `decidedBy`.
 - Repeats are harmless for agents: creating a title in use returns that
   review, and logging the same database, query and date replaces that search.
@@ -858,11 +935,10 @@ PDF import.
 ## Deliberate exclusions
 
 This slice does not implement two-way Zotero sync, Zotero group libraries,
-uploading PDFs to Zotero, attaching PDFs named
-in a reference file's `file` field, source merging,
-automatic possible-duplicate merging, multi-source
-bibliographies, arbitrary CSL style installation, annotations, evidence claims,
-OCR of scanned PDFs, fuzzy metadata search, mobile UI, or a separate Studio route.
+uploading PDFs to Zotero, attaching PDFs named in a reference file's `file`
+field, source merging, automatic possible-duplicate merging, multi-source
+bibliographies, arbitrary CSL style installation, evidence claims, OCR of
+scanned PDFs, fuzzy metadata search, mobile UI, or a separate Studio route.
 Later source systems should add adapters into the same domain and store rather
 than add provider-shaped fields to the host application.
 
