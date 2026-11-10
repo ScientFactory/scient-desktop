@@ -319,8 +319,17 @@ in a collection.
   from the review's list or type another). With the record focused, press I,
   M or E. **Skip** moves a record to the end; **Undo** in **Recent decisions**
   reopens one. Only records included at title and abstract reach full text.
-- **PRISMA** shows the flow diagram with every count, including what is still
-  awaiting a decision. **Copy as Mermaid** copies it for a Markdown document.
+  At full text, choose **Not retrieved** for a report you could not obtain:
+  it is counted as not retrieved, not as excluded. Deciding a report means you
+  retrieved it.
+- **PRISMA** shows the PRISMA 2020 flow: records screened and excluded,
+  reports sought for retrieval and not retrieved, reports assessed for
+  eligibility and excluded with their reasons, and studies included. Work not
+  done yet is shown separately as awaiting screening, retrieval or assessment;
+  a record marked **Maybe** is still awaiting. **Copy as Mermaid** copies it
+  for a Markdown document. In reviews made before retrieval was recorded, a
+  full-text exclusion with the reason "Full text not available" counts as not
+  retrieved.
 
 Choose **Edit review** from the review's actions to set its title, review
 question and the exclusion reasons offered when you exclude a record. Deleting a

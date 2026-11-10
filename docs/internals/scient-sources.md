@@ -697,7 +697,19 @@ lock.
   given). Overlap between searches, which the Library has already merged on
   import, plus records marked as duplicates are "duplicates removed"; results
   never brought in and records no longer in the Library are "removed for other
-  reasons". Identified minus removed always equals screened.
+  reasons". Identified minus removed always equals the records reaching
+  screening; `screened` counts only settled include or exclude decisions, and
+  maybe or undecided records are reported as pending.
+- Retrieval is its own append-only log (`retrieval`, optional so older files
+  decode): every report included at title and abstract is sought, and its
+  outcome is the latest `record-retrieval` entry (`sought`, `not-retrieved`,
+  `retrieved`). Without one, a full-text decision means retrieved, except a
+  full-text exclusion with the reason "Full text not available" (the older
+  default), which means not retrieved; no decision means retrieval pending.
+  The store keeps the two logs consistent: a full-text decision on a report
+  recorded as sought or not retrieved also records it as retrieved, and
+  recording sought or not retrieved reopens its full-text decision. Reports
+  assessed, excluded and included count only retrieved reports.
 - Screening is an append-only log; the latest entry per source and stage is
   the decision in force, so changes stay auditable; `clear-decision` appends a
   `cleared` entry that reopens the record without erasing its history. Full-text decisions apply only to records included at

@@ -102,6 +102,7 @@ const ScientSystematicReviewUpdateTool = Tool.make("scient_sources_systematic_re
     "(database, exact query, date searched, and the database's resultCount); the same database, query and date replaces that search. add-sources adds records found another way. " +
     "Library imports already merge exact duplicates; mark-duplicate removes a remaining one (keep duplicateOf), mark-distinct dismisses a possible pair. " +
     "screen records include, exclude or maybe at title-abstract, then full-text for records included there; give an exclusion reason at full text. " +
+    "record-retrieval marks a report sought, retrieved or not-retrieved; a report not retrieved is not assessed, and a full-text decision records it as retrieved. " +
     "Decisions are credited to the agent and the latest one counts; clear-decision reopens a record. skippedSourceIds lists ids that were not applied.",
   parameters: Schema.Struct({ change: ScientSystematicReviewAction }),
   success: ScientSystematicReviewChangeResult,

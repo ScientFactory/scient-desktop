@@ -192,7 +192,7 @@ describe("Systematic review tools", () => {
         identified: { databases: 2 },
         screened: 2,
         titleAbstract: { included: 1, excluded: 1 },
-        fullText: { pending: 1 },
+        retrieval: { sought: 1, pending: 1 },
       });
       expect(read.review?.prismaMermaid).toContain("Records screened (n = 2)");
 

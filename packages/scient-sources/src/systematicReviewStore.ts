@@ -20,9 +20,12 @@ import {
   scientReviewDecisions,
   scientReviewPossibleDuplicates,
   scientReviewRecordIds,
+  scientReviewRetrievalOutcomes,
   scientReviewScreeningIds,
   ScientSystematicReview,
   SCIENT_REVIEW_DEFAULT_EXCLUSION_REASONS,
+  type ScientReviewRetrieval,
+  type ScientReviewScreening,
   type ScientSystematicReviewAction,
   type ScientSystematicReviewChangeResult,
   type ScientSystematicReviewDetail,
@@ -152,6 +155,10 @@ export async function readScientSystematicReview(
   };
 }
 
+function recordedRetrieval(review: ScientSystematicReview) {
+  return new Map((review.retrieval ?? []).map((entry) => [entry.sourceId, entry.outcome]));
+}
+
 function newId(prefix: string): string {
   return `${prefix}_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
 }
@@ -186,6 +193,7 @@ function applyChange(input: {
       duplicates: [],
       distinctPairs: [],
       screening: [],
+      retrieval: [],
       exclusionReasons: [...SCIENT_REVIEW_DEFAULT_EXCLUSION_REASONS],
     };
     return { review, result: { outcome: "created", reviewId: review.reviewId } };
@@ -364,11 +372,7 @@ function applyChange(input: {
       const eligible = new Set(
         change.stage === "title-abstract"
           ? scientReviewScreeningIds(current, present)
-          : scientReviewScreeningIds(current, present).filter(
-              (sourceId) =>
-                scientReviewDecisions(current, "title-abstract").get(sourceId)?.decision ===
-                "include",
-            ),
+          : scientReviewRetrievalOutcomes(current, present).keys(),
       );
       const inForce = scientReviewDecisions(current, change.stage);
       const skipped: string[] = [];
@@ -412,7 +416,73 @@ function applyChange(input: {
           : {}),
       };
       if (entries.length === 0) return unchanged(extra);
-      return touched({ ...current, screening: [...current.screening, ...entries] }, extra);
+      // Assessing a report means it was retrieved, whatever was recorded before.
+      const recorded = recordedRetrieval(current);
+      const retrieved =
+        change.stage === "full-text"
+          ? entries
+              .filter((entry) => (recorded.get(entry.sourceId) ?? "retrieved") !== "retrieved")
+              .map((entry) => ({
+                sourceId: entry.sourceId,
+                outcome: "retrieved" as const,
+                recordedAt: now,
+                recordedBy: actor,
+              }))
+          : [];
+      return touched(
+        {
+          ...current,
+          screening: [...current.screening, ...entries],
+          ...(retrieved.length > 0
+            ? { retrieval: [...(current.retrieval ?? []), ...retrieved] }
+            : {}),
+        },
+        extra,
+      );
+    }
+    case "record-retrieval": {
+      const outcomes = scientReviewRetrievalOutcomes(current, present);
+      const fullText = scientReviewDecisions(current, "full-text");
+      const skipped: string[] = [];
+      const recorded: ScientReviewRetrieval[] = [];
+      const cleared: ScientReviewScreening[] = [];
+      for (const report of change.reports) {
+        const outcome = outcomes.get(report.sourceId);
+        const note = report.note?.trim();
+        if (outcome === undefined) {
+          skipped.push(report.sourceId);
+          continue;
+        }
+        if (outcome === report.outcome && !note) continue;
+        recorded.push({
+          sourceId: report.sourceId,
+          outcome: report.outcome,
+          ...(note ? { note } : {}),
+          recordedAt: now,
+          recordedBy: actor,
+        });
+        // A report that was not retrieved was not assessed, so its full-text decision is reopened.
+        const decision = fullText.get(report.sourceId);
+        if (report.outcome !== "retrieved" && decision) {
+          cleared.push({ ...decision, cleared: true, decidedAt: now, decidedBy: actor });
+        }
+      }
+      const extra =
+        skipped.length > 0
+          ? {
+              ...skippedField(skipped),
+              message: "Skipped sources are not included at title and abstract screening.",
+            }
+          : {};
+      if (recorded.length === 0) return unchanged(extra);
+      return touched(
+        {
+          ...current,
+          screening: [...current.screening, ...cleared],
+          retrieval: [...(current.retrieval ?? []), ...recorded],
+        },
+        extra,
+      );
     }
     case "clear-decision": {
       const previous = scientReviewDecisions(current, change.stage).get(change.sourceId);

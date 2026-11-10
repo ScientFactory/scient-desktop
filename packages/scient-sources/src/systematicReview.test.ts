@@ -184,8 +184,9 @@ describe("Systematic reviews", () => {
       },
       // egdt appears in both searches, and the preprint was marked as its duplicate.
       removedBeforeScreening: { duplicates: 2, other: 2 },
-      screened: 4,
+      screened: 3,
       titleAbstract: { included: 2, excluded: 1, maybe: 1, pending: 0 },
+      retrieval: { sought: 2, notRetrieved: 0, retrieved: 2, pending: 0 },
       fullText: {
         assessed: 2,
         excluded: 1,
@@ -202,6 +203,139 @@ describe("Systematic reviews", () => {
     expect(listed.reviews.map((review) => [review.title, review.searchCount])).toEqual([
       ["Sepsis resuscitation", 2],
     ]);
+  });
+
+  it("counts pending screening, an unavailable report and an eligibility exclusion apart", async () => {
+    const { root, sourceIds } = await project([
+      ["Included after reading the full text", 2020],
+      ["Report that could not be obtained", 2021],
+      ["Retrieved report with the wrong outcome", 2022],
+      ["Report still being requested", 2023],
+      ["Record nobody has screened yet", 2024],
+    ]);
+    const [read, unavailable, wrongOutcome, requested, unscreened] = sourceIds as [
+      string,
+      string,
+      string,
+      string,
+      string,
+    ];
+    const { reviewId } = await changeScientSystematicReview({
+      root,
+      change: { action: "create-review", title: "Counts" },
+      actor: "user",
+    });
+    const id = reviewId ?? "";
+    const change = (next: Parameters<typeof changeScientSystematicReview>[0]["change"]) =>
+      changeScientSystematicReview({ root, change: next, actor: "agent" });
+    await change({
+      action: "log-search",
+      reviewId: id,
+      database: "PubMed",
+      query: "q",
+      searchedOn: "2026-11-11",
+      sourceIds,
+    });
+    await change({
+      action: "screen",
+      reviewId: id,
+      stage: "title-abstract",
+      decisions: [read, unavailable, wrongOutcome, requested].map((sourceId) => ({
+        sourceId,
+        decision: "include" as const,
+      })),
+    });
+    const retrieval = await change({
+      action: "record-retrieval",
+      reviewId: id,
+      reports: [
+        { sourceId: unavailable, outcome: "not-retrieved", note: "Not held by the library" },
+        { sourceId: wrongOutcome, outcome: "retrieved" },
+        { sourceId: requested, outcome: "sought" },
+        { sourceId: unscreened, outcome: "retrieved" },
+      ],
+    });
+    expect(retrieval.skippedSourceIds).toEqual([unscreened]);
+    await change({
+      action: "screen",
+      reviewId: id,
+      stage: "full-text",
+      decisions: [
+        { sourceId: read, decision: "include" },
+        { sourceId: wrongOutcome, decision: "exclude", reason: "Wrong outcome" },
+      ],
+    });
+
+    const detail = await readScientSystematicReview(root, id);
+    expect(detail?.prisma).toMatchObject({
+      screened: 4,
+      titleAbstract: { included: 4, excluded: 0, maybe: 0, pending: 1 },
+      retrieval: { sought: 4, notRetrieved: 1, retrieved: 2, pending: 1 },
+      fullText: {
+        assessed: 2,
+        excluded: 1,
+        excludedByReason: [{ reason: "Wrong outcome", count: 1 }],
+        maybe: 0,
+        pending: 0,
+      },
+      included: 1,
+    });
+    expect(scientReviewPendingIds(detail!.review, "full-text", new Set(sourceIds))).toEqual([
+      requested,
+    ]);
+    const mermaid = scientPrismaMermaid(detail!.prisma);
+    expect(mermaid).toContain("Awaiting screening (n = 1)");
+    expect(mermaid).toContain('notRetrieved["Reports not retrieved (n = 1)"]');
+    expect(mermaid).toContain(
+      "Reports sought for retrieval (n = 4)<br/>Awaiting retrieval (n = 1)",
+    );
+  });
+
+  it("reads a review saved before retrieval was recorded", async () => {
+    const { root, sourceIds } = await project([
+      ["Older review record one", 2019],
+      ["Older review record two", 2020],
+    ]);
+    const [kept, unavailable] = sourceIds as [string, string];
+    const entry = (sourceId: string, stage: string, decision: string, reason?: string) => ({
+      sourceId,
+      stage,
+      decision,
+      ...(reason ? { reason } : {}),
+      decidedAt: "2026-11-10T00:00:00.000Z",
+      decidedBy: "user",
+    });
+    await NodeFSP.mkdir(NodePath.join(root, ".scient/sources/reviews"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(root, ".scient/sources/reviews/review_old.json"),
+      JSON.stringify({
+        formatVersion: 1,
+        reviewId: "review_old",
+        title: "Older review",
+        createdAt: "2026-11-10T00:00:00.000Z",
+        updatedAt: "2026-11-10T00:00:00.000Z",
+        updatedBy: "user",
+        searches: [],
+        otherSourceIds: sourceIds,
+        duplicates: [],
+        distinctPairs: [],
+        screening: [
+          entry(kept, "title-abstract", "include"),
+          entry(unavailable, "title-abstract", "include"),
+          entry(kept, "full-text", "include"),
+          entry(unavailable, "full-text", "exclude", "Full text not available"),
+        ],
+        exclusionReasons: ["Wrong population", "Full text not available"],
+      }),
+      "utf8",
+    );
+
+    const detail = await readScientSystematicReview(root, "review_old");
+    expect(detail?.prisma).toMatchObject({
+      retrieval: { sought: 2, notRetrieved: 1, retrieved: 1, pending: 0 },
+      fullText: { assessed: 1, excluded: 0, excludedByReason: [] },
+      included: 1,
+    });
   });
 
   it("keeps the latest decision, skips repeats, and reopens a record when it is cleared", async () => {
@@ -292,7 +426,8 @@ describe("Systematic reviews", () => {
     expect(detail?.prisma).toMatchObject({
       identified: { databases: 2 },
       removedBeforeScreening: { duplicates: 0, other: 1 },
-      screened: 1,
+      screened: 0,
+      titleAbstract: { pending: 1 },
     });
   });
 

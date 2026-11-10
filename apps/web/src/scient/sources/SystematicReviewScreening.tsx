@@ -1,7 +1,9 @@
 import {
   scientReviewDecisions,
   scientReviewPendingIds,
+  scientReviewRetrievalOutcomes,
   type ScientReviewDecision,
+  type ScientReviewRetrievalOutcome,
   type ScientReviewStage,
 } from "@scientfactory/scient-sources";
 import type {
@@ -52,6 +54,10 @@ export function SystematicReviewScreening(props: {
     reason?: string,
   ) => Promise<unknown>;
   readonly onClear: (sourceId: string) => Promise<unknown>;
+  readonly onRetrieval: (
+    sourceId: string,
+    outcome: ScientReviewRetrievalOutcome,
+  ) => Promise<unknown>;
   readonly onOpenSource: (sourceId: string) => void;
   readonly onRequestName: (request: SourcesNameRequest) => void;
 }) {
@@ -66,8 +72,38 @@ export function SystematicReviewScreening(props: {
   const current = ordered[0] ?? null;
   const decisions = scientReviewDecisions(detail.review, stage);
   const eligible =
-    stage === "title-abstract" ? detail.prisma.screened : detail.prisma.fullText.assessed;
-  const recent = [...decisions.values()].toReversed().slice(0, 5);
+    stage === "title-abstract" ? detail.screeningSourceIds.length : detail.prisma.retrieval.sought;
+  const outcomes = scientReviewRetrievalOutcomes(detail.review, present);
+  // Older reviews may record an unavailable report as an exclusion; that one shows as a decision.
+  const notRetrieved =
+    stage === "full-text"
+      ? [
+          ...new Map(
+            (detail.review.retrieval ?? []).map((entry) => [entry.sourceId, entry]),
+          ).values(),
+        ].filter(
+          (entry) =>
+            entry.outcome === "not-retrieved" && outcomes.get(entry.sourceId) === "not-retrieved",
+        )
+      : [];
+  const recent = [
+    ...[...decisions.values()].map((entry) => ({
+      sourceId: entry.sourceId,
+      at: entry.decidedAt,
+      label: `${DECISION_LABELS[entry.decision]}${entry.reason ? ` · ${entry.reason}` : ""}`,
+      by: entry.decidedBy,
+      undo: () => props.onClear(entry.sourceId),
+    })),
+    ...notRetrieved.map((entry) => ({
+      sourceId: entry.sourceId,
+      at: entry.recordedAt,
+      label: "Not retrieved",
+      by: entry.recordedBy,
+      undo: () => props.onRetrieval(entry.sourceId, "sought"),
+    })),
+  ]
+    .toSorted((left, right) => right.at.localeCompare(left.at))
+    .slice(0, 5);
   const record = current ? props.records.get(current) : undefined;
   const sourceDetail = current ? props.sourceDetails[current] : undefined;
   const abstractReady = sourceDetail && sourceDetail.revision === record?.revision;
@@ -85,6 +121,11 @@ export function SystematicReviewScreening(props: {
     if (!current || props.pending) return;
     setSkipped((list) => list.filter((sourceId) => sourceId !== current));
     void props.onDecide(current, decision, reason);
+  };
+  const markNotRetrieved = () => {
+    if (!current || props.pending) return;
+    setSkipped((list) => list.filter((sourceId) => sourceId !== current));
+    void props.onRetrieval(current, "not-retrieved");
   };
   const otherReason = () =>
     props.onRequestName({
@@ -173,6 +214,17 @@ export function SystematicReviewScreening(props: {
                 <MenuItem onClick={() => decide("exclude")}>Exclude without a reason</MenuItem>
               </MenuPopup>
             </Menu>
+            {stage === "full-text" ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                disabled={props.pending}
+                onClick={markNotRetrieved}
+              >
+                Not retrieved
+              </Button>
+            ) : null}
             {ordered.length > 1 ? (
               <Button
                 type="button"
@@ -203,16 +255,15 @@ export function SystematicReviewScreening(props: {
                   {props.records.get(entry.sourceId)?.title ?? "Untitled source"}
                 </span>
                 <span className="shrink-0 text-xs text-muted-foreground">
-                  {DECISION_LABELS[entry.decision]}
-                  {entry.reason ? ` · ${entry.reason}` : ""}
-                  {entry.decidedBy === "agent" ? " · by agent" : ""}
+                  {entry.label}
+                  {entry.by === "agent" ? " · by agent" : ""}
                 </span>
                 <Button
                   type="button"
                   size="compact"
                   variant="ghost-muted"
                   disabled={props.pending}
-                  onClick={() => void props.onClear(entry.sourceId)}
+                  onClick={() => void entry.undo()}
                 >
                   Undo
                 </Button>
