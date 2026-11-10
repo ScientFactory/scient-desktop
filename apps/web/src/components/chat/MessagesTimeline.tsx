@@ -1155,11 +1155,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
       // Removing a tail wholly below the viewport cannot clamp the reading position.
       if (bottom >= state.scroll + state.scrollLength) onReleaseUnusedAnchor?.();
     }
+    // Legend's scroll offset can trail the page by a frame. Read the page's own offset, or a stale
+    // value reports leaving the end and then re-arriving, which rejoins a follow the reader ended.
+    const liveState = state && viewport ? { ...state, scroll: viewport.scrollTop } : state;
     // The reader is at the bottom once the end's text is in view, but for at
     // most its last three lines (readerAtReadingEnd: a running turn's latest
     // content, otherwise the latest turn's answer). Reserved anchor space and
     // what trails a finished answer are not unread content.
-    const isAtEnd = readerAtReadingEnd(state, contentInsetEndAdjustment, turnUnfinished);
+    const isAtEnd = readerAtReadingEnd(liveState, contentInsetEndAdjustment, turnUnfinished);
     if (isAtEnd !== undefined && !citationPositioning) {
       onIsAtEndChange(isAtEnd);
       // Arriving at the end, or landing there on opening the thread, joins a working thread's
