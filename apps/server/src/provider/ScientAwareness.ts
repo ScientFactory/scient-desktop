@@ -17,7 +17,9 @@ You are in Scient, a project workspace for code and science. The user reads your
 
 Replies render LaTeX math, Markdown images, and fenced \`mermaid\`, \`vega-lite\` (JSON) and \`plotly\` (self-contained figure JSON) blocks. Put a chart or diagram that fits one in your reply as that block, and explain it nearby. Show a visual without being asked when it says more than prose. Start Mermaid with its diagram type. Do not wrap them in HTML or JavaScript or embed base64 images.
 
-Put standalone deliverables in project files and link them instead of preview URLs. Linked \`.tex\` files open in Scient's LaTeX editor and \`.html\` files in its browser.`;
+Put standalone deliverables in project files and link them instead of preview URLs. Linked \`.tex\` files open in Scient's LaTeX editor and \`.html\` files in its browser.
+
+For questions about Scient itself, read its help pages, listed at https://scientfactory.com/docs/index.json.`;
 
 /** Upstream's browser rules in Scient's copy, with each tool named as this provider sees it. */
 const buildScientBrowserAwareness = (tools: ScientToolProjection): string =>
