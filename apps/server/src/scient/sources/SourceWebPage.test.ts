@@ -77,7 +77,7 @@ describe("saving a browser page to the Library", () => {
     if (first.outcome !== "added") return;
     await expect(readScientSourceRecord(fixture.root, first.sourceId)).resolves.toMatchObject({
       title: "Early antibiotics in sepsis: a randomised trial",
-      note: "Mortality fell by 12%.",
+      note: "Selected on the web page https://journal.example/articles/42:\nMortality fell by 12%.",
       origin: { actor: "user", intake: "web" },
       verification: { state: "verified" },
     });
@@ -92,7 +92,9 @@ describe("saving a browser page to the Library", () => {
       passageSaved: true,
     });
     await expect(readScientSourceRecord(fixture.root, first.sourceId)).resolves.toMatchObject({
-      note: "Mortality fell by 12%.\n\nA second passage.",
+      note:
+        "Selected on the web page https://journal.example/articles/42:\nMortality fell by 12%.\n\n" +
+        "Selected on the web page https://journal.example/articles/42:\nA second passage.",
     });
     await expect(listScientSourceRecords(fixture.root)).resolves.toHaveLength(1);
   });
@@ -117,6 +119,47 @@ describe("saving a browser page to the Library", () => {
     await expect(
       saveWebPageSource({ root: fixture.root, page, actor: "agent" }),
     ).resolves.toMatchObject({ outcome: "existing", sourceId: first.sourceId });
+  });
+
+  it("saves a passage against the web page when the page is not the work its DOI names", async () => {
+    await using fixture = await project();
+    const save = (page: ScientSourceWebPage) =>
+      saveWebPageSource({
+        root: fixture.root,
+        page,
+        actor: "user",
+        resolveIdentifier: registry,
+        enrich: false,
+      });
+    const paper = await save(articlePage(null));
+    if (paper.outcome !== "added") throw new Error("The fixture paper was not added.");
+    const spoofed = (url: string): ScientSourceWebPage => ({
+      url,
+      title: "Fake miracle cure",
+      selection: "Invented result",
+      meta: [
+        { name: "citation_title", content: "Fake miracle cure" },
+        { name: "citation_doi", content: "10.1000/cc.2024.42" },
+      ],
+    });
+
+    for (const url of ["https://attacker.invalid/a", "https://attacker.invalid/b"]) {
+      const result = await save(spoofed(url));
+      expect(result).toMatchObject({ outcome: "added", passageSaved: true });
+      if (result.outcome !== "added") return;
+      expect(result.sourceId).not.toBe(paper.sourceId);
+      const page = await readScientSourceRecord(fixture.root, result.sourceId);
+      expect(page).toMatchObject({
+        type: "web",
+        title: "Fake miracle cure",
+        identifiers: [],
+        url,
+        note: `Selected on the web page ${url}:\nInvented result`,
+      });
+      expect(page?.verification?.state).not.toBe("verified");
+    }
+    const untouched = await readScientSourceRecord(fixture.root, paper.sourceId);
+    expect(untouched?.revision).toBe(paper.revision);
   });
 
   it("refuses a page whose stated DOI does not exist", async () => {
