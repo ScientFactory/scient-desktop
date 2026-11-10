@@ -94,6 +94,7 @@ const harness = Effect.gen(function* () {
             };
       }),
     readFile: () => Effect.succeed(null),
+    extras: () => Effect.succeed({ sidecar: {} }),
     touched: Stream.empty,
     enabled: Effect.sync(() => enabled),
     enabledChanges: Stream.empty,

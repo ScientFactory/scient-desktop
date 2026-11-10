@@ -20,6 +20,7 @@ import { RepositoryIdentityResolver } from "../../project/RepositoryIdentityReso
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ConversationSnapshotService } from "../conversationExport/ConversationSnapshotService.ts";
 import { CloudSyncSource, type SyncThreadFacts } from "./CloudSync.ts";
+import { ConversationExtras } from "./ConversationExtras.ts";
 
 /** Where a project sits across computers: its repository grouping key and sub-folder. */
 export interface ProjectPlacement {
@@ -69,6 +70,7 @@ export const layer = Layer.effect(
     const settings = yield* ServerSettingsService;
     const fileSystem = yield* FileSystem.FileSystem;
     const placement = yield* makeProjectPlacement;
+    const extras = yield* ConversationExtras;
     const placements = new Map<ProjectId, ProjectPlacement | null>();
 
     const placeOf = (projectId: ProjectId) =>
@@ -130,6 +132,7 @@ export const layer = Layer.effect(
       readFile: Effect.fn("CloudSyncSource.readFile")((path) =>
         fileSystem.readFile(path).pipe(Effect.orElseSucceed(() => null)),
       ),
+      extras: extras.read,
       touched: orchestrator.streamDomainEvents.pipe(
         Stream.map((event) => event.threadId),
         Stream.catchCause((cause) =>
