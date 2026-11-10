@@ -103,8 +103,9 @@ registries.
 ## Export the Library
 
 Choose **Export** (the arrow next to **Import sources**) and a format: BibTeX,
-RIS, CSL-JSON or EndNote XML. When the search box narrows the list, only the
-shown sources are exported. Each source is written under its citation key.
+RIS, CSL-JSON or EndNote XML. When sources are selected, only they are
+exported; otherwise, when a search or filter narrows the list, only the shown
+sources are. Each source is written under its citation key.
 Project notes stay private unless you turn on **Include notes**. Exported
 BibTeX is UTF-8; words with inner capitals (`DNA`, `mRNA`) are braced so
 styles keep their case.
@@ -138,6 +139,37 @@ source stays available to restore until the trash is emptied.
 If a source's file in the project cannot be read, the Library still lists the
 others and says which file it skipped.
 
+## Organize sources
+
+**Collections** group sources for a chapter, a project aim or a reading list.
+A source can be in several collections, and putting it in one never changes the
+source itself. Open the filter button beside the search box and choose
+**Collection** to show one collection or to create a new one. In a source's
+details, the **Collections** row shows where it belongs; use **+ Collection** to
+add it to more. Deleting a collection keeps all of its sources, and **Undo** in
+the message brings the collection back.
+
+**Tags** are short labels such as a method or a screening decision. In a
+source's details, use **+ Tag** to add an existing tag or create a new one, and
+the ✕ on a tag to remove it. Selecting a tag shows every source with that tag.
+Tags match without regard to capitals, so `RCT` and `rct` are the same tag.
+
+The filter button also narrows the list by type and by whether a source has a
+PDF. While a filter is on, a row under the search box shows each part, how many
+sources match, and actions to rename or delete the collection or to save the
+search. **Saved searches** keep the search text and filters under a name;
+choose one from **Saved searches** to run it again.
+
+To change many sources at once, choose **Select** from a source's actions, or
+Command-click (Ctrl-click on Windows and Linux) a source. Then select more and
+use the bar at the top of the list to add or remove a tag, add them to or take
+them out of a collection, set their type, or move them to the Trash. Tag and
+type changes are saved as a new version of each source, so they appear in its
+history and can be restored like any other edit.
+
+Collections and saved searches are kept in `.scient/sources/collections.json`
+with the rest of the project's Library.
+
 ## Copy a formatted reference
 
 Open a source, choose **Vancouver** or **APA 7**, then choose **Copy
@@ -154,12 +186,14 @@ unknown values.
 In a project conversation, an agent can search and read the same project-owned
 library, maintain source notes, update metadata, attach or detach a project PDF,
 move a source to the trash and restore it, restore an earlier version, or add a
-new one. Everything an agent changes is credited to it and can be undone the
-same way as your own changes. An agent can also import a reference file from
-the project (`scient_sources_import_file`), which reports the same unreadable
-entries and fields not kept, and write the Library to a project file in any of
-the four formats (`scient_sources_export`), never replacing an existing file
-unless asked to.
+new one. It can also organize the Library the way you can: create, rename and
+delete collections, save searches, list a collection or a tag, and change tags,
+type or collections on many sources at once. It can import a reference file
+from the project (`scient_sources_import_file`), which reports the same
+unreadable entries and fields not kept, and write the Library to a project file
+in any of the four formats (`scient_sources_export`), never replacing an
+existing file unless asked to. Everything an agent changes is credited to it
+and can be undone the same way as your own changes.
 
 Before an agent adds a source, Scient looks up its DOI at doi.org or its PMID in
 PubMed. If the identifier does not exist, or it belongs to a paper with a

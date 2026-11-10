@@ -12,6 +12,10 @@
       "types": "./src/bibliography/index.ts",
       "import": "./src/bibliography/index.ts"
     },
+    "./collections": {
+      "types": "./src/collections.ts",
+      "import": "./src/collections.ts"
+    },
     "./bibtex": {
       "types": "./src/bibtex.ts",
       "import": "./src/bibtex.ts"

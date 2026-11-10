@@ -37,17 +37,20 @@ const FORMATS: ReadonlyArray<{
   { format: "endnote-xml", label: "EndNote XML", extension: ".xml", mediaType: "application/xml" },
 ];
 
-/** Exports the shown sources (all of them unless a search narrows the list) to a reference file. */
+/** Exports the selected sources, else the shown ones, else the whole Library, to a reference file. */
 export function SourcesExportMenu(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
   readonly totalCount: number;
-  /** The shown sources when a search narrows the list; null exports everything. */
-  readonly shownSourceIds: ReadonlyArray<string> | null;
+  /** The selected or shown sources; null exports everything. */
+  readonly scope: {
+    readonly kind: "selected" | "shown";
+    readonly sourceIds: ReadonlyArray<string>;
+  } | null;
 }) {
   const [includeNotes, setIncludeNotes] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const count = props.shownSourceIds?.length ?? props.totalCount;
+  const count = props.scope?.sourceIds.length ?? props.totalCount;
   if (props.totalCount === 0) return null;
 
   const exportAs = async (option: (typeof FORMATS)[number]) => {
@@ -56,7 +59,7 @@ export function SourcesExportMenu(props: {
       const result = await exportScientSources(props.environmentId, {
         root: props.root,
         format: option.format,
-        ...(props.shownSourceIds ? { sourceIds: [...props.shownSourceIds] } : {}),
+        ...(props.scope ? { sourceIds: [...props.scope.sourceIds] } : {}),
         includeNotes,
       });
       downloadBlob(new Blob([result.content], { type: option.mediaType }), result.fileName);
@@ -85,8 +88,8 @@ export function SourcesExportMenu(props: {
       <MenuPopup align="end" side="bottom" className="min-w-52">
         <MenuGroup>
           <MenuGroupLabel>
-            {props.shownSourceIds
-              ? `Export ${count.toLocaleString()} shown`
+            {props.scope
+              ? `Export ${count.toLocaleString()} ${props.scope.kind}`
               : `Export ${count === 1 ? "1 source" : `all ${count.toLocaleString()} sources`}`}
           </MenuGroupLabel>
           {FORMATS.map((option) => (
