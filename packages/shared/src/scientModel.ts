@@ -19,6 +19,7 @@ const VISIBLE_AGENT_SUBSCRIPTION_MODELS = new Set([
   "openai-codex/gpt-6-astra",
   "openai-codex/gpt-6-luna",
   "openai-codex/gpt-6.1-sol",
+  "openai-codex/gpt-6.1-terra",
   "google-antigravity/gemini-3.8-flash",
   "google-antigravity/gemini-3.1-pro",
   "google-antigravity/claude-opus-4-6",

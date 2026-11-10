@@ -123,7 +123,7 @@ function ComposerPickerParent(props: {
 
 const existingHistory = { messages: [{ runId: null }], runs: [], items: [] };
 const footer = () =>
-  document.querySelector<HTMLButtonElement>('button[aria-label="Continue in a new chat"]');
+  document.querySelector<HTMLButtonElement>('button[aria-label="Fork to continue in a new chat"]');
 const provider = (id: ProviderInstanceId) =>
   document.querySelector<HTMLButtonElement>(`[data-model-picker-provider="${id}"] button`);
 const picker = () => document.querySelector("[data-model-picker-content]");
