@@ -74,6 +74,42 @@ for lookup, not the PDF itself. PubMed metadata is provided through NCBI
 E-utilities and remains subject to the
 [NCBI disclaimer and copyright notice](https://www.ncbi.nlm.nih.gov/home/about/policies/).
 
+## Import a reference file
+
+Bring a library from Zotero, Mendeley, EndNote, JabRef, Google Scholar or any
+other reference manager by exporting it to a file and importing that file.
+
+1. In **Sources**, choose **Import sources → Import a reference file**, or drop
+   the file on the Sources panel.
+2. Select a BibTeX or BibLaTeX (`.bib`), RIS (`.ris`), CSL-JSON (`.json`) or
+   EndNote XML (`.xml`) file.
+
+Each entry keeps its citation key, authors, editors, identifiers (DOI, PMID,
+PMCID, arXiv, ISBN, ISSN), tags and abstract. Notes in the file (`note` and
+`annote`, RIS `N1`, EndNote notes) become the source's project note. LaTeX
+accents and commands in `.bib` files are turned into plain text, `@string`
+abbreviations and `crossref` entries are resolved, and Google Scholar's
+"arXiv preprint" entries become preprints with their arXiv ID.
+
+Entries already in the Library are left out, so importing the same file again
+adds only what is new. Up to 500 new references are imported at a time; for a
+larger file, choose **Import the rest** (or import the file again) to continue.
+After the import, a short note lists entries that could not be read (with
+their line) and fields that have no place in a Scient source, such as `file`
+links, `address` or `edition`. Nothing else is dropped silently. Identifiers
+from a file are stored as given; Scient has not yet checked them against their
+registries.
+
+## Export the Library
+
+Choose **Export** (the arrow next to **Import sources**) and a format: BibTeX,
+RIS, CSL-JSON or EndNote XML. When sources are selected, only they are
+exported; otherwise, when a search or filter narrows the list, only the shown
+sources are. Each source is written under its citation key.
+Project notes stay private unless you turn on **Include notes**. Exported
+BibTeX is UTF-8; words with inner capitals (`DNA`, `mRNA`) are braced so
+styles keep their case.
+
 ## Review and manage a source
 
 Select a source to inspect its title, creators, publication details,
@@ -152,8 +188,12 @@ library, maintain source notes, update metadata, attach or detach a project PDF,
 move a source to the trash and restore it, restore an earlier version, or add a
 new one. It can also organize the Library the way you can: create, rename and
 delete collections, save searches, list a collection or a tag, and change tags,
-type or collections on many sources at once. Everything an agent changes is credited to it and can be undone the
-same way as your own changes.
+type or collections on many sources at once. It can import a reference file
+from the project (`scient_sources_import_file`), which reports the same
+unreadable entries and fields not kept, and write the Library to a project file
+in any of the four formats (`scient_sources_export`), never replacing an
+existing file unless asked to. Everything an agent changes is credited to it
+and can be undone the same way as your own changes.
 
 Before an agent adds a source, Scient looks up its DOI at doi.org or its PMID in
 PubMed. If the identifier does not exist, or it belongs to a paper with a
@@ -186,7 +226,8 @@ metadata into verified evidence.
 
 ## Current limits
 
-Sources currently supports local Zotero intake and direct PDF import. It is not
+Sources currently supports local Zotero intake, direct PDF import and
+reference files (BibTeX, RIS, CSL-JSON, EndNote XML). It is not
 a replacement for Zotero and does not yet provide ongoing synchronization,
 Zotero write-back, in-text citation insertion, multi-source bibliography
 generation, PDF annotation, or evidence grading. When a Zotero item has several

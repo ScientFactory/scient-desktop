@@ -67,7 +67,7 @@ export type ScientSourceExternalReference = typeof ScientSourceExternalReference
 
 export const ScientSourceOrigin = Schema.Struct({
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper", "file"]),
   operationId: NonEmptyString,
   // Older records may still say "pending"; nothing gates on it any more.
   review: Schema.Literals(["none", "pending"]),
@@ -102,6 +102,7 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "google-books",
     "openalex",
     "semantic-scholar",
+    "file",
   ]),
   sourceField: NullableText,
   sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),
@@ -447,9 +448,9 @@ export const ScientSourceImportOperation = Schema.Struct({
   formatVersion: Schema.Literal(1),
   operationId: NonEmptyString,
   projectId: NonEmptyString,
-  adapter: Schema.Literals(["zotero", "local-files", "agent", "zotero-web"]),
+  adapter: Schema.Literals(["zotero", "local-files", "agent", "zotero-web", "file"]),
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "file"]),
   state: Schema.Literals(["running", "cancelled", "completed"]),
   createdAt: NonEmptyString,
   updatedAt: NonEmptyString,

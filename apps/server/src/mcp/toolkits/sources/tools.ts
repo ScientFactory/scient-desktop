@@ -701,6 +701,89 @@ const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.bulk_update", true));
 
+const FileFormat = Schema.Literals(["bibtex", "ris", "csl-json", "endnote-xml"]);
+const FileReportEntry = Schema.Struct({
+  line: Schema.NullOr(Schema.Int),
+  citationKey: Schema.NullOr(Schema.String),
+  reason: Schema.String,
+});
+
+export const ScientSourcesImportFileResult = Schema.Struct({
+  format: FileFormat,
+  entryCount: Schema.Int,
+  importedCount: Schema.Int,
+  imported: Schema.Array(
+    Schema.Struct({ sourceId: NonEmptyString, citationKey: Schema.NullOr(Schema.String) }),
+  ).pipe(Schema.check(Schema.isMaxLength(100))),
+  alreadyInLibrary: Schema.Int,
+  failed: Schema.Array(FileReportEntry),
+  remaining: Schema.Int,
+  unreadable: Schema.Array(FileReportEntry),
+  notKept: Schema.Array(
+    Schema.Struct({
+      field: Schema.String,
+      entryCount: Schema.Int,
+      citationKeys: Schema.Array(Schema.String),
+    }),
+  ),
+  withoutCitationKey: Schema.Int,
+});
+
+const ScientSourcesImportFileTool = Tool.make("scient_sources_import_file", {
+  description:
+    "Import the references in a project file into the Library after the user asks: BibTeX or BibLaTeX (.bib), RIS (.ris), " +
+    "CSL-JSON (.json) or EndNote XML (.xml), as exported by Zotero, Mendeley, EndNote, JabRef or Google Scholar. " +
+    "Each entry keeps its citation key, identifiers, tags and notes. Entries already in the Library are skipped. " +
+    "Identifiers are stored as given (verification unchecked). Up to 500 new entries are imported per call; " +
+    "if remaining is above 0, call again with the same file to continue. " +
+    "Tell the user about unreadable entries and notKept fields, which did not arrive in the Library.",
+  parameters: Schema.Struct({
+    relativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
+    format: Schema.optionalKey(
+      FileFormat.annotate({ description: "Only when the file's extension does not say it." }),
+    ),
+  }),
+  success: ScientSourcesImportFileResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Import a reference file")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.import.file", true));
+
+const ScientSourcesExportTool = Tool.make("scient_sources_export", {
+  description:
+    "Write this project's Library, or the given sources, to a project file in BibTeX (.bib), RIS (.ris), " +
+    "CSL-JSON (.json) or EndNote XML (.xml), each source under its citation key. Project notes are left out unless includeNotes. " +
+    "An existing file is replaced only with overwrite.",
+  parameters: Schema.Struct({
+    relativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
+    format: FileFormat,
+    sourceIds: Schema.optionalKey(
+      Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(20_000))),
+    ),
+    includeNotes: Schema.optionalKey(Schema.Boolean),
+    overwrite: Schema.optionalKey(Schema.Boolean),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["written", "exists"]),
+    relativePath: NonEmptyString,
+    sourceCount: Schema.Int,
+    missingSourceIds: Schema.Array(NonEmptyString),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Export the Library to a file")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.export", true));
+
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,
   ScientSourceGetTool,
@@ -716,6 +799,8 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesSearchTool,
   ScientSourceReadTextTool,
   ScientSourceQuoteCheckTool,
+  ScientSourcesImportFileTool,
+  ScientSourcesExportTool,
   ScientSourcesCollectionsTool,
   ScientSourcesOrganizeTool,
   ScientSourcesBulkUpdateTool,
