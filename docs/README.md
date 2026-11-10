@@ -70,6 +70,7 @@ require a cosmetic folder migration.
 - [Keeping app and server in sync](./user/updating.md)
 - [Source control integrations](./user/source-control.md)
 - [File previews](./user/file-previews.md)
+- [Writing Markdown](./user/markdown.md)
 - [Reading PDFs](./user/pdf-reader.md)
 - [Math in chat and Markdown](./user/math-in-chat.md)
 - [LaTeX projects](./user/latex.md)
@@ -145,9 +146,12 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient analysis runtime foundation](./internals/scient-analysis-runtime-foundation.md)
 - [Scient Compute: sessions, runtimes, agents and notebooks](./internals/scient-compute.md)
 - [Scient universal file opening](./internals/scient-universal-file-opening.md)
+- [Scient document system and ownership map](./internals/scient-documents.md)
 - [Saving workspace files](./internals/scient-file-saving.md)
 - [Scient PDF reader](./internals/scient-pdf-reader.md)
 - [Scient LaTeX](./internals/scient-latex.md)
+  - [Visual authoring](./internals/scient-latex-visual.md)
+  - [Visual performance](./internals/scient-latex-visual-performance.md)
 - [Scient content direction](./internals/scient-content-direction.md)
 - [Scient typography profile](./internals/scient-typography.md)
 - [Scient math rendering](./internals/scient-math.md)
@@ -199,4 +203,4 @@ Follow their linked successors for current behavior.
 
 ## Manuscript integration foundation
 
-- [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — unmounted foundation: local application and connection-state invariants.
+- [Overleaf manuscript engine](./internals/scient-overleaf-engine.md) — mounted folder sync, editor saving, conflict review and publication contracts.

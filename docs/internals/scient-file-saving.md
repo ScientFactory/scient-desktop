@@ -1,7 +1,8 @@
 # Saving workspace files
 
-A save lands or goes again. Nothing about a failed save stops the next one, and
-the editor never locks.
+Document saves keep retrying after failure. A failed disk write does not disable
+typing. Source conversion, recovery choices and durable publication admission
+are separate boundaries; visible input is not proof that a save reached disk.
 
 Workspace mutations live in
 `apps/server/src/scient/workspace/WorkspaceFileMutations.ts`. Saves, creates,
@@ -61,6 +62,15 @@ A rename takes the file's history along. A delete keeps a copy.
 
 Plain text and code files still use the older `fileSaveCoordinator`, with its own
 Try again and conflict question.
+
+Before a document-session write reaches the server, the registry commits the
+exact publication intent to its recovery journal. This applies to Markdown,
+LaTeX and bibliography files. Ordinary draft-copy failures are diagnostic, but
+`MarkdownDraftCheckpointWriter.flushPublication` is strict: unavailable storage,
+quota/capacity failures or lost checkpoint ownership can refuse transport
+admission. Retrying a save does not bypass that requirement. LaTeX Visual also
+has a separate recovery workflow that can pause editing while an unstored copy
+needs attention; see [Visual recovery](scient-latex-visual.md#saving-preparation-and-recovery).
 
 ## Overleaf
 
