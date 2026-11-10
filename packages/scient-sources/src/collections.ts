@@ -716,14 +716,23 @@ function bulkEditsDirectory(root: string): string {
   return NodePath.join(root, SCIENT_SOURCE_BULK_EDITS_DIRECTORY);
 }
 
-async function writeBulkReceipt(root: string, receipt: ScientSourcesBulkReceipt): Promise<void> {
+function bulkReceiptPath(root: string, batchId: string): string {
+  return NodePath.join(bulkEditsDirectory(root), `${batchId}.json`);
+}
+
+async function writeBulkReceipt(
+  root: string,
+  receipt: ScientSourcesBulkReceipt,
+  options: { readonly prune?: boolean } = {},
+): Promise<void> {
   const directory = bulkEditsDirectory(root);
   await assertScientProjectDirectory(root, directory, { create: true });
   await atomicWriteJson(
-    NodePath.join(directory, `${receipt.batchId}.json`),
+    bulkReceiptPath(root, receipt.batchId),
     validateBulkReceipt(receipt),
     MAX_BULK_RECEIPT_BYTES,
   );
+  if (!options.prune) return;
   const names = (await NodeFSP.readdir(directory))
     .filter((name) => name.startsWith("bulk_") && name.endsWith(".json"))
     .toSorted();
@@ -745,7 +754,7 @@ async function readBulkReceipt(
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
     throw error;
   }
-  const filePath = NodePath.join(bulkEditsDirectory(root), `${batchId}.json`);
+  const filePath = bulkReceiptPath(root, batchId);
   if ((await snapshot(filePath)) === "missing") return null;
   const receipt = await readBoundedJson(filePath, MAX_BULK_RECEIPT_BYTES, ScientSourcesBulkReceipt);
   if (receipt.batchId !== batchId) throw new Error("The bulk edit record is damaged.");
@@ -756,6 +765,14 @@ function newBatchId(now: string): string {
   // Sortable by time, so pruning keeps the newest.
   return `bulk_${now.replace(/[^0-9]/gu, "")}_${NodeCrypto.randomUUID().slice(0, 8)}`;
 }
+
+function failureMessage(error: unknown, fallback: string): string {
+  return error instanceof Error ? error.message : fallback;
+}
+
+type BulkReceiptSource = ScientSourcesBulkReceipt["sources"][number];
+type BulkReceiptCollection = ScientSourcesBulkReceipt["collections"][number];
+type BulkCollectionResult = ScientSourcesBulkResult["collections"][number];
 
 /**
  * Applies one change to many sources, reporting each source rather than stopping at the first.
@@ -772,15 +789,60 @@ export async function bulkUpdateScientSources(input: {
   const change = input.change;
   const paths = await sourceStorePaths(input.root);
   const createdAt = new Date().toISOString();
+  const batchId = newBatchId(createdAt);
   const sourceIds = [...new Set(change.sourceIds)];
   const editsRecords =
     (change.addTags?.length ?? 0) > 0 ||
     (change.removeTags?.length ?? 0) > 0 ||
     change.type !== undefined;
   const sources: BulkSourceResult[] = [];
-  const receiptSources: ScientSourcesBulkReceipt["sources"][number][] = [];
-  for (const sourceId of sourceIds) {
-    if (editsRecords) {
+  const collections: BulkCollectionResult[] = [];
+  const receiptSources: BulkReceiptSource[] = [];
+  const receiptCollections: BulkReceiptCollection[] = [];
+  const publish = (options?: { readonly prune?: boolean }) =>
+    writeBulkReceipt(
+      paths.root,
+      {
+        formatVersion: 1,
+        batchId,
+        createdAt,
+        actor: input.actor,
+        sources: receiptSources,
+        collections: receiptCollections,
+      },
+      options,
+    );
+  // Published before anything changes and after each change, so an unusable receipt folder
+  // stops the edit first and a later failure still leaves Undo for what was done.
+  await publish({ prune: true });
+  let unsaved = null as string | null;
+  const record = async (add: () => void, remove: () => void): Promise<string | null> => {
+    add();
+    try {
+      await publish();
+      return null;
+    } catch (error) {
+      remove();
+      unsaved =
+        `Undo could not be saved, so the rest was not changed. ${failureMessage(error, "")}`.trim();
+      return unsaved;
+    }
+  };
+  try {
+    for (const sourceId of sourceIds) {
+      if (unsaved !== null) {
+        sources.push({ sourceId, outcome: "failed", revision: null, message: unsaved });
+        continue;
+      }
+      if (!editsRecords) {
+        const existing = await readScientSourceRecord(paths.root, sourceId);
+        sources.push(
+          existing
+            ? { sourceId, outcome: "unchanged", revision: existing.revision }
+            : { sourceId, outcome: "not-found", revision: null },
+        );
+        continue;
+      }
       const updated = await updateBulkFields({
         root: paths.root,
         sourceId,
@@ -801,80 +863,88 @@ export async function bulkUpdateScientSources(input: {
           },
         }),
       });
-      sources.push(updated.entry);
-      if (updated.change) receiptSources.push({ sourceId, ...updated.change });
-      continue;
+      const entryChange = updated.change;
+      const problem = entryChange
+        ? await record(
+            () => receiptSources.push({ sourceId, ...entryChange }),
+            () => receiptSources.pop(),
+          )
+        : null;
+      sources.push(problem ? { ...updated.entry, message: problem } : updated.entry);
     }
-    const record = await readScientSourceRecord(paths.root, sourceId);
-    sources.push(
-      record
-        ? { sourceId, outcome: "unchanged", revision: record.revision }
-        : { sourceId, outcome: "not-found", revision: null },
-    );
-  }
-  const present = sources
-    .filter((entry) => entry.outcome !== "not-found")
-    .map((entry) => entry.sourceId);
-  const collections: ScientSourcesBulkResult["collections"][number][] = [];
-  const receiptCollections: ScientSourcesBulkReceipt["collections"][number][] = [];
-  const memberChanges = [
-    ...(change.addToCollectionIds ?? []).map((collectionId) => ({ collectionId, add: present })),
-    ...(change.removeFromCollectionIds ?? []).map((collectionId) => ({
-      collectionId,
-      remove: present,
-    })),
-  ];
-  for (const memberChange of memberChanges) {
-    if (present.length === 0) break;
-    const result = await changeScientSourceCollectionMembers({
-      root: paths.root,
-      ...memberChange,
-      actor: input.actor,
-    });
-    collections.push({
-      collectionId: memberChange.collectionId,
-      outcome:
-        result.outcome === "updated"
-          ? "updated"
-          : result.outcome === "unchanged"
-            ? "unchanged"
-            : "not-found",
-    });
-    if (result.outcome === "updated") {
-      receiptCollections.push({
-        collectionId: memberChange.collectionId,
-        addedSourceIds: result.addedSourceIds,
-        removedSourceIds: result.removedSourceIds,
-      });
+    const present = sources
+      .filter((entry) => entry.outcome !== "not-found")
+      .map((entry) => entry.sourceId);
+    const memberChanges = [
+      ...(change.addToCollectionIds ?? []).map((collectionId) => ({ collectionId, add: present })),
+      ...(change.removeFromCollectionIds ?? []).map((collectionId) => ({
+        collectionId,
+        remove: present,
+      })),
+    ];
+    for (const memberChange of present.length === 0 ? [] : memberChanges) {
+      const { collectionId } = memberChange;
+      if (unsaved !== null) {
+        collections.push({ collectionId, outcome: "failed", message: unsaved });
+        continue;
+      }
+      try {
+        const result = await changeScientSourceCollectionMembers({
+          root: paths.root,
+          ...memberChange,
+          actor: input.actor,
+        });
+        if (result.outcome !== "updated") {
+          collections.push({
+            collectionId,
+            outcome: result.outcome === "unchanged" ? "unchanged" : "not-found",
+          });
+          continue;
+        }
+        const problem = await record(
+          () =>
+            receiptCollections.push({
+              collectionId,
+              addedSourceIds: result.addedSourceIds,
+              removedSourceIds: result.removedSourceIds,
+            }),
+          () => receiptCollections.pop(),
+        );
+        collections.push({
+          collectionId,
+          outcome: "updated",
+          ...(problem ? { message: problem } : {}),
+        });
+      } catch (error) {
+        collections.push({
+          collectionId,
+          outcome: "failed",
+          message: failureMessage(error, "The collection could not be changed."),
+        });
+      }
+    }
+  } finally {
+    if (receiptSources.length === 0 && receiptCollections.length === 0) {
+      await NodeFSP.rm(bulkReceiptPath(paths.root, batchId), { force: true }).catch(
+        () => undefined,
+      );
     }
   }
   if (receiptSources.length === 0 && receiptCollections.length === 0) {
     return { sources, collections };
   }
-  const receipt: ScientSourcesBulkReceipt = {
-    formatVersion: 1,
-    batchId: newBatchId(createdAt),
-    createdAt,
-    actor: input.actor,
-    sources: receiptSources,
-    collections: receiptCollections,
-  };
-  await writeBulkReceipt(paths.root, receipt);
   const changedSourceIds = new Set([
     ...receiptSources.map((entry) => entry.sourceId),
     ...receiptCollections.flatMap((entry) => [...entry.addedSourceIds, ...entry.removedSourceIds]),
   ]);
-  return {
-    sources,
-    collections,
-    undo: { batchId: receipt.batchId, sourceCount: changedSourceIds.size },
-  };
+  return { sources, collections, undo: { batchId, sourceCount: changedSourceIds.size } };
 }
 
 /**
  * Puts back what one bulk edit changed. A value someone changed since is left as it is and
  * reported; tags and memberships are reversed as the exact additions and removals, so later
- * unrelated tags and memberships stay.
+ * unrelated tags and memberships stay. Each entry is marked when done, so after a failure the
+ * same batch can be undone again and only what is left is tried.
  */
 async function undoBulkUpdate(input: {
   readonly root: string;
@@ -897,9 +967,26 @@ async function undoBulkUpdate(input: {
         ],
       };
     }
+    const receiptSources = [...receipt.sources];
+    const receiptCollections = [...receipt.collections];
+    const markDone = async (mark: (undoneAt: string) => void): Promise<void> => {
+      const undoneAt = new Date().toISOString();
+      mark(undoneAt);
+      const finished = [...receiptSources, ...receiptCollections].every(
+        (entry) => entry.undoneAt !== undefined,
+      );
+      await writeBulkReceipt(paths.root, {
+        ...receipt,
+        sources: receiptSources,
+        collections: receiptCollections,
+        ...(finished ? { undoneAt, undoneBy: input.actor } : {}),
+      });
+    };
     const sources: BulkSourceResult[] = [];
     const conflicts: BulkConflict[] = [];
-    for (const { sourceId, before, after } of receipt.sources) {
+    for (const [index, entry] of receiptSources.entries()) {
+      if (entry.undoneAt !== undefined) continue;
+      const { sourceId, before, after } = entry;
       const typeChanged = before.type !== after.type || before.customType !== after.customType;
       const beforeKeys = new Set(before.tags.map(scientSourceTagKey));
       const afterKeys = new Set(after.tags.map(scientSourceTagKey));
@@ -928,41 +1015,48 @@ async function undoBulkUpdate(input: {
         },
       });
       sources.push(result.entry);
+      if (result.entry.outcome === "failed") continue;
       if (result.entry.outcome === "not-found") {
         conflicts.push({ sourceId, message: "The source is no longer in the Library." });
       }
       for (const message of result.conflicts) conflicts.push({ sourceId, message });
+      await markDone((undoneAt) => {
+        receiptSources[index] = { ...entry, undoneAt };
+      });
     }
-    const collections: ScientSourcesBulkResult["collections"][number][] = [];
-    for (const delta of receipt.collections.toReversed()) {
+    const collections: BulkCollectionResult[] = [];
+    for (const [index, delta] of [...receiptCollections.entries()].toReversed()) {
+      if (delta.undoneAt !== undefined) continue;
       const result = await changeScientSourceCollectionMembers({
         root: paths.root,
         collectionId: delta.collectionId,
         add: delta.removedSourceIds,
         remove: delta.addedSourceIds,
         actor: input.actor,
-      });
+      }).catch((error: unknown) => failureMessage(error, "The collection could not be changed."));
+      if (typeof result === "string") {
+        collections.push({ collectionId: delta.collectionId, outcome: "failed", message: result });
+        continue;
+      }
       if (result.outcome !== "updated" && result.outcome !== "unchanged") {
         collections.push({ collectionId: delta.collectionId, outcome: "not-found" });
         conflicts.push({
           collectionId: delta.collectionId,
           message: "The collection was deleted, so its members were not changed.",
         });
-        continue;
+      } else {
+        collections.push({ collectionId: delta.collectionId, outcome: result.outcome });
+        if ("unknownSourceIds" in result && result.unknownSourceIds.length > 0) {
+          conflicts.push({
+            collectionId: delta.collectionId,
+            message: `${result.unknownSourceIds.length} sources are no longer in the Library and were not put back.`,
+          });
+        }
       }
-      collections.push({ collectionId: delta.collectionId, outcome: result.outcome });
-      if ("unknownSourceIds" in result && result.unknownSourceIds.length > 0) {
-        conflicts.push({
-          collectionId: delta.collectionId,
-          message: `${result.unknownSourceIds.length} sources are no longer in the Library and were not put back.`,
-        });
-      }
+      await markDone((undoneAt) => {
+        receiptCollections[index] = { ...delta, undoneAt };
+      });
     }
-    await writeBulkReceipt(paths.root, {
-      ...receipt,
-      undoneAt: new Date().toISOString(),
-      undoneBy: input.actor,
-    });
     return { sources, collections, ...(conflicts.length > 0 ? { conflicts } : {}) };
   });
 }

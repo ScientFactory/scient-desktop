@@ -896,7 +896,7 @@ const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
     "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive, existing spelling kept), set the type " +
     "(customType is required for other), and add to or remove from collections. Tag and type changes make a new revision per source, credited to the agent. " +
     "Each source is reported (updated, unchanged, not-found, failed with a message); one failure does not stop the rest. " +
-    "Undo the whole edit with change {undoBatchId: undo.batchId}: original values and memberships come back, later edits are kept and listed in conflicts. " +
+    "Undo the whole edit with change {undoBatchId: undo.batchId}: original values and memberships come back, later edits are kept and listed in conflicts. If some failed, call it again with the same undoBatchId; finished parts are skipped. " +
     "To remove many sources, call scient_sources_remove for each.",
   parameters: Schema.Struct({ change: ScientSourcesBulkRequestChange }),
   success: ScientSourcesBulkResult,

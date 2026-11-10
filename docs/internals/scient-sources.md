@@ -684,15 +684,22 @@ an agent.
   one retry on a stale revision, then membership changes. Each source is
   reported; one failure does not stop the rest. Bulk removal is the trash
   removal per source, with one Undo for the batch in the panel.
-- A bulk edit that changed something writes a receipt to
+- A bulk edit keeps a receipt in
   `.scient/sources/bulk-edits/<batch-id>.json` (latest 50 kept): each updated
   source's type, custom type and tags before and after, and each collection's
-  exact added and removed members. The result's `undo.batchId` passed back as
-  `{ undoBatchId }` (HTTP and `scient_sources_bulk_update`) reverses it once,
-  credited to the actor: a type is restored only while it still has the bulk
-  value, tags and memberships are reversed as the recorded additions and
-  removals (restoring the original order when the tags are untouched), and
-  anything left as it is comes back in `conflicts`.
+  exact added and removed members. The receipt is published before anything
+  changes, so an unsafe or unwritable folder stops the edit first, and is
+  rewritten after each change. If a rewrite fails, the rest is not changed and
+  reported as failed, and the result still carries Undo for what was recorded.
+  A receipt with nothing in it is removed.
+- The result's `undo.batchId` passed back as `{ undoBatchId }` (HTTP and
+  `scient_sources_bulk_update`) reverses it, credited to the actor: a type is
+  restored only while it still has the bulk value, tags and memberships are
+  reversed as the recorded additions and removals (restoring the original
+  order when the tags are untouched), and anything left as it is comes back in
+  `conflicts`. Each receipt entry gets `undoneAt` when done; failed entries
+  stay open, so the same batch can be undone again and only what is left is
+  tried. The receipt itself is marked undone when no entry is left.
 
 ## Systematic reviews
 
