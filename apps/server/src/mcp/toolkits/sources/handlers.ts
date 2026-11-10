@@ -2,11 +2,18 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  compileScientSourceFilter,
   normalizeScientSourceEditableMetadata,
+  scientSourceTagCounts,
   validateScientSourceEditableMetadata,
   type ScientSourceCandidate,
   type ScientSourceEditableMetadata,
+  type ScientSourceFilter,
+  type ScientSourcesBulkChange,
+  type ScientSourcesOrganizeAction,
+  type ScientSourceType,
 } from "@scientfactory/scient-sources";
+import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
 import { resolveScientSourceInputPdf } from "@scientfactory/scient-sources/store";
 import {
   deleteScientSourcesPermanently,
@@ -35,7 +42,9 @@ import {
 import {
   addAgentSource,
   attachSourcePdf,
+  bulkUpdateSources,
   detachSourcePdf,
+  organizeSources,
   prepareAgentProjectPdf,
   removeSource,
   updateScientSource,
@@ -208,6 +217,11 @@ const doiValue = (record: Awaited<ReturnType<typeof listScientSourceRecords>>[nu
 export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.list")(
   function* (input: {
     readonly query?: string;
+    readonly tags?: ReadonlyArray<string>;
+    readonly collectionId?: string;
+    readonly type?: ScientSourceType;
+    readonly hasPdf?: boolean;
+    readonly savedSearchId?: string;
     readonly inTrash?: boolean;
     readonly offset?: number;
     readonly limit?: number;
@@ -224,24 +238,29 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     const all = trash
       ? [...trash.values()].map((entry) => entry.record)
       : yield* attempt(() => listScientSourceRecords(root));
-    const query = input.query?.trim().toLowerCase() ?? "";
-    const matching =
-      query.length === 0
-        ? all
-        : all.filter((record) =>
-            [
-              record.citationKey ?? null,
-              record.title,
-              creatorName(record),
-              record.issuedYear,
-              record.containerTitle,
-              doiValue(record),
-            ]
-              .filter((value) => value !== null)
-              .join(" ")
-              .toLowerCase()
-              .includes(query),
-          );
+    const narrowsByOrganization =
+      input.collectionId !== undefined || input.savedSearchId !== undefined;
+    const organization = narrowsByOrganization
+      ? yield* attempt(() => readScientSourcesOrganization(root))
+      : { collections: [], savedSearches: [] };
+    const saved = input.savedSearchId
+      ? organization.savedSearches.find((search) => search.searchId === input.savedSearchId)
+      : undefined;
+    if (input.savedSearchId && !saved) {
+      return yield* toolError("not-found", "The saved search was not found in this project.");
+    }
+    const filters: ReadonlyArray<ScientSourceFilter> = [
+      ...(saved ? [saved.filter] : []),
+      {
+        ...(input.query ? { text: input.query } : {}),
+        ...(input.tags ? { tags: input.tags } : {}),
+        ...(input.collectionId ? { collectionId: input.collectionId } : {}),
+        ...(input.type ? { type: input.type } : {}),
+        ...(input.hasPdf !== undefined ? { hasPdf: input.hasPdf } : {}),
+      },
+    ];
+    const predicates = filters.map((filter) => compileScientSourceFilter(filter, organization));
+    const matching = all.filter((record) => predicates.every((matches) => matches(record)));
     // The public schema rejects invalid values. Clamp here as a second
     // boundary so internal callers cannot accidentally create an unbounded
     // model payload by bypassing MCP decoding.
@@ -268,9 +287,59 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
               removedBy: trash.get(record.sourceId)!.removedBy,
             }
           : {}),
+        ...(record.tags.length > 0 ? { tags: record.tags } : {}),
       })),
       total: matching.length,
       nextOffset: offset + page.length < matching.length ? offset + page.length : null,
+    };
+  },
+);
+
+export const readScientSourceCollectionsForInvocation = Effect.fn(
+  "ScientSourcesToolkit.collections",
+)(function* () {
+  const { root } = yield* resolveScientSourcesProject();
+  const records = yield* attempt(() => listScientSourceRecords(root));
+  const organization = yield* attempt(() =>
+    readScientSourcesOrganization(root, new Set(records.map((record) => record.sourceId))),
+  );
+  return {
+    collections: organization.collections.map((collection) => ({
+      collectionId: collection.collectionId,
+      name: collection.name,
+      sourceCount: collection.sourceIds.length,
+    })),
+    savedSearches: organization.savedSearches.map(({ searchId, name, filter }) => ({
+      searchId,
+      name,
+      filter,
+    })),
+    tags: scientSourceTagCounts(records).slice(0, 200),
+    ...(organization.issue ? { message: organization.issue } : {}),
+  };
+});
+
+export const organizeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.organize")(
+  function* (input: { readonly change: ScientSourcesOrganizeAction }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() => organizeSources({ root, change: input.change, actor: "agent" }));
+  },
+);
+
+export const bulkUpdateScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.bulkUpdate")(
+  function* (input: { readonly change: ScientSourcesBulkChange }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const result = yield* attempt(() =>
+      bulkUpdateSources({ root, change: input.change, actor: "agent" }),
+    );
+    // Store messages for a failed source may name host paths; keep them out of model output.
+    return {
+      ...result,
+      sources: result.sources.map((entry) =>
+        entry.message && (entry.message.includes(root) || /[\\/]\.scient[\\/]/u.test(entry.message))
+          ? { ...entry, message: "The source could not be updated." }
+          : entry,
+      ),
     };
   },
 );
@@ -775,6 +844,9 @@ const handlers = {
   scient_sources_read_text: readScientSourceTextForInvocation,
   scient_sources_quote_check: checkScientSourceQuotesForInvocation,
   scient_sources_save_page: saveScientSourcePageForInvocation,
+  scient_sources_collections: readScientSourceCollectionsForInvocation,
+  scient_sources_organize: organizeScientSourcesForInvocation,
+  scient_sources_bulk_update: bulkUpdateScientSourcesForInvocation,
 } satisfies Parameters<typeof ScientSourcesToolkit.toLayer>[0];
 
 export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(handlers);

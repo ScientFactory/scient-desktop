@@ -74,6 +74,24 @@ describe("Library full-text results", () => {
     expect(onOpenHit).toHaveBeenCalledWith(hit);
   });
 
+  it("shows only passages from sources the Library's filters keep", async () => {
+    const { answer } = setup();
+    await using screen = await render(
+      <SourceFullTextResults
+        environmentId={environmentId}
+        root="/project"
+        query="antibiotics"
+        metadataMatchCount={0}
+        sourceIds={new Set(["source-2"])}
+        onOpenHit={vi.fn()}
+      />,
+    );
+    await vi.waitFor(() => expect(mocks.searchScientSourcesFullText).toHaveBeenCalledTimes(1));
+    answer.resolve({ hits: [hit], status });
+    await expect.element(page.getByText("No matching sources were found.")).toBeVisible();
+    expect(screen.container.textContent).not.toContain("Early antibiotics trial");
+  });
+
   it("says nothing matched only after the full-text search has answered", async () => {
     const { answer } = setup();
     await using screen = await render(

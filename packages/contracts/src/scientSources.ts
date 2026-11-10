@@ -17,6 +17,11 @@ import {
   ScientSourceTrashListing,
   ScientSourcePreflightItem,
   ScientSourceWebPage,
+  ScientSourcesBulkChange,
+  ScientSourcesBulkResult,
+  ScientSourcesOrganization,
+  ScientSourcesOrganizeAction,
+  ScientSourcesOrganizeResult,
   ScientSourcesOverview as ScientSourcesStoreOverview,
   ZoteroConnection,
   ZoteroConnectionStatus,
@@ -187,6 +192,17 @@ export const ScientSourceRemovalRequest = Schema.Struct({
 });
 export type ScientSourceRemovalRequest = typeof ScientSourceRemovalRequest.Type;
 
+export const ScientSourcesOrganizeRequest = Schema.Struct({
+  root: NonEmptyString,
+  change: ScientSourcesOrganizeAction,
+});
+export type ScientSourcesOrganizeRequest = typeof ScientSourcesOrganizeRequest.Type;
+
+export const ScientSourcesBulkUpdateRequest = Schema.Struct({
+  root: NonEmptyString,
+  change: ScientSourcesBulkChange,
+});
+export type ScientSourcesBulkUpdateRequest = typeof ScientSourcesBulkUpdateRequest.Type;
 export const ScientSourcesAddByIdentifierRequest = Schema.Struct({
   root: NonEmptyString,
   entries: Schema.Array(Schema.String.check(Schema.isMaxLength(1_000))).pipe(
@@ -336,6 +352,8 @@ export type ScientSourcesRetryImportRequest = typeof ScientSourcesRetryImportReq
 
 export {
   ScientSourceImportOperation,
+  ScientSourcesBulkResult,
+  ScientSourcesOrganizeResult,
   ScientSourceMetadataUpdateResult,
   ScientSourcePermanentDeletionResult,
   ScientSourceRemovalResult,
@@ -359,5 +377,7 @@ export const ScientSourcesOverviewResult = Schema.Struct({
   ...ScientSourcesStoreOverview.fields,
   records: Schema.Array(ScientSourceSummary),
   recordDiagnostics: Schema.Array(ScientSourceRecordDiagnostics),
+  // Optional so a client can read an older server's overview.
+  organization: Schema.optionalKey(ScientSourcesOrganization),
 });
 export type ScientSourcesOverviewResult = typeof ScientSourcesOverviewResult.Type;

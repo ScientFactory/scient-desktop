@@ -8,6 +8,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./collections": {
+      "types": "./src/collections.ts",
+      "import": "./src/collections.ts"
+    },
     "./bibtex": {
       "types": "./src/bibtex.ts",
       "import": "./src/bibtex.ts"
