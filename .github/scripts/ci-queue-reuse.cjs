@@ -7,8 +7,7 @@ const { validateResult } = require("./thread-transfer-report.cjs");
 
 const WORKFLOW = ".github/workflows/ci.yml";
 const { jobFailures } = require("./ci-check.cjs");
-// The main ruleset lands at most this many queue entries in one push (max_entries_to_merge).
-const MAX_QUEUE_SEGMENTS = 6;
+const { MAX_QUEUE_SEGMENTS } = require("./queue-verified.cjs");
 const SCHEMA = 4;
 const RECEIPT_KEYS = [
   "schemaVersion",

@@ -16,6 +16,9 @@ jobs:
     name: Verify upstream provenance
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout owned history
         uses: actions/checkout@v6
@@ -23,10 +26,21 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      # The merge queue already ran this check on every commit the push lands.
+      - name: Check for queue verification
+        id: queue
+        if: github.event_name == 'push'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await require('./.github/scripts/queue-verified.cjs').queueVerified({ github, context, core });
+
       - name: Fetch official T3 main
+        if: steps.queue.outputs.verified != 'true'
         run: git fetch --no-tags https://github.com/pingdotgg/t3code.git main:refs/remotes/upstream-verification/main
 
       - name: Verify upstream provenance and Scient seams
+        if: steps.queue.outputs.verified != 'true'
         env:
           VERIFY_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           VERIFY_HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
