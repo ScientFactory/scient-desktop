@@ -1718,6 +1718,7 @@ export async function readScientSourceAttachmentPdf(
   const resolved = await resolveScientProjectFile(canonicalRoot, requested, {
     extensions: [".pdf"],
     description: "source PDF",
+    allowScientStorage: true,
   });
   if (resolved.relativePath !== requested) {
     throw new Error("The source PDF is reached through a symlink.");
