@@ -15,9 +15,11 @@ import {
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
+import { zoteroItem } from "./Zotero.testkit.ts";
 import type { ZoteroRawItem } from "./ZoteroItems.ts";
 import { refreshZoteroSources, sendSourcesToZotero } from "./ZoteroSync.ts";
 import type { ZoteroWebHttp, ZoteroWebRequest } from "./ZoteroWebAdapter.ts";
+import { zoteroPatchFor } from "./ZoteroWrite.ts";
 
 const roots: string[] = [];
 const USER = 475425;
@@ -224,6 +226,25 @@ describe("Send to Zotero", () => {
       [["PATCH", { title: "Retitled in Scient" }]],
     );
     expect(unchanged.items[0]?.outcome).toBe("unchanged");
+  });
+
+  it("keeps identifiers in Zotero's Extra that Scient does not have", async () => {
+    const { root, sourceId } = await sourceInScient();
+    const record = await readScientSourceRecord(root, sourceId);
+    if (!record) throw new Error("missing");
+    const extra = "PMID: 123456\nPMCID: PMC123456\narXiv: 2101.00001\nUser annotation";
+    const current = zoteroItem("OLDA2345", {
+      itemType: "journalArticle",
+      title: "Written in Scient",
+      DOI: "10.1000/notes",
+      extra,
+    });
+
+    const sent = String(zoteroPatchFor({ record, current }).extra ?? extra);
+
+    expect(sent).toContain("PMCID: PMC123456");
+    expect(sent).toContain("arXiv: 2101.00001");
+    expect(sent).toContain("User annotation");
   });
 
   it("does not overwrite an item changed in Zotero since Scient read it", async () => {
