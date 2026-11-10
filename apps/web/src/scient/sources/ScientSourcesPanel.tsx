@@ -39,6 +39,7 @@ import {
 import { Button } from "../../components/ui/button";
 import { ManagedBibliographyNotice } from "./ManagedBibliographyNotice";
 import { useManagedBibliography } from "./useManagedBibliography";
+import { useLibrarySourceRequest } from "./librarySourceRequest";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
@@ -297,6 +298,7 @@ export function ScientSourcesPanel(props: {
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  useLibrarySourceRequest(props.root, sources.overview !== null, setSelectedSourceId);
   const [editingSource, setEditingSource] = useState(false);
   const [importOutcome, setImportOutcome] = useState<ScientSourcesImportOutcome | null>(null);
   const panelContext = `${props.environmentId}\0${props.root}`;

@@ -41,6 +41,8 @@ export type {
 
 export interface ScientMarkdownNodeViewOptions {
   readonly onOpenWikiLink?: ScientMarkdownLinkOpenHandler;
+  /** Opens the Library source a citation's source text names; false when none is known. */
+  readonly openCitation?: (source: string) => boolean;
   readonly registerCodeEditor?: ScientMarkdownCodeEditorRegistrar;
   readonly registerExternalPresentation?: ScientMarkdownExternalPresentationRegistrar;
   readonly registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar;
@@ -74,7 +76,8 @@ export function buildScientMarkdownNodeViews(
         options.showRichFenceContextMenu,
         options.registerCodeEditor,
       ),
-    citation: (node, view, getPos) => createScientReferenceNodeView(node, view, getPos),
+    citation: (node, view, getPos) =>
+      createScientReferenceNodeView(node, view, getPos, undefined, options.openCitation),
     display_math: createScientMathNodeView,
     image: (node, view, getPos) =>
       createScientImageNodeView(
