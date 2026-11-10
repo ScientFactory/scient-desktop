@@ -97,6 +97,7 @@ import {
   fileImportVerification,
   getBibliographyFileImportCandidate,
 } from "./BibliographyFileAdapter.ts";
+import { recordZoteroSync } from "./ZoteroSync.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
@@ -883,7 +884,7 @@ async function importZoteroOperationItem(input: {
     input.zotero,
     input.operation.adapter === "zotero-web" ? "web" : "local",
   );
-  const { candidate, files } = await zoteroImportMaterial(transport, input.itemKey);
+  const { candidate, material, files } = await zoteroImportMaterial(transport, input.itemKey);
   try {
     const [primary, ...extra] = files;
     const result = await importScientSourceOperationItem({
@@ -907,6 +908,14 @@ async function importZoteroOperationItem(input: {
         actor: input.operation.actor,
       });
       record = attached.record;
+    }
+    if (result.outcome === "imported" && record) {
+      await recordZoteroSync({
+        root: input.root,
+        record,
+        material,
+        attachmentKeys: files.map((file) => file.attachmentKey),
+      });
     }
     return { ...result, record };
   } finally {

@@ -43,6 +43,12 @@ import {
   summarizeIdentifierAdd,
 } from "../../../scient/sources/SourceIdentifierAdd.ts";
 import {
+  browseZoteroForInvocation,
+  importZoteroForInvocation,
+  refreshZoteroForInvocation,
+  sendToZoteroForInvocation,
+} from "./zoteroHandlers.ts";
+import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
   type ScientSourceAddInput as ScientSourceAddInputType,
@@ -919,6 +925,10 @@ const handlers = {
   scient_sources_search: searchScientSourcesForInvocation,
   scient_sources_read_text: readScientSourceTextForInvocation,
   scient_sources_quote_check: checkScientSourceQuotesForInvocation,
+  scient_sources_zotero_browse: browseZoteroForInvocation,
+  scient_sources_zotero_import: importZoteroForInvocation,
+  scient_sources_zotero_refresh: refreshZoteroForInvocation,
+  scient_sources_zotero_send: sendToZoteroForInvocation,
   scient_sources_collections: readScientSourceCollectionsForInvocation,
   scient_sources_organize: organizeScientSourcesForInvocation,
   scient_sources_bulk_update: bulkUpdateScientSourcesForInvocation,

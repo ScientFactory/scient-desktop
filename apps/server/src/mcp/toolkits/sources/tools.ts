@@ -15,6 +15,11 @@ import {
   ScientSourceRevisionSummary,
   ScientSourceType,
   ScientSourceVerification,
+  ScientSourceZoteroRefreshField,
+  ScientSourceZoteroRefreshItem,
+  ScientSourceZoteroSendResult,
+  ZoteroConnection,
+  ZoteroConnectionState,
   ScientSourcesBulkChange,
   ScientSourcesBulkResult,
   ScientSourcesOrganizeAction,
@@ -636,6 +641,167 @@ const ScientSourceQuoteCheckTool = Tool.make("scient_sources_quote_check", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.quote.check", false));
 
+const ZoteroConnectionInput = ZoteroConnection.annotate({
+  description:
+    "local is Zotero on this computer; web is the user's library on zotero.org with the Zotero key in Accounts. Omit to use whichever is ready, local first.",
+});
+const ZoteroItemKey = Schema.String.check(Schema.isPattern(/^[23456789A-Z]{8}$/u));
+const ZoteroRefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
+  Schema.check(Schema.isMaxLength(32)),
+);
+
+export const ScientSourcesZoteroBrowseResult = Schema.Struct({
+  state: ZoteroConnectionState,
+  connection: Schema.NullOr(ZoteroConnection),
+  canWrite: Schema.Boolean,
+  message: NonEmptyString,
+  collections: Schema.Array(
+    Schema.Struct({ key: NonEmptyString, name: NonEmptyString, parentKey: NullableText }),
+  ),
+  items: Schema.Array(
+    Schema.Struct({
+      itemKey: NonEmptyString,
+      type: ScientSourceType,
+      title: NullableText,
+      creator: NullableText,
+      issuedYear: Schema.NullOr(Schema.Int),
+      doi: NullableText,
+      pdfCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      sourceId: NullableText,
+    }),
+  ).pipe(Schema.check(Schema.isMaxLength(50))),
+  total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  nextStart: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+});
+
+const ScientSourcesZoteroBrowseTool = Tool.make("scient_sources_zotero_browse", {
+  description:
+    "Look at the user's Zotero library: whether it can be reached, its collections, and a page of references, " +
+    "optionally in one collection or matching a search. sourceId is set for references already in this project's Library. " +
+    "If state is not ready, tell the user the message; do not guess.",
+  parameters: Schema.Struct({
+    connection: Schema.optionalKey(ZoteroConnectionInput),
+    collectionKey: Schema.optionalKey(ZoteroItemKey),
+    includeSubcollections: Schema.optionalKey(Schema.Boolean),
+    query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
+    start: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+    limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+  }),
+  success: ScientSourcesZoteroBrowseResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Browse the Zotero library")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, sourceOperation("sources.zotero.browse", false));
+
+export const ScientSourcesZoteroImportResult = Schema.Struct({
+  imported: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  skipped: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  failed: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  items: Schema.Array(
+    Schema.Struct({
+      itemKey: NonEmptyString,
+      outcome: Schema.Literals(["imported", "skipped", "failed", "pending"]),
+      duplicate: Schema.optionalKey(
+        Schema.Literals([
+          "same-origin",
+          "same-identifier",
+          "same-pdf",
+          "possible-metadata-match",
+          "new",
+        ]),
+      ),
+      sourceId: NullableText,
+      message: NullableText,
+    }),
+  ).pipe(Schema.check(Schema.isMaxLength(500))),
+});
+
+const ScientSourcesZoteroImportTool = Tool.make("scient_sources_zotero_import", {
+  description:
+    "Import references from the user's Zotero library into this project's Library after the user asks: chosen itemKeys, " +
+    "one collection, or the whole library (all). Notes, tags, PDFs and citation keys come along. " +
+    "References already imported are skipped as same-origin; a possible-metadata-match is skipped unless its itemKey is in possibleMetadataMatchOverrides. " +
+    "At most 500 references per call.",
+  parameters: Schema.Struct({
+    connection: Schema.optionalKey(ZoteroConnectionInput),
+    itemKeys: Schema.optionalKey(
+      Schema.Array(ZoteroItemKey).pipe(
+        Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+      ),
+    ),
+    collectionKey: Schema.optionalKey(ZoteroItemKey),
+    includeSubcollections: Schema.optionalKey(Schema.Boolean),
+    all: Schema.optionalKey(Schema.Boolean),
+    possibleMetadataMatchOverrides: Schema.optionalKey(
+      Schema.Array(ZoteroItemKey).pipe(Schema.check(Schema.isMaxLength(500))),
+    ),
+  }),
+  success: ScientSourcesZoteroImportResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Import from Zotero")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, sourceOperation("sources.zotero.import", true));
+
+const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh", {
+  description:
+    "Bring Zotero's changes into Sources imported from Zotero (all of them, or sourceIds). A field edited here that Zotero " +
+    "also changed is kept and reported in conflicts; ask the user, then pass the field in useZotero to take Zotero's value " +
+    "or keepLocal to keep this one and stop the report. Only changed or problem sources are listed.",
+  parameters: Schema.Struct({
+    sourceIds: Schema.optionalKey(
+      Schema.Array(NonEmptyString).pipe(
+        Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+      ),
+    ),
+    connection: Schema.optionalKey(ZoteroConnectionInput),
+    useZotero: Schema.optionalKey(ZoteroRefreshFields),
+    keepLocal: Schema.optionalKey(ZoteroRefreshFields),
+  }),
+  success: Schema.Struct({
+    connection: ZoteroConnection,
+    unchanged: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    items: Schema.Array(ScientSourceZoteroRefreshItem).pipe(Schema.check(Schema.isMaxLength(500))),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Refresh from Zotero")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, sourceOperation("sources.zotero.refresh", true));
+
+const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
+  description:
+    "Send Sources to the user's zotero.org library after the user asks: creates each item (linking the source to it) or " +
+    "updates fields that differ. Needs a Zotero key with write access in Accounts. An item changed in Zotero since Scient " +
+    "read it is not overwritten (changed-in-zotero): refresh first, then send again.",
+  parameters: Schema.Struct({
+    sourceIds: Schema.Array(NonEmptyString).pipe(
+      Schema.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+    ),
+  }),
+  success: ScientSourceZoteroSendResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Send to Zotero")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, sourceOperation("sources.zotero.send", true));
 export const ScientSourcesCollectionsResult = Schema.Struct({
   collections: Schema.Array(
     Schema.Struct({ collectionId: NonEmptyString, name: NonEmptyString, sourceCount: Schema.Int }),
@@ -801,6 +967,10 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceQuoteCheckTool,
   ScientSourcesImportFileTool,
   ScientSourcesExportTool,
+  ScientSourcesZoteroBrowseTool,
+  ScientSourcesZoteroImportTool,
+  ScientSourcesZoteroRefreshTool,
+  ScientSourcesZoteroSendTool,
   ScientSourcesCollectionsTool,
   ScientSourcesOrganizeTool,
   ScientSourcesBulkUpdateTool,

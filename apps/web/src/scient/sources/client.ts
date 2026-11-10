@@ -28,6 +28,8 @@ import {
   syncEnvironmentScientBibliography,
   updateEnvironmentScientSourceMetadata,
   updateEnvironmentScientSourceNote,
+  refreshEnvironmentZoteroSources,
+  sendEnvironmentSourcesToZotero,
   uploadEnvironmentLocalSourcePdf,
   importEnvironmentScientSourcesFile,
   exportEnvironmentScientSources,
@@ -48,6 +50,8 @@ import type {
   ScientSourceRevisionsRequest,
   ScientSourcesPermanentDeletionRequest,
   ScientSourcesTrashRequest,
+  ScientSourcesZoteroRefreshRequest,
+  ScientSourcesZoteroSendRequest,
   ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
@@ -278,6 +282,24 @@ export function beginZoteroScopeImport(
 ) {
   return runtime.runPromise(
     beginEnvironmentZoteroScopedImport({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function refreshZoteroSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesZoteroRefreshRequest,
+) {
+  return runtime.runPromise(
+    refreshEnvironmentZoteroSources({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function sendSourcesToZotero(
+  environmentId: EnvironmentId,
+  input: ScientSourcesZoteroSendRequest,
+) {
+  return runtime.runPromise(
+    sendEnvironmentSourcesToZotero({ prepared: prepared(environmentId), ...input }),
   );
 }
 

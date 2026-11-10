@@ -22,6 +22,9 @@ import {
   ScientSourcesOrganizeAction,
   ScientSourcesOrganizeResult,
   ScientSourcesOverview as ScientSourcesStoreOverview,
+  ScientSourceZoteroRefreshField,
+  ScientSourceZoteroRefreshResult,
+  ScientSourceZoteroSendResult,
   ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,
@@ -238,6 +241,29 @@ export const ZoteroStatusRequest = Schema.Struct({
 });
 export type ZoteroStatusRequest = typeof ZoteroStatusRequest.Type;
 
+const BoundedSourceIds = Schema.Array(NonEmptyString).pipe(
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+);
+const RefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
+  Schema.check(Schema.isMaxLength(32)),
+);
+
+/** Without sourceIds, every source imported from Zotero is refreshed. */
+export const ScientSourcesZoteroRefreshRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceIds: Schema.optionalKey(BoundedSourceIds),
+  connection: Schema.optionalKey(ZoteroConnection),
+  useZotero: Schema.optionalKey(RefreshFields),
+  keepLocal: Schema.optionalKey(RefreshFields),
+});
+export type ScientSourcesZoteroRefreshRequest = typeof ScientSourcesZoteroRefreshRequest.Type;
+
+export const ScientSourcesZoteroSendRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceIds: BoundedSourceIds,
+});
+export type ScientSourcesZoteroSendRequest = typeof ScientSourcesZoteroSendRequest.Type;
+
 export const ZoteroLibraryRequest = Schema.Struct({
   scope: ZoteroImportScope,
   query: Schema.String,
@@ -380,6 +406,9 @@ export {
   ScientSourceRestoreResult,
   ScientSourceRevertResult,
   ScientSourceTrashListing,
+  ScientSourceZoteroRefreshField,
+  ScientSourceZoteroRefreshResult,
+  ScientSourceZoteroSendResult,
   ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,
