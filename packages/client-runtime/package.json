@@ -351,6 +351,10 @@
       "types": "./src/state/scientSourcesHttp.ts",
       "default": "./src/state/scientSourcesHttp.ts"
     },
+    "./state/scient-references": {
+      "types": "./src/state/scientReferencesHttp.ts",
+      "default": "./src/state/scientReferencesHttp.ts"
+    },
     "./state/scient-analytics": {
       "types": "./src/state/scientAnalyticsHttp.ts",
       "default": "./src/state/scientAnalyticsHttp.ts"

@@ -59,6 +59,7 @@ import { initializeScientProjectForOpening } from "../../lib/scientProjectInitia
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { ReferenceCheckButton } from "../references/ReferenceCheckButton";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceFullTextResults } from "./SourceFullTextResults";
@@ -254,6 +255,7 @@ export function ScientSourcesPanel(props: {
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  readonly onOpenFile?: (path: string, line: number) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
   const bibliography = useManagedBibliography({
@@ -1102,6 +1104,12 @@ export function ScientSourcesPanel(props: {
         action={
           <div className="flex items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
+            <ReferenceCheckButton
+              environmentId={props.environmentId}
+              root={props.root}
+              onOpenSource={setSelectedSourceId}
+              {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
+            />
             {sources.overview.trashedCount ? (
               <SourceTrashButton
                 environmentId={props.environmentId}
