@@ -2,6 +2,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import type {
   EnvironmentId,
   ScientSourceDetailResult,
+  ScientSourcesFileImportResult,
   ScientSourcesPreflightResult,
   ZoteroImportScope,
 } from "@t3tools/contracts";
@@ -26,6 +27,7 @@ import {
   readZoteroCollections,
   readZoteroStatus,
   uploadLocalSourcePdf,
+  importScientSourcesFile,
 } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import type { ScientSourcesImportOutcome, ScientSourcesImportCounts } from "./importOutcome";
@@ -371,6 +373,88 @@ export function useScientSources(input: {
         );
       }
       return importOutcomeFromOperation({ operation: next, revealSingleSource: false });
+    })()
+      .catch(async (cause) => {
+        if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
+        return null;
+      })
+      .finally(() => {
+        if (isCurrentRequest(request)) {
+          dispatch({ type: "importPreparationChanged", preparation: null });
+          dispatch({ type: "busyChanged", busy: false });
+        }
+      });
+  };
+
+  /** Imports a .bib, RIS, CSL-JSON or EndNote XML file; entries already in the Library are left out. */
+  const importReferenceFile = async (
+    file: File,
+  ): Promise<{
+    readonly outcome: ScientSourcesImportOutcome | null;
+    readonly report: ScientSourcesFileImportResult["report"];
+  } | null> => {
+    dispatch({ type: "operationCleared" });
+    const request = nextRequestToken();
+    dispatch({ type: "requestStarted", request });
+    dispatch({ type: "importPreparationChanged", preparation: { kind: "file", name: file.name } });
+    dispatch({ type: "busyChanged", busy: true });
+    dispatch({ type: "errorCleared" });
+    return await (async () => {
+      const begun = await importScientSourcesFile(input.environmentId, {
+        root: input.root,
+        operationId: randomUUID(),
+        file,
+      });
+      const priorCounts = {
+        imported: 0,
+        alreadyPresent: begun.report.alreadyInLibrary,
+        reviewRequired: 0,
+        failed: 0,
+      };
+      if (!begun.operation) {
+        return {
+          report: begun.report,
+          outcome:
+            priorCounts.alreadyPresent > 0
+              ? {
+                  kind: "already-present" as const,
+                  operation: null,
+                  sourceId: null,
+                  existingSourceId: null,
+                  counts: priorCounts,
+                }
+              : null,
+        };
+      }
+      if (isCurrentRequest(request)) {
+        dispatch({ type: "operationArrived", request, operation: begun.operation });
+      }
+      const next = await continueSourceImport({
+        environmentId: input.environmentId,
+        root: input.root,
+        operation: begun.operation,
+        advance: (operationId) =>
+          advanceSourcesImport(input.environmentId, { root: input.root, operationId }),
+        onProgress: (value) => {
+          if (isCurrentRequest(request)) {
+            dispatch({ type: "operationArrived", request, operation: value });
+          }
+        },
+      });
+      if (isCurrentRequest(request)) {
+        dispatch({ type: "operationArrived", request, operation: next });
+        await refreshOverview().catch((cause: unknown) =>
+          dispatch({ type: "errorArrived", error: message(cause) }),
+        );
+      }
+      return {
+        report: begun.report,
+        outcome: importOutcomeFromOperation({
+          operation: next,
+          revealSingleSource: false,
+          priorCounts,
+        }),
+      };
     })()
       .catch(async (cause) => {
         if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
@@ -831,6 +915,7 @@ export function useScientSources(input: {
     importPreparation: state.importPreparation,
     openZoteroLibrary,
     uploadLocalFiles,
+    importReferenceFile,
     searchZotero,
     selectZoteroScope,
     importZoteroScope,

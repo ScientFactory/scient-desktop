@@ -19,6 +19,8 @@ import {
   updateEnvironmentScientSourceMetadata,
   updateEnvironmentScientSourceNote,
   uploadEnvironmentLocalSourcePdf,
+  importEnvironmentScientSourcesFile,
+  exportEnvironmentScientSources,
 } from "@t3tools/client-runtime/state/scient-sources";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type {
@@ -27,6 +29,7 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourcesExportRequest,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 
@@ -239,5 +242,29 @@ export function retrySourcesImport(
 ) {
   return runtime.runPromise(
     retryEnvironmentScientSourcesImport({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function importScientSourcesFile(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly operationId: string; readonly file: File },
+) {
+  return runtime.runPromise(
+    importEnvironmentScientSourcesFile({
+      prepared: prepared(environmentId),
+      root: input.root,
+      operationId: input.operationId,
+      file: input.file,
+      fileName: input.file.name,
+    }),
+  );
+}
+
+export function exportScientSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesExportRequest,
+) {
+  return runtime.runPromise(
+    exportEnvironmentScientSources({ prepared: prepared(environmentId), ...input }),
   );
 }
