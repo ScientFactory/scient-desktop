@@ -183,6 +183,15 @@ import {
   ScientOverleafUndoResult,
   ScientOverleafWorkspaceRequest,
 } from "../scientOverleaf.ts";
+import {
+  ScientReferenceCheckError,
+  ScientReferenceCheckRequest,
+  ScientReferenceCheckResult,
+  ScientReferenceDocumentsRequest,
+  ScientReferenceDocumentsResult,
+  ScientReferenceResolveRequest,
+  ScientReferenceResolveResult,
+} from "../scientReferences.ts";
 
 /** Scient reasons inside environmentHttp's EnvironmentInternalErrorReason, in wire order. */
 export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
@@ -201,6 +210,7 @@ export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "scient_word_export_failed",
   "scient_overleaf_operation_failed",
   "scient_annotations_operation_failed",
+  "scient_references_operation_failed",
 ] as const;
 
 export class ScientThreadQueueOperationError extends Schema.TaggedError<ScientThreadQueueOperationError>()(
@@ -973,6 +983,33 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
+  // Scient reference check group: checks a document or the Library, then fixes or ignores findings.
+  class EnvironmentScientReferencesHttpApi extends HttpApiGroup.make("scientReferences")
+    .add(
+      HttpApiEndpoint.post("documents", "/api/scient/references/v1/documents", {
+        headers: OptionalBearerHeaders,
+        payload: ScientReferenceDocumentsRequest,
+        success: ScientReferenceDocumentsResult,
+        error: [EnvironmentHttpCommonError, ScientReferenceCheckError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("check", "/api/scient/references/v1/check", {
+        headers: OptionalBearerHeaders,
+        payload: ScientReferenceCheckRequest,
+        success: ScientReferenceCheckResult,
+        error: [EnvironmentHttpCommonError, ScientReferenceCheckError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("resolve", "/api/scient/references/v1/resolve", {
+        headers: OptionalBearerHeaders,
+        payload: ScientReferenceResolveRequest,
+        success: ScientReferenceResolveResult,
+        error: [EnvironmentHttpCommonError, ScientReferenceCheckError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    ) {}
+
   return {
     EnvironmentScientKeepAwakeHttpApi,
     EnvironmentScientProjectHttpApi,
@@ -986,5 +1023,6 @@ export function makeScientEnvironmentHttpGroups({
     EnvironmentScientConversationImportHttpApi,
     EnvironmentScientWordExportHttpApi,
     EnvironmentScientOverleafHttpApi,
+    EnvironmentScientReferencesHttpApi,
   };
 }
