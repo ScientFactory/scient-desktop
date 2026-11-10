@@ -181,16 +181,24 @@ export const ScientSourcesBulkReceipt = Schema.Struct({
   batchId: NonEmptyString,
   createdAt: NonEmptyString,
   actor: ScientSourceActor,
+  // An entry's `undoneAt` is set once Undo has dealt with it, so a retry skips it.
   sources: Schema.Array(
-    Schema.Struct({ sourceId: NonEmptyString, before: BulkFields, after: BulkFields }),
+    Schema.Struct({
+      sourceId: NonEmptyString,
+      before: BulkFields,
+      after: BulkFields,
+      undoneAt: Schema.optionalKey(NonEmptyString),
+    }),
   ),
   collections: Schema.Array(
     Schema.Struct({
       collectionId: NonEmptyString,
       addedSourceIds: Schema.Array(NonEmptyString),
       removedSourceIds: Schema.Array(NonEmptyString),
+      undoneAt: Schema.optionalKey(NonEmptyString),
     }),
   ),
+  // Set when every entry is undone.
   undoneAt: Schema.optionalKey(NonEmptyString),
   undoneBy: Schema.optionalKey(ScientSourceActor),
 });
@@ -208,7 +216,8 @@ export const ScientSourcesBulkResult = Schema.Struct({
   collections: Schema.Array(
     Schema.Struct({
       collectionId: NonEmptyString,
-      outcome: Schema.Literals(["updated", "unchanged", "not-found"]),
+      outcome: Schema.Literals(["updated", "unchanged", "not-found", "failed"]),
+      message: Schema.optionalKey(Schema.String),
     }),
   ),
   // Present when the edit changed something; pass batchId as undoBatchId to reverse it.
