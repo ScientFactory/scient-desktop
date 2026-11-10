@@ -12,6 +12,10 @@
       "types": "./src/computerJws.ts",
       "import": "./src/computerJws.ts"
     },
+    "./content-frame": {
+      "types": "./src/contentFrame.ts",
+      "import": "./src/contentFrame.ts"
+    },
     "./limits": {
       "types": "./src/limits.ts",
       "import": "./src/limits.ts"
