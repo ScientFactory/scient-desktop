@@ -1,0 +1,11 @@
+@import "../../../index.css";
+
+/* The share page builds from its own root, so Tailwind is pointed back at the app's sources. */
+@source "../../..";
+
+@media print {
+  html,
+  body {
+    background: white;
+  }
+}
