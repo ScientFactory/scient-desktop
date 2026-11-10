@@ -96,9 +96,11 @@ import {
   PreviewToolkit,
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
+// SCIENT-FORK:START — PDF annotation agent tools.
 import { layer as ScientAnnotationsLive } from "../scient/annotations/ScientAnnotations.ts";
 import { ScientAnnotationsToolkitHandlersLive } from "./toolkits/annotations/handlers.ts";
 import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
+// SCIENT-FORK:END
 import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 import { ScientReferencesToolkitHandlersLive } from "./toolkits/references/handlers.ts";
@@ -1442,9 +1444,11 @@ const ScientSystematicReviewsToolkitRegistrationLive = registerScientToolkit(
   ScientSystematicReviewsToolkit,
 ).pipe(Layer.provide(ScientSystematicReviewsToolkitHandlersLive));
 
+// SCIENT-FORK:START — PDF annotation agent tools.
 export const ScientAnnotationsToolkitRegistrationLive = registerScientToolkit(
   ScientAnnotationsToolkit,
 ).pipe(Layer.provide(ScientAnnotationsToolkitHandlersLive), Layer.provide(ScientAnnotationsLive));
+// SCIENT-FORK:END
 
 export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientSkillsToolkit).pipe(
   Layer.provide(ScientSkillsToolkitHandlersLive),
@@ -1605,7 +1609,9 @@ export const layerTools = Layer.mergeAll(
   ScientSourcesToolkitRegistrationLive,
   ScientReferencesToolkitRegistrationLive,
   ScientSystematicReviewsToolkitRegistrationLive,
+  // SCIENT-FORK:START — PDF annotation agent tools.
   ScientAnnotationsToolkitRegistrationLive,
+  // SCIENT-FORK:END
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
   // SCIENT-FORK:START — Overleaf agent tools.
