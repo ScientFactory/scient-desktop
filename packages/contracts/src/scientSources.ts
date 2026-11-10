@@ -18,6 +18,10 @@ import {
   ScientSourcePreflightItem,
   ScientSourcesBulkChange,
   ScientSourcesBulkResult,
+  ScientSystematicReviewAction,
+  ScientSystematicReviewChangeResult,
+  ScientSystematicReviewDetail,
+  ScientSystematicReviewList,
   ScientSourcesOrganization,
   ScientSourcesOrganizeAction,
   ScientSourcesOrganizeResult,
@@ -175,6 +179,26 @@ export const ScientSourcesOrganizeRequest = Schema.Struct({
 });
 export type ScientSourcesOrganizeRequest = typeof ScientSourcesOrganizeRequest.Type;
 
+export const ScientSystematicReviewsRequest = Schema.Struct({ root: NonEmptyString });
+export type ScientSystematicReviewsRequest = typeof ScientSystematicReviewsRequest.Type;
+
+export const ScientSystematicReviewRequest = Schema.Struct({
+  root: NonEmptyString,
+  reviewId: NonEmptyString,
+});
+export type ScientSystematicReviewRequest = typeof ScientSystematicReviewRequest.Type;
+
+export const ScientSystematicReviewResult = Schema.Struct({
+  detail: Schema.NullOr(ScientSystematicReviewDetail),
+});
+export type ScientSystematicReviewResult = typeof ScientSystematicReviewResult.Type;
+
+export const ScientSystematicReviewChangeRequest = Schema.Struct({
+  root: NonEmptyString,
+  change: ScientSystematicReviewAction,
+});
+export type ScientSystematicReviewChangeRequest = typeof ScientSystematicReviewChangeRequest.Type;
+
 export const ScientSourcesBulkUpdateRequest = Schema.Struct({
   root: NonEmptyString,
   change: ScientSourcesBulkChange,
@@ -331,6 +355,8 @@ export {
   ScientSourceImportOperation,
   ScientSourcesBulkResult,
   ScientSourcesOrganizeResult,
+  ScientSystematicReviewChangeResult,
+  ScientSystematicReviewList,
   ScientSourceMetadataUpdateResult,
   ScientSourcePermanentDeletionResult,
   ScientSourceRemovalResult,

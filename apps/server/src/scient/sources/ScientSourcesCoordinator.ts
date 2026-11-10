@@ -50,6 +50,11 @@ import {
 } from "@scientfactory/scient-sources/collections";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
+  changeScientSystematicReview,
+  listScientSystematicReviews,
+  readScientSystematicReview,
+} from "@scientfactory/scient-sources/systematic-review";
+import {
   cancelSourceImportOperation,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
@@ -217,6 +222,23 @@ export async function getScientSourcesOverview(root: string) {
 
 export async function organizeSources(input: Parameters<typeof organizeScientSources>[0]) {
   return organizeScientSources(input);
+}
+
+export async function listSystematicReviews(root: string) {
+  return listScientSystematicReviews(root);
+}
+
+export async function getSystematicReview(input: {
+  readonly root: string;
+  readonly reviewId: string;
+}) {
+  return { detail: await readScientSystematicReview(input.root, input.reviewId) };
+}
+
+export async function changeSystematicReview(
+  input: Parameters<typeof changeScientSystematicReview>[0],
+) {
+  return changeScientSystematicReview(input);
 }
 
 export async function bulkUpdateSources(input: Parameters<typeof bulkUpdateScientSources>[0]) {

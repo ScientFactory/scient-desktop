@@ -22,6 +22,9 @@ import {
   advanceSourceImport,
   beginLocalPdfImport,
   bulkUpdateSources,
+  changeSystematicReview,
+  getSystematicReview,
+  listSystematicReviews,
   beginZoteroImport,
   beginZoteroScopedImport,
   cancelSourceImport,
@@ -185,6 +188,21 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("organize", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             organizeSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("systematicReviews", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listSystematicReviews(args.payload.root),
+          ),
+        )
+        .handle("systematicReview", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            getSystematicReview(args.payload),
+          ),
+        )
+        .handle("systematicReviewChange", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            changeSystematicReview({ ...args.payload, actor: "user" }),
           ),
         )
         .handle("bulkUpdate", (args) =>

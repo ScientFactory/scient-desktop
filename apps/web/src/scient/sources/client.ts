@@ -5,6 +5,9 @@ import {
   beginEnvironmentZoteroImport,
   beginEnvironmentZoteroScopedImport,
   bulkUpdateEnvironmentScientSources,
+  changeEnvironmentScientSystematicReview,
+  getEnvironmentScientSystematicReview,
+  listEnvironmentScientSystematicReviews,
   cancelEnvironmentScientSourcesImport,
   retryEnvironmentScientSourcesImport,
   discardEnvironmentLocalSourcePdfs,
@@ -40,6 +43,9 @@ import type {
   ScientSourceRemovalRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
+  ScientSystematicReviewChangeRequest,
+  ScientSystematicReviewRequest,
+  ScientSystematicReviewsRequest,
   ScientSourceRestoreRequest,
   ScientSourceRevertRequest,
   ScientSourceRevisionsRequest,
@@ -115,6 +121,33 @@ export function organizeScientSources(
 ) {
   return runtime.runPromise(
     organizeEnvironmentScientSources({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function readSystematicReviews(
+  environmentId: EnvironmentId,
+  input: ScientSystematicReviewsRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientSystematicReviews({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function readSystematicReview(
+  environmentId: EnvironmentId,
+  input: ScientSystematicReviewRequest,
+) {
+  return runtime.runPromise(
+    getEnvironmentScientSystematicReview({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function changeSystematicReview(
+  environmentId: EnvironmentId,
+  input: ScientSystematicReviewChangeRequest,
+) {
+  return runtime.runPromise(
+    changeEnvironmentScientSystematicReview({ prepared: prepared(environmentId), ...input }),
   );
 }
 

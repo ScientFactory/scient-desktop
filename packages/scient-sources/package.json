@@ -35,6 +35,10 @@
     "./store": {
       "types": "./src/store.ts",
       "import": "./src/store.ts"
+    },
+    "./systematic-review": {
+      "types": "./src/systematicReviewStore.ts",
+      "import": "./src/systematicReviewStore.ts"
     }
   },
   "scripts": {
