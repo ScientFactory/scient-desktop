@@ -5,3 +5,4 @@ export * from "./editable.ts";
 export * from "./model.ts";
 export * from "./normalize.ts";
 export * from "./identifierInput.ts";
+export * from "./webPage.ts";

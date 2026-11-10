@@ -602,6 +602,46 @@ const ScientSourceQuoteCheckTool = Tool.make("scient_sources_quote_check", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.quote.check", false));
 
+const ScientSourceSavePageTool = Tool.make("scient_sources_save_page", {
+  description:
+    "Save a web page to this project's Library after the user asks, keeping a passage from it in the source's note. " +
+    "Pass the page's meta tags (citation_*, dc.*, prism.*, og:*) as read from the page, for example with preview_evaluate. " +
+    "A DOI, PMID or arXiv ID the page states is checked against its registry and its metadata is used; otherwise the page is saved as a web page. " +
+    "Saving the same page again adds only a new passage. For a PDF, use scient_paper_get or scient_sources_add with pdfRelativePath.",
+  parameters: Schema.Struct({
+    url: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(4_096))),
+    title: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(2_000)))),
+    passage: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(20_000)))),
+    meta: Schema.optionalKey(
+      Schema.Array(
+        Schema.Struct({
+          name: Schema.String.pipe(Schema.check(Schema.isMaxLength(200))),
+          content: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_000))),
+        }),
+      ).pipe(Schema.check(Schema.isMaxLength(400))),
+    ),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["added", "existing", "not-added"]),
+    sourceId: Schema.NullOr(NonEmptyString),
+    revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+    passageSaved: Schema.Boolean,
+    reason: Schema.optionalKey(
+      Schema.Literals(["identifier-not-found", "identifier-mismatch", "possible-duplicate"]),
+    ),
+    message: Schema.optionalKey(Schema.String),
+    matchingSourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Save a web page to sources")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, sourceOperation("sources.page.save", true));
+
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,
   ScientSourceGetTool,
@@ -617,4 +657,5 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesSearchTool,
   ScientSourceReadTextTool,
   ScientSourceQuoteCheckTool,
+  ScientSourceSavePageTool,
 );

@@ -42,6 +42,7 @@ import {
   readSourceText,
   searchSourceFullText,
 } from "../../../scient/sources/SourceFullText.ts";
+import { saveWebPageSource } from "../../../scient/sources/SourceWebPage.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientSourcesToolError>[0]["code"];
 
@@ -673,6 +674,38 @@ const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesToolkit.che
   },
 );
 
+const saveScientSourcePageForInvocation = Effect.fn("ScientSourcesToolkit.savePage")(
+  function* (input: {
+    readonly url: string;
+    readonly title?: string;
+    readonly passage?: string;
+    readonly meta?: ReadonlyArray<{ readonly name: string; readonly content: string }>;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const resolveIdentifier = yield* SourceIdentifierLookup;
+    const observeImport = yield* makeSourceImportAnalytics("agent");
+    const result = yield* attempt(() =>
+      saveWebPageSource(
+        {
+          root,
+          page: {
+            url: input.url,
+            title: input.title ?? null,
+            selection: input.passage ?? null,
+            meta: input.meta ?? [],
+          },
+          actor: "agent",
+          resolveIdentifier,
+        },
+        observeImport,
+      ),
+    );
+    return result.outcome === "not-added"
+      ? { ...result, sourceId: null, revision: null, passageSaved: false }
+      : result;
+  },
+);
+
 const handlers = {
   scient_sources_list: listScientSourcesForInvocation,
   scient_sources_get: getScientSourceForInvocation,
@@ -688,6 +721,7 @@ const handlers = {
   scient_sources_search: searchScientSourcesForInvocation,
   scient_sources_read_text: readScientSourceTextForInvocation,
   scient_sources_quote_check: checkScientSourceQuotesForInvocation,
+  scient_sources_save_page: saveScientSourcePageForInvocation,
 } satisfies Parameters<typeof ScientSourcesToolkit.toLayer>[0];
 
 export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(handlers);

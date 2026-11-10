@@ -67,7 +67,7 @@ export type ScientSourceExternalReference = typeof ScientSourceExternalReference
 
 export const ScientSourceOrigin = Schema.Struct({
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper", "web"]),
   operationId: NonEmptyString,
   // Older records may still say "pending"; nothing gates on it any more.
   review: Schema.Literals(["none", "pending"]),
@@ -101,6 +101,7 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "open-library",
     "google-books",
     "openalex",
+    "web-page",
   ]),
   sourceField: NullableText,
   sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),

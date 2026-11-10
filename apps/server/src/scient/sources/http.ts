@@ -16,6 +16,7 @@ import {
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
 import { searchSourceFullText } from "./SourceFullText.ts";
+import { saveWebPageSource } from "./SourceWebPage.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import { zoteroKeyLookup } from "./ZoteroAccountKey.ts";
 import {
@@ -126,6 +127,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               query: args.payload.query,
               limit: args.payload.limit ?? 20,
             }),
+          ),
+        )
+        .handle("savePage", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            saveWebPageSource({ ...args.payload, actor: "user" }, observeImport),
           ),
         )
         .handle("journalIcon", (args) =>

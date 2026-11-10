@@ -32,6 +32,8 @@ import {
   ScientSourceAttachmentPreviewResult,
   ScientSourcesFullTextSearchRequest,
   ScientSourcesFullTextSearchResult,
+  ScientSourceSavePageRequest,
+  ScientSourceSavePageResult,
   ScientSourceDetailRequest,
   ScientSourceDetailResult,
   ScientSourceJournalIconRequest,
@@ -282,6 +284,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesFullTextSearchRequest,
         success: ScientSourcesFullTextSearchResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("savePage", "/api/scient/sources/pages/save", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceSavePageRequest,
+        success: ScientSourceSavePageResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )
