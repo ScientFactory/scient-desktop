@@ -20,6 +20,7 @@ import {
   Pencil,
   RefreshCw,
   Trash2,
+  Upload,
 } from "lucide-react";
 import {
   useEffect,
@@ -616,12 +617,15 @@ export function SourceDetails(props: {
   readonly onRefreshMetadata: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
   readonly onOpenHistory?: () => void;
+  readonly onSendToZotero?: () => void;
   readonly onGetPdf?: () => Promise<void>;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  /** The Source's highlights and notes, shown after its reference. */
+  readonly annotations?: ReactNode;
 }) {
   const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
@@ -744,6 +748,12 @@ export function SourceDetails(props: {
                 History
               </MenuItem>
             ) : null}
+            {props.onSendToZotero ? (
+              <MenuItem onClick={props.onSendToZotero}>
+                <Upload />
+                Send to Zotero
+              </MenuItem>
+            ) : null}
             <MenuSeparator />
             <MenuItem
               variant="destructive"
@@ -859,6 +869,8 @@ export function SourceDetails(props: {
             ) : null)}
 
           <SourceReference record={record} />
+
+          {props.annotations}
 
           {sourceNote.section}
 

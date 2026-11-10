@@ -57,17 +57,20 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { toastManager } from "../../components/ui/toast";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { useZoteroSync, ZoteroRefreshDialog } from "./ZoteroSync";
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { initializeScientProjectForOpening } from "../../lib/scientProjectInitialization";
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { SourceAnnotations } from "../annotations/SourceAnnotations";
 import { AddByIdentifier } from "./AddByIdentifier";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceFullTextResults } from "./SourceFullTextResults";
 import { SourceJournalIcon } from "./SourceJournalIcon";
 import { requestSourceTextReveal } from "./sourceTextReveal";
+import { useLibraryFileImport } from "./libraryFileHandoff";
 import { agentVerificationLabel, newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
 import {
   filterScientSourceSearchIndex,
@@ -269,6 +272,16 @@ export function ScientSourcesPanel(props: {
   }) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const zoteroSync = useZoteroSync({
+    environmentId: props.environmentId,
+    root: props.root,
+    onChanged: async () => {
+      await sources.refreshOverview();
+    },
+  });
+  const hasZoteroSources = (sources.overview?.records ?? []).some((record) =>
+    record.externalReferences.some((reference) => reference.system === "zotero"),
+  );
   const bibliography = useManagedBibliography({
     environmentId: props.environmentId,
     root: props.root,
@@ -388,6 +401,9 @@ export function ScientSourcesPanel(props: {
       }
     });
   };
+  useLibraryFileImport(props.root, sources.overview !== null, (files) =>
+    revealImportedSource(sources.uploadLocalFiles(files), files.length === 1),
+  );
 
   const importReferenceFile = (file: File) => {
     setSelectedSourceId(null);
@@ -1086,6 +1102,7 @@ export function ScientSourcesPanel(props: {
             });
           }}
           onRemove={() => moveToTrash(selectedRecord)}
+          onSendToZotero={() => void zoteroSync.sendToZotero(selectedRecord.sourceId)}
           onOpenHistory={() => setHistorySourceId(selectedRecord.sourceId)}
           onGetPdf={async () => {
             const doi = selectedRecord.identifiers.find(
@@ -1116,6 +1133,14 @@ export function ScientSourcesPanel(props: {
             });
           }}
           onOpenPdf={props.onOpenPdf}
+          annotations={
+            <SourceAnnotations
+              environmentId={props.environmentId}
+              root={props.root}
+              record={selectedRecord}
+              onOpenPdf={props.onOpenPdf}
+            />
+          }
         />
         {historySourceId === selectedRecord.sourceId ? (
           <SourceHistoryDialog
@@ -1273,6 +1298,12 @@ export function ScientSourcesPanel(props: {
                   <ZoteroMark />
                   Import from Zotero
                 </MenuItem>
+                {hasZoteroSources ? (
+                  <MenuItem onClick={() => void zoteroSync.startRefresh()}>
+                    <RefreshCw />
+                    Refresh from Zotero
+                  </MenuItem>
+                ) : null}
                 <MenuItem onClick={() => setAddingByIdentifier(true)}>
                   <Hash />
                   Add by identifier
@@ -1309,6 +1340,14 @@ export function ScientSourcesPanel(props: {
         <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
       ) : null}
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
+      <ZoteroRefreshDialog
+        state={zoteroSync.refresh}
+        resolving={zoteroSync.resolving}
+        onClose={zoteroSync.closeRefresh}
+        onResolve={(sourceId, field, side) =>
+          void zoteroSync.resolveConflict(sourceId, field, side)
+        }
+      />
       {bibliography.status ? (
         <ManagedBibliographyNotice
           files={bibliography.status.files}
@@ -1632,6 +1671,16 @@ export function ScientSourcesPanel(props: {
               root={props.root}
               query={sourceQuery}
               metadataMatchCount={filteredSourceRecords.length}
+              sourceIds={
+                new Set(
+                  filterScientSourceSearchIndex(
+                    sourceSearchIndex,
+                    "",
+                    organize.filter,
+                    organize.organization,
+                  ).map((record) => record.sourceId),
+                )
+              }
               onOpenHit={(hit) => {
                 requestSourceTextReveal(props.root, hit);
                 props.onOpenPdf(hit);
