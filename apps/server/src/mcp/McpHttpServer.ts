@@ -96,6 +96,9 @@ import {
   PreviewToolkit,
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
+import { layer as ScientAnnotationsLive } from "../scient/annotations/ScientAnnotations.ts";
+import { ScientAnnotationsToolkitHandlersLive } from "./toolkits/annotations/handlers.ts";
+import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
 import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 import { ScientReferencesToolkitHandlersLive } from "./toolkits/references/handlers.ts";
@@ -1433,6 +1436,10 @@ const ScientReferencesToolkitRegistrationLive = registerScientToolkit(ScientRefe
   Layer.provide(ScientReferencesToolkitHandlersLive),
 );
 
+export const ScientAnnotationsToolkitRegistrationLive = registerScientToolkit(
+  ScientAnnotationsToolkit,
+).pipe(Layer.provide(ScientAnnotationsToolkitHandlersLive), Layer.provide(ScientAnnotationsLive));
+
 export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientSkillsToolkit).pipe(
   Layer.provide(ScientSkillsToolkitHandlersLive),
 );
@@ -1591,6 +1598,7 @@ export const layerTools = Layer.mergeAll(
   // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,
   ScientReferencesToolkitRegistrationLive,
+  ScientAnnotationsToolkitRegistrationLive,
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
   // SCIENT-FORK:START — Overleaf agent tools.

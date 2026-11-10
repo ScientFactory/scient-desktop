@@ -5,6 +5,7 @@ import { makeOperationRegistry } from "@scientfactory/operations";
 import type { Tool } from "effect/ai";
 
 import { operationDefinitionForTool } from "./ScientOperationTool.ts";
+import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
@@ -38,6 +39,7 @@ export const scientTools = [
   // SCIENT-FORK:END
   ...Object.values(ScientSourcesToolkit.tools),
   ...Object.values(ScientReferencesToolkit.tools),
+  ...Object.values(ScientAnnotationsToolkit.tools),
   ...Object.values(ScientSkillsToolkit.tools),
   ...Object.values(ScientDocumentsToolkit.tools),
   ...Object.values(ScientOverleafToolkit.tools),

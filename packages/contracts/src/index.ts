@@ -90,6 +90,7 @@ export * from "./scientProject.ts";
 export * from "./scientSources.ts";
 export * from "./scientReferences.ts";
 export * from "./scientBibliography.ts";
+export * from "./scientAnnotations.ts";
 export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
