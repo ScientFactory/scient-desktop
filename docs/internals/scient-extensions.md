@@ -574,8 +574,10 @@ sign-in's browser profile in a hidden tab, writes them as owner-only files under
 - `SCIENT_SIGN_IN_COOKIES_TXT` (Netscape)
 - `SCIENT_SIGN_IN_USER_AGENT`
 
-The program never gets the password. Cookie values join the proxy's redaction set, and earlier
-values stay in it. Every exchange checks the sign-in again: whether it exists, covers the site,
+The program never gets the password. Every response event is checked against the connector's
+current credentials, so cookies from a new sign-in during a call are covered too, and earlier
+values stay. Keys are redacted from 16 characters wherever they appear. Cookie values are
+redacted from 6 characters, but only as whole tokens, so ordinary output is never mangled. Every exchange checks the sign-in again: whether it exists, covers the site,
 is on, has global agent access and is in the project's scope. If not, the running copies stop and
 the session files are deleted. A university's own sign-in service stays in the browser.
 
@@ -589,7 +591,9 @@ the session files are deleted. A university's own sign-in service stays in the b
    handshake.
 5. Retry only the calls that reported expiry, once.
 
-A call cut off by the swap returns an "outcome unknown" error and is never replayed. When the
+A call cut off by the swap returns an "outcome unknown" error and is never replayed. If the
+session ends while it waits (the agent closes it, the program exits, the sign-in is revoked), no
+new process starts. When the
 site needs the person, the agent is told to sign in, and the connector shows Needs sign-in with a
 Sign in button.
 
