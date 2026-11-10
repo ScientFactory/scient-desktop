@@ -30,6 +30,14 @@ mobile activation, or a product-policy change.
    actual range. If implementation evidence invalidates a decision, stop, explain it, and update the
    protocol through review rather than working around it.
 
+## Cadence
+
+Align once a day: one batch up to the official tip at the time it starts, with one owner and one
+open alignment at a time. Each alignment costs about the same review and CI work whatever its size
+up to a few hundred commits, so more frequent alignments mostly add sessions. A fix upstream ships
+for security, data loss or a broken release aligns at once, on its own. Ranges past about 300
+commits took 36–44 hours to land; split them at a reviewed boundary instead.
+
 ## 1. Freeze exact boundaries
 
 Before mutation:
