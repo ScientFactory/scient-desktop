@@ -31,6 +31,7 @@ export type {
   BibliographyParseResult,
 } from "./entry.ts";
 export { BIBLIOGRAPHY_FORMATS } from "./entry.ts";
+export { cslJsonItem, type CslJsonItem } from "./cslJson.ts";
 
 export const BibliographyFormatSchema = Schema.Literals(BIBLIOGRAPHY_FORMATS);
 

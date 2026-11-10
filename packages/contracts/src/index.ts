@@ -89,6 +89,7 @@ export * from "./review.ts";
 export * from "./scientProject.ts";
 export * from "./scientSources.ts";
 export * from "./scientReferences.ts";
+// SCIENT-FORK: managed bibliography contracts (new file, no upstream edits).
 export * from "./scientBibliography.ts";
 // SCIENT-FORK:START — Scient PDF annotation contracts (new file, no upstream edits).
 export * from "./scientAnnotations.ts";

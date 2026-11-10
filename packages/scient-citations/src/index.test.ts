@@ -45,6 +45,7 @@ describe("scientSourceToCslJson", () => {
       author: [{ given: "John P. A.", family: "Ioannidis" }],
       issued: { "date-parts": [[2005]] },
       abstract: "A testable abstract.",
+      keyword: "methods",
       "container-title": "PLOS Medicine",
       publisher: "Public Library of Science",
       volume: "2",

@@ -408,6 +408,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "word-export",
     searchTerms: ["word", "docx", "export", "pandoc", "document conversion", "reinstall"],
   },
+  // SCIENT-FORK:START — Word export citation style.
   {
     id: "word-citation-style",
     title: "Citation style",
@@ -415,6 +416,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "word-citation-style",
     searchTerms: ["citation", "references", "bibliography", "csl", "apa", "vancouver", "word"],
   },
+  // SCIENT-FORK:END
   {
     id: "storage-worktree-keep-when",
     targetId: "storage-worktrees",

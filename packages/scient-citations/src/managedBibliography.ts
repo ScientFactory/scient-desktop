@@ -1,7 +1,5 @@
 import type { ScientSourceRecord } from "@scientfactory/scient-sources";
-
-import { scientSourceToBibtex } from "./bibtex.ts";
-import { scientSourceToCslJson } from "./index.ts";
+import { formatBibliography } from "@scientfactory/scient-sources/bibliography";
 
 const MANAGED_BIBTEX_HEADER =
   "% Written by Scient from this project's Library. Scient offers edits made here back as an import.\n";
@@ -12,28 +10,25 @@ export interface ManagedBibliographyContents {
   readonly keys: ReadonlyArray<string>;
 }
 
-/** Both managed files, sorted by citation key. Sources without a key are left out. */
+/**
+ * Both managed files, sorted by citation key, with the same entries a Library
+ * export writes (notes stay private). Sources without a key are left out.
+ */
 export function renderManagedBibliography(
   records: ReadonlyArray<ScientSourceRecord>,
 ): ManagedBibliographyContents {
-  const keyed = records
-    .flatMap((record) => (record.citationKey ? [{ record, key: record.citationKey }] : []))
+  const items = records
+    .flatMap((record) => (record.citationKey ? [{ record, citationKey: record.citationKey }] : []))
     .toSorted(
       (left, right) =>
-        left.key.localeCompare(right.key, "en", { sensitivity: "base" }) ||
-        left.key.localeCompare(right.key),
+        left.citationKey.localeCompare(right.citationKey, "en", { sensitivity: "base" }) ||
+        left.citationKey.localeCompare(right.citationKey),
     );
-  const items = keyed.map(({ record, key }) => {
-    const { abstract: _abstract, ...item } = scientSourceToCslJson(record);
-    return { ...item, id: key };
-  });
+  const options = { includeNotes: false };
   return {
-    bibtex: [
-      MANAGED_BIBTEX_HEADER,
-      ...keyed.map(({ record, key }) => scientSourceToBibtex(record, key)),
-    ].join("\n"),
-    cslJson: `${JSON.stringify(items, null, 2)}\n`,
-    keys: keyed.map(({ key }) => key),
+    bibtex: `${MANAGED_BIBTEX_HEADER}\n${formatBibliography(items, "bibtex", options)}`,
+    cslJson: formatBibliography(items, "csl-json", options),
+    keys: items.map(({ citationKey }) => citationKey),
   };
 }
 

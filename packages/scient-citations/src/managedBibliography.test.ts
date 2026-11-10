@@ -1,7 +1,7 @@
 import type { ScientSourceRecord } from "@scientfactory/scient-sources";
+import { formatBibliography } from "@scientfactory/scient-sources/bibliography";
 import { describe, expect, it } from "vite-plus/test";
 
-import { scientSourceToBibtex } from "./bibtex.ts";
 import {
   bibtexEntriesByKey,
   compareBibliographyEntries,
@@ -47,42 +47,24 @@ function record(overrides: Partial<ScientSourceRecord>): ScientSourceRecord {
 }
 
 describe("managed bibliography", () => {
-  it("writes BibTeX that LaTeX reads literally, with verbatim identifiers", () => {
-    expect(
-      scientSourceToBibtex(
-        record({
-          title: "Costs & benefits of 50% {fast} C_2 ~ tests",
-          creators: [
-            { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
-            {
-              creatorType: "author",
-              givenName: null,
-              familyName: null,
-              literalName: "World Health Organization",
-            },
-            { creatorType: "editor", givenName: "Max", familyName: "Born", literalName: null },
-          ],
-          pages: "10 - 20",
-          identifiers: [{ scheme: "doi", value: "10.1000/a_b%c" }],
-        }),
-        "key2005",
-      ),
-    ).toBe(
-      [
-        "@article{key2005,",
-        "  author = {Lovelace, Ada and {World Health Organization}},",
-        "  editor = {Born, Max},",
-        "  title = {Costs \\& benefits of 50\\% \\{fast\\} C\\_2 \\textasciitilde{} tests},",
-        "  journal = {PLOS Medicine},",
-        "  year = {2005},",
-        "  volume = {2},",
-        "  number = {8},",
-        "  pages = {10--20},",
-        "  doi = {10.1000/a_b%c},",
-        "}",
-        "",
-      ].join("\n"),
-    );
+  // regression: managed files once had their own writers and lost what export keeps.
+  it("writes the same entry as a Library export of the same source", () => {
+    const thesis = record({
+      type: "thesis",
+      title: "DNA & mRNA in München",
+      containerTitle: null,
+      publisher: "Synthetic University",
+      identifiers: [{ scheme: "pmid", value: "12345" }],
+    });
+    const rendered = renderManagedBibliography([thesis]);
+    const items = [{ record: thesis, citationKey: "ioannidis2005why" }];
+    const options = { includeNotes: false };
+
+    expect(rendered.bibtex).toContain(formatBibliography(items, "bibtex", options));
+    expect(rendered.bibtex).toContain("title = {{DNA} \\& {mRNA} in München}");
+    expect(rendered.bibtex).toContain("school = {Synthetic University}");
+    expect(rendered.cslJson).toBe(formatBibliography(items, "csl-json", options));
+    expect(JSON.parse(rendered.cslJson)[0]).toMatchObject({ PMID: "12345" });
   });
 
   it("keys both files by citation key, sorted, and leaves out unkeyed sources", () => {
@@ -97,7 +79,6 @@ describe("managed bibliography", () => {
     expect([...bibtexEntriesByKey(rendered.bibtex).keys()]).toEqual(rendered.keys);
     const items = JSON.parse(rendered.cslJson) as Array<Record<string, unknown>>;
     expect(items.map((item) => item.id)).toEqual(rendered.keys);
-    expect(items[0]).not.toHaveProperty("abstract");
   });
 
   it("reports entries added, changed and removed by hand", () => {

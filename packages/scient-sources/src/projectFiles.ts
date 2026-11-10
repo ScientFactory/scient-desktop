@@ -2,6 +2,12 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+export {
+  publishScientProjectFile,
+  scientProjectFilePublicationHooks,
+  type ScientProjectFilePublication,
+} from "./projectFilePublication.ts";
+
 function insideRoot(root: string, path: string): boolean {
   const relative = NodePath.relative(root, path);
   return (

@@ -216,7 +216,8 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
     "read the source first, keep every field you are not changing, and pass its current revision. " +
     "If the read says abstractTruncated, do not replace from it; tell the user. If stale, read it again and redo the change on what you read. " +
     "Changed fields are recorded as set by the agent; attachments stay as they are. Changing identifiers clears the source's identifier check. " +
-    "A new citationKey is a deliberate rename: project Markdown and LaTeX citations follow it, and citationKeyRenamedIn lists the files changed.",
+    "A new citationKey is a deliberate rename: project Markdown and LaTeX citations follow it, and citationKeyRenamedIn lists the files changed. " +
+    "citationKeyRenameSkipped lists documents the rename could not reach; tell the user, since their citations still use the old key.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -240,6 +241,9 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
     }),
     validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
     citationKeyRenamedIn: Schema.optionalKey(Schema.Array(NonEmptyString)),
+    citationKeyRenameSkipped: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ path: NonEmptyString, reason: NonEmptyString })),
+    ),
   }),
   failure: ScientSourcesToolError,
   dependencies,
