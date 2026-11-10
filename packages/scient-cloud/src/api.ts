@@ -15,7 +15,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
 export const SCIENT_CLOUD_ORIGIN = "https://cloud.scientfactory.com";
-export const SCIENT_SHARE_ORIGIN = "https://scientfactory.com";
+const SCIENT_SHARE_ORIGIN = "https://scientfactory.com";
 export const SCIENT_SHARE_CONTENT_ORIGIN = "https://share.scientusercontent.com";
 
 export const THREAD_META_HEADER = "x-scient-thread-meta";

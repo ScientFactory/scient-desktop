@@ -22,7 +22,7 @@ import type { Ed25519PublicJwk } from "./api.ts";
 
 export const COMPUTER_REQUEST_TYP = "scient-cloud+jwt";
 export const COMPUTER_ENROLLMENT_TYP = "scient-cloud-enroll+jwt";
-export const COMPUTER_AUTHORIZATION_SCHEME = "ScientComputer";
+const COMPUTER_AUTHORIZATION_SCHEME = "ScientComputer";
 const COMPUTER_JWS_MAX_LIFETIME_SECONDS = 300;
 const CLOCK_TOLERANCE = "60 seconds";
 
