@@ -55,7 +55,7 @@ const CONTAINER_FIELDS = [
 ];
 const PUBLISHER_FIELDS = ["publisher", "university", "institution", "repository"];
 const CREATE_CREATOR_TYPES = new Set(["author", "editor", "contributor", "translator"]);
-const MANAGED_EXTRA = /^\s*(?:pmid|pmcid|arxiv|doi|citation key)\s*:/iu;
+const MANAGED_EXTRA = /^\s*(pmid|pmcid|arxiv|doi|citation key)\s*:/iu;
 
 /** The item type to write: Zotero's own when it still means the same Scient type. */
 export function zoteroItemTypeFor(record: ScientSourceRecord, existing?: string): string {
@@ -109,21 +109,25 @@ function extraLines(
   fields: ReadonlySet<string>,
   existing: string | undefined,
 ): string {
+  const values: ReadonlyArray<readonly [key: string, label: string, value: string | null]> = [
+    ["citation key", "Citation Key", record.citationKey ?? null],
+    ["doi", "DOI", identifier(record, "doi")],
+    ["pmid", "PMID", identifier(record, "pmid")],
+    ["pmcid", "PMCID", identifier(record, "pmcid")],
+    ["arxiv", "arXiv", identifier(record, "arxiv")],
+  ];
+  const supplied = new Set(values.filter(([, , value]) => value).map(([key]) => key));
+  // A managed line Scient has no value for stays, so sending never deletes Zotero's identifier.
   const kept = (existing ?? "")
     .split(/\r?\n/u)
-    .filter((line) => line.trim() && !MANAGED_EXTRA.test(line));
-  const managed = [
-    ...(record.citationKey ? [`Citation Key: ${record.citationKey}`] : []),
-    ...(!fields.has("DOI") && identifier(record, "doi")
-      ? [`DOI: ${identifier(record, "doi")}`]
-      : []),
-    ...(identifier(record, "pmid") ? [`PMID: ${identifier(record, "pmid")}`] : []),
-    ...(identifier(record, "pmcid") ? [`PMCID: ${identifier(record, "pmcid")}`] : []),
-    ...(identifier(record, "arxiv") ? [`arXiv: ${identifier(record, "arxiv")}`] : []),
-  ];
+    .filter(
+      (line) => line.trim() && !supplied.has(MANAGED_EXTRA.exec(line)?.[1]?.toLowerCase() ?? ""),
+    );
+  const managed = values
+    .filter(([key, , value]) => value && !(key === "doi" && fields.has("DOI")))
+    .map(([, label, value]) => `${label}: ${value}`);
   return [...managed, ...kept].join("\n");
 }
-
 /**
  * The record as Zotero item fields, limited to `fields`. Empty values are left out, so
  * sending never clears something Zotero has.

@@ -184,6 +184,27 @@ describe("Zotero refresh", () => {
     expect((await readScientSourceRecord(root, record.sourceId))?.note).toBe("My own note");
   });
 
+  it("keeps a note cleared here when Zotero changes it", async () => {
+    const { root, library, zotero, record } = await importedFromZotero(original, [
+      zoteroItem("NOTE2345", { itemType: "note", note: "<p>First</p>" }),
+    ]);
+    await updateScientSourceNote({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      note: null,
+    });
+    library.items.set("ABCD2345", {
+      item: original,
+      children: [zoteroItem("NOTE2345", { itemType: "note", note: "<p>Second</p>" })],
+    });
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+
+    expect(result.items[0]?.conflicts.map((conflict) => conflict.field)).toEqual(["note"]);
+    expect((await readScientSourceRecord(root, record.sourceId))?.note ?? null).toBeNull();
+  });
+
   it("leaves a source alone when its item is gone from Zotero", async () => {
     const { root, library, zotero, record } = await importedFromZotero(original);
     library.items.delete("ABCD2345");

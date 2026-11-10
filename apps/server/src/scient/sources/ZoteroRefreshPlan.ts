@@ -160,7 +160,7 @@ export function planZoteroRefresh(input: {
   let storedBaseNote = zoteroNote;
   if (!same(localNote, zoteroNote) && zoteroNote !== null) {
     const zoteroChanged = baseNote === undefined || baseNote !== zoteroNote;
-    const noteEditedHere = localNote !== null && (baseNote === undefined || localNote !== baseNote);
+    const noteEditedHere = baseNote === undefined ? localNote !== null : localNote !== baseNote;
     if (useZotero.has("note") || (zoteroChanged && !noteEditedHere)) {
       note = { value: zoteroNote };
     } else if (zoteroChanged && !keepLocal.has("note")) {
