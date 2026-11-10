@@ -1,3 +1,4 @@
+// @effect-diagnostics globalDate:off -- Playwright calls these listeners outside any Effect.
 /**
  * What an agent studying a site needs from a tab's traffic: its recent requests, and for one of
  * them the headers and bodies, with cookies, authorization and token-looking values hidden. The

@@ -274,10 +274,11 @@ export const makeConnectorSessions = Effect.fn("ConnectorSessions.make")(functio
     prepare,
     signInAgain,
     remove: (connectorId) =>
-      Effect.promise(() => {
+      Effect.promise(async () => {
         written.delete(connectorId);
-        return;
-        NodeFSP.rm(folderOf(connectorId), { recursive: true, force: true }).catch(() => undefined);
+        await NodeFSP.rm(folderOf(connectorId), { recursive: true, force: true }).catch(
+          () => undefined,
+        );
       }),
   } satisfies ConnectorSessionsShape;
 });
