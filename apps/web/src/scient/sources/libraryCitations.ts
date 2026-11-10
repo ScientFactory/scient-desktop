@@ -94,3 +94,27 @@ export function citationGroupKeys(source: string): ReadonlyArray<string> {
     .map((match) => match[1] ?? "")
     .filter(Boolean);
 }
+
+/** Library sources for the LaTeX citation dialog, after the document's own .bib entries. */
+export function libraryLatexCitationChoices(
+  candidates: ReadonlyArray<LibraryCitationCandidate>,
+  bibliographyKeys: ReadonlySet<string>,
+): ReadonlyArray<{
+  readonly key: string;
+  readonly title: string;
+  readonly detail: string;
+  readonly command: "cite";
+}> {
+  return candidates.flatMap((candidate) =>
+    bibliographyKeys.has(candidate.citationKey)
+      ? []
+      : [
+          {
+            key: candidate.citationKey,
+            title: candidate.title ?? candidate.label,
+            detail: `${candidate.label} · Library`,
+            command: "cite" as const,
+          },
+        ],
+  );
+}
