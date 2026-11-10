@@ -254,9 +254,9 @@ jobs:
           release_notes_base64="$(base64 < "$RUNNER_TEMP/scient-release-notes.md" | tr -d '\n')"
           echo "release_notes_base64=$release_notes_base64" >> "$GITHUB_OUTPUT"
 
-  # Scient cloud is intentionally disabled for the first migration release.
-  # Keep T3's proven relay/tracing handoff visible and structurally intact so
-  # enabling cloud later is a conscious gate change, not a reconstruction.
+  # Relay client tracing stays off while Scient's outbound telemetry is off.
+  # Keep T3's relay/tracing handoff structurally intact so turning tracing on
+  # later is a conscious gate change, not a reconstruction.
   relay_public_config:
     name: Preserve disabled cloud relay foundation
     needs: preflight
@@ -490,6 +490,17 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
           fetch-depth: 0
+      # SCIENT-FORK:START — Scient Connect's public ids come from .env.example.
+      - name: Load Scient Connect public config
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID RELAY_URL; do
+            value="$(sed -n "s|^T3CODE_${name}=||p" .env.example)"
+            [[ -n "$value" ]] || { echo "Missing T3CODE_${name} in .env.example" >&2; exit 1; }
+            echo "T3CODE_${name}=${value}" >> "$GITHUB_ENV"
+          done
+      # SCIENT-FORK:END
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
@@ -890,6 +901,17 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
+      # SCIENT-FORK:START — Scient Connect's public ids come from .env.example.
+      - name: Load Scient Connect public config
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID RELAY_URL; do
+            value="$(sed -n "s|^T3CODE_${name}=||p" .env.example)"
+            [[ -n "$value" ]] || { echo "Missing T3CODE_${name} in .env.example" >&2; exit 1; }
+            echo "T3CODE_${name}=${value}" >> "$GITHUB_ENV"
+          done
+      # SCIENT-FORK:END
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json

@@ -25,7 +25,9 @@ export const SCIENT_DESKTOP_IDENTITY = {
   clientSettingsStorageKey: "scient-next:client-settings:v1",
   safetyEnvelopeMarker: "true",
   safetyEnvelopeEnabled: true,
-  cloudEnabled: false,
+  cloudEnabled: true,
+  // The Scient phone app is not published yet; nothing offers it until it is.
+  mobileAppEnabled: false,
   autoUpdateEnabled: true,
   // SCIENT-FORK:START — Upstream T3 added two project-creation capabilities in
   // Scratch retains an owning project and a private plain folder; create-from-name stays disabled.

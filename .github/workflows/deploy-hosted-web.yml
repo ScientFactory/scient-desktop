@@ -1,0 +1,45 @@
+name: Deploy Scient hosted web
+
+# app.scientfactory.com serves the web client of the latest stable release, so the
+# hosted app matches the servers people run. Dispatch redeploys a chosen ref.
+on:
+  release:
+    types: [released]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to build and deploy.
+        type: string
+        default: main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-web-production
+  cancel-in-progress: false
+
+jobs:
+  deploy_hosted_web:
+    name: Deploy app.scientfactory.com
+    if: ${{ github.repository == 'ScientFactory/scient-desktop' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: scient-connect
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          run-install: |
+            args:
+              - --filter=@t3tools/web...
+      - name: Build and deploy
+        run: infra/scient-web/build.sh --deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
