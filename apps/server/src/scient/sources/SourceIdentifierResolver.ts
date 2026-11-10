@@ -70,6 +70,9 @@ const CslMetadata = Schema.Struct({
   page: Schema.optionalKey(CslText),
   language: Schema.optionalKey(Schema.String),
   URL: Schema.optionalKey(Schema.String),
+  // Read leniently: an unexpected shape here must not turn a found DOI into "unavailable".
+  "updated-by": Schema.optionalKey(Schema.Unknown),
+  relation: Schema.optionalKey(Schema.Unknown),
 });
 export type CslMetadata = typeof CslMetadata.Type;
 
@@ -204,6 +207,21 @@ function mergeIdentifiers(
   });
 }
 
+/** A notice the registry links to the work, such as a retraction or correction (Crossref `updated-by`). */
+export interface RegistryUpdateNotice {
+  readonly type: string;
+  readonly doi: string | null;
+  readonly date: string | null;
+  readonly source: string | null;
+}
+
+/** A typed link to another work (Crossref `relation`), such as `is-preprint-of`. */
+export interface RegistryRelation {
+  readonly type: string;
+  readonly idType: string | null;
+  readonly id: string;
+}
+
 /** Registry metadata in candidate field shapes; null or empty means the registry omitted it. */
 export interface ResolvedSourceMetadata {
   readonly type: ScientSourceType | null;
@@ -221,6 +239,49 @@ export interface ResolvedSourceMetadata {
   readonly pages: string | null;
   readonly language: string | null;
   readonly url: string | null;
+  readonly updates?: ReadonlyArray<RegistryUpdateNotice>;
+  readonly relations?: ReadonlyArray<RegistryRelation>;
+}
+
+const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+function cslUpdates(value: unknown): ReadonlyArray<RegistryUpdateNotice> {
+  return (Array.isArray(value) ? value : []).flatMap(
+    (entry): ReadonlyArray<RegistryUpdateNotice> => {
+      if (!isRecord(entry)) return [];
+      const type = text(entry.type)?.toLowerCase();
+      if (!type) return [];
+      const updated = isRecord(entry.updated) ? entry.updated : null;
+      const dateTime = text(updated?.["date-time"]);
+      return [
+        {
+          type,
+          doi: text(entry.DOI),
+          date: dateTime ? dateTime.slice(0, 10) : null,
+          source: text(entry.source),
+        },
+      ];
+    },
+  );
+}
+
+function cslRelations(value: unknown): ReadonlyArray<RegistryRelation> {
+  if (!isRecord(value)) return [];
+  return Object.entries(value).flatMap(([type, items]) =>
+    (Array.isArray(items) ? items : [items]).flatMap((item): ReadonlyArray<RegistryRelation> => {
+      if (!isRecord(item)) return [];
+      const id = text(item.id);
+      return id ? [{ type, idType: text(item["id-type"])?.toLowerCase() ?? null, id }] : [];
+    }),
+  );
+}
+
+function nonEmpty<K extends string, A>(
+  key: K,
+  values: ReadonlyArray<A>,
+): { readonly [P in K]?: ReadonlyArray<A> } {
+  return (values.length > 0 ? { [key]: values } : {}) as { readonly [P in K]?: ReadonlyArray<A> };
 }
 
 function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata {
@@ -253,6 +314,8 @@ function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata 
     pages: text(csl.page),
     language: text(csl.language),
     url: text(csl.URL) ?? `https://doi.org/${resolvedDoi}`,
+    ...nonEmpty("updates", cslUpdates(csl["updated-by"])),
+    ...nonEmpty("relations", cslRelations(csl.relation)),
   };
 }
 
