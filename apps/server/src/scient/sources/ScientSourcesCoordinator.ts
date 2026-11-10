@@ -69,6 +69,7 @@ import {
   listZoteroScopeItemKeys,
 } from "./ZoteroLocalAdapter.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
+import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
 
@@ -122,6 +123,7 @@ function normalizeSourceRecordForRead(record: ScientSourceRecord): ScientSourceR
 
 export async function getScientSourcesOverview(root: string) {
   const overview = await inspectScientSources(root);
+  void scheduleSourceFullTextIndexing(root);
   return {
     ...overview,
     records: overview.records.map(scientSourceSummaryFromRecord),
