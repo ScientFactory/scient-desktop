@@ -26,6 +26,8 @@ export const SCIENT_DESKTOP_IDENTITY = {
   safetyEnvelopeMarker: "true",
   safetyEnvelopeEnabled: true,
   cloudEnabled: true,
+  // Scient Cloud API (conversation copies, share links); SCIENT_CLOUD_URL overrides it for local runs.
+  cloudApiUrl: "https://cloud.scientfactory.com",
   // The Scient phone app is not published yet; nothing offers it until it is.
   mobileAppEnabled: false as boolean,
   autoUpdateEnabled: true,

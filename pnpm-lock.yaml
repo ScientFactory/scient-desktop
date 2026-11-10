@@ -904,6 +904,9 @@ importers:
       '@scientfactory/provider-runtime':
         specifier: workspace:*
         version: link:../../packages/scient-provider-runtime
+      '@scientfactory/scient-cloud':
+        specifier: workspace:*
+        version: link:../../packages/scient-cloud
       '@scientfactory/scient-markdown':
         specifier: workspace:*
         version: link:../../packages/scient-markdown
