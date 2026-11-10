@@ -187,12 +187,19 @@ const messageOf = (line: string): JsonMessage | undefined => {
   return Exit.isSuccess(parsed) && isMessage(parsed.value) ? parsed.value : undefined;
 };
 
-const lastLine = (text: string) =>
-  text
+/** Lines that never say why: Node's version banner, stack frames and closing braces. */
+const NOISE = /^(Node\.js v\d|at |\}|\]|\^+$|code: |requireStack: )/u;
+
+/** The line that best says why a program stopped: the last naming an error, else the last. */
+const lastLine = (text: string) => {
+  const lines = text
     .split(/\r?\n/)
     .map((line) => line.trim())
-    .findLast((line) => line.length > 0)
-    ?.slice(0, 300);
+    .filter((line) => line.length > 0 && !NOISE.test(line));
+  return (
+    lines.findLast((line) => /\b(?:[A-Z]\w*)?Error\b|\berror\b/u.test(line)) ?? lines.at(-1)
+  )?.slice(0, 300);
+};
 
 const hidden = (text: string, hide: ReadonlyArray<string>) =>
   hide.reduce((current, secret) => current.replaceAll(secret, "[hidden]"), text);

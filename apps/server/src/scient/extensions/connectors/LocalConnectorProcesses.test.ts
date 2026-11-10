@@ -179,3 +179,48 @@ describe("signed-in local connectors", () => {
     }).pipe(Effect.provide(layer)),
   );
 });
+
+describe("why a local connector stopped", () => {
+  it.live("names the error, not Node's version banner after it", () =>
+    Effect.gen(function* () {
+      const root = yield* scratch;
+      const events: LocalConnectorEvent[] = [];
+      const host = yield* makeLocalConnectorHost({
+        onEvent: (event) => Effect.sync(() => void events.push(event)),
+      });
+      const start = Effect.succeed({
+        launch: {
+          executable: process.execPath,
+          args: [NodePath.join(root, "missing.mjs")],
+          shell: false,
+          cwd: root,
+          environment: {},
+        },
+        hide: [],
+      });
+      const response = yield* host.exchange(
+        { connectorId: "con_broken", displayName: "Broken" },
+        {
+          method: "POST",
+          sessionId: undefined,
+          body: encode({
+            jsonrpc: "2.0",
+            id: 1,
+            method: "initialize",
+            params: { protocolVersion: "2025-11-25", capabilities: {}, clientInfo: { name: "t" } },
+          }),
+          signal: new AbortController().signal,
+        },
+        start,
+      );
+      const [answer] = yield* readEvents(response);
+      const message = (answer as { error?: { message: string } } | undefined)?.error?.message;
+      const failed = events.find((event) => event.type === "failed");
+      expect(failed).toMatchObject({ type: "failed" });
+      expect((failed as { message: string }).message).toMatch(
+        /^Broken could not start: Error: Cannot find module/u,
+      );
+      expect(message ?? (failed as { message: string }).message).not.toContain("Node.js v");
+    }).pipe(Effect.provide(layer)),
+  );
+});
