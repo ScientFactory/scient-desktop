@@ -2,13 +2,17 @@ import { describe, expect, it } from "@effect/vitest";
 import { ZoteroLibraryPage } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 
+import { zoteroItem } from "./Zotero.testkit.ts";
+import { betterBibTexCitationKeys } from "./ZoteroLocalAdapter.ts";
 import {
   zoteroDescendantCollectionKeys,
+  zoteroItemMaterial,
   zoteroItemToCandidate,
   zoteroItemWithChildrenToCandidate,
-} from "./ZoteroLocalAdapter.ts";
+  zoteroNoteToText,
+} from "./ZoteroItems.ts";
 
-describe("Zotero local adapter", () => {
+describe("Zotero items", () => {
   it("includes nested collection descendants exactly once", () => {
     expect(
       new Set(
@@ -171,5 +175,82 @@ describe("Zotero local adapter", () => {
         }),
       ),
     ).toThrow();
+  });
+
+  it("reads identifiers and the citation key that Zotero keeps in Extra", () => {
+    const material = zoteroItemMaterial(
+      zoteroItem("ABCD2345", {
+        extra: "PMID: 31234567\nCitation Key: lovelace2026study\narXiv: 2601.00001",
+      }),
+      [],
+    );
+
+    expect(material.candidate.identifiers).toEqual([
+      { scheme: "pmid", value: "31234567" },
+      { scheme: "arxiv", value: "2601.00001" },
+    ]);
+    expect(material.candidate.fieldProvenance).toEqual(
+      expect.arrayContaining([
+        { field: "identifiers.pmid", origin: "zotero", sourceField: "extra" },
+      ]),
+    );
+    expect(material.citationKey).toBe("lovelace2026study");
+  });
+
+  it("prefers Zotero's own citation key field over Extra", () => {
+    const material = zoteroItemMaterial(
+      zoteroItem("ABCD2345", { citationKey: "native2026", extra: "Citation Key: pinned2026" }),
+      [],
+    );
+
+    expect(material.citationKey).toBe("native2026");
+  });
+
+  it("maps type-specific container and publisher fields", () => {
+    expect(
+      zoteroItemToCandidate(
+        zoteroItem("ABCD2345", { itemType: "thesis", university: "University of Haifa" }),
+      ).publisher,
+    ).toBe("University of Haifa");
+    expect(
+      zoteroItemToCandidate(zoteroItem("ABCD2345", { itemType: "webpage", websiteTitle: "Nature" }))
+        .containerTitle,
+    ).toBe("Nature");
+  });
+
+  it("joins child notes as text and skips linked URLs as PDFs", () => {
+    const material = zoteroItemMaterial(zoteroItem("ABCD2345"), [
+      zoteroItem("NOTE3456", { itemType: "note", note: "<p>Second <em>note</em></p>" }),
+      zoteroItem("NOTE2345", { itemType: "note", note: "<p>First &amp; <strong>key</strong></p>" }),
+      zoteroItem("LINK2345", {
+        itemType: "attachment",
+        contentType: "application/pdf",
+        linkMode: "linked_url",
+      }),
+    ]);
+
+    expect(material.note).toBe("First & **key**\n\n---\n\nSecond *note*");
+    expect(material.pdfs).toEqual([]);
+  });
+
+  it("turns note HTML lists and breaks into readable lines", () => {
+    expect(zoteroNoteToText("<h1>Aims</h1><ul><li>one</li><li>two</li></ul>a<br>b")).toBe(
+      "Aims\n\n- one\n\n- two\n\na\nb",
+    );
+  });
+});
+
+describe("Better BibTeX keys", () => {
+  it("reads keys by item key, with or without a library prefix", () => {
+    expect(
+      betterBibTexCitationKeys(
+        JSON.stringify({ result: { ABCD2345: "ada2026", "1:EFGH2345": "lovelace1843", X: "" } }),
+      ),
+    ).toEqual(
+      new Map([
+        ["ABCD2345", "ada2026"],
+        ["EFGH2345", "lovelace1843"],
+      ]),
+    );
   });
 });

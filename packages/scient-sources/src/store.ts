@@ -1226,7 +1226,7 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
 export async function createSourceImportOperation(input: {
   readonly root: string;
   readonly operationId: string;
-  readonly adapter: "zotero" | "local-files";
+  readonly adapter: "zotero" | "zotero-web" | "local-files";
   readonly actor?: "user" | "agent";
   readonly intake?: "zotero" | "local-pdf" | "identifier";
   readonly itemKeys: ReadonlyArray<string>;
@@ -2059,6 +2059,7 @@ async function importScientSourceWithRecordLookup(
       language: input.candidate.language,
       url: input.candidate.url,
       tags: input.candidate.tags,
+      ...(input.candidate.note ? { note: normalizeScientSourceNote(input.candidate.note) } : {}),
       externalReferences: input.candidate.externalReferences,
       attachments: attachment ? [attachment] : [],
       fieldProvenance: input.candidate.fieldProvenance,
