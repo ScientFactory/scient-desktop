@@ -149,7 +149,7 @@ describe("ShareBuilder", () => {
               text: `Run with ${SAVED} as ${EMAIL} in ${HOME}/lab, token ${TOKEN}`,
               references: [],
               attachments: [
-                attachment("a-contacts", "file", "contacts.csv", "text/csv", 40),
+                attachment("a-contacts", "file", "contacts.csv", `text/csv; owner=${EMAIL}`, 40),
                 attachment("a-keys", "file", `keys-${EMAIL}.txt`, "text/plain", 40),
                 attachment("a-plot", "image", `plot-${SAVED}.png`, "image/png", 4),
               ],

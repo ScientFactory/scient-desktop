@@ -187,8 +187,11 @@ export const make = Effect.gen(function* () {
       const bytes = yield* source.readFile(path, maxBlobBytes);
       if (bytes === null) continue;
       const sha256 = sha256Hex(bytes);
-      if (!(yield* api.hasBlob(userId, sha256, threadId)))
+      if (!(yield* api.hasBlob(userId, sha256, threadId))) {
+        // Turning Cloud copy off while the check ran stops the file before it leaves.
+        if (!(yield* stillActive(userId))) return null;
         yield* api.putBlob(userId, sha256, bytes, threadId);
+      }
       attachments.push({ localId, sha256, bytes: bytes.byteLength });
     }
     return attachments;

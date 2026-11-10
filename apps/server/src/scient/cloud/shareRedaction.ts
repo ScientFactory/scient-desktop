@@ -246,7 +246,7 @@ function dedupeLocations(locations: ReadonlyArray<RedactionLocation>): Redaction
 }
 
 const SKIPPED_KEY =
-  /(?:^id$|Id$|At$|^n$|^_tag$|^format$|^version$|^contentDigest$|^kind$|^role$|^mimeType$|^status$|^level$|^itemType$|^provider$|^model$|^sizeBytes$)/u;
+  /(?:^id$|Id$|At$|^n$|^_tag$|^format$|^version$|^contentDigest$|^kind$|^role$|^status$|^level$|^itemType$|^provider$|^model$|^sizeBytes$)/u;
 
 const FIELD_OF: Record<string, ScientCloudRedactionField> = {
   thread: "title",

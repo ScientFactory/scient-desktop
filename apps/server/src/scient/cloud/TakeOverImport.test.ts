@@ -35,7 +35,9 @@ const dependencies = Layer.mergeAll(
     ...unused<ProjectionStoreV2["Service"]>(),
     getThreadShell: (threadId: ThreadId) =>
       Effect.succeed(
-        threadId === IMPORTED ? ({ id: IMPORTED, projectId: PROJECT } as never) : null,
+        threadId === IMPORTED
+          ? ({ id: IMPORTED, projectId: PROJECT, archivedAt: null } as never)
+          : null,
       ),
   }),
   Layer.succeed(ProjectStoreV2, unused()),

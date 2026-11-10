@@ -171,7 +171,7 @@ const make = Effect.gen(function* () {
     );
   });
 
-  /** A retry or second click returns the conversation already continued here, while it exists. */
+  /** A retry or second click returns the conversation already continued here, while it is active. */
   const previousImport = Effect.fn("TakeOverImport.previousImport")(function* (
     request: ScientCloudTakeOverRequest,
   ) {
@@ -182,7 +182,8 @@ const make = Effect.gen(function* () {
       const shell = yield* projections
         .getThreadShell(threadId as ThreadId)
         .pipe(Effect.orElseSucceed(() => null));
-      if (shell !== null) {
+      // An archived continuation no longer counts; a new take-over imports again.
+      if (shell !== null && shell.archivedAt === null) {
         return { _tag: "imported", threadId: shell.id, projectId: shell.projectId } as const;
       }
     }
