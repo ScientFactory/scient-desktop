@@ -528,7 +528,10 @@ Project files are published with `publishScientProjectFile`
 without replacing one created meanwhile, and an existing file is moved aside
 and checked against what the sync read; a save that landed in between goes back
 in place (or is kept beside the file as `<name>.kept-<id>`) and the file reports
-as `edited`. The copies folder is reached only through real folders
+as `edited`. If writing fails after the move, the moved-aside text goes back in
+place, or stays as `<name>.kept-<id>` and the error
+(`ScientProjectFilePublicationError.recoveryPath`) names it; it is deleted only
+once another copy is in place. The copies folder is reached only through real folders
 (`assertScientProjectDirectory`); a link anywhere on that path makes both files
 `unmanaged`.
 
@@ -598,10 +601,9 @@ over and is reported, not hidden, in listings. Writes are serialized per PDF
 inside the server process, like the Sources store.
 
 The reader paints annotations per rendered page with the CSS Custom Highlight
-API. Stored offsets are kept when they still select the stored quote with its
-stored context;
-otherwise the quote is searched on its page with its context, then alone, and
-shown only when it occurs once. A create names the PDF path and is refused
+API. The quote is searched on its page with its stored context, then alone, and
+shown only when it occurs once; stored offsets alone never decide between
+repeats. A create names the PDF path and is refused
 (`material-changed`) when the file's bytes are no longer the ones the reader
 loaded. An agent's quote is anchored server-side against the Sources full text
 when it is complete, otherwise against a fresh pdf.js extraction in the same
@@ -639,10 +641,11 @@ same two functions.
   carried on `ResolvedSourceMetadata`.
 - `referenceComparison.ts` holds the comparisons (different work, registry
   status, field differences). A single-source check before citing reuses them.
-- A finding's `fix` is self-contained: a `.bib` fix carries the field's current
-  text (and, when the key repeats in the file, which entry) and is refused as
-  stale when the file no longer has it; inserted fields keep the file's line
-  endings. A Library fix carries the expected revision and goes through
+- A finding's `fix` is self-contained: a `.bib` fix names its entry by key,
+  carries the field's current text and is refused as stale when the file no
+  longer has it; inserted fields keep the file's line endings. An entry whose
+  key repeats in the file gets no fix, and a fix for such a key is refused, since
+  no stable name tells the entries apart. A Library fix carries the expected revision and goes through
   `updateScientSource`, credited to the actor; fixes from one check to the same
   source are applied together as one revision. Fixes exist only for registry
   values; identifiers, retractions and published versions are left to the
