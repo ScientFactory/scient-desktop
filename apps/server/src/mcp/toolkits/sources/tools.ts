@@ -10,6 +10,7 @@ import {
   ScientSourceActor,
   ScientSourceAttachmentRetrieval,
   ScientSourceOrigin,
+  ScientSourceRevisionSummary,
   ScientSourceType,
   ScientSourceVerification,
 } from "@scientfactory/scient-sources";
@@ -66,6 +67,8 @@ export const ScientSourceAgentSummary = Schema.Struct({
   hasPdf: Schema.Boolean,
   addedBy: Schema.Literals(["user", "agent"]),
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  removedAt: Schema.optionalKey(NonEmptyString),
+  removedBy: Schema.optionalKey(ScientSourceActor),
 });
 
 export const ScientSourcesListResult = Schema.Struct({
@@ -105,13 +108,16 @@ export const ScientSourceAgentDetail = Schema.Struct({
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
   updatedBy: Schema.optionalKey(ScientSourceActor),
+  revisions: Schema.Array(ScientSourceRevisionSummary),
 });
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly.",
+    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly. " +
+    "inTrash lists removed sources instead, newest removal first; restore one with scient_sources_restore.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
+    inTrash: Schema.optionalKey(Schema.Boolean),
     offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
   }),
@@ -128,7 +134,7 @@ const ScientSourcesListTool = Tool.make("scient_sources_list", {
 
 const ScientSourceGetTool = Tool.make("scient_sources_get", {
   description:
-    "Read one of this project's Sources by source ID: its metadata, revision, provenance and attachments. An abstract over 50,000 characters is cut, and abstractTruncated says so.",
+    "Read one of this project's Sources by source ID: its metadata, revision, provenance, attachments and kept revisions (newest first, with who saved each and which fields it changed). An abstract over 50,000 characters is cut, and abstractTruncated says so.",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
   success: ScientSourceAgentDetail,
   failure: ScientSourcesToolError,
@@ -208,15 +214,20 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
 
 const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   description:
-    "Remove one Source from this project after the user explicitly asks. Read the source first and pass its current revision. If stale, read it again and redo the change on what you read.",
+    "Remove one Source from this project after the user explicitly asks. It moves to the project trash with its PDFs (restorable: scient_sources_restore). " +
+    "Read the source first and pass its current revision. If stale, read it again and redo the change on what you read. " +
+    "permanent deletes a source that is already in the trash, with its saved revisions and any PDF nothing else uses; only when the user asks for that, since it cannot be undone. " +
+    "Pass the revision shown by scient_sources_list with inTrash.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+    permanent: Schema.optionalKey(Schema.Boolean),
   }),
   success: Schema.Struct({
-    outcome: Schema.Literals(["removed", "not-found", "stale"]),
+    outcome: Schema.Literals(["removed", "not-found", "stale", "deleted"]),
     sourceId: NonEmptyString,
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+    restorable: Schema.optionalKey(Schema.Boolean),
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -227,6 +238,54 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.remove", true));
+
+const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
+  description:
+    "Put a removed Source back from the project trash, with its PDFs, as a new revision credited to you. " +
+    "exists means a source with this ID is already in the Library; duplicate means another source now has its identifier (see matchingSourceIds).",
+  parameters: Schema.Struct({ sourceId: NonEmptyString }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
+    sourceId: NonEmptyString,
+    revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+    matchingSourceIds: Schema.Array(NonEmptyString),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Restore a removed source")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.restore", true));
+
+const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
+  description:
+    "Make an earlier revision of a Source current again, as a new revision credited to you. Read the source first: pass its current revision as expectedRevision " +
+    "and a kept revision from its revisions list as toRevision. Metadata, note, tags, identifiers and attachments return to that revision; " +
+    "missingAttachmentCount counts PDFs whose files were deleted when the trash was emptied. If stale, read it again.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+    toRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["reverted", "unchanged", "stale", "not-found", "duplicate"]),
+    sourceId: NonEmptyString,
+    revision: Schema.Int.check(Schema.isGreaterThan(0)),
+    missingAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    matchingSourceIds: Schema.Array(NonEmptyString),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Revert a source to an earlier revision")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.revert", true));
 
 export const ScientSourceAddInput = Schema.Struct({
   type: Schema.optionalKey(ScientSourceType),
@@ -346,7 +405,8 @@ const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
 const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   description:
     "Remove one PDF attachment from a Source, keeping its metadata, after the user explicitly asks. " +
-    "Read the source first and pass its current revision. If stale, read it again and redo the change on what you read.",
+    "Read the source first and pass its current revision. If stale, read it again and redo the change on what you read. " +
+    "The file stays in the project until the trash is emptied, so scient_sources_revert can bring it back.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     attachmentId: NonEmptyString,
@@ -357,8 +417,6 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
     sourceId: NonEmptyString,
     attachmentId: NonEmptyString,
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
-    removedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-    retainedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -519,6 +577,8 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceNoteUpdateTool,
   ScientSourceMetadataUpdateTool,
   ScientSourceRemoveTool,
+  ScientSourceRestoreTool,
+  ScientSourceRevertTool,
   ScientSourceAddTool,
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,
