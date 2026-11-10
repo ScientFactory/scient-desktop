@@ -107,3 +107,82 @@ it.effect("follows a key rotated in Accounts after the layer is built", () =>
     ]);
   }).pipe(Effect.scoped),
 );
+
+const keep = (accounts: ReadonlyArray<unknown>, values: Readonly<Record<string, string>>) => {
+  const links: Array<unknown> = [];
+  const settings = {
+    subscribeChanges: Effect.succeed(Stream.empty),
+    getSettings: Effect.succeed({
+      providerInstances: {
+        [instanceId]: {
+          driver: "codex",
+          environment: [{ name: "OPENAI_API_KEY", value: "typed-key", sensitive: true }],
+        },
+      },
+    }),
+    updateProviderInstance: () => Effect.die("the variable already holds the key"),
+  } as unknown as ServerSettingsService["Service"];
+  const fake = fakeAccounts({ accounts: accounts as never, values });
+  const service = {
+    ...fake.service,
+    setKeyLink: (target: unknown, id: unknown) => Effect.sync(() => void links.push([target, id])),
+  } as typeof fake.service;
+  return Effect.scoped(
+    makeAccountKeyLinks(service).pipe(
+      Effect.flatMap((linkKey) => linkKey({ instanceId, variable: "OPENAI_API_KEY" })),
+      Effect.as({ saves: fake.saves, links }),
+      Effect.provideService(ServerSettingsService, settings),
+    ),
+  );
+};
+
+it.effect("keeps a variable's own key in Accounts and links the variable to it", () =>
+  Effect.gen(function* () {
+    const { saves, links } = yield* keep([], { token: "typed-key" });
+    expect(saves).toEqual([
+      {
+        name: "Codex · OPENAI_API_KEY",
+        details: {
+          kind: "api-key",
+          sites: [],
+          auth: { type: "bearer" },
+          envName: "OPENAI_API_KEY",
+        },
+        secrets: { token: { type: "scient", value: "typed-key" } },
+      },
+    ]);
+    expect(links).toEqual([
+      [{ instanceId, variable: "OPENAI_API_KEY", accountId: "acc_saved_0001" }, "acc_saved_0001"],
+    ]);
+  }),
+);
+
+it.effect("links to an account already holding the same key instead of keeping it twice", () =>
+  Effect.gen(function* () {
+    // Saved under another variable name, or none: still the same key.
+    const existing = {
+      accountId,
+      details: { kind: "api-key", envName: "OPENAI_KEY" },
+      secrets: { token: { source: { type: "scient" } } },
+    };
+    const { saves, links } = yield* keep([existing], { token: "typed-key" });
+    expect(saves).toEqual([]);
+    expect(links).toEqual([[{ instanceId, variable: "OPENAI_API_KEY", accountId }, accountId]]);
+  }),
+);
+
+it.effect("never opens a key kept in another store just to compare it", () =>
+  Effect.gen(function* () {
+    // Its 1Password reference may be disconnected; comparing must not need it.
+    const external = {
+      accountId,
+      details: { kind: "api-key", envName: "GITHUB_TOKEN" },
+      secrets: { token: { source: { type: "1password", reference: "op://v/i/f" } } },
+    };
+    const { saves, links } = yield* keep([external], { token: "typed-key" });
+    expect(saves).toHaveLength(1);
+    expect(links).toEqual([
+      [{ instanceId, variable: "OPENAI_API_KEY", accountId: "acc_saved_0001" }, "acc_saved_0001"],
+    ]);
+  }),
+);

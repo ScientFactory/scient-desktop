@@ -840,7 +840,10 @@ describe("listSourceProfiles Firefox fallback", () => {
 });
 
 describe("isSourceRunning for Firefox", () => {
-  it.effect.skipIf(!symlinksSupported)("finds the lock inside the profile, not at the root", () =>
+  // SCIENT-FORK:START — the faked macOS host probes the lock with fcntl, which Windows lacks.
+  const posixHost = symlinksSupported && HostProcess.Platform.defaultValue() !== "win32";
+  it.effect.skipIf(!posixHost)("finds the lock inside the profile, not at the root", () =>
+    // SCIENT-FORK:END
     run(
       Effect.gen(function* () {
         const fileSystem = yield* FileSystem.FileSystem;

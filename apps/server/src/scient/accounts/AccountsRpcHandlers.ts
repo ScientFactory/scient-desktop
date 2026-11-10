@@ -2,7 +2,7 @@ import {
   AccountsError,
   WS_METHODS,
   WsAccountsRpcGroup,
-  type AccountKeyLink,
+  type AccountLinkKeyInput,
   type AccountRestoreKeptKeysInput,
   type AccountPaperForSourceInput,
   type AccountPaperForSourceResult,
@@ -94,7 +94,7 @@ export const makeAccountsRpcHandlers = ({
   readonly check: (
     input: AccountsCheckInput,
   ) => Effect.Effect<{ checked: number; alreadyRunning?: boolean }, AccountsError>;
-  readonly linkKey: (link: AccountKeyLink) => Effect.Effect<void, AccountsError>;
+  readonly linkKey: (input: AccountLinkKeyInput) => Effect.Effect<void, AccountsError>;
   readonly restoreKeptKeys: (
     input: AccountRestoreKeptKeysInput,
   ) => Effect.Effect<void, AccountsError>;

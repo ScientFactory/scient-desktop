@@ -863,6 +863,13 @@ export const AccountKeyLink = Schema.Struct({
 });
 export type AccountKeyLink = typeof AccountKeyLink.Type;
 
+/** Without an account, Scient keeps the variable's own key as an API key and links it to that. */
+export const AccountLinkKeyInput = Schema.Struct({
+  ...AccountKeyLink.fields,
+  accountId: Schema.optional(AccountId),
+});
+export type AccountLinkKeyInput = typeof AccountLinkKeyInput.Type;
+
 /** Kept keys (`keptFrom`) to put back into a newly added agent of the same kind. */
 export const AccountRestoreKeptKeysInput = Schema.Struct({
   instanceId: TrimmedNonEmptyString,
