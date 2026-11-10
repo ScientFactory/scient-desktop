@@ -735,7 +735,7 @@ const saveScientSourcePageForInvocation = Effect.fn("ScientSourcesToolkit.savePa
     readonly meta?: ReadonlyArray<{ readonly name: string; readonly content: string }>;
   }) {
     const { root } = yield* resolveScientSourcesProject();
-    const resolveIdentifier = yield* SourceIdentifierLookup;
+    const resolveIdentifier = yield* keyedIdentifierLookup();
     const observeImport = yield* makeSourceImportAnalytics("agent");
     const result = yield* attempt(() =>
       saveWebPageSource(
