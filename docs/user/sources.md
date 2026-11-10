@@ -203,6 +203,30 @@ source stays available to restore until the trash is emptied.
 If a source's file in the project cannot be read, the Library still lists the
 others and says which file it skipped.
 
+## Highlight and annotate PDFs
+
+Select text in any PDF in your project, including a source's PDF, and choose
+**Highlight** or **Note** in the bar that appears. Highlights stay on the page
+the next time you open the PDF; a passage with a note is underlined. Click a
+highlight to add or change its note, **Remove** it (choose **Undo** in the
+message to bring it back), or **Quote in my document**.
+
+**Quote in my document** puts the passage into the Markdown or LaTeX document
+in this project that you used last, as a quotation followed by its citation:
+`[@key, p. 4]` in Markdown, `\cite[p.~4]{key}` in LaTeX. The key is the
+source's citation key, so the quote is cited from your Library. A PDF that is
+not a source is named by file and page instead. If no document is open, the
+quote is copied as Markdown so you can paste it.
+
+A source's details list the highlights and notes on its PDFs in reading order.
+Choose a passage to open the PDF at it. Passages an agent added say so.
+
+Highlights belong to the PDF's content, not its file name: the same PDF moved
+or copied elsewhere in the project keeps them. If a PDF is replaced by a
+different version, Scient shows each highlight only where its text can still be
+found on its page. Highlights are stored in the project, in
+`.scient/annotations/`, so they travel with it.
+
 ## Search the full text
 
 Scient reads the text of every page of every PDF in the Library and keeps it
@@ -389,6 +413,12 @@ back to a free accepted manuscript or preprint; the source's details then say
 how it arrived: a free copy, the publisher, your university sign-in, or your
 library's link.
 
+Agents can read your highlights and notes, and highlight or note a passage by
+quoting it when you ask; Scient finds the words in the PDF's text even when
+spacing or line breaks differ, and tells the agent when they appear more than
+once. An agent can also change, remove or restore a highlight. Its highlights
+appear in the open PDF when you come back to the window.
+
 Agents also search and read the PDFs' text, and check quotes against it before
 they give them to you: `scient_sources_search` finds passages,
 `scient_sources_read_text` reads a paper page by page, and
@@ -408,6 +438,8 @@ them to send.
 
 Sources supports Zotero (on this computer or on zotero.org), direct PDF import
 and reference files (BibTeX, RIS, CSL-JSON, EndNote XML). It does not yet
-provide in-text citation insertion, multi-source bibliography generation, PDF
-annotation, or evidence grading. Zotero group libraries and automatic two-way
-sync are not supported; Send to Zotero does not upload PDFs.
+provide in-text citation insertion, multi-source bibliography generation, or
+evidence grading. Zotero group libraries and automatic two-way sync are not
+supported; Send to Zotero does not upload PDFs. Highlights need selectable
+text: a scanned PDF without a text layer, chat attachments and generated PDFs
+cannot be highlighted yet.
