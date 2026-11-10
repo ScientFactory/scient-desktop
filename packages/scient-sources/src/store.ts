@@ -1580,6 +1580,7 @@ async function importScientSourceWithRecordLookup(
       language: input.candidate.language,
       url: input.candidate.url,
       tags: input.candidate.tags,
+      ...(input.candidate.note?.trim() ? { note: input.candidate.note.trim() } : {}),
       externalReferences: input.candidate.externalReferences,
       attachments: attachment ? [attachment] : [],
       fieldProvenance: input.candidate.fieldProvenance,

@@ -67,7 +67,7 @@ export type ScientSourceExternalReference = typeof ScientSourceExternalReference
 
 export const ScientSourceOrigin = Schema.Struct({
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "file"]),
   operationId: NonEmptyString,
   // Older records may still say "pending"; nothing gates on it any more.
   review: Schema.Literals(["none", "pending"]),
@@ -97,6 +97,7 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "europe-pmc",
     "derived",
     "user",
+    "file",
   ]),
   sourceField: NullableText,
   sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),
@@ -257,6 +258,7 @@ export const ScientSourceCandidate = Schema.Struct({
   pdfAvailable: Schema.Boolean,
   pdfFileName: NullableText,
   pdfAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  note: Schema.optionalKey(ScientSourceNote),
 });
 export type ScientSourceCandidate = typeof ScientSourceCandidate.Type;
 
@@ -348,9 +350,9 @@ export const ScientSourceImportOperation = Schema.Struct({
   formatVersion: Schema.Literal(1),
   operationId: NonEmptyString,
   projectId: NonEmptyString,
-  adapter: Schema.Literals(["zotero", "local-files", "agent"]),
+  adapter: Schema.Literals(["zotero", "local-files", "agent", "file"]),
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "file"]),
   state: Schema.Literals(["running", "cancelled", "completed"]),
   createdAt: NonEmptyString,
   updatedAt: NonEmptyString,

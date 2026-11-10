@@ -1,0 +1,35 @@
+[
+  {
+    "id": "http://zotero.org/users/123/items/ABCD1234",
+    "type": "article-journal",
+    "title": "Coral reef resilience",
+    "container-title": "Marine Examples",
+    "page": "10–19",
+    "volume": "3",
+    "issue": "2",
+    "source": "Example Library",
+    "abstract": "Reefs recover.",
+    "DOI": "10.1000/marine.3.2",
+    "ISSN": "1111-2222",
+    "language": "en",
+    "author": [
+      { "family": "Silva", "given": "Ana" },
+      { "family": "Beethoven", "given": "Ludwig", "non-dropping-particle": "van" },
+      { "literal": "Reef Study Group" }
+    ],
+    "issued": { "date-parts": [["2018", 7, 1]] },
+    "accessed": { "date-parts": [[2023, 1, 1]] },
+    "note": "Citation Key: silva2018coral\nTwo reefs studied"
+  },
+  {
+    "id": "patel2022",
+    "type": "article",
+    "title": "A preprint about proteins",
+    "number": "arXiv:2201.00001",
+    "publisher": "arXiv",
+    "author": [{ "family": "Patel", "given": "Ravi" }],
+    "issued": { "raw": "2022" },
+    "keyword": "proteins, folding"
+  },
+  "not an item"
+]
