@@ -3,6 +3,7 @@
 import * as NodeTimersPromises from "node:timers/promises";
 
 import {
+  editorialNoticeKind,
   isbn13,
   isValidIsbn,
   isWellFormedArxivId,
@@ -15,6 +16,7 @@ import {
   type ScientSourceAbstractSection,
   type ScientSourceCandidate,
   type ScientSourceCreator,
+  type ScientSourceEditorialNotice,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
   type ScientSourceType,
@@ -61,6 +63,9 @@ const CslMetadata = Schema.Struct({
   page: Schema.optionalKey(CslText),
   language: Schema.optionalKey(Schema.String),
   URL: Schema.optionalKey(Schema.String),
+  // Crossref adds the notices that update a work, including Retraction Watch's. Read leniently:
+  // an odd entry must not lose the work's metadata.
+  "updated-by": Schema.optionalKey(Schema.Unknown),
 });
 export type CslMetadata = typeof CslMetadata.Type;
 
@@ -80,6 +85,7 @@ const PubmedSummary = Schema.Struct({
   pages: Schema.optionalKey(Schema.String),
   lang: Schema.optionalKey(Schema.Array(Schema.String)),
   articleids: Schema.optionalKey(Schema.Array(PubmedArticleId)),
+  pubtype: Schema.optionalKey(Schema.Unknown),
   error: Schema.optionalKey(Schema.Unknown),
 });
 export type PubmedSummary = typeof PubmedSummary.Type;
@@ -212,6 +218,42 @@ export interface ResolvedSourceMetadata {
   readonly pages: string | null;
   readonly language: string | null;
   readonly url: string | null;
+  /** Retractions and corrections the registry reported; absent when it keeps no such data. */
+  readonly editorialNotices?: ReadonlyArray<ScientSourceEditorialNotice>;
+}
+
+function noticeDate(value: unknown): string | null {
+  if (!Predicate.isObject(value)) return null;
+  const parts = Predicate.hasProperty(value, "date-parts") ? value["date-parts"] : null;
+  const first: unknown = Array.isArray(parts) ? parts[0] : null;
+  if (!Array.isArray(first) || typeof first[0] !== "number") return null;
+  return first
+    .slice(0, 3)
+    .filter((part): part is number => typeof part === "number")
+    .map((part, index) => String(part).padStart(index === 0 ? 4 : 2, "0"))
+    .join("-");
+}
+
+/** Crossref's `updated-by` entries that retract, withdraw, flag or correct the work. */
+function crossrefEditorialNotices(updatedBy: unknown): ReadonlyArray<ScientSourceEditorialNotice> {
+  if (!Array.isArray(updatedBy)) return [];
+  return updatedBy.flatMap((entry): ReadonlyArray<ScientSourceEditorialNotice> => {
+    if (!Predicate.isObject(entry)) return [];
+    const type = Predicate.hasProperty(entry, "type") ? entry.type : null;
+    const kind = Predicate.isString(type) ? editorialNoticeKind(type) : null;
+    if (!kind) return [];
+    const doi = Predicate.hasProperty(entry, "DOI") ? text(entry.DOI) : null;
+    const source = Predicate.hasProperty(entry, "source") ? text(entry.source) : null;
+    const date = Predicate.hasProperty(entry, "updated") ? noticeDate(entry.updated) : null;
+    return [
+      {
+        kind,
+        ...(doi ? { doi: doi.toLowerCase() } : {}),
+        ...(date ? { date } : {}),
+        ...(source ? { source } : {}),
+      },
+    ];
+  });
 }
 
 function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata {
@@ -244,6 +286,7 @@ function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata 
     pages: text(csl.page),
     language: text(csl.language),
     url: text(csl.URL) ?? `https://doi.org/${resolvedDoi}`,
+    editorialNotices: crossrefEditorialNotices(csl["updated-by"]),
   };
 }
 
@@ -283,6 +326,11 @@ function metadataFromPubmed(pmid: string, summary: PubmedSummary): ResolvedSourc
     pages: text(summary.pages),
     language: text(summary.lang?.[0]),
     url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`,
+    // PubMed marks the retracted article itself; its notices carry other publication types.
+    editorialNotices:
+      Array.isArray(summary.pubtype) && summary.pubtype.includes("Retracted Publication")
+        ? [{ kind: "retraction", source: "pubmed" }]
+        : [],
   };
 }
 

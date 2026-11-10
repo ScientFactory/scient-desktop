@@ -21,6 +21,7 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       "scient_sources_add",
       "scient_sources_attach_pdf",
       "scient_sources_bibliography",
+      "scient_sources_check",
       "scient_sources_detach_pdf",
       "scient_sources_get",
       "scient_sources_list",
@@ -52,6 +53,7 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
         "scient_sources_add",
         "scient_sources_attach_pdf",
         "scient_sources_bibliography",
+        "scient_sources_check",
         "scient_sources_detach_pdf",
         "scient_sources_note_update",
         "scient_sources_remove",
@@ -65,7 +67,7 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
         readOnlyHint: false,
         destructiveHint: ["scient_sources_detach_pdf", "scient_sources_remove"].includes(tool.name),
         idempotentHint: true,
-        openWorldHint: tool.name === "scient_sources_add",
+        openWorldHint: ["scient_sources_add", "scient_sources_check"].includes(tool.name),
       });
     }
   }).pipe(Effect.provide(TestLayer)),

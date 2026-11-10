@@ -54,6 +54,7 @@ import {
   type ScientSourceStoreIssue,
   type ScientSourceTrashListing,
   type ScientSourceVerification,
+  type ScientSourceEditorialStatus,
   ScientSourceTrashEntry,
 } from "./model.ts";
 
@@ -525,8 +526,12 @@ export async function updateScientSourceMetadata(input: {
     const identifiersChanged = changedEditableMetadataFields(currentMetadata, requested).includes(
       "identifiers",
     );
-    const { verification: _staleVerification, ...unverified } = applied;
-    // A verification vouches only for the identifiers it checked.
+    const {
+      verification: _staleVerification,
+      editorialStatus: _staleEditorialStatus,
+      ...unverified
+    } = applied;
+    // A verification or retraction check vouches only for the identifiers it checked.
     const updated = identifiersChanged ? unverified : applied;
     const next = input.fieldProvenance
       ? { ...updated, fieldProvenance: [...input.fieldProvenance] }
@@ -569,6 +574,55 @@ export async function assignMissingScientSourceCitationKeys(root: string): Promi
       });
     }
     return missing.length;
+  });
+}
+
+const withoutCheckTime = (value: {
+  readonly verification?: ScientSourceVerification;
+  readonly editorialStatus?: ScientSourceEditorialStatus;
+}) =>
+  JSON.stringify([
+    value.verification ? { ...value.verification, checkedAt: null } : null,
+    value.editorialStatus ? { ...value.editorialStatus, checkedAt: null } : null,
+  ]);
+
+/**
+ * Records a fresh registry check of the source's identifier. A check that finds what the record
+ * already says writes nothing, so repeated checks do not pile up revisions.
+ */
+export async function recordScientSourceCheck(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+  readonly verification: ScientSourceVerification;
+  readonly editorialStatus: ScientSourceEditorialStatus | null;
+  readonly actor?: ScientSourceActor;
+}): Promise<{
+  readonly outcome: "updated" | "unchanged" | "stale";
+  readonly record: ScientSourceRecord;
+}> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const current = await readSourceRecordFromPaths(paths, input.sourceId);
+    if (current.revision !== input.expectedRevision) return { outcome: "stale", record: current };
+    const { verification: _verification, editorialStatus: _editorial, ...rest } = current;
+    const checked = {
+      verification: input.verification,
+      ...(input.editorialStatus ? { editorialStatus: input.editorialStatus } : {}),
+    };
+    if (withoutCheckTime(current) === withoutCheckTime(checked)) {
+      return { outcome: "unchanged", record: current };
+    }
+    const next: ScientSourceRecord = {
+      ...rest,
+      ...checked,
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+      updatedBy: input.actor ?? "user",
+    };
+    await persistSourceRevision(paths, current, next);
+    return { outcome: "updated", record: next };
   });
 }
 
@@ -1981,6 +2035,7 @@ interface ImportScientSourceInput {
   readonly actor?: ScientSourceActor;
   readonly intake?: ScientSourceOrigin["intake"];
   readonly verification?: ScientSourceVerification;
+  readonly editorialStatus?: ScientSourceEditorialStatus;
   readonly pdfRetrieval?: ScientSourceAttachmentRetrieval;
 }
 
@@ -2074,6 +2129,7 @@ async function importScientSourceWithRecordLookup(
           }
         : {}),
       ...(input.verification ? { verification: input.verification } : {}),
+      ...(input.editorialStatus ? { editorialStatus: input.editorialStatus } : {}),
       importedAt,
     };
     const recordPath = sourceRecordPath(paths, sourceId);

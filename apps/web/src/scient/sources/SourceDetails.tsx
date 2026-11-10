@@ -48,6 +48,8 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { agentVerificationLabel } from "./sourceLabels";
 import { pdfVersionLabel } from "./sourcePdfVersion";
+import { SourceEditorialStatus } from "./SourceEditorialStatus";
+import { verificationProblemLabel } from "./sourceLifecycleLabels";
 import { SourceReference } from "./SourceReference";
 import { useSourceNoteControls } from "./SourceNote";
 import type { SourceAnchorPoint } from "./sourceAnchor";
@@ -144,7 +146,7 @@ function importedLabel(record: SourceRecord): string {
         ? "Imported from Zotero"
         : "Added to Scient";
   const editedLabel = record.updatedBy === "agent" ? " · Edited by agent" : "";
-  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${agentVerificationLabel(record)}${editedLabel}${pdfVersionLabel(record.attachments)}`;
+  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${agentVerificationLabel(record)}${verificationProblemLabel(record.verification)}${editedLabel}${pdfVersionLabel(record.attachments)}`;
 }
 
 function openExternal(url: string): void {
@@ -770,6 +772,7 @@ export function SourceDetails(props: {
               {record.title ?? "Untitled source"}
             </h2>
             <p className="text-sm text-muted-foreground">{creatorsLabel(record)}</p>
+            <SourceEditorialStatus status={record.editorialStatus} />
           </header>
 
           {props.diagnostics.length > 0 ? (

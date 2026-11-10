@@ -79,6 +79,7 @@ import {
   type ScientSourcesImportOutcome,
 } from "./importOutcome";
 import { SourceHistoryDialog } from "./SourceHistory";
+import { sourceTrustLabel } from "./sourceLifecycleLabels";
 import { SourceStoreNotice } from "./SourceStoreNotice";
 import { announceSourceMovedToTrash, SourceTrashButton } from "./SourceTrash";
 import { useScientSources } from "./useScientSources";
@@ -1352,6 +1353,7 @@ export function ScientSourcesPanel(props: {
                                 )}
                               </span>
                               {agentVerificationLabel(record)}
+                              {sourceTrustLabel(record)}
                             </span>
                           </span>
                         </button>

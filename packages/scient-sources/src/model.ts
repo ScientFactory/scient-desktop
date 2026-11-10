@@ -77,13 +77,36 @@ export type ScientSourceOrigin = typeof ScientSourceOrigin.Type;
 export const ScientSourceActor = Schema.Literals(["user", "agent"]);
 export type ScientSourceActor = typeof ScientSourceActor.Type;
 
-/** Whether an agent-added source's identifier was confirmed against its registry. */
+/** Whether a source's identifier was confirmed against its registry. */
 export const ScientSourceVerification = Schema.Struct({
   state: Schema.Literals(["verified", "unchecked", "unverified"]),
   identifier: Schema.optionalKey(ScientSourceIdentifier),
   checkedAt: Schema.optionalKey(NonEmptyString),
+  /** Why a checked identifier stays unverified: the registry has no such work, or another one. */
+  problem: Schema.optionalKey(Schema.Literals(["not-found", "mismatch"])),
 });
 export type ScientSourceVerification = typeof ScientSourceVerification.Type;
+
+export const ScientSourceEditorialNotice = Schema.Struct({
+  kind: Schema.Literals(["retraction", "withdrawal", "expression-of-concern", "correction"]),
+  /** The notice's own DOI, when the registry gives one. */
+  doi: Schema.optionalKey(NonEmptyString),
+  date: Schema.optionalKey(NonEmptyString),
+  /** Who reported it, as the registry names them, for example "retraction-watch" or "publisher". */
+  source: Schema.optionalKey(NonEmptyString),
+});
+export type ScientSourceEditorialNotice = typeof ScientSourceEditorialNotice.Type;
+
+/**
+ * Retractions, withdrawals, expressions of concern and corrections the registry reported when the
+ * identifier was last checked. `none` means it reported none; absence means never checked.
+ */
+export const ScientSourceEditorialStatus = Schema.Struct({
+  state: Schema.Literals(["retracted", "withdrawn", "expression-of-concern", "corrected", "none"]),
+  notices: Schema.Array(ScientSourceEditorialNotice).pipe(Schema.check(Schema.isMaxLength(64))),
+  checkedAt: NonEmptyString,
+});
+export type ScientSourceEditorialStatus = typeof ScientSourceEditorialStatus.Type;
 
 export const ScientSourceFieldProvenance = Schema.Struct({
   field: NonEmptyString,
@@ -169,6 +192,7 @@ export const ScientSourceRecord = Schema.Struct({
   fieldProvenance: Schema.Array(ScientSourceFieldProvenance),
   origin: Schema.optionalKey(ScientSourceOrigin),
   verification: Schema.optionalKey(ScientSourceVerification),
+  editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus),
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
   updatedBy: Schema.optionalKey(ScientSourceActor),
@@ -196,6 +220,7 @@ export const ScientSourceSummary = Schema.Struct({
   updatedAt: ScientSourceRecord.fields.updatedAt,
   origin: Schema.optional(ScientSourceOrigin),
   verification: Schema.optional(ScientSourceVerification),
+  editorialStatus: Schema.optional(ScientSourceEditorialStatus),
 });
 export type ScientSourceSummary = typeof ScientSourceSummary.Type;
 
@@ -222,6 +247,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
     ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
     ...(record.origin ? { origin: record.origin } : {}),
     ...(record.verification ? { verification: record.verification } : {}),
+    ...(record.editorialStatus ? { editorialStatus: record.editorialStatus } : {}),
   };
 }
 

@@ -250,7 +250,9 @@ Sources MCP toolkit:
   revisioned removal path as the UI, `scient_sources_list` with `inTrash`
   lists the trash, and `permanent` deletes a trashed source for good;
 - `scient_sources_restore` puts a trashed source back; and
-- `scient_sources_revert` makes a kept revision current again.
+- `scient_sources_revert` makes a kept revision current again; and
+- `scient_sources_check` checks a source's DOI or PMID with its registry again
+  and records the verification and editorial status (below).
   `scient_sources_get` returns the kept revisions with who saved each and which
   fields changed.
 
@@ -281,7 +283,28 @@ or `pubmed` field provenance carrying the identifier and retrieval time, and
 stores verification `verified`. An unreachable or unusable registry adds the
 source as given with `unchecked`; a source without a DOI or PMID is
 `unverified`. An exact duplicate is reported without a lookup, and optional
-abstract enrichment runs after the check. Only agent adds record verification.
+abstract enrichment runs after the check. The same add path serves a person
+adding by identifier (actor `user`), with the same refusals and states.
+
+A found identifier also records `editorialStatus`: the retraction, withdrawal,
+expression-of-concern and correction notices the registry reported, and the
+most serious one as `state` (`none` when it reported none; absent when never
+checked). For DOIs these come from the `updated-by` entries in the same
+doi.org CSL-JSON response, which Crossref fills from publisher updates and
+Retraction Watch; for PMIDs, from PubMed's `Retracted Publication` type.
+Unrecognized or malformed entries are skipped without losing the metadata.
+
+`checkSourceIdentifier` (the `scient_sources_check` tool, and the end of every
+user metadata refresh) re-resolves a source's identifier without touching its
+metadata: found and matching the stored title is `verified` with fresh
+editorial status; not found, or found with a different title, is `unverified`
+with `problem` `not-found` or `mismatch` and no editorial status; an
+unreachable registry keeps an earlier verdict for the same identifier and
+otherwise records `unchecked`. A check that changes nothing but timestamps
+writes no revision; otherwise it writes one credited to the actor. Editing a
+source's identifiers clears both verification and editorial status, since
+they vouched only for the old identifiers; reverting restores the ones saved
+with the reverted identifiers.
 
 Agent-added sources are not held for approval. Trust comes from that check,
 from attribution (origin actor, field provenance, `updatedBy` and revision

@@ -38,9 +38,14 @@ const VERIFICATION_LABELS = {
 
 export function agentVerificationLabel(record: {
   readonly origin?: { readonly actor?: string } | null | undefined;
-  readonly verification?: { readonly state: keyof typeof VERIFICATION_LABELS } | undefined;
+  readonly verification?:
+    | { readonly state: keyof typeof VERIFICATION_LABELS; readonly problem?: string }
+    | undefined;
 }): string {
-  if (record.origin?.actor !== "agent" || !record.verification) return "";
+  // A checked identifier's problem is named by sourceTrustLabel instead.
+  if (record.origin?.actor !== "agent" || !record.verification || record.verification.problem) {
+    return "";
+  }
   return ` · ${VERIFICATION_LABELS[record.verification.state]}`;
 }
 

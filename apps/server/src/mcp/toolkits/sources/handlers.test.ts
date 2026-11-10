@@ -36,6 +36,7 @@ import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
   addScientSourceForInvocation,
+  checkScientSourceForInvocation,
   removeScientSourceForInvocation,
   restoreScientSourceForInvocation,
   revertScientSourceForInvocation,
@@ -436,6 +437,34 @@ describe("Scient Sources MCP handlers", () => {
         context,
       );
       expect(stale).toEqual({ ...updated, outcome: "stale" });
+    }),
+  );
+
+  it.effect("checks a source's identifier and credits the agent", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-check-"));
+      yield* Effect.promise(() => writeSource(root, { sourceId: "source_check", title: "Check" }));
+      const projectId = ProjectId.make("project-check");
+      const threadId = ThreadId.make("thread-check");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      const checked = yield* provideContext(
+        checkScientSourceForInvocation({ sourceId: "source_check" }),
+        context,
+      );
+      expect(checked).toMatchObject({
+        outcome: "updated",
+        revision: 2,
+        registry: "unavailable",
+        verification: { state: "unchecked", identifier: { scheme: "doi" } },
+      });
+      const record = yield* Effect.promise(() => readScientSourceRecord(root, "source_check"));
+      expect(record?.updatedBy).toBe("agent");
     }),
   );
 

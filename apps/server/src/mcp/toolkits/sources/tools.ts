@@ -1,5 +1,6 @@
 import {
   ScientSourceCreator,
+  ScientSourceEditorialStatus,
   ScientSourceExternalReference,
   ScientSourceEditableMetadata,
   ScientSourceFieldProvenance,
@@ -76,6 +77,8 @@ export const ScientSourceAgentSummary = Schema.Struct({
   hasPdf: Schema.Boolean,
   addedBy: Schema.Literals(["user", "agent"]),
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  /** Present only when the registry reported a retraction, withdrawal, concern or correction. */
+  editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus.fields.state),
   removedAt: Schema.optionalKey(NonEmptyString),
   removedBy: Schema.optionalKey(ScientSourceActor),
 });
@@ -115,6 +118,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
   fieldProvenance: Schema.Array(ScientSourceFieldProvenance),
   origin: Schema.optionalKey(ScientSourceOrigin),
   verification: Schema.optionalKey(ScientSourceVerification),
+  editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus),
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
   updatedBy: Schema.optionalKey(ScientSourceActor),
@@ -297,6 +301,31 @@ const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.revert", true));
 
+const ScientSourceCheckTool = Tool.make("scient_sources_check", {
+  description:
+    "Check one Source's DOI or PMID against its registry again, for example before citing it. Records the result on the source " +
+    "(credited to you; nothing is written when nothing changed) and never changes its metadata. registry: found, not-found, " +
+    "mismatch (the identifier now names a work with a different title), unavailable (registry unreachable; the earlier result stays) " +
+    "or none (no DOI or PMID). editorialStatus reports retractions, withdrawals, expressions of concern and corrections.",
+  parameters: Schema.Struct({ sourceId: NonEmptyString }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["updated", "unchanged", "stale"]),
+    sourceId: NonEmptyString,
+    revision: Schema.Int.check(Schema.isGreaterThan(0)),
+    registry: Schema.Literals(["found", "not-found", "mismatch", "unavailable", "none"]),
+    verification: Schema.optionalKey(ScientSourceVerification),
+    editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Check a source's identifier")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, sourceOperation("sources.check", true));
+
 export const ScientSourceAddInput = Schema.Struct({
   type: Schema.optionalKey(ScientSourceType),
   customType: Schema.optionalKey(NullableText),
@@ -356,6 +385,7 @@ export const ScientSourceAddResult = Schema.Struct({
   }),
   validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus.fields.state),
   resolved: Schema.optionalKey(
     Schema.Struct({
       title: NullableText,
@@ -375,6 +405,7 @@ const ScientSourceAddTool = Tool.make("scient_sources_add", {
     "identifier-not-found means the identifier does not exist and identifier-mismatch means it names a different work (see resolved); nothing is added in either case. " +
     "A found identifier's registry metadata replaces the citation fields you gave (verification verified). " +
     "If the registry cannot be reached the source is added as given (unchecked); without a DOI or PMID it is unverified. " +
+    "editorialStatus reports a retraction, withdrawal, expression of concern or correction; tell the user before relying on such a work. " +
     "The user sees that you added it. Repeating the same request adds nothing.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
@@ -610,6 +641,7 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceRemoveTool,
   ScientSourceRestoreTool,
   ScientSourceRevertTool,
+  ScientSourceCheckTool,
   ScientSourceAddTool,
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,

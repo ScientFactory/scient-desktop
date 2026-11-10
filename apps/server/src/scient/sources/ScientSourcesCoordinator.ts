@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This owned Promise-based Sources coordinator assigns its store operation ID synchronously.
+// @effect-diagnostics globalDate:off -- Check records keep the interoperable ISO timestamp the store uses.
 import * as NodeCrypto from "node:crypto";
 
 import { observeSourceImport, type SourceImportObserver } from "./SourceImportObservation.ts";
@@ -23,6 +24,7 @@ import {
   abstractDocumentFromSections,
   changedEditableMetadataFields,
   editableMetadataFromRecord,
+  editorialStatusFromNotices,
   normalizeScientSourceAbstractDocument,
   normalizeScientSourceEditableMetadata,
   sourceMetadataDiagnostics,
@@ -34,6 +36,7 @@ import {
   type ScientSourceDuplicateAssessment,
   type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
+  type ScientSourceEditorialStatus,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
   type ScientSourceImportOperation,
@@ -62,6 +65,7 @@ import {
   listScientSourceRecords,
   readScientSourceRecord,
   readSourceImportOperation,
+  recordScientSourceCheck,
   retryFailedSourceImportOperationItems,
   removeScientSource,
   updateSourceImportOperationItem,
@@ -267,6 +271,10 @@ export type AgentSourceAddResult =
       readonly message: string;
     };
 
+/**
+ * Adds a source after checking its identifier against its registry, for an agent or (with actor
+ * "user") a person adding by identifier: both get the same refusals and verification states.
+ */
 export async function addAgentSource(
   input: {
     readonly root: string;
@@ -338,6 +346,10 @@ export async function addAgentSource(
                 checkedAt: resolution.retrievedAt,
               }
             : { state: "unchecked", identifier: resolution.identifier };
+      const editorialStatus =
+        resolution?.status === "found" && resolution.metadata.editorialNotices
+          ? editorialStatusFromNotices(resolution.metadata.editorialNotices, resolution.retrievedAt)
+          : null;
       const resolved =
         resolution?.status === "found"
           ? applyResolvedSourceMetadata(input.candidate, resolution)
@@ -354,6 +366,7 @@ export async function addAgentSource(
         actor: input.actor ?? "agent",
         intake: input.intake ?? (input.pdfPath ? "local-pdf" : "identifier"),
         ...(verification ? { verification } : {}),
+        ...(editorialStatus ? { editorialStatus } : {}),
         ...(input.pdfRetrieval ? { pdfRetrieval: input.pdfRetrieval } : {}),
         allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
         ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
@@ -362,6 +375,91 @@ export async function addAgentSource(
     },
     (result) => (result.outcome === "imported" ? "imported" : "skipped"),
   );
+}
+
+export type SourceCheckRegistryOutcome =
+  | "found"
+  | "not-found"
+  | "mismatch"
+  | "unavailable"
+  | "none";
+
+/**
+ * Checks a source's identifier against its registry again and records what it says: verification
+ * and retraction or correction notices. Metadata is never changed here. An unreachable registry
+ * keeps an earlier verdict for the same identifier.
+ */
+export async function checkSourceIdentifier(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly actor: ScientSourceActor;
+  readonly resolveIdentifier?: ResolveSourceIdentifier;
+  readonly now?: () => Date;
+}): Promise<{
+  readonly outcome: "updated" | "unchanged" | "stale";
+  readonly registry: SourceCheckRegistryOutcome;
+  readonly record: ScientSourceRecord;
+}> {
+  const record = await readScientSourceRecord(input.root, input.sourceId);
+  if (!record) throw new Error("The source was not found in this project.");
+  const resolution = await (input.resolveIdentifier ?? resolveSourceIdentifier)(record.identifiers);
+  const checkedAt = (input.now ?? (() => new Date()))().toISOString();
+  const previous = record.verification;
+  const sameIdentifier =
+    resolution !== null &&
+    previous?.identifier?.scheme === resolution.identifier.scheme &&
+    previous.identifier.value === resolution.identifier.value;
+  const mismatch =
+    resolution?.status === "found" &&
+    Boolean(record.title && resolution.metadata.title) &&
+    !titlesAgree(record.title!, resolution.metadata.title!);
+  const registry: SourceCheckRegistryOutcome =
+    resolution === null ? "none" : mismatch ? "mismatch" : resolution.status;
+  const check: {
+    readonly verification: ScientSourceVerification;
+    readonly editorialStatus: ScientSourceEditorialStatus | null;
+  } =
+    resolution === null
+      ? { verification: { state: "unverified" }, editorialStatus: null }
+      : resolution.status === "found" && !mismatch
+        ? {
+            verification: {
+              state: "verified",
+              identifier: resolution.identifier,
+              checkedAt: resolution.retrievedAt,
+            },
+            editorialStatus: resolution.metadata.editorialNotices
+              ? editorialStatusFromNotices(
+                  resolution.metadata.editorialNotices,
+                  resolution.retrievedAt,
+                )
+              : null,
+          }
+        : resolution.status === "unavailable"
+          ? {
+              verification:
+                sameIdentifier && previous
+                  ? previous
+                  : { state: "unchecked", identifier: resolution.identifier },
+              editorialStatus: sameIdentifier ? (record.editorialStatus ?? null) : null,
+            }
+          : {
+              verification: {
+                state: "unverified",
+                identifier: resolution.identifier,
+                checkedAt,
+                problem: mismatch ? "mismatch" : "not-found",
+              },
+              editorialStatus: null,
+            };
+  const result = await recordScientSourceCheck({
+    root: input.root,
+    sourceId: input.sourceId,
+    expectedRevision: record.revision,
+    ...check,
+    actor: input.actor,
+  });
+  return { ...result, registry };
 }
 
 export async function prepareAgentProjectPdf(input: {
@@ -637,6 +735,7 @@ export async function refreshScientSourceMetadata(input: {
   readonly root: string;
   readonly sourceId: string;
   readonly expectedRevision: number;
+  readonly resolveIdentifier?: ResolveSourceIdentifier;
 }) {
   const root = await canonicalizeScientSourceRoot(input.root);
   const record = await readScientSourceRecord(root, input.sourceId);
@@ -682,7 +781,25 @@ export async function refreshScientSourceMetadata(input: {
       message: "This source changed while its metadata was being checked.",
     };
   }
-  return applyRefreshedSourceMetadata({ root, record: latest, candidate });
+  const refreshed = await applyRefreshedSourceMetadata({ root, record: latest, candidate });
+  if (refreshed.outcome !== "refreshed" && refreshed.outcome !== "unchanged") return refreshed;
+  // A refresh also re-checks the identifier, so retractions and verification stay current.
+  const checked = await checkSourceIdentifier({
+    root,
+    sourceId: input.sourceId,
+    actor: "user",
+    ...(input.resolveIdentifier ? { resolveIdentifier: input.resolveIdentifier } : {}),
+  }).catch(() => null);
+  if (checked?.outcome !== "updated") return refreshed;
+  return {
+    ...refreshed,
+    outcome: "refreshed" as const,
+    record: checked.record,
+    message:
+      refreshed.outcome === "refreshed"
+        ? refreshed.message
+        : "The identifier was checked again with its registry.",
+  };
 }
 
 export async function removeSource(input: Parameters<typeof removeScientSource>[0]) {
