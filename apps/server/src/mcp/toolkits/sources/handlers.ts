@@ -2,11 +2,18 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
+  compileScientSourceFilter,
   normalizeScientSourceEditableMetadata,
+  scientSourceTagCounts,
   validateScientSourceEditableMetadata,
   type ScientSourceCandidate,
   type ScientSourceEditableMetadata,
+  type ScientSourceFilter,
+  type ScientSourcesBulkChange,
+  type ScientSourcesOrganizeAction,
+  type ScientSourceType,
 } from "@scientfactory/scient-sources";
+import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
 import { resolveScientSourceInputPdf } from "@scientfactory/scient-sources/store";
 import {
   deleteScientSourcesPermanently,
@@ -21,7 +28,12 @@ import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
-import { SourceIdentifierLookup } from "../../../scient/sources/SourceIdentifierResolver.ts";
+import { keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
+import {
+  addScientSourcesByIdentifier,
+  SourceIdentifierBatchLookup,
+  summarizeIdentifierAdd,
+} from "../../../scient/sources/SourceIdentifierAdd.ts";
 import {
   browseZoteroForInvocation,
   importZoteroForInvocation,
@@ -36,7 +48,9 @@ import {
 import {
   addAgentSource,
   attachSourcePdf,
+  bulkUpdateSources,
   detachSourcePdf,
+  organizeSources,
   prepareAgentProjectPdf,
   removeSource,
   updateScientSource,
@@ -208,6 +222,11 @@ const doiValue = (record: Awaited<ReturnType<typeof listScientSourceRecords>>[nu
 export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.list")(
   function* (input: {
     readonly query?: string;
+    readonly tags?: ReadonlyArray<string>;
+    readonly collectionId?: string;
+    readonly type?: ScientSourceType;
+    readonly hasPdf?: boolean;
+    readonly savedSearchId?: string;
     readonly inTrash?: boolean;
     readonly offset?: number;
     readonly limit?: number;
@@ -224,24 +243,29 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     const all = trash
       ? [...trash.values()].map((entry) => entry.record)
       : yield* attempt(() => listScientSourceRecords(root));
-    const query = input.query?.trim().toLowerCase() ?? "";
-    const matching =
-      query.length === 0
-        ? all
-        : all.filter((record) =>
-            [
-              record.citationKey ?? null,
-              record.title,
-              creatorName(record),
-              record.issuedYear,
-              record.containerTitle,
-              doiValue(record),
-            ]
-              .filter((value) => value !== null)
-              .join(" ")
-              .toLowerCase()
-              .includes(query),
-          );
+    const narrowsByOrganization =
+      input.collectionId !== undefined || input.savedSearchId !== undefined;
+    const organization = narrowsByOrganization
+      ? yield* attempt(() => readScientSourcesOrganization(root))
+      : { collections: [], savedSearches: [] };
+    const saved = input.savedSearchId
+      ? organization.savedSearches.find((search) => search.searchId === input.savedSearchId)
+      : undefined;
+    if (input.savedSearchId && !saved) {
+      return yield* toolError("not-found", "The saved search was not found in this project.");
+    }
+    const filters: ReadonlyArray<ScientSourceFilter> = [
+      ...(saved ? [saved.filter] : []),
+      {
+        ...(input.query ? { text: input.query } : {}),
+        ...(input.tags ? { tags: input.tags } : {}),
+        ...(input.collectionId ? { collectionId: input.collectionId } : {}),
+        ...(input.type ? { type: input.type } : {}),
+        ...(input.hasPdf !== undefined ? { hasPdf: input.hasPdf } : {}),
+      },
+    ];
+    const predicates = filters.map((filter) => compileScientSourceFilter(filter, organization));
+    const matching = all.filter((record) => predicates.every((matches) => matches(record)));
     // The public schema rejects invalid values. Clamp here as a second
     // boundary so internal callers cannot accidentally create an unbounded
     // model payload by bypassing MCP decoding.
@@ -268,9 +292,59 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
               removedBy: trash.get(record.sourceId)!.removedBy,
             }
           : {}),
+        ...(record.tags.length > 0 ? { tags: record.tags } : {}),
       })),
       total: matching.length,
       nextOffset: offset + page.length < matching.length ? offset + page.length : null,
+    };
+  },
+);
+
+export const readScientSourceCollectionsForInvocation = Effect.fn(
+  "ScientSourcesToolkit.collections",
+)(function* () {
+  const { root } = yield* resolveScientSourcesProject();
+  const records = yield* attempt(() => listScientSourceRecords(root));
+  const organization = yield* attempt(() =>
+    readScientSourcesOrganization(root, new Set(records.map((record) => record.sourceId))),
+  );
+  return {
+    collections: organization.collections.map((collection) => ({
+      collectionId: collection.collectionId,
+      name: collection.name,
+      sourceCount: collection.sourceIds.length,
+    })),
+    savedSearches: organization.savedSearches.map(({ searchId, name, filter }) => ({
+      searchId,
+      name,
+      filter,
+    })),
+    tags: scientSourceTagCounts(records).slice(0, 200),
+    ...(organization.issue ? { message: organization.issue } : {}),
+  };
+});
+
+export const organizeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.organize")(
+  function* (input: { readonly change: ScientSourcesOrganizeAction }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() => organizeSources({ root, change: input.change, actor: "agent" }));
+  },
+);
+
+export const bulkUpdateScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.bulkUpdate")(
+  function* (input: { readonly change: ScientSourcesBulkChange }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const result = yield* attempt(() =>
+      bulkUpdateSources({ root, change: input.change, actor: "agent" }),
+    );
+    // Store messages for a failed source may name host paths; keep them out of model output.
+    return {
+      ...result,
+      sources: result.sources.map((entry) =>
+        entry.message && (entry.message.includes(root) || /[\\/]\.scient[\\/]/u.test(entry.message))
+          ? { ...entry, message: "The source could not be updated." }
+          : entry,
+      ),
     };
   },
 );
@@ -454,9 +528,57 @@ export const revertScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
   },
 );
 
+const IDENTIFIER_LIST_OPTIONS = new Set(["identifierList", "enrich", "allowPossibleMetadataMatch"]);
+
+const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolkit.addByIdentifier")(
+  function* (input: ScientSourceAddInputType, identifierList: ReadonlyArray<string>) {
+    const { root } = yield* resolveScientSourcesProject();
+    const extra = Object.keys(input).find((field) => !IDENTIFIER_LIST_OPTIONS.has(field));
+    if (extra) {
+      const message =
+        "Give identifierList alone. Add a source from citation fields or a PDF in a separate call.";
+      return {
+        outcome: "invalid" as const,
+        sourceId: null,
+        revision: null,
+        duplicate: { kind: "new" as const, matchingSourceIds: [], reason: message },
+        validationIssues: [{ field: extra, message }],
+      };
+    }
+    const resolveIdentifiers = yield* SourceIdentifierBatchLookup;
+    const observeImport = yield* makeSourceImportAnalytics("agent");
+    const results = yield* attempt(() =>
+      addScientSourcesByIdentifier(
+        {
+          root,
+          entries: identifierList,
+          actor: "agent",
+          enrich: input.enrich ?? false,
+          allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+          resolveIdentifiers,
+        },
+        observeImport,
+      ),
+    );
+    const summary = summarizeIdentifierAdd(results);
+    return {
+      outcome: "batch" as const,
+      sourceId: null,
+      revision: null,
+      duplicate: { kind: "new" as const, matchingSourceIds: [], reason: summary },
+      validationIssues: [],
+      results,
+      message: summary,
+    };
+  },
+);
+
 export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add")(function* (
   input: ScientSourceAddInputType,
 ) {
+  if (input.identifierList) {
+    return yield* addScientSourcesByIdentifierForInvocation(input, input.identifierList);
+  }
   const { root } = yield* resolveScientSourcesProject();
   const { candidate: initialCandidate, validationIssues: initialIssues } =
     candidateFromAgentInput(input);
@@ -510,7 +632,7 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
       validationIssues,
     };
   }
-  const resolveIdentifier = yield* SourceIdentifierLookup;
+  const resolveIdentifier = yield* keyedIdentifierLookup();
   const observeImport = yield* makeSourceImportAnalytics("agent");
   const result = yield* attempt(() =>
     addAgentSource(
@@ -621,7 +743,7 @@ const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search"
     readonly limit?: number;
   }) {
     const { root } = yield* resolveScientSourcesProject();
-    return yield* attempt(() =>
+    const { hits, status } = yield* attempt(() =>
       searchSourceFullText({
         root,
         query: input.query,
@@ -629,6 +751,21 @@ const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search"
         ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
       }),
     );
+    return {
+      status,
+      hits: hits.map(
+        ({ sourceId, attachmentId, title, page, start, end, passage, matchedTerms }) => ({
+          sourceId,
+          attachmentId,
+          title,
+          page,
+          start,
+          end,
+          passage,
+          matchedTerms,
+        }),
+      ),
+    };
   },
 );
 
@@ -683,6 +820,9 @@ const handlers = {
   scient_sources_zotero_import: importZoteroForInvocation,
   scient_sources_zotero_refresh: refreshZoteroForInvocation,
   scient_sources_zotero_send: sendToZoteroForInvocation,
+  scient_sources_collections: readScientSourceCollectionsForInvocation,
+  scient_sources_organize: organizeScientSourcesForInvocation,
+  scient_sources_bulk_update: bulkUpdateScientSourcesForInvocation,
 } satisfies Parameters<typeof ScientSourcesToolkit.toLayer>[0];
 
 export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(handlers);

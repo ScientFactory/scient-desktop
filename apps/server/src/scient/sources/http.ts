@@ -15,6 +15,7 @@ import {
 } from "../../auth/http.ts";
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
+import { searchSourceFullText } from "./SourceFullText.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import { zoteroKeyLookup } from "./ZoteroAccountKey.ts";
 import { ZoteroTransports } from "./ZoteroConnections.ts";
@@ -22,6 +23,7 @@ import { refreshZoteroSources, sendSourcesToZotero } from "./ZoteroSync.ts";
 import {
   advanceSourceImport,
   beginLocalPdfImport,
+  bulkUpdateSources,
   beginZoteroImport,
   beginZoteroScopedImport,
   cancelSourceImport,
@@ -33,6 +35,7 @@ import {
   inspectZoteroConnection,
   listZoteroCollections,
   listZoteroLibrary,
+  organizeSources,
   preflightZoteroImport,
   refreshScientSourceMetadata,
   deleteSourcesPermanently,
@@ -46,6 +49,7 @@ import {
   updateSourceNote,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
+import { addScientSourcesByIdentifier } from "./SourceIdentifierAdd.ts";
 import { startManagedBibliographySync, syncManagedBibliography } from "./ManagedBibliography.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
@@ -117,8 +121,20 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),
             );
-            return asset;
+            const { sha256, byteLength } = material.attachment;
+            return /^[0-9a-f]{64}$/u.test(sha256) && byteLength >= 1
+              ? { ...asset, material: { sha256, byteLength } }
+              : asset;
           }),
+        )
+        .handle("fullTextSearch", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            searchSourceFullText({
+              root: args.payload.root,
+              query: args.payload.query,
+              limit: args.payload.limit ?? 20,
+            }),
+          ),
         )
         .handle("journalIcon", (args) =>
           Effect.gen(function* () {
@@ -170,6 +186,29 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             removeSource(args.payload),
           ),
+        )
+        .handle("organize", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            organizeSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("bulkUpdate", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            bulkUpdateSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("addByIdentifier", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, async () => ({
+            results: await addScientSourcesByIdentifier(
+              {
+                root: args.payload.root,
+                entries: args.payload.entries,
+                actor: "user",
+                enrich: true,
+              },
+              observeImport,
+            ),
+          })),
         )
         .handle("trash", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>

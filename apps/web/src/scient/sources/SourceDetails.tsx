@@ -606,6 +606,8 @@ function MetadataRefreshConfirmation(props: {
 export function SourceDetails(props: {
   readonly record: SourceRecord;
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
+  /** Editable tags and collections; without it the tags are shown read-only. */
+  readonly organize?: ReactNode;
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onSaveNote: (
@@ -857,11 +859,12 @@ export function SourceDetails(props: {
             </DetailsSection>
           ) : null}
 
-          {tags.length > 0 ? (
-            <DetailsSection title="Tags">
-              <SourceTags tags={tags} />
-            </DetailsSection>
-          ) : null}
+          {props.organize ??
+            (tags.length > 0 ? (
+              <DetailsSection title="Tags">
+                <SourceTags tags={tags} />
+              </DetailsSection>
+            ) : null)}
 
           <SourceReference record={record} />
 

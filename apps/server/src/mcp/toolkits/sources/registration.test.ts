@@ -21,10 +21,13 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       "scient_sources_add",
       "scient_sources_attach_pdf",
       "scient_sources_bibliography",
+      "scient_sources_bulk_update",
+      "scient_sources_collections",
       "scient_sources_detach_pdf",
       "scient_sources_get",
       "scient_sources_list",
       "scient_sources_note_update",
+      "scient_sources_organize",
       "scient_sources_quote_check",
       "scient_sources_read_text",
       "scient_sources_remove",
@@ -39,6 +42,7 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
     ]);
     for (const { tool } of sourceTools.filter(({ tool }) =>
       [
+        "scient_sources_collections",
         "scient_sources_get",
         "scient_sources_list",
         "scient_sources_search",
@@ -56,8 +60,10 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
         "scient_sources_add",
         "scient_sources_attach_pdf",
         "scient_sources_bibliography",
+        "scient_sources_bulk_update",
         "scient_sources_detach_pdf",
         "scient_sources_note_update",
+        "scient_sources_organize",
         "scient_sources_remove",
         "scient_sources_restore",
         "scient_sources_revert",

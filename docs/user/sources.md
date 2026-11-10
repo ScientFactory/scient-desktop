@@ -59,8 +59,14 @@ It first uses metadata embedded in the file. When the PDF contains one clear
 DOI or explicitly labelled PMID, Scient can use that identifier to retrieve
 better bibliographic metadata or an abstract from PubMed, Crossref, or Europe
 PMC. It does not use fuzzy title matching, OCR, or an AI model to invent
-missing facts. A PDF remains importable when metadata cannot be resolved; the
-unknown fields stay visible for correction.
+missing facts. The date a PDF file was made is not taken as the publication
+date; only a publication date the publisher embedded counts. A PDF remains
+importable when metadata cannot be resolved; the unknown fields stay visible
+for correction.
+
+To get faster, more reliable answers from Crossref, OpenAlex and Unpaywall, add
+a contact email in **Settings ▸ Documents ▸ Library**. Scient sends it only to
+those services, and sends no email while the field is empty.
 
 For remote projects, the selected PDFs are transferred to the selected project
 environment. Metadata services receive only the exact public identifier used
@@ -97,6 +103,37 @@ source stays available to restore until the trash is emptied.
 If a source's file in the project cannot be read, the Library still lists the
 others and says which file it skipped.
 
+## Organize sources
+
+**Collections** group sources for a chapter, a project aim or a reading list.
+A source can be in several collections, and putting it in one never changes the
+source itself. Open the filter button beside the search box and choose
+**Collection** to show one collection or to create a new one. In a source's
+details, the **Collections** row shows where it belongs; use **+ Collection** to
+add it to more. Deleting a collection keeps all of its sources, and **Undo** in
+the message brings the collection back.
+
+**Tags** are short labels such as a method or a screening decision. In a
+source's details, use **+ Tag** to add an existing tag or create a new one, and
+the ✕ on a tag to remove it. Selecting a tag shows every source with that tag.
+Tags match without regard to capitals, so `RCT` and `rct` are the same tag.
+
+The filter button also narrows the list by type and by whether a source has a
+PDF. While a filter is on, a row under the search box shows each part, how many
+sources match, and actions to rename or delete the collection or to save the
+search. **Saved searches** keep the search text and filters under a name;
+choose one from **Saved searches** to run it again.
+
+To change many sources at once, choose **Select** from a source's actions, or
+Command-click (Ctrl-click on Windows and Linux) a source. Then select more and
+use the bar at the top of the list to add or remove a tag, add them to or take
+them out of a collection, set their type, or move them to the Trash. Tag and
+type changes are saved as a new version of each source, so they appear in its
+history and can be restored like any other edit.
+
+Collections and saved searches are kept in `.scient/sources/collections.json`
+with the rest of the project's Library.
+
 ## Copy a formatted reference
 
 Open a source, choose **Vancouver** or **APA 7**, then choose **Copy
@@ -113,7 +150,9 @@ unknown values.
 In a project conversation, an agent can search and read the same project-owned
 library, maintain source notes, update metadata, attach or detach a project PDF,
 move a source to the trash and restore it, restore an earlier version, or add a
-new one. Everything an agent changes is credited to it and can be undone the
+new one. It can also organize the Library the way you can: create, rename and
+delete collections, save searches, list a collection or a tag, and change tags,
+type or collections on many sources at once. Everything an agent changes is credited to it and can be undone the
 same way as your own changes.
 
 Before an agent adds a source, Scient looks up its DOI at doi.org or its PMID in
@@ -125,6 +164,11 @@ that an agent added it and whether its identifier was verified, not yet checked
 because the registry could not be reached, or missing. After an agent changes a
 source, its details say "Edited by agent". You can edit or remove these sources
 like any other.
+
+Results from the PubMed, Semantic Scholar and OpenAlex connectors become
+sources the same way: the agent passes the paper's PMID, Semantic Scholar ID or
+OpenAlex ID, and Scient fetches the record and checks it at the DOI's registry.
+You can paste those IDs or links when you add by identifier, too.
 
 When you ask an agent to get papers for your library, it fetches them with
 `scient_paper_get` or `scient_papers_queue` and files each PDF on the paper's

@@ -91,6 +91,7 @@ their own subtree:
 ├── files/sha256/<prefix>/   content-addressed PDF copies
 ├── history/<source-id>/     kept prior revisions (first one plus the latest 49)
 ├── trash/<source-id>.json   removed sources, whole, until restored or deleted
+├── collections.json         collections and saved searches
 ├── operations/              resumable import state
 ├── receipts/                terminal import evidence
 └── staging/                 bounded temporary copies
@@ -98,7 +99,8 @@ their own subtree:
 
 There is deliberately no canonical mutable manifest. An overview is derived
 from validated records and operations. The overview contract returns bounded
-summaries only; complete abstracts, tags, provenance, and revision evidence are
+summaries only (tags included, so the list can filter by them); complete
+abstracts, provenance, and revision evidence are
 loaded through a direct source-ID detail endpoint when a researcher opens an
 item. Journal artwork uses the same direct record lookup, so rendering one row
 does not repeatedly decode the rest of a large ledger. Source-PDF preview keeps
@@ -159,7 +161,10 @@ malformed optional field cannot discard already readable metadata or prevent
 first-page identifier extraction. It reads bounded document metadata and text
 from at most the first two pages. A single unambiguous DOI or explicitly
 labelled PMID may be resolved through the public DOI CSL JSON or NCBI ESummary
-endpoint for bibliographic identity.
+endpoint for bibliographic identity. The embedded date counts as the
+publication date only from XMP `prism:coverDate` or `prism:publicationDate`;
+the document-info `CreationDate` and Dublin Core `dc:date` describe the file
+and are ignored. Records imported before this keep their stored date.
 
 After a Zotero or local-PDF adapter has built its candidate, a shared
 provider-neutral enrichment seam may fill a missing abstract using only that
@@ -172,10 +177,28 @@ metadata, or a researcher is never replaced. Retrieved abstracts retain their
 service, exact identifier, source field, and retrieval time in field
 provenance.
 
+Registry lookups read the user's research keys from Accounts through
+`researchKeys.ts`: the API-key row whose sites match the service (OpenAlex,
+Semantic Scholar, NCBI, and the Unpaywall email), skipping a row set to Off.
+Tools take the resolver through `keyedIdentifierLookup`, which passes the keys
+as `Redacted` values; the Effect HTTP client gets them as `Redacted` URL
+parameters so spans show them redacted. Paper downloads send the OpenAlex key
+and ask Unpaywall only when OpenAlex has no free copy.
+
 All NCBI E-utilities requests share one serialized, interval-limited lane.
 The lane remains owned until the active network request settles and releases
 in `finally`, preventing overlapping requests and avoiding a dead lane after a
 failure.
+
+Every registry request goes through `metadataHttp.ts`, which sends the
+versioned `METADATA_USER_AGENT`. The Library setting
+`scientSources.registryContactEmail` (Settings ▸ Documents) is followed by
+`RegistryContact.layer`; when it holds an address, requests to
+`api.crossref.org` and `api.openalex.org` (including redirect hops, such as
+doi.org to Crossref) carry it as the `mailto` parameter and in the
+User-Agent. No other host receives it, and an empty or malformed value sends
+nothing. Adapters that pass the address another way (Unpaywall's `email`)
+read `registryContactEmail()`; none keeps its own setting.
 
 All metadata responses are HTTPS-only, time- and size-bounded, and
 schema-decoded. Only the exact identifier leaves the project environment; the
@@ -269,6 +292,16 @@ stores verification `verified`. An unreachable or unusable registry adds the
 source as given with `unchecked`; a source without a DOI or PMID is
 `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. Only agent adds record verification.
+
+Connector results reach the Library as identifiers, not copied metadata. The
+resolver also takes an OpenAlex work ID (`openalex`, `W…`) and a Semantic
+Scholar paper ID (`s2`, a 40-character paper ID or `CorpusId:N`), tried after
+every registry scheme. `ConnectorIdentifierLookup.ts` reads the catalogue entry
+(OpenAlex at 10 requests a second, Semantic Scholar at one), follows its DOI,
+then PMID, then arXiv ID through the ordinary scheme lookups, and keeps the
+catalogue ID among the record's identifiers. Only when no registry has the work
+does the catalogue's own record stand, with `openalex` or `semantic-scholar`
+provenance. A catalogue that does not know the ID returns not found.
 
 Agent-added sources are not held for approval. Trust comes from that check,
 from attribution (origin actor, field provenance, `updatedBy` and revision
@@ -405,6 +438,35 @@ is `unmanaged` and is never written over. Only an explicit `replaceEdited` from
 the user or an agent restores the Library version. The project file is written
 before the copy, so an interrupted write is adopted on the next sync instead
 of reported as an edit. Nothing is written for a project without a Library.
+
+## Collections, saved searches and bulk edit
+
+`packages/scient-sources/src/collections.ts` owns
+`.scient/sources/collections.json`; `organize.ts` holds its schemas and the
+one filter model (text, tags, collection, type, PDF) that the panel list,
+saved searches and `scient_sources_list` all compile through
+`compileScientSourceFilter`, so a search means the same thing to a person and
+an agent.
+
+- Collections are stored apart from records and never rewrite them. Members
+  are source IDs; a removed source keeps its membership and is only hidden, so
+  restoring it from the trash restores its collections too. Reads project
+  members onto the sources that exist.
+- Names are unique per project without regard to case. Creating a name that
+  exists returns that collection and adds the given sources, so a repeated
+  agent request is harmless. Deleting a collection or saved search marks it
+  deleted (the latest 50 are kept) so it can be restored.
+- Every change goes through `organizeScientSources` (one action union shared by
+  the `organize` HTTP endpoint and `scient_sources_organize`) under one write
+  lock, credited with `updatedBy`.
+- A collections file that cannot be decoded is reported as an `issue` on the
+  overview and hides collections, but never breaks the source list; writes
+  refuse instead of overwriting it.
+- `bulkUpdateScientSources` applies tag (case-insensitive, existing spelling
+  kept) and type changes as ordinary metadata revisions, one per source with
+  one retry on a stale revision, then membership changes. Each source is
+  reported; one failure does not stop the rest. Bulk removal is the trash
+  removal per source, with one Undo for the batch in the panel.
 
 ## Zotero boundary
 
