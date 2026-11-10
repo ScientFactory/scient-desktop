@@ -10,6 +10,7 @@ import {
   listScientSourceFullTextHashes,
   readScientSourceFullText,
   removeScientSourceFullText,
+  scientSourceFullTextByteLength,
   SCIENT_SOURCE_TEXT_DIRECTORY,
   writeScientSourceFullText,
 } from "./fullTextStore.ts";
@@ -41,8 +42,10 @@ describe("full-text store", () => {
   it("stores text by PDF hash and lists and removes it", async () => {
     await using project = await temporaryRoot();
     expect(await readScientSourceFullText(project.root, sha256)).toBeNull();
+    expect(await scientSourceFullTextByteLength(project.root, sha256)).toBeNull();
     await writeScientSourceFullText(project.root, extracted);
     expect(await readScientSourceFullText(project.root, sha256)).toEqual(extracted);
+    expect(await scientSourceFullTextByteLength(project.root, sha256)).toBeGreaterThan(0);
     expect(await listScientSourceFullTextHashes(project.root)).toEqual([sha256]);
     await removeScientSourceFullText(project.root, sha256);
     expect(await listScientSourceFullTextHashes(project.root)).toEqual([]);
