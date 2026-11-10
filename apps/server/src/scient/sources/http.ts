@@ -32,8 +32,13 @@ import {
   listZoteroLibrary,
   preflightZoteroImport,
   refreshScientSourceMetadata,
+  deleteSourcesPermanently,
+  listSourceRevisions,
+  listSourceTrash,
   removeSource,
+  restoreSource,
   retrySourceImport,
+  revertSource,
   updateScientSource,
   updateSourceNote,
   uploadLocalPdfSource,
@@ -155,6 +160,31 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("remove", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             removeSource(args.payload),
+          ),
+        )
+        .handle("trash", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listSourceTrash(args.payload),
+          ),
+        )
+        .handle("restore", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            restoreSource(args.payload),
+          ),
+        )
+        .handle("deletePermanently", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            deleteSourcesPermanently(args.payload),
+          ),
+        )
+        .handle("revisions", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listSourceRevisions(args.payload),
+          ),
+        )
+        .handle("revert", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            revertSource(args.payload),
           ),
         )
         .handle("zoteroStatus", (args) =>

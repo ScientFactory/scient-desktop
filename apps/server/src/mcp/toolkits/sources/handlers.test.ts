@@ -4,7 +4,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
-import { SCIENT_SOURCE_RECORDS_DIRECTORY } from "@scientfactory/scient-sources/store";
+import { editableMetadataFromRecord } from "@scientfactory/scient-sources";
+import {
+  readScientSourceRecord,
+  SCIENT_SOURCE_RECORDS_DIRECTORY,
+} from "@scientfactory/scient-sources/store";
 import {
   EnvironmentId,
   type OrchestrationProjectShell,
@@ -32,6 +36,9 @@ import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
   addScientSourceForInvocation,
+  removeScientSourceForInvocation,
+  restoreScientSourceForInvocation,
+  revertScientSourceForInvocation,
   attachScientSourcePdfForInvocation,
   detachScientSourcePdfForInvocation,
   resolveScientSourcesProject,
@@ -432,6 +439,119 @@ describe("Scient Sources MCP handlers", () => {
     }),
   );
 
+  it.effect("moves an agent removal to the trash, restores it, and reverts an edit", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-trash-"));
+      yield* Effect.promise(() => writeSource(root, { sourceId: "source_kept", title: "Kept" }));
+      const projectId = ProjectId.make("project-trash");
+      const threadId = ThreadId.make("thread-trash");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+
+      const removed = yield* provideContext(
+        removeScientSourceForInvocation({ sourceId: "source_kept", expectedRevision: 1 }),
+        context,
+      );
+      expect(removed).toEqual({
+        outcome: "removed",
+        sourceId: "source_kept",
+        revision: 1,
+        restorable: true,
+      });
+      const trash = yield* provideContext(
+        listScientSourcesForInvocation({ inTrash: true }),
+        context,
+      );
+      expect(trash.records).toMatchObject([
+        { sourceId: "source_kept", revision: 1, removedBy: "agent" },
+      ]);
+      expect((yield* provideContext(listScientSourcesForInvocation({}), context)).records).toEqual(
+        [],
+      );
+
+      const restored = yield* provideContext(
+        restoreScientSourceForInvocation({ sourceId: "source_kept" }),
+        context,
+      );
+      expect(restored).toEqual({
+        outcome: "restored",
+        sourceId: "source_kept",
+        revision: 2,
+        matchingSourceIds: [],
+      });
+
+      const stored = yield* Effect.promise(() => readScientSourceRecord(root, "source_kept"));
+      if (!stored) throw new Error("Expected the restored source.");
+      const edited = yield* provideContext(
+        updateScientSourceForInvocation({
+          sourceId: "source_kept",
+          expectedRevision: stored.revision,
+          metadata: { ...editableMetadataFromRecord(stored), title: "Wrong" },
+        }),
+        context,
+      );
+      expect(edited.outcome).toBe("updated");
+      const history = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: "source_kept" }),
+        context,
+      );
+      expect(
+        history.revisions.map(({ revision, savedBy, changes }) => ({ revision, savedBy, changes })),
+      ).toEqual([
+        { revision: 3, savedBy: "agent", changes: ["title"] },
+        { revision: 2, savedBy: "agent", changes: [] },
+        { revision: 1, savedBy: "user", changes: [] },
+      ]);
+      const reverted = yield* provideContext(
+        revertScientSourceForInvocation({
+          sourceId: "source_kept",
+          expectedRevision: 3,
+          toRevision: 2,
+        }),
+        context,
+      );
+      expect(reverted).toMatchObject({ outcome: "reverted", revision: 4 });
+      const back = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: "source_kept" }),
+        context,
+      );
+      expect(back).toMatchObject({ title: "Kept", updatedBy: "agent" });
+
+      yield* provideContext(
+        removeScientSourceForInvocation({ sourceId: "source_kept", expectedRevision: 4 }),
+        context,
+      );
+      expect(
+        yield* provideContext(
+          removeScientSourceForInvocation({
+            sourceId: "source_kept",
+            expectedRevision: 3,
+            permanent: true,
+          }),
+          context,
+        ),
+      ).toMatchObject({ outcome: "stale", revision: 4 });
+      expect(
+        yield* provideContext(
+          removeScientSourceForInvocation({
+            sourceId: "source_kept",
+            expectedRevision: 4,
+            permanent: true,
+          }),
+          context,
+        ),
+      ).toEqual({ outcome: "deleted", sourceId: "source_kept", revision: null });
+      expect(
+        (yield* provideContext(listScientSourcesForInvocation({ inTrash: true }), context)).records,
+      ).toEqual([]);
+    }),
+  );
+
   it.effect("adds an idempotent metadata-only agent source with agent provenance", () =>
     Effect.gen(function* () {
       const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] =
@@ -668,8 +788,8 @@ describe("Scient Sources MCP handlers", () => {
         outcome: "removed",
         sourceId: detail.sourceId,
         revision: detail.revision + 1,
-        removedAttachmentCount: 1,
       });
+      expect(detached).not.toHaveProperty("removedAttachmentCount");
     }),
   );
 
