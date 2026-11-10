@@ -40,6 +40,15 @@ export const legacyTunnelGraceMinutesConfig = Config.option(
   ),
 );
 
+// SCIENT-FORK:START — default managed tunnel cap per account; manual overrides still replace it.
+export const defaultManagedTunnelLimitConfig = Config.option(
+  Config.schema(
+    Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThan(0))),
+    "RELAY_DEFAULT_TUNNEL_LIMIT",
+  ),
+);
+// SCIENT-FORK:END
+
 export interface ApnsCredentials {
   readonly teamId: string;
   readonly keyId: string;

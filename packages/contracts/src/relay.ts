@@ -983,6 +983,8 @@ export const RelayT3ChatLinkResponse = Schema.Struct({
   link: Schema.NullOr(RelayT3ChatLink),
   // A manual cap that replaces the plan's; T3 Chat upgrades do not raise it.
   maxTunnelsOverride: Schema.optionalKey(Schema.Number),
+  // SCIENT-FORK: the relay's configured default cap; absent from relays that predate it.
+  defaultMaxTunnels: Schema.optionalKey(Schema.Number),
 });
 export type RelayT3ChatLinkResponse = typeof RelayT3ChatLinkResponse.Type;
 
