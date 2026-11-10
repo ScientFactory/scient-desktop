@@ -339,6 +339,10 @@
       "types": "./src/state/scientLatexHttp.ts",
       "default": "./src/state/scientLatexHttp.ts"
     },
+    "./state/scient-annotations": {
+      "types": "./src/state/scientAnnotationsHttp.ts",
+      "default": "./src/state/scientAnnotationsHttp.ts"
+    },
     "./state/scient-pdf-edits": {
       "types": "./src/state/scientPdfEditsHttp.ts",
       "default": "./src/state/scientPdfEditsHttp.ts"
@@ -350,6 +354,10 @@
     "./state/scient-sources": {
       "types": "./src/state/scientSourcesHttp.ts",
       "default": "./src/state/scientSourcesHttp.ts"
+    },
+    "./state/scient-references": {
+      "types": "./src/state/scientReferencesHttp.ts",
+      "default": "./src/state/scientReferencesHttp.ts"
     },
     "./state/scient-analytics": {
       "types": "./src/state/scientAnalyticsHttp.ts",

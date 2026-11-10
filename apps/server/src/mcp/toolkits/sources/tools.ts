@@ -136,7 +136,8 @@ export const ScientSourceAgentDetail = Schema.Struct({
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly. " +
+    "List a page of this project's Library (Sources): the papers, books and other references it cites; total is its size. " +
+    "Use this before literature, citation or source-dependent work and before searching the web; do not scan or edit .scient/sources files directly. " +
     "query matches citation key, title, authors, year, journal, identifiers and tags. Narrow with tags (all must match), collectionId, type or hasPdf, " +
     "or run a saved search with savedSearchId (other filters then narrow it further); scient_sources_collections lists collections, saved searches and tags. " +
     "inTrash lists removed sources instead, newest removal first; restore one with scient_sources_restore.",

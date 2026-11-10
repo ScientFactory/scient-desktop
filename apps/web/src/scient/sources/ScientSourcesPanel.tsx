@@ -63,6 +63,8 @@ import { initializeScientProjectForOpening } from "../../lib/scientProjectInitia
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { SourceAnnotations } from "../annotations/SourceAnnotations";
+import { ReferenceCheckButton } from "../references/ReferenceCheckButton";
 import { AddByIdentifier } from "./AddByIdentifier";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
@@ -269,6 +271,7 @@ export function ScientSourcesPanel(props: {
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  readonly onOpenFile?: (path: string, line: number) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
   const zoteroSync = useZoteroSync({
@@ -1131,6 +1134,14 @@ export function ScientSourcesPanel(props: {
             });
           }}
           onOpenPdf={props.onOpenPdf}
+          annotations={
+            <SourceAnnotations
+              environmentId={props.environmentId}
+              root={props.root}
+              record={selectedRecord}
+              onOpenPdf={props.onOpenPdf}
+            />
+          }
         />
         {historySourceId === selectedRecord.sourceId ? (
           <SourceHistoryDialog
@@ -1213,6 +1224,12 @@ export function ScientSourcesPanel(props: {
         action={
           <div className="flex items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
+            <ReferenceCheckButton
+              environmentId={props.environmentId}
+              root={props.root}
+              onOpenSource={setSelectedSourceId}
+              {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
+            />
             {sources.overview.trashedCount ? (
               <SourceTrashButton
                 environmentId={props.environmentId}
