@@ -59,6 +59,9 @@ This skill grants no tools or permissions.
 6. `scient_connector_save {folder, connector}`. Scient keeps the old version (Undo on the
    connector's page). A vendor's connector becomes the user's own copy; say so.
 
+Go from the diagnosis to the saved fix in one go; don't stop to ask whether to go ahead.
+Ask only when the fix needs something from the user (a key, a sign-in, a choice of behaviour).
+
 ## Hard rules
 
 - **Secrets only through Scient.** Keys, passwords, tokens and cookies never go in chat, code,
