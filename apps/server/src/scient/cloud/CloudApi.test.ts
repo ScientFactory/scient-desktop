@@ -129,6 +129,29 @@ describe("CloudApi", () => {
     }).pipe(Effect.provide(computerJwsCryptoLayer)),
   );
 
+  it.effect("names the conversation that uses a file on blob uploads, inside the signature", () =>
+    Effect.gen(function* () {
+      const { api, seen, publicKey } = yield* harness(() => new Response(null, { status: 404 }));
+      const thread = ThreadId.make("thread-1");
+      expect(yield* api.hasBlob("user_1", "a".repeat(64), thread)).toBe(false);
+      const request = seen[0]!;
+      expect(request.method).toBe("HEAD");
+      expect(`${request.url.pathname}${request.url.search}`).toBe(
+        `/v1/blobs/${"a".repeat(64)}?env=env-a&thread=thread-1`,
+      );
+      yield* verifyComputerRequest({
+        token: readComputerAuthorization(request.headers["authorization"])!,
+        publicKey,
+        environmentId: ENVIRONMENT,
+        userId: "user_1",
+        audience: CLOUD,
+        method: "HEAD",
+        target: `${request.url.pathname}${request.url.search}`,
+        bodySha256: yield* bodySha256(new Uint8Array()),
+      });
+    }).pipe(Effect.provide(computerJwsCryptoLayer)),
+  );
+
   it.effect("makes an enrollment proof for the nonce with the computer's public key", () =>
     Effect.gen(function* () {
       const { api, publicKey } = yield* harness(() => new Response("{}"));

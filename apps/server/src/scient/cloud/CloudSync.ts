@@ -168,6 +168,7 @@ export const make = Effect.gen(function* () {
 
   const uploadBlobs = Effect.fn("CloudSync.uploadBlobs")(function* (
     userId: string,
+    threadId: ThreadId,
     capture: SyncCapture,
     maxBlobBytes: number,
   ) {
@@ -176,7 +177,8 @@ export const make = Effect.gen(function* () {
       const bytes = yield* source.readFile(path);
       if (bytes === null || bytes.byteLength > maxBlobBytes) continue;
       const sha256 = sha256Hex(bytes);
-      if (!(yield* api.hasBlob(userId, sha256))) yield* api.putBlob(userId, sha256, bytes);
+      if (!(yield* api.hasBlob(userId, sha256, threadId)))
+        yield* api.putBlob(userId, sha256, bytes, threadId);
       attachments.push({ localId, sha256, bytes: bytes.byteLength });
     }
     return attachments;
@@ -218,7 +220,7 @@ export const make = Effect.gen(function* () {
         }));
         return "unchanged" satisfies UploadOutcome;
       }
-      const attachments = yield* uploadBlobs(userId, capture, max.maxBlobBytes);
+      const attachments = yield* uploadBlobs(userId, threadId, capture, max.maxBlobBytes);
       const document: CloudConversation = {
         snapshot: capture.snapshot,
         ...(attachments.length === 0 ? {} : { sidecar: { attachments } }),

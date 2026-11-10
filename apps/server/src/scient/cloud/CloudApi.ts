@@ -83,11 +83,17 @@ export interface CloudApiShape {
     readonly gzip: Uint8Array;
   }) => Effect.Effect<ThreadPutResponse, CloudApiError>;
   readonly deleteThread: (userId: string, threadId: ThreadId) => Effect.Effect<void, CloudApiError>;
-  readonly hasBlob: (userId: string, sha256: string) => Effect.Effect<boolean, CloudApiError>;
+  /** HEAD and PUT name the conversation that uses the file; the cloud keeps it while one does. */
+  readonly hasBlob: (
+    userId: string,
+    sha256: string,
+    usedBy: ThreadId,
+  ) => Effect.Effect<boolean, CloudApiError>;
   readonly putBlob: (
     userId: string,
     sha256: string,
     bytes: Uint8Array,
+    usedBy: ThreadId,
   ) => Effect.Effect<void, CloudApiError>;
   readonly moved: (
     userId: string,
@@ -272,8 +278,13 @@ const make = Effect.gen(function* () {
         ),
       );
     }),
-    hasBlob: Effect.fn("CloudApi.hasBlob")(function* (userId, sha256) {
-      return yield* send({ userId, method: "HEAD", path: cloudPaths.blob(sha256) }).pipe(
+    hasBlob: Effect.fn("CloudApi.hasBlob")(function* (userId, sha256, usedBy) {
+      const env = yield* environmentId;
+      return yield* send({
+        userId,
+        method: "HEAD",
+        path: cloudPaths.blob(sha256, { env, thread: usedBy }),
+      }).pipe(
         Effect.as(true),
         Effect.catchIf(
           (error) => error.code === "not_found",
@@ -281,8 +292,14 @@ const make = Effect.gen(function* () {
         ),
       );
     }),
-    putBlob: Effect.fn("CloudApi.putBlob")(function* (userId, sha256, bytes) {
-      yield* send({ userId, method: "PUT", path: cloudPaths.blob(sha256), body: bytes });
+    putBlob: Effect.fn("CloudApi.putBlob")(function* (userId, sha256, bytes, usedBy) {
+      const env = yield* environmentId;
+      yield* send({
+        userId,
+        method: "PUT",
+        path: cloudPaths.blob(sha256, { env, thread: usedBy }),
+        body: bytes,
+      });
     }),
     moved: Effect.fn("CloudApi.moved")(function* (userId, since) {
       const { bytes } = yield* send({
