@@ -1861,6 +1861,31 @@ export class ScientMarkdownEditorView {
     return items.length > 0 ? { query, items } : null;
   }
 
+  /** Adds a quoted passage after the block holding the cursor, ending in its citation. */
+  insertQuotation(quote: {
+    readonly text: string;
+    /** A citation node's source such as `@key, p. 4`, or null to write `reference` as text. */
+    readonly citation: string | null;
+    readonly reference: string;
+  }): boolean {
+    const view = this.editorView;
+    const { blockquote, paragraph, citation } = scientMarkdownSchema.nodes;
+    if (!view || !modeIsEditable(this.mode) || !blockquote || !paragraph) return false;
+    const inline =
+      quote.citation && citation
+        ? [scientMarkdownSchema.text(`${quote.text} `), citation.create({ source: quote.citation })]
+        : [scientMarkdownSchema.text(`${quote.text} ${quote.reference}`)];
+    const { $to } = view.state.selection;
+    const at = $to.depth > 0 ? $to.after(1) : $to.pos;
+    view.dispatch(
+      view.state.tr
+        .insert(at, blockquote.create(null, paragraph.create(null, inline)))
+        .scrollIntoView(),
+    );
+    view.focus();
+    return true;
+  }
+
   /** Replaces the `[@…` being typed with a citation of one Library source. */
   insertLibraryCitation(citationKey: string): boolean {
     const view = this.editorView;
