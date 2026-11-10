@@ -2470,6 +2470,8 @@ describe("OpenCodeAdapterV2", () => {
         },
         command: { list: async () => ({ data: [{ name: "review" }] }) },
         session: {
+          // SCIENT-FORK: Scient's adapter reads and syncs the session's permission rules first.
+          ...nativePermissionPeer(),
           create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
           command: (input: { messageID: string }) => {
             commandCalled.resolve(input.messageID);

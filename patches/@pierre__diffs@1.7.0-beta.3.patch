@@ -288,17 +288,55 @@ index 30c476c7b7e559644fd8e190f570d25cc5c94eea..edbc1d1e5f1bd5b3c76b6477c6037ccb
    /** Whether there is an undone edit to redo. */
    get canRedo(): boolean;
 diff --git a/dist/editor/editor.js b/dist/editor/editor.js
-index a9905d43382de2ca03d6111ba9ab3725d8cb6981..43c785d5d5e1ba8aa58cc32c9aa75e7cf9e62f80 100644
+index a9905d43382de2ca03d6111ba9ab3725d8cb6981..417c7a9813c15a5eb93ac89856892ff23980e365 100644
 --- a/dist/editor/editor.js
 +++ b/dist/editor/editor.js
-@@ -373,6 +373,24 @@ var Editor = class {
+@@ -11,7 +11,7 @@ import { SearchHighlighter } from "../search/SearchHighlighter.js";
+ import { createSpriteElement } from "./sprite.js";
+ import { SearchPanelWidget } from "../search/SearchPanelWidget.js";
+ import { computeLineOffsets } from "../utils/computeFileOffsets.js";
+-import { normalizeLineBreaks } from "../utils/lineEndings.js";
++import { lineEndingOf, normalizeLineBreaks } from "../utils/lineEndings.js";
+ import { EditStack } from "./editStack.js";
+ import { getTextDocumentChangeTransaction } from "./textDocumentChangeTransaction.js";
+ import { TextDocument } from "./textDocument.js";
+@@ -373,6 +373,54 @@ var Editor = class {
  		return [replacementEnd, replacementEnd];
  	}
  	/** Whether there is an edit to undo. */
 +	prepareExternalEdits(expectedSource, edits) {
 +		const document = this.#editSession?.document;
 +		if (!document || this.#isComposing || document.getText() !== expectedSource) return null;
-+		const prepared = document.prepareExternalEdits(edits);
++		// The document keeps "\n" line breaks and adds the file's line ending only on the way out,
++		// so each offset drops the "\r\n" pairs before it. An edit inside a pair, or a result
++		// the document cannot show exactly, such as mixed line endings, declines.
++		let next = expectedSource;
++		for (const edit of edits.toSorted((a, b) => b.start - a.start)) {
++			if (edit.start < 0 || edit.end < edit.start || edit.end > expectedSource.length) return null;
++			next = next.slice(0, edit.start) + edit.text + next.slice(edit.end);
++		}
++		const eol = /\r\n|\r|\n/.test(next) ? lineEndingOf(next) : document.eol;
++		const after = normalizeLineBreaks(next);
++		if ((eol === "\n" ? after : after.replaceAll("\n", eol)) !== next) return null;
++		const pairEnds = [];
++		for (let index = expectedSource.indexOf("\r\n"); index !== -1; index = expectedSource.indexOf("\r\n", index + 2)) pairEnds.push(index + 2);
++		const toInternal = (offset) => {
++			let dropped = 0;
++			for (const pairEnd of pairEnds) {
++				if (pairEnd > offset + 1) break;
++				if (pairEnd === offset + 1) return null;
++				dropped++;
++			}
++			return offset - dropped;
++		};
++		const internalEdits = [];
++		for (const edit of edits) {
++			const start = toInternal(edit.start);
++			const end = toInternal(edit.end);
++			if (start === null || end === null) return null;
++			internalEdits.push({ start, end, text: normalizeLineBreaks(edit.text) });
++		}
++		const prepared = internalEdits.length === 0 ? () => void 0 : document.prepareExternalEdits(internalEdits);
 +		if (!prepared) return null;
 +		return () => {
 +			if (this.#editSession?.document !== document || document.getText() !== expectedSource || this.#isComposing)
@@ -307,16 +345,17 @@ index a9905d43382de2ca03d6111ba9ab3725d8cb6981..43c785d5d5e1ba8aa58cc32c9aa75e7c
 +			const selections = this.#selections;
 +			const offsets = selections?.map((selection) => [document.offsetAt(selection.start), document.offsetAt(selection.end)]);
 +			const change = prepared();
++			if (eol !== document.eol) document.adoptLineEnding(next);
 +			if (!change) return;
-+			const next = selections && offsets ? remapSelectionsAfterEdits(document, selections, offsets, edits) : void 0;
-+			this.#applyChange(change, next, this.#lineAnnotations === void 0 ? void 0 : applyDocumentChangeToLineAnnotations(change, this.#lineAnnotations), { skipFocus: true });
++			const nextSelections = selections && offsets ? remapSelectionsAfterEdits(document, selections, offsets, internalEdits) : void 0;
++			this.#applyChange(change, nextSelections, this.#lineAnnotations === void 0 ? void 0 : applyDocumentChangeToLineAnnotations(change, this.#lineAnnotations), { skipFocus: true });
 +		};
 +	}
 +	get isComposing() { return this.#isComposing; }
  	get canUndo() {
  		return (this.#editSession ?? this.#initialState)?.document?.canUndo ?? false;
  	}
-@@ -490,7 +508,9 @@ var Editor = class {
+@@ -490,7 +538,9 @@ var Editor = class {
  			selections: this.#selections
  		});
  		const primarySelection = resolvedSelections.at(-1);
@@ -327,7 +366,7 @@ index a9905d43382de2ca03d6111ba9ab3725d8cb6981..43c785d5d5e1ba8aa58cc32c9aa75e7c
  		this.#scrollToPrimaryCaret();
  	}
  	setMarkers(markers) {
-@@ -1308,6 +1328,17 @@ var Editor = class {
+@@ -1308,6 +1358,17 @@ var Editor = class {
  					this.#cancelEditPrediction(true);
  					return;
  				}
@@ -458,16 +497,17 @@ index 0000000000000000000000000000000000000000..d86fe62b8dbb4ec7d5ed19afaeb6d1be
 +  }
 +}
 diff --git a/dist/editor/textDocument.js b/dist/editor/textDocument.js
-index 9f89b03d81eff453c9a9a8ecc3f3fd88db0ba42b..c894a789c1d5abf26a4e40acbf0b62e10b1ad7ed 100644
+index 9f89b03d81eff453c9a9a8ecc3f3fd88db0ba42b..8fb816711a9f5f75316d6bdfa44c75a8f7a8e6a5 100644
 --- a/dist/editor/textDocument.js
 +++ b/dist/editor/textDocument.js
-@@ -144,6 +144,19 @@ var TextDocument = class TextDocument {
+@@ -144,6 +144,20 @@ var TextDocument = class TextDocument {
  	setLastUndoSelectionsAfter(selections) {
  		this.#editStack.setLastUndoSelectionsAfter(selections);
  	}
 +	prepareExternalEdits(edits) {
 +		const resolved = this.#sortAndValidateResolvedEdits(edits.map((edit) => ({ ...edit })));
-+		const commitHistory = this.#editStack.prepareExternal(this.getText(), resolved);
++		// History offsets count the document's own "\n" text, not the file's line ending.
++		const commitHistory = this.#editStack.prepareExternal(this.#pieceTable.getText(), resolved);
 +		if (!commitHistory) return null;
 +		const version = this.#version;
 +		return () => {

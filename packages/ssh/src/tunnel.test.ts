@@ -142,7 +142,7 @@ describe("ssh tunnel scripts", () => {
       'T3_RUNTIME_DIR="$HOME/.scient-next/runtime/versions/$T3_ARCHIVE_VERSION"',
     );
     assert.notInclude(script, "$HOME/.t3");
-    assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM-$T3_ARCH.tar.gz"');
+    assert.include(script, 'T3_ARCHIVE="t3-$T3_ARCHIVE_VERSION-$T3_PLATFORM_KEY.tar.gz"');
     assert.include(script, "SHA256SUMS");
     assert.include(script, 'exec "$T3_RUNTIME_DIR/t3" "$@"');
     assert.notInclude(script, "npx");

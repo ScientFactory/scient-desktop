@@ -365,7 +365,7 @@ patchedDependencies:
   '@ff-labs/fff-node@0.11.0': cc71fcec015f4d39bc96ae2e2bf6b0ca678124c722c66a7841efce9d34b5983c
   '@legendapp/list@3.7.2': 3c68607b8bb7a531873bcbe0b197d163ef1fdb4d4cf52a4ddf9d2b3804671658
   '@muse-code/sdk@1.4.6': 7b495b607fc5d76b444c7c4d58821e839726a30e6f3c53564f0d59f2d5b42101
-  '@pierre/diffs@1.7.0-beta.3': 61fee6cd677ab57e312fc617f3983d689ec057fd8abc11622cc55622c7d7ba93
+  '@pierre/diffs@1.7.0-beta.3': 4489e15e2b76eff7ab0d158c54d41b61d2e21fb727e2d7c822ca55896df4ac3e
   '@pierre/trees@1.0.0-beta.6': 89b9655ab0b73365c5862649b8636a7533d62ea8a9bba8057c3ca08d4d58c92b
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': 6872ba71b9847c5a0210b1b896923dadc3860faedfe28d9f062bcedfe786ef1d
@@ -575,7 +575,7 @@ importers:
         version: 0.3.0
       '@pierre/diffs':
         specifier: 1.7.0-beta.3
-        version: 1.7.0-beta.3(patch_hash=61fee6cd677ab57e312fc617f3983d689ec057fd8abc11622cc55622c7d7ba93)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 1.7.0-beta.3(patch_hash=4489e15e2b76eff7ab0d158c54d41b61d2e21fb727e2d7c822ca55896df4ac3e)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/highlights':
         specifier: 'catalog:'
         version: 0.5.0
@@ -1201,7 +1201,7 @@ importers:
         version: 1.8.0
       '@pierre/diffs':
         specifier: 1.7.0-beta.3
-        version: 1.7.0-beta.3(patch_hash=61fee6cd677ab57e312fc617f3983d689ec057fd8abc11622cc55622c7d7ba93)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 1.7.0-beta.3(patch_hash=4489e15e2b76eff7ab0d158c54d41b61d2e21fb727e2d7c822ca55896df4ac3e)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@pierre/theme':
         specifier: 1.1.0
         version: 1.1.0
@@ -1737,7 +1737,7 @@ importers:
     dependencies:
       '@pierre/diffs':
         specifier: 1.7.0-beta.3
-        version: 1.7.0-beta.3(patch_hash=61fee6cd677ab57e312fc617f3983d689ec057fd8abc11622cc55622c7d7ba93)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
+        version: 1.7.0-beta.3(patch_hash=4489e15e2b76eff7ab0d158c54d41b61d2e21fb727e2d7c822ca55896df4ac3e)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)
       '@t3tools/contracts':
         specifier: workspace:*
         version: link:../contracts
@@ -17555,7 +17555,7 @@ snapshots:
 
   '@petamoriken/float16@3.9.3': {}
 
-  '@pierre/diffs@1.7.0-beta.3(patch_hash=61fee6cd677ab57e312fc617f3983d689ec057fd8abc11622cc55622c7d7ba93)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
+  '@pierre/diffs@1.7.0-beta.3(patch_hash=4489e15e2b76eff7ab0d158c54d41b61d2e21fb727e2d7c822ca55896df4ac3e)(@shikijs/themes@4.2.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)':
     dependencies:
       '@pierre/highlights': 0.5.0
       '@pierre/patches': 0.0.1
