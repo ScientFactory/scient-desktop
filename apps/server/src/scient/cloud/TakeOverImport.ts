@@ -13,6 +13,7 @@ import {
   type ScientCloudTakeOverResult,
   SCIC_FILE_EXTENSION,
   ScientCloudError,
+  type ThreadId,
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as SecureRandom from "effect/crypto/SecureRandom";
@@ -22,10 +23,12 @@ import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import packageJson from "../../../package.json" with { type: "json" };
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
+import { ProjectionStoreV2 } from "../../orchestration-v2/ProjectionStore.ts";
 import { ConversationExportFiles } from "../conversationExport/ConversationExportFiles.ts";
 import { prepareScicPackage, sha256Digest } from "../conversationFile/ScicWriter.ts";
 import {
@@ -54,6 +57,8 @@ const make = Effect.gen(function* () {
   const api = yield* CloudApi;
   const store = yield* CloudSyncState;
   const projects = yield* ProjectStoreV2;
+  const projections = yield* ProjectionStoreV2;
+  const lock = yield* Semaphore.make(1);
   const staging = yield* ConversationImportStaging;
   const files = yield* ConversationExportFiles;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -166,6 +171,24 @@ const make = Effect.gen(function* () {
     );
   });
 
+  /** A retry or second click returns the conversation already continued here, while it exists. */
+  const previousImport = Effect.fn("TakeOverImport.previousImport")(function* (
+    request: ScientCloudTakeOverRequest,
+  ) {
+    const { continuedFrom } = yield* store.get;
+    for (const [threadId, from] of Object.entries(continuedFrom)) {
+      if (from.env !== request.source.environmentId || from.thread !== request.source.threadId)
+        continue;
+      const shell = yield* projections
+        .getThreadShell(threadId as ThreadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (shell !== null) {
+        return { _tag: "imported", threadId: shell.id, projectId: shell.projectId } as const;
+      }
+    }
+    return null;
+  });
+
   const takeOver = Effect.fn("TakeOverImport.takeOver")(function* (
     request: ScientCloudTakeOverRequest,
     principal: EnvironmentSessionPrincipalShape,
@@ -177,6 +200,8 @@ const make = Effect.gen(function* () {
         message: "Turn on Cloud copy on this computer first.",
       });
     }
+    const previous = yield* previousImport(request);
+    if (previous !== null) return previous;
     const destination = yield* destinationFor(request);
     if (destination._tag === "choose") {
       return { _tag: "choose-project", candidates: destination.candidates } as const;
@@ -203,33 +228,35 @@ const make = Effect.gen(function* () {
 
   return TakeOverImport.of({
     takeOver: Effect.fn("TakeOverImport.takeOverMapped")((request, principal) =>
-      takeOver(request, principal).pipe(
-        Effect.catchTags({
-          CloudApiError: (error) =>
-            Effect.fail(
-              new ScientCloudError({
-                reason:
-                  error.code === "not_found"
-                    ? "thread-not-found"
-                    : error.code === "network"
-                      ? "cloud-unavailable"
-                      : "cloud-refused",
-                message: error.message,
-              }),
-            ),
-          ScientConversationImportError: (error) => Effect.fail(refused(error.message)),
-        }),
-        Effect.catchIf(
-          (error): error is Exclude<typeof error, ScientCloudError> =>
-            error._tag !== "ScientCloudError",
-          (cause) =>
-            Effect.logWarning("Take-over import failed.", { cause }).pipe(
-              Effect.andThen(
-                Effect.fail(refused("This conversation could not be continued here.")),
+      lock
+        .withPermits(1)(takeOver(request, principal))
+        .pipe(
+          Effect.catchTags({
+            CloudApiError: (error) =>
+              Effect.fail(
+                new ScientCloudError({
+                  reason:
+                    error.code === "not_found"
+                      ? "thread-not-found"
+                      : error.code === "network"
+                        ? "cloud-unavailable"
+                        : "cloud-refused",
+                  message: error.message,
+                }),
               ),
-            ),
+            ScientConversationImportError: (error) => Effect.fail(refused(error.message)),
+          }),
+          Effect.catchIf(
+            (error): error is Exclude<typeof error, ScientCloudError> =>
+              error._tag !== "ScientCloudError",
+            (cause) =>
+              Effect.logWarning("Take-over import failed.", { cause }).pipe(
+                Effect.andThen(
+                  Effect.fail(refused("This conversation could not be continued here.")),
+                ),
+              ),
+          ),
         ),
-      ),
     ),
   });
 });
