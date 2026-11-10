@@ -87,6 +87,10 @@ export const ScientSourcesFullTextSearchRequest = Schema.Struct({
   root: NonEmptyString,
   query: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+  /** Searches only these sources, before ranking and the limit; absent searches the whole Library. */
+  sourceIds: Schema.optionalKey(
+    Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(20_000))),
+  ),
 });
 export type ScientSourcesFullTextSearchRequest = typeof ScientSourcesFullTextSearchRequest.Type;
 

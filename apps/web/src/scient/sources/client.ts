@@ -171,7 +171,11 @@ export function bulkUpdateScientSources(
 
 export async function searchScientSourcesFullText(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly query: string },
+  input: {
+    readonly root: string;
+    readonly query: string;
+    readonly sourceIds?: ReadonlyArray<string>;
+  },
 ) {
   return runtime.runPromise(
     searchEnvironmentScientSourcesFullText({ prepared: prepared(environmentId), ...input }),

@@ -143,6 +143,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               root: args.payload.root,
               query: args.payload.query,
               limit: args.payload.limit ?? 20,
+              ...(args.payload.sourceIds ? { sourceIds: args.payload.sourceIds } : {}),
             }),
           ),
         )

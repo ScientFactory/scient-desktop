@@ -4,9 +4,12 @@ import * as NodeCrypto from "node:crypto";
 import {
   noteWithPassage,
   normalizePersistentIdentifier,
+  webPageBibliographicTitle,
   webPageCandidate,
+  webPageOnlyCandidate,
   webPagePassage,
   type ScientSourceActor,
+  type ScientSourceCandidate,
   type ScientSourceWebPage,
 } from "@scientfactory/scient-sources";
 import {
@@ -16,7 +19,7 @@ import {
 
 import { addAgentSource, updateSourceNote } from "./ScientSourcesCoordinator.ts";
 import type { SourceImportObserver } from "./SourceImportObservation.ts";
-import type { ResolveSourceIdentifier } from "./SourceIdentifierResolver.ts";
+import { titlesAgree, type ResolveSourceIdentifier } from "./SourceIdentifierResolver.ts";
 
 export type SaveWebPageResult =
   | {
@@ -28,7 +31,7 @@ export type SaveWebPageResult =
     }
   | {
       readonly outcome: "not-added";
-      readonly reason: "identifier-not-found" | "identifier-mismatch" | "possible-duplicate";
+      readonly reason: "identifier-not-found" | "possible-duplicate";
       readonly message: string;
       readonly matchingSourceIds: ReadonlyArray<string>;
     };
@@ -75,9 +78,10 @@ async function savePassage(input: {
 }
 
 /**
- * Saves a browser page to the Library: by the identifier the page states,
- * checked against its registry, or as a web page. The selected passage goes
- * into the note, also when the source was already in the Library.
+ * Saves a browser page to the Library: as the work its identifier names when
+ * the registry confirms it and the page's title agrees, otherwise as the web
+ * page itself. The selected passage goes into the note with the page it came
+ * from, also when the source was already in the Library.
  */
 export async function saveWebPageSource(
   input: {
@@ -90,62 +94,90 @@ export async function saveWebPageSource(
   },
   observer?: SourceImportObserver,
 ): Promise<SaveWebPageResult> {
-  const draft = webPageCandidate(input.page, "pending");
-  const keys = draft.identifiers.map((identifier) =>
-    normalizePersistentIdentifier(identifier.scheme, identifier.value),
-  );
-  const candidate = { ...draft, sourceKey: pageSourceKey(input.page, keys) };
-  const passage = webPagePassage(input.page.selection);
+  const passage = webPagePassage(input.page.selection, input.page.url);
   const withPassage = async (sourceId: string, outcome: "added" | "existing", revision: number) => {
     const note = passage
       ? await savePassage({ root: input.root, sourceId, passage, actor: input.actor })
       : { revision, saved: false };
     return { outcome, sourceId, revision: note.revision, passageSaved: note.saved };
   };
-  if (candidate.identifiers.length === 0) {
-    // Without an identifier, the page's address is what makes it the same source.
-    const address = pageAddress(input.page.url);
-    const existing = (await listScientSourceRecords(input.root)).find(
-      (record) => record.url !== null && pageAddress(record.url) === address,
+  const add = (candidate: ScientSourceCandidate, claimedTitle: string | null) =>
+    addAgentSource(
+      {
+        root: input.root,
+        candidate,
+        enrich: input.enrich ?? candidate.identifiers.length > 0,
+        claimedTitle,
+        actor: input.actor,
+        intake: "web",
+        ...(input.resolveIdentifier ? { resolveIdentifier: input.resolveIdentifier } : {}),
+      },
+      observer,
     );
-    if (existing) return withPassage(existing.sourceId, "existing", existing.revision);
+  const saved = async (
+    result: Awaited<ReturnType<typeof add>>,
+    claimedTitle: string | null,
+  ): Promise<SaveWebPageResult | "not-the-work"> => {
+    if (result.outcome === "identifier-mismatch") return "not-the-work";
+    if (result.outcome === "identifier-not-found") {
+      return {
+        outcome: "not-added",
+        reason: result.outcome,
+        message: result.message,
+        matchingSourceIds: [],
+      };
+    }
+    if (result.outcome === "imported" && result.record) {
+      return withPassage(result.record.sourceId, "added", result.record.revision);
+    }
+    const sourceId =
+      result.duplicate.kind === "possible-metadata-match"
+        ? null
+        : result.duplicate.matchingSourceIds[0];
+    const existing = sourceId ? await readScientSourceRecord(input.root, sourceId) : null;
+    if (!existing) {
+      return {
+        outcome: "not-added",
+        reason: "possible-duplicate",
+        message: result.duplicate.reason,
+        matchingSourceIds: result.duplicate.matchingSourceIds,
+      };
+    }
+    // An exact duplicate is found by identifier alone, so the title check happens here.
+    if (claimedTitle && existing.title && !titlesAgree(claimedTitle, existing.title)) {
+      return "not-the-work";
+    }
+    return withPassage(existing.sourceId, "existing", existing.revision);
+  };
+
+  const draft = webPageCandidate(input.page, "pending");
+  // Without a title from the page there is nothing to tell the work from a page that cites it.
+  const claimedTitle = webPageBibliographicTitle(input.page) ?? (input.page.title?.trim() || null);
+  if (draft.identifiers.length > 0 && claimedTitle) {
+    const keys = draft.identifiers.map((identifier) =>
+      normalizePersistentIdentifier(identifier.scheme, identifier.value),
+    );
+    const work = await saved(
+      await add({ ...draft, sourceKey: pageSourceKey(input.page, keys) }, claimedTitle),
+      claimedTitle,
+    );
+    if (work !== "not-the-work") return work;
   }
-  const result = await addAgentSource(
-    {
-      root: input.root,
-      candidate,
-      enrich: input.enrich ?? candidate.identifiers.length > 0,
-      // The page title is the site's, not a claim about the work the identifier names.
-      claimedTitle: null,
-      actor: input.actor,
-      intake: "web",
-      ...(input.resolveIdentifier ? { resolveIdentifier: input.resolveIdentifier } : {}),
-    },
-    observer,
+
+  // Without an established work, the page's address is what makes it the same source.
+  const address = pageAddress(input.page.url);
+  const identified = draft.identifiers.length > 0;
+  const existing = (await listScientSourceRecords(input.root)).find(
+    (record) =>
+      record.url !== null &&
+      pageAddress(record.url) === address &&
+      (!identified || record.identifiers.length === 0),
   );
-  if (result.outcome === "identifier-not-found" || result.outcome === "identifier-mismatch") {
-    return {
-      outcome: "not-added",
-      reason: result.outcome,
-      message: result.message,
-      matchingSourceIds: [],
-    };
-  }
-  const added = result.outcome === "imported" ? result.record : null;
-  const sourceId =
-    added?.sourceId ??
-    (result.duplicate.kind === "possible-metadata-match"
-      ? null
-      : result.duplicate.matchingSourceIds[0]);
-  if (!sourceId) {
-    return {
-      outcome: "not-added",
-      reason: "possible-duplicate",
-      message: result.duplicate.reason,
-      matchingSourceIds: result.duplicate.matchingSourceIds,
-    };
-  }
-  const revision =
-    added?.revision ?? (await readScientSourceRecord(input.root, sourceId))?.revision ?? 1;
-  return withPassage(sourceId, added ? "added" : "existing", revision);
+  if (existing) return withPassage(existing.sourceId, "existing", existing.revision);
+  const page = await saved(
+    await add(webPageOnlyCandidate(input.page, pageSourceKey(input.page, [])), null),
+    null,
+  );
+  if (page === "not-the-work") throw new Error("A web page has no identifier to mismatch.");
+  return page;
 }

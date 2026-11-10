@@ -85,10 +85,12 @@ describe("web pages saved to the Library", () => {
   });
 
   it("keeps the selected passage once in the note", () => {
-    expect(webPagePassage("  First  line\nwraps.\n\n Second paragraph. ")).toBe(
-      "First line wraps.\n\nSecond paragraph.",
+    expect(
+      webPagePassage("  First  line\nwraps.\n\n Second paragraph. ", "https://example.org/a"),
+    ).toBe(
+      "Selected on the web page https://example.org/a:\nFirst line wraps.\n\nSecond paragraph.",
     );
-    expect(webPagePassage(" \n ")).toBeNull();
+    expect(webPagePassage(" \n ", "https://example.org/a")).toBeNull();
     expect(noteWithPassage(null, "Quote")).toBe("Quote");
     expect(noteWithPassage("My note", "Quote")).toBe("My note\n\nQuote");
     expect(noteWithPassage("My note\n\nQuote", "Quote")).toBeNull();
