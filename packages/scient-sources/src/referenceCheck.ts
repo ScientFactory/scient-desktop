@@ -10,7 +10,13 @@ const NullableText = Schema.NullOr(Schema.String);
 const ProjectPath = NonEmptyString.pipe(Schema.check(Schema.isMaxLength(4_096)));
 
 export const ScientReferenceCheckTarget = Schema.Union([
-  Schema.Struct({ kind: Schema.Literal("library") }),
+  Schema.Struct({
+    kind: Schema.Literal("library"),
+    /** Only these sources, as when an agent checks a source before citing it. */
+    sourceIds: Schema.optionalKey(
+      Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(50))),
+    ),
+  }),
   Schema.Struct({ kind: Schema.Literal("file"), path: ProjectPath }),
 ]);
 export type ScientReferenceCheckTarget = typeof ScientReferenceCheckTarget.Type;

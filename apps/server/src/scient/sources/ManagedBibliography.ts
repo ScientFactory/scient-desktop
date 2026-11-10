@@ -45,6 +45,7 @@ export interface ManagedBibliographyFileStatus {
 export interface ManagedBibliographyStatus {
   readonly files: ReadonlyArray<ManagedBibliographyFileStatus>;
   readonly citedSourceCount: number;
+  readonly imported?: number;
 }
 
 type FileRead =
