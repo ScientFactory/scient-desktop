@@ -326,7 +326,10 @@ const seg = encodeURIComponent;
 export const cloudPaths = {
   computerNonce: () => "/v1/computers/nonce",
   computers: () => "/v1/computers",
+  /** DELETE stops syncing: the computer can no longer upload; its copies stay readable. */
   computer: (env: string) => `/v1/computers/${seg(env)}`,
+  /** DELETE removes every copy the computer made (person or that computer). */
+  computerThreads: (env: string) => `/v1/computers/${seg(env)}/threads`,
   computerMoved: (env: string, since?: string) =>
     `/v1/computers/${seg(env)}/moved${since === undefined ? "" : `?since=${seg(since)}`}`,
   limits: () => "/v1/limits",
