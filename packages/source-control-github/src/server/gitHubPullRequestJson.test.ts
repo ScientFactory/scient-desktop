@@ -1796,6 +1796,7 @@ describe("pull request watch fingerprints", () => {
       readonly commentEditedAt: string | null;
       readonly reviews: number;
       readonly removals: number;
+      readonly timelineItems: number;
     }) => ({
       state: "OPEN",
       mergeable: "MERGEABLE",
@@ -1803,7 +1804,7 @@ describe("pull request watch fingerprints", () => {
       comments: { totalCount: 1, nodes: [{ lastEditedAt: input.commentEditedAt }] },
       reviews: { totalCount: input.reviews, nodes: [] },
       reviewThreads: { totalCount: 0 },
-      mergeQueueRemovals: { filteredCount: input.removals },
+      mergeQueueRemovals: { totalCount: input.timelineItems, filteredCount: input.removals },
       commits: {
         nodes: [
           {
@@ -1825,7 +1826,14 @@ describe("pull request watch fingerprints", () => {
     });
     const fingerprint = (input: Parameters<typeof pullRequest>[0]) =>
       toPullRequestWatchFingerprint(decodeWatched(pullRequest(input)));
-    const base = { running: 2, failed: 0, commentEditedAt: null, reviews: 1, removals: 0 };
+    const base = {
+      running: 2,
+      failed: 0,
+      commentEditedAt: null,
+      reviews: 1,
+      removals: 0,
+      timelineItems: 3,
+    };
     const before = fingerprint(base);
     const checkFinished = fingerprint({ ...base, running: 1, failed: 1 });
     const summaryEdited = fingerprint({ ...base, commentEditedAt: "2026-10-05T23:47:43Z" });
@@ -1837,8 +1845,11 @@ describe("pull request watch fingerprints", () => {
     expect(summaryEdited.status).toBe(before.status);
     expect(replied.remarks).not.toBe(before.remarks);
     // Queued and dropped between two passes leaves the head and its checks as they were.
-    const dropped = fingerprint({ ...base, removals: 1 });
+    const dropped = fingerprint({ ...base, removals: 1, timelineItems: 5 });
     expect(dropped.status).not.toBe(before.status);
     expect(dropped.remarks).toBe(before.remarks);
+    // GitHub's totalCount counts every timeline item, whatever itemTypes asks for.
+    const queued = fingerprint({ ...base, timelineItems: 4 });
+    expect(queued.status).toBe(before.status);
   });
 });
