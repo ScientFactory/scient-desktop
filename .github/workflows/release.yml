@@ -91,6 +91,7 @@ jobs:
       publish_release: ${{ steps.meta.outputs.publish_release }}
       allow_unsigned_windows: ${{ steps.meta.outputs.allow_unsigned_windows }}
       release_notes_base64: ${{ steps.meta.outputs.release_notes_base64 }}
+      macos_profile_required: ${{ steps.macos_signing.outputs.profile_required }}
     steps:
       - name: Require the channel's source branch
         shell: bash
@@ -155,6 +156,26 @@ jobs:
           RELEASE_DATE="$(date -u +%Y%m%d)"
           export RELEASE_DATE
           node scripts/resolve-scient-release-inputs.ts
+
+      - name: Test macOS profile validation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_macos_connect_profile.py'
+
+      - id: macos_signing
+        name: Require macOS Connect signing inputs before native builds
+        env:
+          MACOS_SIGNING_CONFIGURED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' }}
+          REQUESTED_PUBLICATION: ${{ inputs.publish_release }}
+          SCIENT_APPLE_TEAM_ID: ${{ vars.SCIENT_APPLE_TEAM_ID }}
+          SCIENT_MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.SCIENT_MACOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          required=false
+          if [[ "$RELEASE_CHANNEL" == beta || "$REQUESTED_PUBLICATION" == true || "$MACOS_SIGNING_CONFIGURED" == true ]]; then
+            required=true
+          fi
+          echo "profile_required=$required" >> "$GITHUB_OUTPUT"
+          [[ "$required" == true ]] || exit 0
+          [[ "$SCIENT_APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || { echo "Configure SCIENT_APPLE_TEAM_ID." >&2; exit 1; }
+          [[ -n "$SCIENT_MACOS_PROVISIONING_PROFILE_BASE64" ]] || { echo "Configure SCIENT_MACOS_PROVISIONING_PROFILE_BASE64." >&2; exit 1; }
 
       - name: Refuse an existing tag or release before builds
         shell: bash
@@ -501,6 +522,13 @@ jobs:
             echo "T3CODE_${name}=${value}" >> "$GITHUB_ENV"
           done
       # SCIENT-FORK:END
+      - name: Stage macOS Connect provisioning profile
+        if: matrix.platform == 'mac' && needs.preflight.outputs.macos_profile_required == 'true'
+        env:
+          SCIENT_APPLE_TEAM_ID: ${{ vars.SCIENT_APPLE_TEAM_ID }}
+          SCIENT_MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.SCIENT_MACOS_PROVISIONING_PROFILE_BASE64 }}
+          T3CODE_CLERK_PASSKEY_RP_DOMAINS: ${{ vars.T3CODE_CLERK_PASSKEY_RP_DOMAINS }}
+        run: python3 .github/scripts/stage-macos-connect-profile.py
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
