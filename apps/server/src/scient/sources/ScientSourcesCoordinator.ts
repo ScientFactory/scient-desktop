@@ -7,8 +7,6 @@ import {
   applyResolvedSourceMetadata,
   creatorDisplayName,
   resolveSourceIdentifier,
-  sourceIdentifierLabel as identifierLabel,
-  sourceIdentifierRegistryName as registryName,
   titlesAgree,
   type ResolveSourceIdentifier,
 } from "./SourceIdentifierResolver.ts";
@@ -20,6 +18,8 @@ import {
   refreshExistingSourceCandidate,
 } from "./LocalPdfSourceAdapter.ts";
 import {
+  sourceIdentifierLabel as identifierLabel,
+  sourceIdentifierRegistryName as registryName,
   abstractDocumentFromSections,
   changedEditableMetadataFields,
   editableMetadataFromRecord,
@@ -43,6 +43,11 @@ import {
   type ZoteroConnection,
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
+import {
+  bulkUpdateScientSources,
+  organizeScientSources,
+  readScientSourcesOrganization,
+} from "@scientfactory/scient-sources/collections";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   cancelSourceImportOperation,
@@ -191,6 +196,13 @@ function normalizeSourceRecordForRead(record: ScientSourceRecord): ScientSourceR
 
 export async function getScientSourcesOverview(root: string) {
   const overview = await inspectScientSources(root);
+  const organization =
+    overview.projectState === "initialized"
+      ? await readScientSourcesOrganization(
+          root,
+          new Set(overview.records.map((record) => record.sourceId)),
+        )
+      : null;
   void scheduleSourceFullTextIndexing(root);
   return {
     ...overview,
@@ -199,7 +211,16 @@ export async function getScientSourcesOverview(root: string) {
       sourceId: record.sourceId,
       diagnostics: sourceMetadataDiagnostics(record),
     })),
+    ...(organization ? { organization } : {}),
   };
+}
+
+export async function organizeSources(input: Parameters<typeof organizeScientSources>[0]) {
+  return organizeScientSources(input);
+}
+
+export async function bulkUpdateSources(input: Parameters<typeof bulkUpdateScientSources>[0]) {
+  return bulkUpdateScientSources(input);
 }
 
 export async function getScientSourceDetail(input: {

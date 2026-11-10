@@ -1,3 +1,5 @@
+import type { ScientSourceType } from "@scientfactory/scient-sources";
+
 function isSameCalendarDay(left: Date, right: Date): boolean {
   return (
     left.getFullYear() === right.getFullYear() &&
@@ -55,3 +57,16 @@ export function sourceAddedLabel(
   if (isSameCalendarDay(date, new Date())) return "Added today";
   return `Added ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date)}`;
 }
+
+export const SCIENT_SOURCE_TYPE_LABELS = {
+  article: "Article",
+  preprint: "Preprint",
+  book: "Book",
+  "book-chapter": "Book chapter",
+  "conference-paper": "Conference paper",
+  thesis: "Thesis",
+  report: "Report",
+  dataset: "Dataset",
+  web: "Web source",
+  other: "Other source",
+} as const satisfies Readonly<Record<ScientSourceType, string>>;

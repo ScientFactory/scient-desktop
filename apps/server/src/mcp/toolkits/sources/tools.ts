@@ -1,4 +1,6 @@
 import {
+  MAX_SOURCE_IDENTIFIER_BATCH,
+  ScientSourceIdentifierAddItem,
   ScientSourceCreator,
   ScientSourceExternalReference,
   ScientSourceEditableMetadata,
@@ -13,6 +15,11 @@ import {
   ScientSourceRevisionSummary,
   ScientSourceType,
   ScientSourceVerification,
+  ScientSourcesBulkChange,
+  ScientSourcesBulkResult,
+  ScientSourcesOrganizeAction,
+  ScientSourcesOrganizeResult,
+  ScientSourceFilter,
 } from "@scientfactory/scient-sources";
 import {
   isTrimmedUnadvertised,
@@ -78,6 +85,7 @@ export const ScientSourceAgentSummary = Schema.Struct({
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
   removedAt: Schema.optionalKey(NonEmptyString),
   removedBy: Schema.optionalKey(ScientSourceActor),
+  tags: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 export const ScientSourcesListResult = Schema.Struct({
@@ -124,9 +132,16 @@ export const ScientSourceAgentDetail = Schema.Struct({
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
     "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly. " +
+    "query matches citation key, title, authors, year, journal, identifiers and tags. Narrow with tags (all must match), collectionId, type or hasPdf, " +
+    "or run a saved search with savedSearchId (other filters then narrow it further); scient_sources_collections lists collections, saved searches and tags. " +
     "inTrash lists removed sources instead, newest removal first; restore one with scient_sources_restore.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
+    tags: Schema.optionalKey(ScientSourceFilter.fields.tags),
+    collectionId: Schema.optionalKey(NonEmptyString),
+    type: Schema.optionalKey(ScientSourceType),
+    hasPdf: Schema.optionalKey(Schema.Boolean),
+    savedSearchId: Schema.optionalKey(NonEmptyString),
     inTrash: Schema.optionalKey(Schema.Boolean),
     offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
@@ -330,6 +345,15 @@ export const ScientSourceAddInput = Schema.Struct({
     }),
   ),
   allowPossibleMetadataMatch: Schema.optionalKey(AllowPossibleMetadataMatch),
+  identifierList: Schema.optionalKey(
+    Schema.Array(Schema.String.pipe(Schema.check(Schema.isMaxLength(1_000))))
+      .pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_SOURCE_IDENTIFIER_BATCH)))
+      .annotate({
+        description:
+          "Add several works at once: one DOI, PMID, arXiv ID or ISBN per entry, bare, prefixed or as a link (identifiers from search or connector results go here). " +
+          "Each entry becomes its own source from its registry's metadata; give no citation fields or PDF with it. See results.",
+      }),
+  ),
 });
 export type ScientSourceAddInput = typeof ScientSourceAddInput.Type;
 
@@ -340,6 +364,7 @@ export const ScientSourceAddResult = Schema.Struct({
     "invalid",
     "identifier-not-found",
     "identifier-mismatch",
+    "batch",
   ]),
   sourceId: Schema.NullOr(NonEmptyString),
   revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
@@ -365,16 +390,24 @@ export const ScientSourceAddResult = Schema.Struct({
     }),
   ),
   message: Schema.optionalKey(NonEmptyString),
+  results: Schema.optionalKey(
+    Schema.Array(ScientSourceIdentifierAddItem).annotate({
+      description:
+        "One per identifierList entry, in order: imported (added, verified), duplicate (already in the Library; sourceId names it), " +
+        "identifier-not-found (does not exist; nothing added), unavailable (registry unreachable; nothing added, try again later), or unrecognized (not an identifier).",
+    }),
+  ),
 });
 
 const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
-    "Add one source to this project after the user explicitly asks. List existing Sources first. " +
+    "Add a source, or several by identifier, to this project's Library after the user explicitly asks. List existing Sources first. " +
+    "To add works you know by DOI, PMID, arXiv ID or ISBN, pass identifierList (up to 50, mixed); outcome is batch and results says what happened to each. " +
     "For a PDF in the project, pass its relative path as pdfRelativePath; Scient reads metadata from it, " +
-    "so citation fields are optional. A DOI or PMID is checked against doi.org or PubMed first: " +
+    "so citation fields are optional. A DOI, PMID, arXiv ID or ISBN is checked against its registry first: " +
     "identifier-not-found means the identifier does not exist and identifier-mismatch means it names a different work (see resolved); nothing is added in either case. " +
     "A found identifier's registry metadata replaces the citation fields you gave (verification verified). " +
-    "If the registry cannot be reached the source is added as given (unchecked); without a DOI or PMID it is unverified. " +
+    "If the registry cannot be reached the source is added as given (unchecked); without one of these identifiers it is unverified. " +
     "The user sees that you added it. Repeating the same request adds nothing. " +
     "From a PubMed, Semantic Scholar or OpenAlex result, pass only its identifier (scheme pmid, s2 for a paperId or CorpusId:N, or openalex for a W work ID) without citation fields: Scient fetches the record and checks it at the DOI's registry.",
   parameters: ScientSourceAddInput,
@@ -603,6 +636,71 @@ const ScientSourceQuoteCheckTool = Tool.make("scient_sources_quote_check", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.quote.check", false));
 
+export const ScientSourcesCollectionsResult = Schema.Struct({
+  collections: Schema.Array(
+    Schema.Struct({ collectionId: NonEmptyString, name: NonEmptyString, sourceCount: Schema.Int }),
+  ),
+  savedSearches: Schema.Array(
+    Schema.Struct({ searchId: NonEmptyString, name: NonEmptyString, filter: ScientSourceFilter }),
+  ),
+  tags: Schema.Array(Schema.Struct({ tag: Schema.String, count: Schema.Int })).pipe(
+    Schema.check(Schema.isMaxLength(200)),
+  ),
+  message: Schema.optionalKey(Schema.String),
+});
+
+const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
+  description:
+    "Read how this project's Sources are organized: collections with their source counts, saved searches with their filters, and the most used tags. " +
+    "List a collection's sources with scient_sources_list collectionId.",
+  parameters: Tool.EmptyParams,
+  success: ScientSourcesCollectionsResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read source collections")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.collections", false));
+
+const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
+  description:
+    "Change collections or saved searches after the user asks. A source can be in several collections; collections never change source records. " +
+    "create-collection with an existing name returns that collection (existing) and adds the given sources. " +
+    "delete-collection keeps its sources and can be undone with restore-collection. save-search with an existing name replaces its filter. " +
+    "unknownSourceIds lists ids that are not in the Library and were not added.",
+  parameters: Schema.Struct({ change: ScientSourcesOrganizeAction }),
+  success: ScientSourcesOrganizeResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Organize sources")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.organize", true));
+
+const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
+  description:
+    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive, existing spelling kept), set the type " +
+    "(customType is required for other), and add to or remove from collections. Tag and type changes make a new revision per source, recorded as set by the agent " +
+    "and undoable with scient_sources_revert. Each source is reported (updated, unchanged, not-found, failed with a message); one failure does not stop the rest. " +
+    "To remove many sources, call scient_sources_remove for each.",
+  parameters: Schema.Struct({ change: ScientSourcesBulkChange }),
+  success: ScientSourcesBulkResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Edit many sources")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.bulk_update", true));
+
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,
   ScientSourceGetTool,
@@ -618,4 +716,7 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesSearchTool,
   ScientSourceReadTextTool,
   ScientSourceQuoteCheckTool,
+  ScientSourcesCollectionsTool,
+  ScientSourcesOrganizeTool,
+  ScientSourcesBulkUpdateTool,
 );
