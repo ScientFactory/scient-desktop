@@ -67,6 +67,8 @@ const headTags = (
     `<meta name="scient-cloud-api" content="${escapeHtml(config.apiOrigin)}">`,
     `<meta name="scient-share-content" content="${escapeHtml(config.contentOrigin)}">`,
   ];
+  const hostedApp = config.appOrigins.find((origin) => origin.startsWith("https://"));
+  if (hostedApp) tags.push(`<meta name="scient-hosted-app" content="${escapeHtml(hostedApp)}">`);
   if (!page.indexable) tags.push(`<meta name="robots" content="noindex, nofollow">`);
   if (page.card) {
     const title = escapeHtml(page.card.title);

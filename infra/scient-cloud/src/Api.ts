@@ -152,6 +152,12 @@ const requireComputer = Effect.fn("Api.requireComputer")(
   }),
 );
 
+/** A person, or any of their enrolled computers (take-over import reads on the new computer). */
+const requireReader = (request: Request) =>
+  readComputerAuthorization(request.headers.get("authorization")) === undefined
+    ? requireUser(request)
+    : requireComputer(request, new Uint8Array(0)).pipe(Effect.map((computer) => computer.userId));
+
 /** A person, or the computer named by the path. */
 const requireUserOrComputer = (request: Request, env: string) =>
   readComputerAuthorization(request.headers.get("authorization")) === undefined
@@ -303,7 +309,7 @@ const getThread = Effect.fn("Api.getThread")(function* (
   env: string,
   thread: string,
 ) {
-  const userId = yield* requireUser(request);
+  const userId = yield* requireReader(request);
   const found = yield* (yield* Users).get(userId).getThread(env, thread);
   return yield* decryptedResponse(userId, found.objectKey, snapshotHeaders, passthrough);
 });
@@ -374,7 +380,7 @@ const putBlob = Effect.fn("Api.putBlob")(function* (request: Request, sha: strin
 });
 
 const getBlob = Effect.fn("Api.getBlob")(function* (request: Request, sha: string) {
-  const userId = yield* requireUser(request);
+  const userId = yield* requireReader(request);
   const blob = yield* (yield* Users).get(userId).blobForRead(sha);
   return yield* decryptedResponse(userId, blob.objectKey, {
     ...OBJECT_HEADERS,

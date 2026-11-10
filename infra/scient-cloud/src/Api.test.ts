@@ -215,6 +215,11 @@ describe("sync", () => {
       expect(leased.status).toBe(200);
       expect(leased.headers.get(LEASE_GENERATION_HEADER)).toBe("1");
       expect(yield* readBytes(leased)).toEqual(body);
+      // The new computer downloads the copy with its own signature.
+      const imported = yield* call("GET", cloudPaths.thread("env-a", "t1"), {
+        computer: computerB,
+      });
+      expect(yield* readBytes(imported)).toEqual(body);
 
       const lost = yield* putThread(
         computerA,
@@ -425,7 +430,18 @@ describe("shares", () => {
   it.effect("serves the page shell without indexing and a card only for public plain links", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
-      const encrypted = yield* publishShare({ mode: "link" }, { card: { title: "Hidden" } });
+      const carded = yield* call("POST", cloudPaths.shares(), {
+        person: "ada-token",
+        body: {
+          source: { env: "env-a", thread: "t1" },
+          encrypted: true,
+          access: { mode: "link" },
+          indexable: false,
+          card: { title: "Hidden" },
+        },
+      });
+      expect(carded.status).toBe(400);
+      const encrypted = yield* publishShare({ mode: "link" });
       const page = yield* call("GET", cloudPaths.sharePage(encrypted));
       expect(page.status).toBe(200);
       expect(page.headers.get("referrer-policy")).toBe("no-referrer");
