@@ -21,6 +21,7 @@ import {
   listEnvironmentScientSourceTrash,
   restoreEnvironmentScientSource,
   revertEnvironmentScientSource,
+  syncEnvironmentScientBibliography,
   updateEnvironmentScientSourceMetadata,
   updateEnvironmentScientSourceNote,
   uploadEnvironmentLocalSourcePdf,
@@ -28,6 +29,7 @@ import {
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type {
   EnvironmentId,
+  ScientManagedBibliographyFileName,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
@@ -291,5 +293,17 @@ export function retrySourcesImport(
 ) {
   return runtime.runPromise(
     retryEnvironmentScientSourcesImport({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function syncScientBibliography(
+  environmentId: EnvironmentId,
+  input: {
+    readonly root: string;
+    readonly replaceEdited?: ReadonlyArray<ScientManagedBibliographyFileName>;
+  },
+) {
+  return runtime.runPromise(
+    syncEnvironmentScientBibliography({ prepared: prepared(environmentId), ...input }),
   );
 }

@@ -37,6 +37,8 @@ import {
 } from "react";
 
 import { Button } from "../../components/ui/button";
+import { ManagedBibliographyNotice } from "./ManagedBibliographyNotice";
+import { useManagedBibliography } from "./useManagedBibliography";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
@@ -252,6 +254,11 @@ export function ScientSourcesPanel(props: {
   }) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const bibliography = useManagedBibliography({
+    environmentId: props.environmentId,
+    root: props.root,
+    records: sources.overview?.records ?? null,
+  });
   const getPaper = useAccountCommand(accountsState.paperForSource, props.environmentId);
   const requestPapers = useAccountCommand(accountsState.requestPapers, props.environmentId);
   const listPapers = useStableCallback(
@@ -1173,6 +1180,13 @@ export function ScientSourcesPanel(props: {
         <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
       ) : null}
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
+      {bibliography.status ? (
+        <ManagedBibliographyNotice
+          files={bibliography.status.files}
+          replacing={bibliography.replacing}
+          onReplace={(name) => void bibliography.replace(name)}
+        />
+      ) : null}
       {sources.operation ? (
         <ImportSummary
           operation={sources.operation}

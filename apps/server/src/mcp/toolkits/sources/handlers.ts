@@ -36,6 +36,7 @@ import {
   updateScientSource,
   updateSourceNote,
 } from "../../../scient/sources/ScientSourcesCoordinator.ts";
+import { syncManagedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
 import {
   checkSourceQuotes,
   readSourceText,
@@ -223,6 +224,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         ? all
         : all.filter((record) =>
             [
+              record.citationKey ?? null,
               record.title,
               creatorName(record),
               record.issuedYear,
@@ -244,6 +246,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
       records: page.map((record) => ({
         sourceId: record.sourceId,
         revision: record.revision,
+        ...(record.citationKey ? { citationKey: record.citationKey } : {}),
         type: record.type,
         title: record.title,
         creator: creatorName(record),
@@ -596,6 +599,15 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
   },
 );
 
+const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolkit.bibliography")(
+  function* (input: {
+    readonly replaceEdited?: ReadonlyArray<"references.bib" | "references.json">;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() => syncManagedBibliography(root, input));
+  },
+);
+
 const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search")(
   function* (input: {
     readonly query: string;
@@ -657,6 +669,7 @@ const handlers = {
   scient_sources_add: addScientSourceForInvocation,
   scient_sources_attach_pdf: attachScientSourcePdfForInvocation,
   scient_sources_detach_pdf: detachScientSourcePdfForInvocation,
+  scient_sources_bibliography: syncScientBibliographyForInvocation,
   scient_sources_search: searchScientSourcesForInvocation,
   scient_sources_read_text: readScientSourceTextForInvocation,
   scient_sources_quote_check: checkScientSourceQuotesForInvocation,
