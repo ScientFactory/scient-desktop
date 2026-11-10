@@ -135,6 +135,35 @@ describe("a local size keeps its share of the surrounding text", () => {
       ([name]) => name === "word/styles.xml",
     )?.[1];
     // 1.2 x 18 pt = 21.6 pt, kept to the half point: 21.5 pt, which Word writes as 43.
-    expect(styles).toMatch(/w:styleId="ScientSize120of18pt"[\s\S]*?<w:sz w:val="43"/u);
+    expect(styles).toMatch(
+      /<w:style [^>]*w:styleId="ScientSize120of18pt"(?:(?!<\/w:style>)[\s\S])*?<w:sz w:val="43"/u,
+    );
+  });
+
+  it("does not carry the font around a footnote reference into the footnote text", () => {
+    const family = { t: "RawInline", c: ["html", '<span style="font-family:monospace">'] };
+    const text = [
+      {
+        t: "Para",
+        c: [open, { t: "Note", c: [{ t: "Para", c: [family, word, close] }] }, close],
+      },
+    ];
+    applyFontSpans(text, pass());
+    expect(JSON.stringify(text)).toContain("Scient Font monospace");
+    expect(JSON.stringify(text)).not.toContain("120% of 9pt Font");
+  });
+
+  it("combines a size and a family in a heading", () => {
+    const family = { t: "RawInline", c: ["html", '<span style="font-family:serif">'] };
+    const heading = [{ t: "Header", c: [2, attributes, [open, family, word, close, close]] }];
+    const used = pass();
+    applyFontSpans(heading, used);
+    // Pandoc keeps only the innermost style of a run, so the innermost one names both.
+    expect(
+      JSON.stringify(heading)
+        .match(/Scient[^"]*/gu)
+        ?.at(-1),
+    ).toBe("Scient Size 120% of 15pt Font serif");
+    expect(used.inContext.has("Scient Size 120% of 15pt Font serif")).toBe(true);
   });
 });
