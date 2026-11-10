@@ -487,6 +487,8 @@ describe("native OMP event ingress budgets", () => {
             message: { text: "q".repeat(20_000) + "Healthy answer", streaming: false },
           });
           yield* sessions[index]!.close;
+          // A reading consumer owns its backlog until EOF, so wait for it to finish.
+          yield* observers[index]!.ended;
         }
         expect(f.locks()).toHaveLength(0);
         expect(f.handles()).toBe(0);
@@ -609,6 +611,8 @@ describe("native OMP event ingress budgets", () => {
           status: "completed",
         });
         yield* quiet.close;
+        // A reading consumer owns its backlog until EOF, so wait for it to finish.
+        yield* q.ended;
         expect(f.locks()).toHaveLength(0);
         expect(f.backlogs()).toEqual([]);
       }),
