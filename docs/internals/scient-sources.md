@@ -439,6 +439,37 @@ the user or an agent restores the Library version. The project file is written
 before the copy, so an interrupted write is adopted on the next sync instead
 of reported as an edit. Nothing is written for a project without a Library.
 
+`importEdited` sends an edited file through the ordinary reference-file import
+(`importBibliographyFile`). Only when the edit added entries and every added
+key is then in the Library, with nothing changed or removed, is the file
+written again; otherwise it stays edited for the person to decide.
+
+## Citing
+
+Documents cite by key. In Markdown, typing `[@` opens a list of Library
+sources (`prosemirror/libraryCitation.ts`, ranked by
+`sources/libraryCitations.ts`) and inserts the existing Pandoc `citation`
+node; the LaTeX citation dialog appends Library sources after the document's
+own `.bib` entries. A citation opens its source through
+`librarySourceRequest.ts`, which the Library panel acts on once loaded.
+
+A deliberate key rename goes through `updateScientSource`, which then rewrites
+the key in project Markdown citations (outside code) and LaTeX `\cite`-family
+key lists (`renameCitationKeyInDocument`); `citationKeyRenamedIn` lists the
+files. Nothing else changes a key, so a key a document uses stays frozen.
+
+`scient_sources_cite` (`LibraryCitation.ts`) runs the shared reference check
+(`checkReferences` with a Library `sourceIds` target) on the sources about to
+be cited and reports identifier, retraction, notice, published-version and
+registry-detail findings next to the citation it returns; it never withholds
+the citation.
+
+Markdown Word export passes a CSL style to Pandoc: the document's `csl:`
+front matter (a bundled `apa` or `vancouver`, or a project `.csl` file), else
+the request's `citationStyle` from Settings, else Pandoc's default. Library
+sources are the lowest-precedence references (`fallbackCitations`), after the
+document's front matter and named bibliographies. Export only reads records.
+
 ## Collections, saved searches and bulk edit
 
 `packages/scient-sources/src/collections.ts` owns

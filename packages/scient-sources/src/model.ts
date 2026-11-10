@@ -330,6 +330,8 @@ export const ScientSourceMetadataUpdateResult = Schema.Struct({
   record: ScientSourceRecord,
   duplicate: ScientSourceDuplicateAssessment,
   validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
+  /** Project documents whose citations followed a deliberate key rename. */
+  citationKeyRenamedIn: Schema.optionalKey(Schema.Array(NonEmptyString)),
 });
 export type ScientSourceMetadataUpdateResult = typeof ScientSourceMetadataUpdateResult.Type;
 

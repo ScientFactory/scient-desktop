@@ -58,6 +58,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
         "scient_sources_organize",
         "scient_sources_bulk_update",
         "scient_sources_bibliography",
+        "scient_sources_cite",
       ]),
       tools("sources:read", ["scient_references_check"]),
       tools("sources:write", ["scient_references_resolve"]),

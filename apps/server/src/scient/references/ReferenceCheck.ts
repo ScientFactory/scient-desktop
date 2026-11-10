@@ -406,8 +406,14 @@ interface Collected {
   readonly complete: boolean;
 }
 
-async function collectLibrary(root: string): Promise<Collected> {
-  const records = await listScientSourceRecords(root);
+async function collectLibrary(
+  root: string,
+  sourceIds: ReadonlyArray<string> | undefined,
+): Promise<Collected> {
+  const wanted = sourceIds ? new Set(sourceIds) : null;
+  const records = (await listScientSourceRecords(root)).filter(
+    (record) => wanted === null || wanted.has(record.sourceId),
+  );
   return {
     subjects: records.map(sourceSubject),
     files: [],
@@ -640,7 +646,7 @@ export async function checkReferences(
   const startedAt = now().getTime();
   const collected =
     input.target.kind === "library"
-      ? await collectLibrary(root)
+      ? await collectLibrary(root, input.target.sourceIds)
       : await collectDocument(root, input.target.path);
   const scope = input.target.kind === "library" ? "library" : collected.files[0]!;
   const notes = [...collected.notes];

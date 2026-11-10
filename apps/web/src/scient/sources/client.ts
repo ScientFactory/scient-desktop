@@ -378,6 +378,7 @@ export function syncScientBibliography(
   input: {
     readonly root: string;
     readonly replaceEdited?: ReadonlyArray<ScientManagedBibliographyFileName>;
+    readonly importEdited?: ReadonlyArray<ScientManagedBibliographyFileName>;
   },
 ) {
   return runtime.runPromise(

@@ -42,6 +42,7 @@ import {
   removeSource,
   restoreSource,
   retrySourceImport,
+  syncManagedBibliographyWithImports,
   revertSource,
   updateScientSource,
   updateSourceNote,
@@ -53,7 +54,7 @@ import {
   exportBibliography,
   readBibliographyFile,
 } from "./BibliographyFileAdapter.ts";
-import { startManagedBibliographySync, syncManagedBibliography } from "./ManagedBibliography.ts";
+import { startManagedBibliographySync } from "./ManagedBibliography.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
   "ScientSourcesOperationError",
@@ -317,7 +318,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         )
         .handle("syncBibliography", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            syncManagedBibliography(args.payload.root, args.payload),
+            syncManagedBibliographyWithImports({ ...args.payload, actor: "user" }, observeImport),
           ),
         ),
     );

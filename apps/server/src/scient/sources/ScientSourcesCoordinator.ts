@@ -91,11 +91,18 @@ import {
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
+import { renameCitationKeyInProject } from "./LibraryCitation.ts";
+import {
+  syncManagedBibliography,
+  type ManagedBibliographyFileName,
+} from "./ManagedBibliography.ts";
 import {
   beginBibliographyFileImport,
   discardBibliographyFileImport,
   fileImportVerification,
   getBibliographyFileImportCandidate,
+  readBibliographyFile,
+  resolveProjectBibliographyFile,
 } from "./BibliographyFileAdapter.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
@@ -265,8 +272,18 @@ export async function getScientSourceJournalIconMaterial(input: {
   return record ? resolveJournalIcon({ record, cacheRoot: input.cacheRoot }) : null;
 }
 
+/** A deliberate citation key rename also renames the key where project documents cite it. */
 export async function updateScientSource(input: Parameters<typeof updateScientSourceMetadata>[0]) {
-  return updateScientSourceMetadata(input);
+  const previousKey = input.metadata.citationKey
+    ? (await readScientSourceRecord(input.root, input.sourceId))?.citationKey
+    : undefined;
+  const result = await updateScientSourceMetadata(input);
+  const nextKey = result.record.citationKey;
+  if (result.outcome !== "updated" || !previousKey || !nextKey || previousKey === nextKey) {
+    return result;
+  }
+  const citationKeyRenamedIn = await renameCitationKeyInProject(input.root, previousKey, nextKey);
+  return { ...result, citationKeyRenamedIn };
 }
 
 export async function updateSourceNote(input: Parameters<typeof updateScientSourceNote>[0]) {
@@ -1033,6 +1050,66 @@ export async function retrySourceImport(input: {
 }) {
   const root = await canonicalizeScientSourceRoot(input.root);
   return retryFailedSourceImportOperationItems(root, input.operationId, input.itemKeys);
+}
+
+/**
+ * Offers hand edits to the managed bibliography back to the Library: new entries
+ * are imported like any reference file. A file whose only edits were new
+ * entries, all now in the Library under their keys, is then written again;
+ * one with changed or removed entries stays as the person left it.
+ */
+export async function syncManagedBibliographyWithImports(
+  input: {
+    readonly root: string;
+    readonly replaceEdited?: ReadonlyArray<ManagedBibliographyFileName>;
+    readonly importEdited?: ReadonlyArray<ManagedBibliographyFileName>;
+    readonly actor: ScientSourceActor;
+  },
+  observer?: SourceImportObserver,
+) {
+  const importEdited = input.importEdited ?? [];
+  if (importEdited.length === 0) {
+    return syncManagedBibliography(
+      input.root,
+      input.replaceEdited ? { replaceEdited: input.replaceEdited } : {},
+    );
+  }
+  const before = await syncManagedBibliography(input.root);
+  let imported = 0;
+  for (const name of importEdited) {
+    if (before.files.find((file) => file.name === name)?.state !== "edited") continue;
+    const file = await resolveProjectBibliographyFile(input.root, name);
+    const result = await importBibliographyFile(
+      {
+        root: input.root,
+        operationId: `bibliography_${NodeCrypto.randomUUID()}`,
+        fileName: file.fileName,
+        text: await readBibliographyFile(file.absolutePath),
+        actor: input.actor,
+      },
+      observer,
+    );
+    imported += result.operation?.items.filter((item) => item.state === "imported").length ?? 0;
+  }
+  const keys = new Set(
+    (await listScientSourceRecords(input.root)).flatMap((record) =>
+      record.citationKey ? [record.citationKey] : [],
+    ),
+  );
+  const fullyImported = before.files.flatMap((file) =>
+    importEdited.includes(file.name) &&
+    file.state === "edited" &&
+    file.changes !== null &&
+    file.changes.changed.length === 0 &&
+    file.changes.removed.length === 0 &&
+    file.changes.added.every((key) => keys.has(key))
+      ? [file.name]
+      : [],
+  );
+  const status = await syncManagedBibliography(input.root, {
+    replaceEdited: [...(input.replaceEdited ?? []), ...fullyImported],
+  });
+  return { ...status, imported };
 }
 
 /** Begins a reference-file import and runs it to the end, for callers without a progress view. */

@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { editableMetadataFromRecord } from "@scientfactory/scient-sources";
 import {
+  assignMissingScientSourceCitationKeys,
   readScientSourceRecord,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
 } from "@scientfactory/scient-sources/store";
@@ -439,6 +440,37 @@ describe("Scient Sources MCP handlers", () => {
         context,
       );
       expect(stale).toEqual({ ...updated, outcome: "stale" });
+    }),
+  );
+
+  it.effect("tells an agent why a citation key rename was refused", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-key-"));
+      yield* Effect.promise(() => writeSource(root, { sourceId: "source_a", title: "Alpha" }));
+      yield* Effect.promise(() => writeSource(root, { sourceId: "source_b", title: "Beta" }));
+      yield* Effect.promise(() => assignMissingScientSourceCitationKeys(root));
+      const projectId = ProjectId.make("project-keys");
+      const threadId = ThreadId.make("thread-keys");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      const first = yield* Effect.promise(() => readScientSourceRecord(root, "source_a"));
+      const second = yield* Effect.promise(() => readScientSourceRecord(root, "source_b"));
+      if (!first?.citationKey || !second) throw new Error("Expected keyed sources.");
+
+      const refused = yield* provideContext(
+        updateScientSourceForInvocation({
+          sourceId: second.sourceId,
+          expectedRevision: second.revision,
+          metadata: { ...editableMetadataFromRecord(second), citationKey: first.citationKey },
+        }),
+        context,
+      ).pipe(Effect.flip);
+      expect(refused.message).toBe("Another source already uses this citation key.");
     }),
   );
 
