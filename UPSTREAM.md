@@ -2121,6 +2121,35 @@ exact workspace file, not only PDFs. The boundary is offered to T3 as pingdotgg/
 `FileRevisionBoundary`); if it merges, take T3's and drop `ScientFileRevisionBoundary` and the
 marked key in `FilePreviewPanel.tsx`.
 
+### Kept documents
+
+Switching to another file and back reopened a document from scratch: the PDF was downloaded and
+parsed again, and a Word file fetched, prepared and laid out again. `scient/documentCache` keeps
+the opened document (a pdf.js document; a prepared Office file with its engine session) for the
+last two files a reader left, within 64 MB per GB of the computer's memory (128 to 512 MB, each
+kind estimating what it holds), and drops it when its file's revision changes. The drawn pages
+are not kept. Seams:
+
+- `OpenXmlOfficeViewer.tsx` prepares through `acquireOfficeDocument`, keyed by
+  `DocumentIdentityContext`, which `ScientFileRevisionBoundary` provides once the file's revision
+  is known (it now opens the preview only after that first check).
+- `WordDocument.tsx` and `Presentation.tsx` open their engine in a session (`openWordSession`,
+  `openPresentationSession`: T3's effect bodies, moved) and the viewer subscribes to it; a
+  `session` slot keeps it with the cached document. Without a slot the viewer owns it, as in T3.
+- `pdfRuntime.ts`: `destroy()` leaves the document open; `useScientPdfReader.ts` leases it through
+  `acquirePdfDocument` and shows a kept PDF at once, without waiting for its pages to paint.
+- `DataFileTable` checks the file's revision before reading its rows again, instead of on every
+  workspace mutation.
+- `FilePreviewPanel.tsx`: the preview body is `ScientDocumentShelf` (was a `div` with the same
+  props), and the PDF and Office branches are `ShelfItem`s. The shelf keeps the last left views
+  mounted but hidden while their reader parks its lease (`lease.park`): kept views and kept
+  documents share one budget, which counts a hidden view's canvases. A hidden PDF pauses pdf.js's
+  rendering queue and drops pages out of view (`pdfRuntime.ts` `park`); `OfficePages.tsx` draws
+  only pages in view while hidden (`useShelfHidden`). A reload counts for the file shown when it
+  was asked (`useChangesWhileShown`), so it does not remount another file's hidden view.
+
+When T3 changes those viewers' open or layout code, carry it into the session functions.
+
 When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
 worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should
 replace Scient's rather than run beside it.

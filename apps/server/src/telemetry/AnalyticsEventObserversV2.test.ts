@@ -28,6 +28,7 @@ import {
   launchV2AnalyticsEventObservers,
   makeV2AnalyticsObservers,
 } from "./AnalyticsEventObserversV2.ts";
+import { BrowserToolCallLedger } from "./ScientMcpAnalytics.ts";
 import { EventSinkStreamError, EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
@@ -639,6 +640,30 @@ describe("native V2 analytics", () => {
     expect(JSON.stringify(output)).not.toContain("private");
     expect(mapper.event(runEvent("completed"))).toEqual([]);
   });
+  it.each(["completed", "failed", "cancelled"] as const)(
+    "keeps browser counts on the %s turn, not the next turn",
+    (status) => {
+      const ledger = new BrowserToolCallLedger();
+      const completedAt = DateTime.toEpochMillis(runEvent("completed").occurredAt);
+      ledger.record(threadId, completedAt - 2_000, false);
+      ledger.record(threadId, completedAt - 1_000, true);
+      ledger.record(threadId, completedAt + 1, false);
+      const mapper = createV2AnalyticsEventMapper(ledger);
+      mapper.event(runEvent("running"));
+      expect(mapper.event(runEvent(status))).toMatchObject([
+        {
+          name:
+            status === "completed"
+              ? "provider.turn.completed"
+              : status === "failed"
+                ? "provider.turn.failed"
+                : "provider.turn.stopped",
+          properties: { browserToolCalls: 2, browserToolFailures: 1 },
+        },
+      ]);
+      expect(ledger.take(threadId, completedAt + 1)).toEqual({ calls: 1, failures: 0 });
+    },
+  );
   it("ignores restored terminals and workspace-preparation failures", () => {
     const mapper = createV2AnalyticsEventMapper();
     expect(mapper.event(runEvent("completed"))).toEqual([]);

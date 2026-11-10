@@ -9,6 +9,8 @@ interface Operation {
   readonly startedAt: string;
   readonly finishedAt: string | null;
   readonly outcome: "completed" | "failed" | "cancelled" | null;
+  /** The owner's typed classification of a failure; never derived from its message. */
+  readonly failureClass?: string;
 }
 
 interface Snapshot {
@@ -47,6 +49,7 @@ function snapshot(provider: ServerProvider): Snapshot {
               : operation.status === "failed" || operation.status === "cancelled"
                 ? operation.status
                 : null,
+          ...(operation.failureClass === undefined ? {} : { failureClass: operation.failureClass }),
         }
       : null,
     connection: connection
@@ -107,9 +110,8 @@ function lifecycleEvent(
       stage: next.outcome === null ? next.stage : (previous?.stage ?? "unknown"),
       durationMs,
       // The UI message is deliberately not inspected: it can contain paths,
-      // credentials, provider output, or URLs. Typed classifications can be
-      // added at their owner without changing this snapshot boundary.
-      failureClass: "unknown",
+      // credentials, provider output, or URLs. The owner sets the typed class.
+      failureClass: next.outcome === "failed" ? (next.failureClass ?? "unknown") : "unknown",
     },
   };
 }

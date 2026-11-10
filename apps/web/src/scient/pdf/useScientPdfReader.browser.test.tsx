@@ -5,6 +5,7 @@ import { page } from "vite-plus/test/browser";
 import { expect, it, vi } from "vite-plus/test";
 import type { PdfSourceResolution, PdfSourceResolver } from "@scientfactory/document-artifacts";
 import { EnvironmentId } from "@t3tools/contracts";
+import { documentCache } from "../documentCache/documentCache";
 import { ScientPdfReader } from "./ScientPdfReader";
 import { webPdfSourceActions, workspacePdfSource } from "./pdfSource";
 import { presentPdfSaveCopyResult } from "./pdfSaveCopyModel";
@@ -39,6 +40,8 @@ vi.mock("./pdfSaveCopyNotification", () => ({
 
 const documentProxy = {
   numPages: 2,
+  getDownloadInfo: async () => ({ length: 1024 }),
+  cleanup: async () => undefined,
   annotationStorage: { size: 0 },
   getOutline: async () => [],
   getPage: async () => ({
@@ -112,6 +115,7 @@ async function publish(_fixture: _Fixture, index: number) {
 }
 async function _setupFixture0(_fixture: _Fixture) {
   _fixture.tasks.length = _fixture.runtimes.length = _fixture.preparations.length = 0;
+  documentCache.clear();
   mocks.authorize.mockReset();
   mocks.load.mockReset().mockImplementation(() => {
     let resolve!: (doc: any) => void;
@@ -671,3 +675,40 @@ function _createFixture() {
   };
 }
 type _Fixture = ReturnType<typeof _createFixture>;
+
+// regression: leaving a PDF and coming back downloaded and parsed it again.
+it("reopens a PDF it left without loading it again, until its content changes", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+  await render(_fixture, "A", "revision-a", 0, true, "file:1");
+  await load(_fixture, 0);
+  await publish(_fixture, 0);
+  // Another file opens in the panel, then this one again, under a renewed URL.
+  await act(async () => await _fixture.root0.rerender(null));
+  expect(_fixture.runtimes[0].destroy).toHaveBeenCalledTimes(1);
+  expect(_fixture.tasks[0]!.destroy).not.toHaveBeenCalled();
+  await render(_fixture, "A-renewed", "revision-a", 0, true, "file:1");
+  await vi.waitFor(() => expect(_fixture.runtimes).toHaveLength(2));
+  await act(() => _fixture.runtimes[1].emit("pagesinit", {}));
+  // It shows at once, where it was left: no wait for its pages to paint.
+  expect(_fixture.preparations).toHaveLength(1);
+  expect(mocks.load).toHaveBeenCalledTimes(1);
+  expect(_fixture.reader.state.phase).toBe("ready");
+  // The file changed while it was away: it loads afresh.
+  await act(async () => await _fixture.root0.rerender(null));
+  await render(_fixture, "A-changed", "revision-a", 0, true, "file:2");
+  await vi.waitFor(() => expect(mocks.load).toHaveBeenCalledTimes(2));
+});
+
+it("loads an edited or unknown PDF afresh each time", async () => {
+  await using _fixture = _createFixture();
+  _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+  await _setupFixture0(_fixture);
+  await render(_fixture, "blob:edited", "revision-a");
+  await load(_fixture, 0);
+  await act(async () => await _fixture.root0.rerender(null));
+  await vi.waitFor(() => expect(_fixture.tasks[0]!.destroy).toHaveBeenCalledOnce());
+  await render(_fixture, "blob:edited", "revision-a");
+  await vi.waitFor(() => expect(mocks.load).toHaveBeenCalledTimes(2));
+});

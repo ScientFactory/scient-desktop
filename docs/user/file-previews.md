@@ -189,7 +189,11 @@ A very long document shows its first 1,000 pages, a paragraph or table too long 
 out quickly ends the preview there, and a header or footer that long is left out; each
 says **Preview limited**. Open the file in Word or PowerPoint for the rest. An open file
 reloads only when the file itself changes, not each time the agent runs a command, and a
-file opened again returns to the page and zoom it was left at.
+file opened again returns to the page and zoom it was left at. The last two PDF, Word or
+PowerPoint files you left in the file panel stay open in the background, so switching back to
+one shows it exactly as you left it, without drawing it again. Scient keeps them within a memory
+budget that follows your computer's memory; a very long document may be opened afresh instead.
+A file changed while you were away shows its new version when you come back.
 
 To save a project Markdown file as a PDF, expand the editor's formatting tools
 and choose **More actions → Export → PDF**. Scient saves your latest edits,

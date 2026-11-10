@@ -17,6 +17,7 @@ import {
 } from "@scientfactory/document-artifacts";
 import { ExecutionRunId, type ExecutionProcessHandle } from "@scientfactory/execution";
 import type {
+  ScientLatexBuildFailureClass,
   ScientLatexBuildSnapshot,
   ScientLatexBuildState,
   ScientLatexDiagnostic,
@@ -291,6 +292,8 @@ interface LatexBuildEntry {
   readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
   readonly descriptor: PdfSourceDescriptor | null;
   readonly failureSummary: string | null;
+  /** Why a failed build failed, for analytics; set by each failure site. */
+  readonly failureClass?: ScientLatexBuildFailureClass | null;
   readonly startedAtEpochMs: number | null;
   readonly finishedAtEpochMs: number | null;
   readonly pendingRerun: boolean;
@@ -685,6 +688,9 @@ export const make = Effect.gen(function* () {
     finishedAtEpochMs: entry.finishedAtEpochMs,
     toolchain,
     pendingRerun: entry.pendingRerun,
+    ...(entry.state === "failed" && entry.failureClass != null
+      ? { failureClass: entry.failureClass }
+      : {}),
     ...(entry.state === "succeeded" &&
     !entry.pendingRerun &&
     entry.visualSourceRevisions !== undefined
@@ -715,13 +721,17 @@ export const make = Effect.gen(function* () {
     update: (entry: LatexBuildEntry) => LatexBuildEntry,
   ) {
     const finishedAtEpochMs = yield* Clock.currentTimeMillis;
-    yield* updateOwnEntry(key, generation, (entry) => ({
-      ...update(entry),
-      finishedAtEpochMs,
-      production: null,
-      handle: null,
-      installingPackages: null,
-    }));
+    yield* updateOwnEntry(key, generation, (entry) => {
+      const next = update(entry);
+      return {
+        ...next,
+        failureClass: next.state === "failed" ? (next.failureClass ?? null) : null,
+        finishedAtEpochMs,
+        production: null,
+        handle: null,
+        installingPackages: null,
+      };
+    });
     const entry = yield* getEntry(key);
     if (
       entry?.generation === generation &&
@@ -743,6 +753,9 @@ export const make = Effect.gen(function* () {
           status,
           startedAt: entry.startedAtEpochMs,
           finishedAt: finishedAtEpochMs,
+          ...(status === "failed" && entry.failureClass != null
+            ? { failureClass: entry.failureClass }
+            : {}),
         });
     }
   });
@@ -794,6 +807,7 @@ export const make = Effect.gen(function* () {
     readonly production: GeneratedDocumentProductionHandle;
     readonly summary: string;
     readonly diagnostics: ReadonlyArray<ScientLatexDiagnostic>;
+    readonly failureClass: ScientLatexBuildFailureClass;
   }) {
     yield* recordStoreFailure(input.production, input.summary);
     // Re-read the binding so the snapshot carries the stale status the store
@@ -808,6 +822,7 @@ export const make = Effect.gen(function* () {
       ...entry,
       state: "failed",
       failureSummary: input.summary,
+      failureClass: input.failureClass,
       diagnostics,
       descriptor: descriptor ?? entry.descriptor,
     }));
@@ -917,6 +932,7 @@ export const make = Effect.gen(function* () {
             state: "failed",
             descriptor,
             failureSummary: PUBLISHED_PDF_VERIFICATION_SUMMARY,
+            failureClass: "publish",
             diagnostics: withFailureReason(input.diagnostics, PUBLISHED_PDF_VERIFICATION_SUMMARY),
           })),
         ),
@@ -1029,6 +1045,7 @@ export const make = Effect.gen(function* () {
               key: input.key,
               generation: input.generation,
               production: input.production,
+              failureClass: "sources_changed",
               summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
               diagnostics: input.diagnostics,
             });
@@ -1048,6 +1065,7 @@ export const make = Effect.gen(function* () {
               ...entry,
               state: "failed",
               failureSummary: error.detail,
+              failureClass: "publish",
               diagnostics: withFailureReason(input.diagnostics, error.detail),
             }));
           }
@@ -1055,6 +1073,7 @@ export const make = Effect.gen(function* () {
             key: input.key,
             generation: input.generation,
             production: input.production,
+            failureClass: "publish",
             summary: error.detail,
             diagnostics: input.diagnostics,
           });
@@ -1091,6 +1110,7 @@ export const make = Effect.gen(function* () {
           key: input.key,
           generation: input.generation,
           production: input.production,
+          failureClass: "sources_changed",
           summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
           diagnostics: [],
         });
@@ -1561,6 +1581,7 @@ export const make = Effect.gen(function* () {
           ...current,
           state: "failed",
           failureSummary: noToolchainSummary(defaultToolchain),
+          failureClass: "missing_engine",
           diagnostics: withFailureReason([], noToolchainSummary(defaultToolchain)),
         }));
         return;
@@ -1608,6 +1629,7 @@ export const make = Effect.gen(function* () {
                 ...current,
                 state: "failed",
                 failureSummary: summary,
+                failureClass: "workspace",
                 diagnostics: withFailureReason([], summary),
               }));
               return null;
@@ -1620,6 +1642,7 @@ export const make = Effect.gen(function* () {
           key,
           generation,
           production,
+          failureClass: "sources_changed",
           summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
           diagnostics: [],
         });
@@ -1634,6 +1657,7 @@ export const make = Effect.gen(function* () {
           key,
           generation,
           production,
+          failureClass: "missing_engine",
           summary:
             // A Tectonic that is installed but broken says why, ahead of
             // the advice to install it.
@@ -1651,6 +1675,7 @@ export const make = Effect.gen(function* () {
           key,
           generation,
           production,
+          failureClass: "missing_engine",
           summary: compiler.error,
           diagnostics: [
             {
@@ -1764,6 +1789,7 @@ export const make = Effect.gen(function* () {
             key,
             generation,
             production,
+            failureClass: "sources_changed",
             summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
             diagnostics: [],
           });
@@ -1807,6 +1833,7 @@ export const make = Effect.gen(function* () {
             key,
             generation,
             production,
+            failureClass: "timeout",
             summary: TIMEOUT_SUMMARY,
             diagnostics: withFailureReason(parsed, () =>
               transcriptFailureDiagnostic({ transcript: outcome.transcript, exitCode: null }),
@@ -1884,6 +1911,7 @@ export const make = Effect.gen(function* () {
             key,
             generation,
             production,
+            failureClass: missing.length > 0 ? "missing_package" : "compile_error",
             summary: summarizeLatexFailure(failureDiagnostics),
             diagnostics: failureDiagnostics,
           });
@@ -1897,6 +1925,7 @@ export const make = Effect.gen(function* () {
             key,
             generation,
             production,
+            failureClass: "no_output",
             summary: MISSING_PDF_SUMMARY,
             diagnostics: failureDiagnostics,
           });
@@ -1925,6 +1954,7 @@ export const make = Effect.gen(function* () {
             key,
             generation,
             production,
+            failureClass: "sources_changed",
             summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
             diagnostics,
           });
@@ -1952,6 +1982,7 @@ export const make = Effect.gen(function* () {
             key,
             generation,
             production,
+            failureClass: "sources_changed",
             summary: SOURCES_CHANGED_DURING_BUILD_SUMMARY,
             diagnostics,
           });
@@ -2017,6 +2048,7 @@ export const make = Effect.gen(function* () {
               ...current,
               state: "failed",
               failureSummary: summary,
+              failureClass: "internal",
               // Without this the snapshot keeps whatever the last finished
               // build said — nothing, on a first build — and the reader is
               // left with a generic sentence and an empty list.
@@ -2493,6 +2525,7 @@ export const make = Effect.gen(function* () {
       failureSummary: retirementUnknown
         ? "The compiler could not be stopped. Its private output directory was retained."
         : CANCELLED_SUMMARY,
+      ...(retirementUnknown ? { failureClass: "internal" as const } : {}),
       descriptor: descriptor ?? current.descriptor,
     }));
     return yield* readEntrySnapshot(target.logicalDocumentKey);

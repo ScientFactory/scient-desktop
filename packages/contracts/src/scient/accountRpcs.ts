@@ -22,7 +22,7 @@ import {
   AccountGoogleSessions,
   AccountId,
   AccountCodeSourcesResult,
-  AccountKeyLink,
+  AccountLinkKeyInput,
   AccountPaperForSourceInput,
   AccountPlainKey,
   AccountPlainKeyInput,
@@ -306,7 +306,7 @@ export const WsAccountsKeepPlainKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.acco
 });
 
 export const WsAccountsLinkKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsLinkKey, {
-  payload: AccountKeyLink,
+  payload: AccountLinkKeyInput,
   success: Empty,
   error: AccountsRpcError,
 });

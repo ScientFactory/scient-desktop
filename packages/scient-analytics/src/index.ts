@@ -1,5 +1,6 @@
 export {
   AnalyticsConsent,
+  modelKey,
   type AnalyticsBatch,
   type AnalyticsEvent,
   type EventPrivacyLevel,

@@ -409,7 +409,7 @@ describe("Scient analytics background runtime", () => {
             attachmentCountBucket: "4-10",
             hasInput: true,
             serviceTier: "fast",
-            contractRevision: "10",
+            contractRevision: "11",
           },
         },
       ],
