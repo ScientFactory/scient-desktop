@@ -68,7 +68,15 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "scient-sources",
   ),
   t3_sources_remove: tool(["Remove", "Removing", "Removed", "a source"], "scient-sources"),
-  t3_sources_review: tool(["Review", "Reviewing", "Reviewed", "a source"], "scient-sources"),
+  t3_sources_restore: tool(["Restore", "Restoring", "Restored", "a source"], "scient-sources"),
+  t3_sources_revert: tool(
+    ["Revert", "Reverting", "Reverted", "a source to an earlier version"],
+    "scient-sources",
+  ),
+  t3_sources_check: tool(
+    ["Check", "Checking", "Checked", "a source's identifier"],
+    "scient-sources",
+  ),
   t3_sources_attach_pdf: tool(
     ["Attach", "Attaching", "Attached", "a PDF to a source"],
     "scient-sources",

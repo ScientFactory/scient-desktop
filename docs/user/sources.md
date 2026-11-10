@@ -173,6 +173,14 @@ identifiers, abstract, tags, metadata warnings, and imported PDF. Opening the
 PDF uses Scient's normal [PDF reader](pdf-reader.md), so you can move between
 the library, source details, the document, and your conversation.
 
+When the publisher or Retraction Watch has reported that a work was retracted,
+withdrawn, flagged with an expression of concern or corrected, the source says
+so in one line under its authors, with a link to the notice, and the Library
+list shows it beside the source. Scient learns this from Crossref (or PubMed)
+when the source is added and each time you refresh its metadata. If its DOI or
+PMID no longer exists, or now names a different work, the source says that
+instead.
+
 Use **Edit** to correct the metadata. Use **Refresh metadata** when you want
 Scient to recheck the existing PDF and exact DOI or PMID; review the warning
 first because refreshed fields can replace manual corrections. Scient blocks
