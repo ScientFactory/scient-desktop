@@ -233,6 +233,11 @@
       "path": "apps/server/src/telemetry/OperationAnalytics.ts",
       "anchor": "ScientLatexBuildFailureClass",
       "purpose": "Carry bounded LaTeX failure classes through shared operation analytics without including compiler output or document details."
+    },
+    {
+      "path": "apps/server/src/telemetry/FailureAttribution.ts",
+      "anchor": "ScientLatexBuildFailureClass",
+      "purpose": "Map each bounded LaTeX failure class to who owns the failure (document, environment or Scient) without reading compiler output."
     }
   ]
 }

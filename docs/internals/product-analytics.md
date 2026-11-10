@@ -612,6 +612,36 @@ imports and code runs keep their existing operation events, so they are not coun
 measure a new Scient feature, add its method, route or tool to that file; its test fails if a
 route or tool name no longer exists.
 
+## Whose failure, and what agents run outside Scient
+
+A failure count mixes Scient's bugs with ordinary bad code. Failed `scient.operation.*` events and
+failed `mcp.tool.invoked` calls carry `failureOwner`: `scient`, `code` (the code or document being
+run), `input` (a request the caller got wrong), `environment` (a missing runtime, package or
+permission), `external` (a network or remote service), `cancelled` or `unknown`.
+[`FailureAttribution.ts`](../../apps/server/src/telemetry/FailureAttribution.ts) decides it where
+the typed failure is still in hand, with a closed `failureCategory` beside it. A runtime-reported
+error is the code's own, unless its error class names a missing package, memory or network; a
+missing package in Scient-managed Python stays `unknown`, since its Toolkits are Scient's promise.
+A run that never reached the kernel, an app restart or a broken bridge connection is Scient's. A
+runtime that exits mid-run stays `unknown`. Error names and messages never leave the computer.
+Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`, `selection`,
+`cell`, `run-file`) and `runtimeSource`.
+
+Agents also run programs in their own terminal, which bypasses Scient's tools. At each turn's end
+the native observer sends one `provider.commands.observed` per program category the turn ran, with
+`commandCount`, `failedCount` and `stoppedCount`.
+[`CommandCategories.ts`](../../apps/server/src/telemetry/CommandCategories.ts) reads the command
+on the computer and keeps only the category (`python`, `r`, `stata`, `latex`, `hpc`,
+`document-convert` and so on, or `shell-other`); the command, its arguments and output never
+leave it. Codex and Claude commands arrive as `command_execution`; native providers' shell tools
+as `dynamic_tool` with the command in their input. Scient's own workspace-preparation and
+sign-out rows are excluded. A command counts once, when it ends; a nonzero exit or a failed
+item counts as failed.
+
+The contract reads these fields with closed lists, so free text becomes `unknown` or is dropped.
+The gateway accepts them unchanged; reference queries on the ledger live in the website's
+`workers/events/src/attributionPipeline.test.ts`.
+
 ## Privacy invariants
 
 Analytics must never include prompts, responses, file contents or paths, URLs (except a public skill

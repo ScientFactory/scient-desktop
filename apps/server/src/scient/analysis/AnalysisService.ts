@@ -59,6 +59,7 @@ import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
+import { programRunAttribution } from "../../telemetry/FailureAttribution.ts";
 import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
 import * as WorkspaceFileSystem from "../../workspace/WorkspaceFileSystem.ts";
 import * as WorkspacePaths from "../../workspace/WorkspacePaths.ts";
@@ -294,6 +295,11 @@ const make = Effect.gen(function* () {
         startedAt: Date.parse(receipt.startedAt),
         ...(receipt.finishedAt === null ? {} : { finishedAt: Date.parse(receipt.finishedAt) }),
         trigger: "user",
+        entry: "run-file",
+        language: run.runtime.kind,
+        ...(receipt.status === "failed" || receipt.status === "lost"
+          ? { attribution: programRunAttribution(receipt.status, receipt.exitCode) }
+          : {}),
       });
     }
 
