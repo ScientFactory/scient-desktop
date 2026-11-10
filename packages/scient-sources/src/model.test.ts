@@ -124,6 +124,7 @@ describe("Scient source model", () => {
     expect(normalizePersistentIdentifier("arXiv", "https://arxiv.org/pdf/2401.01234.pdf")).toBe(
       "arxiv:2401.01234",
     );
+    expect(normalizePersistentIdentifier("arXiv", "arXiv:2401.01234v3")).toBe("arxiv:2401.01234");
   });
 
   // regression: 4e05b272c1 feat(sources): complete reference intake workflows

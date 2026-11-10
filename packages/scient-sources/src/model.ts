@@ -97,6 +97,9 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "europe-pmc",
     "derived",
     "user",
+    "arxiv",
+    "open-library",
+    "google-books",
     "openalex",
   ]),
   sourceField: NullableText,
@@ -134,11 +137,15 @@ export const ScientSourceAttachmentSummary = Schema.Struct({
 });
 export type ScientSourceAttachmentSummary = typeof ScientSourceAttachmentSummary.Type;
 
+/** Rules in `citationKeys.ts`; decoding stays lenient so one odd key never hides a record. */
+export const ScientSourceCitationKey = NonEmptyString;
+
 export const ScientSourceRecord = Schema.Struct({
   formatVersion: Schema.Literal(1),
   sourceId: NonEmptyString,
   projectId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -175,6 +182,7 @@ export type ScientSourceRecord = typeof ScientSourceRecord.Type;
 export const ScientSourceSummary = Schema.Struct({
   sourceId: ScientSourceRecord.fields.sourceId,
   revision: ScientSourceRecord.fields.revision,
+  citationKey: ScientSourceRecord.fields.citationKey,
   type: ScientSourceRecord.fields.type,
   title: ScientSourceRecord.fields.title,
   creators: ScientSourceRecord.fields.creators,
@@ -195,6 +203,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
   return {
     sourceId: record.sourceId,
     revision: record.revision,
+    ...(record.citationKey ? { citationKey: record.citationKey } : {}),
     type: record.type,
     title: record.title,
     creators: record.creators,
@@ -218,6 +227,8 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
 
 /** The fields a researcher may correct without changing source identity or files. */
 export const ScientSourceEditableMetadata = Schema.Struct({
+  /** Omitted means keep the current key. A new value renames the key on purpose. */
+  citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -245,6 +256,8 @@ export type ScientSourceMetadataValidationIssue = typeof ScientSourceMetadataVal
 
 export const ScientSourceCandidate = Schema.Struct({
   sourceKey: NonEmptyString,
+  /** A key kept from the importing system; the store generates one when absent. */
+  citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,

@@ -133,8 +133,8 @@ describe("resolveSourceIdentifier", () => {
       request: () => new Promise(() => undefined),
       deadlineMs: 25,
     });
-    expect(timer).toHaveBeenCalledWith(25, { status: "unavailable" }, { ref: false });
-    deadline.resolve({ status: "unavailable" });
+    expect(timer).toHaveBeenCalledWith(25, expect.any(Map), { ref: false });
+    deadline.resolve(new Map([["10.1000/abc.123", { status: "unavailable" }]]));
     await expect(pending).resolves.toMatchObject({ status: "unavailable" });
   });
 
@@ -144,9 +144,9 @@ describe("resolveSourceIdentifier", () => {
     expect(request.mock.calls[0]?.[0].host).toBe("doi.org");
   });
 
-  it("returns null without a DOI or PMID", async () => {
+  it("returns null without a DOI, PMID, arXiv ID or ISBN", async () => {
     await expect(
-      resolveSourceIdentifier([{ scheme: "isbn", value: "9780262033848" }]),
+      resolveSourceIdentifier([{ scheme: "issn", value: "1234-5678" }]),
     ).resolves.toBeNull();
   });
 
