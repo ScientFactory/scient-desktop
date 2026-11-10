@@ -3,7 +3,7 @@ import {
   markdownFontSpanStyle,
   parseMarkdownFontSpanStyle,
 } from "@scientfactory/scient-markdown";
-import { readMarkdownDocumentFont } from "../markdownEditor/documentFont";
+import { LEADING_FRONT_MATTER, readMarkdownDocumentFont } from "../markdownEditor/documentFont";
 import { isFontFamilyName } from "../writing/fontChoices";
 
 /**
@@ -62,6 +62,6 @@ export function rehypeApplyFontSpans() {
 
 /** The leading `---` block of the document, if it starts with one. */
 export function documentFontOfMarkdown(markdown: string) {
-  const front = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/u.exec(markdown);
+  const front = LEADING_FRONT_MATTER.exec(markdown);
   return readMarkdownDocumentFont(front?.[0] ?? null);
 }

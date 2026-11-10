@@ -17,6 +17,10 @@ export const MARKDOWN_FONT_SIZES = [
   { name: "Huge", em: 2.49 },
 ] as const;
 
+/** Whole-document base sizes: the `font-size` front matter values and the LaTeX class options. */
+export const DOCUMENT_FONT_SIZES = ["10pt", "11pt", "12pt"] as const;
+export type DocumentFontSize = (typeof DOCUMENT_FONT_SIZES)[number];
+
 export const MARKDOWN_FONT_FAMILIES = ["serif", "sans-serif", "monospace"] as const;
 
 export type MarkdownFontSizeName = (typeof MARKDOWN_FONT_SIZES)[number]["name"];

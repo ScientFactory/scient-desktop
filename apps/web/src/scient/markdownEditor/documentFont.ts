@@ -1,3 +1,4 @@
+import { DOCUMENT_FONT_SIZES, type DocumentFontSize } from "@scientfactory/scient-markdown";
 import { FONT_FAMILIES, type FontFamilyName } from "../writing/fontChoices";
 
 /**
@@ -5,14 +6,14 @@ import { FONT_FAMILIES, type FontFamilyName } from "../writing/fontChoices";
  * leading YAML front matter (`font-size: 11pt`, `font-family: serif`). The
  * sizes match the LaTeX Document settings card.
  */
-export const DOCUMENT_FONT_SIZES = ["10pt", "11pt", "12pt"] as const;
-export type DocumentFontSize = (typeof DOCUMENT_FONT_SIZES)[number];
 
 export interface MarkdownDocumentFont {
   readonly fontFamily: FontFamilyName | null;
   readonly fontSize: DocumentFontSize | null;
 }
 
+// The leading `---` block of a whole document.
+export const LEADING_FRONT_MATTER = /^---[ \t]*\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/u;
 // Fence, body, closing fence, and whatever follows the block (kept untouched).
 const YAML_FRONT_MATTER = /^(---[ \t]*)(\r?\n)([\s\S]*?)(?:\r?\n)?(---[ \t]*)(\s*)$/u;
 const FONT_KEYS = /^font-(?:size|family)[ \t]*:/u;
@@ -56,9 +57,12 @@ export function writeMarkdownDocumentFont(
   const match = YAML_FRONT_MATTER.exec(frontMatter);
   if (!match) return undefined;
   const [, open, eol, body = "", close, after = ""] = match;
-  const kept = body.split(/\r?\n/u).filter((line) => line !== "" && !FONT_KEYS.test(line));
-  const lines = [...kept, ...wanted];
-  if (lines.length === 0) return null;
+  // The font keys go after the last other key; blank lines inside the block are kept.
+  const others = body.split(/\r?\n/u).filter((line) => !FONT_KEYS.test(line));
+  const kept = others.every((line) => line === "") ? [] : others;
+  if (wanted.length === 0 && kept.length === 0) return null;
+  const insertAt = kept.findLastIndex((line) => line !== "") + 1;
+  const lines = [...kept.slice(0, insertAt), ...wanted, ...kept.slice(insertAt)];
   const newline = eol ?? "\n";
   return `${open}${newline}${lines.join(newline)}${newline}${close}${after}`;
 }

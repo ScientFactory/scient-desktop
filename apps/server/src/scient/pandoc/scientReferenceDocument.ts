@@ -51,9 +51,13 @@ function style(spec: StyleSpec): string {
 
 const size = (points: number) => `<w:sz w:val="${points * 2}"/><w:szCs w:val="${points * 2}"/>`;
 
+/** Heading sizes in points, level 1 first; a local size in a heading is a share of its level's. */
+export const HEADING_POINTS = [18, 15, 13, 12, 11, 11, 11, 11, 11] as const;
+/** Footnote text size in points. */
+export const FOOTNOTE_POINTS = 9;
+
 function headingStyles(): Array<StyleSpec> {
-  const sizes = [18, 15, 13, 12, 11, 11, 11, 11, 11];
-  return sizes.map((points, index) => ({
+  return HEADING_POINTS.map((points, index) => ({
     type: "paragraph",
     id: `Heading${index + 1}`,
     name: `heading ${index + 1}`,
@@ -193,7 +197,7 @@ export const SCIENT_REFERENCE_STYLES: ReadonlyArray<StyleSpec> = [
     name: "footnote text",
     basedOn: "Normal",
     pPr: `<w:spacing w:after="40"/>`,
-    rPr: size(9),
+    rPr: size(FOOTNOTE_POINTS),
   },
   {
     type: "paragraph",
@@ -368,10 +372,15 @@ const familyFonts = (family: MarkdownFontFamilyName): string =>
     ? BODY_FONT
     : `<w:rFonts w:ascii="${WORD_FONT_NAMES[family]}" w:hAnsi="${WORD_FONT_NAMES[family]}" w:eastAsia="${WORD_FONT_NAMES[family]}" w:cs="${family === "serif" ? "Arial" : WORD_FONT_NAMES[family]}"/>`;
 
-/** A local size (a share of the base size) and/or family; a Word run carries only one style. */
+/**
+ * A local size (a share of the surrounding text) and/or family; a Word run carries only one
+ * style. `context` is the size in points of the surrounding text when that is not the base size,
+ * as inside a heading or a footnote, so the share is kept there too.
+ */
 export interface WordLocalFont {
   readonly em?: number | undefined;
   readonly family?: MarkdownFontFamilyName | undefined;
+  readonly context?: number | undefined;
 }
 
 /**
@@ -381,43 +390,55 @@ export interface WordLocalFont {
 export const wordFontStyleName = (font: WordLocalFont): string =>
   [
     "Scient",
-    font.em === undefined ? null : `Size ${Math.round(font.em * 100)}%`,
+    font.em === undefined
+      ? null
+      : `Size ${Math.round(font.em * 100)}%${font.context === undefined ? "" : ` of ${font.context}pt`}`,
     font.family === undefined ? null : `Font ${font.family}`,
   ]
     .filter((part) => part !== null)
     .join(" ");
 
-/** Character styles for every size, every family, and every size with a family. */
-function fontStyles(base: WordBaseFont): Array<StyleSpec> {
-  const sizes = [undefined, ...MARKDOWN_FONT_SIZES.map(({ em }) => em)];
-  const families = [undefined, ...MARKDOWN_FONT_FAMILIES];
-  return sizes.flatMap((em) =>
-    families.flatMap((family): Array<StyleSpec> => {
-      if (em === undefined && family === undefined) return [];
-      const name = wordFontStyleName({ em, family });
-      return [
-        {
-          type: "character",
-          id: name.replaceAll(/[^A-Za-z0-9]/gu, ""),
-          name,
-          custom: true,
-          rPr: [
-            family === undefined ? "" : familyFonts(family),
-            em === undefined ? "" : size(Math.round(em * base.sizePoints * 2) / 2),
-          ].join(""),
-        },
-      ];
-    }),
-  );
+function fontStyle(font: WordLocalFont, base: WordBaseFont): StyleSpec {
+  const name = wordFontStyleName(font);
+  return {
+    type: "character",
+    id: name.replaceAll(/[^A-Za-z0-9]/gu, ""),
+    name,
+    custom: true,
+    rPr: [
+      font.family === undefined ? "" : familyFonts(font.family),
+      font.em === undefined
+        ? ""
+        : size(Math.round(font.em * (font.context ?? base.sizePoints) * 2) / 2),
+    ].join(""),
+  };
 }
 
-function scientReferenceStylesXml(base: WordBaseFont): string {
+/**
+ * Character styles for every size, every family, and every size with a family, then the styles
+ * for sizes used inside headings or footnotes.
+ */
+function fontStyles(base: WordBaseFont, inContext: ReadonlyArray<WordLocalFont>): Array<StyleSpec> {
+  const sizes = [undefined, ...MARKDOWN_FONT_SIZES.map(({ em }) => em)];
+  const families = [undefined, ...MARKDOWN_FONT_FAMILIES];
+  const fonts: Array<WordLocalFont> = sizes.flatMap((em) =>
+    families.flatMap((family) =>
+      em === undefined && family === undefined ? [] : [{ em, family }],
+    ),
+  );
+  return [...fonts, ...inContext].map((font) => fontStyle(font, base));
+}
+
+function scientReferenceStylesXml(
+  base: WordBaseFont,
+  inContext: ReadonlyArray<WordLocalFont>,
+): string {
   return [
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>`,
     `<w:styles xmlns:w="${W}">`,
     `<w:docDefaults><w:rPrDefault><w:rPr>${familyFonts(base.family)}${size(base.sizePoints)}<w:lang w:val="en-US" w:eastAsia="en-US" w:bidi="he-IL"/></w:rPr></w:rPrDefault>`,
     `<w:pPrDefault><w:pPr><w:spacing w:after="0" w:line="276" w:lineRule="auto"/></w:pPr></w:pPrDefault></w:docDefaults>`,
-    ...[...SCIENT_REFERENCE_STYLES, ...fontStyles(base)].map(style),
+    ...[...SCIENT_REFERENCE_STYLES, ...fontStyles(base, inContext)].map(style),
     `</w:styles>`,
   ].join("");
 }
@@ -491,39 +512,51 @@ const ENTRY_TIME = DateTime.toDateUtc(DateTime.makeUnsafe("2026-01-01T00:00:00Z"
 
 export function scientReferenceDocumentParts(
   base: WordBaseFont = DEFAULT_WORD_BASE_FONT,
+  inContext: ReadonlyArray<WordLocalFont> = [],
 ): ReadonlyArray<readonly [string, string]> {
   return [
     ["[Content_Types].xml", CONTENT_TYPES],
     ["_rels/.rels", PACKAGE_RELATIONSHIPS],
     ["word/document.xml", DOCUMENT_XML],
     ["word/_rels/document.xml.rels", DOCUMENT_RELATIONSHIPS],
-    ["word/styles.xml", scientReferenceStylesXml(base)],
+    ["word/styles.xml", scientReferenceStylesXml(base, inContext)],
   ];
 }
 
 const cached = new Map<string, Promise<Uint8Array>>();
 
-function packReferenceDocument(base: WordBaseFont): Promise<Uint8Array> {
+function packReferenceDocument(
+  base: WordBaseFont,
+  inContext: ReadonlyArray<WordLocalFont>,
+): Promise<Uint8Array> {
   return new Promise((resolve, reject) => {
     const zip = new yazl.ZipFile();
     const chunks: Array<Buffer> = [];
     zip.outputStream.on("data", (chunk: Buffer) => chunks.push(chunk));
     zip.outputStream.on("error", reject);
     zip.outputStream.on("end", () => resolve(new Uint8Array(Buffer.concat(chunks))));
-    for (const [name, contents] of scientReferenceDocumentParts(base)) {
+    for (const [name, contents] of scientReferenceDocumentParts(base, inContext)) {
       zip.addBuffer(Buffer.from(contents, "utf8"), name, { mtime: ENTRY_TIME, mode: 0o100644 });
     }
     zip.end();
   });
 }
 
-/** The packed reference document for a base font; built once per process for each. */
-export const scientReferenceDocumentFor = (base: WordBaseFont) =>
+/**
+ * The packed reference document for a base font and the sizes used inside headings or
+ * footnotes; built once per process for each combination.
+ */
+export const scientReferenceDocumentFor = (
+  base: WordBaseFont,
+  inContext: ReadonlyArray<WordLocalFont> = [],
+) =>
   Effect.promise(() => {
-    const key = `${base.sizePoints}/${base.family}`;
+    const key = [`${base.sizePoints}/${base.family}`, ...inContext.map(wordFontStyleName)].join(
+      "|",
+    );
     const existing = cached.get(key);
     if (existing !== undefined) return existing;
-    const packed = packReferenceDocument(base);
+    const packed = packReferenceDocument(base, inContext);
     cached.set(key, packed);
     return packed;
   });

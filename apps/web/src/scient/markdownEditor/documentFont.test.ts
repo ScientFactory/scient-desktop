@@ -30,6 +30,13 @@ describe("Markdown document font front matter", () => {
     );
   });
 
+  it("keeps the blank lines of the block", () => {
+    const source = "---\ntitle: T\n\n# notes\ntags: [a]\n\nfont-size: 10pt\n---";
+    expect(writeMarkdownDocumentFont(source, { fontFamily: null, fontSize: "12pt" })).toBe(
+      "---\ntitle: T\n\n# notes\ntags: [a]\nfont-size: 12pt\n\n---",
+    );
+  });
+
   it("removes the block when the last key goes, and refuses TOML", () => {
     expect(writeMarkdownDocumentFont("---\nfont-size: 10pt\n---", none)).toBeNull();
     expect(

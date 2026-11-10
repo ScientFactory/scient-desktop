@@ -43,7 +43,7 @@ import {
 } from "./pandocFont.ts";
 import { securePandocDocument } from "./pandocResources.ts";
 import { spaceTextAroundTables } from "./pandocTableSpacing.ts";
-import { scientReferenceDocumentFor } from "./scientReferenceDocument.ts";
+import { scientReferenceDocumentFor, type WordLocalFont } from "./scientReferenceDocument.ts";
 import type { PreparedLatexProject } from "./latexProjectPreparation.ts";
 import type { CapturedWorkspaceImage } from "./wordImageSnapshot.ts";
 
@@ -375,10 +375,11 @@ const make = Effect.gen(function* () {
           }
         }
         const citations = applyCitations(document.blocks, bibliography);
-        if (input.latex) applyLatexFontSpans(document.blocks);
-        else applyFontSpans(document.blocks);
         // Read before the security pass, which clears the document's metadata.
         const baseFont = input.latex ? latexBaseFontOf(source) : wordBaseFontOf(document.meta);
+        const fontPass = { base: baseFont, inContext: new Map<string, WordLocalFont>() };
+        if (input.latex) applyLatexFontSpans(document.blocks, fontPass);
+        else applyFontSpans(document.blocks, fontPass);
         const security = yield* securePandocDocument(document, {
           assets: input.bundle.assets,
           files: input.imageSnapshot === undefined ? (input.files ?? null) : null,
@@ -418,7 +419,7 @@ const make = Effect.gen(function* () {
         const args = ["--sandbox", "-f", "json", "-t", "docx", "--reference-doc=reference.docx"];
         yield* fileSystem.writeFile(
           path.join(scratch.work, "reference.docx"),
-          yield* scientReferenceDocumentFor(baseFont),
+          yield* scientReferenceDocumentFor(baseFont, [...fontPass.inContext.values()]),
         );
         const cited = [...citations.citedKeys].flatMap((key) => {
           const item = bibliography.get(key);
