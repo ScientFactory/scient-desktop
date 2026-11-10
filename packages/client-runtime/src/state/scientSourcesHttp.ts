@@ -64,6 +64,31 @@ export const getEnvironmentScientSourceDetail = Effect.fn(
   });
 });
 
+export const searchEnvironmentScientSourcesFullText = Effect.fn(
+  "clientRuntime.state.searchEnvironmentScientSourcesFullText",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: string;
+  readonly query: string;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.fullTextSearch(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) =>
+      client.fullTextSearch({
+        headers,
+        payload: { root: input.root, query: input.query },
+      }),
+  });
+});
+
 export const getEnvironmentScientSourceAttachmentPreview = Effect.fn(
   "clientRuntime.state.getEnvironmentScientSourceAttachmentPreview",
 )(function* (input: {

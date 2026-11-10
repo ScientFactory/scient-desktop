@@ -57,6 +57,49 @@ export const ScientSourceAttachmentPreviewResult = Schema.Struct({
 });
 export type ScientSourceAttachmentPreviewResult = typeof ScientSourceAttachmentPreviewResult.Type;
 
+export const ScientSourcesFullTextSearchRequest = Schema.Struct({
+  root: NonEmptyString,
+  query: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+});
+export type ScientSourcesFullTextSearchRequest = typeof ScientSourcesFullTextSearchRequest.Type;
+
+const TextOffset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+export const ScientSourcesFullTextSearchResult = Schema.Struct({
+  hits: Schema.Array(
+    Schema.Struct({
+      sourceId: NonEmptyString,
+      attachmentId: NonEmptyString,
+      fileName: NonEmptyString,
+      title: Schema.NullOr(Schema.String),
+      page: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      start: TextOffset,
+      end: TextOffset,
+      passage: Schema.String,
+      matchedTerms: Schema.Array(Schema.String),
+      selector: Schema.Struct({
+        extractorVersion: NonEmptyString,
+        viewBox: Schema.Tuple([Schema.Finite, Schema.Finite, Schema.Finite, Schema.Finite]),
+        rotation: Schema.Int,
+        userUnit: Schema.Finite,
+        pageTextHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+        quote: Schema.String,
+        prefix: Schema.String,
+        suffix: Schema.String,
+      }),
+    }),
+  ),
+  status: Schema.Struct({
+    pdfs: TextOffset,
+    searchable: TextOffset,
+    pending: TextOffset,
+    withoutText: TextOffset,
+    unreadable: TextOffset,
+  }),
+});
+export type ScientSourcesFullTextSearchResult = typeof ScientSourcesFullTextSearchResult.Type;
+
 export const ScientSourceJournalIconRequest = Schema.Struct({
   root: NonEmptyString,
   sourceId: NonEmptyString,

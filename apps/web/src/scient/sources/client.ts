@@ -7,6 +7,7 @@ import {
   retryEnvironmentScientSourcesImport,
   discardEnvironmentLocalSourcePdfs,
   getEnvironmentScientSourceAttachmentPreview,
+  searchEnvironmentScientSourcesFullText,
   getEnvironmentScientSourceDetail,
   getEnvironmentScientSourceJournalIcon,
   getEnvironmentScientSourcesOverview,
@@ -87,6 +88,15 @@ export function removeScientSource(
 ) {
   return runtime.runPromise(
     removeEnvironmentScientSource({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export async function searchScientSourcesFullText(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly query: string },
+) {
+  return runtime.runPromise(
+    searchEnvironmentScientSourcesFullText({ prepared: prepared(environmentId), ...input }),
   );
 }
 

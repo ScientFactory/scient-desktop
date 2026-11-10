@@ -10,6 +10,7 @@ import type { AssetUrlState } from "../../assets/assetUrls";
 import { Button } from "../../components/ui/button";
 import { workspacePdfSource } from "../pdf/pdfSource";
 import { readScientSourceAttachmentPreview } from "./client";
+import { useSourceTextReveal } from "./sourceTextReveal";
 
 import "../pdf/scientPdfReader.css";
 
@@ -149,6 +150,11 @@ export function SourcePdfPreview(props: {
   }
   const source =
     requestedSource ?? (retainedSource?.requestKey === requestKey ? retainedSource.source : null);
+  useSourceTextReveal(source, {
+    root: props.root,
+    sourceId: props.sourceId,
+    attachmentId: props.attachmentId,
+  });
   const resolver: PdfSourceResolver = { useResolve: () => currentAsset };
   if (source === null) {
     return (

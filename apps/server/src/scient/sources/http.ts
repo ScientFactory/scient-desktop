@@ -15,6 +15,7 @@ import {
 } from "../../auth/http.ts";
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
+import { searchSourceFullText } from "./SourceFullText.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import {
   advanceSourceImport,
@@ -108,6 +109,15 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               ? { ...asset, material: { sha256, byteLength } }
               : asset;
           }),
+        )
+        .handle("fullTextSearch", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            searchSourceFullText({
+              root: args.payload.root,
+              query: args.payload.query,
+              limit: args.payload.limit ?? 20,
+            }),
+          ),
         )
         .handle("journalIcon", (args) =>
           Effect.gen(function* () {
