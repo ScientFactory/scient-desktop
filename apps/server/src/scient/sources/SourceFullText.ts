@@ -8,14 +8,12 @@ import * as NodeURL from "node:url";
 import {
   fullTextHasText,
   fullTextPassage,
-  foldText,
   locateFullTextQuote,
   parseFullTextQuery,
   searchFullText,
   SCIENT_SOURCE_FULL_TEXT_LIMITS,
   SCIENT_SOURCE_FULL_TEXT_PROFILE,
   type FullTextRange,
-  type FullTextSearchDocument,
   type ScientSourceExtractedFullText,
   type ScientSourceFullText,
   type ScientSourceFullTextPage,
@@ -37,6 +35,8 @@ import {
 } from "@scientfactory/scient-sources/store";
 import type { ScientSourceAttachment, ScientSourceRecord } from "@scientfactory/scient-sources";
 import * as Predicate from "effect/Predicate";
+
+import { makeSourceFullTextCache } from "./SourceFullTextCache.ts";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const MAX_FAILURE_BYTES = 4_096;
@@ -201,45 +201,9 @@ function inLane<A>(run: () => Promise<A>): Promise<A> {
 }
 
 // Stored text never changes for a hash, so extracted text and its folded pages
-// are cached by hash across projects, bounded by characters.
-const MAX_CACHED_CHARACTERS = 48_000_000;
-const textCache = new Map<
-  string,
-  {
-    readonly text: ScientSourceExtractedFullText;
-    readonly document: FullTextSearchDocument;
-    readonly characters: number;
-  }
->();
-let cachedCharacters = 0;
-
-function cacheText(text: ScientSourceExtractedFullText) {
-  const cached = textCache.get(text.sha256);
-  if (cached) {
-    textCache.delete(text.sha256);
-    textCache.set(text.sha256, cached);
-    return cached;
-  }
-  const entry = {
-    text,
-    document: {
-      key: text.sha256,
-      pages: text.pages.map((page) => ({
-        page: page.page,
-        folded: foldText(page.text, "search").text,
-      })),
-    },
-    characters: 2 * text.pages.reduce((total, page) => total + page.text.length, 0),
-  };
-  textCache.set(text.sha256, entry);
-  cachedCharacters += entry.characters;
-  for (const [key, old] of textCache) {
-    if (cachedCharacters <= MAX_CACHED_CHARACTERS || key === text.sha256) break;
-    textCache.delete(key);
-    cachedCharacters -= old.characters;
-  }
-  return entry;
-}
+// are cached by hash across projects.
+const textCache = makeSourceFullTextCache();
+const cacheText = (text: ScientSourceExtractedFullText) => textCache.add(text);
 
 const searchDocumentFor = (text: ScientSourceExtractedFullText) => cacheText(text).document;
 
