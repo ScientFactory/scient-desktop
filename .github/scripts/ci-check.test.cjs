@@ -150,7 +150,7 @@ test("CI refuses missing native analyzers instead of accepting SwiftLint's optio
   }
 });
 
-test("Windows Overleaf cannot be skipped or omitted, including exact queue reuse", () => {
+test("Windows Overleaf runs unless exact reuse carries its verified pass", () => {
   for (const event of ["pull_request", "merge_group"]) {
     const f = normal(event);
     if (event === "merge_group") {
@@ -164,4 +164,26 @@ test("Windows Overleaf cannot be skipped or omitted, including exact queue reuse
     delete f.needs.overleaf_windows;
     assert.ok(failures(f).includes("overleaf_windows: missing"));
   }
+  const f = normal("merge_group");
+  for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
+  f.needs.overleaf_windows.result = "skipped";
+  for (const job of [
+    "changes",
+    "lint",
+    "build",
+    "test",
+    "test_web",
+    "test_server",
+    ...Object.keys(GATED),
+  ])
+    f.needs[job].result = "skipped";
+  f.needs.queue_ci.outputs = { reused: "true", web_reports: "true", server_reports: "true" };
+  assert.ok(failures(f).includes("overleaf_windows: skipped without a reason"));
+  f.needs.queue_ci.outputs.overleaf_windows = "false";
+  assert.ok(failures(f).includes("overleaf_windows: skipped without a reason"));
+  f.needs.queue_ci.outputs.overleaf_windows = "true";
+  assert.deepEqual(failures(f), []);
+  // A reuse claim that did not succeed never excuses the skip.
+  f.needs.queue_ci.result = "failure";
+  assert.ok(failures(f).some((error) => error.startsWith("overleaf_windows: skipped")));
 });

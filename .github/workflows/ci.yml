@@ -93,6 +93,7 @@ jobs:
       server_reports: ${{ steps.restore.outputs.server_reports }}
       source_run_id: ${{ steps.restore.outputs.source_run_id }}
       source_url: ${{ steps.restore.outputs.source_url }}
+      overleaf_windows: ${{ steps.restore.outputs.overleaf_windows }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -836,12 +837,13 @@ jobs:
           python3 -m unittest discover -s .github/scripts -p 'test_macos_connect_profile.py'
           node scripts/release-smoke.ts
 
-  # SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory, including exact queue
-  # reuse. Accounts rides this job to reuse its install: a job of its own would wait for a runner
-  # and install again.
+  # SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory. Exact reuse carries the
+  # source's verified pass instead of rerunning it. Accounts rides this job to reuse its install: a
+  # job of its own would wait for a runner and install again.
   overleaf_windows:
     name: Overleaf Windows
-    needs: [release_notes]
+    needs: [queue_ci, release_notes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     runs-on: windows-2025
     timeout-minutes: 30
     steps:

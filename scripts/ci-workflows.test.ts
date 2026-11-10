@@ -105,6 +105,7 @@ function simulate(
           reused: String(reused),
           web_reports: "true",
           server_reports: "true",
+          overleaf_windows: "true",
         };
       if (run && id === "changes") needs[id].outputs = gates;
       pending.delete(id);
@@ -345,7 +346,15 @@ describe("CI workflow decisions", () => {
   it("exact queue reuse requires reporters while release notes still run every test lane", () => {
     const reused = simulate(["apps/web/src/authBootstrap.test.ts"], "merge_group", true);
     expect(reused.failures).toEqual([]);
-    for (const id of ["lint", "build", "test", "test_web", "test_server", "changes"])
+    for (const id of [
+      "lint",
+      "build",
+      "test",
+      "test_web",
+      "test_server",
+      "changes",
+      "overleaf_windows",
+    ])
       expect(reused.needs[id]!.result).toBe("skipped");
     for (const id of ["test_web_reused", "test_server_reused"])
       expect(reused.needs[id]!.result).toBe("success");
@@ -383,7 +392,8 @@ describe("CI workflow decisions", () => {
     ],
     ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 39],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 30],
-    ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 7],
+    // Only the probe, release notes, two reporters, the receipt and Check: no Windows rerun.
+    ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 6],
     ["main push", "docs/operations/development.md", "push", false, 52],
   ] as const)(
     "%s expands to the expected runners with a passing Check",

@@ -42,6 +42,7 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
     )
   )
     errors.push("Reused report coverage is missing");
+  const windowsReused = reused && needs.queue_ci.outputs.overleaf_windows === "true";
   for (const job of expected) {
     const result = needs[job]?.result;
     const reporting = REPORTERS.includes(job);
@@ -50,7 +51,8 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
     if (job === "queue_ci") skip = eventName !== "merge_group";
     else if (job === "qualification") skip = !qualify;
     else if (reporting) skip = !reused;
-    else if (job !== "release_notes" && job !== "overleaf_windows") {
+    else if (job === "overleaf_windows") skip = windowsReused;
+    else if (job !== "release_notes") {
       skip = reused || (GATED[job]?.every((key) => gates[key] === "false") ?? false);
     }
     // Active reporters and receipts must finish; every actual failure/cancellation blocks.
