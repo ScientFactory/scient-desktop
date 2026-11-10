@@ -50,26 +50,28 @@ describe("shared raised settings surface", () => {
     await using fixture = _createFixture();
     await _setupFixture0(fixture);
     fixture.host.style.overflow = "auto";
-    await fixture.root0.rerender(
-      <div className="grid gap-10">
-        <section className="grid gap-3">
-          <SettingsSourceGroup activePanelId={null}>
-            <SettingsSourceStrip label="Projects">
-              {Array.from({ length: 24 }, (_, index) => (
-                <SettingsSourceStripItem
-                  key={index}
-                  controls={`project-${index}`}
-                  expanded={false}
-                  label={`Lab project ${index} — research workspace`}
-                  icon={<span />}
-                  separated={index > 0}
-                  onToggle={() => {}}
-                />
-              ))}
-            </SettingsSourceStrip>
-          </SettingsSourceGroup>
-        </section>
-      </div>,
+    await act(async () =>
+      fixture.root0.rerender(
+        <div className="grid gap-10">
+          <section className="grid gap-3">
+            <SettingsSourceGroup activePanelId={null}>
+              <SettingsSourceStrip label="Projects">
+                {Array.from({ length: 24 }, (_, index) => (
+                  <SettingsSourceStripItem
+                    key={index}
+                    controls={`project-${index}`}
+                    expanded={false}
+                    label={`Lab project ${index} — research workspace`}
+                    icon={<span />}
+                    separated={index > 0}
+                    onToggle={() => {}}
+                  />
+                ))}
+              </SettingsSourceStrip>
+            </SettingsSourceGroup>
+          </section>
+        </div>,
+      ),
     );
     const strip = fixture.host.querySelector<HTMLElement>('[aria-label="Projects"]')!;
     expect(fixture.host.scrollWidth).toBe(fixture.host.clientWidth);
