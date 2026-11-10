@@ -47,6 +47,10 @@ import {
   ScientSourcesCancelImportRequest,
   ScientSourcesRetryImportRequest,
   ScientSourcesDiscardStagedRequest,
+  ScientSourcesExportRequest,
+  ScientSourcesExportResult,
+  ScientSourcesFileImportRequest,
+  ScientSourcesFileImportResult,
   ScientSourcesDiscardStagedResult,
   ScientSourcesLocalPdfUploadRequest,
   ScientSourcesLocalPdfUploadResult,
@@ -354,6 +358,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesDiscardStagedRequest,
         success: ScientSourcesDiscardStagedResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("fileImport", "/api/scient/sources/files/import", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesFileImportRequest,
+        success: ScientSourcesFileImportResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("export", "/api/scient/sources/export", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesExportRequest,
+        success: ScientSourcesExportResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

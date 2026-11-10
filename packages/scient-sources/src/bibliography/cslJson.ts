@@ -1,7 +1,7 @@
 import type { ScientSourceCreator, ScientSourceType } from "../model.ts";
+import { normalizeImportedCitationKey } from "../citationKeys.ts";
 import {
   BibliographyEntryBuilder,
-  plausibleCitationKey,
   type BibliographyEntry,
   type BibliographyExportItem,
   type BibliographyExportOptions,
@@ -227,13 +227,13 @@ function entryFromItem(item: JsonObject, index: number): BibliographyEntry {
   if (builder.type === "other" && genre) builder.customType = collapseWhitespace(genre);
 
   builder.citationKey =
-    plausibleCitationKey(stringValue(item["citation-key"])) ??
-    plausibleCitationKey(fromNote?.key) ??
+    normalizeImportedCitationKey(stringValue(item["citation-key"])) ??
+    normalizeImportedCitationKey(fromNote?.key) ??
     (() => {
       const id = stringValue(item["id"]);
       // Zotero item URIs and numeric IDs are database handles, not citation keys.
       return id && !/^https?:|\//iu.test(id) && !/^\d+$/u.test(id)
-        ? plausibleCitationKey(id)
+        ? normalizeImportedCitationKey(id)
         : null;
     })();
 

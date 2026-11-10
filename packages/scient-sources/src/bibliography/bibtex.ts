@@ -1,7 +1,7 @@
 import type { ScientSourceType } from "../model.ts";
+import { normalizeImportedCitationKey } from "../citationKeys.ts";
 import {
   BibliographyEntryBuilder,
-  plausibleCitationKey,
   type BibliographyEntry,
   type BibliographyExportItem,
   type BibliographyExportOptions,
@@ -363,7 +363,7 @@ function bibtexDate(fields: ReadonlyMap<string, string>): { value: string; field
 function entryFromRaw(raw: RawBibtexEntry, index: number): BibliographyEntry {
   const builder = new BibliographyEntryBuilder(index, raw.line);
   const fields = raw.fields;
-  builder.citationKey = plausibleCitationKey(raw.key);
+  builder.citationKey = normalizeImportedCitationKey(raw.key);
   const text = (name: string) => {
     const value = fields.get(name);
     return value === undefined ? null : decodeLatex(value);

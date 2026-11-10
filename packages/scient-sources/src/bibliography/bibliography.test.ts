@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import { ScientSourceCandidate, ScientSourceRecord } from "../model.ts";
 import {
   BIBLIOGRAPHY_FORMATS,
+  bibliographyExportItems,
   detectBibliographyFormat,
   formatBibliography,
   parseBibliography,
@@ -440,6 +441,16 @@ describe("export", () => {
     expect(entry?.creators).toEqual(record.creators);
     expect(entry?.identifiers).toEqual(expect.arrayContaining([...record.identifiers]));
     expect(entry?.abstract?.replace(/\s+/gu, " ")).toBe("Line one. Line two.");
+  });
+
+  it("exports each source under its own key and gives keyless sources a free one", () => {
+    const keyless = { ...record, sourceId: "source_2", citationKey: undefined };
+    const { citationKey: _key, ...withoutKey } = keyless;
+    const exported = bibliographyExportItems([
+      decodeRecord(withoutKey),
+      { ...record, citationKey: "muller2021gene" },
+    ]);
+    expect(exported.map((item) => item.citationKey)).toEqual(["muller2021genea", "muller2021gene"]);
   });
 
   it.each(BIBLIOGRAPHY_FORMATS)("leaves project notes out of %s unless asked", (format) => {

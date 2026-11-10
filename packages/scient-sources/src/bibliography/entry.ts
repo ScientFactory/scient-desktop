@@ -76,13 +76,6 @@ export interface BibliographyParseResult {
   readonly unreadable: ReadonlyArray<BibliographyUnreadableEntry>;
 }
 
-const CITATION_KEY_PATTERN = /^[\p{L}\p{N}_:.\-+/]{1,128}$/u;
-
-export function plausibleCitationKey(value: string | null | undefined): string | null {
-  const key = value?.trim() ?? "";
-  return CITATION_KEY_PATTERN.test(key) ? key : null;
-}
-
 function yearFrom(value: string | null): number | null {
   const match = value?.match(/(?<!\d)(\d{4})(?!\d)/u);
   const year = match?.[1] ? Number(match[1]) : null;
@@ -284,5 +277,6 @@ export function bibliographyEntryCandidate(input: {
     pdfFileName: null,
     pdfAttachmentCount: 0,
     ...(entry.note ? { note: entry.note } : {}),
+    ...(entry.citationKey ? { citationKey: entry.citationKey } : {}),
   };
 }

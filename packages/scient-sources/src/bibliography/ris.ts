@@ -1,7 +1,7 @@
 import type { ScientSourceType } from "../model.ts";
+import { normalizeImportedCitationKey } from "../citationKeys.ts";
 import {
   BibliographyEntryBuilder,
-  plausibleCitationKey,
   standardNumberScheme,
   type BibliographyEntry,
   type BibliographyExportItem,
@@ -232,7 +232,7 @@ function entryFromRaw(raw: RawRisRecord, index: number): BibliographyEntry {
   }
   use("L2", "LK");
   const key = first("ID");
-  if (key && !/^\d+$/u.test(key)) builder.citationKey = plausibleCitationKey(key);
+  if (key && !/^\d+$/u.test(key)) builder.citationKey = normalizeImportedCitationKey(key);
   if (
     builder.type === "article" &&
     /\b(?:arxiv|biorxiv|medrxiv|ssrn)\b/iu.test(builder.get("containerTitle") ?? "")

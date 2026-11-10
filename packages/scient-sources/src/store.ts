@@ -11,6 +11,7 @@ import {
 } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
+import { BibliographyImportReport } from "./bibliography/index.ts";
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
 import {
@@ -36,7 +37,7 @@ import {
   type ScientSourceActor,
   type ScientSourceAttachment,
   type ScientSourceAttachmentRetrieval,
-  type ScientSourceCandidate,
+  ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
   type ScientSourceDuplicateKind,
   type ScientSourceEditableMetadata,
@@ -762,9 +763,9 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
 export async function createSourceImportOperation(input: {
   readonly root: string;
   readonly operationId: string;
-  readonly adapter: "zotero" | "local-files";
+  readonly adapter: "zotero" | "local-files" | "file";
   readonly actor?: "user" | "agent";
-  readonly intake?: "zotero" | "local-pdf" | "identifier";
+  readonly intake?: "zotero" | "local-pdf" | "identifier" | "file";
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides?: ReadonlyArray<string>;
 }): Promise<ScientSourceImportOperation> {
@@ -1027,49 +1028,53 @@ export interface ScientSourcePdfInspection {
   readonly byteLength: number;
 }
 
-export async function resolveScientSourceInputPdf(
+/** Resolves a project-relative path to a regular file that stays inside the project, symlinks included. */
+export async function resolveScientSourceProjectFile(
   root: string,
   relativePath: string,
+  label = "file",
 ): Promise<{ readonly absolutePath: string; readonly fileName: string }> {
   const requested = relativePath.trim();
   if (
     requested.length === 0 ||
     requested.includes("\0") ||
     requested.includes("\\") ||
-    NodePath.posix.isAbsolute(requested) ||
-    !requested.toLowerCase().endsWith(".pdf")
+    NodePath.posix.isAbsolute(requested)
   ) {
-    throw new Error("The PDF path must be a relative project path ending in .pdf.");
+    throw new Error(`The ${label} path must be a relative project path.`);
   }
   const canonicalRoot = await NodeFSP.realpath(root);
+  const outside = (candidate: string) => {
+    const relative = NodePath.relative(canonicalRoot, candidate);
+    return (
+      relative === "" ||
+      relative === ".." ||
+      relative.startsWith(`..${NodePath.sep}`) ||
+      NodePath.isAbsolute(relative)
+    );
+  };
   const lexicalPath = NodePath.resolve(canonicalRoot, ...requested.split("/"));
-  const lexicalRelative = NodePath.relative(canonicalRoot, lexicalPath);
-  if (
-    lexicalRelative === "" ||
-    lexicalRelative === ".." ||
-    lexicalRelative.startsWith(`..${NodePath.sep}`) ||
-    NodePath.isAbsolute(lexicalRelative)
-  ) {
-    throw new Error("The PDF path must remain inside the project.");
-  }
+  if (outside(lexicalPath)) throw new Error(`The ${label} path must remain inside the project.`);
   const absolutePath = await NodeFSP.realpath(lexicalPath);
-  const realRelative = NodePath.relative(canonicalRoot, absolutePath);
-  if (
-    realRelative === "" ||
-    realRelative === ".." ||
-    realRelative.startsWith(`..${NodePath.sep}`) ||
-    NodePath.isAbsolute(realRelative)
-  ) {
-    throw new Error("The PDF path must remain inside the project.");
-  }
+  if (outside(absolutePath)) throw new Error(`The ${label} path must remain inside the project.`);
   const stats = await NodeFSP.lstat(absolutePath);
   if (!stats.isFile() || stats.isSymbolicLink()) {
-    throw new Error("The selected PDF is not a safe regular file.");
+    throw new Error(`The selected ${label} is not a safe regular file.`);
   }
   return {
     absolutePath,
     fileName: safeUploadedFileName(NodePath.basename(requested)),
   };
+}
+
+export async function resolveScientSourceInputPdf(
+  root: string,
+  relativePath: string,
+): Promise<{ readonly absolutePath: string; readonly fileName: string }> {
+  if (!relativePath.trim().toLowerCase().endsWith(".pdf")) {
+    throw new Error("The PDF path must be a relative project path ending in .pdf.");
+  }
+  return resolveScientSourceProjectFile(root, relativePath, "PDF");
 }
 
 async function readValidatedPdf(
@@ -1281,6 +1286,68 @@ export async function removeScientSourceStagedMaterial(
     NodeFSP.rm(materialPaths.pdf, { force: true }),
     NodeFSP.rm(materialPaths.metadata, { force: true }),
   ]);
+}
+
+const MAX_STAGED_FILE_IMPORT_BYTES = 64 * 1024 * 1024;
+
+/** Candidates read from one reference file, held until their import operation settles. */
+const ScientSourceStagedFileImport = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  operationId: Schema.String.check(Schema.isNonEmpty()),
+  fileName: Schema.String,
+  report: BibliographyImportReport,
+  candidates: Schema.Array(ScientSourceCandidate).pipe(
+    Schema.check(Schema.isMaxLength(SCIENT_SOURCE_IMPORT_ITEM_LIMIT)),
+  ),
+});
+export type ScientSourceStagedFileImport = typeof ScientSourceStagedFileImport.Type;
+const decodeStagedFileImport = Schema.decodeSync(ScientSourceStagedFileImport);
+
+function stagedFileImportPath(
+  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  operationId: string,
+): string {
+  assertSafeIdentifier(operationId, "Operation ID");
+  return NodePath.join(paths.staging, "files", `${operationId}.json`);
+}
+
+export async function writeScientSourceStagedFileImport(
+  root: string,
+  staged: ScientSourceStagedFileImport,
+): Promise<void> {
+  const paths = await sourceStorePaths(root);
+  const decoded = decodeStagedFileImport(staged);
+  await atomicWriteJson(
+    stagedFileImportPath(paths, decoded.operationId),
+    decoded,
+    MAX_STAGED_FILE_IMPORT_BYTES,
+  );
+}
+
+export async function readScientSourceStagedFileImport(
+  root: string,
+  operationId: string,
+): Promise<ScientSourceStagedFileImport | null> {
+  const paths = await sourceStorePaths(root);
+  const filePath = stagedFileImportPath(paths, operationId);
+  if ((await snapshot(filePath)) === "missing") return null;
+  const staged = await readBoundedJson(
+    filePath,
+    MAX_STAGED_FILE_IMPORT_BYTES,
+    ScientSourceStagedFileImport,
+  );
+  if (staged.operationId !== operationId) {
+    throw new Error("The staged file import identity is inconsistent.");
+  }
+  return staged;
+}
+
+export async function removeScientSourceStagedFileImport(
+  root: string,
+  operationId: string,
+): Promise<void> {
+  const paths = await sourceStorePaths(root);
+  await NodeFSP.rm(stagedFileImportPath(paths, operationId), { force: true });
 }
 
 async function stagePdf(input: {

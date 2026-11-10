@@ -34,6 +34,8 @@ import {
   addScientSourceForInvocation,
   attachScientSourcePdfForInvocation,
   detachScientSourcePdfForInvocation,
+  exportScientSourcesForInvocation,
+  importScientSourcesFileForInvocation,
   resolveScientSourcesProject,
   updateScientSourceNoteForInvocation,
   updateScientSourceForInvocation,
@@ -1099,6 +1101,84 @@ describe("Scient Sources MCP handlers", () => {
       expect(result.outcome).toBe("invalid");
       expect(result.sourceId).toBeNull();
       expect(result.validationIssues.some((issue) => issue.field === "identity")).toBe(true);
+    }),
+  );
+
+  it.effect("imports a project reference file as the agent and exports the Library back", () =>
+    Effect.gen(function* () {
+      const analytics = AnalyticsService.of({
+        recordOwners: () => Effect.void,
+        record: () => Effect.void,
+        status: Effect.succeed({ available: true, consent: "product" }),
+        collectionEpoch: Effect.succeed(0),
+        flush: Effect.void,
+      });
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-file-"));
+      const projectId = ProjectId.make("project-agent-file");
+      const threadId = ThreadId.make("thread-agent-file");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(root, "refs.ris"),
+          [
+            "TY  - JOUR",
+            "ID  - rossi2020sleep",
+            "TI  - Sleep and memory",
+            "AU  - Rossi, Giulia",
+            "PY  - 2020",
+            "DO  - 10.1000/sleep.1",
+            "CY  - Boston",
+            "ER  - ",
+            "",
+          ].join("\n"),
+        ),
+      );
+      const imported = yield* provideContext(
+        importScientSourcesFileForInvocation({ relativePath: "refs.ris" }),
+        context,
+      ).pipe(Effect.provideService(AnalyticsService, analytics));
+      expect(imported).toMatchObject({
+        format: "ris",
+        importedCount: 1,
+        imported: [{ citationKey: "rossi2020sleep" }],
+        alreadyInLibrary: 0,
+        remaining: 0,
+        notKept: [{ field: "CY", entryCount: 1, citationKeys: ["rossi2020sleep"] }],
+      });
+      const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
+      expect(listed.records[0]).toMatchObject({ addedBy: "agent", verification: "unchecked" });
+
+      const missing = yield* provideContext(
+        importScientSourcesFileForInvocation({ relativePath: "absent.bib" }),
+        context,
+      ).pipe(Effect.provideService(AnalyticsService, analytics), Effect.flip);
+      expect(missing.message).toBe("The file was not found in this project.");
+
+      const exported = yield* provideContext(
+        exportScientSourcesForInvocation({ relativePath: "library.bib", format: "bibtex" }),
+        context,
+      );
+      expect(exported).toEqual({
+        outcome: "written",
+        relativePath: "library.bib",
+        sourceCount: 1,
+        missingSourceIds: [],
+      });
+      const written = yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(root, "library.bib"), "utf8"),
+      );
+      expect(written).toContain("@article{rossi2020sleep,");
+      const again = yield* provideContext(
+        exportScientSourcesForInvocation({ relativePath: "library.bib", format: "bibtex" }),
+        context,
+      );
+      expect(again.outcome).toBe("exists");
     }),
   );
 });

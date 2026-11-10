@@ -1,7 +1,7 @@
 import type { ScientSourceType } from "../model.ts";
+import { normalizeImportedCitationKey } from "../citationKeys.ts";
 import {
   BibliographyEntryBuilder,
-  plausibleCitationKey,
   standardNumberScheme,
   type BibliographyEntry,
   type BibliographyExportItem,
@@ -188,7 +188,7 @@ function entryFromRecord(record: XmlElement, index: number): BibliographyEntry {
     }
     if (childElements(urls, "pdf-urls").length > 0) builder.notKeep("urls/pdf-urls");
   }
-  builder.citationKey = plausibleCitationKey(text(child("label")));
+  builder.citationKey = normalizeImportedCitationKey(text(child("label")));
 
   const handled = new Set([
     "contributors",

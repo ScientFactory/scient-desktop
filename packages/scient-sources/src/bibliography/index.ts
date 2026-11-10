@@ -1,5 +1,10 @@
 import * as Schema from "effect/Schema";
 
+import {
+  assignCitationKey,
+  citationKeyComparisonValue,
+  takenCitationKeys,
+} from "../citationKeys.ts";
 import { assessSourceDuplicate } from "../duplicates.ts";
 import type { ScientSourceCandidate, ScientSourceRecord } from "../model.ts";
 import { normalizePersistentIdentifier } from "../normalize.ts";
@@ -28,6 +33,16 @@ export type {
 export { BIBLIOGRAPHY_FORMATS } from "./entry.ts";
 
 export const BibliographyFormatSchema = Schema.Literals(BIBLIOGRAPHY_FORMATS);
+
+export const BIBLIOGRAPHY_FILE_EXTENSIONS: Readonly<Record<BibliographyFormat, string>> = {
+  bibtex: ".bib",
+  ris: ".ris",
+  "csl-json": ".json",
+  "endnote-xml": ".xml",
+};
+
+/** Upload and project-file bound for one reference file. */
+export const BIBLIOGRAPHY_FILE_MAX_BYTES = 32 * 1024 * 1024;
 
 const EXTENSION_FORMATS: Readonly<Record<string, BibliographyFormat>> = {
   bib: "bibtex",
@@ -83,6 +98,28 @@ export function formatBibliography(
     case "endnote-xml":
       return formatEndnoteXml(items, options);
   }
+}
+
+/**
+ * Pairs each source with the key it is exported under: its own citation key,
+ * or for an older source without one, a key from the Library's key rules that
+ * no other exported source uses.
+ */
+export function bibliographyExportItems(
+  records: ReadonlyArray<ScientSourceRecord>,
+): BibliographyExportItem[] {
+  const taken = takenCitationKeys(records);
+  const used = new Set<string>();
+  return records.map((record) => {
+    const own = record.citationKey;
+    const citationKey =
+      own && !used.has(citationKeyComparisonValue(own))
+        ? own
+        : assignCitationKey({ ...record, preferred: own ?? null, taken });
+    used.add(citationKeyComparisonValue(citationKey));
+    taken.add(citationKeyComparisonValue(citationKey));
+    return { record, citationKey };
+  });
 }
 
 const REPORT_LIST_LIMIT = 50;
