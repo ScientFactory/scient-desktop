@@ -13,10 +13,10 @@ type SearchState =
   | { readonly _tag: "Idle" }
   | {
       readonly _tag: "Done";
-      readonly query: string;
+      readonly key: string;
       readonly result: ScientSourcesFullTextSearchResult;
     }
-  | { readonly _tag: "Failed"; readonly query: string };
+  | { readonly _tag: "Failed"; readonly key: string };
 
 /** Words of the passage that the search matched, so they can be set apart. */
 function passageSegments(
@@ -56,26 +56,32 @@ export function SourceFullTextResults(props: {
   readonly root: string;
   readonly query: string;
   readonly metadataMatchCount: number;
-  /** Sources the Library's filters keep; passages from others are not shown. */
-  readonly sourceIds?: ReadonlySet<string>;
+  /** Sources the Library's filters keep; the search runs over these alone. Absent: every source. */
+  readonly sourceIds?: ReadonlyArray<string> | undefined;
   readonly onOpenHit: (hit: FullTextHit) => void;
 }) {
   const query = props.query.trim();
   const searchable = query.length >= MINIMUM_QUERY_LENGTH;
   const [state, setState] = useState<SearchState>({ _tag: "Idle" });
-  const { environmentId, root } = props;
+  const { environmentId, root, sourceIds } = props;
+  const scopeKey = sourceIds === undefined ? null : sourceIds.join("\0");
+  const requestKey = `${scopeKey ?? ""}\u0001${query}`;
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- queries the environment's full-text index after typing pauses, ignoring stale answers
   useEffect(() => {
     if (!searchable) return;
     let current = true;
     const timer = setTimeout(() => {
-      void searchScientSourcesFullText(environmentId, { root, query }).then(
+      void searchScientSourcesFullText(environmentId, {
+        root,
+        query,
+        ...(scopeKey === null ? {} : { sourceIds: scopeKey ? scopeKey.split("\0") : [] }),
+      }).then(
         (result) => {
-          if (current) setState({ _tag: "Done", query, result });
+          if (current) setState({ _tag: "Done", key: requestKey, result });
         },
         () => {
-          if (current) setState({ _tag: "Failed", query });
+          if (current) setState({ _tag: "Failed", key: requestKey });
         },
       );
     }, SEARCH_DELAY_MS);
@@ -83,13 +89,11 @@ export function SourceFullTextResults(props: {
       current = false;
       clearTimeout(timer);
     };
-  }, [environmentId, root, query, searchable]);
+  }, [environmentId, root, query, searchable, scopeKey, requestKey]);
 
-  const answered = searchable && state._tag !== "Idle" && state.query === query;
+  const answered = searchable && state._tag !== "Idle" && state.key === requestKey;
   const result = answered && state._tag === "Done" ? state.result : null;
-  const hits = (result?.hits ?? []).filter(
-    (hit) => props.sourceIds === undefined || props.sourceIds.has(hit.sourceId),
-  );
+  const hits = result?.hits ?? [];
   const pending = result?.status.pending ?? 0;
 
   if (props.metadataMatchCount === 0 && hits.length === 0 && (answered || !searchable)) {
