@@ -324,6 +324,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.accountsPlainKeys]: "accounts",
   [WS_METHODS.accountsKeepPlainKey]: "accounts",
   [WS_METHODS.accountsUnlinkKey]: "accounts",
+  [WS_METHODS.accountsRestoreKeptKeys]: "accounts",
   [WS_METHODS.accountsSetControls]: "accounts",
   [WS_METHODS.accountsSetAgentAccess]: "accounts",
   [WS_METHODS.accountsProfileUpdate]: "accounts",

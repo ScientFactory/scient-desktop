@@ -11,10 +11,12 @@ import {
   type ManagedRuntimeArtifactReceipt,
 } from "./managedRuntimeArtifact.ts";
 import {
+  canUnpackManagedRuntimeZstd,
   downloadManagedRuntime,
   type ManagedRuntimeDownloadRetry,
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
+  unpackManagedRuntimeZstd,
   verifyManagedRuntimeChecksum,
 } from "./runtimeFiles.ts";
 import { managedRuntimeTargetKey } from "./target.ts";
@@ -103,6 +105,8 @@ export interface ManagedProviderRuntimeInstallInput {
   readonly qualify?: (input: ManagedProviderRuntimeQualificationInput) => Promise<void>;
   /** Runs after staging and smoke testing, immediately before the live runtime changes. */
   readonly beforeActivate?: (signal: AbortSignal) => Promise<void>;
+  /** Told why the compressed copy failed, before the raw binary is downloaded; a throw stops the install. */
+  readonly onCompressedFallback?: (cause: unknown) => void;
 }
 
 interface ManagedProviderRuntimeActivation {
@@ -281,6 +285,8 @@ export interface ManagedProviderRuntimeDependencies {
   readonly download: typeof downloadManagedRuntime;
   readonly verify: typeof verifyManagedRuntimeChecksum;
   readonly materialize: typeof materializeManagedRuntimeArtifact;
+  /** Absent where this Node cannot unpack zstd; the raw binary is downloaded then. */
+  readonly unpackZstd: typeof unpackManagedRuntimeZstd | undefined;
   readonly smoke: (
     executable: string,
     args: ReadonlyArray<string>,
@@ -329,6 +335,7 @@ const DEFAULT_DEPENDENCIES: ManagedProviderRuntimeDependencies = {
   download: downloadManagedRuntime,
   verify: verifyManagedRuntimeChecksum,
   materialize: materializeManagedRuntimeArtifact,
+  unpackZstd: canUnpackManagedRuntimeZstd() ? unpackManagedRuntimeZstd : undefined,
   smoke: smokeManagedRuntimeExecutable,
   commitState: commitManagedRuntimeState,
   now: Date.now,
@@ -649,10 +656,83 @@ export class ManagedProviderRuntime {
     }
   }
 
+  /**
+   * Downloads the release binary to `archivePath` and checks its digest. A zstd copy, when the
+   * catalog names one and this process can unpack it, is tried first; any failure of that copy
+   * other than cancellation falls back to the raw binary.
+   */
+  async #downloadVerified(input: {
+    readonly artifact: ManagedRuntimeArtifact;
+    readonly archivePath: string;
+    readonly signal: AbortSignal;
+    readonly onProgress: ManagedProviderRuntimeInstallInput["onProgress"];
+    readonly onCompressedFallback: ManagedProviderRuntimeInstallInput["onCompressedFallback"];
+  }): Promise<void> {
+    const { artifact, archivePath, signal, onProgress } = input;
+    const compressed = artifact.compressed;
+    const unpack = this.#dependencies.unpackZstd;
+    const fetchVerified = async (copy: {
+      readonly url: string;
+      readonly mirrorUrl?: string | undefined;
+      readonly checksum: ManagedRuntimeArtifact["checksum"];
+      readonly size: number;
+      readonly destination: string;
+    }) => {
+      onProgress?.({ stage: "downloading", downloadedBytes: 0, totalBytes: copy.size });
+      await this.#dependencies.download({
+        ...(copy.mirrorUrl
+          ? {
+              url: copy.mirrorUrl,
+              fallbackUrl: copy.url,
+              checksum: copy.checksum,
+              allowedHosts: [...artifact.allowedHosts, new URL(copy.mirrorUrl).hostname],
+            }
+          : { url: copy.url, allowedHosts: artifact.allowedHosts }),
+        destination: copy.destination,
+        expectedSize: copy.size,
+        signal,
+        onProgress: (downloadedBytes, totalBytes) =>
+          onProgress?.({ stage: "downloading", downloadedBytes, totalBytes }),
+        onRetry: (retry) =>
+          onProgress?.({ stage: "downloading", downloadedBytes: 0, totalBytes: copy.size, retry }),
+      });
+      onProgress?.({ stage: "verifying" });
+    };
+    if (compressed && unpack) {
+      const compressedPath = `${archivePath}.zst`;
+      try {
+        await fetchVerified({ ...compressed, destination: compressedPath });
+        await this.#dependencies.verify(compressedPath, compressed.checksum);
+        await unpack({
+          source: compressedPath,
+          destination: archivePath,
+          expectedSize: artifact.size,
+          signal,
+        });
+        await this.#dependencies.verify(archivePath, artifact.checksum);
+        return;
+      } catch (cause) {
+        if (signal.aborted) throw cause;
+        await NodeFSP.rm(archivePath, { force: true });
+        input.onCompressedFallback?.(cause);
+      } finally {
+        await NodeFSP.rm(compressedPath, { force: true });
+      }
+    }
+    await fetchVerified({
+      url: artifact.url,
+      mirrorUrl: managedRuntimeMirrorUrl(artifact),
+      checksum: artifact.checksum,
+      size: artifact.size,
+      destination: archivePath,
+    });
+    await this.#dependencies.verify(archivePath, artifact.checksum);
+  }
+
   async #installOwned(
     input: ManagedProviderRuntimeInstallInput,
   ): Promise<ManagedProviderRuntimeStatus> {
-    const { artifact, signal, onProgress, qualify, beforeActivate } = input;
+    const { artifact, signal, onProgress, qualify, beforeActivate, onCompressedFallback } = input;
     await NodeFSP.mkdir(this.#stagingDir, { recursive: true, mode: 0o700 });
     // This process launches what it installs. Pruning needs the mutation lock held here.
     await this.#lease(artifact.version);
@@ -670,36 +750,13 @@ export class ManagedProviderRuntime {
     const previousState = await this.readState();
 
     try {
-      onProgress?.({
-        stage: "downloading",
-        downloadedBytes: 0,
-        totalBytes: artifact.size,
-      });
-      const mirrorUrl = managedRuntimeMirrorUrl(artifact);
-      await this.#dependencies.download({
-        ...(mirrorUrl
-          ? {
-              url: mirrorUrl,
-              fallbackUrl: artifact.url,
-              checksum: artifact.checksum,
-              allowedHosts: [...artifact.allowedHosts, new URL(mirrorUrl).hostname],
-            }
-          : { url: artifact.url, allowedHosts: artifact.allowedHosts }),
-        destination: archivePath,
-        expectedSize: artifact.size,
+      await this.#downloadVerified({
+        artifact,
+        archivePath,
         signal,
-        onProgress: (downloadedBytes, totalBytes) =>
-          onProgress?.({ stage: "downloading", downloadedBytes, totalBytes }),
-        onRetry: (retry) =>
-          onProgress?.({
-            stage: "downloading",
-            downloadedBytes: 0,
-            totalBytes: artifact.size,
-            retry,
-          }),
+        onProgress,
+        onCompressedFallback,
       });
-      onProgress?.({ stage: "verifying" });
-      await this.#dependencies.verify(archivePath, artifact.checksum);
       onProgress?.({ stage: "installing" });
       const stagedExecutable = await this.#dependencies.materialize({
         archivePath,

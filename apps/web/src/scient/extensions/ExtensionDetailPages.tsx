@@ -65,6 +65,7 @@ import {
   collectProviderExtensionGroups,
   connectorActions,
   connectorAuthLabel,
+  connectorFacts,
   connectorSourceLabel,
   entryName,
   entryNeedsSetup,
@@ -758,7 +759,7 @@ function ConnectorDetail({
       <AboutCard
         rows={[
           fact("Added on", formatDate(connector.createdAt)),
-          ...entryFacts(entry),
+          ...connectorFacts(entry, connector),
           fact("Category", categoryLabel(entry, catalog)),
           fact("Website", entry?.websiteUrl ? <ExternalLink href={entry.websiteUrl} /> : null),
           fact(

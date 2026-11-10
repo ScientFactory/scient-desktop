@@ -34,6 +34,7 @@ import {
   parseManagedMuseVersion,
   isSupportedScientAgentVersion,
   type ManagedRuntimeArtifactPolicy,
+  type ManagedRuntimeCompressedRelease,
   type ManagedRuntimeProvider,
   type ManagedRuntimeCatalogProvider,
   type ManagedRuntimeTarget,
@@ -62,6 +63,8 @@ export interface ManagedRuntimeCatalogArtifactData {
     readonly executableBytes: number;
     readonly harnessBytes: number;
   };
+  /** The binary's zstd copy, published beside it; apps that predate it ignore the field. */
+  readonly compressed?: ManagedRuntimeCompressedRelease;
 }
 
 export interface ManagedRuntimeCatalogProviderData {
@@ -166,6 +169,27 @@ function strictSize(value: number, label: string): number {
     throw new Error(`${label} returned an invalid artifact size.`);
   }
   return value;
+}
+
+/** A binary's zstd copy as a catalog names it; any other format is an error here. */
+function strictCompressed(value: unknown, label: string): ManagedRuntimeCompressedRelease {
+  const compressed = record(value, `${label} compressed copy`);
+  const checksum = record(compressed.checksum, `${label} compressed copy checksum`);
+  if (compressed.format !== "zstd" || checksum.algorithm !== "sha256") {
+    throw new Error(`${label} names a compressed copy in an unsupported format.`);
+  }
+  return {
+    format: "zstd",
+    size: strictSize(Number(compressed.size), `${label} compressed copy`),
+    checksum: {
+      algorithm: "sha256",
+      digest: strictDigest(
+        stringField(checksum, "digest", `${label} compressed copy checksum`),
+        "sha256",
+        `${label} compressed copy`,
+      ),
+    },
+  };
 }
 
 async function request(input: {
@@ -308,14 +332,20 @@ function candidateProvider(input: {
   for (const { key, policy } of policies) {
     const artifact = input.artifacts[key];
     if (!artifact) throw new Error(`${input.provider} is missing ${key}.`);
-    const hydrated = hydrateManagedRuntimeArtifact(policy, {
-      provider: input.provider,
-      version: input.version,
-      target: policy.target,
-      ...artifact,
-      catalogRevision: `automation:${input.provider}:${input.version}:${key}`,
-    });
+    const hydrated = hydrateManagedRuntimeArtifact(
+      policy,
+      {
+        provider: input.provider,
+        version: input.version,
+        target: policy.target,
+        ...artifact,
+        catalogRevision: `automation:${input.provider}:${input.version}:${key}`,
+      },
+      artifact.compressed,
+    );
     if (!hydrated) throw new Error(`${input.provider} ${key} violates app-owned runtime policy.`);
+    if (artifact.compressed && !hydrated.compressed)
+      throw new Error(`${input.provider} ${key} has a compressed copy its policy does not name.`);
   }
   return {
     contractRevision: MANAGED_RUNTIME_POLICY[input.provider].revision,
@@ -380,6 +410,7 @@ export function readManagedRuntimeCatalog(
           strictSize(payload.executableBytes, "ACP executable");
           strictSize(payload.harnessBytes, "ACP harness");
         }
+        if (artifact.compressed !== undefined) strictCompressed(artifact.compressed, "Provider");
       }
       // Valid siblings are preserved verbatim, including newer contracts and unknown fields.
       entries.set(provider, value as ManagedRuntimeCatalogProviderData);
@@ -410,8 +441,10 @@ export function readManagedRuntimeCatalog(
 }
 
 /** Binds a Cursor qualification to its predecessor without depending on sibling changes. */
+/** With `withTransport: false`, the binaries alone: compressed copies are left out. */
 export function managedRuntimeProviderIdentity(
   release: ManagedRuntimeCatalogProviderData | undefined,
+  withTransport = true,
 ): string {
   const normalized = release
     ? {
@@ -432,6 +465,7 @@ export function managedRuntimeProviderIdentity(
               },
               size: artifact.size,
               antigravityAcp: artifact.antigravityAcp,
+              ...(withTransport && artifact.compressed ? { compressed: artifact.compressed } : {}),
             },
           ]),
       }
@@ -525,6 +559,9 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
           ),
         },
         size: strictSize(Number(rawArtifact.size), `${provider} ${key}`),
+        ...(rawArtifact.compressed !== undefined
+          ? { compressed: strictCompressed(rawArtifact.compressed, `${provider} ${key}`) }
+          : {}),
         ...(provider === "antigravityAcp"
           ? (() => {
               const payload = record(rawArtifact.antigravityAcp, `${provider} ${key} payload`);
@@ -562,14 +599,20 @@ export function validateManagedRuntimeCatalog(input: unknown): ManagedRuntimeCat
     for (const { key, policy } of policyEntries(provider)) {
       const artifact = artifacts[key];
       if (!artifact) continue;
-      const hydrated = hydrateManagedRuntimeArtifact(policy, {
-        provider,
-        version,
-        target: policy.target,
-        ...artifact,
-        catalogRevision: `validation:${provider}:${version}:${key}`,
-      });
+      const hydrated = hydrateManagedRuntimeArtifact(
+        policy,
+        {
+          provider,
+          version,
+          target: policy.target,
+          ...artifact,
+          catalogRevision: `validation:${provider}:${version}:${key}`,
+        },
+        artifact.compressed,
+      );
       if (!hydrated) throw new Error(`${provider} ${key} violates app-owned runtime policy.`);
+      if (artifact.compressed && !hydrated.compressed)
+        throw new Error(`${provider} ${key} has a compressed copy its policy does not name.`);
     }
     providers[provider] = {
       contractRevision,
@@ -592,7 +635,14 @@ function releaseChanged(
   if (current.version === version) {
     return (
       current.contractRevision !== MANAGED_RUNTIME_POLICY[provider].revision ||
-      approvedTargetKeys(provider).some((key) => current.artifacts[key] === undefined)
+      approvedTargetKeys(provider).some((key) => current.artifacts[key] === undefined) ||
+      // Copies published after the release are looked for again; finding none changes nothing.
+      (provider !== "antigravityAcp" &&
+        policyEntries(provider).some(
+          ({ key, policy }) =>
+            policy.compressedArtifactName !== undefined &&
+            current.artifacts[key]?.compressed === undefined,
+        ))
     );
   }
   const comparison = compareManagedRuntimeReleases({ provider, current, candidate: { version } });
@@ -1069,6 +1119,47 @@ async function scientAgentRelease(fetch_: Fetch): Promise<Record<string, unknown
   return release;
 }
 
+/**
+ * One release asset and its `.sha256` file, checked against GitHub's own metadata. An optional
+ * asset that is absent with its checksum returns undefined; one without the other is an error.
+ */
+async function scientAgentAsset(
+  fetch_: Fetch,
+  assets: ReadonlyArray<Record<string, unknown>>,
+  url: string,
+  name: string,
+  optional = false,
+): Promise<{ readonly digest: string; readonly size: number } | undefined> {
+  const asset = assets.find((value) => value.name === name);
+  const checksumAsset = assets.find((value) => value.name === `${name}.sha256`);
+  if (optional && !asset && !checksumAsset) return undefined;
+  if (!asset || !checksumAsset)
+    throw new Error(`Scient Agent release is missing ${name} or its checksum.`);
+  if (
+    stringField(asset, "browser_download_url", "Scient Agent release asset") !== url ||
+    stringField(checksumAsset, "browser_download_url", "Scient Agent checksum asset") !==
+      `${url}.sha256`
+  ) {
+    throw new Error("Scient Agent release asset URL differs from its policy.");
+  }
+  const checksum = (await metadataText(fetch_, `${url}.sha256`)).trim();
+  const match = /^([0-9a-fA-F]{64})[ \t]+\*?([^\r\n]+)$/u.exec(checksum);
+  if (!match || match[2] !== name)
+    throw new Error("Scient Agent checksum does not identify its release artifact.");
+  const digest = strictDigest(match[1]!, "sha256", "Scient Agent release checksum");
+  if (
+    asset.digest !== undefined &&
+    asset.digest !== null &&
+    (typeof asset.digest !== "string" || asset.digest !== `sha256:${digest}`)
+  ) {
+    throw new Error("Scient Agent release checksum differs from GitHub's asset digest.");
+  }
+  const size = await artifactSize(fetch_, url);
+  if (asset.size !== size)
+    throw new Error("Scient Agent release size differs from GitHub's asset metadata.");
+  return { digest, size };
+}
+
 async function discoverScientAgent(fetch_: Fetch): Promise<ManagedRuntimeCatalogProviderData> {
   const release = await scientAgentRelease(fetch_);
   if (!release) throw new Error("Scient Agent stable release disappeared during discovery.");
@@ -1076,34 +1167,19 @@ async function discoverScientAgent(fetch_: Fetch): Promise<ManagedRuntimeCatalog
   if (!Array.isArray(release.assets)) throw new Error("Scient Agent release assets are missing.");
   const assets = release.assets.map((value) => record(value, "Scient Agent release asset"));
   const entries = await mapConcurrent(policyEntries("scient"), 2, async ({ key, policy }) => {
-    const url = `${policy.releaseUrlPrefix}${version}/${policy.artifactName}`;
-    const asset = assets.find((value) => value.name === policy.artifactName);
-    const checksumName = `${policy.artifactName}.sha256`;
-    const checksumAsset = assets.find((value) => value.name === checksumName);
-    if (!asset || !checksumAsset)
-      throw new Error(`Scient Agent release is missing ${policy.artifactName} or its checksum.`);
-    if (
-      stringField(asset, "browser_download_url", "Scient Agent release asset") !== url ||
-      stringField(checksumAsset, "browser_download_url", "Scient Agent checksum asset") !==
-        `${url}.sha256`
-    ) {
-      throw new Error("Scient Agent release asset URL differs from its policy.");
-    }
-    const checksum = (await metadataText(fetch_, `${url}.sha256`)).trim();
-    const match = /^([0-9a-fA-F]{64})[ \t]+\*?([^\r\n]+)$/u.exec(checksum);
-    if (!match || match[2] !== policy.artifactName)
-      throw new Error("Scient Agent checksum does not identify its release artifact.");
-    const digest = strictDigest(match[1]!, "sha256", "Scient Agent release checksum");
-    if (
-      asset.digest !== undefined &&
-      asset.digest !== null &&
-      (typeof asset.digest !== "string" || asset.digest !== `sha256:${digest}`)
-    ) {
-      throw new Error("Scient Agent release checksum differs from GitHub's asset digest.");
-    }
-    const size = await artifactSize(fetch_, url);
-    if (asset.size !== size)
-      throw new Error("Scient Agent release size differs from GitHub's asset metadata.");
+    const folder = `${policy.releaseUrlPrefix}${version}/`;
+    const url = `${folder}${policy.artifactName}`;
+    const { digest, size } = (await scientAgentAsset(fetch_, assets, url, policy.artifactName))!;
+    // Releases before the compressed copies keep working without them.
+    const compressed = policy.compressedArtifactName
+      ? await scientAgentAsset(
+          fetch_,
+          assets,
+          `${folder}${policy.compressedArtifactName}`,
+          policy.compressedArtifactName,
+          true,
+        )
+      : undefined;
     return [
       key,
       {
@@ -1111,6 +1187,15 @@ async function discoverScientAgent(fetch_: Fetch): Promise<ManagedRuntimeCatalog
         url,
         checksum: { algorithm: "sha256" as const, digest },
         size,
+        ...(compressed
+          ? {
+              compressed: {
+                format: "zstd" as const,
+                size: compressed.size,
+                checksum: { algorithm: "sha256" as const, digest: compressed.digest },
+              },
+            }
+          : {}),
       },
     ] as const;
   });
@@ -1287,6 +1372,13 @@ export async function refreshManagedRuntimeProvider(
   if (candidate.version !== latestVersion) {
     throw new Error(`${provider} stable release changed during discovery.`);
   }
+  if (
+    current.providers[provider] &&
+    managedRuntimeProviderIdentity(existing) === managedRuntimeProviderIdentity(candidate)
+  ) {
+    report(`${provider} is already current at ${latestVersion}.`);
+    return { catalog: current, changedProviders: [] };
+  }
   report(`${provider} ${latestVersion} candidate metadata is complete.`);
   return {
     catalog: {
@@ -1333,16 +1425,22 @@ export function mergeQualifiedManagedRuntimeProvider(input: {
       managedRuntimeProviderIdentity(currentRelease) !==
       managedRuntimeProviderIdentity(candidateRelease)
     ) {
+      // Compressed copies added to a published release: the same binaries, qualified again.
+      const sameBinaries =
+        managedRuntimeProviderIdentity(currentRelease, false) ===
+        managedRuntimeProviderIdentity(candidateRelease, false);
       if (
-        JSON.stringify(currentRelease.supersedes) !== JSON.stringify(candidateRelease.supersedes) ||
-        !preservesPublishedArtifacts({
-          provider: input.provider,
-          current: currentRelease,
-          candidate: candidateRelease,
-        }) ||
-        (candidateRelease.contractRevision === currentRelease.contractRevision &&
-          Object.keys(candidateRelease.artifacts).length <=
-            Object.keys(currentRelease.artifacts).length)
+        !sameBinaries &&
+        (JSON.stringify(currentRelease.supersedes) !==
+          JSON.stringify(candidateRelease.supersedes) ||
+          !preservesPublishedArtifacts({
+            provider: input.provider,
+            current: currentRelease,
+            candidate: candidateRelease,
+          }) ||
+          (candidateRelease.contractRevision === currentRelease.contractRevision &&
+            Object.keys(candidateRelease.artifacts).length <=
+              Object.keys(currentRelease.artifacts).length))
       ) {
         throw new Error(`${input.provider} attempted a same-version catalog repack.`);
       }

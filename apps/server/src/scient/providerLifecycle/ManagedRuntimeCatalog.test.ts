@@ -104,7 +104,11 @@ const remoteCatalog = (version = newerCodexVersion): ManagedRuntimeCatalogData =
 });
 
 /** A Scient Agent release as discovery records it: one binary for every target. */
-const scientCatalog = (version: string, digest = "a".repeat(64)): ManagedRuntimeCatalogData => ({
+const scientCatalog = (
+  version: string,
+  digest = "a".repeat(64),
+  compressed?: unknown,
+): ManagedRuntimeCatalogData => ({
   schemaVersion: 1,
   providers: {
     scient: {
@@ -121,6 +125,7 @@ const scientCatalog = (version: string, digest = "a".repeat(64)): ManagedRuntime
               url: `https://github.com/ScientFactory/scient-agent/releases/download/v${version}/${artifactName}`,
               checksum: { algorithm: "sha256" as const, digest },
               size: 123_456,
+              ...(compressed === undefined ? {} : { compressed }),
             },
           ];
         }),
@@ -341,6 +346,91 @@ describe("managed runtime catalog resolution", () => {
     assert.deepStrictEqual(
       mergeManagedRuntimeCatalogs(BUNDLED_MANAGED_RUNTIME_CATALOG, fetched).providers.scient,
       release.providers.scient,
+    );
+  });
+
+  it.effect("reads a Scient release whose artifacts carry fields this app does not know", () =>
+    Effect.gen(function* () {
+      const release = scientCatalog("0.2.0").providers.scient!;
+      const decoded = yield* decodeBoundedCatalogJson(
+        JSON.stringify({
+          schemaVersion: 1,
+          providers: {
+            scient: {
+              ...release,
+              artifacts: Object.fromEntries(
+                Object.entries(release.artifacts).map(([target, artifact]) => [
+                  target,
+                  { ...artifact, futureTransport: { format: "future", size: 1 } },
+                ]),
+              ),
+            },
+          },
+        }),
+      );
+      assert.strictEqual(decoded.providers.scient?.version, "0.2.0");
+      assert.strictEqual(
+        resolveFetchedManagedRuntimeCatalog(decoded).providers.scient?.version,
+        "0.2.0",
+      );
+    }),
+  );
+
+  const zstdCopy = {
+    format: "zstd",
+    size: 54_321,
+    checksum: { algorithm: "sha256", digest: "c".repeat(64) },
+  } as const;
+
+  it.each([
+    { name: "a zstd copy", compressed: zstdCopy, used: true },
+    { name: "a format this app does not know", compressed: { ...zstdCopy, format: "xz" } },
+    { name: "a malformed copy", compressed: { ...zstdCopy, checksum: { digest: "short" } } },
+    { name: "a copy that is not an object", compressed: "scient-agent-darwin-arm64.zst" },
+  ])("keeps the release whose artifacts name $name", ({ compressed, used }) =>
+    Effect.gen(function* () {
+      const decoded = yield* decodeBoundedCatalogJson(
+        JSON.stringify(scientCatalog("0.2.0", "a".repeat(64), compressed)),
+      );
+      const artifact = resolveManagedRuntimeCatalogArtifact({
+        catalog: resolveFetchedManagedRuntimeCatalog(decoded),
+        policy: resolveScientAgentArtifactPolicy({ platform: "win32", arch: "x64" })!,
+        contractRevision: MANAGED_RUNTIME_POLICY.scient.revision,
+      });
+      assert.strictEqual(artifact?.version, "0.2.0");
+      assert.deepStrictEqual(
+        artifact?.compressed,
+        used
+          ? {
+              ...zstdCopy,
+              artifactName: "scient-agent-windows-x64.exe.zst",
+              url: "https://github.com/ScientFactory/scient-agent/releases/download/v0.2.0/scient-agent-windows-x64.exe.zst",
+              mirrorUrl:
+                "https://downloads.scientfactory.com/scient-agent/v0.2.0/scient-agent-windows-x64.exe.zst",
+            }
+          : undefined,
+      );
+      // The copy is only a way to download the binary: the receipt never names it.
+      assert.notProperty(managedRuntimeArtifactReceipt(artifact!), "compressed");
+    }).pipe(Effect.runSync),
+  );
+
+  it("takes up a same-version republish that adds or changes compressed copies", () => {
+    const plain = resolveFetchedManagedRuntimeCatalog(scientCatalog("0.2.0"));
+    const withCopies = scientCatalog("0.2.0", "a".repeat(64), zstdCopy);
+    const adopted = resolveFetchedManagedRuntimeCatalog(withCopies, plain);
+    assert.deepStrictEqual(adopted.providers.scient, withCopies.providers.scient);
+    assert.deepStrictEqual(changedManagedRuntimeProviders(plain, adopted), ["scient"]);
+    const changed = scientCatalog("0.2.0", "a".repeat(64), { ...zstdCopy, size: 1 });
+    assert.deepStrictEqual(
+      resolveFetchedManagedRuntimeCatalog(changed, adopted).providers.scient,
+      changed.providers.scient,
+    );
+    // A different binary under the same version is still a repack.
+    assert.deepStrictEqual(
+      resolveFetchedManagedRuntimeCatalog(scientCatalog("0.2.0", "b".repeat(64), zstdCopy), adopted)
+        .providers.scient,
+      adopted.providers.scient,
     );
   });
 
@@ -1288,6 +1378,35 @@ describe("latest qualified repair selection", () => {
         },
       }),
       candidate,
+    );
+  });
+});
+
+describe("compressed copies in the catalog cache", () => {
+  it.live("survives a restart with the release's compressed copies", () => {
+    const release = scientCatalog("0.2.0", "a".repeat(64), {
+      format: "zstd",
+      size: 54_321,
+      checksum: { algorithm: "sha256", digest: "c".repeat(64) },
+    });
+    let online = true;
+    return Effect.gen(function* () {
+      const service = yield* makeWithOptions({ startBackgroundRefresh: false });
+      assert.deepStrictEqual(
+        (yield* service.refreshNow).providers.scient,
+        release.providers.scient,
+      );
+      online = false;
+      const rebooted = yield* makeWithOptions({ startBackgroundRefresh: false });
+      assert.deepStrictEqual((yield* rebooted.current).providers.scient, release.providers.scient);
+    }).pipe(
+      Effect.scoped,
+      Effect.provide(
+        serviceLayers({
+          prefix: "compressed-copy-cache",
+          response: () => (online ? Response.json(release) : new Response(null, { status: 503 })),
+        }),
+      ),
     );
   });
 });

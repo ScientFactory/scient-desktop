@@ -34,6 +34,7 @@ it.effect(
           universities: () => Effect.die("not reached"),
         },
         plainKeys: { find: () => Effect.succeed([]), keep: () => Effect.void },
+        restoreKeptKeys: () => Effect.void,
       });
       const group = WsAccountsRpcGroup.middleware(RpcScopeAuthorization);
       const layer = group.toLayer(handlers);
