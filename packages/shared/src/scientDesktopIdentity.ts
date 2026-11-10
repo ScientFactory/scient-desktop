@@ -27,7 +27,7 @@ export const SCIENT_DESKTOP_IDENTITY = {
   safetyEnvelopeEnabled: true,
   cloudEnabled: true,
   // The Scient phone app is not published yet; nothing offers it until it is.
-  mobileAppEnabled: false,
+  mobileAppEnabled: false as boolean,
   autoUpdateEnabled: true,
   // SCIENT-FORK:START — Upstream T3 added two project-creation capabilities in
   // Scratch retains an owning project and a private plain folder; create-from-name stays disabled.
