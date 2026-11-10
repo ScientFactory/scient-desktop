@@ -849,13 +849,15 @@ export function ScientSourcesPanel(props: {
   if (sources.zoteroStatus && sources.zoteroStatus.state !== "ready") {
     const status = sources.zoteroStatus;
     const connectionMessage =
-      status.state === "unreachable"
-        ? "Open Zotero on this computer to continue."
-        : status.state === "access-disabled"
-          ? "Allow local Zotero access to continue."
-          : status.state === "incompatible"
-            ? "This Zotero version is not supported."
-            : "Scient could not verify Zotero.";
+      status.connection === "web"
+        ? status.message
+        : status.state === "unreachable"
+          ? "Open Zotero on this computer to continue."
+          : status.state === "access-disabled"
+            ? "Allow local Zotero access to continue."
+            : status.state === "incompatible"
+              ? "This Zotero version is not supported."
+              : "Scient could not verify Zotero.";
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <PanelHeader
@@ -924,6 +926,10 @@ export function ScientSourcesPanel(props: {
                       </li>
                       <li>Return here and choose Check again.</li>
                     </ol>
+                    <p className="text-muted-foreground">
+                      Without Zotero on this computer, add a Zotero API key in Accounts to use your
+                      library on zotero.org.
+                    </p>
                   </div>
                 </PopoverPopup>
               </Popover>
