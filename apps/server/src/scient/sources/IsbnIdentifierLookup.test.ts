@@ -241,4 +241,25 @@ describe("ISBN identifiers", () => {
       "unavailable",
     ]);
   });
+
+  it("sends no Open Library request still queued when the deadline passes", async () => {
+    const deadline = Promise.withResolvers<null>();
+    using _deadline = vi.spyOn(NodeTimersPromises, "setTimeout").mockReturnValue(deadline.promise);
+    const laneFree = Promise.withResolvers<void>();
+    const queued = Promise.withResolvers<void>();
+    const request = vi.fn<MetadataRequest>();
+    const pending = resolveSourceIdentifierBatch([{ scheme: "isbn", value: ISBN }], {
+      request,
+      pace: (run) => {
+        queued.resolve();
+        return laneFree.promise.then(run);
+      },
+    });
+    await queued.promise;
+    deadline.resolve(null);
+    expect((await pending).map((resolution) => resolution.status)).toEqual(["unavailable"]);
+    laneFree.resolve();
+    await laneFree.promise;
+    expect(request).not.toHaveBeenCalled();
+  });
 });

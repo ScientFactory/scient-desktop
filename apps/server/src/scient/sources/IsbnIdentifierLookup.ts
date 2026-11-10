@@ -120,6 +120,7 @@ async function lookupOpenLibrary(
   isbns: ReadonlyArray<string>,
   request: MetadataRequest,
   pace: RequestPace,
+  signal: AbortSignal | undefined,
 ): Promise<ReadonlyMap<string, CatalogAnswer>> {
   const parameters = new URLSearchParams({
     bibkeys: isbns.map((isbn) => `ISBN:${isbn}`).join(","),
@@ -127,10 +128,12 @@ async function lookupOpenLibrary(
     jscmd: "data",
   });
   const response = await pace(() =>
-    request(new URL(`https://openlibrary.org/api/books?${parameters}`), {
-      Accept: "application/json",
-      "User-Agent": METADATA_USER_AGENT,
-    }),
+    signal?.aborted
+      ? Promise.resolve(null)
+      : request(new URL(`https://openlibrary.org/api/books?${parameters}`), {
+          Accept: "application/json",
+          "User-Agent": METADATA_USER_AGENT,
+        }),
   ).catch(() => null);
   if (!response || response.status < 200 || response.status >= 300) {
     return new Map(isbns.map((isbn) => [isbn, { status: "unavailable" }]));
@@ -235,6 +238,7 @@ export async function lookupIsbns(
     isbns,
     request,
     pace ?? runWithOpenLibraryRequestLimit,
+    progress?.signal,
   );
   const results = new Map<string, IdentifierLookup>();
   const settle = (isbn: string, lookup: IdentifierLookup) => {

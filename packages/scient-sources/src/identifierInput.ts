@@ -197,10 +197,25 @@ function segmentEntries(segment: string): ReadonlyArray<SourceIdentifierListEntr
   return embedded.length > 0 ? embedded : [{ input: segment, identifier: null }];
 }
 
-// A comma or semicolon followed by a DOI, link or scheme prefix separates two identifiers
+// A comma or semicolon followed by a DOI, link or scheme prefix may separate two identifiers
 // even without a space; other commas and semicolons may belong to an old DOI.
 const LIST_BOUNDARY =
-  /[,;](?=\s*(?:https?:\/\/|(?:dx\.)?doi\.org\/|10\.\d{4,9}\/|(?:doi|pmid|arxiv|isbn(?:-1[03])?)[:\s]))/iu;
+  /[,;](?=\s*(?:https?:\/\/|(?:dx\.)?doi\.org\/|10\.\d{4,9}\/|(?:doi|pmid|arxiv|isbn(?:-1[03])?)[:\s]))/giu;
+
+// Split only where the text after a boundary is a whole identifier, so a DOI suffix
+// containing ";isbn:" stays in one piece.
+function splitListLine(line: string): ReadonlyArray<string> {
+  const parts: string[] = [];
+  let start = 0;
+  for (const match of line.matchAll(LIST_BOUNDARY)) {
+    const next = line.slice(match.index + 1).split(LIST_BOUNDARY)[0] ?? "";
+    if (!detectSourceIdentifier(next)) continue;
+    parts.push(line.slice(start, match.index));
+    start = match.index + 1;
+  }
+  parts.push(line.slice(start));
+  return parts;
+}
 
 function partEntries(part: string): ReadonlyArray<SourceIdentifierListEntry> {
   const whole = detectSourceIdentifier(part);
@@ -220,7 +235,7 @@ export function parseSourceIdentifierList(text: string): ReadonlyArray<SourceIde
   const seen = new Set<string>();
   return text
     .split(/[\r\n]+/u)
-    .flatMap((line) => line.split(LIST_BOUNDARY))
+    .flatMap(splitListLine)
     .map((part) => part.trim())
     .filter(Boolean)
     .flatMap(partEntries)

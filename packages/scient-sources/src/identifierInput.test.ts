@@ -80,6 +80,8 @@ describe("parseSourceIdentifierList", () => {
           "10.1000/alpha,10.1000/beta",
           "10.1000/gamma;PMID:12345",
           "10.1002/(SICI)1097-4636(199706)35:4<487::AID-JBM9>3.0.CO;2-B",
+          "10.1000/appendix;isbn:notes",
+          "https://doi.org/10.1000/annex,isbn:notes",
         ].join("\n"),
       ).map((entry) => entry.identifier),
     ).toEqual([
@@ -88,6 +90,8 @@ describe("parseSourceIdentifierList", () => {
       { scheme: "doi", value: "10.1000/gamma" },
       { scheme: "pmid", value: "12345" },
       { scheme: "doi", value: "10.1002/(sici)1097-4636(199706)35:4<487::aid-jbm9>3.0.co;2-b" },
+      { scheme: "doi", value: "10.1000/appendix;isbn:notes" },
+      { scheme: "doi", value: "10.1000/annex,isbn:notes" },
     ]);
   });
 
