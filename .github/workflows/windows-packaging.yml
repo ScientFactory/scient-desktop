@@ -253,6 +253,8 @@ jobs:
             node scripts/qualify-windows-packaged-runtime.mjs "$freshDir" --launch-smoke
             if ($LASTEXITCODE -ne 0) { throw "Diagnostic round $round failed" }
           }
+          # A per-user install elsewhere can remove the earlier one; later steps use the last.
+          "SCIENT_PACKAGING_INSTALL=$freshDir" >> $env:GITHUB_ENV
       # The voice helper must need nothing Windows lacks (no Visual C++
       # Redistributable) and must transcribe through the app's runtime owner.
       - name: Transcribe with the installed voice runtime
