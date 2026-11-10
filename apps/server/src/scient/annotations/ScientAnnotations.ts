@@ -12,6 +12,7 @@ import {
   resolveScientSourceInputPdf,
   sourceAttachmentAbsolutePath,
 } from "@scientfactory/scient-sources/store";
+import { readScientSourceFullText } from "@scientfactory/scient-sources/full-text-store";
 import {
   liveScientAnnotations,
   scientAnnotationQuote,
@@ -38,7 +39,8 @@ import {
   type AnnotationHistoryEntry,
   type ScientAnnotationFile,
 } from "./annotationStore.ts";
-import { anchorPdfQuote, readPdfPageTexts } from "./pdfQuoteAnchor.ts";
+import { extractSourcePdfFullText } from "../sources/SourceFullText.ts";
+import { anchorPdfQuote, type PdfPageText } from "./pdfQuoteAnchor.ts";
 
 export class ScientAnnotationsError extends Schema.TaggedError<ScientAnnotationsError>()(
   "ScientAnnotationsError",
@@ -121,6 +123,29 @@ async function sourcePdf(
     relativePath: `${SCIENT_SOURCES_DIRECTORY}/${attachment.relativePath}`,
     material: { sha256: attachment.sha256, byteLength: attachment.byteLength },
   };
+}
+
+/** Page texts in the reader's profile: the stored Sources full text when complete, else read now. */
+async function pdfPageTexts(
+  canonicalRoot: string,
+  pdf: ProjectPdf,
+): Promise<{
+  readonly extractorVersion: string;
+  readonly pages: ReadonlyArray<PdfPageText>;
+} | null> {
+  const stored = await readScientSourceFullText(canonicalRoot, pdf.material.sha256).catch(
+    () => null,
+  );
+  const text =
+    stored?.outcome === "extracted" && stored.complete
+      ? stored
+      : await extractSourcePdfFullText({
+          pdfPath: pdf.absolutePath,
+          sha256: pdf.material.sha256,
+          byteLength: pdf.material.byteLength,
+        });
+  if (text.outcome !== "extracted") return null;
+  return { extractorVersion: text.extractor.version, pages: text.pages };
 }
 
 export interface AnnotatedPdfSummary {
@@ -384,7 +409,8 @@ export const layer = Layer.succeed(ScientAnnotations, {
           ? await projectPdf(canonicalRoot, input.pdf.relativePath).catch(() => null)
           : await sourcePdf(canonicalRoot, input.pdf.sourceId, input.pdf.attachmentId);
       if (!pdf) return { outcome: "pdf-not-found" };
-      const text = await readPdfPageTexts(pdf.absolutePath);
+      const text = await pdfPageTexts(canonicalRoot, pdf);
+      if (!text) return { outcome: "quote-not-found" };
       const anchoring = anchorPdfQuote(text.pages, input.quote, text.extractorVersion, input.page);
       switch (anchoring._tag) {
         case "NotFound":

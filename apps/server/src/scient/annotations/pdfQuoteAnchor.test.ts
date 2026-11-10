@@ -1,10 +1,6 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The fixture PDF is written to a temporary project.
-import * as NodePath from "node:path";
-
 import { describe, expect, it } from "@effect/vitest";
 
-import { anchorPdfQuote, readPdfPageTexts, type PdfPageText } from "./pdfQuoteAnchor.ts";
-import { temporaryProject, textPdf, writeProjectFile } from "./annotationTestUtils.ts";
+import { anchorPdfQuote, type PdfPageText } from "./pdfQuoteAnchor.ts";
 
 const geometry = { viewBox: [0, 0, 612, 792] as const, rotation: 0, userUnit: 1 };
 const page = (number: number, text: string): PdfPageText => ({ page: number, text, ...geometry });
@@ -45,28 +41,5 @@ describe("anchorPdfQuote", () => {
     const picked = anchorPdfQuote(pages, "p < 0.05", "v", 4);
     expect(picked._tag === "Found" && picked.anchor.selector.pages[0]!.page).toBe(4);
     expect(anchorPdfQuote(pages, "not in the paper", "v")).toEqual({ _tag: "NotFound" });
-  });
-});
-
-describe("readPdfPageTexts", () => {
-  it("reads every page in the reader's text profile so an agent can anchor a quote", async () => {
-    await using project = await temporaryProject();
-    await writeProjectFile(
-      project.root,
-      "paper.pdf",
-      textPdf([
-        ["Abstract", "We studied sleep."],
-        ["Methods", "Mice were observed nightly."],
-      ]),
-    );
-    const read = await readPdfPageTexts(NodePath.join(project.root, "paper.pdf"));
-    expect(read.pages.map((entry) => entry.page)).toEqual([1, 2]);
-    expect(read.pages[1]!.text).toContain("Mice were observed nightly.");
-    const found = anchorPdfQuote(read.pages, "mice were observed", read.extractorVersion);
-    expect(found._tag === "Found" && found.anchor.selector.pages[0]).toMatchObject({
-      page: 2,
-      quote: "Mice were observed",
-      viewBox: [0, 0, 612, 792],
-    });
   });
 });

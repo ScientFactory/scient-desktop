@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Page-text hashes use the same synchronous sha256 the reader stores.
 import * as NodeCrypto from "node:crypto";
-import * as NodeURL from "node:url";
 
 import {
   PDF_TARGET_LIMITS,
@@ -8,7 +7,6 @@ import {
   type PdfTextPageSelector,
 } from "@scientfactory/document-artifacts";
 import type { ScientPdfAnnotationAnchor } from "@t3tools/contracts";
-import * as Predicate from "effect/Predicate";
 
 /** One page's text in the reader's target profile, with its geometry. */
 export interface PdfPageText {
@@ -26,8 +24,6 @@ export type PdfQuoteAnchoring =
   /** The quote is longer or spans more pages than one annotation can hold. */
   | { readonly _tag: "TooLong" };
 
-const MAX_PAGES = 2_000;
-const MAX_PAGE_CHARACTERS = 250_000;
 const SOFT_HYPHEN = String.fromCharCode(0xad);
 
 interface Folded {
@@ -177,57 +173,4 @@ export function anchorPdfQuote(
 function endOffset(text: string, offset: number): number {
   const code = text.codePointAt(offset);
   return offset + (code !== undefined && code > 0xffff ? 2 : 1);
-}
-
-/** Every page's text the way the reader's text layer profiles it. */
-export async function readPdfPageTexts(absolutePath: string): Promise<{
-  readonly extractorVersion: string;
-  readonly pages: ReadonlyArray<PdfPageText>;
-}> {
-  const { getDocument, version } = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const task = getDocument({
-    url: NodeURL.pathToFileURL(absolutePath),
-    disableAutoFetch: true,
-    disableFontFace: true,
-    useSystemFonts: false,
-    verbosity: 0,
-  });
-  try {
-    const document = await task.promise;
-    try {
-      const pages: PdfPageText[] = [];
-      const count = Math.min(document.numPages, MAX_PAGES);
-      for (let number = 1; number <= count; number += 1) {
-        const page = await document.getPage(number);
-        try {
-          const content = await page.getTextContent({
-            includeMarkedContent: true,
-            disableNormalization: true,
-          });
-          const text = content.items
-            .map((item) =>
-              Predicate.hasProperty(item, "str") && Predicate.isString(item.str)
-                ? item.str + (Predicate.hasProperty(item, "hasEOL") && item.hasEOL ? "\n" : "")
-                : "",
-            )
-            .join("");
-          const [x1, y1, x2, y2] = page.view;
-          pages.push({
-            page: number,
-            text: text.length > MAX_PAGE_CHARACTERS ? "" : text,
-            viewBox: [x1!, y1!, x2!, y2!],
-            rotation: page.rotate,
-            userUnit: page.userUnit,
-          });
-        } finally {
-          page.cleanup();
-        }
-      }
-      return { extractorVersion: version, pages };
-    } finally {
-      await document.cleanup();
-    }
-  } finally {
-    await task.destroy().catch(() => undefined);
-  }
 }
