@@ -116,7 +116,9 @@ export const hostedAppUrlConfig = makePublicValueConfig(
   DEFAULT_HOSTED_APP_URL,
 ).pipe(Config.mapEffect(validateHostedAppUrl));
 
-const NIGHTLY_HOSTED_APP_URL = "https://nightly.app.t3.codes";
+// SCIENT-FORK:START — Scient's one hosted app approves sign-ins for nightly builds too.
+const NIGHTLY_HOSTED_APP_URL = DEFAULT_HOSTED_APP_URL;
+// SCIENT-FORK:END
 
 /**
  * Where agent sign-ins on the T3 Connect address are approved. A nightly build defaults to the
