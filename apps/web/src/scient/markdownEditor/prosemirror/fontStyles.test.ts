@@ -125,4 +125,18 @@ describe("Markdown font size and family", () => {
     expect(scientMarkdownSchema.marks.font_size).toBeDefined();
     expect(scientMarkdownSchema.marks.font_family).toBeDefined();
   });
+
+  it("ignores pasted HTML whose size or family is not a known name", () => {
+    const parseRule = (markName: "font_size" | "font_family") => {
+      const rule = scientMarkdownSchema.marks[markName]?.spec.parseDOM?.[0];
+      return rule?.getAttrs as (element: { getAttribute: (name: string) => string }) => unknown;
+    };
+    const attribute = (value: string) => ({ getAttribute: () => value });
+    expect(parseRule("font_size")(attribute("huge"))).toEqual({ size: "huge" });
+    expect(parseRule("font_size")(attribute("x;background:url(https://example.invalid)"))).toBe(
+      false,
+    );
+    expect(parseRule("font_family")(attribute("monospace"))).toEqual({ family: "monospace" });
+    expect(parseRule("font_family")(attribute('serif" onmouseover="alert(1)'))).toBe(false);
+  });
 });
