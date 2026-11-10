@@ -450,6 +450,36 @@ the user or an agent restores the Library version. The project file is written
 before the copy, so an interrupted write is adopted on the next sync instead
 of reported as an edit. Nothing is written for a project without a Library.
 
+## Reference check
+
+`apps/server/src/scient/references/` checks a document or the Library against
+the shared identifier resolver; the MCP tools (`scient_references_check`,
+`scient_references_resolve`) and the `scientReferences` HTTP group call the
+same two functions.
+
+- Parsing is pure and lives in `packages/scient-sources`:
+  `referenceDocuments.ts` reads citations, named bibliography files, bibitems,
+  typed numbered lists and identifiers; `bibtex.ts` is the positional BibTeX
+  reader the LaTeX editor also uses.
+- A document check reads the file, the `.bib` or CSL-JSON files it names
+  (relative to it, through the same project-file guard as PDF intake), and the
+  Library records whose `citationKey` matches an otherwise unlisted citation.
+- Identifiers go to `resolveSourceIdentifierBatch` in batches; lookups not
+  started within 90 seconds count as unavailable and the report says it is
+  incomplete. Retractions and corrections come from Crossref `updated-by`,
+  published versions from Crossref `relation` or an arXiv record's DOI, both
+  carried on `ResolvedSourceMetadata`.
+- `referenceComparison.ts` holds the comparisons (different work, registry
+  status, field differences). A single-source check before citing reuses them.
+- A finding's `fix` is self-contained: a `.bib` fix carries the field's current
+  text and is refused as stale when the file no longer has it; a Library fix
+  carries the expected revision and goes through `updateScientSource`, credited
+  to the actor. Fixes exist only for registry values; identifiers, retractions
+  and published versions are left to the author.
+- Ignored findings are kept in `.scient/reference-check/ignored.json`, outside
+  the Sources store. A finding ID hashes the checked file, the reference, the
+  kind and the registry value, so a changed record is reported again.
+
 ## Collections, saved searches and bulk edit
 
 `packages/scient-sources/src/collections.ts` owns
