@@ -38,6 +38,7 @@ import {
 import { providerInventoryMessage } from "./providerInventory";
 import { useWindowFocusRefresh } from "./useWindowFocusRefresh";
 import { AgentSkills } from "../skills/AgentSkills";
+import { PersonalSkillsSection } from "../skills/PersonalSkillsSection";
 import { ProjectSkills } from "../skills/ProjectSkills";
 import { ScientSkillsLibrary, ScientSkillsTitle } from "../skills/ScientSkillsLibrary";
 
@@ -165,7 +166,7 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
     <>
       <ExtensionsTopBar tab="installed" kind={kind}>
         <span className="flex items-center gap-2">
-          {showsKind(kind, "plugins") ? <AddYourOwn /> : null}
+          <AddYourOwn kind={kind} />
           <span className="w-56">
             <NativeSelect
               size="sm"
@@ -275,6 +276,9 @@ function Installed({ kind }: { readonly kind: ExtensionKind | undefined }) {
 
       {showsKind(kind, "skills") ? (
         <>
+          <ExtensionsSection title="Your skills">
+            <PersonalSkillsSection environmentId={environmentId} providers={providers} />
+          </ExtensionsSection>
           <ExtensionsSection title={<ScientSkillsTitle />}>
             <ScientSkillsLibrary environmentId={environmentId} providers={providers} onlyActive />
           </ExtensionsSection>

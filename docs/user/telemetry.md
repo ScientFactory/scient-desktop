@@ -23,6 +23,12 @@ it.
   counts are sent, never the message.
 - Whether a turn was started by you, an agent or a schedule.
 - Which agent tools run, how long they take and whether they succeed.
+- For your own skills: where each one came from (a file, folder, zip, pasted
+  text, a web address or another app), how many were found and added, whether
+  you or an agent made the change, and why a step failed. The names of Scient's
+  built-in skills that agents load. If you add a skill from a public code host
+  such as GitHub or Hugging Face, its address, so we can see which shared skills
+  people use. Never the names or contents of your skills.
 - How many threads and projects you have. Only the numbers, never their names.
 - Your app version, operating system, device type and how you connected.
 - A random identifier for this installation.
@@ -42,8 +48,9 @@ it.
 
 ## What is never collected
 
-Prompts, responses, file contents, file names and paths, URLs, research results,
-passwords, API keys, access tokens and raw provider events. Email is accepted
+Prompts, responses, file contents, file names and paths, URLs (other than the
+public skill addresses above), research results, passwords, API keys, access
+tokens, your skills' contents and raw provider events. Email is accepted
 only on the dedicated provider-account observation; ordinary usage events
 continue to reject email, paths and links. The Usage
 page's wider local history stays on your computer.
