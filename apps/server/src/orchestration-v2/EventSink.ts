@@ -43,7 +43,6 @@ import {
   type ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import * as ProviderCommitBatch from "./ProviderCommitBatch.ts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -129,10 +128,10 @@ interface EventSinkTransactionHooks {
 }
 
 export interface EventSinkV2Shape {
-  readonly consumeProviderEvents: <E, R, E2, R2>(
-    // SCIENT-FORK: the stream also carries Scient's running-fork text batches.
-    source: Stream.Stream<ProviderAdapter.ProviderAdapterV2InternalEvent, E, R>,
-    process: (event: ProviderAdapter.ProviderAdapterV2InternalEvent) => Effect.Effect<void, E2, R2>,
+  /** Items that are not provider snapshots, such as a consumer's own control items, never batch. */
+  readonly consumeProviderEvents: <A extends { readonly type: string }, E, R, E2, R2>(
+    source: Stream.Stream<A, E, R>,
+    process: (event: A) => Effect.Effect<void, E2, R2>,
     after: Effect.Effect<boolean, E2, R2>,
     canBatch: Effect.Effect<boolean, never, R2>,
   ) => Effect.Effect<

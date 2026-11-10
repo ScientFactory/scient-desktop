@@ -96,8 +96,9 @@ it("bounds wheel zoom and returns to fit when the window resizes", async () => {
   await _setupFixture0(_fixture);
 
   const { viewport, zoom } = await mountImage(_fixture);
+  // A pinch or Ctrl+wheel zooms; a plain wheel pans.
   const wheel = async (deltaY: number) => {
-    const event = new WheelEvent("wheel", { deltaY, cancelable: true });
+    const event = new WheelEvent("wheel", { deltaY, ctrlKey: true, cancelable: true });
     await act(() => viewport.dispatchEvent(event));
     return event;
   };

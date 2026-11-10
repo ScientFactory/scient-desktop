@@ -619,6 +619,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`7171fdd7716b05dc1b4be40c26ac78e8bb35f80c` is recorded in
+[the 2026-11-10 7171fdd771 receipt](docs/internals/t3-upstream-sync-20261110-7171fdd771.md).
+Literal merge `3bce08006815ca295d8e60f2402606ad4d666f0d` has owned base
+`a3cc2496dac3b2356f69864b73468fe7fdba33e4` and the frozen official target as parents, retaining
+the 80 official commits after `33db45effd`. Scient keeps its package install for the server
+runtime. T3's agent sign-in approval runs through Scient Connect, which merged first.
+`@pierre/diffs` moves to 1.7.0-beta.3 with Scient's editor additions. No migrations.
+Release remains separate.
+
+The previous committed alignment through
 `33db45effd176c01a27b3f2976192e77ad82b301` is recorded in
 [the 2026-11-09 33db45effd receipt](docs/internals/t3-upstream-sync-20261109-33db45effd.md).
 Literal merge `dce80a7807a0f16dd1a3acdec885d3c644e48d73` has owned base
@@ -627,7 +637,7 @@ the 37 official commits after `402d0623d5`. T3's one-page Welcome replaces its w
 builds; Scient keeps Getting started. T3's "use in another app (MCP)" wizard is aligned with
 Scient names and stays dormant with T3 Connect. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `402d0623d5f4160859607e9b7c11fc829fbe3e18` is recorded in
 [the 2026-11-09 402d0623d5 receipt](docs/internals/t3-upstream-sync-20261109-402d0623d5.md).
 Literal merge `4ced9d1208a9bdf0116ed3d7e60b72e53452d42c` has owned base

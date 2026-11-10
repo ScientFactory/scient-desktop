@@ -34,6 +34,7 @@ import {
   showScientUpdateReadyNotice,
 } from "../../scient/desktopUpdate/updateReadyNotice";
 // SCIENT-FORK:END
+import { useCheckProviderUpdates } from "../ProviderUpdatesAction";
 import { Alert, AlertDescription, AlertTitle } from "../ui/alert";
 import { Popover, PopoverCreateHandle, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { SidebarMenuItem } from "../ui/sidebar";
@@ -213,6 +214,8 @@ function SidebarUpdateControl() {
   // question, with what it stops and what it admits.
   const [askingPass, setAskingPass] = useState<ReturnType<typeof confirmServerStops> | null>(null);
   // SCIENT-FORK:END
+  const [providerCheck, setProviderCheck] = useState<"button" | null>(null);
+  const isCheckingProviders = providerCheck === "button";
   const [checkAnimationKey, setCheckAnimationKey] = useState(0);
   const [releaseNotesPopoverHandle] = useState(() => PopoverCreateHandle());
   const suppressReleaseNotesFocusOpen = useRef(false);
@@ -262,6 +265,7 @@ function SidebarUpdateControl() {
   const localUpdateVersion =
     state && action !== "none" ? getDesktopUpdateDownloadedVersion(state) : null;
   const everything = useUpdateEverything(localUpdateVersion);
+  const checkProviderUpdates = useCheckProviderUpdates();
   // SCIENT-FORK:START — the pill is this app's own update. Other updates join it only in a pass
   // that downloads this app, never in a running one, and only such a pass holds the pill.
   const run = useUpdateEverythingRun();
@@ -276,7 +280,7 @@ function SidebarUpdateControl() {
   // SCIENT-FORK:END
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
-    isChecking: state?.status === "checking",
+    isChecking: state?.status === "checking" || isCheckingProviders,
     prefersReducedMotion,
   });
   const { iconStatus, showUpdateDetails, showUpdateIconState } = resolveSidebarUpdatePresentation({
@@ -413,7 +417,7 @@ function SidebarUpdateControl() {
       setIsCheckAnimationLatched(true);
       setCheckAnimationKey((key) => key + 1);
     }
-    void bridge
+    const appCheck = bridge
       .checkForUpdate()
       .then((result) => {
         if (result.checked) return;
@@ -436,8 +440,10 @@ function SidebarUpdateControl() {
             description: error instanceof Error ? error.message : "Update check failed.",
           }),
         );
-      })
-      .finally(() => setIsActionPending(false));
+      });
+    setProviderCheck("button");
+    const providersChecked = checkProviderUpdates().finally(() => setProviderCheck(null));
+    void Promise.allSettled([appCheck, providersChecked]).then(() => setIsActionPending(false));
   };
 
   // SCIENT-FORK:START — servers restart only while they stop no more threads than agreed.
@@ -475,7 +481,7 @@ function SidebarUpdateControl() {
   const handleCheckAnimationIteration = () => {
     setIsCheckAnimationLatched(
       shouldContinueDesktopUpdateCheckAnimation({
-        isChecking: state?.status === "checking",
+        isChecking: state?.status === "checking" || isCheckingProviders,
         prefersReducedMotion,
       }),
     );
