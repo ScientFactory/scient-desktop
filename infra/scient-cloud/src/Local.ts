@@ -13,7 +13,7 @@ import type { SqlError } from "effect/sql/SqlError";
 import { importKek } from "./AtRest.ts";
 import { cloudError } from "./CloudError.ts";
 import { expireShare } from "./expireShare.ts";
-import { memoryObjects, Objects } from "./Objects.ts";
+import { memoryObjects, Objects, readAll } from "./Objects.ts";
 import { serialized } from "./runner.ts";
 import {
   CloudConfig,
@@ -43,11 +43,12 @@ export interface LocalCloudOptions {
   readonly kek?: string;
   /** SQLite files go here; in memory when omitted. */
   readonly dataDir?: string;
-  /** Test sign-in: bearer token → person. */
-  readonly people: ReadonlyMap<string, LocalPerson>;
+  /** Test sign-in: bearer token → person. Ignored when `peopleAuth` is given. */
+  readonly people?: ReadonlyMap<string, LocalPerson>;
+  readonly peopleAuth?: PeopleAuth["Service"];
   /** Share page build to serve under `/s/_app/`. */
   readonly shareDist?: string;
-  readonly objects?: Map<string, Uint8Array>;
+  readonly objects?: Map<string, Uint8Array> | Objects["Service"];
 }
 
 /** Test-only key-encryption key; production refuses to start without `SCIENT_CLOUD_KEK`. */
@@ -166,29 +167,35 @@ export const layer = (options: LocalCloudOptions) =>
         },
       });
 
-      const people = PeopleAuth.of({
-        verify: Effect.fn("LocalPeopleAuth.verify")(function* (token: string) {
-          const person = options.people.get(token);
-          if (person === undefined) {
-            return yield* cloudError("unauthorized", "Sign in to continue.");
-          }
-          return { userId: person.userId };
-        }),
-        verifiedEmails: Effect.fn("LocalPeopleAuth.verifiedEmails")((userId: string) =>
-          Effect.sync(() =>
-            [...options.people.values()]
-              .filter((person) => person.userId === userId)
-              .flatMap((person) => person.emails ?? [])
-              .map((email) => email.toLowerCase()),
+      const people = options.people ?? new Map<string, LocalPerson>();
+      const peopleAuth =
+        options.peopleAuth ??
+        PeopleAuth.of({
+          verify: Effect.fn("LocalPeopleAuth.verify")(function* (token: string) {
+            const person = people.get(token);
+            if (person === undefined) {
+              return yield* cloudError("unauthorized", "Sign in to continue.");
+            }
+            return { userId: person.userId };
+          }),
+          verifiedEmails: Effect.fn("LocalPeopleAuth.verifiedEmails")((userId: string) =>
+            Effect.sync(() =>
+              [...people.values()]
+                .filter((person) => person.userId === userId)
+                .flatMap((person) => person.emails ?? [])
+                .map((email) => email.toLowerCase()),
+            ),
           ),
-        ),
-      });
+        });
 
-      const objects = memoryObjects(options.objects);
+      const objects =
+        options.objects === undefined || options.objects instanceof Map
+          ? memoryObjects(options.objects)
+          : options.objects;
       const context = Layer.mergeAll(
         Layer.succeed(Users, usersService),
         Layer.succeed(Shares, sharesService),
-        Layer.succeed(PeopleAuth, people),
+        Layer.succeed(PeopleAuth, peopleAuth),
         Layer.succeed(Objects, objects),
         Layer.succeed(CloudConfig, settings),
         Layer.succeed(PageAssets, directoryAssets(options.shareDist)),
@@ -212,3 +219,28 @@ export const layer = (options: LocalCloudOptions) =>
       return yield* Layer.build(context);
     }),
   );
+
+/** Objects as files under `dir`, so a dev server keeps its data across restarts. */
+export const fileObjects = (dir: string): Objects["Service"] => {
+  NodeFS.mkdirSync(dir, { recursive: true });
+  const fileOf = (key: string) => NodePath.join(dir, encodeURIComponent(key));
+  return {
+    put: (key, body, length) =>
+      Effect.promise(async () => {
+        const bytes = await readAll(body);
+        if (bytes.length !== length) throw new Error(`Length mismatch for ${key}`);
+        NodeFS.writeFileSync(fileOf(key), bytes);
+      }),
+    get: (key) =>
+      Effect.sync(() => {
+        const file = fileOf(key);
+        if (!NodeFS.existsSync(file)) return undefined;
+        const bytes = NodeFS.readFileSync(file);
+        return { body: new Blob([bytes]).stream(), size: bytes.length };
+      }),
+    delete: (keys) =>
+      Effect.sync(() => {
+        for (const key of keys) NodeFS.rmSync(fileOf(key), { force: true });
+      }),
+  };
+};
