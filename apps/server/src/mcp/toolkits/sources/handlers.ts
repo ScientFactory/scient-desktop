@@ -32,6 +32,11 @@ import {
   updateSourceNote,
 } from "../../../scient/sources/ScientSourcesCoordinator.ts";
 import { syncManagedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
+import {
+  checkSourceQuotes,
+  readSourceText,
+  searchSourceFullText,
+} from "../../../scient/sources/SourceFullText.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientSourcesToolError>[0]["code"];
 
@@ -256,7 +261,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       abstractTruncated,
       note: record.note ?? null,
       attachments: record.attachments.map(
-        ({ attachmentId, kind, fileName, mediaType, sha256, byteLength, importedAt }) => ({
+        ({
           attachmentId,
           kind,
           fileName,
@@ -264,6 +269,16 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
           sha256,
           byteLength,
           importedAt,
+          retrieval,
+        }) => ({
+          attachmentId,
+          kind,
+          fileName,
+          mediaType,
+          sha256,
+          byteLength,
+          importedAt,
+          ...(retrieval ? { retrieval } : {}),
         }),
       ),
     };
@@ -505,6 +520,56 @@ const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolkit.bibl
   },
 );
 
+const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search")(
+  function* (input: {
+    readonly query: string;
+    readonly sourceIds?: ReadonlyArray<string>;
+    readonly limit?: number;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() =>
+      searchSourceFullText({
+        root,
+        query: input.query,
+        limit: Math.min(25, Math.max(1, input.limit ?? 10)),
+        ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
+      }),
+    );
+  },
+);
+
+const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit.readText")(
+  function* (input: {
+    readonly sourceId: string;
+    readonly attachmentId?: string;
+    readonly fromPage?: number;
+    readonly maxCharacters?: number;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() =>
+      readSourceText({
+        root,
+        sourceId: input.sourceId,
+        ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
+        fromPage: Math.max(1, input.fromPage ?? 1),
+        maxCharacters: Math.min(60_000, Math.max(1_000, input.maxCharacters ?? 20_000)),
+      }),
+    );
+  },
+);
+
+const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesToolkit.checkQuotes")(
+  function* (input: {
+    readonly quotes: ReadonlyArray<{ readonly quote: string; readonly sourceId?: string }>;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const results = yield* attempt(() =>
+      checkSourceQuotes({ root, quotes: input.quotes.slice(0, 25) }),
+    );
+    return { results };
+  },
+);
+
 const handlers = {
   scient_sources_list: listScientSourcesForInvocation,
   scient_sources_get: getScientSourceForInvocation,
@@ -515,6 +580,9 @@ const handlers = {
   scient_sources_attach_pdf: attachScientSourcePdfForInvocation,
   scient_sources_detach_pdf: detachScientSourcePdfForInvocation,
   scient_sources_bibliography: syncScientBibliographyForInvocation,
+  scient_sources_search: searchScientSourcesForInvocation,
+  scient_sources_read_text: readScientSourceTextForInvocation,
+  scient_sources_quote_check: checkScientSourceQuotesForInvocation,
 } satisfies Parameters<typeof ScientSourcesToolkit.toLayer>[0];
 
 export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(handlers);

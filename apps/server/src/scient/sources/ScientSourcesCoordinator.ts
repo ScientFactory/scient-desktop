@@ -7,6 +7,8 @@ import {
   applyResolvedSourceMetadata,
   creatorDisplayName,
   resolveSourceIdentifier,
+  sourceIdentifierLabel as identifierLabel,
+  sourceIdentifierRegistryName as registryName,
   titlesAgree,
   type ResolveSourceIdentifier,
 } from "./SourceIdentifierResolver.ts";
@@ -26,12 +28,15 @@ import {
   sourceMetadataDiagnostics,
   assessSourceDuplicate,
   scientSourceSummaryFromRecord,
+  type ScientSourceActor,
+  type ScientSourceAttachmentRetrieval,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
   type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
+  type ScientSourceOrigin,
   type ScientSourceRecord,
   type ScientSourceVerification,
   type ZoteroImportScope,
@@ -67,6 +72,7 @@ import {
   listZoteroScopeItemKeys,
 } from "./ZoteroLocalAdapter.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
+import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
 
@@ -120,6 +126,7 @@ function normalizeSourceRecordForRead(record: ScientSourceRecord): ScientSourceR
 
 export async function getScientSourcesOverview(root: string) {
   const overview = await inspectScientSources(root);
+  void scheduleSourceFullTextIndexing(root);
   return {
     ...overview,
     records: overview.records.map(scientSourceSummaryFromRecord),
@@ -195,12 +202,6 @@ export type AgentSourceAddResult =
       readonly message: string;
     };
 
-const identifierLabel = (identifier: ScientSourceIdentifier) =>
-  `${identifier.scheme === "doi" ? "DOI" : "PMID"} ${identifier.value}`;
-
-const registryName = (identifier: ScientSourceIdentifier) =>
-  identifier.scheme === "doi" ? "doi.org" : "PubMed";
-
 export async function addAgentSource(
   input: {
     readonly root: string;
@@ -213,6 +214,10 @@ export async function addAgentSource(
     readonly resolveIdentifier?: ResolveSourceIdentifier;
     /** The title the agent asserted; PDF-derived and filename titles are not claims. */
     readonly claimedTitle?: string | null;
+    /** A downloaded paper is added for whoever asked for it. */
+    readonly actor?: ScientSourceActor;
+    readonly intake?: ScientSourceOrigin["intake"];
+    readonly pdfRetrieval?: ScientSourceAttachmentRetrieval;
   },
   observer?: SourceImportObserver,
 ): Promise<AgentSourceAddResult> {
@@ -281,9 +286,10 @@ export async function addAgentSource(
         root: input.root,
         operationId: `agent_${NodeCrypto.randomUUID()}`,
         candidate: candidateWithPdfName,
-        actor: "agent",
-        intake: input.pdfPath ? "local-pdf" : "identifier",
+        actor: input.actor ?? "agent",
+        intake: input.intake ?? (input.pdfPath ? "local-pdf" : "identifier"),
         ...(verification ? { verification } : {}),
+        ...(input.pdfRetrieval ? { pdfRetrieval: input.pdfRetrieval } : {}),
         allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
         ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
         ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),

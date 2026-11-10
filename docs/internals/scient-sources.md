@@ -235,6 +235,21 @@ Sources MCP toolkit:
 - `scient_sources_remove` removes a canonical source only through the same
   revisioned removal path as the UI.
 
+Paper downloads reach the store through `paperIntake.ts`. A `scient_paper_get`
+or `scient_papers_queue` request with `addToLibrary` (or `sourceId`) needs the
+`sources:write` grant; without it the PDF is only saved and the result says so.
+Once the queue has saved the PDF, the intake attaches it to the source whose DOI
+or arXiv ID matches, at that source's current revision, or creates a source
+through the same resolver as an agent add (`origin.intake: "paper"`, credited to
+the agent, or to the user for their own queue). Its candidate holds only the
+asked identifier; OpenAlex's title and year are kept, with `openalex`
+provenance, only when no registry answers. The DOI in the PDF's own text is not
+used, since it can be a cited work. A not-found DOI adds nothing, and a possible
+metadata match is reported for the agent to decide. Each downloaded attachment
+records `retrieval`: the route (`open-access`, `publisher`, `university`,
+`library`) and the version (`published`, `accepted`, `preprint`, or `unknown`
+when the repository did not say). A copy already in `papers/` records none.
+
 Before an agent add writes anything, the server checks the source's DOI at
 doi.org (CSL-JSON), or failing that its PMID through PubMed esummary on the
 shared NCBI request lane, within a 6.5-second deadline. A DOI that doi.org

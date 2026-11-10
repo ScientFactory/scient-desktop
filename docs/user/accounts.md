@@ -144,7 +144,8 @@ agents queue any number. One queue runs every paper, one at a time per publisher
 publisher that refuses several in a row. A sign-in or a publisher's check asks you once, then every
 paper waiting on it continues, even after a restart. Many university licences forbid systematic
 downloading, so how many papers you fetch is your call. Scient saves only a PDF that is the paper,
-in the project's `papers` folder, and never fetches one twice.
+in the project's `papers` folder, and never fetches one twice. Papers an agent gets for your
+library also go on their source in [Sources](sources.md), which is added when missing.
 
 ## What Accounts doesn't protect against
 
