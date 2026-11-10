@@ -26,7 +26,8 @@ back.
 
 Research keys also serve [Sources](sources.md) and paper downloads. With an **OpenAlex** key, an
 **NCBI / PubMed** key or a **Semantic Scholar** key saved, Scient's own lookups use it, and
-**Unpaywall email** lets Scient ask Unpaywall for a free copy that OpenAlex doesn't list. A key you
+**Unpaywall email** lets Scient ask Unpaywall for a free copy that OpenAlex doesn't list; without
+one, Scient uses the Library's contact email (Settings ▸ Documents ▸ Library) if you set it. A key you
 turn Off for agents is not used. The values stay in Accounts and never appear in what agents see.
 
 ## What agents may use

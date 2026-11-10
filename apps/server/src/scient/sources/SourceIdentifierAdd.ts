@@ -228,7 +228,9 @@ export async function addScientSourcesByIdentifier(
     const key = identifierKey(step.identifier);
     const resolution = resolutionByKey.get(key);
     if (resolution?.status !== "found") {
-      const registry = sourceIdentifierRegistryName(step.identifier);
+      const missing =
+        (resolution?.status === "not-found" ? resolution.named : undefined) ?? step.identifier;
+      const registry = sourceIdentifierRegistryName(missing);
       results.push({
         input: step.input,
         identifier: step.identifier,
@@ -237,7 +239,7 @@ export async function addScientSourcesByIdentifier(
         title: null,
         message:
           resolution?.status === "not-found"
-            ? `The ${sourceIdentifierLabel(step.identifier)} does not exist at ${registry}.`
+            ? `The ${sourceIdentifierLabel(missing)} does not exist at ${registry}.`
             : `${registry} could not be reached, so nothing was added. Try again later.`,
       });
       continue;
@@ -257,11 +259,14 @@ export async function addScientSourcesByIdentifier(
           candidate,
           actor: input.actor,
           intake: "identifier",
-          verification: {
-            state: "verified",
-            identifier: resolution.identifier,
-            checkedAt: resolution.retrievedAt,
-          },
+          // A work only a catalogue has is not registry-verified.
+          verification: resolution.catalogueOnly
+            ? { state: "unverified" }
+            : {
+                state: "verified",
+                identifier: resolution.identifier,
+                checkedAt: resolution.retrievedAt,
+              },
           allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
         }),
       (result) => (result.outcome === "imported" ? "imported" : "skipped"),
@@ -273,7 +278,7 @@ export async function addScientSourcesByIdentifier(
         outcome: "imported",
         sourceId: imported.record.sourceId,
         title: imported.record.title,
-        verification: "verified",
+        verification: resolution.catalogueOnly ? "unverified" : "verified",
         message: null,
       });
       continue;

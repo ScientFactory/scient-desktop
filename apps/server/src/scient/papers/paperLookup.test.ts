@@ -12,6 +12,7 @@ import {
   openAccessPdf,
   paperFileName,
 } from "./paperLookup.ts";
+import { setRegistryContactEmail } from "../sources/metadataHttp.ts";
 
 describe("paper lookup", () => {
   it("finds a DOI in links and citations, without trailing punctuation", () => {
@@ -154,6 +155,20 @@ describe("lookUpPaper", () => {
         { pdfUrl: "https://repo.example/accepted.pdf", version: "accepted" },
       ]);
     }),
+  );
+
+  it.effect(
+    "sends the Library's contact email to OpenAlex and, without its own, to Unpaywall",
+    () =>
+      Effect.gen(function* () {
+        setRegistryContactEmail("lab@example.org");
+        const { asked, layer } = registries(new Response(null, { status: 503 }));
+        yield* lookUpPaper({ doi }).pipe(Effect.provide(layer));
+        expect(asked.map(({ params }) => params)).toEqual([
+          { mailto: "lab@example.org" },
+          { email: "lab@example.org" },
+        ]);
+      }).pipe(Effect.ensuring(Effect.sync(() => setRegistryContactEmail(null)))),
   );
 
   it.effect("asks no one else without an Unpaywall email", () =>

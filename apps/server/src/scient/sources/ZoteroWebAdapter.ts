@@ -313,6 +313,7 @@ export function makeZoteroWebLibrary(input: {
   };
 
   return {
+    account: input.account,
     transport,
     /** Creates items in one request; the write token makes a retried request create nothing new. */
     createItems: async (

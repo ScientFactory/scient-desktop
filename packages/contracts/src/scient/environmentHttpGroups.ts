@@ -93,6 +93,10 @@ import {
   ZoteroLibraryRequest,
   ZoteroScopedImportRequest,
   ZoteroStatusRequest,
+  ScientSourcesZoteroRefreshRequest,
+  ScientSourcesZoteroSendRequest,
+  ScientSourceZoteroRefreshResult,
+  ScientSourceZoteroSendResult,
 } from "../scientSources.ts";
 import {
   ScientManagedBibliographyStatus,
@@ -513,6 +517,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ZoteroScopedImportRequest,
         success: ScientSourceImportOperation,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("zoteroRefresh", "/api/scient/sources/zotero/refresh", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesZoteroRefreshRequest,
+        success: ScientSourceZoteroRefreshResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("zoteroSend", "/api/scient/sources/zotero/send", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesZoteroSendRequest,
+        success: ScientSourceZoteroSendResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

@@ -97,6 +97,7 @@ import {
   fileImportVerification,
   getBibliographyFileImportCandidate,
 } from "./BibliographyFileAdapter.ts";
+import { recordZoteroSync } from "./ZoteroSync.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
@@ -328,35 +329,47 @@ export async function addAgentSource(
         ? null
         : await (input.resolveIdentifier ?? resolveSourceIdentifier)(input.candidate.identifiers);
       if (resolution?.status === "not-found") {
+        const missing = resolution.named ?? resolution.identifier;
         return {
           outcome: "identifier-not-found",
-          identifier: resolution.identifier,
-          message: `The ${identifierLabel(resolution.identifier)} does not exist at ${registryName(resolution.identifier)}. Check the identifier; do not guess.`,
+          identifier: missing,
+          message: `The ${identifierLabel(missing)} does not exist at ${registryName(missing)}. Check the identifier; do not guess.`,
         };
       }
+      // A catalogue's record fills in the work while its registry cannot be reached.
+      const record =
+        resolution?.status === "found"
+          ? resolution
+          : resolution?.status === "unavailable" && resolution.catalogue
+            ? {
+                status: "found" as const,
+                identifier: resolution.identifier,
+                ...resolution.catalogue,
+              }
+            : null;
       if (
-        resolution?.status === "found" &&
+        record &&
         input.claimedTitle &&
-        resolution.metadata.title &&
-        !titlesAgree(input.claimedTitle, resolution.metadata.title)
+        record.metadata.title &&
+        !titlesAgree(input.claimedTitle, record.metadata.title)
       ) {
         return {
           outcome: "identifier-mismatch",
-          identifier: resolution.identifier,
+          identifier: record.identifier,
           resolved: {
-            title: resolution.metadata.title,
-            creators: resolution.metadata.creators
+            title: record.metadata.title,
+            creators: record.metadata.creators
               .slice(0, 3)
               .flatMap((creator) => creatorDisplayName(creator) ?? []),
-            issuedYear: resolution.metadata.issuedYear,
-            containerTitle: resolution.metadata.containerTitle,
+            issuedYear: record.metadata.issuedYear,
+            containerTitle: record.metadata.containerTitle,
           },
-          message: `The ${identifierLabel(resolution.identifier)} belongs to a work with a different title. Check whether the identifier or the title is wrong; do not guess. If the resolved work is the one meant, add it again without a title.`,
+          message: `The ${identifierLabel(record.identifier)} belongs to a work with a different title. Check whether the identifier or the title is wrong; do not guess. If the resolved work is the one meant, add it again without a title.`,
         };
       }
       const verification: ScientSourceVerification | null = exactDuplicate
         ? null
-        : resolution === null
+        : resolution === null || (resolution.status === "found" && resolution.catalogueOnly)
           ? { state: "unverified" }
           : resolution.status === "found"
             ? {
@@ -365,10 +378,9 @@ export async function addAgentSource(
                 checkedAt: resolution.retrievedAt,
               }
             : { state: "unchecked", identifier: resolution.identifier };
-      const resolved =
-        resolution?.status === "found"
-          ? applyResolvedSourceMetadata(input.candidate, resolution)
-          : input.candidate;
+      const resolved = record
+        ? applyResolvedSourceMetadata(input.candidate, record)
+        : input.candidate;
       const candidate = input.enrich ? await enrichScientSourceCandidate(resolved) : resolved;
       const candidateWithPdfName =
         input.pdfPath && input.pdfFileName
@@ -883,7 +895,7 @@ async function importZoteroOperationItem(input: {
     input.zotero,
     input.operation.adapter === "zotero-web" ? "web" : "local",
   );
-  const { candidate, files } = await zoteroImportMaterial(transport, input.itemKey);
+  const { candidate, material, files } = await zoteroImportMaterial(transport, input.itemKey);
   try {
     const [primary, ...extra] = files;
     const result = await importScientSourceOperationItem({
@@ -907,6 +919,14 @@ async function importZoteroOperationItem(input: {
         actor: input.operation.actor,
       });
       record = attached.record;
+    }
+    if (result.outcome === "imported" && record) {
+      await recordZoteroSync({
+        root: input.root,
+        record,
+        material,
+        attachmentKeys: files.map((file) => file.attachmentKey),
+      });
     }
     return { ...result, record };
   } finally {
