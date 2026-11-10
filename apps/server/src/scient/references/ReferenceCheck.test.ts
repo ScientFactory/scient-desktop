@@ -311,11 +311,14 @@ describe("checkReferences", () => {
     expect(bib).toContain("pages = {1-9}");
   });
 
-  it("adds a missing field the registry supplies", async () => {
+  it.each(["\n", "\r\n"])("adds a missing field the registry supplies (%j)", async (eol) => {
     await using fixture = await project();
+    const lines = (text: string) => text.replaceAll("\n", eol);
     await fixture.write(
       "refs.bib",
-      "@article{smith2020,\n  author = {Smith, J.},\n  title = {The effect of light on sleep},\n  year = 2021,\n  doi = {10.1000/smith}\n}\n",
+      lines(
+        "@article{smith2020,\n  author = {Smith, J.},\n  title = {The effect of light on sleep},\n  year = 2021,\n  doi = {10.1000/smith}\n}\n",
+      ),
     );
     const report = await checkReferences(
       { root: fixture.root, target: { kind: "file", path: "refs.bib" } },
@@ -329,8 +332,41 @@ describe("checkReferences", () => {
     await resolveReferenceFindings({ root: fixture.root, apply: [missing!.fix!], actor: "agent" });
 
     expect(await fixture.read("refs.bib")).toBe(
-      "@article{smith2020,\n  author = {Smith, J.},\n  title = {The effect of light on sleep},\n  year = 2021,\n  doi = {10.1000/smith},\n  journal = {Journal of Sleep Research}\n}\n",
+      lines(
+        "@article{smith2020,\n  author = {Smith, J.},\n  title = {The effect of light on sleep},\n  year = 2021,\n  doi = {10.1000/smith},\n  journal = {Journal of Sleep Research}\n}\n",
+      ),
     );
+  });
+
+  it("applies a fix to the exact entry when two entries share a key", async () => {
+    await using fixture = await project();
+    const first =
+      "@article{duplicate, author = {Smith, J.}, title = {The effect of light on sleep}, journal = {Journal of Sleep Research}, year = {2021}, volume = {12}, pages = {100-110}, doi = {10.1000/smith}}\n";
+    await fixture.write(
+      "refs.bib",
+      `${first}@article{duplicate, author = {Smith, J.}, title = {The effect of light on sleep}, journal = {Journal of Sleep Research}, year = {2020}, volume = {12}, pages = {100-110}, doi = {10.1000/other}}\n`,
+    );
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "file", path: "refs.bib" } },
+      { resolveIdentifiers: registry({ ...works, "doi:10.1000/other": SMITH }), now },
+    );
+    const yearFix = report.findings.find((finding) => finding.fix?.kind === "bibtex-field")!;
+    expect(yearFix.location).toEqual({ path: "refs.bib", line: 2 });
+    const fix = yearFix.fix!;
+    if (fix.kind !== "bibtex-field") throw new Error("Expected a .bib fix");
+    const { occurrence, ...unnamed } = fix;
+    expect(occurrence).toBe(1);
+
+    const resolution = await resolveReferenceFindings({
+      root: fixture.root,
+      apply: [fix, unnamed],
+      actor: "user",
+    });
+
+    expect(resolution.fixes.map(({ outcome }) => outcome)).toEqual(["applied", "stale"]);
+    const bib = await fixture.read("refs.bib");
+    expect(bib.startsWith(first)).toBe(true);
+    expect(bib.slice(first.length)).toContain("year = {2021}");
   });
 
   it("checks Library sources and applies a fix as a credited revision", async () => {
@@ -357,6 +393,30 @@ describe("checkReferences", () => {
     expect(resolution.fixes[0]?.outcome).toBe("applied");
     const [record] = await listScientSourceRecords(fixture.root);
     expect(record).toMatchObject({ issuedYear: 2021, issuedRaw: "2021", updatedBy: "agent" });
+  });
+
+  it("applies several fixes to one Library source together as one revision", async () => {
+    await using fixture = await project();
+    await addLibrarySource(fixture.root);
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "library" } },
+      {
+        resolveIdentifiers: registry({ "doi:10.1000/smith": { ...SMITH, volume: "13" } }),
+        now,
+      },
+    );
+    const fixes = report.findings.flatMap((finding) => (finding.fix ? [finding.fix] : []));
+    expect(fixes.map((fix) => fix.field).sort()).toEqual(["issuedYear", "volume"]);
+
+    const resolution = await resolveReferenceFindings({
+      root: fixture.root,
+      apply: fixes,
+      actor: "agent",
+    });
+
+    expect(resolution.fixes.map(({ outcome }) => outcome)).toEqual(["applied", "applied"]);
+    const [record] = await listScientSourceRecords(fixture.root);
+    expect(record).toMatchObject({ issuedYear: 2021, volume: "13", revision: 2 });
   });
 
   it("matches Markdown citations to Library sources by citation key", async () => {
@@ -409,6 +469,27 @@ describe("checkReferences", () => {
       false,
     );
   });
+
+  it.each([".scient", ".scient/reference-check"])(
+    "never writes ignores through a linked %s folder",
+    async (linked) => {
+      await using fixture = await project();
+      await using outside = await project();
+      await outside.write("ignored.json", "kept");
+      await NodeFSP.rm(NodePath.join(fixture.root, linked), { recursive: true, force: true });
+      await NodeFSP.mkdir(NodePath.dirname(NodePath.join(fixture.root, linked)), {
+        recursive: true,
+      });
+      await NodeFSP.symlink(outside.root, NodePath.join(fixture.root, linked), "junction");
+
+      await expect(
+        resolveReferenceFindings({ root: fixture.root, ignore: ["finding"], actor: "user" }),
+      ).rejects.toBeInstanceOf(ReferenceCheckError);
+
+      expect(await outside.read("ignored.json")).toBe("kept");
+      await expect(NodeFSP.stat(NodePath.join(outside.root, "reference-check"))).rejects.toThrow();
+    },
+  );
 
   it("reads Markdown citations against a front-matter bibliography and refuses paths outside the project", async () => {
     await using fixture = await project();
