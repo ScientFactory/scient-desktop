@@ -38,13 +38,13 @@ describe("Compute CI suite selection", () => {
         changes: {
           outputs: {
             compute_changed:
-              "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.changed }}",
+              "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.changed }}",
             real_kernel:
-              "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.real_kernel }}",
+              "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.real_kernel }}",
             managed_python:
-              "${{ github.event_name == 'push' && 'true' || steps.compute.outputs.managed_python }}",
+              "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.managed_python }}",
             compute_platforms:
-              "${{ github.event_name == 'push' && 'all' || steps.compute.outputs.platforms }}",
+              "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'all' || steps.compute.outputs.platforms }}",
           },
         },
         compute_native: {
