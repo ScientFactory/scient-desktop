@@ -314,62 +314,83 @@ function cslIssued(raw: string | null, year: number | null) {
   const parsedYear = match?.[1] ? Number(match[1]) : year;
   if (parsedYear !== null && parsedYear !== undefined) {
     const parts = [parsedYear];
-    if (match?.[2]) {
-      parts.push(Number(match[2]));
-      if (match[3]) parts.push(Number(match[3]));
+    const month = match?.[2] ? Number(match[2]) : null;
+    const day = match?.[3] ? Number(match[3]) : null;
+    if (month !== null && month >= 1 && month <= 12) {
+      parts.push(month);
+      if (day !== null && day >= 1 && day <= 31) parts.push(day);
     }
     return { "date-parts": [parts] };
   }
   return raw ? { literal: raw } : undefined;
 }
 
+export type CslJsonItem = Readonly<Record<string, unknown>> & {
+  readonly id: string;
+  readonly type: string;
+};
+
+/**
+ * The one CSL-JSON writer: file export, the managed `references.json`, Word
+ * export and reference formatting all read a source through it.
+ */
+export function cslJsonItem(
+  { record, citationKey }: BibliographyExportItem,
+  options: BibliographyExportOptions & { readonly id?: string },
+): CslJsonItem {
+  const identifier = (scheme: string) =>
+    record.identifiers.find((entry) => entry.scheme.toLowerCase() === scheme)?.value;
+  const all = (scheme: string) =>
+    record.identifiers
+      .filter((entry) => entry.scheme.toLowerCase() === scheme)
+      .map((entry) => entry.value);
+  const arxiv = identifier("arxiv");
+  const fields: Record<string, unknown> = {
+    id: options.id ?? citationKey,
+    "citation-key": citationKey || undefined,
+    type: CSL_TYPE_BY_TYPE[record.type],
+    title: record.title ?? undefined,
+    author: cslNames(record.creators, new Set(["author"])),
+    editor: cslNames(record.creators, new Set(["editor"])),
+    translator: cslNames(record.creators, new Set(["translator"])),
+    "container-author": cslNames(record.creators, new Set(["bookauthor"])),
+    "collection-editor": cslNames(record.creators, new Set(["serieseditor"])),
+    issued: cslIssued(record.issuedRaw, record.issuedYear),
+    "container-title": record.containerTitle ?? undefined,
+    publisher: record.publisher ?? undefined,
+    volume: record.volume ?? undefined,
+    issue: record.issue ?? undefined,
+    page: record.pages ?? undefined,
+    language: record.language ?? undefined,
+    URL: record.url ?? (arxiv ? `https://arxiv.org/abs/${arxiv}` : undefined),
+    DOI: identifier("doi"),
+    PMID: identifier("pmid"),
+    PMCID: identifier("pmcid"),
+    ISBN: all("isbn").join(", ") || undefined,
+    ISSN: all("issn").join(", ") || undefined,
+    number: arxiv ? `arXiv:${arxiv}` : undefined,
+    genre:
+      record.type === "preprint"
+        ? "Preprint"
+        : record.type === "other" && record.customType
+          ? record.customType
+          : undefined,
+    abstract: record.abstract ?? undefined,
+    keyword: record.tags.length > 0 ? record.tags.join(", ") : undefined,
+    note: options.includeNotes ? (record.note ?? undefined) : undefined,
+  };
+  return Object.fromEntries(
+    Object.entries(fields).filter(([, value]) => value !== undefined),
+  ) as CslJsonItem;
+}
+
 export function formatCslJson(
   items: ReadonlyArray<BibliographyExportItem>,
   options: BibliographyExportOptions,
 ): string {
-  const output = items.map(({ record, citationKey }) => {
-    const identifier = (scheme: string) =>
-      record.identifiers.find((entry) => entry.scheme.toLowerCase() === scheme)?.value;
-    const all = (scheme: string) =>
-      record.identifiers
-        .filter((entry) => entry.scheme.toLowerCase() === scheme)
-        .map((entry) => entry.value);
-    const arxiv = identifier("arxiv");
-    const fields: Record<string, unknown> = {
-      id: citationKey,
-      "citation-key": citationKey,
-      type: CSL_TYPE_BY_TYPE[record.type],
-      title: record.title ?? undefined,
-      author: cslNames(record.creators, new Set(["author"])),
-      editor: cslNames(record.creators, new Set(["editor"])),
-      translator: cslNames(record.creators, new Set(["translator"])),
-      "container-author": cslNames(record.creators, new Set(["bookauthor"])),
-      "collection-editor": cslNames(record.creators, new Set(["serieseditor"])),
-      issued: cslIssued(record.issuedRaw, record.issuedYear),
-      "container-title": record.containerTitle ?? undefined,
-      publisher: record.publisher ?? undefined,
-      volume: record.volume ?? undefined,
-      issue: record.issue ?? undefined,
-      page: record.pages ?? undefined,
-      language: record.language ?? undefined,
-      URL: record.url ?? (arxiv ? `https://arxiv.org/abs/${arxiv}` : undefined),
-      DOI: identifier("doi"),
-      PMID: identifier("pmid"),
-      PMCID: identifier("pmcid"),
-      ISBN: all("isbn").join(", ") || undefined,
-      ISSN: all("issn").join(", ") || undefined,
-      number: arxiv ? `arXiv:${arxiv}` : undefined,
-      genre:
-        record.type === "preprint"
-          ? "Preprint"
-          : record.type === "other" && record.customType
-            ? record.customType
-            : undefined,
-      abstract: record.abstract ?? undefined,
-      keyword: record.tags.length > 0 ? record.tags.join(", ") : undefined,
-      note: options.includeNotes ? (record.note ?? undefined) : undefined,
-    };
-    return Object.fromEntries(Object.entries(fields).filter(([, value]) => value !== undefined));
-  });
-  return `${JSON.stringify(output, null, 2)}\n`;
+  return `${JSON.stringify(
+    items.map((item) => cslJsonItem(item, options)),
+    null,
+    2,
+  )}\n`;
 }

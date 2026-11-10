@@ -628,6 +628,7 @@ function identifierValues(item: BibliographyExportItem, scheme: string): string[
     .map((identifier) => identifier.value);
 }
 
+/** The one BibTeX writer: file export and the managed `references.bib` both use it. */
 export function formatBibtex(
   items: ReadonlyArray<BibliographyExportItem>,
   options: BibliographyExportOptions,
@@ -645,6 +646,7 @@ export function formatBibtex(
         if (clean) fields.push([name, `{${clean.replace(/[{}]/gu, "")}}`]);
       };
       add("author", bibtexNames(item, new Set(["author"])), (value) => value);
+      add("bookauthor", bibtexNames(item, new Set(["bookauthor"])), (value) => value);
       add("editor", bibtexNames(item, new Set(["editor", "serieseditor"])), (value) => value);
       add("translator", bibtexNames(item, new Set(["translator"])), (value) => value);
       add("title", record.title, encodeLatexTitle);
