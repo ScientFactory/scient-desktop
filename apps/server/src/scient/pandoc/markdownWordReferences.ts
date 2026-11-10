@@ -1,4 +1,6 @@
 /** Bibliographic inputs named by a saved Markdown file's YAML front matter. */
+import { renderManagedBibliography } from "@scientfactory/scient-citations/bibliography";
+import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import { CslItem, type DocumentCitation, type DocumentWarning } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { parse as parseYaml } from "yaml";
@@ -6,6 +8,8 @@ import { parse as parseYaml } from "yaml";
 export interface MarkdownReferenceDeclarations {
   readonly citations: ReadonlyArray<DocumentCitation>;
   readonly bibliographyPaths: ReadonlyArray<string>;
+  /** Front matter `csl:`, a bundled style name or a local `.csl` path. */
+  readonly csl: string | null;
   readonly warnings: ReadonlyArray<DocumentWarning>;
 }
 
@@ -14,7 +18,7 @@ const MAX_BIBLIOGRAPHIES = 8;
 
 /** Read only reference fields; all other front matter stays in the document. */
 export function markdownReferenceDeclarations(markdown: string): MarkdownReferenceDeclarations {
-  const empty = { citations: [], bibliographyPaths: [], warnings: [] };
+  const empty = { citations: [], bibliographyPaths: [], csl: null, warnings: [] };
   const match = /^(?:\uFEFF)?---\r?\n([\s\S]*?)\r?\n---(?:\r?\n|$)/u.exec(markdown);
   if (!match) return empty;
   let parsed: unknown;
@@ -91,7 +95,8 @@ export function markdownReferenceDeclarations(markdown: string): MarkdownReferen
       });
     }
   }
-  return { citations, bibliographyPaths, warnings };
+  const csl = typeof fields.csl === "string" && fields.csl.trim() ? fields.csl.trim() : null;
+  return { citations, bibliographyPaths, csl, warnings };
 }
 
 /** A CSL-JSON bibliography can be an array or an object keyed by citation id. */
@@ -118,4 +123,14 @@ export function citationsFromCslJson(contents: string): ReadonlyArray<DocumentCi
     key: reference.id,
     reference,
   }));
+}
+
+/** The project's Library as citations by key; none when the project has no Library. */
+export async function libraryCitations(root: string): Promise<ReadonlyArray<DocumentCitation>> {
+  try {
+    const records = await listScientSourceRecords(root);
+    return citationsFromCslJson(renderManagedBibliography(records).cslJson) ?? [];
+  } catch {
+    return [];
+  }
 }

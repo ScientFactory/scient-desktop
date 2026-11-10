@@ -23,6 +23,11 @@ export interface FakeZoteroLibrary {
   readonly files?: ReadonlyMap<string, string>;
   readonly failures?: ReadonlyMap<string, Error>;
   readonly citationKeys?: ReadonlyMap<string, string>;
+  readonly collections?: ReadonlyArray<{
+    readonly key: string;
+    readonly name: string;
+    readonly parent?: string;
+  }>;
 }
 
 const json = (value: unknown, total?: number): ZoteroResponse => ({
@@ -55,7 +60,17 @@ export function fakeZoteroTransport(
         const top = [...library.items.values()].map((entry) => entry.item);
         return json(top, top.length);
       }
-      if (route === "/collections") return json([], 0);
+      if (route === "/collections") {
+        const collections = (library.collections ?? []).map((collection) => ({
+          key: collection.key,
+          data: {
+            key: collection.key,
+            name: collection.name,
+            parentCollection: collection.parent ?? false,
+          },
+        }));
+        return json(collections, collections.length);
+      }
       return { status: 404, headers: {}, body: "" };
     },
     attachmentFile: async (attachment) => {
@@ -70,7 +85,9 @@ export function fakeZoteroTransport(
   };
 }
 
+/** Zotero on this computer, open and answering from `local`. */
 export const fakeZoteroAccess = (local: ZoteroTransport): ZoteroAccess => ({
   webKey: async () => null,
   local,
+  inspectLocal: async () => ({ state: "ready", apiVersion: 3, message: "Ready." }),
 });

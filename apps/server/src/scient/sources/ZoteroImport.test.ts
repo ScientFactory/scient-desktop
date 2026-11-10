@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
+import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
@@ -121,6 +122,48 @@ describe("Zotero import", () => {
       .map((record) => record.citationKey)
       .toSorted();
     expect(keys).toEqual(["fromBetterBibTeX", "pinned2026"]);
+  });
+
+  it("puts imported items in Library collections named after their Zotero collections", async () => {
+    const root = await project();
+    const zotero = fakeZoteroAccess(
+      fakeZoteroTransport({
+        items: new Map([
+          [
+            "ABCD2345",
+            {
+              item: zoteroItem("ABCD2345", {
+                title: "Filed twice",
+                abstractNote: "A.",
+                collections: ["THES2345", "CHAP2345"],
+              }),
+              children: [],
+            },
+          ],
+        ]),
+        collections: [
+          { key: "THES2345", name: "Thesis" },
+          { key: "CHAP2345", name: "Chapter 2", parent: "THES2345" },
+        ],
+      }),
+    );
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "filed",
+      scope: { kind: "library" },
+      zotero,
+    });
+    await advanceSourceImport({ root, operationId: "filed", zotero });
+
+    const [record] = await listScientSourceRecords(root);
+    const organization = await readScientSourcesOrganization(root);
+    expect(
+      organization.collections.map((collection) => [collection.name, collection.sourceIds]),
+    ).toEqual([
+      ["Thesis", [record?.sourceId]],
+      ["Thesis / Chapter 2", [record?.sourceId]],
+    ]);
   });
 
   it("imports metadata when Zotero has no copy of the PDF file", async () => {

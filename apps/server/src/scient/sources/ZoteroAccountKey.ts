@@ -1,4 +1,5 @@
 import type { AccountSummary, AccountsSnapshot, ProjectId } from "@t3tools/contracts";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -47,6 +48,10 @@ export function zoteroAccountFor(
 
 export type ZoteroKeyLookup = () => Promise<string | null>;
 
+// One import reads the key for every step; Accounts activity shows one use per stretch of work.
+const USE_RECORD_INTERVAL_MS = 10 * 60_000;
+const lastRecordedUse = new Map<string, number>();
+
 /** Reads the Zotero key from Accounts; the value never leaves the server's request headers. */
 export const readZoteroApiKey = Effect.fn("ZoteroAccountKey.read")(function* (
   accounts: Pick<AccountsServiceShape, "snapshot" | "resolveSecrets" | "recordUse">,
@@ -57,13 +62,18 @@ export const readZoteroApiKey = Effect.fn("ZoteroAccountKey.read")(function* (
   if (!account) return Option.none<Redacted.Redacted<string>>();
   const { token } = yield* accounts.resolveSecrets(account.accountId, ["token"]);
   if (!token || !Redacted.value(token).trim()) return Option.none<Redacted.Redacted<string>>();
-  yield* accounts.recordUse({
-    target: { type: "account", accountId: account.accountId },
-    action: "request",
-    detail: "Sources · api.zotero.org",
-    outcome: "ok",
-    ...(use.actor === "agent" && use.projectId !== undefined ? { projectId: use.projectId } : {}),
-  });
+  const now = yield* Clock.currentTimeMillis;
+  const recordKey = `${account.accountId}\0${use.actor}`;
+  if (now - (lastRecordedUse.get(recordKey) ?? -Infinity) >= USE_RECORD_INTERVAL_MS) {
+    lastRecordedUse.set(recordKey, now);
+    yield* accounts.recordUse({
+      target: { type: "account", accountId: account.accountId },
+      action: "request",
+      detail: "Sources · api.zotero.org",
+      outcome: "ok",
+      ...(use.actor === "agent" && use.projectId !== undefined ? { projectId: use.projectId } : {}),
+    });
+  }
   return Option.some(token);
 });
 

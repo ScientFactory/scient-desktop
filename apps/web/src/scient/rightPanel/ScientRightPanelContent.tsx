@@ -180,6 +180,7 @@ export function ScientRightPanelContent(input: ScientRightPanelContentProps): Re
         root={activeWorkspaceRoot}
         projectTitle={activeProject.title}
         onOpenPdf={openScientSourcePdf}
+        onOpenFile={(path, line) => input.openFileSourceSurface(path, line)}
       />
     </Suspense>
   ) : null;

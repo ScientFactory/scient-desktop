@@ -13,9 +13,16 @@ import { vi } from "vite-plus/test";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
 import type * as PaperAttempt from "./paperAttempt.ts";
-import { listPapers, requestPapers, resumePapers, type PaperRequester } from "./paperQueue.ts";
+import {
+  continuePapers,
+  listPapers,
+  requestPapers,
+  resumePapers,
+  type PaperRequester,
+} from "./paperQueue.ts";
 import { initializeScientProject } from "@scientfactory/project-init";
-import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
+import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
+import { importScientSource, listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import {
   SourceIdentifierLookup,
   verifiableSourceIdentifier,
@@ -23,6 +30,8 @@ import {
 
 const fetched = vi.hoisted(() => ({
   calls: [] as Array<{ doi: string | undefined; requester: PaperRequester }>,
+  /** A paper whose DOI ends in "later" needs the person until this is set. */
+  released: false,
 }));
 
 /** No real fetching: each paper ends as its DOI says, and who it ran as is kept. */
@@ -32,7 +41,8 @@ vi.mock("./paperAttempt.ts", async (importOriginal) => {
   const paper = { landingUrl: "https://doi.org/10.1/x", openAccess: [] };
   const fetchOnePaper: typeof actual.fetchOnePaper = (asked, requester) => {
     fetched.calls.push({ doi: asked.doi, requester });
-    if (asked.doi?.endsWith("preprint"))
+    const later = asked.doi?.endsWith("later") === true;
+    if (asked.doi?.endsWith("preprint") || (later && fetched.released))
       return succeed({
         state: "saved" as const,
         paper: { ...paper, doi: asked.doi, title: "A preprint", openAccess: [] },
@@ -42,7 +52,7 @@ vi.mock("./paperAttempt.ts", async (importOriginal) => {
         version: "preprint" as const,
       });
     return succeed(
-      asked.doi?.endsWith("needs-you")
+      asked.doi?.endsWith("needs-you") || later
         ? {
             state: "needs-you" as const,
             paper,
@@ -86,6 +96,38 @@ const restarted = (stored: unknown) =>
     yield* fs.makeDirectory(path.dirname(file), { recursive: true });
     yield* fs.writeFileString(file, JSON.stringify(stored));
     return root;
+  });
+
+/** A Library source for this DOI, with no PDF yet. */
+const sourceFor = (root: string, doi: string) =>
+  Effect.promise(async () => {
+    await initializeScientProject({ root });
+    const candidate: ScientSourceCandidate = {
+      sourceKey: "fixture",
+      type: "article",
+      customType: null,
+      title: "A source waiting for its PDF",
+      creators: [],
+      issuedRaw: null,
+      issuedYear: null,
+      identifiers: [{ scheme: "doi", value: doi }],
+      abstract: null,
+      containerTitle: null,
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      url: null,
+      tags: [],
+      externalReferences: [],
+      fieldProvenance: [],
+      pdfAvailable: false,
+      pdfFileName: null,
+      pdfAttachmentCount: 0,
+    };
+    const { record } = await importScientSource({ root, operationId: "fixture", candidate });
+    return { sourceId: record!.sourceId, expectedRevision: record!.revision };
   });
 
 /** Runs a test whose `settled` waits until the queue has stored and shown nothing waiting. */
@@ -245,5 +287,67 @@ it.effect("files a paper asked for the Library on a new source, credited to the 
         };
       }),
     ),
+  ),
+);
+
+it.effect("credits an agent's PDF on a named source to the agent", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      const source = yield* sourceFor(root, "10.1/preprint");
+      yield* requestPapers(root, [{ doi: "10.1/preprint", source }], agent);
+      yield* settled(root);
+
+      expect(yield* Effect.promise(() => listScientSourceRecords(root))).toMatchObject([
+        { sourceId: source.sourceId, updatedBy: "agent", attachments: [{}] },
+      ]);
+    }),
+  ),
+);
+
+it.effect("files a waiting paper on the source a later request names", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      const source = yield* sourceFor(root, "10.1/later");
+      yield* requestPapers(root, [{ doi: "10.1/later" }], user);
+      yield* settled(root);
+      yield* requestPapers(root, [{ doi: "10.1/later", source }], agent);
+      yield* settled(root);
+      fetched.released = true;
+      yield* continuePapers(root, user);
+      yield* settled(root);
+
+      expect(yield* listPapers(root)).toMatchObject([
+        { state: "saved", sourceId: source.sourceId },
+      ]);
+      expect(yield* Effect.promise(() => listScientSourceRecords(root))).toMatchObject([
+        { sourceId: source.sourceId, updatedBy: "agent", attachments: [{}] },
+      ]);
+    }),
+  ),
+);
+
+it.effect("keeps the credit of a named source when a Library request joins it", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      const source = yield* sourceFor(root, "10.1/joined-later");
+      fetched.released = false;
+      yield* requestPapers(root, [{ doi: "10.1/joined-later", source }], user);
+      yield* settled(root);
+      yield* requestPapers(root, [{ doi: "10.1/joined-later", library: true }], agent);
+      yield* settled(root);
+      fetched.released = true;
+      yield* continuePapers(root, user);
+      yield* settled(root);
+
+      expect(yield* Effect.promise(() => listScientSourceRecords(root))).toMatchObject([
+        { sourceId: source.sourceId, updatedBy: "user", attachments: [{}] },
+      ]);
+    }),
   ),
 );

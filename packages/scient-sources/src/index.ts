@@ -5,6 +5,8 @@ export * from "./duplicates.ts";
 export * from "./editable.ts";
 export * from "./model.ts";
 export * from "./normalize.ts";
+export * from "./organize.ts";
 export * from "./identifierInput.ts";
 export * from "./referenceCheck.ts";
 export * from "./referenceDocuments.ts";
+export * from "./webPage.ts";

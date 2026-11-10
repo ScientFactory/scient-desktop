@@ -38,7 +38,12 @@ import {
   LatexPreparationError,
   prepareLatexProject,
 } from "./latexProjectPreparation.ts";
-import { citationsFromCslJson, markdownReferenceDeclarations } from "./markdownWordReferences.ts";
+import {
+  citationsFromCslJson,
+  libraryCitations,
+  markdownReferenceDeclarations,
+} from "./markdownWordReferences.ts";
+import { bundledCslStyle } from "@scientfactory/scient-citations";
 import { capturedWordDiagramAssets, planWordDiagrams } from "./wordDiagramCapture.ts";
 import { captureWordImages } from "./wordImageSnapshot.ts";
 
@@ -212,114 +217,142 @@ const make = Effect.gen(function* () {
       const { root, target, read, mutationEpoch } = yield* readSavedMarkdown(request);
 
       const title = path.basename(target.relativePath).replace(MARKDOWN_FILE, "") || "Document";
-      const { bundle, bibliographySources, diagrams, imageSnapshot } = yield* workspaceFiles
-        .withSettledWorkspaceRead({ cwd: root, relativePath: target.relativePath }, (attention) =>
-          Effect.gen(function* () {
-            if (attention !== null) return yield* workspaceChanged;
-            const declared = markdownReferenceDeclarations(read.contents);
-            const citations = [...declared.citations];
-            const warnings = [...declared.warnings];
-            const bibliographySources: Array<{ format: "bibtex"; contents: string }> = [];
-            for (const name of declared.bibliographyPaths) {
-              if (path.isAbsolute(name) || /^(?:[a-z][a-z\d+.-]*:|\\\\)/iu.test(name)) {
-                warnings.push({
-                  code: "resource-unresolved",
-                  message:
-                    "An absolute or remote bibliography was not used; its citation keys remain as written.",
-                });
-                continue;
+      const { bundle, bibliographySources, cslStyle, diagrams, imageSnapshot } =
+        yield* workspaceFiles
+          .withSettledWorkspaceRead({ cwd: root, relativePath: target.relativePath }, (attention) =>
+            Effect.gen(function* () {
+              if (attention !== null) return yield* workspaceChanged;
+              const declared = markdownReferenceDeclarations(read.contents);
+              const citations = [...declared.citations];
+              const warnings = [...declared.warnings];
+              const bibliographySources: Array<{ format: "bibtex"; contents: string }> = [];
+              for (const name of declared.bibliographyPaths) {
+                if (path.isAbsolute(name) || /^(?:[a-z][a-z\d+.-]*:|\\\\)/iu.test(name)) {
+                  warnings.push({
+                    code: "resource-unresolved",
+                    message:
+                      "An absolute or remote bibliography was not used; its citation keys remain as written.",
+                  });
+                  continue;
+                }
+                const loaded = yield* readBibliography(
+                  root,
+                  path.resolve(path.dirname(target.absolutePath), name),
+                );
+                if (loaded._tag === "unsupported-platform") {
+                  warnings.push({
+                    code: "resource-unresolved",
+                    message: `Bibliography “${path.basename(name)}” was not used: this platform cannot safely verify workspace file paths during Word export; its citation keys remain as written.`,
+                  });
+                  continue;
+                }
+                if (loaded._tag !== "contents") {
+                  warnings.push({
+                    code: "resource-unresolved",
+                    message: `Bibliography “${path.basename(name)}” could not be read inside this project; its citation keys remain as written.`,
+                  });
+                  continue;
+                }
+                if (/\.bib$/iu.test(name)) {
+                  bibliographySources.push({ format: "bibtex", contents: loaded.contents });
+                  continue;
+                }
+                const entries = citationsFromCslJson(loaded.contents);
+                if (entries === null) {
+                  warnings.push({
+                    code: "resource-unresolved",
+                    message: `Bibliography “${path.basename(name)}” is not valid CSL-JSON; its citation keys remain as written.`,
+                  });
+                } else {
+                  citations.push(...entries);
+                }
               }
-              const loaded = yield* readBibliography(
-                root,
-                path.resolve(path.dirname(target.absolutePath), name),
-              );
-              if (loaded._tag === "unsupported-platform") {
-                warnings.push({
-                  code: "resource-unresolved",
-                  message: `Bibliography “${path.basename(name)}” was not used: this platform cannot safely verify workspace file paths during Word export; its citation keys remain as written.`,
-                });
-                continue;
+              let cslStyle: string | null = request.citationStyle
+                ? bundledCslStyle(request.citationStyle)
+                : null;
+              if (declared.csl !== null) {
+                const named = declared.csl.toLowerCase();
+                if (named === "apa" || named === "vancouver") {
+                  cslStyle = bundledCslStyle(named);
+                } else {
+                  const loaded =
+                    /\.csl$/iu.test(declared.csl) && !path.isAbsolute(declared.csl)
+                      ? yield* readBibliography(
+                          root,
+                          path.resolve(path.dirname(target.absolutePath), declared.csl),
+                        )
+                      : null;
+                  if (loaded?._tag === "contents") cslStyle = loaded.contents;
+                  else
+                    warnings.push({
+                      code: "resource-unresolved",
+                      message: `Citation style “${path.basename(declared.csl)}” is not a local .csl file or a bundled style (apa, vancouver); ${cslStyle === null ? "the default style" : "the chosen style"} was used.`,
+                    });
+                }
               }
-              if (loaded._tag !== "contents") {
-                warnings.push({
-                  code: "resource-unresolved",
-                  message: `Bibliography “${path.basename(name)}” could not be read inside this project; its citation keys remain as written.`,
-                });
-                continue;
-              }
-              if (/\.bib$/iu.test(name)) {
-                bibliographySources.push({ format: "bibtex", contents: loaded.contents });
-                continue;
-              }
-              const entries = citationsFromCslJson(loaded.contents);
-              if (entries === null) {
-                warnings.push({
-                  code: "resource-unresolved",
-                  message: `Bibliography “${path.basename(name)}” is not valid CSL-JSON; its citation keys remain as written.`,
-                });
-              } else {
-                citations.push(...entries);
-              }
-            }
-            const bundle: DocumentBundle = {
-              markdown: read.contents,
-              profile: "document",
-              metadata: {
-                title,
-                language: null,
-                direction: "auto",
-                createdAt: null,
-                source: {
-                  _tag: "workspace-file",
-                  cwd: root,
-                  relativePath: target.relativePath,
-                  revision: read.revision,
+              const bundle: DocumentBundle = {
+                markdown: read.contents,
+                profile: "document",
+                metadata: {
+                  title,
+                  language: null,
+                  direction: "auto",
+                  createdAt: null,
+                  source: {
+                    _tag: "workspace-file",
+                    cwd: root,
+                    relativePath: target.relativePath,
+                    revision: read.revision,
+                  },
                 },
-              },
-              assets: [],
-              citations,
-              warnings,
-            };
-            const diagrams = yield* Effect.try({
-              try: () => capturedWordDiagramAssets(bundle, read.revision, request.diagramCapture),
-              catch: (cause) =>
-                new ScientWordExportError({
-                  reason: "conversion-failed",
-                  message:
-                    cause instanceof Error ? cause.message : "The diagram capture is invalid.",
-                }),
-            });
-            const imageSnapshot = yield* captureWordImages(
-              inspectMarkdownDocument(read.contents).imageReferences,
-              { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },
-            ).pipe(
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, path),
-              Effect.mapError(
-                () =>
+                assets: [],
+                citations,
+                warnings,
+              };
+              const diagrams = yield* Effect.try({
+                try: () => capturedWordDiagramAssets(bundle, read.revision, request.diagramCapture),
+                catch: (cause) =>
                   new ScientWordExportError({
-                    reason: "too-large",
-                    message: "This document names too many images for one Word export.",
+                    reason: "conversion-failed",
+                    message:
+                      cause instanceof Error ? cause.message : "The diagram capture is invalid.",
                   }),
-              ),
-            );
-            return { bundle, bibliographySources, diagrams, imageSnapshot };
-          }),
-        )
-        .pipe(
-          Effect.mapError((cause) =>
-            cause._tag === "ScientWordExportError" ? cause : workspaceChanged,
-          ),
-        );
+              });
+              const imageSnapshot = yield* captureWordImages(
+                inspectMarkdownDocument(read.contents).imageReferences,
+                { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },
+              ).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.mapError(
+                  () =>
+                    new ScientWordExportError({
+                      reason: "too-large",
+                      message: "This document names too many images for one Word export.",
+                    }),
+                ),
+              );
+              return { bundle, bibliographySources, cslStyle, diagrams, imageSnapshot };
+            }),
+          )
+          .pipe(
+            Effect.mapError((cause) =>
+              cause._tag === "ScientWordExportError" ? cause : workspaceChanged,
+            ),
+          );
       yield* readSavedMarkdown(request);
       yield* withCapturedEpoch(root, mutationEpoch, () => Effect.void);
       const exportId = yield* random.uuidV4();
       const fileName = exportFileName(title, ".docx");
       const reserved = yield* files.reserve({ exportId, fileName });
+      // Library sources resolve keys that the document's own references do not.
+      const fallbackCitations = yield* Effect.promise(() => libraryCitations(root));
       const converted = yield* words
         .convert({
           bundle: { ...bundle, assets: [...bundle.assets, ...diagrams] },
           bibliographySources,
+          fallbackCitations,
+          cslStyle,
           imageSnapshot,
           outputPath: reserved.path,
           files: { baseDirectory: path.dirname(target.absolutePath), allowRoots: [root] },

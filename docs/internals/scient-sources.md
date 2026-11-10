@@ -91,6 +91,8 @@ their own subtree:
 ├── files/sha256/<prefix>/   content-addressed PDF copies
 ├── history/<source-id>/     kept prior revisions (first one plus the latest 49)
 ├── trash/<source-id>.json   removed sources, whole, until restored or deleted
+├── text/sha256/<prefix>/    extracted PDF text, one JSON file per PDF hash
+├── collections.json         collections and saved searches
 ├── operations/              resumable import state
 ├── receipts/                terminal import evidence
 └── staging/                 bounded temporary copies
@@ -98,7 +100,8 @@ their own subtree:
 
 There is deliberately no canonical mutable manifest. An overview is derived
 from validated records and operations. The overview contract returns bounded
-summaries only; complete abstracts, tags, provenance, and revision evidence are
+summaries only (tags included, so the list can filter by them); complete
+abstracts, provenance, and revision evidence are
 loaded through a direct source-ID detail endpoint when a researcher opens an
 item. Journal artwork uses the same direct record lookup, so rendering one row
 does not repeatedly decode the rest of a large ledger. Source-PDF preview keeps
@@ -181,7 +184,9 @@ Semantic Scholar, NCBI, and the Unpaywall email), skipping a row set to Off.
 Tools take the resolver through `keyedIdentifierLookup`, which passes the keys
 as `Redacted` values; the Effect HTTP client gets them as `Redacted` URL
 parameters so spans show them redacted. Paper downloads send the OpenAlex key
-and ask Unpaywall only when OpenAlex has no free copy.
+and ask Unpaywall only when OpenAlex has no free copy. The Library's registry
+contact email goes to OpenAlex as `mailto` and to Unpaywall when no Unpaywall
+email is saved.
 
 All NCBI E-utilities requests share one serialized, interval-limited lane.
 The lane remains owned until the active network request settles and releases
@@ -287,9 +292,44 @@ three creators, year and container. Neither writes a record. A confirmed
 identifier makes the registry's bibliographic fields authoritative, with `doi`
 or `pubmed` field provenance carrying the identifier and retrieval time, and
 stores verification `verified`. An unreachable or unusable registry adds the
-source as given with `unchecked`; a source without a DOI or PMID is
-`unverified`. An exact duplicate is reported without a lookup, and optional
+source as given with `unchecked`; a source without a DOI, PMID, arXiv ID or ISBN
+is `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. Only agent adds record verification.
+
+arXiv IDs and ISBNs are registry schemes too, checked after DOI and PMID, each
+in its own file registered in the resolver's scheme table
+(`IDENTIFIER_SCHEMES`). An arXiv ID is looked up through the arXiv API
+(`export.arxiv.org/api/query`, up to 50 IDs per `id_list` request, one request
+every three seconds as arXiv asks); an ID missing from the feed does not exist.
+Its record is a `preprint` with publisher `arXiv`, and the published version's
+DOI from `arxiv:doi` joins its identifiers. Version suffixes (`v2`) are not
+part of the identity. An ISBN must have a valid check digit and is stored as
+ISBN-13. Open Library answers first (several ISBNs per request); an entry
+without authors is not accepted, since the openly edited catalogue holds spam
+listings under real ISBNs, and Google Books is asked instead, counting only a
+volume that lists the same ISBN. Not found needs both catalogues to say so;
+otherwise the ISBN is unavailable. Field provenance names `arxiv`,
+`open-library` or `google-books`. None of these requests carries the contact
+email.
+
+`resolveSourceIdentifierBatch` resolves many identifiers, each as its own work,
+grouping them per registry: arXiv and Open Library answer many per request, DOI
+and PMID lookups run four at a time so none waits out its deadline in the NCBI
+lane, and each request has the 6.5-second deadline. `SourceIdentifierAdd.ts`
+uses it for adds by identifier: `scient_sources_add` with `identifierList` (up
+to 50 entries in any common spelling, outcome `batch` with one result per
+entry) and the user's **Add by identifier** (`POST
+/api/scient/sources/identifiers/add`). Text is read by `detectSourceIdentifier`
+and `parseSourceIdentifierList` in `packages/scient-sources`. An identifier
+already in the Library (a work-level identifier, or the ISBN of an existing
+book) is reported as a duplicate without a lookup. Only a found identifier is
+added, verified and credited to its actor; not found, unavailable and
+unrecognized entries add nothing, since an entry has no other metadata to keep.
+
+Agents with `sources:read` in a verified project get a short `## Scient Library`
+awareness block naming the list, search, add and bibliography tools and asking
+them to start literature work there before web search; `scient_sources_list`
+returns the Library's size as `total`.
 
 Connector results reach the Library as identifiers, not copied metadata. The
 resolver also takes an OpenAlex work ID (`openalex`, `W…`) and a Semantic
@@ -297,9 +337,16 @@ Scholar paper ID (`s2`, a 40-character paper ID or `CorpusId:N`), tried after
 every registry scheme. `ConnectorIdentifierLookup.ts` reads the catalogue entry
 (OpenAlex at 10 requests a second, Semantic Scholar at one), follows its DOI,
 then PMID, then arXiv ID through the ordinary scheme lookups, and keeps the
-catalogue ID among the record's identifiers. Only when no registry has the work
-does the catalogue's own record stand, with `openalex` or `semantic-scholar`
-provenance. A catalogue that does not know the ID returns not found.
+catalogue ID among the record's identifiers (both Semantic Scholar IDs, paper ID
+and `CorpusId`, when it gives them). A registry that does not have the
+identifier the catalogue names refuses the work like any other add
+(`identifier-not-found`, naming that identifier in `named`). A registry that
+cannot be reached returns unavailable with the catalogue's record, which the
+agent add keeps as unchecked with the registry identifiers. A work no registry
+names is the catalogue's own record (`catalogueOnly`, `openalex` or
+`semantic-scholar` provenance) and is added unverified. A catalogue that does
+not know the ID returns not found. OpenAlex and Semantic Scholar IDs are
+work-level identifiers in exact duplicate matching.
 
 Agent-added sources are not held for approval. Trust comes from that check,
 from attribution (origin actor, field provenance, `updatedBy` and revision
@@ -307,7 +354,8 @@ history, all shown in the Sources panel) and from ordinary edit and removal.
 New records always store origin review `none`; older records that still say
 `pending` decode unchanged, and nothing gates on the value.
 
-The toolkit is project-scoped, does not write Zotero, and does not create a
+The toolkit is project-scoped, writes Zotero only through
+`scient_sources_zotero_send`, and does not create a
 second agent-owned notes or source format. Read and write capabilities are
 separate, mutating tool descriptions require an explicit user request, and
 normal agent tool authorization remains the approval boundary rather than a
@@ -473,44 +521,187 @@ project that was focused last in the window, using the PDF's Source citation
 key (`[@key, p. N]`, `\cite[p.~N]{key}`), and copies Markdown when no editor
 can take it. Page numbers are PDF page indices, not printed page labels.
 
+## Reference check
+
+`apps/server/src/scient/references/` checks a document or the Library against
+the shared identifier resolver; the MCP tools (`scient_references_check`,
+`scient_references_resolve`) and the `scientReferences` HTTP group call the
+same two functions.
+
+- Parsing is pure and lives in `packages/scient-sources`:
+  `referenceDocuments.ts` reads citations, named bibliography files, bibitems,
+  typed numbered lists and identifiers; `bibtex.ts` is the positional BibTeX
+  reader the LaTeX editor also uses.
+- A document check reads the file, the `.bib` or CSL-JSON files it names
+  (relative to it, through the same project-file guard as PDF intake), and the
+  Library records whose `citationKey` matches an otherwise unlisted citation.
+- Identifiers go to `resolveSourceIdentifierBatch` in batches; lookups not
+  started within 90 seconds count as unavailable and the report says it is
+  incomplete. Retractions and corrections come from Crossref `updated-by`,
+  published versions from Crossref `relation` or an arXiv record's DOI, both
+  carried on `ResolvedSourceMetadata`.
+- `referenceComparison.ts` holds the comparisons (different work, registry
+  status, field differences). A single-source check before citing reuses them.
+- A finding's `fix` is self-contained: a `.bib` fix carries the field's current
+  text and is refused as stale when the file no longer has it; a Library fix
+  carries the expected revision and goes through `updateScientSource`, credited
+  to the actor. Fixes exist only for registry values; identifiers, retractions
+  and published versions are left to the author.
+- Ignored findings are kept in `.scient/reference-check/ignored.json`, outside
+  the Sources store. A finding ID hashes the checked file, the reference, the
+  kind and the registry value, so a changed record is reported again.
+
+## Collections, saved searches and bulk edit
+
+`packages/scient-sources/src/collections.ts` owns
+`.scient/sources/collections.json`; `organize.ts` holds its schemas and the
+one filter model (text, tags, collection, type, PDF) that the panel list,
+saved searches and `scient_sources_list` all compile through
+`compileScientSourceFilter`, so a search means the same thing to a person and
+an agent.
+
+- Collections are stored apart from records and never rewrite them. Members
+  are source IDs; a removed source keeps its membership and is only hidden, so
+  restoring it from the trash restores its collections too. Reads project
+  members onto the sources that exist.
+- Names are unique per project without regard to case. Creating a name that
+  exists returns that collection and adds the given sources, so a repeated
+  agent request is harmless. Deleting a collection or saved search marks it
+  deleted (the latest 50 are kept) so it can be restored.
+- Every change goes through `organizeScientSources` (one action union shared by
+  the `organize` HTTP endpoint and `scient_sources_organize`) under one write
+  lock, credited with `updatedBy`.
+- A collections file that cannot be decoded is reported as an `issue` on the
+  overview and hides collections, but never breaks the source list; writes
+  refuse instead of overwriting it.
+- `bulkUpdateScientSources` applies tag (case-insensitive, existing spelling
+  kept) and type changes as ordinary metadata revisions, one per source with
+  one retry on a stale revision, then membership changes. Each source is
+  reported; one failure does not stop the rest. Bulk removal is the trash
+  removal per source, with one Undo for the batch in the panel.
+
+## Reference files
+
+`packages/scient-sources/src/bibliography/` reads and writes BibTeX/BibLaTeX,
+RIS, CSL-JSON and EndNote XML as pure functions with no new dependency (a
+small XML reader handles EndNote). Every parser yields format-neutral entries
+that keep the citation key (normalized by `citationKeys.ts`), the project note
+and, per entry, the source fields that have no Scient field (`notKept`).
+Entries that cannot be parsed are skipped with their line, so one damaged
+entry does not lose the file. `planBibliographyImport` turns a parse into
+candidates: it drops empty entries, repeats within the file (same content or
+same work-level identifier) and entries already in the Library, and only then
+takes the first `SCIENT_SOURCE_IMPORT_ITEM_LIMIT` new ones. Importing the same
+file again therefore continues a large file instead of re-processing the first
+batch. Field provenance is `file` with `sourceField` `<format>:<field>`.
+
+The server adapter (`BibliographyFileAdapter.ts`) bounds a file to 32 MB,
+falls back to Windows-1252 when a file is not valid UTF-8, stages the batch as
+one JSON file under `.scient/sources/staging/files/<operationId>.json` with its
+report, and starts an ordinary durable operation (`adapter`/`intake` `file`).
+Advancing reads candidates from that stage; the stage is removed when the
+operation settles without failures or is cancelled, and kept for retry while
+failed items remain. File imports record verification `unchecked` with their
+DOI or PMID, or `unverified` without one: the identifiers are the file's, not
+the registry's. Agents import a project-relative file with
+`scient_sources_import_file`, which runs the same operation to completion;
+files inside `.scient/sources` are refused. Adapter error messages are written
+for people, while filesystem errors (which can carry host paths) are replaced
+before they reach a model.
+
+Export (`exportBibliography`) writes the Library or a selection under each
+record's citation key; a record without one gets a free key from the same
+rules for that file only. Project notes are excluded unless requested.
+`scient_sources_export` writes a project file atomically, refuses `.scient/`
+and paths outside the project, and replaces an existing file only with
+`overwrite`.
+
 ## Zotero boundary
 
-The adapter uses Zotero's read-only local API v3 at the fixed loopback endpoint
-`127.0.0.1:23119`. It does not scan Zotero's database, accept arbitrary hosts,
-store credentials, write library data, or depend on Zotero cloud sync. Responses
-are time- and size-bounded and decoded through explicit schemas. PDF paths come
-from Zotero's local attachment endpoint and are revalidated by the store.
+One reader (`ZoteroLibraryReader.ts`) works over two transports. The local
+transport (`ZoteroLocalAdapter.ts`) uses Zotero's read-only local API v3 at the
+fixed loopback endpoint `127.0.0.1:23119`, plus Better BibTeX's local JSON-RPC
+`item.citationkey` for keys an item does not carry itself. The web transport
+(`ZoteroWebAdapter.ts`) reads and writes the key owner's personal library at
+`api.zotero.org`. Neither scans Zotero's database or accepts arbitrary hosts.
+Responses are time- and size-bounded and decoded through explicit schemas;
+mapping lives in `ZoteroItems.ts`.
 
-Connection states distinguish ready, local access disabled, incompatible API,
-malformed response, and unreachable. The local API alone cannot honestly prove
-whether an unreachable Zotero installation is absent or merely not running, so
-the product does not invent that distinction.
+The zotero.org key comes from Accounts (`ZoteroAccountKey.ts`): the newest
+API-key account whose site is zotero.org or whose variable is `ZOTERO_API_KEY`.
+Off always stops its use. For agents, the global agent switch and the account's
+project scope apply and Ask counts as allowed, as for connector bindings: the
+saved key is the user's approval. Each use is recorded in Accounts activity
+without the value. The key is read on the server, sent only to
+`api.zotero.org` (file redirects drop it), and never appears in tool output.
+Key checks (`/keys/current`) are cached for five minutes by key digest; writes
+check again.
+
+Without a requested connection, the status check prefers Zotero on this
+computer and falls back to zotero.org when a key works; the chosen connection
+travels with browse, preflight and import requests, and a zotero.org import is
+recorded with the `zotero-web` operation adapter so resumed steps read the same
+library. Local item keys and zotero.org keys name the same items in the user's
+personal library (local library ID `0` and the zotero.org user ID are the same
+library). Group libraries are not supported.
+
+Connection states distinguish ready, access disabled (or a refused key),
+incompatible API, malformed response, and unreachable. The local API alone
+cannot honestly prove whether an unreachable Zotero installation is absent or
+merely not running, so the product does not invent that distinction.
 
 Library pagination advances by the number of raw Zotero items received, even
-when unsupported note or annotation items are filtered from the Scient view.
-Import re-fetches each selected item immediately before storing it.
+when notes, annotations and attachments are filtered from the Scient view.
+Import re-fetches each selected item with all its children immediately before
+storing it. Child notes (HTML) become the source note as plain text with
+Markdown bold and italic; every stored or linked PDF is copied (the first with
+the record, the rest attached), and a PDF Zotero cannot provide is skipped
+rather than failing the item. zotero.org PDFs are streamed to a temporary file
+that is removed after import. Identifiers Zotero keeps in Extra (PMID, PMCID,
+arXiv, DOI for types without a DOI field) and the citation key (Zotero's field,
+then Better BibTeX's `Citation Key:` line, then Better BibTeX's JSON-RPC) are
+read; S2's key rules keep it.
 
-Zotero collections are treated only as adapter-side intake scopes; they never
-enter the canonical Scient source record. The UI exposes the flat Zotero
-collection graph as readable parent/child paths. Browsing and importing a
-selected collection uses Zotero's bounded server-side pagination for that
-exact collection; nested collections are selected explicitly. This avoids
-materializing an entire collection tree merely to render one page. **My
-Library** remains available as an explicit whole-library scope. Scope discovery
-is read-only, capped at 500 importable references per operation, and fails
-with a request to choose a smaller scope above that bound.
+Zotero collections are intake scopes when browsing. After an item is imported
+it joins a Library collection (`collections.json`) named after each Zotero
+collection it belongs to, nested ones as `Parent / Child`; a collection problem
+never fails the import. Scope discovery is capped at 500 importable references
+per operation and fails with a request to choose a smaller scope above that
+bound. Collection and whole-library actions skip the separate preflight
+screen; each item is still validated, duplicate-assessed and committed by the
+normal importer, and exact or possible matches are skipped. A zotero.org
+preflight does not hash PDFs (that would download every file); identifier,
+origin and metadata duplicate checks still run.
 
-Collection and whole-library actions deliberately skip a separate preflight
-screen. Each item is still re-fetched, validated, duplicate-assessed, and
-committed by the normal importer. Exact matches and possible metadata matches
-are safely skipped rather than overwriting project-owned corrections; selected
-single-item intake retains the explicit possible-match override workflow.
+### Refresh and Send to Zotero
 
-Zotero items may have several PDF children. The adapter counts all of them and
-selects one deterministically by portable filename and item key. Preflight
-identifies the chosen filename and warns that the remaining PDFs are outside
-this first slice. Full multi-attachment intake requires attachment-level
-duplicate and presentation decisions and is deliberately deferred.
+`ZoteroSync.ts` keeps, per source, what Zotero held at the last import,
+refresh or send in `.scient/sources/sync/zotero/<sourceId>.json`, apart from
+the record. Refresh (`ZoteroRefreshPlan.ts`) is a three-way merge against it:
+a field Zotero changed is taken unless it was edited here (field provenance
+`user` or `agent`), in which case the value here is kept and reported as a
+conflict. A conflict keeps its old merge base, so it is reported again until
+the user takes Zotero's value (`useZotero`) or keeps theirs (`keepLocal`).
+Empty Zotero values never clear a field; tags merge as additions and removals;
+notes follow the same rule as fields; new PDFs (by attachment key) are
+attached; the record's Zotero item version is updated; an item gone from Zotero
+is reported and left alone. Without a sync file (sources imported before this
+existed), every difference counts as a Zotero change. The citation key is never
+changed by a refresh.
+
+Send to Zotero (`ZoteroWrite.ts`) is one way and needs the zotero.org key with
+write access. A source without a Zotero item is created with a write token
+derived from its project, ID and revision (a retry creates nothing new), with
+the source note as a child note, and the source is linked to the new item. A
+linked source is patched with only the fields that differ, using the item's
+own field set and `If-Unmodified-Since-Version`; if the item changed in Zotero
+since Scient last read it, nothing is sent and the user is asked to refresh.
+Empty values here are never sent. Extra keeps its unmanaged lines and carries
+the citation key and identifiers without a Zotero field. PDFs are not uploaded.
+
+Agent tools `scient_sources_zotero_browse`, `_import`, `_refresh` and `_send`
+give agents the same power; their messages pass through only Zotero's own
+explanations, never local paths.
 
 ## Operations and recovery
 
@@ -552,12 +743,75 @@ and the normal single-server write paths invalidate cached snapshots. True
 multi-process writers would require an explicit cross-process locking protocol
 rather than a larger in-process map.
 
+## Full text
+
+Full text is derived data keyed by PDF `sha256`, never part of a record, so
+several sources sharing one PDF share one text file and no record revision
+changes when text is extracted. `packages/scient-sources` owns the stored
+shape and pure search (`/full-text`) and its filesystem store
+(`/full-text-store`); the server owns extraction (`SourceFullText.ts`).
+
+- Each page is stored in the reader's text profile
+  (`PDF_TEXT_PROFILE`: raw pdf.js item strings, a newline after `hasEOL`
+  items) with its view box, rotation and user unit, so stored offsets and
+  reader quotes describe the same text. A test pins the two profile names
+  together.
+- A background pass starts when the Library loads or a full-text tool runs. It
+  parses one PDF at a time across all projects and yields between pages, since
+  pdf.js shares the server's event loop. Library-wide search never waits for it
+  and reports `pending`; reading one source's text or checking a quote against
+  one source extracts that PDF on demand through the same lane.
+- An unreadable PDF is recorded as `failed` and retried only after the pdf.js
+  version changes. A text file that does not decode is treated as missing and
+  extracted again. Text whose PDF file is gone from `files/` is pruned; text of
+  a trashed source stays while its PDF does.
+- Writes are atomic and every directory below the project root is checked one
+  segment at a time, so a symlinked `text/` folder cannot redirect them.
+
+Search is a pure-JS scan of cached, folded page text rather than SQLite FTS5:
+the text is project data in project files, while the server's SQLite holds app
+state, and a second persistent index could drift from the files. Folding
+lowercases, strips accents and punctuation and joins line-end hyphenation.
+Terms score by rarity across PDFs and repetition inside a 360-character window,
+quoted phrases are required, and terms of four or more characters also match as
+prefixes. The cache is capped by characters and keyed by hash, since stored
+text never changes for a hash.
+
+Quote checking matches verbatim first, then after folding spacing, ligatures,
+quote marks, dashes, and line-end and intra-word hyphens on both sides. It
+works across page boundaries, returns the stored text with its page offsets
+and context, and calls a repeated quote ambiguous instead of choosing one.
+OpenAlex full text is not used: its content downloads need a key and are paid
+per file.
+
+The attachment-preview endpoint returns the attachment's content-addressed
+hash and size; the Sources PDF reader carries them as the descriptor's
+`material`, so quotes from Library PDFs record proven bytes. A Library search
+hit opens through the reader's quote reveal: the panel files the hit, and the
+PDF preview turns it into a target with its own document identity once the
+authorized preview names the file. Server and web pdf.js versions can differ,
+so such targets are found again by their text rather than by offsets.
+
+## Saving browser pages
+
+`SourceWebPage.ts` saves a page through the same identifier-checked add path
+as agent adds and downloaded papers (`origin.intake: "web"`). Identifiers come
+from Highwire Press, Dublin Core and PRISM tags, then from DOI, PubMed and
+arXiv addresses (`packages/scient-sources/src/webPage.ts`); the page's title is
+not treated as a claim about the identified work. A page without an identifier
+is a `web` source and is the same source as another with the same address. The
+selection is appended to the note once. On desktop, a fixed script reads the
+tab's title, selection and meta tags; the address comes from the tab itself,
+and a PDF tab is fetched again through the tab's session and handed to the
+Library's normal PDF import.
+
 ## Deliberate exclusions
 
-This slice does not implement Zotero write-back or sync, source merging,
-automatic possible-duplicate merging, multi-source
-bibliographies, arbitrary CSL style installation, evidence claims,
-OCR, fuzzy metadata search, mobile UI, or a separate Studio route.
+This slice does not implement two-way Zotero sync, Zotero group libraries,
+uploading PDFs to Zotero, attaching PDFs named in a reference file's `file`
+field, source merging, automatic possible-duplicate merging, multi-source
+bibliographies, arbitrary CSL style installation, evidence claims, OCR of
+scanned PDFs, fuzzy metadata search, mobile UI, or a separate Studio route.
 Later source systems should add adapters into the same domain and store rather
 than add provider-shaped fields to the host application.
 

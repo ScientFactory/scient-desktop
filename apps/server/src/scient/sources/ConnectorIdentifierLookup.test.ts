@@ -1,9 +1,17 @@
 // @effect-diagnostics globalDate:off -- A fixed Date makes retrieval timestamps deterministic.
+// @effect-diagnostics nodeBuiltinImport:off -- Each case adds its source to a temporary project.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
-import { describe, expect, it } from "@effect/vitest";
+import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Redacted from "effect/Redacted";
 
 import type { MetadataRequest } from "./metadataHttp.ts";
+import { addAgentSource } from "./ScientSourcesCoordinator.ts";
 import {
   applyResolvedSourceMetadata,
   resolveSourceIdentifier,
@@ -18,7 +26,7 @@ interface Asked {
   readonly headers: Readonly<Record<string, string>>;
 }
 
-/** Recorded registry answers by host and path; anything else is a 404. */
+/** Recorded registry answers by host and path (a number is an HTTP status); anything else is a 404. */
 function registries(answers: Record<string, unknown>) {
   const asked: Array<Asked> = [];
   const request: MetadataRequest = async (url, headers) => {
@@ -26,9 +34,30 @@ function registries(answers: Record<string, unknown>) {
     const answer = answers[`${url.host}${url.pathname}`];
     return answer === undefined
       ? { status: 404, body: "", url }
-      : { status: 200, body: JSON.stringify(answer), url };
+      : typeof answer === "number"
+        ? { status: answer, body: "", url }
+        : { status: 200, body: JSON.stringify(answer), url };
   };
   return { asked, request };
+}
+
+const roots: Array<string> = [];
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => NodeFSP.rm(root, { recursive: true })));
+});
+
+/** Adds the candidate as an agent would, against these recorded registries. */
+async function addWith(request: MetadataRequest, candidate: ScientSourceCandidate) {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-connector-"));
+  roots.push(root);
+  await initializeScientProject({ root });
+  const result = await addAgentSource({
+    root,
+    candidate,
+    resolveIdentifier: (identifiers) =>
+      resolveSourceIdentifier(identifiers, { request, now, pace }),
+  });
+  return { result, records: await listScientSourceRecords(root) };
 }
 
 const openAlexWork = {
@@ -119,10 +148,42 @@ describe("connector identifiers in the resolver", () => {
     });
   });
 
-  it("keeps a Semantic Scholar record without a registry ID as the catalogue gives it", async () => {
+  it("keeps an OpenAlex work unchecked while its DOI's registry cannot be reached", async () => {
+    const { request } = registries({
+      "api.openalex.org/works/W2741809807": openAlexWork,
+      "doi.org/10.1038/s41586-020-2649-2": 503,
+    });
+    const { result, records } = await addWith(request, emptyCandidate);
+
+    expect(result.outcome).toBe("imported");
+    expect(records).toMatchObject([
+      {
+        title: openAlexWork.title,
+        verification: { state: "unchecked", identifier: { scheme: "openalex" } },
+        identifiers: [
+          { scheme: "openalex", value: "W2741809807" },
+          { scheme: "doi", value: "10.1038/s41586-020-2649-2" },
+        ],
+      },
+    ]);
+  });
+
+  it("refuses an OpenAlex work whose DOI does not exist", async () => {
+    const { request } = registries({ "api.openalex.org/works/W2741809807": openAlexWork });
+    const { result, records } = await addWith(request, emptyCandidate);
+
+    expect(result).toMatchObject({
+      outcome: "identifier-not-found",
+      identifier: { scheme: "doi", value: "10.1038/s41586-020-2649-2" },
+    });
+    expect(records).toEqual([]);
+  });
+
+  it("adds a Semantic Scholar paper no registry has as unverified, with both its IDs", async () => {
     const paperId = "649def34f8be52c8b66281af98ae884c09aef38b";
     const { asked, request } = registries({
       [`api.semanticscholar.org/graph/v1/paper/${paperId}`]: {
+        paperId,
         title: "Attention is All you Need",
         year: 2017,
         venue: "Neural Information Processing Systems",
@@ -136,20 +197,26 @@ describe("connector identifiers in the resolver", () => {
       pace,
       keys: { semanticScholar: Redacted.make("s2-key") },
     });
-
-    expect(asked).toHaveLength(1);
     expect(asked[0]?.headers["x-api-key"]).toBe("s2-key");
-    expect(resolution).toMatchObject({
-      status: "found",
-      origin: "semantic-scholar",
-      metadata: {
+    expect(resolution).toMatchObject({ status: "found", catalogueOnly: true });
+
+    const { records } = await addWith(request, {
+      ...emptyCandidate,
+      identifiers: [{ scheme: "s2", value: paperId }],
+    });
+    expect(records).toMatchObject([
+      {
         title: "Attention is All you Need",
         issuedYear: 2017,
         creators: [{ givenName: "Ashish", familyName: "Vaswani" }],
         containerTitle: "Neural Information Processing Systems",
-        identifiers: [{ scheme: "s2", value: paperId }],
+        verification: { state: "unverified" },
+        identifiers: [
+          { scheme: "s2", value: paperId },
+          { scheme: "s2", value: "CorpusId:13756489" },
+        ],
       },
-    });
+    ]);
   });
 
   it("sends the user's NCBI key with a PubMed lookup", async () => {
