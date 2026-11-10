@@ -4987,28 +4987,48 @@ it.layer(
       ),
     );
 
-    it.effect.each([
-      {
-        name: "its own home path",
-        homePath: "/srv/claude-personal",
-        environment: { ANTHROPIC_BASE_URL: "" },
-        configDir: "/srv/claude-personal",
-      },
-      {
-        name: "an inherited CLAUDE_CONFIG_DIR",
-        homePath: "",
-        environment: { ANTHROPIC_BASE_URL: "", CLAUDE_CONFIG_DIR: "/srv/claude-work" },
-        configDir: "/srv/claude-work",
-      },
-      {
-        name: "the default config dir",
-        homePath: "",
-        environment: { ANTHROPIC_BASE_URL: "" },
-        configDir: undefined,
-      },
-    ])(
-      "tells a logged-out instance on $name where to sign in",
-      ({ homePath, environment, configDir }) =>
+    // SCIENT-FORK:START — Scient checks `claude auth status --json` before the SDK, so each row
+    // runs twice: signed out at that CLI gate (Scient's earlier gate, which carries the hint too),
+    // and signed in there but tokenless in the SDK (upstream's branch).
+    it.effect.each(
+      [
+        {
+          name: "its own home path",
+          homePath: "/srv/claude-personal",
+          environment: { ANTHROPIC_BASE_URL: "" },
+          configDir: "/srv/claude-personal",
+        },
+        {
+          name: "an inherited CLAUDE_CONFIG_DIR",
+          homePath: "",
+          environment: { ANTHROPIC_BASE_URL: "", CLAUDE_CONFIG_DIR: "/srv/claude-work" },
+          configDir: "/srv/claude-work",
+        },
+        {
+          name: "the default config dir",
+          homePath: "",
+          environment: { ANTHROPIC_BASE_URL: "" },
+          configDir: undefined,
+        },
+      ].flatMap((row) => [
+        {
+          ...row,
+          gate: "CLI auth status",
+          cliLoggedIn: false,
+          defaultMessage: "Claude is installed but not signed in.",
+        },
+        {
+          ...row,
+          gate: "SDK account",
+          cliLoggedIn: true,
+          defaultMessage:
+            "Claude Code is not authenticated. Run `claude auth login` and try again.",
+        },
+      ]),
+    )(
+      "tells a logged-out instance on $name where to sign in ($gate)",
+      ({ homePath, environment, configDir, cliLoggedIn, defaultMessage }) =>
+        // SCIENT-FORK:END
         Effect.gen(function* () {
           const status = yield* checkClaudeProviderStatus(
             { ...defaultClaudeSettings, homePath },
@@ -5021,10 +5041,7 @@ it.layer(
           );
           assert.strictEqual(status.auth.status, "unauthenticated");
           if (configDir === undefined) {
-            assert.strictEqual(
-              status.message,
-              "Claude Code is not authenticated. Run `claude auth login` and try again.",
-            );
+            assert.strictEqual(status.message, defaultMessage);
           } else {
             // A home path is resolved to a native path; an inherited value is kept literal.
             const expected = homePath ? (yield* Path.Path).resolve(configDir) : configDir;
@@ -5039,6 +5056,13 @@ it.layer(
             layerMockSpawner((args) => {
               const joined = args.join(" ");
               if (joined === "--version") return { stdout: "1.0.0\n", stderr: "", code: 0 };
+              // SCIENT-FORK:START — Scient's CLI auth gate runs before the SDK probe.
+              if (joined === "auth status --json") {
+                return cliLoggedIn
+                  ? { stdout: '{"loggedIn":true}\n', stderr: "", code: 0 }
+                  : { stdout: '{"loggedIn":false}\n', stderr: "", code: 1 };
+              }
+              // SCIENT-FORK:END
               throw new Error(`Unexpected args: ${joined}`);
             }),
           ),

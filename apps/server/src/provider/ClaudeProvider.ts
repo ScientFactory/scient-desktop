@@ -691,6 +691,19 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
     }
 
     if (!authStatus.loggedIn) {
+      // SCIENT-FORK:START — this gate catches a signed-out CLI before upstream's SDK check, so it
+      // carries upstream's hint: a bare `claude auth login` signs in ~/.claude, not this instance's
+      // own config dir.
+      const signedOutConfigDir = (yield* makeClaudeEnvironment(claudeSettings, resolvedEnvironment))
+        .CLAUDE_CONFIG_DIR;
+      const signedOutMessage =
+        signedOutConfigDir === undefined
+          ? "Claude is installed but not signed in."
+          : claudeSignedOutMessage({
+              configDir: signedOutConfigDir,
+              cwd: (yield* Path.Path).resolve(cwd ?? "."),
+            });
+      // SCIENT-FORK:END
       return buildServerProvider({
         presentation: CLAUDE_PRESENTATION,
         enabled: claudeSettings.enabled,
@@ -702,7 +715,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           version: parsedVersion,
           status: "warning",
           auth: { status: "unauthenticated", required: true },
-          message: "Claude is installed but not signed in.",
+          // SCIENT-FORK: names the instance's own config dir (see above).
+          message: signedOutMessage,
         },
       });
     }

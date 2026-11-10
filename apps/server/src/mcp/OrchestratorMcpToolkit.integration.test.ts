@@ -6191,7 +6191,12 @@ describe("orchestrator MCP toolkit", () => {
           );
           expect(statusAgain.isError).not.toBe(true);
           // A task wait reads result transfers and runs from the child; the parent's stay unread.
-          expect(runReads).toHaveLength(runReadsBeforeStatus + 1);
+          // SCIENT-FORK:START — Scient's tool gate also reads the caller's active runs once for
+          // its invocation policy (the modes its live run captured), never the whole history.
+          const statusRunReads = runReads.slice(runReadsBeforeStatus);
+          expect(statusRunReads).toHaveLength(2);
+          expect(statusRunReads.filter((query) => /AND status IN/.test(query))).toHaveLength(1);
+          // SCIENT-FORK:END
           expect(transferReads).toHaveLength(transferReadsBeforeStatus + 1);
           expect(
             threadRecordReads

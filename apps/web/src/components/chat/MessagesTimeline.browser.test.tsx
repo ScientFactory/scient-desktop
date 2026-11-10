@@ -551,9 +551,11 @@ describe("MessagesTimeline messages", () => {
     await vi.waitFor(() => expect(strips()[0]?.dataset.inView).toBe("true"));
 
     // Shrinking a detached viewport moves the bottom away without a scroll event.
-    await screen.rerender(
-      <MessagesTimeline {...props} timelineEntries={entries} liveFollowEnabled={false} />,
-    );
+    // SCIENT-FORK:START — Scient has no live follow to turn off. An idle thread keeps its
+    // reading end in view through a resize; a working thread keeps nothing, so it stands in
+    // for upstream's detached follow.
+    await screen.rerender(<MessagesTimeline {...props} timelineEntries={entries} isWorking />);
+    // SCIENT-FORK:END
     viewport.scrollTop = viewport.scrollHeight;
     await vi.waitFor(() => expect(screen.button("Next turn")).toBeDisabled());
     screen.container.style.height = "600px";
@@ -571,7 +573,9 @@ describe("MessagesTimeline messages", () => {
       <MessagesTimeline
         {...props}
         timelineEntries={entries}
-        liveFollowEnabled={false}
+        // SCIENT-FORK:START — still working: upstream's detached follow (see above).
+        isWorking
+        // SCIENT-FORK:END
         footer={<div style={{ height: 400 }} />}
       />,
     );
@@ -592,11 +596,12 @@ describe("MessagesTimeline messages", () => {
         message(`${prefix} answer ${index}`, { role: "assistant" }, `${prefix}-assistant-${index}`),
       ]).flat();
     const other = "environment-local:thread-minimap-restored";
-    rememberTimelinePosition(
-      other,
-      { rowId: "entry-b-user-4", offsetWithinRow: 0, scrollOffset: 0, atEnd: false },
-      false,
-    );
+    rememberTimelinePosition(other, {
+      rowId: "entry-b-user-4",
+      offsetWithinRow: 0,
+      scrollOffset: 0,
+      atEnd: false,
+    });
     await using screen = await renderElement(
       <MessagesTimeline {...base} timelineEntries={turns("a")} />,
     );
@@ -607,12 +612,7 @@ describe("MessagesTimeline messages", () => {
     });
 
     await screen.rerender(
-      <MessagesTimeline
-        {...base}
-        routeThreadKey={other}
-        timelineEntries={turns("b")}
-        liveFollowEnabled={false}
-      />,
+      <MessagesTimeline {...base} routeThreadKey={other} timelineEntries={turns("b")} />,
     );
     await vi.waitFor(() => {
       const row = screen.container.querySelector('[data-timeline-row-id="entry-b-user-4"]');

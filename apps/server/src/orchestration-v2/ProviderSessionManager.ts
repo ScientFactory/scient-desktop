@@ -28,7 +28,7 @@ import {
 } from "./scient-provider/ProviderTextSnapshots.ts";
 // SCIENT-FORK:END
 import { makePiSessionFileLeases } from "./scient-provider/PiSessionFileLeases.ts";
-import { makeSessionAuthority } from "./scient-provider/SessionAuthority.ts";
+import { makeSessionAuthority, POLICY_RUN_STATUSES } from "./scient-provider/SessionAuthority.ts";
 import {
   makeStartupSessionReservations,
   registerStartupSessionReservations,
@@ -3124,7 +3124,10 @@ export const layerWithOptions = (
         releasingRuntimes,
         readThreadRecords: (invocation) =>
           projectionStore
-            .getThreadRecords(invocation.threadId, ["runs", "attempts", "providerThreads"])
+            // Runs on every thread-caller MCP call; only an active run can carry the policy.
+            .getThreadRecords(invocation.threadId, ["runs", "attempts", "providerThreads"], {
+              runStatuses: POLICY_RUN_STATUSES,
+            })
             .pipe(Effect.mapError(authorityLookupError(invocation))),
         readThreadShell: (invocation) =>
           projectionStore

@@ -253,7 +253,7 @@ it.effect("recognizes the explicit missing Git error and does not cache a failed
     let probes = 0;
     let temporaryFailure = true;
     const workflow = Layer.mock(GitWorkflow.GitWorkflowService)({
-      isRepository: () =>
+      repositoryRoot: () =>
         Effect.suspend(() => {
           probes++;
           return temporaryFailure
