@@ -1,5 +1,6 @@
 export * from "./abstract.ts";
 export * from "./citationKeys.ts";
+export * from "./connectorIdentifiers.ts";
 export * from "./duplicates.ts";
 export * from "./editable.ts";
 export * from "./model.ts";

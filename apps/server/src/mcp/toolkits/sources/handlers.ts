@@ -21,7 +21,7 @@ import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
-import { SourceIdentifierLookup } from "../../../scient/sources/SourceIdentifierResolver.ts";
+import { keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
 import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
@@ -504,7 +504,7 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
       validationIssues,
     };
   }
-  const resolveIdentifier = yield* SourceIdentifierLookup;
+  const resolveIdentifier = yield* keyedIdentifierLookup();
   const observeImport = yield* makeSourceImportAnalytics("agent");
   const result = yield* attempt(() =>
     addAgentSource(
@@ -615,7 +615,7 @@ const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search"
     readonly limit?: number;
   }) {
     const { root } = yield* resolveScientSourcesProject();
-    return yield* attempt(() =>
+    const { hits, status } = yield* attempt(() =>
       searchSourceFullText({
         root,
         query: input.query,
@@ -623,6 +623,21 @@ const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search"
         ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
       }),
     );
+    return {
+      status,
+      hits: hits.map(
+        ({ sourceId, attachmentId, title, page, start, end, passage, matchedTerms }) => ({
+          sourceId,
+          attachmentId,
+          title,
+          page,
+          start,
+          end,
+          passage,
+          matchedTerms,
+        }),
+      ),
+    };
   },
 );
 

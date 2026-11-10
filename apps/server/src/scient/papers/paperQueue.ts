@@ -25,7 +25,7 @@ import { userRunInvocation } from "../accounts/checkAccounts.ts";
 import type { ScientSourceAttachmentRetrieval } from "@scientfactory/scient-sources";
 import { attachSourcePdf } from "../sources/ScientSourcesCoordinator.ts";
 import { addPaperToLibrary, type PaperIntakeResult } from "../sources/paperIntake.ts";
-import { SourceIdentifierLookup } from "../sources/SourceIdentifierResolver.ts";
+import { keyedIdentifierLookup } from "../sources/researchKeys.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import {
   PAPERS_THREAD,
@@ -218,7 +218,7 @@ const intoLibrary = Effect.fn("Papers.intoLibrary")(function* (
   retrieval: ScientSourceAttachmentRetrieval | undefined,
   requester: PaperRequester,
 ) {
-  const resolveIdentifier = yield* SourceIdentifierLookup;
+  const resolveIdentifier = yield* keyedIdentifierLookup();
   const observer = yield* makeSourceImportAnalytics(actorOf(requester));
   return yield* Effect.tryPromise({
     try: () =>

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This owned Promise-based Sources module reads project PDFs through the store boundary.
 // @effect-diagnostics globalDate:off -- Stored text carries an interoperable ISO extraction time.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeURL from "node:url";
@@ -354,6 +355,7 @@ export async function getSourceFullTextStatus(root: string): Promise<SourceFullT
 export interface SourceFullTextSearchHit {
   readonly sourceId: string;
   readonly attachmentId: string;
+  readonly fileName: string;
   readonly title: string | null;
   readonly page: number;
   /** Offsets of the match in the page's stored text. */
@@ -361,7 +363,21 @@ export interface SourceFullTextSearchHit {
   readonly end: number;
   readonly passage: string;
   readonly matchedTerms: ReadonlyArray<string>;
+  /** The match as a reader text selector, so a reader can find and show it. */
+  readonly selector: {
+    readonly extractorVersion: string;
+    readonly viewBox: readonly [number, number, number, number];
+    readonly rotation: number;
+    readonly userUnit: number;
+    readonly pageTextHash: string;
+    readonly quote: string;
+    readonly prefix: string;
+    readonly suffix: string;
+  };
 }
+
+const textHash = (text: string) =>
+  NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
 
 export async function searchSourceFullText(input: {
   readonly root: string;
@@ -396,18 +412,30 @@ export async function searchSourceFullText(input: {
           ? text.pages.find((entry) => entry.page === hit.page)
           : undefined;
       const source = material?.sources[0];
-      if (!material || !page || !source) return [];
+      if (!material || !page || text?.outcome !== "extracted" || !source) return [];
       const passage = fullTextPassage(page.text, hit);
+      const { context } = SCIENT_SOURCE_FULL_TEXT_LIMITS;
       return [
         {
           sourceId: source.record.sourceId,
           attachmentId: source.attachmentId,
+          fileName: material.attachment.fileName,
           title: source.record.title,
           page: hit.page,
           start: passage.start,
           end: passage.end,
           passage: passage.passage,
           matchedTerms: hit.matchedTerms,
+          selector: {
+            extractorVersion: text.extractor.version,
+            viewBox: page.viewBox,
+            rotation: page.rotation,
+            userUnit: page.userUnit,
+            pageTextHash: textHash(page.text),
+            quote: page.text.slice(passage.start, passage.end),
+            prefix: page.text.slice(Math.max(0, passage.start - context), passage.start),
+            suffix: page.text.slice(passage.end, passage.end + context),
+          },
         },
       ];
     }),

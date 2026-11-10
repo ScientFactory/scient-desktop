@@ -36,9 +36,11 @@ import {
   type ScientSourceEditableMetadata,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
+  type ScientSourceImportOperation,
   type ScientSourceOrigin,
   type ScientSourceRecord,
   type ScientSourceVerification,
+  type ZoteroConnection,
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
@@ -69,13 +71,20 @@ import {
 } from "@scientfactory/scient-sources/store";
 
 import {
-  getZoteroItem,
-  getZoteroImportMaterial,
-  inspectZoteroConnection,
-  listZoteroCollections,
-  listZoteroLibrary,
-  listZoteroScopeItemKeys,
-} from "./ZoteroLocalAdapter.ts";
+  inspectZotero,
+  localOnlyZoteroAccess,
+  zoteroTransport,
+  type ZoteroAccess,
+} from "./ZoteroConnections.ts";
+import {
+  getZoteroItemWith,
+  listZoteroCollectionsWith,
+  listZoteroLibraryWith,
+  listZoteroScopeItemKeysWith,
+  readZoteroAttachmentFiles,
+  readZoteroItemMaterial,
+  type ZoteroTransport,
+} from "./ZoteroLibraryReader.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
@@ -98,7 +107,58 @@ async function withOperationLane<A>(key: string, run: () => Promise<A>): Promise
   }
 }
 
-export { inspectZoteroConnection, listZoteroCollections, listZoteroLibrary };
+export async function inspectZoteroConnection(input: {
+  readonly connection?: ZoteroConnection;
+  readonly zotero?: ZoteroAccess;
+}) {
+  return inspectZotero(input.zotero ?? localOnlyZoteroAccess, input.connection);
+}
+
+export async function listZoteroCollections(input: {
+  readonly connection?: ZoteroConnection;
+  readonly zotero?: ZoteroAccess;
+}) {
+  return listZoteroCollectionsWith(
+    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection),
+  );
+}
+
+export async function listZoteroLibrary(input: {
+  readonly scope: ZoteroImportScope;
+  readonly query: string;
+  readonly start: number;
+  readonly limit: number;
+  readonly connection?: ZoteroConnection;
+  readonly zotero?: ZoteroAccess;
+}) {
+  return listZoteroLibraryWith(
+    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection),
+    input,
+  );
+}
+
+const zoteroAdapter = (connection: ZoteroConnection | undefined) =>
+  connection === "web" ? ("zotero-web" as const) : ("zotero" as const);
+
+/**
+ * An item with its notes, citation key and PDFs copied out of Zotero. The caller
+ * imports the first PDF with the record, attaches the rest, then releases them all.
+ */
+async function zoteroImportMaterial(transport: ZoteroTransport, itemKey: string) {
+  const material = await readZoteroItemMaterial(transport, itemKey);
+  const files = await readZoteroAttachmentFiles(transport, material.pdfs);
+  try {
+    const candidate = await enrichScientSourceCandidate({
+      ...material.candidate,
+      ...(material.note ? { note: material.note } : {}),
+      ...(files[0]?.fileName ? { pdfFileName: files[0].fileName } : {}),
+    });
+    return { candidate, material, files };
+  } catch (error) {
+    await Promise.all(files.map((file) => file.release().catch(() => undefined)));
+    throw error;
+  }
+}
 
 function hasMisclassifiedLegacyPdfSubject(record: ScientSourceRecord): boolean {
   return record.fieldProvenance.some(
@@ -682,21 +742,26 @@ export async function assessSourcePreflightDuplicate(input: {
 export async function preflightZoteroImport(input: {
   readonly root: string;
   readonly itemKeys: ReadonlyArray<string>;
+  readonly connection?: ZoteroConnection;
+  readonly zotero?: ZoteroAccess;
 }) {
   const records = await listScientSourceRecords(input.root);
-  const hasImportedPdf = records.some((record) =>
-    record.attachments.some((attachment) => attachment.kind === "pdf"),
-  );
+  const transport = await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  // Only local PDFs are cheap enough to hash for a duplicate check before import.
+  const hasImportedPdf =
+    transport.connection === "local" &&
+    records.some((record) => record.attachments.some((attachment) => attachment.kind === "pdf"));
   const items = [];
   for (const itemKey of new Set(input.itemKeys)) {
-    const { candidate, pdfPath } = hasImportedPdf
-      ? await getZoteroImportMaterial(itemKey)
-      : { candidate: await getZoteroItem(itemKey), pdfPath: null };
+    const material = hasImportedPdf ? await zoteroImportMaterial(transport, itemKey) : null;
+    const candidate = material?.candidate ?? (await getZoteroItemWith(transport, itemKey));
     const duplicate = await assessSourcePreflightDuplicate({
       candidate,
       existing: records,
-      pdfPath,
-    });
+      pdfPath: material?.files[0]?.path ?? null,
+    }).finally(() =>
+      Promise.all(material?.files.map((file) => file.release().catch(() => undefined)) ?? []),
+    );
     items.push({
       candidate,
       duplicate,
@@ -711,28 +776,43 @@ export async function beginZoteroImport(input: {
   readonly operationId: string;
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+  readonly connection?: ZoteroConnection;
+  readonly actor?: "user" | "agent";
 }) {
-  return createSourceImportOperation({ ...input, adapter: "zotero" });
+  return createSourceImportOperation({
+    root: input.root,
+    operationId: input.operationId,
+    itemKeys: input.itemKeys,
+    possibleMetadataMatchOverrides: input.possibleMetadataMatchOverrides,
+    adapter: zoteroAdapter(input.connection),
+    ...(input.actor ? { actor: input.actor } : {}),
+  });
 }
 
 export async function beginZoteroScopedImport(input: {
   readonly root: string;
   readonly operationId: string;
   readonly scope: ZoteroImportScope;
+  readonly connection?: ZoteroConnection;
+  readonly actor?: "user" | "agent";
+  readonly zotero?: ZoteroAccess;
 }) {
+  const adapter = zoteroAdapter(input.connection);
   const existing = await readSourceImportOperation(input.root, input.operationId);
   if (existing) {
-    if (existing.adapter !== "zotero") {
+    if (existing.adapter !== adapter) {
       throw new Error("This operation ID already belongs to another import adapter.");
     }
     return existing;
   }
-  const itemKeys = await listZoteroScopeItemKeys(input.scope);
+  const transport = await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  const itemKeys = await listZoteroScopeItemKeysWith(transport, input.scope);
   return createSourceImportOperation({
     root: input.root,
     operationId: input.operationId,
-    adapter: "zotero",
+    adapter,
     itemKeys,
+    ...(input.actor ? { actor: input.actor } : {}),
   });
 }
 
@@ -765,10 +845,53 @@ export async function discardLocalPdfSources(input: {
   return { discarded: keys.length };
 }
 
+async function importZoteroOperationItem(input: {
+  readonly root: string;
+  readonly operation: ScientSourceImportOperation;
+  readonly itemKey: string;
+  readonly allowPossibleMetadataMatch: boolean;
+  readonly zotero: ZoteroAccess;
+}) {
+  const transport = await zoteroTransport(
+    input.zotero,
+    input.operation.adapter === "zotero-web" ? "web" : "local",
+  );
+  const { candidate, files } = await zoteroImportMaterial(transport, input.itemKey);
+  try {
+    const [primary, ...extra] = files;
+    const result = await importScientSourceOperationItem({
+      root: input.root,
+      operationId: input.operation.operationId,
+      candidate,
+      actor: input.operation.actor,
+      intake: input.operation.intake,
+      ...(primary ? { pdfPath: primary.path } : {}),
+      allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
+    });
+    let record = result.record;
+    for (const file of extra) {
+      if (!record) break;
+      const attached = await attachScientSourcePdf({
+        root: input.root,
+        sourceId: record.sourceId,
+        expectedRevision: record.revision,
+        pdfPath: file.path,
+        ...(file.fileName ? { fileName: file.fileName } : {}),
+        actor: input.operation.actor,
+      });
+      record = attached.record;
+    }
+    return { ...result, record };
+  } finally {
+    await Promise.all(files.map((file) => file.release().catch(() => undefined)));
+  }
+}
+
 export async function advanceSourceImport(
   input: {
     readonly root: string;
     readonly operationId: string;
+    readonly zotero?: ZoteroAccess;
   },
   observer?: SourceImportObserver,
 ) {
@@ -783,10 +906,19 @@ export async function advanceSourceImport(
       const result = await observeSourceImport(
         observer,
         async () => {
-          const { candidate, pdfPath, expectedPdf } =
-            operation.adapter === "zotero"
-              ? { ...(await getZoteroImportMaterial(pending.itemKey)), expectedPdf: undefined }
-              : await getLocalPdfImportMaterial(root, pending.itemKey);
+          if (operation.adapter === "zotero" || operation.adapter === "zotero-web") {
+            return importZoteroOperationItem({
+              root,
+              operation,
+              itemKey: pending.itemKey,
+              allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
+              zotero: input.zotero ?? localOnlyZoteroAccess,
+            });
+          }
+          const { candidate, pdfPath, expectedPdf } = await getLocalPdfImportMaterial(
+            root,
+            pending.itemKey,
+          );
           return importScientSourceOperationItem({
             root,
             operationId: input.operationId,

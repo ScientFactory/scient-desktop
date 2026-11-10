@@ -3,6 +3,7 @@ import type {
   EnvironmentId,
   ScientSourceDetailResult,
   ScientSourcesPreflightResult,
+  ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 import { useEffect, useLayoutEffect, useReducer, useRef } from "react";
@@ -244,13 +245,15 @@ export function useScientSources(input: {
           status,
           feedback:
             showRetryFeedback && status.state !== "ready"
-              ? status.state === "unreachable"
-                ? "Zotero is still unavailable. Make sure it is open on the computer running this project."
-                : status.state === "access-disabled"
-                  ? "Local access is still turned off in Zotero."
-                  : status.state === "incompatible"
-                    ? "This Zotero version is still not compatible with Scient."
-                    : "Zotero responded, but its local API still could not be verified."
+              ? status.connection === "web"
+                ? status.message
+                : status.state === "unreachable"
+                  ? "Zotero is still unavailable. Make sure it is open on the computer running this project."
+                  : status.state === "access-disabled"
+                    ? "Local access is still turned off in Zotero."
+                    : status.state === "incompatible"
+                      ? "This Zotero version is still not compatible with Scient."
+                      : "Zotero responded, but its local API still could not be verified."
               : null,
         });
       }
@@ -273,7 +276,14 @@ export function useScientSources(input: {
       });
   };
 
-  const searchZotero = async (query: string, start = 0, scopeInput?: ZoteroImportScope) => {
+  const zoteroConnection = state.zoteroStatus?.connection;
+
+  const searchZotero = async (
+    query: string,
+    start = 0,
+    scopeInput?: ZoteroImportScope,
+    connection: ZoteroConnection | undefined = zoteroConnection,
+  ) => {
     const scope = scopeInput ?? state.zoteroScope;
     // The Zotero browse lane is independent of imports and overview loads.
     const request = nextZoteroRequestToken();
@@ -286,6 +296,7 @@ export function useScientSources(input: {
         query,
         start,
         limit: 50,
+        ...(connection ? { connection } : {}),
       });
       if (isCurrentContext() && zoteroRequestRef.current === request) {
         dispatch({ type: "zoteroLibraryArrived", request, page });
@@ -310,8 +321,8 @@ export function useScientSources(input: {
       dispatch({ type: "zoteroLibrarySeeded", page: emptyZoteroPage(DEFAULT_ZOTERO_SCOPE) });
       try {
         const [collections] = await Promise.all([
-          readZoteroCollections(input.environmentId),
-          searchZotero("", 0, DEFAULT_ZOTERO_SCOPE),
+          readZoteroCollections(input.environmentId, status.connection),
+          searchZotero("", 0, DEFAULT_ZOTERO_SCOPE, status.connection),
         ]);
         if (isCurrentContext()) {
           dispatch({ type: "zoteroCollectionsArrived", collections: collections.collections });
@@ -343,6 +354,7 @@ export function useScientSources(input: {
         root: input.root,
         operationId: randomUUID(),
         scope: state.zoteroScope,
+        ...(zoteroConnection ? { connection: zoteroConnection } : {}),
       });
       if (isCurrentRequest(request)) {
         dispatch({
@@ -401,6 +413,7 @@ export function useScientSources(input: {
       operationId: randomUUID(),
       itemKeys: options.itemKeys,
       possibleMetadataMatchOverrides: options.possibleMetadataMatchOverrides,
+      ...(options.adapter === "zotero" && zoteroConnection ? { connection: zoteroConnection } : {}),
     });
     options.onStarted?.();
 
@@ -543,6 +556,7 @@ export function useScientSources(input: {
       const result = await preflightZoteroItems(input.environmentId, {
         root: input.root,
         itemKeys,
+        ...(zoteroConnection ? { connection: zoteroConnection } : {}),
       });
       return await importPreflight({ adapter: "zotero", result, request });
     })()
