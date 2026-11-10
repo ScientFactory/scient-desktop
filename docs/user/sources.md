@@ -74,6 +74,26 @@ for lookup, not the PDF itself. PubMed metadata is provided through NCBI
 E-utilities and remains subject to the
 [NCBI disclaimer and copyright notice](https://www.ncbi.nlm.nih.gov/home/about/policies/).
 
+## Add by identifier
+
+1. In **Sources**, choose **Import sources → Add by identifier**.
+2. Paste one or more DOIs, PMIDs, arXiv IDs or ISBNs, one per line. Links such
+   as `https://doi.org/…` or `arxiv.org/abs/…` and prefixes such as `PMID:` or
+   `ISBN` work too, and a list may mix them.
+3. Choose **Add** (or press Ctrl+Enter, ⌘+Enter on a Mac).
+
+Scient looks up each identifier at its registry: doi.org for DOIs, PubMed for
+PMIDs, arXiv for arXiv IDs, and Open Library, then Google Books, for ISBNs.
+Each one that is found becomes its own source with the registry's title,
+authors and date, marked as checked. The input then lists anything it did not
+add and why: already in the Library (with **View**), not found, not an
+identifier, or a registry that could not be reached. Entries of the last kind
+stay in the box so **Add** tries them again. Up to 50 identifiers can be added
+at a time.
+
+Open Library is edited by its readers, so a listing there without any author
+is not trusted; Scient asks Google Books instead.
+
 ## Review and manage a source
 
 Select a source to inspect its title, creators, publication details,
@@ -122,8 +142,10 @@ move a source to the trash and restore it, restore an earlier version, or add a
 new one. Everything an agent changes is credited to it and can be undone the
 same way as your own changes.
 
-Before an agent adds a source, Scient looks up its DOI at doi.org or its PMID in
-PubMed. If the identifier does not exist, or it belongs to a paper with a
+Before an agent adds a source, Scient looks up its DOI at doi.org, its PMID in
+PubMed, its arXiv ID at arXiv or its ISBN in Open Library and Google Books. An
+agent can also add a list of identifiers at once, as you can with **Add by
+identifier**. If the identifier does not exist, or it belongs to a paper with a
 different title, nothing is added and the agent is told what the registry
 found. When the identifier checks out, Scient stores the registry's title,
 authors, date and journal instead of the agent's. The source's details show

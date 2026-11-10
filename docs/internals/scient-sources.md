@@ -287,9 +287,44 @@ three creators, year and container. Neither writes a record. A confirmed
 identifier makes the registry's bibliographic fields authoritative, with `doi`
 or `pubmed` field provenance carrying the identifier and retrieval time, and
 stores verification `verified`. An unreachable or unusable registry adds the
-source as given with `unchecked`; a source without a DOI or PMID is
-`unverified`. An exact duplicate is reported without a lookup, and optional
+source as given with `unchecked`; a source without a DOI, PMID, arXiv ID or ISBN
+is `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. Only agent adds record verification.
+
+arXiv IDs and ISBNs are registry schemes too, checked after DOI and PMID, each
+in its own file registered in the resolver's scheme table
+(`IDENTIFIER_SCHEMES`). An arXiv ID is looked up through the arXiv API
+(`export.arxiv.org/api/query`, up to 50 IDs per `id_list` request, one request
+every three seconds as arXiv asks); an ID missing from the feed does not exist.
+Its record is a `preprint` with publisher `arXiv`, and the published version's
+DOI from `arxiv:doi` joins its identifiers. Version suffixes (`v2`) are not
+part of the identity. An ISBN must have a valid check digit and is stored as
+ISBN-13. Open Library answers first (several ISBNs per request); an entry
+without authors is not accepted, since the openly edited catalogue holds spam
+listings under real ISBNs, and Google Books is asked instead, counting only a
+volume that lists the same ISBN. Not found needs both catalogues to say so;
+otherwise the ISBN is unavailable. Field provenance names `arxiv`,
+`open-library` or `google-books`. None of these requests carries the contact
+email.
+
+`resolveSourceIdentifierBatch` resolves many identifiers, each as its own work,
+grouping them per registry: arXiv and Open Library answer many per request, DOI
+and PMID lookups run four at a time so none waits out its deadline in the NCBI
+lane, and each request has the 6.5-second deadline. `SourceIdentifierAdd.ts`
+uses it for adds by identifier: `scient_sources_add` with `identifierList` (up
+to 50 entries in any common spelling, outcome `batch` with one result per
+entry) and the user's **Add by identifier** (`POST
+/api/scient/sources/identifiers/add`). Text is read by `detectSourceIdentifier`
+and `parseSourceIdentifierList` in `packages/scient-sources`. An identifier
+already in the Library (a work-level identifier, or the ISBN of an existing
+book) is reported as a duplicate without a lookup. Only a found identifier is
+added, verified and credited to its actor; not found, unavailable and
+unrecognized entries add nothing, since an entry has no other metadata to keep.
+
+Agents with `sources:read` in a verified project get a short `## Scient Library`
+awareness block naming the list, search, add and bibliography tools and asking
+them to start literature work there before web search; `scient_sources_list`
+returns the Library's size as `total`.
 
 Connector results reach the Library as identifiers, not copied metadata. The
 resolver also takes an OpenAlex work ID (`openalex`, `W…`) and a Semantic
