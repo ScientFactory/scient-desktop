@@ -31,13 +31,14 @@ export function SignedInSharePage({ shareId }: { shareId: string }) {
 }
 
 function SignedInShare({ address }: { address: ReturnType<typeof readShareAddress> }) {
-  const { isSignedIn, getToken } = useAuth();
+  const { isSignedIn, userId, getToken } = useAuth();
   const { openAuthPrompt } = useT3ConnectAuthPrompt();
   // Wait for Clerk, so a signed-in person never sees a sign-in prompt first.
   if (isSignedIn === undefined) return null;
   return (
     <SharePage
-      key={isSignedIn ? "signed-in" : "signed-out"}
+      // Keyed by account: a share read as one person is gone once another signs in.
+      key={isSignedIn ? `signed-in:${userId}` : "signed-out"}
       address={address}
       apiOrigin={cloudApiOrigin()}
       contentOrigin={SCIENT_SHARE_CONTENT_ORIGIN}

@@ -82,7 +82,15 @@ function ShareLinkDialogSignedIn({
       </Dialog>
     );
   }
-  return <ShareLinkDialog threadRef={threadRef} api={account.api} onClose={onClose} />;
+  // Keyed by account: another account never sees this one's link or preview.
+  return (
+    <ShareLinkDialog
+      key={account.userId ?? "loading"}
+      threadRef={threadRef}
+      api={account.api}
+      onClose={onClose}
+    />
+  );
 }
 
 type BuildState =

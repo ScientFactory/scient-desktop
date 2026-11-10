@@ -43,7 +43,10 @@ function CloudSettingsSignedIn({ environmentId }: { environmentId: EnvironmentId
           onSignIn={account.openSignIn}
         />
       ) : null}
-      {account.isSignedIn ? <SharedLinksSection api={account.api} /> : null}
+      {account.isSignedIn && account.userId !== null ? (
+        // Keyed by account: another account never sees this one's links.
+        <SharedLinksSection key={account.userId} api={account.api} userId={account.userId} />
+      ) : null}
     </>
   );
 }
@@ -173,8 +176,8 @@ function accessLabel(access: ShareAccess): string {
   }
 }
 
-function SharedLinksSection({ api }: { api: CloudApi }) {
-  const shares = useCloudList(() => api.shares(), "shares");
+function SharedLinksSection({ api, userId }: { api: CloudApi; userId: string }) {
+  const shares = useCloudList(() => api.shares(), `shares:${userId}`);
   const threads = useThreadShells();
   if (shares.items === null || shares.items.length === 0) return null;
   const threadFor = (share: ShareRecord) =>

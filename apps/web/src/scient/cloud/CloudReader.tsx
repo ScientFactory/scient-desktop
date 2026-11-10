@@ -7,7 +7,7 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Link, useNavigate } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { ChevronLeftIcon, CloudIcon } from "lucide-react";
-import { useEffect, useEffectEvent, useState, type ReactNode } from "react";
+import { Fragment, useEffect, useEffectEvent, useState, type ReactNode } from "react";
 
 import { AppRouteModal, AppRouteModalClose } from "~/components/AppRouteModal";
 import { Button } from "~/components/ui/button";
@@ -123,7 +123,10 @@ function SignedInAccount({
       </ReaderFrame>
     );
   }
-  return render({ api: account.api, userId: account.userId });
+  // Keyed by account: switching accounts drops what the previous one loaded, in flight or shown.
+  return (
+    <Fragment key={account.userId}>{render({ api: account.api, userId: account.userId })}</Fragment>
+  );
 }
 
 type Loaded<T> =
