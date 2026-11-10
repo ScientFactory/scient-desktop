@@ -150,12 +150,20 @@ function StartOnComputer({ cloud = false }: { readonly cloud?: boolean }) {
       <p>Start Scient on the computer with your code.</p>
       <p className="mt-2 text-xs text-muted-foreground">
         {cloud
-          ? "Open Settings → Connections in that Scient installation and enable its cloud connection."
+          ? "In Scient there, open Settings → Sharing & access, sign in with this account, and turn on Scient Connect."
           : "Create a pairing link in Settings → Connections in that Scient installation, then add it here."}
       </p>
       <p className="mt-2 text-xs text-muted-foreground">
-        Need to install or recover Scient? Use the matching Scient release from the owner of that
-        installation, not a different product’s installer or a global CLI.
+        Don’t have Scient there yet? Download it from{" "}
+        <a
+          className="underline underline-offset-2 hover:text-foreground"
+          href="https://scientfactory.com"
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          scientfactory.com
+        </a>
+        .
       </p>
     </>
   );

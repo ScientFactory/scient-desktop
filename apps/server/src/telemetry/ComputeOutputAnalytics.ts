@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AnalyticsService } from "./AnalyticsService.ts";
+import { captureRejectionAttribution } from "./FailureAttribution.ts";
 import type {
   ComputeCaptureReason,
   ComputeProjectCaptureStatus,
@@ -108,6 +109,7 @@ export const makeComputeOutputAnalytics = Effect.gen(function* () {
         captureReason: observation.rejectionReason ?? observation.coverageReason ?? "none",
         retainedOutputCount: observation.retained,
         rejectedOutputCount: observation.rejected,
+        ...(outcome === "failed" ? captureRejectionAttribution(observation.rejectionReason) : {}),
       });
     }).pipe(Effect.ignoreCause());
 });

@@ -1726,6 +1726,8 @@ describe("interactive capture analytics", () => {
         captureReason: reason,
         retainedOutputCount: retained,
         rejectedOutputCount: rejected,
+        // Missing and mismatched resources are Scient's own capture failures.
+        ...(expected === "failed" ? { failureOwner: "scient", failureCategory: reason } : {}),
       });
       expect(yield* encodeUnknownJson(f.events)).not.toMatch(
         /private-|project-1|session-1|sha256:|display-1|print\(1\)/u,
@@ -2057,6 +2059,87 @@ describe("compute outcome analytics", () => {
       expect(yield* encodeUnknownJson(events)).not.toMatch(
         /project-1|session-1|before-consent|after-consent|queued-|print\(1\)|ZeroDivisionError|division by zero|python3/u,
       );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("compute run attribution", () => {
+  it.effect.each(
+    (
+      [
+        ["print(1)", "succeeded", "completed", undefined, undefined],
+        ["boom", "failed", "failed", "code", "code-error"],
+        ["die", "lost", "failed", "unknown", "runtime-exited"],
+      ] as const
+    ).map(([code, outcome, expected, owner, category]) => ({
+      caseTitle: `labels a ${outcome} ${code} run with who owns its failure`,
+      code,
+      outcome,
+      expected,
+      owner,
+      category,
+    })),
+  )("$caseTitle", ({ code, outcome, expected, owner, category }) =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({ analytics: f.service });
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit(code, "private-attributed-run");
+          yield* waitForExecution(ComputeExecutionId.make("private-attributed-run"), outcome);
+        }),
+      );
+      const runs = f.events.filter((event) => event.properties?.operationKind === "compute-run");
+      expect(runs.map((event) => event.name)).toEqual([
+        "scient.operation.started",
+        `scient.operation.${expected}`,
+      ]);
+      expect(runs[1]?.properties).toMatchObject({
+        language: "python",
+        actor: "user",
+        entry: "console",
+        runtimeSource: "path",
+      });
+      expect(runs[1]?.properties?.failureOwner).toBe(owner);
+      expect(runs[1]?.properties?.failureCategory).toBe(category);
+      expect(yield* encodeUnknownJson(f.events)).not.toMatch(
+        /private-|ZeroDivisionError|division by zero|kernel exited/u,
+      );
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+});
+
+describe("compute run dispatch attribution", () => {
+  it.effect("blames Scient, not the code, when the runtime never accepts a run", () =>
+    Effect.gen(function* () {
+      const f = analyticsFixture();
+      const test = yield* harness({
+        analytics: f.service,
+        transformChannel: (channel) => ({
+          ...channel,
+          execute: () =>
+            Effect.fail(
+              new ComputeTransportError({ operation: "execute", message: "Bridge refused" }),
+            ),
+        }),
+      });
+      yield* test.use(
+        Effect.gen(function* () {
+          yield* start;
+          yield* submit("print(1)", "refused-run");
+          yield* waitForExecution(ComputeExecutionId.make("refused-run"), "failed");
+        }),
+      );
+      const failed = f.events.find(
+        (event) =>
+          event.name === "scient.operation.failed" &&
+          event.properties?.operationKind === "compute-run",
+      );
+      expect(failed?.properties).toMatchObject({
+        failureOwner: "scient",
+        failureCategory: "dispatch",
+      });
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

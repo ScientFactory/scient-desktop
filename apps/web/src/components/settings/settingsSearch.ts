@@ -676,7 +676,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     // SCIENT-FORK:START — guest links need T3 Connect, which Scient keeps off.
     cloudOnly: true,
     // SCIENT-FORK:END
-    searchTerms: ["beta share guest invite link teammate watch t3 connect tunnel"],
+    searchTerms: ["beta share guest invite link teammate watch scient connect tunnel"],
   },
   {
     id: "linked-environments-beta",
@@ -690,7 +690,9 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Suggest next prompt",
     to: "/settings/labs",
     scope: "environment",
-    searchTerms: ["beta tab autocomplete predict next message claude codex ghost text"],
+    searchTerms: [
+      "beta tab autocomplete predict next message claude codex scient agent ghost text",
+    ],
   },
   {
     id: "simlock-hosts",
@@ -1092,6 +1094,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   ...KEYBINDING_SEARCH_ITEMS,
+  // SCIENT-FORK: New Window is a native menu accelerator, outside the server command catalog.
+  {
+    id: "keybinding-new-window",
+    title: "New Window",
+    to: "/settings/keybindings",
+    desktopOnly: true,
+    secondary: true,
+    searchTerms: ["application windows fixed shortcut file mod+alt+shift+n duplicate app"],
+  },
   {
     id: "authoring",
     title: "Markdown, Math, and PDF shortcuts",
@@ -1425,18 +1436,18 @@ export const SETTINGS_SEARCH_ITEMS = [
   ...sourceControlHostSearchItems(sourceControlClients.definitions),
   {
     id: "source-control-writing-style",
-    title: "Source control writing style",
+    title: "Commit and pull request writing",
     to: "/settings/source-control",
     searchTerms: [
-      "repository conventions conventional commits custom instructions change descriptions request titles",
+      "repository conventions conventional commits custom instructions commit messages change pr pull request merge request titles descriptions body style prompt write my own",
     ],
     environmentOnly: true,
   },
   {
     id: "follow-change-request-templates",
-    title: "Follow change request templates",
+    title: "Follow pull request templates",
     to: "/settings/source-control",
-    searchTerms: ["repository pr pull request description structure"],
+    searchTerms: ["repository pr pull request merge request change request description structure"],
     environmentOnly: true,
   },
   {
@@ -1527,7 +1538,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "t3-connect",
     localEnvironmentOnly: true,
-    title: "T3 Connect",
+    title: "Scient Connect",
     to: "/settings/access",
     targetId: "connections-environment",
     searchTerms: ["managed tunnel cloud other devices remote tunnels limit t3 chat"],
@@ -1540,7 +1551,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Hold webhooks while offline",
     to: "/settings/access",
     targetId: "connections-environment",
-    searchTerms: ["webhook automations offline queue mailbox t3 connect"],
+    searchTerms: ["webhook automations offline queue mailbox scient connect"],
     cloudOnly: true,
     managedTunnelOnly: true,
   },
@@ -1573,7 +1584,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "remote-environments",
     title: "Environments",
     to: "/settings/connections",
-    searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
+    searchTerms: ["add pair backend host code ssh config agent tunnel saved scient connect"],
   },
   {
     id: "load-balancing",

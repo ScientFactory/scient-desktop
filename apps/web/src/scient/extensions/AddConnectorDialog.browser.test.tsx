@@ -23,6 +23,11 @@ const state = vi.hoisted(() => ({
   importable: vi.fn(),
   inspect: vi.fn(),
   install: vi.fn(),
+  skillsInspect: vi.fn(),
+  skillsAdd: vi.fn(),
+  skillsUndo: vi.fn(),
+  skillsImportable: vi.fn(),
+  startChat: vi.fn(),
   test: vi.fn(),
   startSignIn: vi.fn(),
   githubSignIn: { start: vi.fn(), wait: vi.fn(), cancel: vi.fn() },
@@ -50,6 +55,17 @@ vi.mock("./extensionsState", () => ({
   startConnectorSignIn: "start-sign-in",
 }));
 vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "local" }));
+vi.mock("../skills/scientSkillsState", () => ({
+  inspectPersonalSkills: "skills-inspect",
+  addPersonalSkills: "skills-add",
+  undoPersonalSkill: "skills-undo",
+  listImportableSkills: "skills-importable",
+}));
+vi.mock("../skills/skillAgentChat", () => ({
+  useSkillAgentChat: () => state.startChat,
+  finishSkillPrompt: (candidate: { readonly name?: string }, source: string) =>
+    `finish ${candidate.name ?? "notes"} from ${source}`,
+}));
 vi.mock("../../state/sourceControl", async () => {
   const { Atom } = await import("effect/reactivity");
   const allowed = Atom.make(true);
@@ -67,19 +83,27 @@ vi.mock("../../state/use-atom-command", () => ({
       ? state.add
       : command === "importable"
         ? state.importable
-        : command === "inspect"
-          ? state.inspect
-          : command === "install"
-            ? state.install
-            : command === "test"
-              ? state.test
-              : command === "start-sign-in"
-                ? state.startSignIn
-                : typeof command === "object" && command.name === "github-start"
-                  ? state.githubSignIn.start
-                  : typeof command === "object" && command.name === "github-wait"
-                    ? state.githubSignIn.wait
-                    : state.githubSignIn.cancel,
+        : command === "skills-inspect"
+          ? state.skillsInspect
+          : command === "skills-add"
+            ? state.skillsAdd
+            : command === "skills-undo"
+              ? state.skillsUndo
+              : command === "skills-importable"
+                ? state.skillsImportable
+                : command === "inspect"
+                  ? state.inspect
+                  : command === "install"
+                    ? state.install
+                    : command === "test"
+                      ? state.test
+                      : command === "start-sign-in"
+                        ? state.startSignIn
+                        : typeof command === "object" && command.name === "github-start"
+                          ? state.githubSignIn.start
+                          : typeof command === "object" && command.name === "github-wait"
+                            ? state.githubSignIn.wait
+                            : state.githubSignIn.cancel,
 }));
 vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => state.openInBrowser }));
 vi.mock("../../components/ui/toast", () => ({ toastManager: { add: state.toast } }));
@@ -112,6 +136,12 @@ function setup() {
   state.add.mockReset();
   state.inspect.mockReset();
   state.install.mockReset();
+  state.skillsAdd.mockReset();
+  state.skillsUndo.mockReset();
+  state.startChat.mockReset();
+  // Nothing is a skill unless a test says so.
+  state.skillsInspect.mockReset().mockResolvedValue({ _tag: "Success", value: { kind: "none" } });
+  state.skillsImportable.mockReset().mockResolvedValue({ _tag: "Success", value: { skills: [] } });
   state.startSignIn.mockReset();
   state.githubSignIn.start.mockReset();
   state.githubSignIn.wait.mockReset();
@@ -840,6 +870,7 @@ describe("local connectors", () => {
         entry={null}
       />,
     );
+    await page.getByRole("button", { name: "From your other apps · 1" }).click();
     await page.getByRole("button", { name: "Add huji from Claude Desktop" }).click();
     expect(state.add).toHaveBeenCalledWith({
       environmentId,
@@ -865,7 +896,7 @@ describe("local connectors", () => {
         entry={null}
       />,
     );
-    await page.getByRole("button", { name: "Advanced: run a command" }).click();
+    await page.getByRole("button", { name: "Run a command…" }).click();
     await userEvent.fill(
       page.getByLabelText("Command"),
       String.raw`C:\Tools\server.exe "My Notes" --port 3`,
@@ -884,7 +915,7 @@ describe("local connectors", () => {
     });
   });
 
-  const renderAddYourOwn = (onWebAddress = vi.fn()) =>
+  const renderAddYourOwn = (onWebAddress = vi.fn(), kind?: "skills") =>
     renderScreen(
       <AddLocalConnectorDialog
         open
@@ -892,6 +923,7 @@ describe("local connectors", () => {
         environmentId={environmentId}
         entry={null}
         onWebAddress={onWebAddress}
+        kind={kind}
       />,
     );
 
@@ -901,10 +933,14 @@ describe("local connectors", () => {
     const onWebAddress = vi.fn();
     await using _screen = await renderAddYourOwn(onWebAddress);
     await userEvent.fill(
-      page.getByLabelText("A path on that computer, or a web address"),
+      page.getByLabelText("Path, web address or text"),
       " https://mcp.example.com/mcp ",
     );
     await press("Open");
+    expect(state.skillsInspect).toHaveBeenCalledWith({
+      environmentId,
+      input: { source: { type: "url", url: "https://mcp.example.com/mcp" } },
+    });
     expect(onWebAddress).toHaveBeenCalledWith("https://mcp.example.com/mcp");
     expect(state.inspect).not.toHaveBeenCalled();
   });
@@ -918,10 +954,7 @@ describe("local connectors", () => {
     });
     state.install.mockResolvedValue({ _tag: "Success", value: {} });
     await using _screen = await renderAddYourOwn();
-    await userEvent.fill(
-      page.getByLabelText("A path on that computer, or a web address"),
-      "/plugins/acme",
-    );
+    await userEvent.fill(page.getByLabelText("Path, web address or text"), "/plugins/acme");
     await press("Open");
     await expect.element(page.getByText("Install Acme Lab")).toBeVisible();
     await press("Install");
@@ -938,13 +971,139 @@ describe("local connectors", () => {
       cause: Cause.fail(new ExtensionsError({ reason: "unreachable", message: long })),
     });
     await using _screen = await renderAddYourOwn();
-    await userEvent.fill(
-      page.getByLabelText("A path on that computer, or a web address"),
-      "/somewhere",
-    );
+    await userEvent.fill(page.getByLabelText("Path, web address or text"), "/somewhere");
     await press("Open");
     await expect.element(page.getByText("Scient could not use that.")).toBeVisible();
     await page.getByRole("button", { name: "Show the full error" }).click();
     await expect.element(page.getByText(long, { exact: true }).last()).toBeVisible();
+  });
+
+  const pathField = () => page.getByLabelText("Path, web address or text");
+  const added = (names: ReadonlyArray<string>) => ({
+    _tag: "Success",
+    value: {
+      added: names,
+      inventory: { skills: [], diagnostics: [], supportedProviders: [] },
+    },
+  });
+
+  it("adds a ready skill from a folder and hands rough notes to an agent", async () => {
+    await using _mocks = setup();
+    ready();
+    state.skillsInspect.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        kind: "skills",
+        stagingId: "s1",
+        sourceLabel: "class-notes",
+        candidates: [
+          {
+            key: "0",
+            name: "lab-notes",
+            description: "Keep lab notes.",
+            status: "ready",
+            notes: ["Named “lab-notes” after its file."],
+            exists: false,
+          },
+          {
+            key: "1",
+            name: "pcr",
+            status: "needs-agent",
+            reason: "It has no skill header with a name and a description.",
+            notes: [],
+            exists: false,
+            material: { path: "/notes/pcr.md", text: "PCR notes" },
+          },
+        ],
+      },
+    });
+    state.skillsAdd.mockResolvedValue(added(["lab-notes"]));
+    state.startChat.mockResolvedValue(true);
+    await using _screen = await renderAddYourOwn();
+    await userEvent.fill(pathField(), "/notes");
+    await press("Open");
+    await expect.element(page.getByText("Found in class-notes")).toBeVisible();
+    await expect.element(page.getByText("Named “lab-notes” after its file.")).toBeVisible();
+    await expect
+      .element(page.getByText("Not a complete skill yet. It has no skill header", { exact: false }))
+      .toBeVisible();
+    expect(state.inspect).not.toHaveBeenCalled();
+
+    await press("Add Lab Notes");
+    expect(state.skillsAdd).toHaveBeenCalledWith({
+      environmentId,
+      input: { stagingId: "s1", keys: ["0"] },
+    });
+    expect(state.onOpenChange).toHaveBeenCalledWith(false);
+    expect(state.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Added lab-notes", actionProps: expect.anything() }),
+    );
+
+    await press("Finish with an agent");
+    expect(state.startChat).toHaveBeenCalledWith("finish pcr from class-notes", "finish");
+  });
+
+  it("reads pasted text as a skill", async () => {
+    await using _mocks = setup();
+    ready();
+    await using _screen = await renderAddYourOwn();
+    // Text that is neither a path nor a web address is read as a skill or notes.
+    await userEvent.fill(pathField(), "Always cite sources.\nUse APA style.");
+    await press("Open");
+    expect(state.skillsInspect).toHaveBeenCalledWith({
+      environmentId,
+      input: { source: { type: "text", text: "Always cite sources.\nUse APA style." } },
+    });
+  });
+
+  it("copies another agent's skill in one click on the Skills tab", async () => {
+    await using _mocks = setup();
+    ready();
+    state.skillsImportable.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        skills: [
+          {
+            app: "claude",
+            appLabel: "Claude Code",
+            name: "review",
+            description: "Review drafts.",
+            folder: "/home/.claude/skills/review",
+            added: false,
+          },
+        ],
+      },
+    });
+    state.skillsInspect.mockResolvedValue({
+      _tag: "Success",
+      value: {
+        kind: "skills",
+        stagingId: "s2",
+        sourceLabel: "review",
+        candidates: [
+          {
+            key: "0",
+            name: "review",
+            description: "Review drafts.",
+            status: "ready",
+            notes: [],
+            exists: false,
+          },
+        ],
+      },
+    });
+    state.skillsAdd.mockResolvedValue(added(["review"]));
+    await using _screen = await renderAddYourOwn(vi.fn(), "skills");
+    expect(state.importable).not.toHaveBeenCalled();
+    await page.getByRole("button", { name: "From your other agents · 1" }).click();
+    await page.getByRole("button", { name: "Add review from Claude Code" }).click();
+    expect(state.skillsInspect).toHaveBeenCalledWith({
+      environmentId,
+      input: { source: { type: "path", path: "/home/.claude/skills/review" } },
+    });
+    expect(state.skillsAdd).toHaveBeenCalledWith({
+      environmentId,
+      input: { stagingId: "s2", keys: ["0"] },
+    });
   });
 });

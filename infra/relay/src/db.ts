@@ -48,10 +48,12 @@ export const PlanetscaleDatabase = Effect.gen(function* () {
     mode === "shared-database"
       ? yield* Planetscale.PostgresDatabase("RelayPostgresDatabase", {
           name: "t3coderelay",
-          region: { slug: "us-west" },
-          clusterSize: "PS_80",
+          // SCIENT-FORK:START — one small node in us-east (worker placement matches).
+          region: { slug: "us-east" },
+          clusterSize: "PS_5",
           migrations: { dir: schema.out, table: "relay_migrations" },
-          replicas: 2,
+          replicas: 0,
+          // SCIENT-FORK:END
         }).pipe(RemovalPolicy.retain())
       : yield* Planetscale.PostgresDatabase.ref("RelayPostgresDatabase", {
           stage: "prod",

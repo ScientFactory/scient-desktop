@@ -31,6 +31,8 @@ const watch = (overrides: Partial<ThreadPullRequestWatch> = {}): ThreadPullReque
   ...overrides,
 });
 
+const run = (id: number) => `https://github.com/o/r/actions/runs/${id}`;
+
 const check = (name: string, status: PullRequestCheck["status"]): PullRequestCheck => ({
   name,
   status,
@@ -93,6 +95,136 @@ const remark = (
 const noRemarks: ReadonlyArray<PullRequestComment> = [];
 
 describe("evaluatePullRequestWatch", () => {
+  it("waits for workflow approval once, through reads that miss it, until the run finishes", () => {
+    const bot = check("bot", "success");
+    const approval = { ...check("CI", "action-required"), url: run(1) };
+    const gated = detail({ checks: [bot, approval] });
+    const first = evaluatePullRequestWatch(watch(), gated, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "checks-awaiting-approval", checks: [approval] }]);
+
+    // GitHub's approval read can answer empty while the rest of the checks read fine.
+    const missing = evaluatePullRequestWatch(first.next, detail({ checks: [bot] }), noRemarks);
+    assert.deepEqual(missing.changes, []);
+    assert.isFalse(missing.next.passed);
+    assert.deepEqual(evaluatePullRequestWatch(missing.next, gated, noRemarks).changes, []);
+    const later = { ...check("Preview", "action-required"), url: run(2) };
+    assert.deepEqual(
+      evaluatePullRequestWatch(missing.next, detail({ checks: [bot, approval, later] }), noRemarks)
+        .changes,
+      [],
+    );
+    const unnamed = { ...check("Docs", "action-required"), url: null };
+    const named = detail({ checks: [bot, unnamed] });
+    const alone = evaluatePullRequestWatch(watch(), named, noRemarks);
+    assert.deepEqual(alone.changes, [{ kind: "checks-awaiting-approval", checks: [unnamed] }]);
+    const placeholder = { ...unnamed, name: "Workflow approval status", placeholder: true };
+    const unlisted = evaluatePullRequestWatch(
+      alone.next,
+      detail({ checks: [bot, placeholder] }),
+      noRemarks,
+    );
+    assert.deepEqual(unlisted.changes, []);
+    assert.isFalse(unlisted.next.passed);
+    assert.deepEqual(evaluatePullRequestWatch(unlisted.next, named, noRemarks).changes, []);
+    const dropped = evaluatePullRequestWatch(alone.next, detail({ checks: [bot] }), noRemarks);
+    assert.deepEqual(dropped.changes, []);
+    assert.isFalse(dropped.next.passed);
+    assert.deepEqual(dropped.next.awaitingApproval, [unnamed.name]);
+    assert.deepEqual(evaluatePullRequestWatch(dropped.next, named, noRemarks).changes, []);
+    const namedPending = evaluatePullRequestWatch(
+      dropped.next,
+      detail({
+        checks: [
+          { ...bot, required: true },
+          { ...unnamed, status: "pending" },
+        ],
+      }),
+      noRemarks,
+    );
+    assert.deepEqual(namedPending.changes, []);
+    assert.isFalse(namedPending.next.passed);
+    const namedDone = detail({ checks: [bot, { ...unnamed, status: "success" }] });
+    const namedFinished = evaluatePullRequestWatch(namedPending.next, namedDone, noRemarks);
+    assert.deepEqual(namedFinished.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+    assert.deepEqual(namedFinished.next.awaitingApproval, []);
+    assert.deepEqual(
+      evaluatePullRequestWatch(namedFinished.next, namedDone, noRemarks).changes,
+      [],
+    );
+    const pushed = detail({ headSha: "bbbbbbbbbb", checks: [bot] });
+    assert.deepEqual(evaluatePullRequestWatch(missing.next, pushed, noRemarks).changes, [
+      { kind: "checks-passed", count: 1, required: false },
+    ]);
+
+    // Approved, the run's jobs carry their own names under the run's URL.
+    const job = { ...check("lint", "success"), url: `${run(1)}/job/7` };
+    const pending = { ...check("test", "pending"), url: `${run(1)}/job/8` };
+    const required = { ...bot, required: true };
+    const running = evaluatePullRequestWatch(
+      missing.next,
+      detail({ checks: [required, job, pending] }),
+      noRemarks,
+    );
+    assert.deepEqual(running.changes, []);
+    assert.isFalse(running.next.passed);
+    assert.deepEqual(running.next.awaitingApproval, [run(1)]);
+    const overlap = evaluatePullRequestWatch(
+      running.next,
+      detail({ checks: [required, job, { ...pending, url: `${run(2)}/job/9` }] }),
+      noRemarks,
+    );
+    assert.deepEqual(overlap.changes, []);
+    assert.isFalse(overlap.next.passed);
+    assert.deepEqual(overlap.next.awaitingApproval, [run(1)]);
+    const unlinked = evaluatePullRequestWatch(
+      overlap.next,
+      detail({ checks: [required, job, { ...pending, url: null }] }),
+      noRemarks,
+    );
+    assert.deepEqual(unlinked.changes, []);
+    assert.isFalse(unlinked.next.passed);
+    assert.deepEqual(unlinked.next.awaitingApproval, [run(1)]);
+    const advisory = evaluatePullRequestWatch(
+      unlinked.next,
+      detail({ checks: [required, job, { ...pending, url: "https://ci.example/test" }] }),
+      noRemarks,
+    );
+    assert.deepEqual(advisory.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(advisory.next.awaitingApproval, []);
+    const completed = detail({ checks: [required, job, { ...pending, status: "success" }] });
+    const finished = evaluatePullRequestWatch(unlinked.next, completed, noRemarks);
+    assert.deepEqual(finished.changes, [{ kind: "checks-passed", count: 1, required: true }]);
+    assert.deepEqual(finished.next.awaitingApproval, []);
+    assert.deepEqual(evaluatePullRequestWatch(finished.next, completed, noRemarks).changes, []);
+
+    const done = evaluatePullRequestWatch(missing.next, detail({ checks: [bot, job] }), noRemarks);
+    assert.deepEqual(done.changes, [{ kind: "checks-passed", count: 2, required: false }]);
+  });
+
+  it("does not pass or fail while the host cannot tell whether workflows await approval", () => {
+    const bot = check("bot", "success");
+    const unknown = {
+      ...check("Workflow approval status", "action-required"),
+      url: null,
+      placeholder: true,
+    };
+    const unread = evaluatePullRequestWatch(watch(), detail({ checks: [bot, unknown] }), noRemarks);
+    assert.deepEqual(unread.changes, []);
+    assert.isFalse(unread.next.passed);
+    const read = evaluatePullRequestWatch(unread.next, detail({ checks: [bot] }), noRemarks);
+    assert.deepEqual(read.changes, [{ kind: "checks-passed", count: 1, required: false }]);
+    const blocked = evaluatePullRequestWatch(
+      read.next,
+      detail({ checks: [{ ...bot, status: "pending" }, unknown] }),
+      noRemarks,
+    );
+    assert.isFalse(blocked.next.passed);
+    assert.deepEqual(
+      evaluatePullRequestWatch(blocked.next, detail({ checks: [bot] }), noRemarks).changes,
+      [{ kind: "checks-passed", count: 1, required: false }],
+    );
+  });
+
   it("reports each failure at once, even while another check never finishes", () => {
     const bot = check("CodeRabbit", "pending");
     const first = detail({ checks: [check("lint", "failure"), check("test", "pending"), bot] });
@@ -109,6 +241,13 @@ describe("evaluatePullRequestWatch", () => {
 
     const pushed = detail({ ...second, headSha: "bbbbbbbbbb" });
     assert.equal(evaluatePullRequestWatch(test.next, pushed, noRemarks).changes.length, 1);
+
+    const approval = { ...check("CI", "action-required"), url: run(1) };
+    const gated = detail({ checks: [approval, check("lint", "failure")] });
+    assert.deepEqual(evaluatePullRequestWatch(watch(), gated, noRemarks).changes, [
+      { kind: "checks-failed", failed: [check("lint", "failure")] },
+      { kind: "checks-awaiting-approval", checks: [approval] },
+    ]);
   });
 
   it("reports passed once the required checks pass, whatever the others do", () => {
@@ -482,6 +621,121 @@ describe("evaluatePullRequestWatch", () => {
     );
   });
 
+  it("reports each merge queue removal once while the head checks stay green", () => {
+    const green = detail({ checks: [check("test", "success")] });
+    const watching = evaluatePullRequestWatch(watch(), green, noRemarks).next;
+    const removed = (id: string, removedAt: string) =>
+      detail({ ...green, mergeQueueRemoval: { id, removedAt, reason: "Merge conflict" } });
+
+    const dropped = removed("first", "2026-10-02T12:10:00Z");
+    const first = evaluatePullRequestWatch(watching, dropped, noRemarks);
+    assert.deepEqual(first.changes, [{ kind: "merge-queue-removed", reason: "Merge conflict" }]);
+    const wake = pullRequestWatchMessage({
+      number: 1,
+      url: "https://github.com/o/r/pull/1",
+      baseBranch: "main",
+      headSha: first.next.headSha,
+      report: first,
+    });
+    assert.deepEqual(wake.notification, {
+      source: { kind: "monitor" },
+      outcome: "failed",
+      summary: "#1: removed from merge queue",
+    });
+    assert.deepEqual(evaluatePullRequestWatch(first.next, dropped, noRemarks).changes, []);
+    // A read without queue news keeps the removal already told.
+    const quiet = evaluatePullRequestWatch(first.next, green, noRemarks);
+    assert.deepEqual(evaluatePullRequestWatch(quiet.next, dropped, noRemarks).changes, []);
+
+    const again = removed("second", "2026-10-02T12:20:00Z");
+    assert.equal(evaluatePullRequestWatch(first.next, again, noRemarks).changes.length, 1);
+    const before = removed("before", "2026-10-02T11:00:00Z");
+    const baseline = evaluatePullRequestWatch(
+      watch({ headSha: watching.headSha, passed: true, passedChecks: watching.passedChecks }),
+      before,
+      noRemarks,
+    );
+    assert.deepEqual(baseline.changes, []);
+    for (const prior of [watching, baseline.next]) {
+      const skewed = evaluatePullRequestWatch(
+        prior,
+        removed("new", "2026-10-02T11:59:58Z"),
+        noRemarks,
+      );
+      assert.deepEqual(skewed.changes, [{ kind: "merge-queue-removed", reason: "Merge conflict" }]);
+      assert.deepEqual(
+        evaluatePullRequestWatch(skewed.next, removed("new", "2026-10-02T11:59:58Z"), noRemarks)
+          .changes,
+        [],
+      );
+    }
+  });
+
+  it("reports a merge queue removal stamped in the second the watch started", () => {
+    const watching = watch({ startedAt: "2026-10-02T12:00:00.500Z" });
+    const removed = (removedAt: string) =>
+      detail({ mergeQueueRemoval: { id: "first", removedAt, reason: "CI failed" } });
+    assert.deepEqual(
+      evaluatePullRequestWatch(watching, removed("2026-10-02T12:00:00Z"), noRemarks).changes,
+      [{ kind: "merge-queue-removed", reason: "CI failed" }],
+    );
+    assert.deepEqual(
+      evaluatePullRequestWatch(watching, removed("2026-10-02T11:59:59Z"), noRemarks).changes,
+      [],
+    );
+  });
+
+  it("stays quiet when the queue lets go of a pull request by merging it", () => {
+    const watching = evaluatePullRequestWatch(watch(), detail(), noRemarks).next;
+    // GitHub stamps this removal up to a second before the pull request reads as merged.
+    const merging = detail({
+      mergeQueueRemoval: { id: "landed", removedAt: "2026-10-02T12:10:00Z", reason: "merged" },
+    });
+    const read = evaluatePullRequestWatch(watching, merging, noRemarks);
+    assert.deepEqual(read.changes, []);
+    assert.equal(read.next.mergeQueueRemovalId, "landed");
+  });
+
+  it("explains GitHub's removal reasons in the wake", () => {
+    const watching = evaluatePullRequestWatch(watch(), detail(), noRemarks).next;
+    const wakeLine = (reason: string | null) => {
+      const report = evaluatePullRequestWatch(
+        watching,
+        detail({
+          mergeQueueRemoval: { id: "dropped", removedAt: "2026-10-02T12:10:00Z", reason },
+        }),
+        noRemarks,
+      );
+      return pullRequestWatchMessage({
+        number: 1,
+        url: "https://github.com/o/r/pull/1",
+        baseBranch: "main",
+        headSha: report.next.headSha,
+        report,
+      })
+        .text.split("\n")
+        .find((line) => line.startsWith("- "));
+    };
+    assert.equal(
+      wakeLine("failed_checks"),
+      "- The merge queue removed it because its checks failed. They ran on the queue's own commit, not on this head, so look for the failures in the queue's runs.",
+    );
+    assert.equal(
+      wakeLine("checks_timed_out"),
+      "- The merge queue removed it because its checks did not finish in time. They ran on the queue's own commit, not on this head, so look in the queue's runs for the check that did not finish.",
+    );
+    assert.equal(
+      wakeLine("merge_conflict"),
+      "- The merge queue removed it because it conflicts with the queue's base.",
+    );
+    assert.equal(wakeLine("manual"), "- It was taken out of the merge queue by hand.");
+    assert.equal(
+      wakeLine("some_new_reason"),
+      "- It was removed from the merge queue without merging: some_new_reason.",
+    );
+    assert.equal(wakeLine(null), "- It was removed from the merge queue without merging.");
+  });
+
   it("does not spend the comment wake limit on check results", () => {
     const tired = watch({ headSha: "aaaaaaaaaa", wakes: PULL_REQUEST_WATCH_WAKE_LIMIT - 1 });
     const result = evaluatePullRequestWatch(
@@ -522,6 +776,15 @@ describe("evaluatePullRequestWatch", () => {
     assert.isTrue(anHourLater(legacy, detail({ checks: [] })).every((kinds) => kinds.length === 0));
     const pushed = anHourLater(legacy, detail({ headSha: "bbbbbbbbbb", checks: [] }));
     assert.deepEqual(pushed.flat(), ["no-checks"]);
+    const unknown = detail({
+      checks: [{ ...check("Workflow approval status", "action-required"), placeholder: true }],
+    });
+    assert.deepEqual(anHourLater(watch(), unknown).flat(), []);
+    const unread = evaluate(watch(), unknown, noRemarks, 0);
+    assert.deepEqual(
+      evaluate(unread.next, detail({ checks: [] }), noRemarks, 60 * 60_000).changes,
+      [{ kind: "no-checks", minutes: 60 }],
+    );
   });
 
   it("never reports missing checks on a host where an empty list says nothing", () => {

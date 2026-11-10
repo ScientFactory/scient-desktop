@@ -52,6 +52,9 @@ import { scientConversationImportHttpApiLayer } from "./conversationImport/http.
 import * as ConversationImportStaging from "./conversationImport/ConversationImportStaging.ts";
 import * as ConversationImporterLive from "./conversationImport/ConversationImporterLive.ts";
 import * as ConversationImportCommit from "./conversationImport/ConversationImportCommit.ts";
+import * as PersonalSkills from "./skills/PersonalSkills.ts";
+import * as ScientSkillPolicy from "./skills/ScientSkillPolicy.ts";
+import * as ScientSkillRegistry from "./skills/ScientSkillRegistry.ts";
 import * as ScientSkillSession from "./skills/ScientSkillSession.ts";
 import * as ScientSkillManagement from "./skills/ScientSkillManagement.ts";
 import { scientWordExportHttpApiLayer } from "./pandoc/http.ts";
@@ -62,9 +65,11 @@ import { scientOverleafHttpApiLayer } from "./overleaf/http.ts";
 import * as OverleafEditorSave from "./overleaf/OverleafEditorSave.ts";
 import * as OverleafSync from "./overleaf/OverleafSync.ts";
 
-// Skill discovery and selected-turn delivery share one live policy/catalog.
+// Skill discovery, personal skills and selected-turn delivery share one live policy/catalog.
 export const ScientSkillsLayerLive = ScientSkillManagement.layer.pipe(
-  Layer.provideMerge(ScientSkillSession.live),
+  Layer.provideMerge(ScientSkillSession.layer),
+  Layer.provideMerge(PersonalSkills.layer),
+  Layer.provideMerge(Layer.merge(ScientSkillRegistry.layer, ScientSkillPolicy.layer)),
 );
 
 export const WorkspaceBindingResolverLayerLive = WorkspaceBindingResolver.layer.pipe(

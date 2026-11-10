@@ -65,3 +65,44 @@ export const providerSkillDocument = createEnvironmentRpcQueryAtomFamily(connect
   staleTimeMs: 60_000,
   idleTtlMs: 60_000,
 });
+
+/** What a file, folder, web address or pasted text holds: skills, material, or nothing. */
+export const inspectPersonalSkills = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-command:skills:personal-inspect",
+  tag: WS_METHODS.skillsPersonalInspect,
+});
+
+export const addPersonalSkills = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-command:skills:personal-add",
+  tag: WS_METHODS.skillsPersonalAdd,
+  concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+  onSuccess: ({ environmentId }, registry) =>
+    Effect.sync(() => registry.refresh(scientSkillsInventory({ environmentId, input: {} }))),
+});
+
+export const removePersonalSkill = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-command:skills:personal-remove",
+  tag: WS_METHODS.skillsPersonalRemove,
+  concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+  onSuccess: ({ environmentId }, registry) =>
+    Effect.sync(() => registry.refresh(scientSkillsInventory({ environmentId, input: {} }))),
+});
+
+export const undoPersonalSkill = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-command:skills:personal-undo",
+  tag: WS_METHODS.skillsPersonalUndo,
+  concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+  onSuccess: ({ environmentId }, registry) =>
+    Effect.sync(() => registry.refresh(scientSkillsInventory({ environmentId, input: {} }))),
+});
+
+export const exportPersonalSkill = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-command:skills:personal-export",
+  tag: WS_METHODS.skillsPersonalExport,
+});
+
+/** Skills other agents on that computer have, which Scient can copy in. */
+export const listImportableSkills = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-command:skills:personal-importable",
+  tag: WS_METHODS.skillsPersonalImportable,
+});

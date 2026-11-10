@@ -501,10 +501,29 @@ export const T3_CONNECT_TROUBLESHOOTING_SECTIONS = [
 ] as const;
 export type T3ConnectTroubleshootingSection = (typeof T3_CONNECT_TROUBLESHOOTING_SECTIONS)[number];
 
+// SCIENT-FORK:START — "More info" opens Scient's help page (docs/user/scient-connect-troubleshooting.md),
+// whose headings name Scient; each upstream section maps to its Scient heading anchor.
+export const SCIENT_CONNECT_TROUBLESHOOTING_ANCHORS: Record<
+  T3ConnectTroubleshootingSection,
+  string
+> = {
+  "the-hosts-tunnel-is-offline": "the-computers-tunnel-is-offline",
+  "port-7844-is-blocked-on-the-host": "port-7844-is-blocked-on-the-computer",
+  "the-tunnel-works-but-t3-code-does-not-answer": "the-tunnel-works-but-scient-does-not-answer",
+  "the-t3-connect-address-does-not-resolve-or-answer":
+    "the-scient-connect-address-does-not-resolve-or-answer",
+  "this-device-cant-reach-t3-connect": "this-device-cant-reach-scient-connect",
+  "sign-in-account-or-link-problems": "sign-in-account-or-link-problems",
+  "the-clock-is-off": "the-clock-is-off",
+  "the-host-runs-an-older-t3-code": "the-computer-runs-an-older-scient",
+  "t3-connect-returned-an-error": "scient-connect-returned-an-error",
+};
+
 /** Clients, the CLI, and server logs link here as "More info". */
 export function t3ConnectTroubleshootingUrl(section: T3ConnectTroubleshootingSection): string {
-  return `https://github.com/pingdotgg/t3code/blob/main/docs/user/t3-connect-troubleshooting.md#${section}`;
+  return `https://scientfactory.com/docs/scient-connect-troubleshooting/#${SCIENT_CONNECT_TROUBLESHOOTING_ANCHORS[section]}`;
 }
+// SCIENT-FORK:END
 
 const REACHABILITY_SECTION = {
   not_linked: "sign-in-account-or-link-problems",
@@ -663,6 +682,8 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   .add(HttpApiEndpoint.get("authorize", "/oauth/mcp/authorize"))
   .add(
     HttpApiEndpoint.post("approval", "/oauth/mcp/approval", {
+      // The hosted app sends the owner's T3 Connect credential; the environment's own page uses its cookie.
+      headers: OptionalBearerHeaders,
       payload: AuthMcpAuthorizationRequest,
       success: [AuthMcpApprovalDetails, AuthMcpApprovalRedirect],
       error: AuthMcpApprovalError,
@@ -670,6 +691,8 @@ class EnvironmentMcpOAuthHttpApi extends HttpApiGroup.make("mcpOAuth")
   )
   .add(
     HttpApiEndpoint.post("decision", "/oauth/mcp/decision", {
+      // The hosted app sends the owner's T3 Connect credential; the environment's own page uses its cookie.
+      headers: OptionalBearerHeaders,
       payload: AuthMcpApprovalDecisionRequest,
       success: AuthMcpApprovalRedirect,
       error: AuthMcpApprovalError,

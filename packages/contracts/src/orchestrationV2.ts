@@ -72,6 +72,7 @@ import {
 export {
   OrchestrationV2ClaudeForkBoundaryEvidence,
   OrchestrationV2ForkInitialization,
+  ToolHostPermission,
 } from "./scient/orchestrationV2Fork.ts";
 // SCIENT-FORK:END
 import { ThreadGuestShare } from "./guestShare.ts";
@@ -1101,6 +1102,9 @@ function kindUnionWithFallback<
 }
 
 const PendingBackgroundTaskFields = {
+  command: Schema.optional(Schema.String),
+  itemId: Schema.optional(TurnItemId),
+  sourceThreadId: Schema.optional(ThreadId),
   taskId: TrimmedNonEmptyString,
   description: Schema.optional(TrimmedNonEmptyString),
   /** The subagent task that started this work and waits on it. */

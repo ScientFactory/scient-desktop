@@ -1,15 +1,31 @@
 # Overleaf manuscript engine
 
-The server mounts it behind authenticated routes (`/api/scient/overleaf/v1/*`)
-and agent tools ([Overleaf agent tools](scient-overleaf-agent-tools.md)), both
-through `OverleafSync`; no screen calls them yet, and nothing synchronizes
-automatically. Its plan, contract, owner decisions
-and status live on the working-documents PR
-[#535](https://github.com/ScientFactory/scient-desktop/pull/535), which is
-closed rather than merged; this file records what is implemented.
-The planned workflow is manual, folder-first synchronization through a private
-bare Git repository. The workspace's repository and checkpoint index do not
-participate in its merge protocol.
+Status: Draft
+Owner: Yaacov
+Created: 2026-10-09
+Last updated: 2026-11-10
+Purpose: Describes mounted Overleaf synchronization, source and publication authority, recovery and remaining qualification.
+Doc type: Current implementation
+
+Folder connection, synced-folder settings and conflict-review screens are
+mounted. They and the [agent tools](scient-overleaf-agent-tools.md) use the
+authenticated routes (`/api/scient/overleaf/v1/*`) through `OverleafSync`.
+Synchronization is requested explicitly; background remote-state checks do not
+send changes. The workflow is folder-first, through a private bare Git
+repository. The workspace's repository and checkpoint index do not participate
+in its merge protocol. See [Overleaf Help](../user/overleaf.md) for the mounted
+workflow; the earlier working-documents PR
+[#535](https://github.com/ScientFactory/scient-desktop/pull/535) is historical
+design context, not the status of today's integration.
+
+Production application uses plain file publication and file history on every
+host, as described in [saving workspace files](scient-file-saving.md). Native
+publication details below describe older retained records and explicit test
+paths, not the mechanism of a new production sync. The service's current
+[editor-saving boundary](#saving-open-editors) applies before operations that
+may write the linked folder. Source inspection at `8006e7bbdab5d2a724a628a2f3c4d3c6d81821ea`
+on 2026-11-10 confirms mounted integration; it does not establish real-cloud or
+installed-platform qualification.
 
 `OverleafRepository` uses system Git 2.39 or newer and `merge-tree` with an
 explicit base. Each conflict decision covers the paths connected by renames or
@@ -88,7 +104,22 @@ fallback installation boundary that cannot be confirmed requires forced review,
 including older fallback records where installation may have completed. Recovery never repeats
 an uncertain installation over a later save or deletion.
 
-The two retained mutation methods on `WorkspaceFileSystem` use the same
+### Current publication and legacy retained records
+
+`WorkspaceFileMutations` defaults to plain publication for saves and Overleaf
+writes. Its `applyStep` keeps earlier material in the step's folder and file
+history, checks the file/group and publishes under the same ownership as a
+save. Native retained publication finishes older unfinished records; the
+`nativeSaves` flag selects a retained-publication implementation for tests.
+
+The retained-native mechanism described in the remainder of this local
+application section records the older implementation and its qualification
+fixtures. Its native lease and exchange guarantees must not be inferred for a
+new plain application. Separate identity, privacy and platform-admission checks
+can still use the helper. Current plain publication and its known limits are
+owned by the saving guide.
+
+In that retained-native implementation, the two mutation methods on `WorkspaceFileSystem` use the same
 canonical-path locks as saves, creates and renames. Their filesystem critical
 section is not interrupted by fiber cancellation. Each record includes staged
 file identity (device and inode), expected bytes and retention locations before
@@ -1037,9 +1068,12 @@ screens alike (the screens' own window answers like any other).
   save runs once more; a file still unsaved then fails, as edited again or as
   not placed.
 
-## Remaining integration gates
+## Remaining integration qualification
 
-Automated tests cannot settle these; each is checked by hand before a release.
+The screens, routes and editor-save integration exist. The remaining work here
+is qualification of the environments below, not mounting that integration.
+These are release requirements, not a record that this documentation update
+performed them. Automated tests alone cannot settle them.
 
 - **Overleaf Cloud itself.** A local bare Git remote does not reproduce the Cloud Git
   bridge's history and acknowledgement behaviour. A disposable Cloud project is synced

@@ -420,7 +420,7 @@ jobs:
 
       - name: Test release checks
         if: ${{ matrix.part == 1 }}
-        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs
 
       - name: Finish installing browser secret helper build libraries
         if: ${{ matrix.part == 1 }}
@@ -817,7 +817,7 @@ jobs:
     needs: [queue_ci, release_notes, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.release_smoke != 'false' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -832,7 +832,9 @@ jobs:
         uses: ./.github/actions/setup-ci-deps
 
       - name: Exercise release-only workflow steps
-        run: node scripts/release-smoke.ts
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_macos_connect_profile.py'
+          node scripts/release-smoke.ts
 
   # SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory, including exact queue
   # reuse. Accounts rides this job to reuse its install: a job of its own would wait for a runner

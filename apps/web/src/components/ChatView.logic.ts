@@ -1119,7 +1119,7 @@ export function shouldRefocusComposerOnWindowFocus(
   return (
     activeElement.closest(
       // SCIENT-FORK:START — focus in a rich document editor (visual LaTeX authoring) is deliberate.
-      '[data-workspace-area]:focus-visible, [data-sidebar-row]:focus-visible, [role="dialog"], [role="alertdialog"], [role="application"], [role="menu"], [role="listbox"], [data-slot$="-popup"], [data-terminal-owner], [contenteditable="true"]',
+      '[data-workspace-keyboard-focus], [data-sidebar-row]:focus-visible, [role="dialog"], [role="alertdialog"], [role="application"], [role="menu"], [role="listbox"], [data-slot$="-popup"], [data-terminal-owner], [contenteditable="true"]',
       // SCIENT-FORK:END
     ) === null
   );

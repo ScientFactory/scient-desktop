@@ -1243,6 +1243,7 @@ function NewKeybindingSettingsRow(props: NewKeybindingProps) {
 
 interface KeybindingsListProps extends KeybindingRowActions {
   rows: ReadonlyArray<KeybindingRow>;
+  showNewWindowShortcut: boolean;
   commandOptions: ReadonlyArray<KeybindingCommandOption>;
   savingCommand: KeybindingCommand | null;
   isAddingBinding: boolean;
@@ -1251,8 +1252,15 @@ interface KeybindingsListProps extends KeybindingRowActions {
 
 /** The add-binding row, one settings row per binding, and the empty state. */
 function KeybindingsList(props: KeybindingsListProps) {
-  const { rows, commandOptions, savingCommand, isAddingBinding, onCancelAdd, ...rowActions } =
-    props;
+  const {
+    rows,
+    showNewWindowShortcut,
+    commandOptions,
+    savingCommand,
+    isAddingBinding,
+    onCancelAdd,
+    ...rowActions
+  } = props;
   const newProps: NewKeybindingProps = {
     commandOptions,
     allRows: rowActions.allRows,
@@ -1266,6 +1274,24 @@ function KeybindingsList(props: KeybindingsListProps) {
   return (
     <div>
       {isAddingBinding ? <NewKeybindingSettingsRow {...newProps} /> : null}
+      {/* SCIENT-FORK:START — Native menu shortcuts are fixed and have no server binding. */}
+      {showNewWindowShortcut ? (
+        <SettingsSection id="keybindings-windows" title="Application & windows">
+          <SettingsRow
+            id="keybinding-new-window"
+            className={SHORTCUT_ROW_CLASS}
+            title="New Window"
+            description="Open another Scient window. Also available from File → New Window."
+            control={
+              <div className="flex items-center gap-2">
+                <Badge variant="secondary">Fixed shortcut</Badge>
+                <ShortcutKeys value="mod+alt+shift+n" />
+              </div>
+            }
+          />
+        </SettingsSection>
+      ) : null}
+      {/* SCIENT-FORK:END */}
       {groupKeybindingRows(rows).map((group) => (
         <SettingsSection key={group.id} id={`keybindings-${group.id}`} title={group.title}>
           {group.rows.map((row) => (
@@ -1279,7 +1305,7 @@ function KeybindingsList(props: KeybindingsListProps) {
           ))}
         </SettingsSection>
       ))}
-      {rows.length === 0 && !isAddingBinding ? (
+      {rows.length === 0 && !showNewWindowShortcut && !isAddingBinding ? (
         <div className="px-4 py-12 text-center text-sm text-muted-foreground">
           No shortcuts match your search.
         </div>
@@ -1378,6 +1404,12 @@ export function KeybindingsSettingsPanel() {
   const whenVariables = buildWhenVariableOptions();
   const { commandOptions, allRows, keybindings } = useKeybindingCatalog();
   const rows = filterKeybindingRows(allRows, query);
+  // SCIENT-FORK: Native menu accelerators cannot be changed by keybindings.json.
+  const showNewWindowShortcut =
+    isElectron &&
+    "new window application windows fixed shortcut file mod+alt+shift+n".includes(
+      query.trim().toLowerCase(),
+    );
 
   const openKeybindingsFile = () => {
     if (
@@ -1500,6 +1532,7 @@ export function KeybindingsSettingsPanel() {
   ) as Record<KeyboardScope, number>;
   const listProps: KeybindingsListProps = {
     rows,
+    showNewWindowShortcut,
     allRows,
     commandOptions,
     savingCommand,
@@ -1568,7 +1601,7 @@ export function KeybindingsSettingsPanel() {
                   {
                     id: "general" as const,
                     label: "General",
-                    detail: `${allRows.length} application bindings`,
+                    detail: `${allRows.length + (isElectron ? 1 : 0)} application shortcuts`,
                     icon: <KeyboardIcon className="size-6 shrink-0" />,
                   },
                   {

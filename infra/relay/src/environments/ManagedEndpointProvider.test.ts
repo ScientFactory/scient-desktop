@@ -377,6 +377,7 @@ function makeTunnelLimits(
   result: ManagedTunnelLimits.ManagedTunnelLimitExceeded | null = null,
 ) {
   return ManagedTunnelLimits.ManagedTunnelLimits.of({
+    defaultMaxTunnels: 3,
     withCapacity: (input, reserve) =>
       Effect.gen(function* () {
         calls.push(input);

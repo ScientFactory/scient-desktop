@@ -202,4 +202,5 @@ export const SCIENT_ACTION_TOOLS: ReadonlySet<string> = new Set([
   "scient_project_create",
   "scient_project_clone",
   "scient_skill_load",
+  "scient_skill_save",
 ]);

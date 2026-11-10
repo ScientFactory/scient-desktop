@@ -36,7 +36,9 @@ import {
   ProviderRegistryRefreshError,
   type ProviderRegistryShape,
 } from "../../provider/ProviderRegistry.ts";
+import { ManagedRuntimeFileError } from "@scientfactory/provider-runtime";
 import { ProviderActivity, type ProviderActivityShape } from "./ProviderActivity.ts";
+import { ProviderConnectionActionError } from "./ProviderConnectionActions.ts";
 import {
   make as makeLifecycleCoordinator,
   ProviderLifecycleCoordinator,
@@ -174,6 +176,7 @@ function makeHarness(
       refresh: () => SubscriptionRef.get(providersRef),
       refreshAfterUpdate: () => SubscriptionRef.get(providersRef),
       invalidateModelCaches: () => Effect.void,
+      refreshModelCatalog: Effect.void,
       refreshInstance: () => SubscriptionRef.get(providersRef),
       refreshWorkspaceSnapshot: () => SubscriptionRef.get(providersRef),
       refreshInstanceStrict: () => SubscriptionRef.get(providersRef),
@@ -950,6 +953,37 @@ describe("ProviderRuntimeManager", () => {
       const { manager, reloadCountRef } = yield* makeHarness(actions, [systemProvider]);
       assert.strictEqual(yield* manager.reselect(INSTANCE), false);
       assert.strictEqual(yield* SubscriptionRef.get(reloadCountRef), 0);
+    }),
+  );
+
+  it.effect("classifies a failed install from its error and the stage it reached", () =>
+    Effect.gen(function* () {
+      const actions: ProviderManagedRuntimeActions = {
+        getSummary: Effect.succeed(systemRuntime),
+        plan: () => Effect.succeed(installPlan()),
+        run: (_action, _revision, report) =>
+          report({ status: "installing", message: "Installing." }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                new ProviderConnectionActionError({
+                  message: "Scient could not install the private Codex runtime.",
+                  cause: new ManagedRuntimeFileError("Unsafe archive path: private/../x"),
+                }),
+              ),
+            ),
+          ),
+      };
+      const { manager, providersRef } = yield* makeHarness(actions, [systemProvider]);
+      yield* manager.start({
+        instanceId: INSTANCE,
+        action: "install",
+        catalogRevision: "reviewed:1",
+      });
+      const completed = yield* awaitState(
+        providersRef,
+        (providers) => providers[0]?.connection?.runtime?.operation?.status === "failed",
+      );
+      assert.strictEqual(completed[0]?.connection?.runtime?.operation?.failureClass, "extract");
     }),
   );
 

@@ -619,6 +619,16 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`7171fdd7716b05dc1b4be40c26ac78e8bb35f80c` is recorded in
+[the 2026-11-10 7171fdd771 receipt](docs/internals/t3-upstream-sync-20261110-7171fdd771.md).
+Literal merge `3bce08006815ca295d8e60f2402606ad4d666f0d` has owned base
+`a3cc2496dac3b2356f69864b73468fe7fdba33e4` and the frozen official target as parents, retaining
+the 80 official commits after `33db45effd`. Scient keeps its package install for the server
+runtime. T3's agent sign-in approval runs through Scient Connect, which merged first.
+`@pierre/diffs` moves to 1.7.0-beta.3 with Scient's editor additions. No migrations.
+Release remains separate.
+
+The previous committed alignment through
 `33db45effd176c01a27b3f2976192e77ad82b301` is recorded in
 [the 2026-11-09 33db45effd receipt](docs/internals/t3-upstream-sync-20261109-33db45effd.md).
 Literal merge `dce80a7807a0f16dd1a3acdec885d3c644e48d73` has owned base
@@ -627,7 +637,7 @@ the 37 official commits after `402d0623d5`. T3's one-page Welcome replaces its w
 builds; Scient keeps Getting started. T3's "use in another app (MCP)" wizard is aligned with
 Scient names and stays dormant with T3 Connect. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `402d0623d5f4160859607e9b7c11fc829fbe3e18` is recorded in
 [the 2026-11-09 402d0623d5 receipt](docs/internals/t3-upstream-sync-20261109-402d0623d5.md).
 Literal merge `4ced9d1208a9bdf0116ed3d7e60b72e53452d42c` has owned base
@@ -2120,6 +2130,35 @@ or the Files pane, still always remounts it); `AssetAccess.ts` reports the revis
 exact workspace file, not only PDFs. The boundary is offered to T3 as pingdotgg/t3code#32670 (issue #32669,
 `FileRevisionBoundary`); if it merges, take T3's and drop `ScientFileRevisionBoundary` and the
 marked key in `FilePreviewPanel.tsx`.
+
+### Kept documents
+
+Switching to another file and back reopened a document from scratch: the PDF was downloaded and
+parsed again, and a Word file fetched, prepared and laid out again. `scient/documentCache` keeps
+the opened document (a pdf.js document; a prepared Office file with its engine session) for the
+last two files a reader left, within 64 MB per GB of the computer's memory (128 to 512 MB, each
+kind estimating what it holds), and drops it when its file's revision changes. The drawn pages
+are not kept. Seams:
+
+- `OpenXmlOfficeViewer.tsx` prepares through `acquireOfficeDocument`, keyed by
+  `DocumentIdentityContext`, which `ScientFileRevisionBoundary` provides once the file's revision
+  is known (it now opens the preview only after that first check).
+- `WordDocument.tsx` and `Presentation.tsx` open their engine in a session (`openWordSession`,
+  `openPresentationSession`: T3's effect bodies, moved) and the viewer subscribes to it; a
+  `session` slot keeps it with the cached document. Without a slot the viewer owns it, as in T3.
+- `pdfRuntime.ts`: `destroy()` leaves the document open; `useScientPdfReader.ts` leases it through
+  `acquirePdfDocument` and shows a kept PDF at once, without waiting for its pages to paint.
+- `DataFileTable` checks the file's revision before reading its rows again, instead of on every
+  workspace mutation.
+- `FilePreviewPanel.tsx`: the preview body is `ScientDocumentShelf` (was a `div` with the same
+  props), and the PDF and Office branches are `ShelfItem`s. The shelf keeps the last left views
+  mounted but hidden while their reader parks its lease (`lease.park`): kept views and kept
+  documents share one budget, which counts a hidden view's canvases. A hidden PDF pauses pdf.js's
+  rendering queue and drops pages out of view (`pdfRuntime.ts` `park`); `OfficePages.tsx` draws
+  only pages in view while hidden (`useShelfHidden`). A reload counts for the file shown when it
+  was asked (`useChangesWhileShown`), so it does not remount another file's hidden view.
+
+When T3 changes those viewers' open or layout code, carry it into the session functions.
 
 When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
 worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should

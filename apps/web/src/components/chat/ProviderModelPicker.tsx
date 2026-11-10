@@ -6,7 +6,17 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@t3tools/contracts";
-import { createContext, memo, useRef, useState, type ReactNode } from "react";
+import { RegistryContext } from "@effect/atom-react";
+import {
+  createContext,
+  memo,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useEffectEvent,
+  useRef,
+  useState,
+} from "react";
 import {
   ModelPickerOverlayContext,
   useModelPickerOverlay,
@@ -17,6 +27,7 @@ import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
+import { ModelPickerNewChatFooter } from "./ModelPickerNewChatFooter";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelEsque, getDisplayModelName, getTriggerDisplayModelName } from "./providerIconUtils";
@@ -24,6 +35,8 @@ import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../provi
 import { ComposerControl, type ComposerControlSize } from "./ComposerControl";
 import { takeOpenTarget, useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
+import { serverEnvironment } from "../../state/server";
+import { useAtomCommand } from "../../state/use-atom-command";
 
 /** Holds the page still behind the open picker; its lifetime is the popup element's. */
 function lockBackgroundScroll(
@@ -124,6 +137,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const composerFloatingLayerProps = useComposerMenuProps();
   const [uncontrolledIsMenuOpen, setUncontrolledIsMenuOpen] = useState(false);
   const isMenuOpen = props.open ?? uncontrolledIsMenuOpen;
+  const registry = useContext(RegistryContext);
+  const refreshProviders = useAtomCommand(serverEnvironment.refreshProviders, {
+    reportFailure: false,
+  });
+  const refreshModelCatalog = useEffectEvent(() => {
+    const environmentId = props.environmentId;
+    if (environmentId === null) return;
+    // An older server drops the field and probes every provider.
+    const config = registry.get(serverEnvironment.configValueAtom(environmentId));
+    if (config?.environment.capabilities.modelCatalogRefresh !== true) return;
+    void refreshProviders({ environmentId, input: { modelCatalogOnly: true } });
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the server for newly released models on every open; a parent, a keybinding or the palette can open the picker, so no one handler sees them all
+  useEffect(() => {
+    if (isMenuOpen) refreshModelCatalog();
+  }, [isMenuOpen]);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const popupRef = useRef<HTMLDivElement | null>(null);
   const size = props.size ?? "sm";
@@ -517,11 +546,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 <div className="flex max-h-(--available-height) flex-col">
                   {/* One fixed height, so a model with more options never resizes the popup. Short
                       windows shrink it and keep the footer. */}
-                  <div className="flex h-86.5 min-h-0 max-sm:h-auto max-sm:flex-col">
+                  <div className="flex h-72 min-h-0 max-sm:h-auto max-sm:flex-col">
                     {picker}
                     <div
                       data-model-picker-effort
-                      className="flex min-h-0 w-48 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:h-64 max-sm:w-full max-sm:border-t max-sm:border-l-0"
+                      className="flex min-h-0 w-38 flex-col sm:shrink-0 border-l border-border/70 bg-muted/40 max-sm:h-52 max-sm:w-full max-sm:border-t max-sm:border-l-0"
                       onKeyDown={(event) => {
                         if (
                           event.key !== "ArrowLeft" ||
@@ -538,7 +567,25 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                       {props.effortColumn}
                     </div>
                   </div>
-                  {props.footer}
+                  {props.footer || props.onContinueInNewChat ? (
+                    <div
+                      data-model-picker-footer
+                      className="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-2.5 py-1.75"
+                    >
+                      {props.onContinueInNewChat ? (
+                        <ModelPickerNewChatFooter
+                          inline
+                          disabled={props.continueInNewChatDisabled ?? false}
+                          onFork={() => {
+                            if (props.continueInNewChatDisabled) return;
+                            setIsMenuOpen(false);
+                            props.onContinueInNewChat?.();
+                          }}
+                        />
+                      ) : null}
+                      {props.footer}
+                    </div>
+                  ) : null}
                 </div>
               </DockedPickerContext>
             ) : (

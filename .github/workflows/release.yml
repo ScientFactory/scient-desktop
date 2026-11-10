@@ -91,6 +91,7 @@ jobs:
       publish_release: ${{ steps.meta.outputs.publish_release }}
       allow_unsigned_windows: ${{ steps.meta.outputs.allow_unsigned_windows }}
       release_notes_base64: ${{ steps.meta.outputs.release_notes_base64 }}
+      macos_profile_required: ${{ steps.macos_signing.outputs.profile_required }}
     steps:
       - name: Require the channel's source branch
         shell: bash
@@ -155,6 +156,26 @@ jobs:
           RELEASE_DATE="$(date -u +%Y%m%d)"
           export RELEASE_DATE
           node scripts/resolve-scient-release-inputs.ts
+
+      - name: Test macOS profile validation
+        run: python3 -m unittest discover -s .github/scripts -p 'test_macos_connect_profile.py'
+
+      - id: macos_signing
+        name: Require macOS Connect signing inputs before native builds
+        env:
+          MACOS_SIGNING_CONFIGURED: ${{ secrets.CSC_LINK != '' && secrets.CSC_KEY_PASSWORD != '' && secrets.APPLE_API_KEY != '' && secrets.APPLE_API_KEY_ID != '' && secrets.APPLE_API_ISSUER != '' }}
+          REQUESTED_PUBLICATION: ${{ inputs.publish_release }}
+          SCIENT_APPLE_TEAM_ID: ${{ vars.SCIENT_APPLE_TEAM_ID }}
+          SCIENT_MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.SCIENT_MACOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          required=false
+          if [[ "$RELEASE_CHANNEL" == beta || "$REQUESTED_PUBLICATION" == true || "$MACOS_SIGNING_CONFIGURED" == true ]]; then
+            required=true
+          fi
+          echo "profile_required=$required" >> "$GITHUB_OUTPUT"
+          [[ "$required" == true ]] || exit 0
+          [[ "$SCIENT_APPLE_TEAM_ID" =~ ^[A-Z0-9]{10}$ ]] || { echo "Configure SCIENT_APPLE_TEAM_ID." >&2; exit 1; }
+          [[ -n "$SCIENT_MACOS_PROVISIONING_PROFILE_BASE64" ]] || { echo "Configure SCIENT_MACOS_PROVISIONING_PROFILE_BASE64." >&2; exit 1; }
 
       - name: Refuse an existing tag or release before builds
         shell: bash
@@ -254,9 +275,9 @@ jobs:
           release_notes_base64="$(base64 < "$RUNNER_TEMP/scient-release-notes.md" | tr -d '\n')"
           echo "release_notes_base64=$release_notes_base64" >> "$GITHUB_OUTPUT"
 
-  # Scient cloud is intentionally disabled for the first migration release.
-  # Keep T3's proven relay/tracing handoff visible and structurally intact so
-  # enabling cloud later is a conscious gate change, not a reconstruction.
+  # Relay client tracing stays off while Scient's outbound telemetry is off.
+  # Keep T3's relay/tracing handoff structurally intact so turning tracing on
+  # later is a conscious gate change, not a reconstruction.
   relay_public_config:
     name: Preserve disabled cloud relay foundation
     needs: preflight
@@ -465,7 +486,7 @@ jobs:
             rust_target: aarch64-apple-darwin
             resource_key: darwin-arm64
           - label: macOS x64
-            runner: macos-26
+            runner: macos-26-intel
             platform: mac
             target: dmg
             arch: x64
@@ -490,6 +511,24 @@ jobs:
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
           fetch-depth: 0
+      # SCIENT-FORK:START — Scient Connect's public ids come from .env.example.
+      - name: Load Scient Connect public config
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID RELAY_URL; do
+            value="$(sed -n "s|^T3CODE_${name}=||p" .env.example)"
+            [[ -n "$value" ]] || { echo "Missing T3CODE_${name} in .env.example" >&2; exit 1; }
+            echo "T3CODE_${name}=${value}" >> "$GITHUB_ENV"
+          done
+      # SCIENT-FORK:END
+      - name: Stage macOS Connect provisioning profile
+        if: matrix.platform == 'mac' && needs.preflight.outputs.macos_profile_required == 'true'
+        env:
+          SCIENT_APPLE_TEAM_ID: ${{ vars.SCIENT_APPLE_TEAM_ID }}
+          SCIENT_MACOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.SCIENT_MACOS_PROVISIONING_PROFILE_BASE64 }}
+          T3CODE_CLERK_PASSKEY_RP_DOMAINS: ${{ vars.T3CODE_CLERK_PASSKEY_RP_DOMAINS }}
+        run: python3 .github/scripts/stage-macos-connect-profile.py
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
@@ -890,6 +929,17 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ needs.preflight.outputs.source_sha }}
+      # SCIENT-FORK:START — Scient Connect's public ids come from .env.example.
+      - name: Load Scient Connect public config
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID RELAY_URL; do
+            value="$(sed -n "s|^T3CODE_${name}=||p" .env.example)"
+            [[ -n "$value" ]] || { echo "Missing T3CODE_${name} in .env.example" >&2; exit 1; }
+            echo "T3CODE_${name}=${value}" >> "$GITHUB_ENV"
+          done
+      # SCIENT-FORK:END
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
@@ -1087,7 +1137,9 @@ jobs:
     timeout-minutes: 10
     environment: ${{ needs.preflight.outputs.channel == 'beta' && 'beta' || 'production' }}
     permissions:
-      actions: read
+      # SCIENT-FORK:START — write lets the stable publish dispatch the hosted app's deploy.
+      actions: write
+      # SCIENT-FORK:END
       contents: write
     steps:
       - name: Require explicit repository release gate
@@ -1226,3 +1278,12 @@ jobs:
               exit 1
             }
           fi
+      # SCIENT-FORK:START — release events from github.token start no workflows, so dispatch
+      # the hosted app's deploy on the published tag.
+      - name: Deploy the hosted app for this release
+        if: needs.preflight.outputs.channel == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: gh workflow run deploy-hosted-web.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG"
+      # SCIENT-FORK:END

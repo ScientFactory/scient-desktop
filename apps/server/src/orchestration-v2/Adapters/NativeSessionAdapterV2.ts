@@ -23,6 +23,11 @@ import {
   type OrchestrationV2TurnItem,
   type ProviderDriverKind,
   type ProviderInstanceId,
+  type ToolActivityIcon,
+  type ToolActivitySource,
+  type ToolActivitySurface,
+  type ToolHostPermission,
+  isDelegatedAppThread,
 } from "@t3tools/contracts";
 import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
@@ -117,6 +122,13 @@ export type NativeSessionUpdate =
       readonly status: "running" | "completed" | "failed";
       readonly input?: unknown;
       readonly output?: string;
+      /** Screenshots shown with the output, in the shape the timeline serves. */
+      readonly images?: ReadonlyArray<{ readonly mimeType: string; readonly data: string }>;
+      readonly title?: string;
+      readonly toolSurface?: ToolActivitySurface;
+      readonly toolSource?: ToolActivitySource;
+      readonly toolIcon?: ToolActivityIcon;
+      readonly permissionsNeeded?: ReadonlyArray<ToolHostPermission>;
     }
   | {
       readonly type: "subagent";
@@ -217,6 +229,8 @@ export interface NativeSession {
   readonly stopSubagent?: (
     nativeTaskId: string,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  /** The user's likely next message after a completed turn; null when the agent has no guess. */
+  readonly predictNextMessage?: Effect.Effect<string | null, NativeSessionOperationError>;
   readonly interrupt: Effect.Effect<void, NativeSessionOperationError>;
   readonly interruptBreaksSession?: boolean;
   // SCIENT-FORK:START — bounded graceful Stop can still require destructive fallback.
@@ -382,6 +396,29 @@ export function makeNativeSessionAdapterV2(
           );
         });
         const emit = (event: ProviderAdapter.ProviderAdapterV2Event) => emitBatch([event], true);
+        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
+        // Best effort, beside the event stream: a prediction never holds up the next turn, and a
+        // stale one is dropped because the composer shows it only for the latest completed run.
+        // Delegated threads have no one typing, so they never ask.
+        const offerPromptSuggestion = Effect.fn("NativeSessionAdapterV2.offerPromptSuggestion")(
+          function* (turn: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            if (isDelegatedAppThread(turn.appThread) || !(yield* promptSuggestionsEnabled)) return;
+            const native = yield* Deferred.await(nativeReady);
+            if (!native.predictNextMessage) return;
+            const text = (yield* native.predictNextMessage)?.trim() ?? "";
+            if (text.length === 0) return;
+            yield* emit({
+              type: "prompt_suggestion.updated",
+              driver,
+              threadId: turn.threadId,
+              runId: turn.runId,
+              text,
+            });
+          },
+          Effect.catchCause((cause) =>
+            Effect.logDebug("orchestration-v2.native-prompt-suggestion-failed", { cause }),
+          ),
+        );
         const updateSession = Effect.fn("NativeSessionAdapterV2.updateSession")(function* (
           status: typeof providerSession.status,
           publish: typeof emit = emit,
@@ -632,6 +669,8 @@ export function makeNativeSessionAdapterV2(
                 }
               : { ...terminal, type: "turn.terminal", status, failure: null },
           );
+          if (status === "completed" && !update.broken)
+            yield* offerPromptSuggestion(running.input).pipe(Effect.forkIn(ownerScope));
           if (options.eventQueueLimits && !update.broken && backgroundPending)
             yield* emitBatch(
               [{ type: "provider_thread.updated", driver, providerThread: thread }],
@@ -1093,18 +1132,36 @@ export function makeNativeSessionAdapterV2(
                     item = { ...common, ...content, driver };
                   else item = { ...common, ...content };
                 } else if (update.type === "tool") {
+                  const images = update.images ?? [];
                   item = {
                     ...base,
                     type: "dynamic_tool",
-                    title: update.name,
+                    title: update.title ?? update.name,
                     toolName: update.name,
+                    ...(update.toolSurface ? { toolSurface: update.toolSurface } : {}),
+                    ...(update.toolSource ? { toolSource: update.toolSource } : {}),
+                    ...(update.toolIcon ? { toolIcon: update.toolIcon } : {}),
+                    ...(update.permissionsNeeded?.length
+                      ? { toolPermissionsNeeded: update.permissionsNeeded }
+                      : {}),
                     status:
                       running.interrupted && update.status === "failed"
                         ? "interrupted"
                         : update.status,
                     input:
                       update.input ?? (previous?.type === "dynamic_tool" ? previous.input : {}),
-                    ...(update.output === undefined ? {} : { output: update.output }),
+                    ...(images.length > 0
+                      ? {
+                          output: {
+                            content: [
+                              ...(update.output ? [{ type: "text", text: update.output }] : []),
+                              ...images.map((image) => ({ type: "image", ...image })),
+                            ],
+                          },
+                        }
+                      : update.output === undefined
+                        ? {}
+                        : { output: update.output }),
                     completedAt: update.status === "running" ? null : now,
                   };
                 } else if (update.type === "subagent") {

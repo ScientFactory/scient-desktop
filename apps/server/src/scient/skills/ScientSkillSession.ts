@@ -14,6 +14,7 @@ import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 
 import type { AgentSkillCatalogStatus } from "../operations/AgentInvocationContext.ts";
+import * as PersonalSkills from "./PersonalSkills.ts";
 import * as ScientSkillPolicy from "./ScientSkillPolicy.ts";
 import * as ScientSkillRegistry from "./ScientSkillRegistry.ts";
 import { resolveEffectiveUserSkillPolicies } from "./ScientSkillEffectivePolicy.ts";
@@ -118,6 +119,7 @@ export class ScientSkillSessionPlanner extends Context.Reference<ScientSkillSess
 const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
   const skillRegistry = yield* ScientSkillRegistry.ScientSkillRegistry;
   const policy = yield* ScientSkillPolicy.ScientSkillPolicy;
+  const personalSkills = yield* PersonalSkills.PersonalSkills;
 
   const resolveRelease = (
     registry: ScientSkillRegistry.ScientSkillCatalogView,
@@ -146,6 +148,8 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
   const resolve: ScientSkillSessionPlannerShape["resolve"] = Effect.fn(
     "ScientSkillSessionPlanner.resolve",
   )(function* (input) {
+    // Personal skills are folders the user or an agent may have just changed.
+    yield* personalSkills.refresh;
     const { snapshot, snapshotIsComplete } = yield* policy.readState;
     const registry = yield* skillRegistry.current;
     const diagnostics: ScientSkillSessionDiagnostic[] = [];
@@ -363,7 +367,3 @@ const make = Effect.fn("ScientSkillSessionPlanner.make")(function* () {
 });
 
 export const layer = Layer.effect(ScientSkillSessionPlanner, make());
-
-export const live = layer.pipe(
-  Layer.provideMerge(Layer.merge(ScientSkillRegistry.layer, ScientSkillPolicy.layer)),
-);

@@ -32,6 +32,7 @@ const ALL_MCP_CAPABILITIES = [
   /** Run code in Scient Compute sessions and read their results. */
   "compute",
   "skills:read",
+  "skills:write",
   "sources:read",
   "sources:write",
   // The handoff-summary reader retains its own read-only grant alongside native orchestration tools.

@@ -424,7 +424,8 @@ consumer's project. Activity names the plugin, variable and agent.
   them would make the server wait on the keychain at startup, and a denied or slow keychain must not
   stop every provider from starting. `keyLinks.ts` lets one follow an API-key account: providers read
   variables at start, so the value is copied in and copied again when the account changes.
-  **Keys used by Scient** lists them by name in the client (`keysInUse`); values stay on the server.
+  `accounts.keys.link` without an account keeps the variable's own key first: an API-key account
+  already holding the same key under that variable name, else a new one, then links to it.
   Removing an agent deletes its settings, so `keptAgentKeys.ts` first keeps each key typed into
   them (sensitive variables and secret fields) as an API-key account with `keptFrom` (agent kind,
   setting), unless it is linked to an account (even one since deleted, which stays deleted) or the
@@ -442,6 +443,10 @@ consumer's project. Activity names the plugin, variable and agent.
   tools that ask for a `secretRef`.
 - **Plain files** (`plainKeys.ts`): the page lists secrets in project `.env` files and shell profiles
   by name. Keeping one copies it into an API-key account and leaves the file alone.
+- **The API keys card** (`apiKeyRows` in the client) shows every key once, by name only: each API-key
+  account with the variables linked to it and the Custom models connection it uses, then Custom
+  models keys no account uses (kept: their store is Accounts'), agent variables not linked to an
+  existing account, and plain-file keys by name that no account's `envName` matches.
 - Server sign-in and session-signing material is never moved.
 
 ## Agent tools
@@ -534,9 +539,9 @@ writes a Netscape cookie jar. It needs the profile's `scriptSignIn`, on by defau
 
 ## The user's side
 
-- **Settings → Accounts & secrets**: the global switch and the accounts added on purpose, then one row
-  each for lists that grow on their own (Saved passwords, Apps and connectors managed in Claude,
-  Codex, Source Control or Extensions), each opening a dialog; then browser profiles, each opening
+- **Settings → Accounts & secrets**: the global switch and the sign-ins added on purpose, then one
+  row each for lists that grow on their own (Saved passwords, API keys, Apps and connectors you
+  sign in to in Claude, Codex, Droid, Source Control or Extensions), each opening a dialog; then browser profiles, each opening
   its sites (its sign-in rows with access and status, then other cookie sites), and password stores. The route stays `/settings/accounts`.
   Built from the existing settings components; labels say what a thing is and status appears only
   when something is wrong. It sits in the Agents group after Extensions. Profiles moved here from

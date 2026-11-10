@@ -17,9 +17,11 @@ const SNIPPET_LENGTH = 200;
 export type PullRequestWatchChange =
   | { readonly kind: "checks-failed"; readonly failed: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "checks-passed"; readonly count: number; readonly required: boolean }
+  | { readonly kind: "checks-awaiting-approval"; readonly checks: ReadonlyArray<PullRequestCheck> }
   | { readonly kind: "remarks"; readonly remarks: ReadonlyArray<PullRequestComment> }
   | { readonly kind: "no-checks"; readonly minutes: number }
-  | { readonly kind: "conflicting" };
+  | { readonly kind: "conflicting" }
+  | { readonly kind: "merge-queue-removed"; readonly reason: string | null };
 
 export interface PullRequestWatchReport {
   readonly changes: ReadonlyArray<PullRequestWatchChange>;
@@ -27,11 +29,24 @@ export interface PullRequestWatchReport {
   readonly exhausted: boolean;
 }
 
+const isFailedCheck = (check: PullRequestCheck) =>
+  check.status === "failure" || check.status === "cancelled";
+
+// A GitHub Actions job's URL extends its workflow run's URL; their names need not match.
+const workflowRunOf = (url: string | null) => url?.match(/^.*\/actions\/runs\/\d+/)?.[0] ?? null;
+const approvalKey = (check: PullRequestCheck) => workflowRunOf(check.url) ?? check.name;
+
 export function evaluatePullRequestWatch(
   watch: ThreadPullRequestWatch,
   detail: Pick<
     PullRequestDetail,
-    "capabilities" | "headSha" | "checks" | "mergeability" | "viewer" | "author"
+    | "capabilities"
+    | "headSha"
+    | "checks"
+    | "mergeability"
+    | "viewer"
+    | "author"
+    | "mergeQueueRemoval"
   >,
   remarks: ReadonlyArray<PullRequestComment> | null,
   now: number,
@@ -46,27 +61,65 @@ export function evaluatePullRequestWatch(
   let passed = headMoved ? false : watch.passed;
   let passedChecks = headMoved ? [] : watch.passedChecks;
   let owedChecks = headMoved ? [] : (watch.owedChecks ?? []);
-  if (detail.checks.length > 0) {
-    // Action-required checks need attention; a warning outcome is terminal but never a failure.
-    const failed = detail.checks.filter(
-      (check) =>
-        check.outcome !== "warning" &&
-        (check.status === "failure" ||
-          check.status === "cancelled" ||
-          check.status === "action-required"),
-    );
+  let awaitingApproval = headMoved ? [] : (watch.awaitingApproval ?? []);
+  let approvalAnnounced = headMoved ? false : (watch.approvalAnnounced ?? false);
+  // An unavailable approval read cannot establish success or that no checks exist.
+  const unread = detail.checks.some((check) => check.placeholder === true);
+  const checks = detail.checks.filter((check) => check.placeholder !== true);
+  // A warning outcome is terminal but never a failure.
+  const failed = checks.filter((check) => check.outcome !== "warning" && isFailedCheck(check));
+  const awaiting = checks.filter((check) => check.status === "action-required");
+  if (checks.length > 0) {
     const newlyFailed = failed.filter((check) => !failedChecks.includes(check.name));
     if (newlyFailed.length > 0) changes.push({ kind: "checks-failed", failed: newlyFailed });
+    if (!approvalAnnounced && awaiting.length > 0) {
+      changes.push({ kind: "checks-awaiting-approval", checks: awaiting });
+      approvalAnnounced = true;
+    }
     failedChecks = failed.map((check) => check.name);
 
-    const required = detail.checks.filter((check) => check.required === true);
-    const gate = required.length > 0 ? required : detail.checks;
-    // GitHub accepts neutral/skipped; terminal Forgejo warnings never satisfy the gate.
-    const passedNow = gate.every(
+    // Approval reads can omit gated runs. Keep each hold until its jobs finish.
+    const awaitingNow = [...new Set(awaiting.map(approvalKey))];
+    const nameUnfinished = (name: string) => {
+      const matching = checks.filter((check) => check.name === name);
+      return (
+        matching.length === 0 ||
+        matching.some((check) => check.status === "pending" || check.status === "action-required")
+      );
+    };
+    // GitHub deduplicates jobs across runs, so a visible pending job may hide one in an awaited run.
+    // A pending check without a URL could be such a job; one with another host's URL cannot.
+    const jobsPending = checks.some(
+      (check) =>
+        check.status === "pending" && (check.url === null || workflowRunOf(check.url) !== null),
+    );
+    const finished = new Set(
+      jobsPending
+        ? []
+        : checks
+            .filter((check) => check.status !== "action-required" && check.status !== "pending")
+            .map((check) => workflowRunOf(check.url)),
+    );
+    awaitingApproval = [
+      ...awaitingNow,
+      ...awaitingApproval.filter(
+        (key) =>
+          !awaitingNow.includes(key) &&
+          (workflowRunOf(key) === key ? !finished.has(key) : nameUnfinished(key)),
+      ),
+    ];
+  }
+  const required = checks.filter((check) => check.required === true);
+  const gate = required.length > 0 ? required : checks;
+  // GitHub accepts neutral/skipped; terminal Forgejo warnings never satisfy the gate.
+  const passedNow =
+    awaitingApproval.length === 0 &&
+    gate.every(
       (check) =>
         check.outcome !== "warning" &&
         (check.status === "success" || check.status === "skipped" || check.status === "neutral"),
     );
+  if (checks.length > 0 && !(unread && passedNow)) {
     const gateNames = gate.map((check) => check.name);
     const told = passed && passedChecks.length === 0 ? gateNames : passedChecks;
     // Required checks can finish between sweeps; detect new names. With no required checks, ignore advisory gate growth.
@@ -75,22 +128,23 @@ export function evaluatePullRequestWatch(
     // Only those are owed, so later advisory churn never wakes. One turned required is gate news.
     const owed =
       passedNow && passed
-        ? detail.checks
+        ? checks
             .filter((check) => check.required !== true && owedChecks.includes(check.name))
             .map((check) => check.name)
         : [];
     const settled =
       failed.length === 0 &&
-      detail.checks.every((check) => check.outcome === "warning" || check.status !== "pending");
+      awaitingApproval.length === 0 &&
+      checks.every((check) => check.outcome === "warning" || check.status !== "pending");
     const warningOwed = owed.some((name) =>
-      detail.checks.some((check) => check.name === name && check.outcome === "warning"),
+      checks.some((check) => check.name === name && check.outcome === "warning"),
     );
     owedChecks = owed;
     if (passedNow && (!passed || gateGrew)) {
       changes.push({ kind: "checks-passed", count: gate.length, required: required.length > 0 });
       owedChecks =
         required.length > 0
-          ? detail.checks
+          ? checks
               .filter(
                 (check) =>
                   check.required !== true &&
@@ -102,7 +156,7 @@ export function evaluatePullRequestWatch(
     } else if (settled && owed.length > 0) {
       // A warning settles an advisory obligation but never earns a passed-check notice.
       if (!warningOwed) {
-        changes.push({ kind: "checks-passed", count: detail.checks.length, required: false });
+        changes.push({ kind: "checks-passed", count: checks.length, required: false });
       }
       owedChecks = [];
     }
@@ -119,9 +173,9 @@ export function evaluatePullRequestWatch(
     const awaitedBefore = headMoved
       ? DateTime.formatIso(DateTime.makeUnsafe(now))
       : (watch.checksAwaitedSince ?? null);
-    checksAwaitedSince = detail.checks.length > 0 ? null : awaitedBefore;
+    checksAwaitedSince = checks.length > 0 ? null : awaitedBefore;
     const awaitedMs = checksAwaitedSince === null ? 0 : now - Date.parse(checksAwaitedSince);
-    if (awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
+    if (!unread && awaitedMs >= PULL_REQUEST_WATCH_NO_CHECKS_MS) {
       changes.push({ kind: "no-checks", minutes: Math.round(awaitedMs / 60_000) });
       checksAwaitedSince = null;
     }
@@ -156,6 +210,23 @@ export function evaluatePullRequestWatch(
   const conflicting =
     detail.mergeability === "unknown" ? toldConflict : detail.mergeability === "conflicting";
 
+  // The queue's checks run on a commit of its own, so its head can stay green after the queue
+  // drops it. After the first read, IDs avoid comparing the server clock with the host clock.
+  // The initial read uses whole seconds to exclude historical removals.
+  const removal = detail.mergeQueueRemoval;
+  if (
+    removal !== undefined &&
+    // Merging also records a removal, up to a second before the pull request reads as merged.
+    removal.reason !== "merged" &&
+    removal.id !== watch.mergeQueueRemovalId &&
+    (watch.mergeQueueRemovalId !== undefined ||
+      Date.parse(removal.removedAt) >= Math.floor(Date.parse(watch.startedAt) / 1000) * 1000)
+  ) {
+    changes.push({ kind: "merge-queue-removed", reason: removal.reason });
+  }
+  // Null records an empty baseline; historical IDs are saved without waking the watch.
+  const mergeQueueRemovalId = removal?.id ?? watch.mergeQueueRemovalId ?? null;
+
   const commentsOnly = changes.length > 0 && changes.every((change) => change.kind === "remarks");
   const progress = headMoved || (changes.length > 0 && !commentsOnly);
   const wakes = (progress ? 0 : watch.wakes) + (commentsOnly ? 1 : 0);
@@ -168,9 +239,12 @@ export function evaluatePullRequestWatch(
       passed,
       passedChecks,
       owedChecks,
+      awaitingApproval,
+      approvalAnnounced,
       remarksThrough,
       remarkIds,
       conflicting,
+      mergeQueueRemovalId,
       wakes,
       checksAwaitedSince,
     },
@@ -210,6 +284,11 @@ function changeLines(
             `  - ${check.name}${check.status === "failure" ? "" : ` (${check.status})`}${check.url ? ` ${check.url}` : ""}`,
         ),
       ];
+    case "checks-awaiting-approval":
+      return [
+        `- Checks are waiting for approval or action from a maintainer${context.commit}:`,
+        ...listed(change.checks, (check) => `  - ${check.name}${check.url ? ` ${check.url}` : ""}`),
+      ];
     case "checks-passed":
       return [
         `- All ${change.count} ${change.required ? "required " : ""}${change.count === 1 ? "check" : "checks"} passed${context.commit}.`,
@@ -230,15 +309,37 @@ function changeLines(
       ];
     case "conflicting":
       return [`- The branch now conflicts with ${context.baseBranch}.`];
+    case "merge-queue-removed":
+      return [
+        `- ${
+          (change.reason === null ? undefined : MERGE_QUEUE_REMOVALS.get(change.reason)) ??
+          `It was removed from the merge queue without merging${change.reason === null ? "" : `: ${change.reason}`}.`
+        }`,
+      ];
   }
 }
+
+const MERGE_QUEUE_REMOVALS = new Map([
+  [
+    "failed_checks",
+    "The merge queue removed it because its checks failed. They ran on the queue's own commit, not on this head, so look for the failures in the queue's runs.",
+  ],
+  [
+    "checks_timed_out",
+    "The merge queue removed it because its checks did not finish in time. They ran on the queue's own commit, not on this head, so look in the queue's runs for the check that did not finish.",
+  ],
+  ["merge_conflict", "The merge queue removed it because it conflicts with the queue's base."],
+  ["manual", "It was taken out of the merge queue by hand."],
+]);
 
 const SUMMARY: Record<PullRequestWatchChange["kind"], string> = {
   "checks-failed": "checks failed",
   "checks-passed": "checks passed",
+  "checks-awaiting-approval": "checks await approval",
   remarks: "new comments",
   "no-checks": "no checks reported",
   conflicting: "merge conflict",
+  "merge-queue-removed": "removed from merge queue",
 };
 
 export function pullRequestWatchMessage(input: {
@@ -262,7 +363,10 @@ export function pullRequestWatchMessage(input: {
       : "Look into each item and act on it as your task requires. This PR stays linked and watched, so do not link, watch, or list it again. End your turn when you are done, and Scient wakes you on the next change. When you hand the work back to the user, call unwatch_pull_request first so the thread returns to their inbox.",
   ].join("\n");
   const failed = changes.some(
-    (change) => change.kind === "checks-failed" || change.kind === "conflicting",
+    (change) =>
+      change.kind === "checks-failed" ||
+      change.kind === "conflicting" ||
+      change.kind === "merge-queue-removed",
   );
   const summary = changes.map((change) => SUMMARY[change.kind]);
   if (exhausted) summary.push("stopped watching");

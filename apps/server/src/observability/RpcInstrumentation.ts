@@ -292,6 +292,14 @@ const RPC_AGGREGATES = {
   // SCIENT-FORK:END
   [WS_METHODS.skillsSetProjectPreference]: "skills",
   [WS_METHODS.skillsSetUserActivation]: "skills",
+  // SCIENT-FORK:START — personal skills.
+  [WS_METHODS.skillsPersonalInspect]: "skills",
+  [WS_METHODS.skillsPersonalAdd]: "skills",
+  [WS_METHODS.skillsPersonalRemove]: "skills",
+  [WS_METHODS.skillsPersonalUndo]: "skills",
+  [WS_METHODS.skillsPersonalExport]: "skills",
+  [WS_METHODS.skillsPersonalImportable]: "skills",
+  // SCIENT-FORK:END
   [WS_METHODS.providerSkillsSetEnabled]: "providerSkills",
   // SCIENT-FORK:START — Scient Accounts: instrument sensitive account RPCs without payloads.
   [WS_METHODS.accountsSnapshot]: "accounts",

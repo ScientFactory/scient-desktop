@@ -145,6 +145,7 @@ it.effect.each(
                 "compute",
                 "sources:read",
                 "sources:write",
+                "skills:write",
                 "threads:read",
                 // SCIENT-FORK:START — Scient Accounts: keep credential-policy fixtures complete.
                 "accounts",
@@ -2927,6 +2928,7 @@ it.effect(
             "compute",
             "sources:read",
             "sources:write",
+            "skills:write",
             "threads:read",
             "accounts",
             "skills:read",

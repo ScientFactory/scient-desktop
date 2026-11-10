@@ -34,9 +34,21 @@ export {
   isStrictSemver,
   loadEmbeddedSkillRelease,
   loadSkillRelease,
+  MAX_RELEASE_BYTES,
+  MAX_RELEASE_FILES,
+  MAX_RESOURCE_BYTES,
   parseSkillReleaseManifest,
+  personalSkillReleaseFromFiles,
   readSkillResource,
 } from "./release.ts";
+export {
+  loadPersonalSkillCatalog,
+  MAX_PERSONAL_SKILL_BYTES,
+  MAX_PERSONAL_SKILLS,
+  type PersonalSkillCatalog,
+  type PersonalSkillDiagnostic,
+} from "./personalSkills.ts";
+export { prepareSkillDocument, skillNameFrom, type SkillDraft } from "./skillDraft.ts";
 export {
   loadProjectSkillCatalog,
   MAX_PROJECT_SKILLS,

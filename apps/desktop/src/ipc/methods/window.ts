@@ -45,6 +45,13 @@ import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
+// SCIENT-FORK:START — computer control permission panes.
+import {
+  computerControlPermissionGranted,
+  isComputerControlPermission,
+  openComputerControlPermissionPane,
+} from "../../scient/computerControl/computerControlPermissions.ts";
+// SCIENT-FORK:END
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import {
@@ -478,6 +485,12 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "darwin") return false;
     const owner = Electron.BrowserWindow.getFocusedWindow();
+    // SCIENT-FORK:START — computer control panes: macOS lists Scient itself, so no drag helper.
+    if (isComputerControlPermission(pane)) {
+      const outcome = yield* Effect.promise(() => openComputerControlPermissionPane(pane));
+      return outcome === "opened" || outcome === "deferred";
+    }
+    // SCIENT-FORK:END
     const opened = yield* shell.openSystemSettings(pane);
     if (opened && environment.isPackaged && pane === "full-disk-access") {
       const permissions = yield* MacPermissions.MacPermissions;
@@ -652,6 +665,9 @@ export const checkSystemPermission = DesktopIpc.makeIpcMethod({
     if (pane === "microphone") {
       return Electron.systemPreferences.getMediaAccessStatus("microphone") === "granted";
     }
+    // SCIENT-FORK:START — computer control panes.
+    if (isComputerControlPermission(pane)) return computerControlPermissionGranted(pane);
+    // SCIENT-FORK:END
     const check = yield* safariPermissionCheck;
     return yield* Effect.promise(check);
   }),

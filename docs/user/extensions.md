@@ -74,16 +74,17 @@ use its tools, exactly like a connected service.
 Choose **Add your own** at the top of **Extensions** (on Discover or Installed,
 or **Not here? Add your own** under search results), then:
 
-- **Choose a file** (a `.mcpb` bundle, the format Claude Desktop uses for its
-  extensions, or a `.zip`) or **Choose a folder**. You can also paste its path.
+- Drop a file or folder on the dialog, or use **Choose…** (a `.mcpb` bundle, the
+  format Claude Desktop uses for its extensions, a `.zip`, or a folder). You can
+  also paste its path.
   Scient works out how to run it and asks only what the connector needs, in plain
   words. A Scient plugin folder is installed as a plugin, and a pasted `https://`
   address adds a connected service that runs online.
-- Or pick it under **From your other apps**: servers you already set up in Claude
+- Or open **From your other apps**: servers you already set up in Claude
   Desktop, Claude Code, Codex or Cursor on that computer, or in a project's
   `.mcp.json`. One click adds it for every agent. Servers that only run inside
   their own app, such as an app's built-in helpers, are not listed.
-- **Advanced: run a command** takes a command such as `uvx my-mcp-server` and
+- **Run a command…** (for developers) takes a command such as `uvx my-mcp-server` and
   environment variables. Tick **Key** on a variable that holds a key.
 
 Servers in **Browse all MCP servers** that are published as npm or PyPI packages
@@ -158,6 +159,40 @@ with Claude.
 
 On **Installed**, the **Works with** filter shows only what a chosen agent can
 use.
+
+## Your skills
+
+A skill is guidance an agent follows for one kind of work: how your lab writes
+methods, how to review a draft, how to run a protocol. Skills you add are yours:
+they work in every project and with every agent.
+
+**Add a skill.** Choose **Add your own** (on the **Skills** tab it also lists
+skills you already have in Claude Code, Codex, Cursor or other agents, one click
+each). Give it any of these:
+
+- a skill folder, a `.zip` or `.skill` file, or a folder or archive with several
+  skills;
+- a `SKILL.md`, or a Markdown or text file;
+- a web address, such as a GitHub repository or folder with skills;
+- text you paste into the same box as a path or web address.
+
+Scient adds a complete skill at once and fixes small things itself, such as a
+missing name. When what you gave is not a complete skill yet, for example notes
+or a document, choose **Finish with an agent**: a new chat opens with a first
+message ready for you, with your material attached. Read it, add anything you
+want, and send it. The agent writes the skill and saves it for you.
+
+You can also ask any agent, in any chat, to make or improve a skill for you; it
+saves it the same way.
+
+**Use and change them.** A skill you add is on at once, from your next message.
+Under **Your skills** on **Installed** (Skills), each skill can be turned off or
+set to **$name only**. Its menu has **Improve with an agent**, **Show in
+folder**, **Export as .zip** (to share with classmates), **Undo last change**
+and **Remove**. When an agent changed a skill, **Undo** appears on its row.
+Removing a skill can be undone from the notice that follows. If you edit a
+skill's folder and it no longer loads, Scient lists it with what is wrong and
+offers **Fix with an agent**.
 
 ## Scient plugins and agents' own items
 

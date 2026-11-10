@@ -18,11 +18,10 @@ import {
   type EnvironmentId,
   type ProviderInstanceId,
 } from "@t3tools/contracts";
-import { Link } from "@tanstack/react-router";
+import { Link, useNavigate } from "@tanstack/react-router";
 import {
   ChevronRightIcon,
   EllipsisIcon,
-  FileKeyIcon,
   KeyRoundIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -88,13 +87,14 @@ import {
   accountManagePage,
   accountStatusLabel,
   activityLine,
+  type ApiKeyRow,
+  apiKeyRows,
   type GitHubIdentity,
   githubIdentities,
-  type KeyInUse,
   isBrowserSignIn,
   isSavedPassword,
-  keysInUse,
   mergeProfiles,
+  onlyIn,
   type ProviderRowsCache,
   steadyProviderRows,
   signedIntoUniversity,
@@ -122,7 +122,6 @@ const providerRowsCache: ProviderRowsCache = new Map();
 
 /** Where each kind of sign-in is managed, for the "Apps and connectors" links. */
 const MANAGED_IN = {
-  "custom-model": "Custom models",
   claude: "Claude",
   codex: "Codex",
   droid: "Droid",
@@ -137,12 +136,15 @@ export function AccountRow({
   onActivity,
   aside,
   menu,
+  detail,
 }: {
   account: AccountSummary;
   environmentId: EnvironmentId;
   canWrite: boolean;
   onEdit: () => void;
   onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
+  /** The line under the name, in place of what the account's kind says. */
+  detail?: string;
   /** Beside the access chip, such as which profile Main uses for the site. */
   aside?: ReactNode;
   /** More items for the row's menu. */
@@ -195,34 +197,38 @@ export function AccountRow({
           <span className="grid min-w-0 gap-1">
             <span className="truncate text-left">{account.name}</span>
             <span className="truncate text-xs text-muted-foreground">
-              {details.kind === "website" && (university || !account.secrets.password)
-                ? [
-                    university
-                      ? (university.institution?.domain ?? details.username ?? details.sites[0])
-                      : (details.username ?? "Browser sign-in"),
-                    profiles.find(
-                      (profile) =>
-                        profile.id ===
-                        (details.profileId ?? newTabProfileId ?? DEFAULT_BROWSER_PROFILE_ID),
-                    )?.name,
-                  ]
-                    .filter(Boolean)
-                    .join(" · ")
-                : isSavedPassword(account) && details.kind === "website"
-                  ? // The username tells two sign-ins to the same site apart.
-                    [details.username, account.name === site ? undefined : details.sites.join(", ")]
-                      .filter(Boolean)
-                      .join(" · ") || KIND_LABELS.website
-                  : [
-                      KIND_LABELS[details.kind],
-                      "sites" in details
-                        ? details.sites.join(", ")
-                        : details.kind === "database"
-                          ? details.host
-                          : details.tool,
+              {detail ??
+                (details.kind === "website" && (university || !account.secrets.password)
+                  ? [
+                      university
+                        ? (university.institution?.domain ?? details.username ?? details.sites[0])
+                        : (details.username ?? "Browser sign-in"),
+                      profiles.find(
+                        (profile) =>
+                          profile.id ===
+                          (details.profileId ?? newTabProfileId ?? DEFAULT_BROWSER_PROFILE_ID),
+                      )?.name,
                     ]
                       .filter(Boolean)
-                      .join(" · ")}
+                      .join(" · ")
+                  : isSavedPassword(account) && details.kind === "website"
+                    ? // The username tells two sign-ins to the same site apart.
+                      [
+                        details.username,
+                        account.name === site ? undefined : details.sites.join(", "),
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || KIND_LABELS.website
+                    : [
+                        KIND_LABELS[details.kind],
+                        "sites" in details
+                          ? details.sites.join(", ")
+                          : details.kind === "database"
+                            ? details.host
+                            : details.tool,
+                      ]
+                        .filter(Boolean)
+                        .join(" · "))}
             </span>
           </span>
           {statusLabel ? (
@@ -376,11 +382,11 @@ function ManagedAccountRow({
   environmentId,
 }: {
   row: {
-    kind: "custom-model" | "extension" | "claude" | "codex" | "droid";
+    kind: "extension" | "claude" | "codex" | "droid";
     instanceId?: ProviderInstanceId;
     name: string;
     detail?: string | undefined;
-    href: "/settings/source-control" | "/settings/custom-models" | "/settings/extensions/installed";
+    href: "/settings/extensions/installed";
   };
   environmentId: EnvironmentId;
 }) {
@@ -693,114 +699,154 @@ function ListDialog({
   );
 }
 
-/** The keys Scient itself runs on. Each is edited where it is used; this says what uses what. */
-function KeysInUseDialog({
-  keys,
-  snapshot,
-  environmentId,
-  canWrite,
-  onClose,
-}: {
-  keys: ReadonlyArray<KeyInUse>;
-  snapshot: AccountsSnapshot;
-  environmentId: EnvironmentId;
-  canWrite: boolean;
-  onClose: () => void;
-}) {
-  const link = useAccountCommand(accountsState.linkKey, environmentId);
-  const unlink = useAccountCommand(accountsState.unlinkKey, environmentId);
-  const savedKeys = snapshot.accounts.flatMap((account) =>
-    account.details.kind === "api-key" && account.secrets.token
-      ? [{ value: account.accountId, name: account.name }]
-      : [],
-  );
-  const linked = (key: KeyInUse) =>
-    snapshot.keyLinks?.find((item) =>
-      key.variables.some(
-        (target) => target.instanceId === item.instanceId && target.variable === item.variable,
-      ),
-    )?.accountId;
-  const follow = async (key: KeyInUse, accountId: string) => {
-    for (const target of key.variables) {
-      await (accountId
-        ? link({ ...target, accountId: AccountId.make(accountId) })
-        : unlink(target));
-    }
-  };
-  return (
-    <ListDialog title="Keys used by Scient" onClose={onClose}>
-      {keys.map((key) => (
-        <SettingsRow
-          key={`${key.href}:${key.name}`}
-          title={<span className="font-mono text-xs">{key.name}</span>}
-          description={key.usedBy.join(", ")}
-          control={
-            <span className="flex items-center gap-2">
-              {key.variables.length && savedKeys.length ? (
-                <ApiKeyAccountPicker
-                  aria-label={`Saved key for ${key.name}`}
-                  emptyLabel="Its own value"
-                  options={savedKeys}
-                  size="xs"
-                  value={linked(key) ?? ""}
-                  disabled={!canWrite}
-                  onChange={(event) => void follow(key, event.currentTarget.value)}
-                />
-              ) : null}
-              <Button size="xs" variant="outline" render={<Link to={key.href} />} onClick={onClose}>
-                Open
-              </Button>
-            </span>
-          }
-        />
-      ))}
-    </ListDialog>
-  );
-}
+/** The line under a key's name: its service and what uses it. */
+const keyDetail = (row: ApiKeyRow) =>
+  [row.service, [...new Set(row.uses.map((use) => use.label))].join(", ")]
+    .filter(Boolean)
+    .join(" · ");
 
-/** Keys in plain files. Keeping one copies it into Accounts; the file stays as it is. */
-function PlainKeysDialog({
-  keys,
+/** Every key, wherever it is stored. Keeping one in Accounts makes it the copy its users follow. */
+function ApiKeysDialog({
+  rows,
   roots,
   environmentId,
   canWrite,
+  onEdit,
+  onActivity,
   onKept,
   onClose,
 }: {
-  keys: ReadonlyArray<AccountPlainKey>;
+  rows: ReadonlyArray<ApiKeyRow>;
   roots: ReadonlyArray<string>;
   environmentId: EnvironmentId;
   canWrite: boolean;
-  onKept: (key: AccountPlainKey) => void;
+  onEdit: (account: AccountSummary) => void;
+  onActivity: (entries: ReadonlyArray<AccountActivityEntry>) => void;
+  onKept: (file: string, name: string) => void;
   onClose: () => void;
 }) {
+  const navigate = useNavigate();
   const keeping = useRef(new Set<string>());
-  const keep = useAccountCommand(accountsState.keepPlainKey, environmentId);
+  const link = useAccountCommand(accountsState.linkKey, environmentId);
+  const unlink = useAccountCommand(accountsState.unlinkKey, environmentId);
+  const keepPlainKey = useAccountCommand(accountsState.keepPlainKey, environmentId);
+  const savedKeys = rows.flatMap((row) =>
+    row.stored === "accounts" && row.account.secrets.token
+      ? [{ value: row.account.accountId, name: row.name }]
+      : [],
+  );
+  const open = (href: ApiKeyRow["uses"][number]["href"]) => {
+    onClose();
+    void navigate({ to: href });
+  };
+  const openLabel = (label: string) =>
+    label === "Custom models" ? "Open Custom models" : `Open ${label} settings`;
+  const keep = async (row: ApiKeyRow) => {
+    if (keeping.current.has(row.id)) return;
+    keeping.current.add(row.id);
+    const result =
+      row.stored === "agent"
+        ? await link({ instanceId: row.instanceId, variable: row.variable })
+        : row.stored === "files"
+          ? await keepPlainKey({ roots, file: row.file, name: row.name })
+          : undefined;
+    keeping.current.delete(row.id);
+    if (!result?.ok) return;
+    if (row.stored === "files") onKept(row.file, row.name);
+    toastManager.add({ type: "success", title: `Kept ${row.name} in Accounts` });
+  };
   return (
-    <ListDialog title="Keys in plain files" onClose={onClose}>
-      {keys.map((key) => (
-        <SettingsRow
-          key={`${key.file}:${key.name}`}
-          title={<span className="font-mono text-xs">{key.name}</span>}
-          description={key.file}
-          control={
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={!canWrite || key.kept}
-              onClick={async () => {
-                if (keeping.current.has(key.name)) return;
-                keeping.current.add(key.name);
-                const result = await keep({ roots, file: key.file, name: key.name });
-                keeping.current.delete(key.name);
-                if (result.ok) onKept(key);
-              }}
-            >
-              {key.kept ? "In Accounts" : "Keep in Accounts"}
-            </Button>
-          }
-        />
-      ))}
+    <ListDialog title="API keys" onClose={onClose}>
+      {rows.map((row) =>
+        row.stored === "accounts" ? (
+          <AccountRow
+            key={row.id}
+            account={row.account}
+            environmentId={environmentId}
+            canWrite={canWrite}
+            onEdit={() => onEdit(row.account)}
+            onActivity={onActivity}
+            detail={keyDetail(row) || KIND_LABELS["api-key"]}
+            menu={
+              <>
+                {[...new Map(row.uses.map((use) => [use.label, use.href])).entries()].map(
+                  ([label, href]) => (
+                    <MenuItem key={label} onClick={() => open(href)}>
+                      {openLabel(label)}
+                    </MenuItem>
+                  ),
+                )}
+                {row.uses.flatMap(({ label, link: target }) =>
+                  target
+                    ? [
+                        <MenuItem
+                          key={`${target.instanceId}:${target.variable}`}
+                          onClick={() => void unlink(target)}
+                        >
+                          Stop using in {label}
+                        </MenuItem>,
+                      ]
+                    : [],
+                )}
+              </>
+            }
+          />
+        ) : (
+          <SettingsRow
+            key={row.id}
+            {...(row.uses[0] ? clickableAccountRow(() => open(row.uses[0]!.href)) : {})}
+            aria-label={row.uses[0] ? `Open where ${row.name} is used` : undefined}
+            title={
+              <span className="flex min-w-0 items-center gap-3">
+                <span className="flex size-10 shrink-0 items-center justify-center rounded-[25%] bg-muted">
+                  <KeyRoundIcon className="size-4 text-muted-foreground" />
+                </span>
+                <span className="grid min-w-0 gap-1">
+                  <span className="truncate text-left">{row.name}</span>
+                  <span className="truncate text-xs text-muted-foreground">
+                    {onlyIn(row) ?? keyDetail(row)}
+                  </span>
+                </span>
+              </span>
+            }
+            control={
+              <span className="flex items-center gap-2">
+                {row.stored === "agent" && savedKeys.length ? (
+                  <span className="w-36 shrink-0">
+                    <ApiKeyAccountPicker
+                      aria-label={`Key in Accounts for ${row.name}`}
+                      emptyLabel="Its own key"
+                      options={savedKeys}
+                      size="xs"
+                      value=""
+                      disabled={!canWrite}
+                      onChange={(event) => {
+                        const accountId = event.currentTarget.value;
+                        if (accountId)
+                          void link({
+                            instanceId: row.instanceId,
+                            variable: row.variable,
+                            accountId: AccountId.make(accountId),
+                          });
+                      }}
+                    />
+                  </span>
+                ) : null}
+                {row.stored === "agent" || row.stored === "files" ? (
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    disabled={!canWrite}
+                    onClick={() => void keep(row)}
+                  >
+                    Keep in Accounts
+                  </Button>
+                ) : null}
+              </span>
+            }
+          />
+        ),
+      )}
     </ListDialog>
   );
 }
@@ -873,15 +919,7 @@ function AccountsContent({
 }) {
   const chromeSignIn = useChromeSignIn(environmentId);
   const [dialog, setDialog] = useState<
-    | "add"
-    | "import"
-    | "1password"
-    | "passwords"
-    | "apps"
-    | "sign-in-codes"
-    | "keys"
-    | "plain-keys"
-    | null
+    "add" | "import" | "1password" | "passwords" | "apps" | "sign-in-codes" | "api-keys" | null
   >(null);
   const [editing, setEditing] = useState<AccountSummary | null>(null);
   const [checking, setChecking] = useState(false);
@@ -904,11 +942,16 @@ function AccountsContent({
     };
   }, [canWrite, scannedRoots]);
   const serverSettings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
-  const keys = keysInUse(
-    serverSettings?.providerInstances ?? {},
-    snapshot.customModelKeys,
-    (driver) => PROVIDER_DISPLAY_NAMES[driver as keyof typeof PROVIDER_DISPLAY_NAMES] ?? driver,
-  );
+  const keys = apiKeyRows({
+    accounts: snapshot.accounts,
+    keyLinks: snapshot.keyLinks,
+    instances: serverSettings?.providerInstances ?? {},
+    customModelKeys: snapshot.customModelKeys,
+    plainKeys,
+    driverName: (driver) =>
+      PROVIDER_DISPLAY_NAMES[driver as keyof typeof PROVIDER_DISPLAY_NAMES] ?? driver,
+  });
+  const keysToKeep = keys.filter((row) => onlyIn(row) !== undefined).length;
   const checkAll = useAccountCommand(accountsState.check, environmentId);
   const profiles = mergeProfiles(
     useClientSettings((settings) => settings.browserProfiles),
@@ -938,19 +981,9 @@ function AccountsContent({
   const savedPasswords = snapshot.accounts.filter(isSavedPassword);
   const importingPasswords = useImportingPasswords();
   const githubRows = githubIdentities(snapshot.managedElsewhere, inventory.data?.connectors ?? []);
+  // Connections you sign in to. GitHub's are its identities above; Custom models' are API keys.
   const managedRows = [
     ...providerRows,
-    // GitHub's rows are its identities above.
-    ...(snapshot.managedElsewhere?.flatMap((row) =>
-      row.kind === "custom-model" ? [{ ...row, kind: row.kind }] : [],
-    ) ??
-      snapshot.customModelKeys.map((connection) => ({
-        kind: "custom-model" as const,
-        id: connection.connectionId,
-        name: connection.name,
-        detail: connection.origin,
-        href: "/settings/custom-models" as const,
-      }))),
     // Only connectors you are signed in to; a key bound from Accounts is already its own row.
     ...(inventory.data?.connectors.filter(holdsOwnSignIn).map((connector) => ({
       kind: "extension" as const,
@@ -1042,7 +1075,12 @@ function AccountsContent({
           />
         ) : null}
         {snapshot.accounts
-          .filter((account) => !isSavedPassword(account) && !isBrowserSignIn(account))
+          .filter(
+            (account) =>
+              !isSavedPassword(account) &&
+              !isBrowserSignIn(account) &&
+              account.details.kind !== "api-key",
+          )
           .map((account) => (
             <AccountRow
               key={account.accountId}
@@ -1064,19 +1102,14 @@ function AccountsContent({
         {keys.length ? (
           <ListRow
             icon={<KeyRoundIcon />}
-            title="Keys used by Scient"
-            detail={keys.map((key) => key.name).join(", ")}
-            onOpen={() => setDialog("keys")}
-          />
-        ) : null}
-        {plainKeys.some((key) => !key.kept) ? (
-          <ListRow
-            icon={<FileKeyIcon />}
-            title="Keys in plain files"
-            detail={[...new Set(plainKeys.filter((key) => !key.kept).map((key) => key.name))].join(
-              ", ",
-            )}
-            onOpen={() => setDialog("plain-keys")}
+            title="API keys"
+            detail={[
+              keys.length === 1 ? "1 key" : `${keys.length} keys`,
+              keysToKeep ? `${keysToKeep} not in Accounts` : undefined,
+            ]
+              .filter(Boolean)
+              .join(" · ")}
+            onOpen={() => setDialog("api-keys")}
           />
         ) : null}
         {isMacPlatform(navigator.platform) ? (
@@ -1155,7 +1188,7 @@ function AccountsContent({
           onClose={() => {
             setEditing(null);
             // Editing from a list returns to it.
-            if (dialog !== "passwords") setDialog(null);
+            if (dialog !== "passwords" && dialog !== "api-keys") setDialog(null);
           }}
         />
       ) : null}
@@ -1178,26 +1211,21 @@ function AccountsContent({
           onClose={() => setDialog(null)}
         />
       ) : null}
-      {dialog === "plain-keys" ? (
-        <PlainKeysDialog
-          keys={plainKeys}
+      {dialog === "api-keys" ? (
+        <ApiKeysDialog
+          rows={keys}
           roots={projectRoots}
           environmentId={environmentId}
           canWrite={canWrite}
-          onKept={(key) =>
+          onEdit={setEditing}
+          onActivity={setActivity}
+          onKept={(file, name) =>
             setPlainKeys((current) =>
-              current.map((item) => (item.name === key.name ? { ...item, kept: true } : item)),
+              current.map((item) =>
+                item.file === file && item.name === name ? { ...item, kept: true } : item,
+              ),
             )
           }
-          onClose={() => setDialog(null)}
-        />
-      ) : null}
-      {dialog === "keys" ? (
-        <KeysInUseDialog
-          keys={keys}
-          snapshot={snapshot}
-          environmentId={environmentId}
-          canWrite={canWrite}
           onClose={() => setDialog(null)}
         />
       ) : null}

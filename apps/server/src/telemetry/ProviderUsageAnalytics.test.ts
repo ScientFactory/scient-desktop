@@ -148,7 +148,7 @@ describe("provider usage reporting", () => {
         const requests = recorded.filter(([event]) => event === "provider.request.completed");
         expect(recorded.filter(([event]) => event === "provider.turn.completed")).toHaveLength(5);
         expect(requests).toHaveLength(2);
-        // The whole payload: no run, turn, or thread ids, prompts, or raw model names.
+        // The whole payload excludes run, turn, and thread ids and prompts.
         expect(requests[0]?.[1]).toEqual({
           reportVersion: 2,
           provider: "codex",
@@ -156,6 +156,8 @@ describe("provider usage reporting", () => {
           terminalStatus: "completed",
           lifecycleObserved: true,
           model: "gpt-6-sol",
+          mainModel: "gpt-6-sol",
+          modelCount: 1,
           effort: "xhigh",
           serviceTier: "fast",
           runtimeMode: "full-access",
