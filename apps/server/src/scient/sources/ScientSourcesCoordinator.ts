@@ -7,6 +7,8 @@ import {
   applyResolvedSourceMetadata,
   creatorDisplayName,
   resolveSourceIdentifier,
+  sourceIdentifierLabel as identifierLabel,
+  sourceIdentifierRegistryName as registryName,
   titlesAgree,
   type ResolveSourceIdentifier,
 } from "./SourceIdentifierResolver.ts";
@@ -194,12 +196,6 @@ export type AgentSourceAddResult =
       readonly resolved: ResolvedSourceSummary;
       readonly message: string;
     };
-
-const identifierLabel = (identifier: ScientSourceIdentifier) =>
-  `${identifier.scheme === "doi" ? "DOI" : "PMID"} ${identifier.value}`;
-
-const registryName = (identifier: ScientSourceIdentifier) =>
-  identifier.scheme === "doi" ? "doi.org" : "PubMed";
 
 export async function addAgentSource(
   input: {
