@@ -59,8 +59,14 @@ It first uses metadata embedded in the file. When the PDF contains one clear
 DOI or explicitly labelled PMID, Scient can use that identifier to retrieve
 better bibliographic metadata or an abstract from PubMed, Crossref, or Europe
 PMC. It does not use fuzzy title matching, OCR, or an AI model to invent
-missing facts. A PDF remains importable when metadata cannot be resolved; the
-unknown fields stay visible for correction.
+missing facts. The date a PDF file was made is not taken as the publication
+date; only a publication date the publisher embedded counts. A PDF remains
+importable when metadata cannot be resolved; the unknown fields stay visible
+for correction.
+
+To get faster, more reliable answers from Crossref, OpenAlex and Unpaywall, add
+a contact email in **Settings ▸ Documents ▸ Library**. Scient sends it only to
+those services, and sends no email while the field is empty.
 
 For remote projects, the selected PDFs are transferred to the selected project
 environment. Metadata services receive only the exact public identifier used
@@ -116,9 +122,21 @@ first because refreshed fields can replace manual corrections. Scient blocks
 conflicting exact identifiers and asks before accepting a possible duplicate
 as a separate source.
 
-Use **Remove from Sources** from the source actions to remove the project-owned
-record. Scient asks for confirmation. Removing it never changes Zotero, and an
-imported PDF is retained when another source in the project still uses it.
+Use **Move to Trash** from the source actions to remove a source. Choose
+**Undo** in the message that appears to put it straight back, or open the
+trash button at the top of the Library later to restore it. Its PDFs stay in
+the project while it is in the trash. **Empty trash** deletes the sources in
+it for good, with their saved versions and any PDF no other source uses.
+Removing a source never changes Zotero.
+
+Every change to a source is kept as a version. Choose **History** from the
+source actions to see who changed what and when, and **Restore** an earlier
+version; restoring saves it as the newest version, so nothing is lost. Scient
+keeps the first version and the latest 49 of each source. A PDF removed from a
+source stays available to restore until the trash is emptied.
+
+If a source's file in the project cannot be read, the Library still lists the
+others and says which file it skipped.
 
 ## Copy a formatted reference
 
@@ -135,11 +153,13 @@ unknown values.
 
 In a project conversation, an agent can search and read the same project-owned
 library, maintain source notes, update metadata, attach or detach a project PDF,
-remove a source, add a new one, import a reference file from the project
-(`scient_sources_import_file`) and write the Library to a project file in any
-of the four formats (`scient_sources_export`). An agent's file import reports
-the same unreadable entries and fields not kept, and an export never replaces
-an existing file unless asked to.
+move a source to the trash and restore it, restore an earlier version, or add a
+new one. Everything an agent changes is credited to it and can be undone the
+same way as your own changes. An agent can also import a reference file from
+the project (`scient_sources_import_file`), which reports the same unreadable
+entries and fields not kept, and write the Library to a project file in any of
+the four formats (`scient_sources_export`), never replacing an existing file
+unless asked to.
 
 Before an agent adds a source, Scient looks up its DOI at doi.org or its PMID in
 PubMed. If the identifier does not exist, or it belongs to a paper with a
@@ -150,6 +170,11 @@ that an agent added it and whether its identifier was verified, not yet checked
 because the registry could not be reached, or missing. After an agent changes a
 source, its details say "Edited by agent". You can edit or remove these sources
 like any other.
+
+Results from the PubMed, Semantic Scholar and OpenAlex connectors become
+sources the same way: the agent passes the paper's PMID, Semantic Scholar ID or
+OpenAlex ID, and Scient fetches the record and checks it at the DOI's registry.
+You can paste those IDs or links when you add by identifier, too.
 
 When you ask an agent to get papers for your library, it fetches them with
 `scient_paper_get` or `scient_papers_queue` and files each PDF on the paper's

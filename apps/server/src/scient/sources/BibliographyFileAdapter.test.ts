@@ -229,5 +229,6 @@ describe("reference file export", () => {
     await expect(write("../escape.bib", "x")).rejects.toThrow("inside the project");
     await expect(write(".scient/sources/records/x.json", "x")).rejects.toThrow("outside .scient");
     await expect(write("missing/library.bib", "x")).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(write("references.bib", "x")).rejects.toThrow("kept up to date from the Library");
   });
 });

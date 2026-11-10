@@ -7,6 +7,7 @@ import {
   retryEnvironmentScientSourcesImport,
   discardEnvironmentLocalSourcePdfs,
   getEnvironmentScientSourceAttachmentPreview,
+  searchEnvironmentScientSourcesFullText,
   getEnvironmentScientSourceDetail,
   getEnvironmentScientSourceJournalIcon,
   getEnvironmentScientSourcesOverview,
@@ -16,6 +17,12 @@ import {
   preflightEnvironmentZoteroImport,
   refreshEnvironmentScientSourceMetadata,
   removeEnvironmentScientSource,
+  deleteEnvironmentScientSourcesPermanently,
+  listEnvironmentScientSourceRevisions,
+  listEnvironmentScientSourceTrash,
+  restoreEnvironmentScientSource,
+  revertEnvironmentScientSource,
+  syncEnvironmentScientBibliography,
   updateEnvironmentScientSourceMetadata,
   updateEnvironmentScientSourceNote,
   uploadEnvironmentLocalSourcePdf,
@@ -25,11 +32,18 @@ import {
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type {
   EnvironmentId,
+  ScientManagedBibliographyFileName,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
   ScientSourcesExportRequest,
+  ScientSourceRestoreRequest,
+  ScientSourceRevertRequest,
+  ScientSourceRevisionsRequest,
+  ScientSourcesPermanentDeletionRequest,
+  ScientSourcesTrashRequest,
+  ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 
@@ -93,6 +107,57 @@ export function removeScientSource(
   );
 }
 
+export async function searchScientSourcesFullText(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly query: string },
+) {
+  return runtime.runPromise(
+    searchEnvironmentScientSourcesFullText({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function readScientSourceTrash(
+  environmentId: EnvironmentId,
+  input: ScientSourcesTrashRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientSourceTrash({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function restoreScientSource(
+  environmentId: EnvironmentId,
+  input: ScientSourceRestoreRequest,
+) {
+  return runtime.runPromise(
+    restoreEnvironmentScientSource({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function deleteScientSourcesPermanently(
+  environmentId: EnvironmentId,
+  input: ScientSourcesPermanentDeletionRequest,
+) {
+  return runtime.runPromise(
+    deleteEnvironmentScientSourcesPermanently({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function readScientSourceRevisions(
+  environmentId: EnvironmentId,
+  input: ScientSourceRevisionsRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientSourceRevisions({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function revertScientSource(environmentId: EnvironmentId, input: ScientSourceRevertRequest) {
+  return runtime.runPromise(
+    revertEnvironmentScientSource({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
 export async function readScientSourceAttachmentPreview(
   environmentId: EnvironmentId,
   input: { readonly root: string; readonly sourceId: string; readonly attachmentId: string },
@@ -119,8 +184,8 @@ export async function readScientSourceJournalIcon(
   return url ? { ...result.icon, url } : null;
 }
 
-export function readZoteroStatus(environmentId: EnvironmentId) {
-  return runtime.runPromise(getEnvironmentZoteroStatus(prepared(environmentId)));
+export function readZoteroStatus(environmentId: EnvironmentId, connection?: ZoteroConnection) {
+  return runtime.runPromise(getEnvironmentZoteroStatus(prepared(environmentId), connection));
 }
 
 export function readZoteroLibrary(
@@ -130,6 +195,7 @@ export function readZoteroLibrary(
     readonly query: string;
     readonly start: number;
     readonly limit: number;
+    readonly connection?: ZoteroConnection;
   },
 ) {
   return runtime.runPromise(
@@ -137,13 +203,17 @@ export function readZoteroLibrary(
   );
 }
 
-export function readZoteroCollections(environmentId: EnvironmentId) {
-  return runtime.runPromise(listEnvironmentZoteroCollections(prepared(environmentId)));
+export function readZoteroCollections(environmentId: EnvironmentId, connection?: ZoteroConnection) {
+  return runtime.runPromise(listEnvironmentZoteroCollections(prepared(environmentId), connection));
 }
 
 export function preflightZoteroItems(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly itemKeys: ReadonlyArray<string> },
+  input: {
+    readonly root: string;
+    readonly itemKeys: ReadonlyArray<string>;
+    readonly connection?: ZoteroConnection;
+  },
 ) {
   return runtime.runPromise(
     preflightEnvironmentZoteroImport({ prepared: prepared(environmentId), ...input }),
@@ -157,6 +227,7 @@ export function beginZoteroItemsImport(
     readonly operationId: string;
     readonly itemKeys: ReadonlyArray<string>;
     readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+    readonly connection?: ZoteroConnection;
   },
 ) {
   return runtime.runPromise(
@@ -170,6 +241,7 @@ export function beginZoteroScopeImport(
     readonly root: string;
     readonly operationId: string;
     readonly scope: ZoteroImportScope;
+    readonly connection?: ZoteroConnection;
   },
 ) {
   return runtime.runPromise(
@@ -266,5 +338,17 @@ export function exportScientSources(
 ) {
   return runtime.runPromise(
     exportEnvironmentScientSources({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function syncScientBibliography(
+  environmentId: EnvironmentId,
+  input: {
+    readonly root: string;
+    readonly replaceEdited?: ReadonlyArray<ScientManagedBibliographyFileName>;
+  },
+) {
+  return runtime.runPromise(
+    syncEnvironmentScientBibliography({ prepared: prepared(environmentId), ...input }),
   );
 }

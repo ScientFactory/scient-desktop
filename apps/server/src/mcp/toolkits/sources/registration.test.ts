@@ -20,6 +20,7 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
     expect(sourceTools.map(({ tool }) => tool.name).sort()).toEqual([
       "scient_sources_add",
       "scient_sources_attach_pdf",
+      "scient_sources_bibliography",
       "scient_sources_detach_pdf",
       "scient_sources_export",
       "scient_sources_get",
@@ -29,6 +30,8 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       "scient_sources_quote_check",
       "scient_sources_read_text",
       "scient_sources_remove",
+      "scient_sources_restore",
+      "scient_sources_revert",
       "scient_sources_search",
       "scient_sources_update",
     ]);
@@ -50,11 +53,14 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       [
         "scient_sources_add",
         "scient_sources_attach_pdf",
+        "scient_sources_bibliography",
         "scient_sources_detach_pdf",
         "scient_sources_export",
         "scient_sources_import_file",
         "scient_sources_note_update",
         "scient_sources_remove",
+        "scient_sources_restore",
+        "scient_sources_revert",
         "scient_sources_update",
       ].includes(tool.name),
     );

@@ -24,6 +24,7 @@ import {
 } from "./paperLookup.ts";
 import { buttonSteps, routeSteps, type RouteStep, type WorkedRoute } from "./paperRoutes.ts";
 import { pdfVerdict, readPdfFacts } from "./pdfCheck.ts";
+import { readResearchKeys } from "../sources/researchKeys.ts";
 
 /** Longest one route of one paper may take, so a stalled publisher can't hold up the rest. */
 const ROUTE_DEADLINE = "90 seconds";
@@ -347,7 +348,7 @@ export const fetchOnePaper = Effect.fn("Papers.fetchOne")(function* (
   savedBefore: (paper: Paper) => Effect.Effect<string | undefined>,
 ) {
   const found = yield* Effect.gen(function* () {
-    const paper = yield* lookUpPaper(asked);
+    const paper = yield* lookUpPaper(asked, yield* readResearchKeys());
     if (!paper?.doi || asked.url) return paper;
     const articleUrl = yield* articleAddress(paper.doi);
     return articleUrl ? { ...paper, articleUrl } : paper;

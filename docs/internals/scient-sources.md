@@ -89,7 +89,8 @@ their own subtree:
 .scient/sources/
 ├── records/                 one versioned JSON record per source
 ├── files/sha256/<prefix>/   content-addressed PDF copies
-├── history/<source-id>/     immutable prior metadata revisions
+├── history/<source-id>/     kept prior revisions (first one plus the latest 49)
+├── trash/<source-id>.json   removed sources, whole, until restored or deleted
 ├── operations/              resumable import state
 ├── receipts/                terminal import evidence
 └── staging/                 bounded temporary copies
@@ -158,7 +159,10 @@ malformed optional field cannot discard already readable metadata or prevent
 first-page identifier extraction. It reads bounded document metadata and text
 from at most the first two pages. A single unambiguous DOI or explicitly
 labelled PMID may be resolved through the public DOI CSL JSON or NCBI ESummary
-endpoint for bibliographic identity.
+endpoint for bibliographic identity. The embedded date counts as the
+publication date only from XMP `prism:coverDate` or `prism:publicationDate`;
+the document-info `CreationDate` and Dublin Core `dc:date` describe the file
+and are ignored. Records imported before this keep their stored date.
 
 After a Zotero or local-PDF adapter has built its candidate, a shared
 provider-neutral enrichment seam may fill a missing abstract using only that
@@ -171,10 +175,28 @@ metadata, or a researcher is never replaced. Retrieved abstracts retain their
 service, exact identifier, source field, and retrieval time in field
 provenance.
 
+Registry lookups read the user's research keys from Accounts through
+`researchKeys.ts`: the API-key row whose sites match the service (OpenAlex,
+Semantic Scholar, NCBI, and the Unpaywall email), skipping a row set to Off.
+Tools take the resolver through `keyedIdentifierLookup`, which passes the keys
+as `Redacted` values; the Effect HTTP client gets them as `Redacted` URL
+parameters so spans show them redacted. Paper downloads send the OpenAlex key
+and ask Unpaywall only when OpenAlex has no free copy.
+
 All NCBI E-utilities requests share one serialized, interval-limited lane.
 The lane remains owned until the active network request settles and releases
 in `finally`, preventing overlapping requests and avoiding a dead lane after a
 failure.
+
+Every registry request goes through `metadataHttp.ts`, which sends the
+versioned `METADATA_USER_AGENT`. The Library setting
+`scientSources.registryContactEmail` (Settings ▸ Documents) is followed by
+`RegistryContact.layer`; when it holds an address, requests to
+`api.crossref.org` and `api.openalex.org` (including redirect hops, such as
+doi.org to Crossref) carry it as the `mailto` parameter and in the
+User-Agent. No other host receives it, and an empty or malformed value sends
+nothing. Adapters that pass the address another way (Unpaywall's `email`)
+read `registryContactEmail()`; none keeps its own setting.
 
 All metadata responses are HTTPS-only, time- and size-bounded, and
 schema-decoded. Only the exact identifier leaves the project environment; the
@@ -222,7 +244,7 @@ italic controls in this slice. Their text direction is resolved by the browser
 from the note itself, so Hebrew, Arabic, English, and mixed research notes do
 not inherit an unrelated application direction.
 
-Provider agents use the same canonical store through a bounded eight-tool
+Provider agents use the same canonical store through a bounded ten-tool
 Sources MCP toolkit:
 
 - `scient_sources_list` and `scient_sources_get` are bounded, read-only views;
@@ -232,8 +254,13 @@ Sources MCP toolkit:
   project-relative PDF after checking its identifier (below);
 - `scient_sources_attach_pdf` and `scient_sources_detach_pdf` change canonical
   attachments without exposing host paths; and
-- `scient_sources_remove` removes a canonical source only through the same
-  revisioned removal path as the UI.
+- `scient_sources_remove` moves a source to the trash through the same
+  revisioned removal path as the UI, `scient_sources_list` with `inTrash`
+  lists the trash, and `permanent` deletes a trashed source for good;
+- `scient_sources_restore` puts a trashed source back; and
+- `scient_sources_revert` makes a kept revision current again.
+  `scient_sources_get` returns the kept revisions with who saved each and which
+  fields changed.
 
 Paper downloads reach the store through `paperIntake.ts`. A `scient_paper_get`
 or `scient_papers_queue` request with `addToLibrary` (or `sourceId`) needs the
@@ -264,6 +291,16 @@ source as given with `unchecked`; a source without a DOI or PMID is
 `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. Only agent adds record verification.
 
+Connector results reach the Library as identifiers, not copied metadata. The
+resolver also takes an OpenAlex work ID (`openalex`, `W…`) and a Semantic
+Scholar paper ID (`s2`, a 40-character paper ID or `CorpusId:N`), tried after
+every registry scheme. `ConnectorIdentifierLookup.ts` reads the catalogue entry
+(OpenAlex at 10 requests a second, Semantic Scholar at one), follows its DOI,
+then PMID, then arXiv ID through the ordinary scheme lookups, and keeps the
+catalogue ID among the record's identifiers. Only when no registry has the work
+does the catalogue's own record stand, with `openalex` or `semantic-scholar`
+provenance. A catalogue that does not know the ID returns not found.
+
 Agent-added sources are not held for approval. Trust comes from that check,
 from attribution (origin actor, field provenance, `updatedBy` and revision
 history, all shown in the Sources panel) and from ordinary edit and removal.
@@ -290,17 +327,39 @@ imported PDF.
 
 Source removal uses the same canonical-root write lane as imports and metadata
 edits. It requires the revision the researcher reviewed and is idempotent when
-a successful response is lost. The current record is removed before attachment
-cleanup, so a crash may leave a harmless unreferenced immutable blob but cannot
-leave another source pointing to a deleted file. A content-addressed PDF is
-deleted only when no remaining source record references its portable relative
-path. Prior immutable metadata revisions remain valid project evidence; if the
-same external source is deliberately imported again later, its record continues
-after the last stored revision so a subsequent edit cannot collide with that
-history. The UI exposes removal only from discreet source actions on the row or
-details page and always confirms that Zotero remains unchanged. The row's
-secondary-click menu uses the existing host context-menu bridge; its actions and
-confirmation remain owned by the Sources surface.
+a successful response is lost. Removal saves the current revision to history,
+writes the whole record to `trash/<source-id>.json` with who removed it and
+when, and only then deletes the live record, so a crash leaves the source
+listed rather than lost. Restore writes the trashed record back as a new
+revision credited to the restorer; it refuses when a live record with the same
+ID exists (`exists`) or another live source has the same identifier
+(`duplicate`). Importing a trashed source again supersedes its trash entry.
+
+Neither removal nor detaching a PDF deletes PDF files. Permanent deletion
+(one trashed source, or the whole trash) deletes the trash entries and their
+revision history, then deletes every content-addressed PDF that no live or
+trashed record refers to. It deletes no file at all while any record or trash
+entry cannot be read, since that record might refer to it. Revert and history
+listing do not keep PDFs alive: a revert whose revision names a deleted file
+leaves that attachment out and reports `missingAttachmentCount`.
+
+Revert copies an earlier revision's content into a new revision credited to
+the actor, keeping the source's identity, `importedAt` and origin. It returns
+`stale`, `not-found` (revision not kept), `unchanged` or `duplicate` (the
+reverted identifiers belong to another live source) without writing. Each
+source keeps its first revision and the most recent ones, 50 including the
+current record; older revisions are pruned after each write.
+
+Listing reads every record file independently. A file that is not valid JSON,
+does not decode, belongs to another project or does not match its file name is
+skipped and reported in the overview's `unreadableRecords` with its
+project-relative path; the UI shows one quiet line naming the files. Reading a
+single source by ID still fails for that source alone.
+
+The UI moves a source to the trash straight from the row's secondary-click
+menu or the details page and offers Undo in the confirmation toast; the trash
+popover in the Library header restores or empties it. The row's secondary-click
+menu uses the existing host context-menu bridge.
 
 Metadata completeness is derived from the record rather than persisted as a
 possibly stale quality label. Missing title or creator produces a warning;
@@ -359,6 +418,24 @@ a record is created, under the same write lock as duplicate assessment:
 
 Records written before keys existed decode unchanged and have no key until one
 is assigned.
+
+## Managed bibliography
+
+`apps/server/src/scient/sources/ManagedBibliography.ts` is the only writer of
+the project's `references.bib` and `references.json` (CSL-JSON, `id` = citation
+key), rendered by `@scientfactory/scient-citations/bibliography` and sorted by
+key. The store reports every settled write through
+`onScientSourceRecordsChanged`; the server coalesces those into one sync per
+project, so writes from people, agents and every import path keep both files
+current. A sync first gives keyless legacy records a key (oldest first).
+
+Scient keeps a copy of what it last wrote in `.scient/sources/bibliography/`.
+A project file that differs from that copy was edited by hand and is kept
+(`edited`, with the keys added, changed or removed); a file Scient never wrote
+is `unmanaged` and is never written over. Only an explicit `replaceEdited` from
+the user or an agent restores the Library version. The project file is written
+before the copy, so an interrupted write is adopted on the next sync instead
+of reported as an edit. Nothing is written for a project without a Library.
 
 ## Reference files
 

@@ -163,7 +163,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(53);
+      expect(scientTools).toHaveLength(63);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "scient_account_add",
         "scient_account_browser_session",
@@ -173,6 +173,11 @@ it.live(
         "scient_account_request",
         "scient_account_sign_in",
         "scient_accounts_list",
+        "scient_annotations_add",
+        "scient_annotations_read",
+        "scient_annotations_remove",
+        "scient_annotations_restore",
+        "scient_annotations_update",
         "scient_compute_control",
         "scient_compute_inventory",
         "scient_compute_output",
@@ -200,6 +205,8 @@ it.live(
         "scient_papers_queue",
         "scient_papers_status",
         "scient_pdf_build",
+        "scient_references_check",
+        "scient_references_resolve",
         "scient_skill_load",
         "scient_skill_read",
         "scient_skill_read_resource",
@@ -207,6 +214,7 @@ it.live(
         "scient_skills_list",
         "scient_sources_add",
         "scient_sources_attach_pdf",
+        "scient_sources_bibliography",
         "scient_sources_detach_pdf",
         "scient_sources_export",
         "scient_sources_get",
@@ -216,6 +224,8 @@ it.live(
         "scient_sources_quote_check",
         "scient_sources_read_text",
         "scient_sources_remove",
+        "scient_sources_restore",
+        "scient_sources_revert",
         "scient_sources_search",
         "scient_sources_update",
       ]);

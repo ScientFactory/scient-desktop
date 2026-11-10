@@ -1,8 +1,15 @@
+import { CONNECTOR_IDENTIFIER_SCHEMES, detectConnectorIdentifier } from "./connectorIdentifiers.ts";
 import type { ScientSourceIdentifier } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
 
 /** Schemes a person or agent can add a source by; each resolves against its registry. */
-export const SOURCE_ADD_IDENTIFIER_SCHEMES = ["doi", "pmid", "arxiv", "isbn"] as const;
+export const SOURCE_ADD_IDENTIFIER_SCHEMES = [
+  "doi",
+  "pmid",
+  "arxiv",
+  "isbn",
+  ...CONNECTOR_IDENTIFIER_SCHEMES,
+] as const;
 export type SourceAddIdentifierScheme = (typeof SOURCE_ADD_IDENTIFIER_SCHEMES)[number];
 
 const DOI_BODY = /^10\.\d{4,9}\/\S+$/u;
@@ -91,9 +98,9 @@ function isbnIdentifier(raw: string): ScientSourceIdentifier | null {
 }
 
 /**
- * Reads one DOI, PMID, arXiv ID or ISBN written in any common form: a bare value, a
- * "scheme:" prefix, or a doi.org, PubMed or arXiv link. Returns null when the text is
- * not exactly one identifier.
+ * Reads one DOI, PMID, arXiv ID, ISBN, OpenAlex work or Semantic Scholar paper written in any
+ * common form: a bare value, a "scheme:" prefix, or a link. Returns null when the text is not
+ * exactly one identifier.
  */
 export function detectSourceIdentifier(text: string): ScientSourceIdentifier | null {
   const value = trimTrailingPunctuation(text.trim().replace(/^<|>$/gu, ""));
@@ -126,7 +133,7 @@ export function detectSourceIdentifier(text: string): ScientSourceIdentifier | n
     if (digits.length >= 10) return isbnIdentifier(value);
     if (!value.includes("-") && isWellFormedPmid(digits)) return identifier("pmid", digits);
   }
-  return null;
+  return detectConnectorIdentifier(value);
 }
 
 export interface SourceIdentifierListEntry {

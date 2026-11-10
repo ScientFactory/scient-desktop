@@ -28,10 +28,10 @@ import {
   readScientSourceStagedFileImport,
   readSourceImportOperation,
   removeScientSourceStagedFileImport,
-  resolveScientSourceProjectFile,
   SCIENT_SOURCES_DIRECTORY,
   writeScientSourceStagedFileImport,
 } from "@scientfactory/scient-sources/store";
+import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
 
 export interface BibliographyFileImportResult {
   readonly operation: ScientSourceImportOperation | null;
@@ -70,8 +70,13 @@ export async function readBibliographyFile(filePath: string): Promise<string> {
   return decodeText(await NodeFSP.readFile(filePath));
 }
 
+const REFERENCE_FILE_EXTENSIONS = [".bib", ".bibtex", ".biblatex", ".ris", ".json", ".xml", ".txt"];
+
 export async function resolveProjectBibliographyFile(root: string, relativePath: string) {
-  const resolved = await resolveScientSourceProjectFile(root, relativePath, "reference file");
+  const resolved = await resolveScientProjectFile(root, relativePath, {
+    extensions: REFERENCE_FILE_EXTENSIONS,
+    description: "reference file",
+  });
   const canonicalRoot = await canonicalizeScientSourceRoot(root);
   const relative = NodePath.relative(canonicalRoot, resolved.absolutePath).split(NodePath.sep);
   if (relative.join("/").startsWith(`${SCIENT_SOURCES_DIRECTORY}/`)) {
@@ -213,6 +218,9 @@ export async function exportBibliography(input: {
   };
 }
 
+/** Written only by the managed bibliography service. */
+const MANAGED_BIBLIOGRAPHY_PATHS = new Set(["references.bib", "references.json"]);
+
 /**
  * Writes an export inside the project, never into Library storage, replacing
  * an existing file only when asked. The write is atomic.
@@ -237,6 +245,11 @@ export async function writeProjectBibliographyFile(input: {
   const normalized = NodePath.posix.normalize(requested);
   if (normalized === ".." || normalized.startsWith("../") || normalized.startsWith(".scient/")) {
     throw new Error("The export path must stay inside the project, outside .scient.");
+  }
+  if (MANAGED_BIBLIOGRAPHY_PATHS.has(normalized.toLowerCase())) {
+    throw new Error(
+      "references.bib and references.json are kept up to date from the Library by Scient. Choose another file name.",
+    );
   }
   const target = NodePath.join(canonicalRoot, ...normalized.split("/"));
   const directory = await NodeFSP.realpath(NodePath.dirname(target));
