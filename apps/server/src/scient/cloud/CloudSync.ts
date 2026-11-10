@@ -28,6 +28,7 @@ import * as Stream from "effect/Stream";
 
 import { CloudApi, type CloudApiError } from "./CloudApi.ts";
 import { CloudSyncState, type CloudSyncStateDocument } from "./CloudSyncState.ts";
+import type { ConversationExtrasResult } from "./ConversationExtras.ts";
 
 export const SYNC_QUIET_MS = 20_000;
 export const SYNC_MIN_INTERVAL_MS = 120_000;
@@ -71,6 +72,11 @@ export interface CloudSyncSourceShape {
     selection: { readonly workLog: boolean; readonly reasoning: boolean },
   ) => Effect.Effect<SyncCapture | null>;
   readonly readFile: (path: string) => Effect.Effect<Uint8Array | null>;
+  /** Per-answer provider/model and the repository commit for the sidecar and meta. */
+  readonly extras: (
+    threadId: ThreadId,
+    snapshot: ConversationSnapshotV1,
+  ) => Effect.Effect<ConversationExtrasResult>;
   /** Threads touched by domain events. */
   readonly touched: Stream.Stream<ThreadId>;
   /** Whether the cloud copy setting is on, and its changes. */
@@ -221,9 +227,11 @@ export const make = Effect.gen(function* () {
         return "unchanged" satisfies UploadOutcome;
       }
       const attachments = yield* uploadBlobs(userId, threadId, capture, max.maxBlobBytes);
+      const extras = yield* source.extras(threadId, capture.snapshot);
+      const sidecar = { ...extras.sidecar, ...(attachments.length === 0 ? {} : { attachments }) };
       const document: CloudConversation = {
         snapshot: capture.snapshot,
-        ...(attachments.length === 0 ? {} : { sidecar: { attachments } }),
+        ...(Object.keys(sidecar).length === 0 ? {} : { sidecar }),
       };
       const body = yield* gzip(new TextEncoder().encode(yield* encodeConversation(document)));
       if (body.byteLength > max.maxSnapshotBytes) continue;
@@ -235,6 +243,7 @@ export const make = Effect.gen(function* () {
         ...(facts.relativePath ? { relativePath: textOf(facts.relativePath, 1000, ".") } : {}),
         ...(facts.repoWebUrl ? { repoWebUrl: textOf(facts.repoWebUrl, 1000, "") } : {}),
         ...(facts.branch ? { branch: textOf(facts.branch, 500, "") } : {}),
+        ...(extras.headCommit === undefined ? {} : { headCommit: extras.headCommit }),
         updatedAt: facts.updatedAt,
         archived: facts.archived,
         contentDigest: digest,

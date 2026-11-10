@@ -20,6 +20,7 @@ import * as Schema from "effect/Schema";
 
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { ConversationSnapshotService } from "../conversationExport/ConversationSnapshotService.ts";
+import { ConversationExtras } from "./ConversationExtras.ts";
 import { Redactor, redactSection } from "./shareRedaction.ts";
 
 /** A built share; `blobs` carry local file paths the HTTP layer turns into signed URLs. */
@@ -54,6 +55,7 @@ const make = Effect.gen(function* () {
   const snapshots = yield* ConversationSnapshotService;
   const fileSystem = yield* FileSystem.FileSystem;
   const accounts = yield* Effect.serviceOption(AccountsService);
+  const extras = yield* ConversationExtras;
   const idKey = new Uint8Array(NodeCrypto.randomBytes(32));
 
   const savedSecrets = Effect.gen(function* () {
@@ -166,9 +168,14 @@ const make = Effect.gen(function* () {
         path: file.path,
       });
     }
+    const { sidecar: extra } = yield* extras.read(request.threadId, snapshot);
+    const sidecar = {
+      ...extra,
+      ...(sidecarAttachments.length === 0 ? {} : { attachments: sidecarAttachments }),
+    };
     const document: CloudConversation = {
       snapshot,
-      ...(sidecarAttachments.length === 0 ? {} : { sidecar: { attachments: sidecarAttachments } }),
+      ...(Object.keys(sidecar).length === 0 ? {} : { sidecar }),
     };
     const report = redactor.report();
     return {

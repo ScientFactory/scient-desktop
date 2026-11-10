@@ -67,6 +67,7 @@ import * as CloudApi from "./cloud/CloudApi.ts";
 import * as CloudSync from "./cloud/CloudSync.ts";
 import * as CloudSyncSourceLive from "./cloud/CloudSyncSourceLive.ts";
 import * as CloudSyncState from "./cloud/CloudSyncState.ts";
+import * as ConversationExtras from "./cloud/ConversationExtras.ts";
 import * as ScientCloud from "./cloud/ScientCloud.ts";
 import * as ShareBuilder from "./cloud/ShareBuilder.ts";
 import * as TakeOverImport from "./cloud/TakeOverImport.ts";
@@ -151,6 +152,7 @@ export function makeScientRouteServices<
     Layer.provide(ShareBuilder.layer),
     Layer.provide(CloudSync.layer.pipe(Layer.provide(CloudSyncSourceLive.layer))),
     Layer.provide(ConversationSnapshotServiceLive),
+    Layer.provide(ConversationExtras.layer),
     Layer.provide(CloudApi.layer),
     Layer.provide(CloudSyncState.layer),
     Layer.provide(ServerSettingsLayerLive),
