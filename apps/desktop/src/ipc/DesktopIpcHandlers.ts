@@ -101,6 +101,9 @@ import {
   setSnapShotAnimationDestination,
   setSnapShotShortcutSuppressed,
 } from "./methods/snapShot.ts";
+// SCIENT-FORK:START — Scient Library: read a tab for "Save to Library".
+import { readLibraryPageMethod } from "../scient/sources/libraryPage.ts";
+// SCIENT-FORK:END
 import * as PreviewIpc from "./methods/preview.ts";
 import * as VoiceIpc from "./methods/voice.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
@@ -126,6 +129,9 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
 
   // SCIENT-FORK:START — spelling dictionaries follow the language being written.
   yield* ipc.handle(noteSpellingSample);
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library".
+  yield* ipc.handle(readLibraryPageMethod);
   // SCIENT-FORK:END
   // SCIENT-FORK:START — conversation files the OS opened with Scient.
   yield* ipc.handle(takeOpenedConversationFiles);

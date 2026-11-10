@@ -16,12 +16,16 @@ import {
   ScientSourceSummary,
   ScientSourceTrashListing,
   ScientSourcePreflightItem,
+  ScientSourceWebPage,
   ScientSourcesBulkChange,
   ScientSourcesBulkResult,
   ScientSourcesOrganization,
   ScientSourcesOrganizeAction,
   ScientSourcesOrganizeResult,
   ScientSourcesOverview as ScientSourcesStoreOverview,
+  ScientSourceZoteroRefreshField,
+  ScientSourceZoteroRefreshResult,
+  ScientSourceZoteroSendResult,
   ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,
@@ -117,6 +121,28 @@ export const ScientSourcesFullTextSearchResult = Schema.Struct({
   }),
 });
 export type ScientSourcesFullTextSearchResult = typeof ScientSourcesFullTextSearchResult.Type;
+
+export const ScientSourceSavePageRequest = Schema.Struct({
+  root: NonEmptyString,
+  page: ScientSourceWebPage,
+});
+export type ScientSourceSavePageRequest = typeof ScientSourceSavePageRequest.Type;
+
+export const ScientSourceSavePageResult = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.Literals(["added", "existing"]),
+    sourceId: NonEmptyString,
+    revision: Schema.Int.check(Schema.isGreaterThan(0)),
+    passageSaved: Schema.Boolean,
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("not-added"),
+    reason: Schema.Literals(["identifier-not-found", "identifier-mismatch", "possible-duplicate"]),
+    message: Schema.String,
+    matchingSourceIds: Schema.Array(NonEmptyString),
+  }),
+]);
+export type ScientSourceSavePageResult = typeof ScientSourceSavePageResult.Type;
 
 export const ScientSourceJournalIconRequest = Schema.Struct({
   root: NonEmptyString,
@@ -238,6 +264,29 @@ export const ZoteroStatusRequest = Schema.Struct({
   connection: Schema.optionalKey(ZoteroConnection),
 });
 export type ZoteroStatusRequest = typeof ZoteroStatusRequest.Type;
+
+const BoundedSourceIds = Schema.Array(NonEmptyString).pipe(
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+);
+const RefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
+  Schema.check(Schema.isMaxLength(32)),
+);
+
+/** Without sourceIds, every source imported from Zotero is refreshed. */
+export const ScientSourcesZoteroRefreshRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceIds: Schema.optionalKey(BoundedSourceIds),
+  connection: Schema.optionalKey(ZoteroConnection),
+  useZotero: Schema.optionalKey(RefreshFields),
+  keepLocal: Schema.optionalKey(RefreshFields),
+});
+export type ScientSourcesZoteroRefreshRequest = typeof ScientSourcesZoteroRefreshRequest.Type;
+
+export const ScientSourcesZoteroSendRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceIds: BoundedSourceIds,
+});
+export type ScientSourcesZoteroSendRequest = typeof ScientSourcesZoteroSendRequest.Type;
 
 export const ZoteroLibraryRequest = Schema.Struct({
   scope: ZoteroImportScope,
@@ -383,6 +432,9 @@ export {
   ScientSourceRestoreResult,
   ScientSourceRevertResult,
   ScientSourceTrashListing,
+  ScientSourceZoteroRefreshField,
+  ScientSourceZoteroRefreshResult,
+  ScientSourceZoteroSendResult,
   ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,

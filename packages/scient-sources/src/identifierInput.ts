@@ -199,8 +199,7 @@ function segmentEntries(segment: string): ReadonlyArray<SourceIdentifierListEntr
 
 /**
  * Splits pasted text (one per line, or separated by commas or semicolons) into identifiers.
- * Repeats of the same identifier collapse to the first; unreadable parts are kept so they
- * can be reported.
+ * Repeats collapse to the first; unreadable parts are kept once so they can be reported.
  */
 export function parseSourceIdentifierList(text: string): ReadonlyArray<SourceIdentifierListEntry> {
   const seen = new Set<string>();
@@ -219,8 +218,9 @@ export function parseSourceIdentifierList(text: string): ReadonlyArray<SourceIde
         .flatMap(segmentEntries);
     })
     .filter((entry) => {
-      if (!entry.identifier) return true;
-      const key = normalizePersistentIdentifier(entry.identifier.scheme, entry.identifier.value);
+      const key = entry.identifier
+        ? normalizePersistentIdentifier(entry.identifier.scheme, entry.identifier.value)
+        : `text:${entry.input}`;
       if (seen.has(key)) return false;
       seen.add(key);
       return true;

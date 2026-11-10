@@ -163,7 +163,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(66);
+      expect(scientTools).toHaveLength(71);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "scient_account_add",
         "scient_account_browser_session",
@@ -229,8 +229,13 @@ it.live(
         "scient_sources_remove",
         "scient_sources_restore",
         "scient_sources_revert",
+        "scient_sources_save_page",
         "scient_sources_search",
         "scient_sources_update",
+        "scient_sources_zotero_browse",
+        "scient_sources_zotero_import",
+        "scient_sources_zotero_refresh",
+        "scient_sources_zotero_send",
       ]);
       yield* Effect.logInfo({
         fixture: "eager-input-schemas",

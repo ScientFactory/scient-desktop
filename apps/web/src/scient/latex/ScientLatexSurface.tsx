@@ -68,6 +68,7 @@ import type {
 import { usePdfSaveCopy } from "~/scient/pdf/usePdfSaveCopy";
 import { ScientTooltip } from "~/scient/presentation/ScientTooltip";
 import { WordFileExportDialog } from "~/scient/wordExport/WordFileExportDialog";
+import { ReferenceCheckDialog } from "~/scient/references/ReferenceCheckDialog";
 
 import { documentBindingChanges } from "./bindingChanges";
 import { DockCommandItem } from "../writing/dockChrome";
@@ -668,6 +669,7 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
   const compilationMode = normalizeLatexCompilation(storedCompilation);
   const [syncNotice, setSyncNotice] = useState<LatexSyncNotice | null>(null);
   const [wordExportOpen, setWordExportOpen] = useState(false);
+  const [referenceCheckOpen, setReferenceCheckOpen] = useState(false);
   // The build messages card is temporary: a click anywhere else closes it.
   const diagnosticsCard = useRef<HTMLDivElement>(null);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- listens for outside pointer and Escape key events on the document while the diagnostics card is open
@@ -1903,6 +1905,11 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
         </IfRowHidden>
       ) : null}
       {withDocumentCommands ? exportItems : null}
+      {withDocumentCommands ? (
+        <DockCommandItem onClick={() => setReferenceCheckOpen(true)}>
+          Check references
+        </DockCommandItem>
+      ) : null}
       {withDocumentCommands ? props.templateActions : null}
       {withDocumentCommands ? <PanelTabNewWindowItem separated /> : null}
     </>
@@ -2499,6 +2506,18 @@ export const ScientLatexSurface = memo(function ScientLatexSurface(props: Scient
               : null;
           }}
           onClose={() => setWordExportOpen(false)}
+        />
+      ) : null}
+      {referenceCheckOpen ? (
+        <ReferenceCheckDialog
+          environmentId={props.environmentId}
+          root={props.cwd}
+          initialTarget={{ kind: "file", path: target?.relativePath ?? props.relativePath }}
+          onOpenFile={(path, line) => {
+            setReferenceCheckOpen(false);
+            props.onOpenFileSource(path, line);
+          }}
+          onClose={() => setReferenceCheckOpen(false)}
         />
       ) : null}
     </div>

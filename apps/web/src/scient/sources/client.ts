@@ -10,6 +10,7 @@ import {
   discardEnvironmentLocalSourcePdfs,
   getEnvironmentScientSourceAttachmentPreview,
   searchEnvironmentScientSourcesFullText,
+  saveEnvironmentScientSourcePage,
   getEnvironmentScientSourceDetail,
   getEnvironmentScientSourceJournalIcon,
   getEnvironmentScientSourcesOverview,
@@ -28,6 +29,8 @@ import {
   syncEnvironmentScientBibliography,
   updateEnvironmentScientSourceMetadata,
   updateEnvironmentScientSourceNote,
+  refreshEnvironmentZoteroSources,
+  sendEnvironmentSourcesToZotero,
   uploadEnvironmentLocalSourcePdf,
   importEnvironmentScientSourcesFile,
   exportEnvironmentScientSources,
@@ -40,6 +43,7 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourceSavePageRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
   ScientSourcesExportRequest,
@@ -48,6 +52,8 @@ import type {
   ScientSourceRevisionsRequest,
   ScientSourcesPermanentDeletionRequest,
   ScientSourcesTrashRequest,
+  ScientSourcesZoteroRefreshRequest,
+  ScientSourcesZoteroSendRequest,
   ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
@@ -136,6 +142,15 @@ export async function searchScientSourcesFullText(
 ) {
   return runtime.runPromise(
     searchEnvironmentScientSourcesFullText({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export async function saveScientSourcePage(
+  environmentId: EnvironmentId,
+  input: ScientSourceSavePageRequest,
+) {
+  return runtime.runPromise(
+    saveEnvironmentScientSourcePage({ prepared: prepared(environmentId), ...input }),
   );
 }
 
@@ -278,6 +293,24 @@ export function beginZoteroScopeImport(
 ) {
   return runtime.runPromise(
     beginEnvironmentZoteroScopedImport({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function refreshZoteroSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesZoteroRefreshRequest,
+) {
+  return runtime.runPromise(
+    refreshEnvironmentZoteroSources({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function sendSourcesToZotero(
+  environmentId: EnvironmentId,
+  input: ScientSourcesZoteroSendRequest,
+) {
+  return runtime.runPromise(
+    sendEnvironmentSourcesToZotero({ prepared: prepared(environmentId), ...input }),
   );
 }
 

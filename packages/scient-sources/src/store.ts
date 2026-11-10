@@ -35,6 +35,7 @@ import {
   ScientSourceImportReceipt,
   ScientSourceRecord,
   ScientSourceStagedMaterial,
+  ScientSourceZoteroSync,
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   type ScientSourceActor,
   type ScientSourceAttachment,
@@ -43,6 +44,7 @@ import {
   type ScientSourceDuplicateAssessment,
   type ScientSourceDuplicateKind,
   type ScientSourceEditableMetadata,
+  type ScientSourceExternalReference,
   type ScientSourceFieldProvenance,
   type ScientSourceMetadataUpdateResult,
   type ScientSourceNoteUpdateResult,
@@ -57,6 +59,7 @@ import {
   type ScientSourceStoreIssue,
   type ScientSourceTrashListing,
   type ScientSourceVerification,
+  type ScientSourceZoteroSync as ScientSourceZoteroSyncType,
   ScientSourceTrashEntry,
 } from "./model.ts";
 
@@ -67,6 +70,7 @@ export const SCIENT_SOURCE_HISTORY_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/hist
 export const SCIENT_SOURCE_OPERATIONS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/operations`;
 export const SCIENT_SOURCE_RECEIPTS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/receipts`;
 const SCIENT_SOURCE_TRASH_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/trash`;
+const SCIENT_SOURCE_ZOTERO_SYNC_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/sync/zotero`;
 /** Kept revisions per source, counting the first one, which is never pruned. */
 export const SCIENT_SOURCE_HISTORY_LIMIT = 50;
 const SCIENT_SOURCE_STAGING_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/staging`;
@@ -2193,6 +2197,62 @@ export function sourceAttachmentAbsolutePath(
     throw new Error("The source attachment path escapes the Scient source store.");
   }
   return resolved;
+}
+
+function zoteroSyncPath(paths: SourceStorePaths, sourceId: string): string {
+  assertSafeIdentifier(sourceId, "Source ID");
+  return NodePath.join(paths.root, SCIENT_SOURCE_ZOTERO_SYNC_DIRECTORY, `${sourceId}.json`);
+}
+
+/** The Zotero values a source was last synced from, or null before its first sync. */
+export async function readScientSourceZoteroSync(
+  root: string,
+  sourceId: string,
+): Promise<ScientSourceZoteroSyncType | null> {
+  const paths = await sourceStorePaths(root);
+  const filePath = zoteroSyncPath(paths, sourceId);
+  if ((await snapshot(filePath)) === "missing") return null;
+  // A damaged sync file only loses the merge base; refresh then treats every difference as new.
+  return readBoundedJson(filePath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(() => null);
+}
+
+export async function writeScientSourceZoteroSync(
+  root: string,
+  state: ScientSourceZoteroSyncType,
+): Promise<void> {
+  const paths = await sourceStorePaths(root);
+  await atomicWriteJson(zoteroSyncPath(paths, state.sourceId), state, MAX_RECORD_BYTES);
+}
+
+/** Replaces a source's links to other reference managers, as a new revision. */
+export async function updateScientSourceExternalReferences(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+  readonly externalReferences: ReadonlyArray<ScientSourceExternalReference>;
+  readonly actor?: ScientSourceActor;
+}): Promise<{
+  readonly outcome: "updated" | "unchanged" | "stale";
+  readonly record: ScientSourceRecord;
+}> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const current = await readSourceRecordFromPaths(paths, input.sourceId);
+    if (JSON.stringify(current.externalReferences) === JSON.stringify(input.externalReferences)) {
+      return { outcome: "unchanged", record: current };
+    }
+    if (current.revision !== input.expectedRevision) return { outcome: "stale", record: current };
+    const next: ScientSourceRecord = {
+      ...current,
+      externalReferences: [...input.externalReferences],
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+      updatedBy: input.actor ?? "user",
+    };
+    await persistSourceRevision(paths, current, next);
+    return { outcome: "updated", record: next };
+  });
 }
 
 /** For sibling project-store modules (collections, reviews) that share this store's safety rules. */
