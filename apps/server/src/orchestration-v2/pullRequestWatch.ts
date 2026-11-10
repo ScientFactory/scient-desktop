@@ -319,11 +319,14 @@ function changeLines(
   }
 }
 
-/** GitHub's removal reasons; any other reason is shown as the host gives it. */
 const MERGE_QUEUE_REMOVALS = new Map([
   [
     "failed_checks",
     "The merge queue removed it because its checks failed. They ran on the queue's own commit, not on this head, so look for the failures in the queue's runs.",
+  ],
+  [
+    "checks_timed_out",
+    "The merge queue removed it because its checks did not finish in time. They ran on the queue's own commit, not on this head, so look in the queue's runs for the check that did not finish.",
   ],
   ["merge_conflict", "The merge queue removed it because it conflicts with the queue's base."],
   ["manual", "It was taken out of the merge queue by hand."],

@@ -721,13 +721,17 @@ describe("evaluatePullRequestWatch", () => {
       "- The merge queue removed it because its checks failed. They ran on the queue's own commit, not on this head, so look for the failures in the queue's runs.",
     );
     assert.equal(
+      wakeLine("checks_timed_out"),
+      "- The merge queue removed it because its checks did not finish in time. They ran on the queue's own commit, not on this head, so look in the queue's runs for the check that did not finish.",
+    );
+    assert.equal(
       wakeLine("merge_conflict"),
       "- The merge queue removed it because it conflicts with the queue's base.",
     );
     assert.equal(wakeLine("manual"), "- It was taken out of the merge queue by hand.");
     assert.equal(
-      wakeLine("queue_timeout"),
-      "- It was removed from the merge queue without merging: queue_timeout.",
+      wakeLine("some_new_reason"),
+      "- It was removed from the merge queue without merging: some_new_reason.",
     );
     assert.equal(wakeLine(null), "- It was removed from the merge queue without merging.");
   });
