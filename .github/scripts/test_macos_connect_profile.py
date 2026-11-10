@@ -1,3 +1,4 @@
+import base64
 import copy
 import datetime
 import importlib.util
@@ -17,7 +18,7 @@ spec.loader.exec_module(stage)
 NOW = datetime.datetime(2026, 11, 10, tzinfo=datetime.timezone.utc)
 TEAM = "ABC1234567"
 APP = "com.scientfactory.scient"
-DOMAIN = "example.clerk.accounts.dev"
+DOMAIN = "login.clerk.accounts.dev"
 
 
 def profile():
@@ -85,7 +86,8 @@ class ProfileTests(unittest.TestCase):
                 "GITHUB_ENV": str(env_file),
                 "SCIENT_APPLE_TEAM_ID": TEAM,
                 "SCIENT_MACOS_PROVISIONING_PROFILE_BASE64": "cHJvZmlsZQ==",
-                "T3CODE_CLERK_PUBLISHABLE_KEY": "pk_test_ZXhhbXBsZS5jbGVyay5hY2NvdW50cy5kZXYk",
+                "T3CODE_CLERK_PUBLISHABLE_KEY": "pk_test_"
+                + base64.b64encode((DOMAIN + "$").encode()).decode().rstrip("="),
             }
             candidate = profile()
             candidate["ExpirationDate"] = datetime.datetime(2099, 1, 1)

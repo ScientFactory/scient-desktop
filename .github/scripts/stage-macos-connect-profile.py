@@ -66,9 +66,10 @@ def main():
                 "A Clerk publishable key or explicit passkey domains are required"
             )
         try:
-            hostname = base64.b64decode(key.split("_", 2)[2], validate=True).decode(
-                "utf-8"
-            )
+            encoded_hostname = key.split("_", 2)[2]
+            hostname = base64.b64decode(
+                encoded_hostname + "=" * (-len(encoded_hostname) % 4), validate=True
+            ).decode("utf-8")
         except (ValueError, UnicodeError):
             raise ValueError(
                 "The Clerk publishable key cannot supply the passkey domain"
