@@ -551,9 +551,10 @@ export const scientReferenceDocumentFor = (
   inContext: ReadonlyArray<WordLocalFont> = [],
 ) =>
   Effect.promise(() => {
-    const key = [`${base.sizePoints}/${base.family}`, ...inContext.map(wordFontStyleName)].join(
-      "|",
-    );
+    const key = [
+      `${base.sizePoints}/${base.family}`,
+      ...inContext.map(wordFontStyleName).toSorted(),
+    ].join("|");
     const existing = cached.get(key);
     if (existing !== undefined) return existing;
     const packed = packReferenceDocument(base, inContext);

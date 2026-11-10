@@ -44,17 +44,19 @@ function styleNameOf(font: WordLocalFont, pass: FontPass): string {
 }
 
 /**
- * The size in points of the text a node holds, when it is not the base size. A size in a heading
- * or a footnote is a share of that text's size, as in the editor, not of the base size.
+ * The font in force inside a node. A heading or a footnote starts afresh at its own size: a size
+ * in it is a share of that size, as in the editor, not of the base size, and a font set around a
+ * footnote reference does not reach the footnote text.
  */
-function contextOf(node: PandocNode, pass: FontPass): number | undefined {
+function fontWithin(node: PandocNode, outer: WordLocalFont, pass: FontPass): WordLocalFont {
   const points =
     node.t === "Header" && Array.isArray(node.c)
       ? HEADING_POINTS[Number(node.c[0]) - 1]
       : node.t === "Note"
         ? FOOTNOTE_POINTS
         : undefined;
-  return points === pass.base.sizePoints ? undefined : points;
+  if (points === undefined) return outer;
+  return points === pass.base.sizePoints ? {} : { context: points };
 }
 
 /** The font of a span laid over the font already in force around it. */
@@ -110,8 +112,7 @@ export function applyFontSpans(value: unknown, pass: FontPass, outer: WordLocalF
     return;
   }
   if (!Predicate.isObject(value)) return;
-  const context = isPandocNode(value) ? contextOf(value, pass) : undefined;
-  const within = context === undefined ? outer : { ...outer, context };
+  const within = isPandocNode(value) ? fontWithin(value, outer, pass) : outer;
   for (const child of Object.values(value)) applyFontSpans(child, pass, within);
 }
 
@@ -283,7 +284,6 @@ export function applyLatexFontSpans(
       return;
     }
   }
-  const context = isPandocNode(value) ? contextOf(value, pass) : undefined;
-  const within = context === undefined ? outer : { ...outer, context };
+  const within = isPandocNode(value) ? fontWithin(value, outer, pass) : outer;
   for (const child of Object.values(value)) applyLatexFontSpans(child, pass, within);
 }

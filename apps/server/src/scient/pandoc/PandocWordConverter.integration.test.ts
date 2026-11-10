@@ -687,6 +687,49 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
       }),
     );
 
+    it.live("keeps the share of the heading size for a size inside a heading", () =>
+      Effect.gen(function* () {
+        const { document, styles } = yield* exportMarkdown(
+          "font-heading",
+          '# Title with <span style="font-size:1.2em">big</span> word\n\nPlain <span style="font-size:1.2em">body</span>.\n',
+        );
+        expect(document).toMatch(
+          /<w:rStyle w:val="ScientSize120of18pt"\s*\/>[\s\S]*?<w:t[^>]*>big<\/w:t>/u,
+        );
+        // 1.2 x 18 pt = 21.6 pt, kept to the half point: 21.5 pt.
+        expect(styles).toMatch(
+          /<w:style [^>]*w:styleId="ScientSize120of18pt"(?:(?!<\/w:style>)[\s\S])*?<w:sz w:val="43"\s*\/>/u,
+        );
+        // The same size in the body stays a share of the base size.
+        expect(document).toMatch(
+          /<w:rStyle w:val="ScientSize120"\s*\/>[\s\S]*?<w:t[^>]*>body<\/w:t>/u,
+        );
+      }),
+    );
+
+    it.live("keeps the share of the footnote size for a size inside a footnote", () =>
+      Effect.gen(function* () {
+        const { styles, footnotes } = yield* withConverter(({ converter, directory }) =>
+          Effect.gen(function* () {
+            const { docx } = yield* convertTo(converter, directory, "font-footnote", {
+              bundle: makeBundle({
+                markdown: 'Text[^1]\n\n[^1]: Note with <span style="font-size:1.2em">big</span>.\n',
+              }),
+            });
+            return {
+              styles: docx.text("word/styles.xml"),
+              footnotes: docx.text("word/footnotes.xml"),
+            };
+          }),
+        );
+        expect(footnotes).toMatch(/<w:rStyle w:val="ScientSize120of9pt"\s*\/>/u);
+        // 1.2 x 9 pt = 10.8 pt, kept to the half point: 11 pt.
+        expect(styles).toMatch(
+          /<w:style [^>]*w:styleId="ScientSize120of9pt"(?:(?!<\/w:style>)[\s\S])*?<w:sz w:val="22"\s*\/>/u,
+        );
+      }),
+    );
+
     it.live("still drops every other span", () =>
       Effect.gen(function* () {
         const { document, warnings } = yield* exportMarkdown(

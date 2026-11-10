@@ -136,7 +136,9 @@ describe("Markdown font size and family", () => {
       "user",
     );
     session.applyTransaction(session.state.tr.insertText("X"), "user");
-    expect(session.session.draftSource.startsWith(`${block}\n\n`)).toBe(true);
+    const written = session.session.draftSource;
+    expect(written).toContain("X");
+    expect(written.startsWith(`${block}\n\n`)).toBe(true);
   });
 
   it("defines both marks in the schema", () => {
