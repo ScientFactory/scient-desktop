@@ -614,7 +614,15 @@
             "algorithm": "sha256",
             "digest": "8b144bcfde2b61ae68040ecdd98aada7b7afed545253ae0c2861973229476978"
           },
-          "size": 235572368
+          "size": 235572368,
+          "compressed": {
+            "format": "zstd",
+            "size": 100223401,
+            "checksum": {
+              "algorithm": "sha256",
+              "digest": "799d51f5bcee04d62d85e1cd1c184afc2301a4cd0f912ed309427414032b4f82"
+            }
+          }
         },
         "darwin-x64": {
           "artifactName": "scient-agent-darwin-x64",
@@ -623,7 +631,15 @@
             "algorithm": "sha256",
             "digest": "da7515f9406e3517a461f1c7a23a6c6fd0776020abd9859252504fda4d8ba6e3"
           },
-          "size": 286897616
+          "size": 286897616,
+          "compressed": {
+            "format": "zstd",
+            "size": 136602063,
+            "checksum": {
+              "algorithm": "sha256",
+              "digest": "44dec54fc5db6e1dff2c4b27f4c4da4c769652a9312113fcf274cd5688ebe983"
+            }
+          }
         },
         "linux-arm64-glibc": {
           "artifactName": "scient-agent-linux-arm64",
@@ -632,7 +648,15 @@
             "algorithm": "sha256",
             "digest": "19e14929845bd30fe85f335403c91a43626d157447b5415c6d39e3f9f2336f24"
           },
-          "size": 259574776
+          "size": 259574776,
+          "compressed": {
+            "format": "zstd",
+            "size": 114126161,
+            "checksum": {
+              "algorithm": "sha256",
+              "digest": "7a172d84a25a740d2f624fa537f7c7567e3673f3722165ebe342330330ff924c"
+            }
+          }
         },
         "linux-x64-glibc": {
           "artifactName": "scient-agent-linux-x64",
@@ -641,7 +665,15 @@
             "algorithm": "sha256",
             "digest": "e6af51b84f9d695382bc60ccc92caa18711d863a2ca482b25d01e524563f7dc7"
           },
-          "size": 304969904
+          "size": 304969904,
+          "compressed": {
+            "format": "zstd",
+            "size": 151480134,
+            "checksum": {
+              "algorithm": "sha256",
+              "digest": "ff03d8ded2122f146a80f5e524fc33fc490ef245525422ba71f111c58b726ad5"
+            }
+          }
         },
         "win32-arm64": {
           "artifactName": "scient-agent-windows-arm64.exe",
@@ -650,7 +682,15 @@
             "algorithm": "sha256",
             "digest": "e009be3275e35513c49807d552965abbdd5a82bcdb1edf637d81de25e3b5f8c8"
           },
-          "size": 243865088
+          "size": 243865088,
+          "compressed": {
+            "format": "zstd",
+            "size": 106607643,
+            "checksum": {
+              "algorithm": "sha256",
+              "digest": "7bc59640f508c75ca7471a2ec6ef80f27eb14232b24dbb4dcd28be11a4cf8d36"
+            }
+          }
         },
         "win32-x64": {
           "artifactName": "scient-agent-windows-x64.exe",
@@ -659,7 +699,15 @@
             "algorithm": "sha256",
             "digest": "6ee1ec56203d5aead0e4abb84486779ea0781b04182b278f4b472011f0d6a576"
           },
-          "size": 300240896
+          "size": 300240896,
+          "compressed": {
+            "format": "zstd",
+            "size": 143482160,
+            "checksum": {
+              "algorithm": "sha256",
+              "digest": "7cdab7a09b9f59c94a890fab9fedd1d08f388d5307c462a459234f759c22a5d7"
+            }
+          }
         }
       }
     },
