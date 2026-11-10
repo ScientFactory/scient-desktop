@@ -176,6 +176,27 @@ describe("ClerkSignInReturn", () => {
     );
   });
 
+  it("waits long before the browser opens and five minutes after", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      install();
+      const redirect = await redirectUrl();
+      vi.advanceTimersByTime(10 * 60_000);
+      await handlers.get(CLERK_OPEN_CHANNEL)!(windowEvent, "https://accounts.example");
+      vi.advanceTimersByTime(4 * 60_000);
+      expect((await visit(`${redirect}&rotating_token_nonce=ok`)).body).toContain(
+        "You're signed in",
+      );
+
+      const later = await redirectUrl();
+      await handlers.get(CLERK_OPEN_CHANNEL)!(windowEvent, "https://accounts.example");
+      vi.advanceTimersByTime(5 * 60_000 + 1);
+      await expect(visit(`${later}&rotating_token_nonce=late`)).rejects.toThrow();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("ignores requests that are not page visits", async () => {
     install(false);
     const redirect = await redirectUrl();

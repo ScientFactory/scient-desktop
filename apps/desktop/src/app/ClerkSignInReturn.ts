@@ -15,8 +15,10 @@ export const CLERK_OPEN_CHANNEL = "clerk:oauth-transport:open";
 const CLERK_SIGN_IN_RETURN_PATH = "/clerk/callback";
 const RELEASE_PORT = 34339;
 const DEVELOPMENT_PORT = 34340;
-// Restarted whenever the browser opens, so it outlasts @clerk/electron's 180 s callback timeout.
-const LISTEN_MS = 300_000;
+// Until the browser opens, a generous wait; from then on, longer than @clerk/electron's 180 s
+// callback timeout, which also starts when the browser opens.
+const BEFORE_OPEN_MS = 30 * 60_000;
+const AFTER_OPEN_MS = 300_000;
 
 const clerkSignInReturnPort = (isDevelopment: boolean) =>
   isDevelopment ? DEVELOPMENT_PORT : RELEASE_PORT;
@@ -135,10 +137,10 @@ export function createClerkBridgeWithSignInReturn<Bridge extends { cleanup(): vo
     return current;
   };
   const stop = () => release()?.closeAllConnections();
-  const arm = () => {
+  const arm = (ms: number) => {
     if (!server) return;
     if (timer) clearTimeout(timer);
-    timer = setTimeout(stop, LISTEN_MS);
+    timer = setTimeout(stop, ms);
     timer.unref();
   };
 
@@ -184,7 +186,7 @@ export function createClerkBridgeWithSignInReturn<Bridge extends { cleanup(): vo
         }
         binding = null;
         server = next;
-        arm();
+        arm(BEFORE_OPEN_MS);
         resolve(true);
       });
     });
@@ -198,7 +200,7 @@ export function createClerkBridgeWithSignInReturn<Bridge extends { cleanup(): vo
     if (channel === CLERK_REDIRECT_URL_CHANNEL) libraryRedirectUrl = listener;
     else if (channel === CLERK_OPEN_CHANNEL)
       handle.call(ipcMain, channel, (event, ...args) => {
-        arm();
+        arm(AFTER_OPEN_MS);
         return listener(event, ...args);
       });
     else handle.call(ipcMain, channel, listener);
@@ -218,7 +220,7 @@ export function createClerkBridgeWithSignInReturn<Bridge extends { cleanup(): vo
     const attempt = new URL(deepLinkUrl).searchParams.get(CLERK_ATTEMPT_PARAM);
     if (attempt === null) acceptAnyAttempt = true;
     else attempts.add(attempt);
-    arm();
+    arm(BEFORE_OPEN_MS);
     const returnUrl = new URL(clerkSignInReturnUrl(input.isDevelopment));
     returnUrl.search = new URL(deepLinkUrl).search;
     return returnUrl.href;
