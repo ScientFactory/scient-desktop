@@ -42,6 +42,9 @@ import {
 } from "~/scient/fileSurfaces/useChatSurfaceSaveGuards";
 import { hasCommittedConversationMessages } from "./chat/composerModelPickerFork";
 import { useConversationImportBanner } from "./chat/scient-import/ConversationImportBanner";
+// SCIENT-FORK:START — a conversation another computer continued.
+import { useCloudMovedBanner } from "../scient/cloud/CloudMovedBanner";
+// SCIENT-FORK:END
 import { useFileCitationTarget } from "~/scient/markdownEditor/fileCitationNavigation";
 import { readTimelinePosition } from "./chat/timelineScrollAnchoring";
 import { useDraftHeroMotion } from "./chat/timelineEntranceMotion";
@@ -3283,11 +3286,13 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:START — an imported thread says where it came from until its
   // first provider session starts.
   const conversationImportBanner = useConversationImportBanner(activeServerThread);
+  const cloudMovedBanner = useCloudMovedBanner(activeServerThread);
   // SCIENT-FORK:END
   const composerBannerItems = (() => {
     // SCIENT-FORK:START — the imported-conversation and token-limit notices.
-    const conversationImportItems =
-      conversationImportBanner === null ? [] : [conversationImportBanner];
+    const conversationImportItems = [conversationImportBanner, cloudMovedBanner].filter(
+      (item) => item !== null,
+    );
     const tokenLimitItems = tokenLimitBannerItems({
       hasTokenLimitNotice,
       tokenLimitNoticeKey,
