@@ -5,6 +5,8 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourcesBulkUpdateRequest,
+  ScientSourcesOrganizeRequest,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 
@@ -244,6 +246,51 @@ export const removeEnvironmentScientSource = Effect.fn(
           expectedRevision: input.expectedRevision,
         },
       }),
+  });
+});
+
+export const organizeEnvironmentScientSources = Effect.fn(
+  "clientRuntime.state.organizeEnvironmentScientSources",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: ScientSourcesOrganizeRequest["root"];
+  readonly change: ScientSourcesOrganizeRequest["change"];
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.organize(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) =>
+      client.organize({ headers, payload: { root: input.root, change: input.change } }),
+  });
+});
+
+export const bulkUpdateEnvironmentScientSources = Effect.fn(
+  "clientRuntime.state.bulkUpdateEnvironmentScientSources",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: ScientSourcesBulkUpdateRequest["root"];
+  readonly change: ScientSourcesBulkUpdateRequest["change"];
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.bulkUpdate(),
+    // Each source in a bulk edit is its own revision write.
+    timeoutMs: IMPORT_STEP_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) =>
+      client.bulkUpdate({ headers, payload: { root: input.root, change: input.change } }),
   });
 });
 

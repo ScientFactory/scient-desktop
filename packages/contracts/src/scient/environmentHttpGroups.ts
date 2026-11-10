@@ -43,6 +43,10 @@ import {
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
   ScientSourcesAdvanceImportRequest,
+  ScientSourcesBulkResult,
+  ScientSourcesBulkUpdateRequest,
+  ScientSourcesOrganizeRequest,
+  ScientSourcesOrganizeResult,
   ScientSourcesBeginImportRequest,
   ScientSourcesCancelImportRequest,
   ScientSourcesRetryImportRequest,
@@ -298,6 +302,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourceRemovalRequest,
         success: ScientSourceRemovalResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("organize", "/api/scient/sources/organize", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesOrganizeRequest,
+        success: ScientSourcesOrganizeResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("bulkUpdate", "/api/scient/sources/bulk-update", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesBulkUpdateRequest,
+        success: ScientSourcesBulkResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

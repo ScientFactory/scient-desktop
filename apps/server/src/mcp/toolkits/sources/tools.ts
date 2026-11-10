@@ -11,6 +11,11 @@ import {
   ScientSourceOrigin,
   ScientSourceType,
   ScientSourceVerification,
+  ScientSourcesBulkChange,
+  ScientSourcesBulkResult,
+  ScientSourcesOrganizeAction,
+  ScientSourcesOrganizeResult,
+  ScientSourceFilter,
 } from "@scientfactory/scient-sources";
 import { isTrimmedUnadvertised } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -64,6 +69,7 @@ export const ScientSourceAgentSummary = Schema.Struct({
   hasPdf: Schema.Boolean,
   addedBy: Schema.Literals(["user", "agent"]),
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  tags: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 export const ScientSourcesListResult = Schema.Struct({
@@ -107,9 +113,16 @@ export const ScientSourceAgentDetail = Schema.Struct({
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly.",
+    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly. " +
+    "query matches title, authors, year, journal, identifiers and tags. Narrow with tags (all must match), collectionId, type or hasPdf, " +
+    "or run a saved search with savedSearchId (other filters then narrow it further). scient_sources_collections lists collections, saved searches and tags.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
+    tags: Schema.optionalKey(ScientSourceFilter.fields.tags),
+    collectionId: Schema.optionalKey(NonEmptyString),
+    type: Schema.optionalKey(ScientSourceType),
+    hasPdf: Schema.optionalKey(Schema.Boolean),
+    savedSearchId: Schema.optionalKey(NonEmptyString),
     offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
   }),
@@ -368,6 +381,70 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.pdf.detach", true));
 
+export const ScientSourcesCollectionsResult = Schema.Struct({
+  collections: Schema.Array(
+    Schema.Struct({ collectionId: NonEmptyString, name: NonEmptyString, sourceCount: Schema.Int }),
+  ),
+  savedSearches: Schema.Array(
+    Schema.Struct({ searchId: NonEmptyString, name: NonEmptyString, filter: ScientSourceFilter }),
+  ),
+  tags: Schema.Array(Schema.Struct({ tag: Schema.String, count: Schema.Int })).pipe(
+    Schema.check(Schema.isMaxLength(200)),
+  ),
+  message: Schema.optionalKey(Schema.String),
+});
+
+const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
+  description:
+    "Read how this project's Sources are organized: collections with their source counts, saved searches with their filters, and the most used tags. " +
+    "List a collection's sources with scient_sources_list collectionId.",
+  parameters: Tool.EmptyParams,
+  success: ScientSourcesCollectionsResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read source collections")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.collections", false));
+
+const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
+  description:
+    "Change collections or saved searches after the user asks. A source can be in several collections; collections never change source records. " +
+    "create-collection with an existing name returns that collection (existing) and adds the given sources. " +
+    "delete-collection keeps its sources and can be undone with restore-collection. save-search with an existing name replaces its filter. " +
+    "unknownSourceIds lists ids that are not in the Library and were not added.",
+  parameters: Schema.Struct({ change: ScientSourcesOrganizeAction }),
+  success: ScientSourcesOrganizeResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Organize sources")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.organize", true));
+
+const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
+  description:
+    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive, existing spelling kept), set the type " +
+    "(customType is required for other), and add to or remove from collections. Tag and type changes make a new revision per source, recorded as set by the agent. " +
+    "Each source is reported (updated, unchanged, not-found, failed with a message); one failure does not stop the rest.",
+  parameters: Schema.Struct({ change: ScientSourcesBulkChange }),
+  success: ScientSourcesBulkResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Edit many sources")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.bulk_update", true));
+
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,
   ScientSourceGetTool,
@@ -377,4 +454,7 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceAddTool,
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,
+  ScientSourcesCollectionsTool,
+  ScientSourcesOrganizeTool,
+  ScientSourcesBulkUpdateTool,
 );

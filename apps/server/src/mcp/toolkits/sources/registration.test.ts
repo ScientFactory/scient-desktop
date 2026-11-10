@@ -20,15 +20,20 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
     expect(sourceTools.map(({ tool }) => tool.name).sort()).toEqual([
       "scient_sources_add",
       "scient_sources_attach_pdf",
+      "scient_sources_bulk_update",
+      "scient_sources_collections",
       "scient_sources_detach_pdf",
       "scient_sources_get",
       "scient_sources_list",
       "scient_sources_note_update",
+      "scient_sources_organize",
       "scient_sources_remove",
       "scient_sources_update",
     ]);
     for (const { tool } of sourceTools.filter(({ tool }) =>
-      ["scient_sources_get", "scient_sources_list"].includes(tool.name),
+      ["scient_sources_collections", "scient_sources_get", "scient_sources_list"].includes(
+        tool.name,
+      ),
     )) {
       expect(tool.annotations?.readOnlyHint).toBe(true);
       expect(tool.annotations?.destructiveHint).toBe(false);
@@ -39,8 +44,10 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       [
         "scient_sources_add",
         "scient_sources_attach_pdf",
+        "scient_sources_bulk_update",
         "scient_sources_detach_pdf",
         "scient_sources_note_update",
+        "scient_sources_organize",
         "scient_sources_remove",
         "scient_sources_update",
       ].includes(tool.name),

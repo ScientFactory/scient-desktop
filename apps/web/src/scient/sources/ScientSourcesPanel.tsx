@@ -78,6 +78,12 @@ import {
   type SourceRemovalAnchorPoint,
 } from "./SourceRemovalConfirmation";
 import { useScientSources } from "./useScientSources";
+import { SourceOrganizeSection } from "./SourceOrganizeSection";
+import { SourcesActiveFilters } from "./SourcesActiveFilters";
+import { SourcesBulkBar } from "./SourcesBulkBar";
+import { SourcesFilterMenu } from "./SourcesFilterMenu";
+import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
+import { useSourcesOrganize } from "./useSourcesOrganize";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest, UniversityRow } from "../accounts/University";
 import { PaperQueueBand } from "../accounts/PaperRequests";
@@ -85,7 +91,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useAccountCommand, useAccounts } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
-type SourceContextAction = "view" | "edit" | "open-pdf" | "remove";
+type SourceContextAction = "view" | "edit" | "open-pdf" | "select" | "remove";
 type PendingSourceRemoval = {
   readonly record: SourceRecord;
   readonly anchorPoint: SourceRemovalAnchorPoint;
@@ -288,6 +294,15 @@ export function ScientSourcesPanel(props: {
   const [query, setQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
   const [sourceSort, setSourceSort] = useState<ScientSourceSort>("last-added");
+  const organize = useSourcesOrganize({
+    environmentId: props.environmentId,
+    root: props.root,
+    organization: sources.overview?.organization,
+    query: sourceQuery,
+    setQuery: setSourceQuery,
+    refreshOverview: sources.refreshOverview,
+  });
+  const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -438,7 +453,12 @@ export function ScientSourcesPanel(props: {
   );
   const sourceSearchIndex = indexScientSourceSummaries(sources.overview?.records ?? []);
   const filteredSourceRecords = sortScientSourceRecords(
-    filterScientSourceSearchIndex(sourceSearchIndex, sourceQuery),
+    filterScientSourceSearchIndex(
+      sourceSearchIndex,
+      sourceQuery,
+      organize.filter,
+      organize.organization,
+    ),
     sourceSort,
   );
   const selectedSummary = selectedSourceId
@@ -477,6 +497,10 @@ export function ScientSourcesPanel(props: {
       { id: "edit", label: "Edit source details", icon: "pencil" },
       ...(pdf ? ([{ id: "open-pdf", label: "Open PDF" }] as const) : []),
       {
+        id: "select",
+        label: organize.selection.has(record.sourceId) ? "Deselect" : "Select",
+      },
+      {
         id: "remove",
         label: "Remove from Sources",
         destructive: true,
@@ -506,6 +530,9 @@ export function ScientSourcesPanel(props: {
             fileName: pdf.fileName,
           });
         }
+        break;
+      case "select":
+        organize.toggleSelected(record.sourceId);
         break;
       case "remove":
         setSourcePendingRemoval({ record, anchorPoint });
@@ -927,87 +954,109 @@ export function ScientSourcesPanel(props: {
       );
     }
     return (
-      <SourceDetails
-        key={selectedRecord.sourceId}
-        record={selectedRecord}
-        diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
-        onBack={() => {
-          setEditingSource(false);
-          setSelectedSourceId(null);
-        }}
-        onEdit={() => setEditingSource(true)}
-        onSaveNote={(note, expectedRevision) =>
-          sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note)
-        }
-        onRefreshMetadata={async () => {
-          const result = await sources.refreshSourceMetadata(
-            selectedRecord.sourceId,
-            selectedRecord.revision,
-          );
-          if (!panelMounted.current || panelContextRef.current !== panelContext) return;
-          sources.acceptSourceRecord(result.record);
-          if (result.outcome === "refreshed") void sources.reloadOverview();
-          toastManager.add({
-            type:
-              result.outcome === "refreshed" || result.outcome === "unchanged"
-                ? "success"
-                : "warning",
-            title:
-              result.outcome === "refreshed"
-                ? "Metadata refreshed"
-                : result.outcome === "unchanged"
-                  ? "Metadata is already up to date"
-                  : result.outcome === "stale"
-                    ? "Source changed while metadata was refreshed"
-                    : result.outcome === "duplicate"
-                      ? "Metadata refresh stopped"
-                      : "Metadata cannot be refreshed yet",
-            description: result.message ?? undefined,
-          });
-        }}
-        onRemove={async () => {
-          const result = await sources.removeSource(
-            selectedRecord.sourceId,
-            selectedRecord.revision,
-          );
-          if (result.outcome === "stale") {
-            throw new Error(
-              "This source changed after you opened it. Review the latest version, then try again.",
+      <>
+        <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
+        <SourceDetails
+          key={selectedRecord.sourceId}
+          record={selectedRecord}
+          diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
+          organize={
+            <SourceOrganizeSection
+              organize={organize}
+              sourceId={selectedRecord.sourceId}
+              tags={selectedRecord.tags}
+              records={sources.overview.records}
+              onRequestName={setNameRequest}
+              onShowTag={(tag) => {
+                setEditingSource(false);
+                setSelectedSourceId(null);
+                organize.showTag(tag);
+              }}
+              onShowCollection={(collectionId) => {
+                setEditingSource(false);
+                setSelectedSourceId(null);
+                organize.showCollection(collectionId);
+              }}
+            />
+          }
+          onBack={() => {
+            setEditingSource(false);
+            setSelectedSourceId(null);
+          }}
+          onEdit={() => setEditingSource(true)}
+          onSaveNote={(note, expectedRevision) =>
+            sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note)
+          }
+          onRefreshMetadata={async () => {
+            const result = await sources.refreshSourceMetadata(
+              selectedRecord.sourceId,
+              selectedRecord.revision,
             );
-          }
-          setEditingSource(false);
-          setSelectedSourceId(null);
-        }}
-        onGetPdf={async () => {
-          const doi = selectedRecord.identifiers.find(
-            (identifier) => identifier.scheme.toLowerCase() === "doi",
-          )?.value;
-          const result = await getPaper({
-            root: props.root,
-            sourceId: selectedRecord.sourceId,
-            expectedRevision: selectedRecord.revision,
-            ...(doi ? { doi } : {}),
-            ...(selectedRecord.url ? { url: selectedRecord.url } : {}),
-          });
-          if (!result.ok) return;
-          if (result.value.status === "attached") {
-            await sources.refreshOverview();
+            if (!panelMounted.current || panelContextRef.current !== panelContext) return;
+            sources.acceptSourceRecord(result.record);
+            if (result.outcome === "refreshed") void sources.reloadOverview();
             toastManager.add({
-              type: "success",
-              title: result.value.published
-                ? "PDF attached"
-                : "PDF attached: an accepted manuscript or preprint",
+              type:
+                result.outcome === "refreshed" || result.outcome === "unchanged"
+                  ? "success"
+                  : "warning",
+              title:
+                result.outcome === "refreshed"
+                  ? "Metadata refreshed"
+                  : result.outcome === "unchanged"
+                    ? "Metadata is already up to date"
+                    : result.outcome === "stale"
+                      ? "Source changed while metadata was refreshed"
+                      : result.outcome === "duplicate"
+                        ? "Metadata refresh stopped"
+                        : "Metadata cannot be refreshed yet",
+              description: result.message ?? undefined,
             });
-            return;
-          }
-          // Anything waiting for the user is on the band above Sources, with its action.
-          toastManager.add({
-            type: result.value.status === "needs-you" ? "info" : "error",
-            title: result.value.message,
-          });
-        }}
-        onOpenPdf={props.onOpenPdf}
-      />
+          }}
+          onRemove={async () => {
+            const result = await sources.removeSource(
+              selectedRecord.sourceId,
+              selectedRecord.revision,
+            );
+            if (result.outcome === "stale") {
+              throw new Error(
+                "This source changed after you opened it. Review the latest version, then try again.",
+              );
+            }
+            setEditingSource(false);
+            setSelectedSourceId(null);
+          }}
+          onGetPdf={async () => {
+            const doi = selectedRecord.identifiers.find(
+              (identifier) => identifier.scheme.toLowerCase() === "doi",
+            )?.value;
+            const result = await getPaper({
+              root: props.root,
+              sourceId: selectedRecord.sourceId,
+              expectedRevision: selectedRecord.revision,
+              ...(doi ? { doi } : {}),
+              ...(selectedRecord.url ? { url: selectedRecord.url } : {}),
+            });
+            if (!result.ok) return;
+            if (result.value.status === "attached") {
+              await sources.refreshOverview();
+              toastManager.add({
+                type: "success",
+                title: result.value.published
+                  ? "PDF attached"
+                  : "PDF attached: an accepted manuscript or preprint",
+              });
+              return;
+            }
+            // Anything waiting for the user is on the band above Sources, with its action.
+            toastManager.add({
+              type: result.value.status === "needs-you" ? "info" : "error",
+              title: result.value.message,
+            });
+          }}
+          onOpenPdf={props.onOpenPdf}
+        />
+      </>
     );
   }
 
@@ -1168,7 +1217,29 @@ export function ScientSourcesPanel(props: {
             : {})}
         />
       ) : null}
-      {sources.overview.records.length > 0 ? (
+      {sources.overview.records.length > 0 && organize.selection.size > 0 ? (
+        <SourcesBulkBar
+          organize={organize}
+          records={sources.overview.records}
+          visibleSourceIds={filteredSourceRecords.map((record) => record.sourceId)}
+          onRequestName={setNameRequest}
+          onRemove={async (records) => {
+            const results = await Promise.allSettled(
+              records.map((record) => sources.removeSource(record.sourceId, record.revision)),
+            );
+            const kept = results.filter(
+              (result) => result.status === "rejected" || result.value.outcome === "stale",
+            ).length;
+            if (kept > 0) {
+              toastManager.add({
+                type: "warning",
+                title: kept === 1 ? "1 source was not removed" : `${kept} sources were not removed`,
+                description: "They changed or could not be removed. Review them, then try again.",
+              });
+            }
+          }}
+        />
+      ) : sources.overview.records.length > 0 ? (
         <div className="mt-2 mb-1 ml-3 mr-4 flex min-h-8 shrink-0 items-center gap-1 rounded-md text-sm text-muted-foreground">
           <div className="flex min-w-0 flex-1 cursor-text items-center gap-2 rounded-md px-2 transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground">
             <Search className="size-4 shrink-0 text-muted-foreground/80" aria-hidden="true" />
@@ -1196,6 +1267,12 @@ export function ScientSourcesPanel(props: {
               </Button>
             ) : null}
           </div>
+          <SourcesFilterMenu
+            organize={organize}
+            records={sources.overview.records}
+            query={sourceQuery}
+            onRequestName={setNameRequest}
+          />
           <Select
             value={sourceSort}
             items={SCIENT_SOURCE_SORT_OPTIONS}
@@ -1224,6 +1301,14 @@ export function ScientSourcesPanel(props: {
           </Select>
         </div>
       ) : null}
+      {sources.overview.records.length > 0 && organize.selection.size === 0 ? (
+        <SourcesActiveFilters
+          organize={organize}
+          matchCount={filteredSourceRecords.length}
+          onRequestName={setNameRequest}
+        />
+      ) : null}
+      <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
       {sources.overview.records.length === 0 ? (
         <>
           <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
@@ -1251,16 +1336,32 @@ export function ScientSourcesPanel(props: {
               return (
                 <div
                   key={record.sourceId}
-                  className="group flex w-full items-start gap-2 px-2 py-1.5 hover:bg-accent/40"
+                  className={`group flex w-full items-start gap-2 px-2 py-1.5 hover:bg-accent/40 ${organize.selection.has(record.sourceId) ? "bg-accent/35" : ""}`}
                   onContextMenu={(event) => void showSourceContextMenu(event, record)}
                 >
+                  {organize.selection.size > 0 ? (
+                    <span className="mt-2.5 ml-1 flex shrink-0">
+                      <Checkbox
+                        checked={organize.selection.has(record.sourceId)}
+                        aria-label={`Select ${record.title ?? "Untitled source"}`}
+                        onCheckedChange={() => organize.toggleSelected(record.sourceId)}
+                      />
+                    </span>
+                  ) : null}
                   <Tooltip>
                     <TooltipTrigger
                       render={
                         <button
                           type="button"
                           className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                          onClick={() => openSourceDetails(record.sourceId)}
+                          onClick={(event) =>
+                            organize.selection.size > 0 ||
+                            event.metaKey ||
+                            event.ctrlKey ||
+                            event.shiftKey
+                              ? organize.toggleSelected(record.sourceId)
+                              : openSourceDetails(record.sourceId)
+                          }
                         >
                           <SourceJournalIcon
                             environmentId={props.environmentId}

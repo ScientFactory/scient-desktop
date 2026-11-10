@@ -19,6 +19,7 @@ import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics
 import {
   advanceSourceImport,
   beginLocalPdfImport,
+  bulkUpdateSources,
   beginZoteroImport,
   beginZoteroScopedImport,
   cancelSourceImport,
@@ -30,6 +31,7 @@ import {
   inspectZoteroConnection,
   listZoteroCollections,
   listZoteroLibrary,
+  organizeSources,
   preflightZoteroImport,
   refreshScientSourceMetadata,
   removeSource,
@@ -155,6 +157,16 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("remove", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             removeSource(args.payload),
+          ),
+        )
+        .handle("organize", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            organizeSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("bulkUpdate", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            bulkUpdateSources({ ...args.payload, actor: "user" }),
           ),
         )
         .handle("zoteroStatus", (args) =>

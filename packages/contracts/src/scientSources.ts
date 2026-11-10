@@ -9,6 +9,11 @@ import {
   ScientSourceRemovalResult,
   ScientSourceSummary,
   ScientSourcePreflightItem,
+  ScientSourcesBulkChange,
+  ScientSourcesBulkResult,
+  ScientSourcesOrganization,
+  ScientSourcesOrganizeAction,
+  ScientSourcesOrganizeResult,
   ScientSourcesOverview as ScientSourcesStoreOverview,
   ZoteroConnectionStatus,
   ZoteroCollection,
@@ -104,6 +109,18 @@ export const ScientSourceRemovalRequest = Schema.Struct({
 });
 export type ScientSourceRemovalRequest = typeof ScientSourceRemovalRequest.Type;
 
+export const ScientSourcesOrganizeRequest = Schema.Struct({
+  root: NonEmptyString,
+  change: ScientSourcesOrganizeAction,
+});
+export type ScientSourcesOrganizeRequest = typeof ScientSourcesOrganizeRequest.Type;
+
+export const ScientSourcesBulkUpdateRequest = Schema.Struct({
+  root: NonEmptyString,
+  change: ScientSourcesBulkChange,
+});
+export type ScientSourcesBulkUpdateRequest = typeof ScientSourcesBulkUpdateRequest.Type;
+
 export const ZoteroStatusRequest = Schema.Struct({});
 export type ZoteroStatusRequest = typeof ZoteroStatusRequest.Type;
 
@@ -196,6 +213,8 @@ export type ScientSourcesRetryImportRequest = typeof ScientSourcesRetryImportReq
 
 export {
   ScientSourceImportOperation,
+  ScientSourcesBulkResult,
+  ScientSourcesOrganizeResult,
   ScientSourceMetadataUpdateResult,
   ScientSourceRemovalResult,
   ZoteroConnectionStatus,
@@ -214,5 +233,7 @@ export const ScientSourcesOverviewResult = Schema.Struct({
   ...ScientSourcesStoreOverview.fields,
   records: Schema.Array(ScientSourceSummary),
   recordDiagnostics: Schema.Array(ScientSourceRecordDiagnostics),
+  // Optional so a client can read an older server's overview.
+  organization: Schema.optionalKey(ScientSourcesOrganization),
 });
 export type ScientSourcesOverviewResult = typeof ScientSourcesOverviewResult.Type;
