@@ -112,6 +112,16 @@ const representativeProperties = {
   createdBy: "user",
   scheduled: false,
   subagent: false,
+  failureOwner: "code",
+  failureCategory: "code-error",
+  language: "python",
+  actor: "agent",
+  entry: "cell",
+  runtimeSource: "managed",
+  commandCategory: "python",
+  commandCount: 3,
+  failedCount: 1,
+  stoppedCount: 1,
 };
 // Content sentinels must not reach the wire; account email is the explicit exception.
 const privateProperties = {
@@ -261,6 +271,23 @@ export function buildAnalyticsConformanceFixture() {
       captureCoverage: "unavailable",
       captureReason: "artifact-collection-failed",
       retainedOutputCount: 1,
+    }),
+  );
+  // Who a failure belongs to and what an agent ran are closed: free text becomes `unknown`.
+  cases.push(
+    fixtureCase("attribution-hostile", "scient.operation.failed", {
+      operationKind: "compute-run",
+      failureOwner: "PRIVATE-CONTENT",
+      failureCategory: "ZeroDivisionError: division by zero",
+      actor: "someone@example.invalid",
+      entry: "/private/fixture.py",
+    }),
+    fixtureCase("command-hostile", "provider.commands.observed", {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      commandCategory: "python /private/fixture.py",
+      commandCount: -4,
+      failedCount: "2",
     }),
   );
   for (const captureOutcome of ["retained", "partial", "none", "failed", "unobserved"]) {

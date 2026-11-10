@@ -90,6 +90,10 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import { makeOperationAnalytics } from "../../telemetry/OperationAnalytics.ts";
+import {
+  computeRunAttribution,
+  type ComputeRunFailureFacts,
+} from "../../telemetry/FailureAttribution.ts";
 import { makeComputeOutputAnalytics } from "../../telemetry/ComputeOutputAnalytics.ts";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
@@ -1079,6 +1083,43 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  const computeRunDimensions = Effect.fn("ComputeSessionService.computeRunDimensions")(function* (
+    live: LiveComputeSession,
+    execution: ComputeExecutionRecord,
+  ) {
+    const runtimeSource = (yield* Ref.get(live.recordRef)).runtime?.source;
+    const { source, actor } = execution.request;
+    const result = execution.result;
+    const facts: ComputeRunFailureFacts | null =
+      result === null
+        ? null
+        : result.status === "failed"
+          ? result.outcome === "failed"
+            ? { kind: "runtime-reported", errorName: result.diagnostics[0]?.errorName }
+            : { kind: "not-admitted" }
+          : result.status === "lost"
+            ? result.startedAt === null
+              ? { kind: "runtime-start" }
+              : {
+                  kind: "lost",
+                  reason:
+                    result.failureReason === SERVER_RESTART_REASON
+                      ? "server-restart"
+                      : result.failureReason === TRANSPORT_FAILED_REASON
+                        ? "transport-failed"
+                        : "exited",
+                }
+            : null;
+    return {
+      actor: actor === undefined ? ("user" as const) : ("agent" as const),
+      entry: source?._tag === "document" ? source.origin : ("console" as const),
+      ...(runtimeSource === undefined ? {} : { runtimeSource }),
+      ...(facts === null
+        ? {}
+        : { attribution: computeRunAttribution(facts, runtimeSource === "managed") }),
+    };
+  });
+
   const publishExecution = Effect.fn("ComputeSessionService.publishExecution")(function* (
     live: LiveComputeSession,
     execution: ComputeExecutionRecord,
@@ -1134,6 +1175,7 @@ const make = Effect.gen(function* () {
       ...(result?.finishedAt ? { finishedAt: Date.parse(result.finishedAt) } : {}),
       failureClass: status === "lost" ? "process-crash" : "unknown",
       language: live.adapter.languageId,
+      ...(yield* computeRunDimensions(live, execution)),
     });
     if (
       status === "succeeded" ||

@@ -802,6 +802,8 @@ describe("analysis outcome analytics", () => {
                 trigger: "user",
                 durationMs: undefined,
                 failureClass: "unknown",
+                language: "matlab",
+                entry: "run-file",
               },
             },
             {
@@ -811,6 +813,12 @@ describe("analysis outcome analytics", () => {
                 trigger: "user",
                 durationMs: expect.any(Number),
                 failureClass: "unknown",
+                language: "matlab",
+                entry: "run-file",
+                // A nonzero exit is the program's own result, not Scient's.
+                ...(outcome === "failed"
+                  ? { failureOwner: "code", failureCategory: "nonzero-exit" }
+                  : {}),
               },
             },
           ]);

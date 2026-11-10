@@ -6,6 +6,11 @@ import * as Cause from "effect/Cause";
 import * as Exit from "effect/Exit";
 import { AnalyticsService } from "./AnalyticsService.ts";
 import type { ComputeCaptureSummary } from "../scient/compute/ComputeCaptureStatus.ts";
+import {
+  captureRejectionAttribution,
+  latexBuildAttribution,
+  type FailureAttribution,
+} from "./FailureAttribution.ts";
 
 export interface OperationObservation {
   /** Opaque local correlation only. Never part of the event payload. */
@@ -19,6 +24,28 @@ export interface OperationObservation {
   /** The compute language, such as `python` or `r`; a closed runtime id, never a path. */
   readonly language?: string;
   readonly capture?: ComputeCaptureSummary;
+  /** Who a failure belongs to; read only on failed outcomes. */
+  readonly attribution?: FailureAttribution;
+  readonly actor?: "user" | "agent";
+  /** How the run entered Compute: the Console, a file, a selection, a notebook cell or Run. */
+  readonly entry?: "console" | "file" | "selection" | "cell" | "run-file";
+  readonly runtimeSource?: string;
+}
+
+function failureAttribution(input: OperationObservation): FailureAttribution | undefined {
+  if (input.status !== "failed") return undefined;
+  if (input.attribution !== undefined) return input.attribution;
+  if (input.operationKind === "latex-build")
+    return latexBuildAttribution(
+      input.failureClass === "process-crash" || input.failureClass === "unknown"
+        ? undefined
+        : input.failureClass,
+    );
+  if (input.operationKind === "compute-artifact") {
+    const reason = input.capture?.captureReason;
+    return captureRejectionAttribution(reason === "none" ? undefined : reason);
+  }
+  return { failureOwner: "unknown", failureCategory: "unknown" };
 }
 
 /** Observe durable outcomes, not RPC acceptance or polling. No raw inputs/results. */
@@ -59,6 +86,10 @@ export const makeOperationAnalytics = Effect.gen(function* () {
             input.finishedAt === undefined ? undefined : input.finishedAt - input.startedAt,
           failureClass: input.failureClass ?? "unknown",
           ...(input.language === undefined ? {} : { language: input.language }),
+          ...failureAttribution(input),
+          ...(input.actor === undefined ? {} : { actor: input.actor }),
+          ...(input.entry === undefined ? {} : { entry: input.entry }),
+          ...(input.runtimeSource === undefined ? {} : { runtimeSource: input.runtimeSource }),
           ...(input.operationKind === "compute-artifact"
             ? { captureSchemaVersion: 2, captureSource: "run-file" }
             : {}),
