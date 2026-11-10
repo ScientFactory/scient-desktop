@@ -440,8 +440,9 @@ The trash listing reports its own entries the same way. Reading a single source
 by ID still fails for that source alone.
 
 The UI moves a source to the trash straight from the row's secondary-click
-menu or the details page and offers Undo in the confirmation toast; the trash
-popover in the Library header restores or empties it. The row's secondary-click
+menu or the details page and offers Undo in the confirmation toast; **Trash** in
+the Library header's overflow menu (`SourcesHeaderMenu`) opens a popover that
+restores or empties it. The row's secondary-click
 menu uses the existing host context-menu bridge.
 
 Metadata completeness is derived from the record rather than persisted as a

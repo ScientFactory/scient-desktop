@@ -5,7 +5,7 @@ import {
 import type { ScientSourceDetailResult } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Check, Copy, PenLine } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import {
@@ -32,10 +32,14 @@ function referenceStyleStorageKey(projectId: string): string {
   return `scient:sources:reference-style:${projectId}:v1`;
 }
 
+let citationModule: CitationModule | null = null;
 let citationModulePromise: Promise<CitationModule> | null = null;
 
 function loadCitationModule(): Promise<CitationModule> {
-  citationModulePromise ??= import("@scientfactory/scient-citations");
+  citationModulePromise ??= import("@scientfactory/scient-citations").then((loaded) => {
+    citationModule = loaded;
+    return loaded;
+  });
   return citationModulePromise;
 }
 
@@ -44,65 +48,48 @@ type ReferenceState =
   | { readonly status: "ready"; readonly value: string }
   | { readonly status: "error" };
 
+function formatReference(
+  citations: CitationModule | null,
+  loadFailed: boolean,
+  record: SourceRecord,
+  style: ScientReferenceStyleId,
+): ReferenceState {
+  if (!citations) return loadFailed ? { status: "error" } : { status: "loading" };
+  try {
+    return { status: "ready", value: citations.formatSourceReference(record, style) };
+  } catch {
+    return { status: "error" };
+  }
+}
+
 export function SourceReference(props: { readonly record: SourceRecord }) {
   const [style, setStyle] = useLocalStorage<ScientReferenceStyleId, ScientReferenceStyleId>(
     referenceStyleStorageKey(props.record.projectId),
     "vancouver",
     REFERENCE_STYLE_SCHEMA,
   );
-  const [reference, setReference] = useState<ReferenceState>({ status: "loading" });
-  const [styleOpen, setStyleOpen] = useState(false);
-  const styleCloseTimer = useRef<number | null>(null);
+  const [citations, setCitations] = useState(citationModule);
+  const [loadFailed, setLoadFailed] = useState(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "reference" });
 
-  const cancelStyleClose = () => {
-    if (styleCloseTimer.current === null) return;
-    window.clearTimeout(styleCloseTimer.current);
-    styleCloseTimer.current = null;
-  };
-  const scheduleStyleClose = () => {
-    cancelStyleClose();
-    styleCloseTimer.current = window.setTimeout(() => {
-      styleCloseTimer.current = null;
-      setStyleOpen(false);
-    }, 120);
-  };
-
-  const [previousReferenceInput, setPreviousReferenceInput] = useState({
-    record: props.record,
-    style: style,
-  });
-  if (previousReferenceInput.record !== props.record || previousReferenceInput.style !== style) {
-    setPreviousReferenceInput({ record: props.record, style: style });
-    setReference({ status: "loading" });
-  }
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the citation module and formats the reference, ignoring stale completions
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads the citation module once; formatting then runs in render
   useEffect(() => {
+    if (citations) return;
     let active = true;
     void loadCitationModule().then(
-      (module) => {
-        if (!active) return;
-        try {
-          setReference({
-            status: "ready",
-            value: module.formatSourceReference(props.record, style),
-          });
-        } catch {
-          setReference({ status: "error" });
-        }
+      (loaded) => {
+        if (active) setCitations(loaded);
       },
       () => {
-        if (active) setReference({ status: "error" });
+        if (active) setLoadFailed(true);
       },
     );
-
     return () => {
       active = false;
     };
-  }, [props.record, style]);
+  }, [citations]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending style-close timer on unmount
-  useEffect(() => cancelStyleClose, [cancelStyleClose]);
+  const reference = formatReference(citations, loadFailed, props.record, style);
 
   return (
     <section className="space-y-2.5" aria-labelledby="source-reference-heading">
@@ -111,9 +98,6 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
           Reference
         </h3>
         <Select
-          modal={false}
-          open={styleOpen}
-          onOpenChange={setStyleOpen}
           value={style}
           items={REFERENCE_STYLE_ITEMS}
           onValueChange={(value) => {
@@ -125,22 +109,11 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
             variant="ghost"
             className="w-auto min-w-0 cursor-pointer"
             aria-label="Reference style"
-            onPointerEnter={() => {
-              cancelStyleClose();
-              setStyleOpen(true);
-            }}
-            onPointerLeave={scheduleStyleClose}
           >
             <PenLine className="size-3.5" aria-hidden="true" />
             <SelectValue className="flex-none" />
           </SelectTrigger>
-          <SelectPopup
-            align="start"
-            alignItemWithTrigger={false}
-            matchTriggerWidth={false}
-            onPointerEnter={cancelStyleClose}
-            onPointerLeave={scheduleStyleClose}
-          >
+          <SelectPopup align="start" alignItemWithTrigger={false} matchTriggerWidth={false}>
             {SCIENT_REFERENCE_STYLES.map((item) => (
               <SelectItem key={item.id} value={item.id}>
                 {item.label}
@@ -150,7 +123,7 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
         </Select>
       </div>
 
-      <div className="flex items-start gap-2 border border-border/70 bg-muted/30 px-3 py-2.5">
+      <div className="flex min-h-22 items-start gap-2 border border-border/70 bg-muted/30 px-3 py-2.5">
         {reference.status === "ready" ? (
           <>
             <p className="min-w-0 flex-1 select-text text-sm leading-relaxed">{reference.value}</p>

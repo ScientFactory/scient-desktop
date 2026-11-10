@@ -3,14 +3,13 @@ import type {
   ScientSourceRestoreResult,
   ScientSourceTrashListing,
 } from "@t3tools/contracts";
-import { LoaderCircle, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { LoaderCircle } from "lucide-react";
+import { useState, type RefObject } from "react";
 
 import { Button } from "../../components/ui/button";
-import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../../components/ui/popover";
+import { Popover, PopoverPopup, PopoverTitle } from "../../components/ui/popover";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { toastManager } from "../../components/ui/toast";
-import { ScientTooltip } from "../presentation/ScientTooltip";
 import {
   deleteScientSourcesPermanently,
   readScientSourceTrash,
@@ -67,13 +66,14 @@ export function announceSourceMovedToTrash(input: {
   });
 }
 
-export function SourceTrashButton(props: {
+export function SourceTrashPopover(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
-  readonly count: number;
+  readonly open: boolean;
+  readonly anchor: RefObject<HTMLElement | null>;
+  readonly onOpenChange: (open: boolean) => void;
   readonly onChanged: () => Promise<unknown>;
 }) {
-  const [open, setOpen] = useState(false);
   const [listing, setListing] = useState<ScientSourceTrashListing | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
@@ -104,26 +104,17 @@ export function SourceTrashButton(props: {
   const entries = listing?.entries ?? [];
   return (
     <Popover
-      open={open}
-      onOpenChange={(next) => {
-        setOpen(next);
+      open={props.open}
+      onOpenChange={props.onOpenChange}
+      onOpenChangeComplete={(open) => {
         setConfirmingEmpty(false);
         setProblem(null);
-        if (next) void load();
+        if (open) void load();
       }}
     >
-      <ScientTooltip
-        content={props.count === 1 ? "Trash: 1 source" : `Trash: ${props.count} sources`}
-      >
-        <PopoverTrigger
-          render={
-            <Button size="icon-xs" variant="ghost" aria-label="Trash">
-              <Trash2 />
-            </Button>
-          }
-        />
-      </ScientTooltip>
       <PopoverPopup
+        anchor={props.anchor}
+        finalFocus={props.anchor}
         align="end"
         side="bottom"
         padding="none"
