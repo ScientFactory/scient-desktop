@@ -20,6 +20,7 @@ import { RepositoryIdentityResolver } from "../../project/RepositoryIdentityReso
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ConversationSnapshotService } from "../conversationExport/ConversationSnapshotService.ts";
 import { CloudSyncSource, type SyncThreadFacts } from "./CloudSync.ts";
+import { fileSize, readBounded } from "./cloudAttachments.ts";
 import { ConversationExtras } from "./ConversationExtras.ts";
 
 /** Where a project sits across computers: its repository grouping key and sub-folder. */
@@ -129,8 +130,9 @@ export const layer = Layer.effect(
           ),
         ),
       ),
-      readFile: Effect.fn("CloudSyncSource.readFile")((path) =>
-        fileSystem.readFile(path).pipe(Effect.orElseSucceed(() => null)),
+      fileSize: Effect.fn("CloudSyncSource.fileSize")((path) => fileSize(fileSystem, path)),
+      readFile: Effect.fn("CloudSyncSource.readFile")((path, maxBytes) =>
+        readBounded(fileSystem, path, maxBytes),
       ),
       extras: extras.read,
       touched: orchestrator.streamDomainEvents.pipe(

@@ -1,8 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The test reads uploaded bodies back with Node's zlib.
+import * as NodeZlib from "node:zlib";
+
 import { describe, expect, it } from "@effect/vitest";
-import type { MovedThreadsResponse } from "@scientfactory/scient-cloud/api";
+import { CloudConversation, type MovedThreadsResponse } from "@scientfactory/scient-cloud/api";
 import { DEFAULT_CLOUD_LIMITS } from "@scientfactory/scient-cloud/limits";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -24,6 +28,7 @@ import {
 } from "./CloudSyncState.ts";
 
 const THREAD = ThreadId.make("thread-1");
+const decodeDocument = Schema.decodeUnknownSync(Schema.fromJsonString(CloudConversation));
 const OTHER = EnvironmentId.make("env-b");
 
 const apiError = (
@@ -53,7 +58,16 @@ const facts = (overrides: Partial<SyncThreadFacts> = {}): SyncThreadFacts => ({
 const harness = Effect.gen(function* () {
   const threads = new Map<ThreadId, SyncThreadFacts>([[THREAD, facts()]]);
   const digests = new Map<ThreadId, string>([[THREAD, `sha256:${"1".repeat(64)}`]]);
-  const puts: Array<{ threadId: ThreadId; generation: number; digest: string }> = [];
+  const puts: Array<{ threadId: ThreadId; generation: number; digest: string; gzip: Uint8Array }> =
+    [];
+  /** Local attachment files of THREAD by localId, with their sizes on disk. */
+  const files = new Map<string, { path: string; size: number }>([
+    ["thread-1-aaaa", { path: "/lab/figure.png", size: 8 }],
+    ["thread-1-bbbb", { path: "/lab/paper.pdf", size: 9 }],
+  ]);
+  const reads: string[] = [];
+  const blobChecks: string[] = [];
+  let onBlobCheck = () => {};
   const deletes: ThreadId[] = [];
   const putFailures: CloudApiError[] = [];
   let moved: MovedThreadsResponse["threads"] = [];
@@ -66,14 +80,19 @@ const harness = Effect.gen(function* () {
     publicJwk: Effect.die("unused"),
     enrollmentProof: () => Effect.die("unused"),
     limits: () => Effect.succeed({ ...DEFAULT_CLOUD_LIMITS, usedBytes: 0 }),
-    putThread: ({ threadId, meta }) => {
+    putThread: ({ threadId, meta, gzip }) => {
       const failure = putFailures.shift();
       if (failure !== undefined) return Effect.fail(failure);
-      puts.push({ threadId, generation: meta.generation, digest: meta.contentDigest });
+      puts.push({ threadId, generation: meta.generation, digest: meta.contentDigest, gzip });
       return Effect.succeed({ status: "stored" as const });
     },
     deleteThread: (_userId, threadId) => Effect.sync(() => void deletes.push(threadId)),
-    hasBlob: () => Effect.succeed(true),
+    hasBlob: (_userId, sha256) =>
+      Effect.sync(() => {
+        blobChecks.push(sha256);
+        onBlobCheck();
+        return true;
+      }),
     putBlob: () => Effect.void,
     moved: () => Effect.sync(() => ({ threads: moved })),
     getThread: () => Effect.die("unused"),
@@ -90,10 +109,21 @@ const harness = Effect.gen(function* () {
           ? null
           : {
               snapshot: { ...capturedSnapshot, contentDigest: digest },
-              attachmentFiles: new Map(),
+              attachmentFiles: new Map(
+                threadId === THREAD
+                  ? [...files].map(([localId, file]) => [localId, file.path] as const)
+                  : [],
+              ),
             };
       }),
-    readFile: () => Effect.succeed(null),
+    fileSize: (path) =>
+      Effect.sync(() => [...files.values()].find((file) => file.path === path)?.size ?? null),
+    readFile: (path, maxBytes) =>
+      Effect.sync(() => {
+        reads.push(path);
+        const size = [...files.values()].find((file) => file.path === path)?.size;
+        return size === undefined || size > maxBytes ? null : new Uint8Array(size).fill(7);
+      }),
     extras: () => Effect.succeed({ sidecar: {} }),
     touched: Stream.empty,
     enabled: Effect.sync(() => enabled),
@@ -117,6 +147,10 @@ const harness = Effect.gen(function* () {
     puts,
     deletes,
     putFailures,
+    files,
+    reads,
+    blobChecks,
+    onBlobCheck: (run: () => void) => (onBlobCheck = run),
     touch: markTouched,
     setMoved: (value: MovedThreadsResponse["threads"]) => (moved = value),
     setEnabled: (value: boolean) => (enabled = value),
@@ -257,6 +291,48 @@ describe("CloudSync", () => {
       yield* h.sync.tick;
       expect(h.puts).toHaveLength(0);
       expect((yield* h.sync.status).state).toBe("off");
+    }),
+  );
+  it.effect("leaves a file over the size limit unread and says so in the copy", () =>
+    Effect.gen(function* () {
+      const h = yield* harness;
+      h.files.set("thread-1-bbbb", {
+        path: "/lab/paper.pdf",
+        size: DEFAULT_CLOUD_LIMITS.maxBlobBytes + 1,
+      });
+      yield* h.sync.tick;
+      expect(h.reads).toEqual(["/lab/figure.png"]);
+      const { snapshot, sidecar } = decodeDocument(
+        new TextDecoder().decode(NodeZlib.gunzipSync(h.puts[0]!.gzip)),
+      );
+      const available = Object.fromEntries(
+        snapshot.messages[0]!.attachments.map((a) => [a.localId, a.available]),
+      );
+      expect(available).toEqual({
+        "thread-1-aaaa": true,
+        "thread-1-bbbb": false,
+        "thread-1-cccc": false,
+      });
+      expect(sidecar?.attachments?.map((entry) => entry.localId)).toEqual(["thread-1-aaaa"]);
+      expect(snapshot.contentDigest).toBe(h.puts[0]!.digest);
+      expect(snapshot.contentDigest).not.toBe(capturedSnapshot.contentDigest);
+    }),
+  );
+
+  it.effect("stops mid-upload when the switch turns off, and copies once it is back on", () =>
+    Effect.gen(function* () {
+      const h = yield* harness;
+      h.files.set("thread-1-bbbb", { path: "/lab/paper.pdf", size: 9 });
+      h.onBlobCheck(() => h.setEnabled(false));
+      yield* h.sync.tick;
+      expect(h.blobChecks).toHaveLength(1);
+      expect(h.puts).toHaveLength(0);
+      expect((yield* h.store.get).threads[THREAD]).toBeUndefined();
+
+      h.onBlobCheck(() => {});
+      h.setEnabled(true);
+      yield* h.sync.tick;
+      expect(h.puts).toHaveLength(1);
     }),
   );
 });

@@ -1,5 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Snapshot gzip and blob hashing use Node's zlib and crypto.
-import * as NodeCrypto from "node:crypto";
+// @effect-diagnostics nodeBuiltinImport:off -- Snapshot gzip uses Node's zlib.
 import * as NodeZlib from "node:zlib";
 
 import {
@@ -27,6 +26,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { CloudApi, type CloudApiError } from "./CloudApi.ts";
+import { markAttachments, sha256Hex, withContentDigest } from "./cloudAttachments.ts";
 import { CloudSyncState, type CloudSyncStateDocument } from "./CloudSyncState.ts";
 import type { ConversationExtrasResult } from "./ConversationExtras.ts";
 
@@ -71,7 +71,10 @@ export interface CloudSyncSourceShape {
     threadId: ThreadId,
     selection: { readonly workLog: boolean; readonly reasoning: boolean },
   ) => Effect.Effect<SyncCapture | null>;
-  readonly readFile: (path: string) => Effect.Effect<Uint8Array | null>;
+  /** Null when the file is missing; read without loading its bytes. */
+  readonly fileSize: (path: string) => Effect.Effect<number | null>;
+  /** Null when the file is missing or holds more than `maxBytes`, which it never reads past. */
+  readonly readFile: (path: string, maxBytes: number) => Effect.Effect<Uint8Array | null>;
   /** Per-answer provider/model and the repository commit for the sidecar and meta. */
   readonly extras: (
     threadId: ThreadId,
@@ -109,7 +112,8 @@ export class CloudSync extends Context.Service<
   }
 >()("t3/scient/cloud/CloudSync") {}
 
-type UploadOutcome = "copied" | "unchanged" | "skipped" | "gone" | "busy";
+/** `stopped`: the switch went off or the enrollment changed mid-upload. */
+type UploadOutcome = "copied" | "unchanged" | "skipped" | "gone" | "busy" | "stopped";
 
 const encodeConversation = Schema.encodeEffect(Schema.fromJsonString(CloudConversation));
 
@@ -125,9 +129,6 @@ const gzip = (bytes: Uint8Array) =>
         NodeZlib.gzip(bytes, (error, result) => (error ? reject(error) : resolve(result))),
       ),
   );
-
-const sha256Hex = (bytes: Uint8Array) =>
-  NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
 const backoffDelayMs = (failures: number, jitter: number, retryAfterMs: number | null) => {
   const base = Math.min(BACKOFF_MAX_MS, BACKOFF_MIN_MS * 2 ** Math.max(0, failures - 1));
@@ -155,6 +156,8 @@ export const make = Effect.gen(function* () {
     if (state.userId === null) return null;
     return (yield* source.enabled) ? state.userId : null;
   });
+  /** Rechecked before every request, so turning the switch off stops a batch promptly. */
+  const stillActive = (userId: string) => active.pipe(Effect.map((current) => current === userId));
 
   const nowIso = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
@@ -175,13 +178,14 @@ export const make = Effect.gen(function* () {
   const uploadBlobs = Effect.fn("CloudSync.uploadBlobs")(function* (
     userId: string,
     threadId: ThreadId,
-    capture: SyncCapture,
+    files: ReadonlyMap<string, string>,
     maxBlobBytes: number,
   ) {
     const attachments: Array<NonNullable<SnapshotSidecar["attachments"]>[number]> = [];
-    for (const [localId, path] of capture.attachmentFiles) {
-      const bytes = yield* source.readFile(path);
-      if (bytes === null || bytes.byteLength > maxBlobBytes) continue;
+    for (const [localId, path] of files) {
+      if (!(yield* stillActive(userId))) return null;
+      const bytes = yield* source.readFile(path, maxBlobBytes);
+      if (bytes === null) continue;
       const sha256 = sha256Hex(bytes);
       if (!(yield* api.hasBlob(userId, sha256, threadId)))
         yield* api.putBlob(userId, sha256, bytes, threadId);
@@ -204,11 +208,21 @@ export const make = Effect.gen(function* () {
     if (!facts.settled) return "busy" satisfies UploadOutcome;
     const max = limits ?? DEFAULT_CLOUD_LIMITS;
     const prior = state.threads[threadId];
+    let lastDigest: string | null = null;
     // The full record first; a record over the limit goes again without work log and reasoning.
     for (const full of [true, false]) {
       const capture = yield* source.capture(threadId, { workLog: full, reasoning: full });
       if (capture === null) continue;
-      const digest = capture.snapshot.contentDigest;
+      // Files over the per-file limit stay home, and the copy says so.
+      const files = new Map<string, string>();
+      for (const [localId, path] of capture.attachmentFiles) {
+        const size = yield* source.fileSize(path);
+        if (size !== null && size <= max.maxBlobBytes) files.set(localId, path);
+      }
+      const marked = markAttachments(capture.snapshot, (localId) => files.has(localId));
+      const snapshot = marked === capture.snapshot ? capture.snapshot : withContentDigest(marked);
+      const digest = snapshot.contentDigest;
+      lastDigest = digest;
       if (state.skipped[threadId] === digest) return "skipped" satisfies UploadOutcome;
       if (
         full &&
@@ -226,11 +240,12 @@ export const make = Effect.gen(function* () {
         }));
         return "unchanged" satisfies UploadOutcome;
       }
-      const attachments = yield* uploadBlobs(userId, threadId, capture, max.maxBlobBytes);
-      const extras = yield* source.extras(threadId, capture.snapshot);
+      const attachments = yield* uploadBlobs(userId, threadId, files, max.maxBlobBytes);
+      if (attachments === null) return "stopped" satisfies UploadOutcome;
+      const extras = yield* source.extras(threadId, snapshot);
       const sidecar = { ...extras.sidecar, ...(attachments.length === 0 ? {} : { attachments }) };
       const document: CloudConversation = {
-        snapshot: capture.snapshot,
+        snapshot,
         ...(Object.keys(sidecar).length === 0 ? {} : { sidecar }),
       };
       const body = yield* gzip(new TextEncoder().encode(yield* encodeConversation(document)));
@@ -252,6 +267,7 @@ export const make = Effect.gen(function* () {
           ? { continuedFrom: { env: continuedFrom.env, thread: continuedFrom.thread } }
           : {}),
       };
+      if (!(yield* stillActive(userId))) return "stopped" satisfies UploadOutcome;
       const stored = yield* api.putThread({ userId, threadId, meta, gzip: body }).pipe(
         Effect.as(true),
         Effect.catchIf(
@@ -281,11 +297,11 @@ export const make = Effect.gen(function* () {
       });
       return "copied" satisfies UploadOutcome;
     }
-    const last = yield* source.capture(threadId, { workLog: false, reasoning: false });
-    if (last !== null) {
+    if (lastDigest !== null) {
+      const skippedDigest = lastDigest;
       yield* store.update((current) => ({
         ...current,
-        skipped: { ...current.skipped, [threadId]: last.snapshot.contentDigest },
+        skipped: { ...current.skipped, [threadId]: skippedDigest },
       }));
     }
     yield* Effect.logInfo("Cloud copy skipped a conversation over the size limit.", { threadId });
@@ -402,12 +418,13 @@ export const make = Effect.gen(function* () {
             pickTouched = touched;
           }
         }
-        if (pick === null) return;
+        if (pick === null || !(yield* stillActive(userId))) return;
         current = pick;
         copying = true;
         const outcome = yield* upload(userId, pick).pipe(
           Effect.ensuring(Effect.sync(() => (copying = false))),
         );
+        if (outcome === "stopped") return;
         if (outcome === "busy") {
           dirty.set(pick, now);
           continue;
