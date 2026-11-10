@@ -17,9 +17,9 @@ represent as rich content.
 Open a file from **Files** or a link in chat. To start a document, choose
 **Markdown** from one of these menus:
 
-- The side panel's **Documents** launcher or add menu creates it at the project
-  root.
-- The Files bar's **New document** menu uses the selected folder, or the folder
+- The side panel's **Documents** menu, or the Markdown format button on the
+  **Document** card in a new **+** tab, creates it at the project root.
+- The Files bar's **New document** button (file-plus icon) opens a menu using the selected folder, or the folder
   of the selected file. With no selection it uses the project root.
 - A folder's context menu offers **New document here → Markdown**.
 
@@ -322,6 +322,10 @@ When both writers changed unambiguously separate Markdown blocks, Scient can
 merge them. A paragraph, list, table or fence is one block; separate lines inside
 it do not necessarily merge.
 
+Very large documents (about 256,000 characters or 2,000 blocks) are not merged
+automatically. The same local-version/history choice below applies when a
+live conflict cannot be merged within those limits.
+
 When a live edit cannot merge, Scient saves your version and keeps the replaced
 file in history. A line offers **Use the other version** if you want that text
 instead. Overleaf sync has its own conflict workflow and does not silently choose a side.
@@ -335,7 +339,11 @@ revision history.
 If math, citation or footnote source is focused during an outside change, leave
 and recheck the field against Source before typing further: a focused native
 field can retain older text. Multiple windows are not a collaborative editor;
-checkpoint ownership and simultaneous edits have separate limits.
+checkpoint ownership and simultaneous edits have separate limits. If the notice
+says **Another editor owns this file's recovery checkpoint**, preserve this
+window's work with **Save a copy**. Continued typing and retries do not restore
+that writer's ownership. Do not clear recovery storage to resolve it before
+preserving the work from each window.
 
 ### File history, recovery copies and undo
 
@@ -353,6 +361,10 @@ differ. This checkpoint is separate from server history, refused rich input,
 and a successful file save. The newest typing can be lost before it commits.
 Storage has shared record and size limits; failed checkpoint admission can keep
 a save retrying without reaching the disk even while typing remains possible.
+With several source copies in one record, the budget can be reached around half
+a million characters; the exact threshold depends on those copies. Such local
+storage/admission failures show **Couldn’t save** immediately while retries
+continue, rather than waiting through the quiet retries for a brief disk failure.
 Use **Save a copy** and preserve unresolved work before clearing storage or
 restarting to investigate a storage problem.
 

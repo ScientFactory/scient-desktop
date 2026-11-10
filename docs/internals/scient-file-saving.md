@@ -7,8 +7,10 @@ are separate boundaries; visible input is not proof that a save reached disk.
 Workspace mutations live in
 `apps/server/src/scient/workspace/WorkspaceFileMutations.ts`. Saves, creates,
 renames, deletes and Overleaf's file writes are plain on every host. The native
-helper (`native/file-exchange`) only finishes what an older build left unfinished,
-and is removed after one release.
+retained-publication path only finishes what an older build left unfinished.
+Helper calls for identity, privacy or platform admission are separate from
+selecting native publication; their presence does not make a new save or sync
+use native retained publication.
 
 ## A save
 
@@ -43,8 +45,10 @@ A rename takes the file's history along. A delete keeps a copy.
 
 ## In the editor
 
-`packages/scient-document/src/persistenceCoordinator.ts` owns this. There is no
-"unknown" or "review" state.
+`packages/scient-document/src/persistenceCoordinator.ts` owns this. Ordinary
+save failures retry instead of entering the former unknown/review workflow.
+Pending renames and older-record recovery still have attention and reviewed
+confirmation paths; they can prevent an immediate flush.
 
 - A failed save goes again after 0.25, 1, 3, 10, then every 30 seconds, for as long
   as it takes. Saving by hand doesn't wait out the delay. Before going again over
@@ -52,13 +56,13 @@ A rename takes the file's history along. A delete keeps a copy.
 - Brief holds stay out of sight. A failure that lasts, or isn't transient, shows one
   notice (`ScientMarkdownPersistenceNotice`, shared by Markdown and LaTeX) with the
   real reason and **Save a copy**.
-- A change elsewhere merges if it can. If it can't, the person's text is saved, the
-  other version goes to the history, and a small line offers **Use the other
-  version**.
+- A clean document adopts a change from elsewhere. With unsaved local edits,
+  changes merge if they can. Otherwise the person's text is saved, the other
+  version goes to history, and a small line offers **Use the other version**.
 - A draft restored from an earlier session that conflicts with the file writes
   nothing. A small line offers **Keep my draft** and **Use the file**, and typing on
-  counts as keeping it. This is the one question left: only the person knows which
-  text they want.
+  counts as keeping it. This restored-draft choice is distinct from the
+  format-specific recovery and pending-input states below.
 
 Plain text and code files still use the older `fileSaveCoordinator`, with its own
 Try again and conflict question.
@@ -69,8 +73,10 @@ LaTeX and bibliography files. Ordinary draft-copy failures are diagnostic, but
 `MarkdownDraftCheckpointWriter.flushPublication` is strict: unavailable storage,
 quota/capacity failures or lost checkpoint ownership can refuse transport
 admission. Retrying a save does not bypass that requirement. LaTeX Visual also
-has a separate recovery workflow that can pause editing while an unstored copy
-needs attention; see [Visual recovery](scient-latex-visual.md#saving-preparation-and-recovery).
+has a separate recovery workflow that pauses editing while an offer that could
+not be parked awaits comparison and a choice. This includes stored live-slot
+offers and copies that could not be stored; see
+[Visual recovery](scient-latex-visual.md#saving-preparation-and-recovery).
 
 ## Overleaf
 
@@ -88,7 +94,8 @@ Sync is not a person, so it never overwrites edits: Overleaf conflicts stop and 
 The first touch of a root looks for unfinished records, without the native helper.
 Nearly every root has none. If there are some, writes wait for them to finish rather
 than race them, and are refused and retried meanwhile. Stalled work holds saves for at
-most two minutes. Nothing a record says blocks a read or a save.
+most two minutes. That bound concerns older retained work; current-file
+conflicts and local journal admission have their own rules.
 
 ## Limits
 

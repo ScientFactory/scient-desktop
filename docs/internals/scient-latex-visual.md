@@ -1374,6 +1374,20 @@ Their repair direction remains in the
 The [historical command-placement record](../design/editing-commands-placement.md)
 is context, not a second menu authority.
 
+#### Dated owner review and open reports
+
+The 2026-10-08 running-app review recorded Ctrl+A as owner-verified, along with
+the other then-reviewed workflow checks. This is dated owner evidence, not a
+fresh automated or installed-candidate qualification at the November baseline.
+
+The responsiveness, math caret/selection positioning and rendering-completeness
+reports remain open pending requalification. Named rendering cases include the
+supplied mixed-column `tabularx`, the reported `\mathbf{n}` appearance and
+`29_long_photo_and_heavy_components.tex`. They must not be silently closed by
+this reorganization. The 2026-10-15 renderer-plan lineage also records landed
+repairs and thesis/template page-span comparisons; those remain historical
+evidence through the linked plan, not proof that all reported cases now pass.
+
 For a construct or library change, qualify each affected operation independently:
 source projection and opaque preservation; narrow/body and structural edits;
 package/physical ownership; exact refusal; source-step and typing undo; retained

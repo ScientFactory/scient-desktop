@@ -7,6 +7,10 @@ Last updated: 2026-11-10
 Purpose: Markdown editing authority, implemented behavior, limitations, and qualification.
 Doc type: Current implementation
 
+Main's 2026-08-30 reconciliation recorded the architecture and product contract
+as accepted. That recorded acceptance is retained; Draft identifies this updated
+current-implementation reconciliation, not a withdrawal of the contract.
+
 This document owns the Markdown editor's architecture, implemented source model,
 and qualification boundaries. The current-behavior sections were reconciled on
 2026-11-10 against `8006e7bbdab5d2a724a628a2f3c4d3c6d81821ea`. Historical foundation
@@ -501,6 +505,11 @@ revision; the server keeps replaced bytes in history and the notice offers
 ordinary document-save UI. A restored earlier-session draft is held for
 **Keep my draft / Use the file**; typing counts as keeping it.
 
+The merge is bounded to 256,000 UTF-16 units and 2,000 blocks, with bounded
+diff work and consecutive reconciliation attempts. A live conflict outside
+those limits takes the local-version/history path instead of merging the
+outside text; it does not restore the old conflict question.
+
 External rich projection uses non-history transactions and retains unaffected
 NodeViews/selection where mapping is safe. Pierre's supported external-edit path
 can map incoming edits through history; unsupported projection/history paths
@@ -521,6 +530,15 @@ source across the copies in one record. Retrying does not bypass that admission.
 Ordinary background checkpoint errors can be diagnostic while an exact
 publication checkpoint remains a condition for writing. Thus “typing remains
 available” does not mean “a save can always reach disk.”
+
+Admission errors are terminal-classified for immediate notice display; the
+coordinator still schedules retries. At roughly four full source copies, the
+4 MiB budget corresponds to about 524,288 UTF-16 units per copy, from source
+arithmetic rather than a new reproduced size qualification. The exact bound
+depends on the stored sources and rename material. A lost checkpoint CAS sets
+the writer's `disabled` flag; its later publication attempts refuse. The
+writer-reset/reopening journey has not been qualified by this documentation
+update, so neither retrying nor closing another window is promised to repair it.
 
 Background-copy diagnostics must not be generalized to the strict publication
 or rename journal. Records are local

@@ -21,8 +21,9 @@ a compatible toolchain and the packages your document uses. See
 ## Start a document
 
 Open a new side-panel tab with **+**, then choose **LaTeX** from the format
-button on the **Document** card. You can also choose **New → LaTeX** in the
-Files bar, or **New document here → LaTeX** from a folder's context menu.
+button on the **Document** card, or use the side panel's **Documents** menu.
+You can also choose the Files bar's **New document** button (file-plus icon)
+then **LaTeX**, or **New document here → LaTeX** from a folder's context menu.
 A single-file template starts as `untitled.tex`; a folder template such as Thesis
 starts at `main.tex` inside its own folder. The document opens in Visual, using
 your default template and placing the cursor in its title. Type the title and keep writing. For Markdown, see
@@ -873,8 +874,10 @@ supported by the document's packages; **Note** edits a plain prefix/page note.
 Cross-references have a searchable **Target** menu. Package-specific citation styles
 remain compiler-owned. Bibliographies have no separate footer.
 Open **Document > References** to search, add, edit and remove entries in a side
-panel. It reads explicitly linked `.bib` files and existing `\bibitem` lists;
-choose a destination when the document uses more than one. It preserves the
+panel. It reads the first 24 explicitly linked `.bib` files and existing `\bibitem` lists;
+use Source for bibliography files beyond that panel limit. These files remain
+part of the compiler's project when its bibliography setup includes them.
+Choose a destination when the document uses more than one. The panel preserves the
 document's bibliography packages, resources, style and printed-list commands.
 BibTeX entries offer title, author, year and additional fields, plus Entry source
 for expressions and custom fields. Manual entries offer their formatted LaTeX
@@ -1064,9 +1067,10 @@ The file's version menu opens file history: saves keep copies of replaced conten
 and a rename carries that history along. History is not every keystroke or an
 independent backup; review a version before relying on it.
 
-For an outside content edit, Scient's ordinary save
-keeps your current accepted text and preserves the displaced version in file
-history. **Use the other version** offers that alternative. LaTeX does not use
+If the file changes outside Scient while you have unsaved edits, Scient's
+ordinary save keeps your current accepted text and preserves the displaced
+version in file history. A document with no unsaved edits adopts the new file.
+**Use the other version** offers the displaced alternative. LaTeX does not use
 Markdown's automatic block merge. This automatic choice is separate from
 Overleaf sync, where conflicts stop for an explicit decision.
 
