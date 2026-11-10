@@ -527,6 +527,76 @@ The record keeps `url` as `scient-local:<connectorId>` (unique, never fetched). 
 Scient versions cannot decode `source.type: "local"`, so they preserve such records
 verbatim instead of treating them as remote connectors.
 
+### Agent-made connectors
+
+Agents build, fix and improve local connectors with three tools in the Accounts toolkit
+(`LocalConnectorAuthoring`), next to `scient_connector_setup`:
+
+- `scient_connector_copy` writes an installed connector's folder, or the template from the
+  built-in `connector-authoring` skill, into `connectors/<slug>/` of the calling thread's folder.
+  Scient does the writing, so sandboxed agents can edit the result. A taken name gets the next
+  free one (`name-2`). A `connectors` folder that is a link, or a target whose real path leaves
+  the thread's folder, is refused. For an installed connector it also returns the status,
+  `lastError` and the log tail.
+- `scient_connector_check` starts a folder's manifest outside any record, with the launcher
+  installed connectors use. It can borrow an installed connector's settings, keys and sign-in, or
+  use a named sign-in. It lists the tools, runs the sample `calls`, and stops the program. Missing
+  keys or a missing sign-in are reported, and the program still starts. A malformed Scient `_meta`
+  block is a problem, never a silent default.
+- `scient_connector_save` checks again, then either adds the folder as the user's own connector
+  (owned, on, all projects) or swaps it into an existing one. A vendor's bundle (`owned: false`)
+  becomes the user's own copy (`forkedFrom`). Settings, keys and the sign-in link are kept, and
+  the connector restarts.
+
+**History.** `FolderHistory`, shared with personal skills, swaps a folder in one step, with
+rollback, and keeps 10 entries per connector in
+`<stateDir>/connector-history/<connectorId>/` (`created`, `replaced`, `removed`; a removal keeps
+the record so it can come back). `extensions.connectors.undo` restores the newest entry.
+Undoing a connector's creation is not offered, because Remove keeps a copy and has its own Undo.
+Summaries carry `changedBy`, `updatedAt`, `forkedFrom` and whether Undo is possible.
+`extensions.connectors.export` returns a local connector as `.mcpb`.
+
+**Logs.** `ConnectorLogs` keeps the last 16 KB of each local connector's stderr in
+`<stateDir>/connector-logs/<connectorId>.log`, across restarts, with keys and cookies removed.
+It is deleted with the connector.
+
+### Signed-in connectors
+
+A manifest's `_meta["com.scientfactory.scient"].signIn: { site }` (https, or `http://localhost`
+and `http://127.0.0.1`) means the program needs the user signed in to that site. Setup and
+`scient_connector_setup` link an Accounts website sign-in for the site (`local.signIn`), or list
+it as missing. At each start, `connectorSessions` reads the site's current cookies from the
+sign-in's browser profile in a hidden tab, writes them as owner-only files under
+`<secretsDir>/connector-sessions/<connectorId>/`, and passes these environment variables:
+
+- `SCIENT_SIGN_IN_SITE`
+- `SCIENT_SIGN_IN_COOKIES` (JSON)
+- `SCIENT_SIGN_IN_COOKIES_TXT` (Netscape)
+- `SCIENT_SIGN_IN_USER_AGENT`
+
+The program never gets the password. Cookie values join the proxy's redaction set, and earlier
+values stay in it. Every exchange checks the sign-in again: whether it exists, covers the site,
+is on, has global agent access and is in the project's scope. If not, the running copies stop and
+the session files are deleted. A university's own sign-in service stays in the browser.
+
+**Expiry.** A tool result whose text starts with `SCIENT_SIGN_IN_EXPIRED` makes the process host:
+
+1. Let the session's other calls finish on the old process, for up to 30 s.
+2. Sign in again (`guardedSignIn` with the unattended `connector` caller: saved password and
+   authenticator code; at most once per 2 minutes per sign-in).
+3. Use a newer session the profile already holds, if there is one.
+4. Rewrite the files and start a fresh process inside the same agent session, replaying the
+   handshake.
+5. Retry only the calls that reported expiry, once.
+
+A call cut off by the swap returns an "outcome unknown" error and is never replayed. When the
+site needs the person, the agent is told to sign in, and the connector shows Needs sign-in with a
+Sign in button.
+
+**Development candidates** can trust a local test site's certificate: the desktop app reads SPKI
+hashes from `server-browser/dev-trusted-spki.txt` in its own state folder, only when
+`VITE_DEV_SERVER_URL` is set and the app is not packaged.
+
 ### Receipts
 
 ```ts
