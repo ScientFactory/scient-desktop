@@ -12,6 +12,14 @@
       "types": "./src/bibliography/index.ts",
       "import": "./src/bibliography/index.ts"
     },
+    "./full-text": {
+      "types": "./src/fullText.ts",
+      "import": "./src/fullText.ts"
+    },
+    "./full-text-store": {
+      "types": "./src/fullTextStore.ts",
+      "import": "./src/fullTextStore.ts"
+    },
     "./material-selection": {
       "types": "./src/materialSelection.ts",
       "import": "./src/materialSelection.ts"

@@ -105,7 +105,8 @@ export function normalizePersistentIdentifier(scheme: string, value: string): st
       .replace(/^https?:\/\/(?:www\.)?arxiv\.org\/(?:abs|pdf)\//u, "")
       .replace(/\.pdf$/u, "")
       .replace(/^arxiv:\s*/u, "")
-      .replace(/\s+/gu, "");
+      .replace(/\s+/gu, "")
+      .replace(/v\d+$/u, "");
   }
   return `${normalizedScheme}:${normalizedValue}`;
 }

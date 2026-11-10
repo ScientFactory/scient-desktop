@@ -67,7 +67,7 @@ export type ScientSourceExternalReference = typeof ScientSourceExternalReference
 
 export const ScientSourceOrigin = Schema.Struct({
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "file"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper", "file"]),
   operationId: NonEmptyString,
   // Older records may still say "pending"; nothing gates on it any more.
   review: Schema.Literals(["none", "pending"]),
@@ -97,6 +97,10 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "europe-pmc",
     "derived",
     "user",
+    "arxiv",
+    "open-library",
+    "google-books",
+    "openalex",
     "file",
   ]),
   sourceField: NullableText,
@@ -104,6 +108,14 @@ export const ScientSourceFieldProvenance = Schema.Struct({
   retrievedAt: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceFieldProvenance = typeof ScientSourceFieldProvenance.Type;
+
+/** How a downloaded PDF was reached, and which version of the work it is. */
+export const ScientSourceAttachmentRetrieval = Schema.Struct({
+  route: Schema.Literals(["open-access", "publisher", "university", "library"]),
+  /** "unknown" is a free copy whose repository did not say which version it holds. */
+  version: Schema.Literals(["published", "accepted", "preprint", "unknown"]),
+});
+export type ScientSourceAttachmentRetrieval = typeof ScientSourceAttachmentRetrieval.Type;
 
 export const ScientSourceAttachment = Schema.Struct({
   attachmentId: NonEmptyString,
@@ -114,6 +126,7 @@ export const ScientSourceAttachment = Schema.Struct({
   byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   relativePath: NonEmptyString,
   importedAt: NonEmptyString,
+  retrieval: Schema.optionalKey(ScientSourceAttachmentRetrieval),
 });
 export type ScientSourceAttachment = typeof ScientSourceAttachment.Type;
 
@@ -125,11 +138,15 @@ export const ScientSourceAttachmentSummary = Schema.Struct({
 });
 export type ScientSourceAttachmentSummary = typeof ScientSourceAttachmentSummary.Type;
 
+/** Rules in `citationKeys.ts`; decoding stays lenient so one odd key never hides a record. */
+export const ScientSourceCitationKey = NonEmptyString;
+
 export const ScientSourceRecord = Schema.Struct({
   formatVersion: Schema.Literal(1),
   sourceId: NonEmptyString,
   projectId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -166,6 +183,7 @@ export type ScientSourceRecord = typeof ScientSourceRecord.Type;
 export const ScientSourceSummary = Schema.Struct({
   sourceId: ScientSourceRecord.fields.sourceId,
   revision: ScientSourceRecord.fields.revision,
+  citationKey: ScientSourceRecord.fields.citationKey,
   type: ScientSourceRecord.fields.type,
   title: ScientSourceRecord.fields.title,
   creators: ScientSourceRecord.fields.creators,
@@ -186,6 +204,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
   return {
     sourceId: record.sourceId,
     revision: record.revision,
+    ...(record.citationKey ? { citationKey: record.citationKey } : {}),
     type: record.type,
     title: record.title,
     creators: record.creators,
@@ -209,6 +228,8 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
 
 /** The fields a researcher may correct without changing source identity or files. */
 export const ScientSourceEditableMetadata = Schema.Struct({
+  /** Omitted means keep the current key. A new value renames the key on purpose. */
+  citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -236,6 +257,8 @@ export type ScientSourceMetadataValidationIssue = typeof ScientSourceMetadataVal
 
 export const ScientSourceCandidate = Schema.Struct({
   sourceKey: NonEmptyString,
+  /** A key kept from the importing system; the store generates one when absent. */
+  citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
