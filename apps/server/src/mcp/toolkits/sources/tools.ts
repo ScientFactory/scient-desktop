@@ -125,7 +125,8 @@ export const ScientSourceAgentDetail = Schema.Struct({
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly. " +
+    "List a page of this project's Library (Sources): the papers, books and other references it cites; total is its size. " +
+    "Use this before literature, citation or source-dependent work and before searching the web; do not scan or edit .scient/sources files directly. " +
     "inTrash lists removed sources instead, newest removal first; restore one with scient_sources_restore.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
