@@ -788,7 +788,7 @@ function ConnectorDetail({
                 ) : null}
               </CardRow>
             ) : null}
-            {connector.local.setup.map(({ field, value, account }) => (
+            {local.setup.map(({ field, value, account }) => (
               <CardRow key={field.key}>
                 <span className="min-w-0 flex-1 text-sm text-foreground">{field.title}</span>
                 <span className="truncate text-sm text-muted-foreground">
