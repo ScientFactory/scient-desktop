@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
+import * as Schema from "effect/Schema";
 import * as HttpServerResponse from "effect/http/HttpServerResponse";
 
 import { handle } from "./Api.ts";
@@ -30,8 +31,23 @@ const DEFAULT_APP_ORIGINS = "https://app.scientfactory.com,scient://app,scient-n
 
 const zoneOf = (host: string) => host.split(".").slice(-2).join(".");
 
+// CI passes unset variables as empty strings; blank means the default.
+const textConfig = (name: string, fallback: string) =>
+  Config.String(name).pipe(
+    Config.withDefault(""),
+    Config.map((value) => value.trim() || fallback),
+  );
+
+const decodeByteCount = Schema.decodeUnknownEffect(
+  Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(0))),
+);
+
 const limitConfig = (name: string, fallback: number) =>
-  Config.Int(name).pipe(Config.withDefault(fallback));
+  textConfig(name, String(fallback)).pipe(
+    Config.mapEffect((value) =>
+      decodeByteCount(value).pipe(Effect.mapError((error) => new Config.ConfigError(error))),
+    ),
+  );
 
 export class Worker extends Cloudflare.Worker<Worker, {}>()("ScientCloud") {}
 
@@ -68,9 +84,7 @@ export const layer = Worker.make(
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
     const adminToken = yield* Config.option(Config.Redacted("SCIENT_CLOUD_ADMIN_TOKEN"));
-    const appOrigins = yield* Config.String("SCIENT_CLOUD_APP_ORIGINS").pipe(
-      Config.withDefault(DEFAULT_APP_ORIGINS),
-    );
+    const appOrigins = yield* textConfig("SCIENT_CLOUD_APP_ORIGINS", DEFAULT_APP_ORIGINS);
     const limits = {
       freeBytes: yield* limitConfig("SCIENT_CLOUD_FREE_BYTES", DEFAULT_CLOUD_LIMITS.freeBytes),
       maxSnapshotBytes: yield* limitConfig(
@@ -120,7 +134,7 @@ export const layer = Worker.make(
           kek: yield* kek,
           adminToken: Option.match(adminToken, {
             onNone: () => null,
-            onSome: (token) => Redacted.value(token),
+            onSome: (token) => Redacted.value(token).trim() || null,
           }),
         }),
       );
