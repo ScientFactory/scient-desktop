@@ -2,6 +2,9 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   ChartNoAxesColumnIcon,
+  // SCIENT-FORK:START — Scient Cloud conversations.
+  CloudIcon,
+  // SCIENT-FORK:END
   EllipsisVerticalIcon,
   ImportIcon,
   SettingsIcon,
@@ -51,6 +54,9 @@ import { observeResize } from "~/lib/observeResize";
 import { APP_BASE_NAME } from "../../branding";
 import { ScientReleaseNotes } from "../../scient/releaseNotes/ScientReleaseNotes";
 import { requestConversationImport } from "../../scient/conversationImport/requests";
+// SCIENT-FORK:START — Scient Cloud conversations.
+import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+// SCIENT-FORK:END
 import { ScientSymbol } from "../ScientSymbol";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
@@ -275,6 +281,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
     requestConversationImport();
   };
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — conversations the person's computers copied to Scient Cloud.
+  const cloudAvailable = hasCloudPublicConfig();
+  const handleCloudClick = () => {
+    closeMobileSidebar();
+    void navigate({ to: "/cloud" });
+  };
+  // SCIENT-FORK:END
 
   const handleUsageClick = () => {
     if (isMobile) {
@@ -325,6 +338,16 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               onClick={handleUsageClick}
               secondary
             />
+            {/* SCIENT-FORK:START — Scient Cloud conversations. */}
+            {cloudAvailable ? (
+              <SidebarUtilityItem
+                icon={<CloudIcon />}
+                label="Cloud conversations"
+                onClick={handleCloudClick}
+                secondary
+              />
+            ) : null}
+            {/* SCIENT-FORK:END */}
             <SidebarMenuItem className="hidden shrink-0" data-sidebar-utility="overflow">
               <Menu>
                 <MenuTrigger
@@ -341,6 +364,14 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
                     <ChartNoAxesColumnIcon />
                     Usage
                   </MenuItem>
+                  {/* SCIENT-FORK:START — Scient Cloud conversations. */}
+                  {cloudAvailable ? (
+                    <MenuItem onClick={handleCloudClick}>
+                      <CloudIcon />
+                      Cloud conversations
+                    </MenuItem>
+                  ) : null}
+                  {/* SCIENT-FORK:END */}
                 </MenuPopup>
               </Menu>
             </SidebarMenuItem>
