@@ -267,6 +267,37 @@ history and can be restored like any other edit.
 Collections and saved searches are kept in `.scient/sources/collections.json`
 with the rest of the project's Library.
 
+## Run a systematic review
+
+Choose **Systematic reviews** (the clipboard button at the top of the Library)
+to plan and record a systematic, scoping or rapid review. Each review keeps its
+searches, duplicate decisions and screening decisions in the project, in
+`.scient/sources/reviews/`, and draws its PRISMA 2020 flow from them. The
+records it screens are ordinary Library sources, so import them first (for
+example a database export, identifiers, or Zotero) and put each search's records
+in a collection.
+
+- **Records**: use **Log search** for each database search: the database, the
+  search string exactly as run, the date and the number of results the
+  database reported, with the collection or selected sources it brought in.
+  Logging the same database, string and date again replaces that search. Add
+  records found another way, such as from reference lists, with **Add
+  records**. Sources the Library already merged on import count as
+  duplicates; **Possible duplicates** lists pairs with the same title for you
+  to resolve with **Keep first**, **Keep second** or **Not duplicates**.
+- **Screening**: decide each record at **Title and abstract** and then at
+  **Full text** with **Include**, **Maybe** or **Exclude** (choose a reason
+  from the review's list or type another). With the record focused, press I,
+  M or E. **Skip** moves a record to the end; **Undo** in **Recent decisions**
+  reopens one. Only records included at title and abstract reach full text.
+- **PRISMA** shows the flow diagram with every count, including what is still
+  awaiting a decision. **Copy as Mermaid** copies it for a Markdown document.
+
+Deleting a review never removes its sources, and **Undo** restores it. An agent
+can do all of this too, using the built-in **systematic-review** skill; its
+decisions are marked "by agent" and you can change any of them. Agent screening
+is not an independent second reviewer.
+
 ## Copy a formatted reference
 
 Open a source, choose **Vancouver** or **APA 7**, then choose **Copy
@@ -313,13 +344,13 @@ In a project conversation, an agent can search and read the same project-owned
 library, maintain source notes, update metadata, attach or detach a project PDF,
 move a source to the trash and restore it, restore an earlier version, or add a
 new one. It can also organize the Library the way you can: create, rename and
-delete collections, save searches, list a collection or a tag, and change tags,
-type or collections on many sources at once. It can import a reference file
-from the project (`scient_sources_import_file`), which reports the same
-unreadable entries and fields not kept, and write the Library to a project file
-in any of the four formats (`scient_sources_export`), never replacing an
-existing file unless asked to. Everything an agent changes is credited to it
-and can be undone the same way as your own changes.
+delete collections, save searches, list a collection or a tag, change tags,
+type or collections on many sources at once, and run a systematic review. It
+can import a reference file from the project (`scient_sources_import_file`),
+which reports the same unreadable entries and fields not kept, and write the
+Library to a project file in any of the four formats (`scient_sources_export`),
+never replacing an existing file unless asked to. Everything an agent changes is
+credited to it and can be undone the same way as your own changes.
 
 Before an agent adds a source, Scient looks up its DOI at doi.org, its PMID in
 PubMed, its arXiv ID at arXiv or its ISBN in Open Library and Google Books. An

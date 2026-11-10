@@ -10,6 +10,9 @@ import type {
   ScientSourcesAddByIdentifierRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
+  ScientSystematicReviewChangeRequest,
+  ScientSystematicReviewRequest,
+  ScientSystematicReviewsRequest,
   ScientSourcesExportRequest,
   ScientSourceRestoreRequest,
   ScientSourceRevertRequest,
@@ -468,6 +471,62 @@ export const bulkUpdateEnvironmentScientSources = Effect.fn(
     group: "scientSources",
     request: ({ client, headers }) =>
       client.bulkUpdate({ headers, payload: { root: input.root, change: input.change } }),
+  });
+});
+
+export const listEnvironmentScientSystematicReviews = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientSystematicReviews",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSystematicReviewsRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.systematicReviews(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.systematicReviews({ headers, payload }),
+  });
+});
+
+export const getEnvironmentScientSystematicReview = Effect.fn(
+  "clientRuntime.state.getEnvironmentScientSystematicReview",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSystematicReviewRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.systematicReview(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.systematicReview({ headers, payload }),
+  });
+});
+
+export const changeEnvironmentScientSystematicReview = Effect.fn(
+  "clientRuntime.state.changeEnvironmentScientSystematicReview",
+)(function* (
+  input: { readonly prepared: PreparedConnection } & ScientSystematicReviewChangeRequest,
+) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.systematicReviewChange(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.systematicReviewChange({ headers, payload }),
   });
 });
 

@@ -13,6 +13,7 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
+  ClipboardList,
   Download,
   ExternalLink,
   FileDown,
@@ -97,6 +98,7 @@ import { announceSourcesMovedToTrash, SourcesBulkBar } from "./SourcesBulkBar";
 import { SourcesFilterMenu } from "./SourcesFilterMenu";
 import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
 import { useSourcesOrganize } from "./useSourcesOrganize";
+import { SystematicReviewsView } from "./SystematicReviews";
 import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesExportMenu } from "./SourcesExportMenu";
@@ -331,6 +333,7 @@ export function ScientSourcesPanel(props: {
     refreshOverview: sources.refreshOverview,
   });
   const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
+  const [showingReviews, setShowingReviews] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -425,6 +428,7 @@ export function ScientSourcesPanel(props: {
   const [previousPanelContext, setPreviousPanelContext] = useState({ context: panelContext });
   if (previousPanelContext.context !== panelContext) {
     setPreviousPanelContext({ context: panelContext });
+    setShowingReviews(false);
     setSelectedSourceId(null);
     setEditingSource(false);
     setImportOutcome(null);
@@ -1162,6 +1166,22 @@ export function ScientSourcesPanel(props: {
     );
   }
 
+  if (showingReviews) {
+    return (
+      <SystematicReviewsView
+        environmentId={props.environmentId}
+        root={props.root}
+        records={sources.overview.records}
+        organization={organize.organization}
+        selectedSourceIds={[...organize.selection]}
+        sourceDetails={sources.sourceDetails}
+        loadSource={sources.loadSource}
+        onOpenSource={openSourceDetails}
+        onBack={() => setShowingReviews(false)}
+      />
+    );
+  }
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
@@ -1225,6 +1245,16 @@ export function ScientSourcesPanel(props: {
         action={
           <div className="flex items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
+            <ScientTooltip content="Systematic reviews">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Systematic reviews"
+                onClick={() => setShowingReviews(true)}
+              >
+                <ClipboardList />
+              </Button>
+            </ScientTooltip>
             <ReferenceCheckButton
               environmentId={props.environmentId}
               root={props.root}

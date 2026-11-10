@@ -93,6 +93,7 @@ their own subtree:
 ├── trash/<source-id>.json   removed sources, whole, until restored or deleted
 ├── text/sha256/<prefix>/    extracted PDF text, one JSON file per PDF hash
 ├── collections.json         collections and saved searches
+├── reviews/<review-id>.json systematic reviews
 ├── operations/              resumable import state
 ├── receipts/                terminal import evidence
 └── staging/                 bounded temporary copies
@@ -566,6 +567,37 @@ an agent.
   one retry on a stale revision, then membership changes. Each source is
   reported; one failure does not stop the rest. Bulk removal is the trash
   removal per source, with one Undo for the batch in the panel.
+
+## Systematic reviews
+
+`packages/scient-sources/src/systematicReview.ts` holds the review schema, the
+action union shared by the `systematicReviewChange` HTTP endpoint and
+`scient_sources_systematic_review_update`, and pure functions for the PRISMA
+2020 counts, possible duplicate pairs and the Mermaid diagram;
+`systematicReviewStore.ts` reads and writes one file per review under one write
+lock.
+
+- Review records are Library source IDs: each logged search's `sourceIds`
+  plus `otherSourceIds`. Nothing is copied out of the Library, and a review
+  never changes a record.
+- Counts follow from the file, never from stored totals. Identified records
+  are each search's reported `resultCount` (or its records when none was
+  given). Overlap between searches, which the Library has already merged on
+  import, plus records marked as duplicates are "duplicates removed"; results
+  never brought in and records no longer in the Library are "removed for other
+  reasons". Identified minus removed always equals screened.
+- Screening is an append-only log; the latest entry per source and stage is
+  the decision in force, so changes stay auditable and `clear-decision`
+  reopens a record. Full-text decisions apply only to records included at
+  title and abstract. Every entry records `decidedBy`.
+- Repeats are harmless for agents: creating a title in use returns that
+  review, and logging the same database, query and date replaces that search.
+- Possible duplicates are pairs with the same normalized title (12 characters
+  or more), ordered by when each entered the review; decided pairs are left
+  out. A review file that cannot be decoded is reported in the list's
+  `issues`, not fatal. Deleting is a soft delete that `restore-review` undoes.
+- The built-in `systematic-review` skill tells agents how to use these tools
+  and that agent screening is not independent dual screening.
 
 ## Reference files
 
