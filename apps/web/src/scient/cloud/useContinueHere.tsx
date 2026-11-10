@@ -1,6 +1,6 @@
 import type { ThreadIndexRow } from "@scientfactory/scient-cloud/api";
 import { EnvironmentId, ProjectId, ThreadId, type ModelSelection } from "@t3tools/contracts";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -43,6 +43,10 @@ export function useContinueHere(api: CloudApi) {
     readonly candidates: ReadonlyArray<Candidate>;
     readonly resolve: (projectId: ProjectId | null) => void;
   } | null>(null);
+  // A pending project choice; leaving the page cancels it, so its claim is released.
+  const pendingChoice = useRef<((projectId: ProjectId | null) => void) | null>(null);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases this page's entry in the module-level in-flight registry when it unmounts mid-choice
+  useEffect(() => () => pendingChoice.current?.(null), []);
 
   const modelFor = (
     environmentId: EnvironmentId,
@@ -99,9 +103,11 @@ export function useContinueHere(api: CloudApi) {
           modelSelection,
         });
         if (result._tag === "imported") return result.threadId;
-        projectId = await new Promise<ProjectId | null>((resolve) =>
-          setChoice({ candidates: result.candidates, resolve }),
-        );
+        projectId = await new Promise<ProjectId | null>((resolve) => {
+          pendingChoice.current = resolve;
+          setChoice({ candidates: result.candidates, resolve });
+        });
+        pendingChoice.current = null;
         setChoice(null);
         if (projectId === null) return null;
       }
