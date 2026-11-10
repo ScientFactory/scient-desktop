@@ -58,13 +58,15 @@ function confirmOpenWhenRunsFinish(running: number): boolean {
 /** macOS ends the app at the moment of the grant, so the watcher outlives a seen grant briefly. */
 const GRANTED_GRACE_MS = 30_000;
 const GRANT_POLL_MS = 2_000;
+/** Without a grant, the watch ends after this, so a later crash or Force Quit doesn't reopen Scient. */
+const WATCH_LIMIT_MS = 10 * 60_000;
 let relaunchWatching = false;
 let cleanExitMarker: string | undefined;
 
 /**
  * Until Screen Recording is on, a detached watcher reopens Scient if it is ended without a clean
  * quit. A clean quit (macOS's own Quit & Reopen, or the user's) ends the watch, and so does a grant
- * seen in this process.
+ * seen in this process or ten minutes without one.
  */
 function watchForForcedExit(): void {
   if (!Electron.app.isPackaged || relaunchWatching) return;
@@ -96,8 +98,11 @@ function watchForForcedExit(): void {
     setTimeout(() => watcher.kill(), GRANTED_GRACE_MS).unref();
   }, GRANT_POLL_MS);
   poll.unref();
+  const limit = setTimeout(() => watcher.kill(), WATCH_LIMIT_MS);
+  limit.unref();
   const stopped = () => {
     clearInterval(poll);
+    clearTimeout(limit);
     relaunchWatching = false;
   };
   watcher.once("exit", stopped);
