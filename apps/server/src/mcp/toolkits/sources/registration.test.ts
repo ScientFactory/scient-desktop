@@ -27,6 +27,8 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       "scient_sources_quote_check",
       "scient_sources_read_text",
       "scient_sources_remove",
+      "scient_sources_restore",
+      "scient_sources_revert",
       "scient_sources_search",
       "scient_sources_update",
     ]);
@@ -51,6 +53,8 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
         "scient_sources_detach_pdf",
         "scient_sources_note_update",
         "scient_sources_remove",
+        "scient_sources_restore",
+        "scient_sources_revert",
         "scient_sources_update",
       ].includes(tool.name),
     );

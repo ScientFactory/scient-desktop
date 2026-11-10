@@ -44,6 +44,16 @@ import {
   ScientSourceNoteUpdateResult,
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
+  ScientSourceRestoreRequest,
+  ScientSourceRestoreResult,
+  ScientSourceRevertRequest,
+  ScientSourceRevertResult,
+  ScientSourceRevisionsRequest,
+  ScientSourceRevisionsResult,
+  ScientSourcesPermanentDeletionRequest,
+  ScientSourcePermanentDeletionResult,
+  ScientSourcesTrashRequest,
+  ScientSourceTrashListing,
   ScientSourcesAdvanceImportRequest,
   ScientSourcesBeginImportRequest,
   ScientSourcesCancelImportRequest,
@@ -308,6 +318,46 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourceRemovalRequest,
         success: ScientSourceRemovalResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("trash", "/api/scient/sources/trash", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesTrashRequest,
+        success: ScientSourceTrashListing,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("restore", "/api/scient/sources/trash/restore", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceRestoreRequest,
+        success: ScientSourceRestoreResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("deletePermanently", "/api/scient/sources/trash/delete", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesPermanentDeletionRequest,
+        success: ScientSourcePermanentDeletionResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("revisions", "/api/scient/sources/revisions", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceRevisionsRequest,
+        success: ScientSourceRevisionsResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("revert", "/api/scient/sources/revert", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourceRevertRequest,
+        success: ScientSourceRevertResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

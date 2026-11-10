@@ -6,8 +6,13 @@ import {
   ScientSourceNote,
   ScientSourceNoteUpdateResult,
   ScientSourceRecord,
+  ScientSourcePermanentDeletionResult,
   ScientSourceRemovalResult,
+  ScientSourceRestoreResult,
+  ScientSourceRevertResult,
+  ScientSourceRevisionSummary,
   ScientSourceSummary,
+  ScientSourceTrashListing,
   ScientSourcePreflightItem,
   ScientSourcesOverview as ScientSourcesStoreOverview,
   ZoteroConnectionStatus,
@@ -156,6 +161,41 @@ export const ScientSourceRemovalRequest = Schema.Struct({
 });
 export type ScientSourceRemovalRequest = typeof ScientSourceRemovalRequest.Type;
 
+export const ScientSourcesTrashRequest = Schema.Struct({ root: NonEmptyString });
+export type ScientSourcesTrashRequest = typeof ScientSourcesTrashRequest.Type;
+
+export const ScientSourceRestoreRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+});
+export type ScientSourceRestoreRequest = typeof ScientSourceRestoreRequest.Type;
+
+/** Without sourceIds the whole trash is emptied. */
+export const ScientSourcesPermanentDeletionRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceIds: Schema.optionalKey(
+    Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+  ),
+});
+export type ScientSourcesPermanentDeletionRequest =
+  typeof ScientSourcesPermanentDeletionRequest.Type;
+
+export const ScientSourceRevisionsRequest = ScientSourceDetailRequest;
+export type ScientSourceRevisionsRequest = typeof ScientSourceRevisionsRequest.Type;
+
+export const ScientSourceRevisionsResult = Schema.Struct({
+  revisions: Schema.Array(ScientSourceRevisionSummary),
+});
+export type ScientSourceRevisionsResult = typeof ScientSourceRevisionsResult.Type;
+
+export const ScientSourceRevertRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  toRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type ScientSourceRevertRequest = typeof ScientSourceRevertRequest.Type;
+
 export const ZoteroStatusRequest = Schema.Struct({});
 export type ZoteroStatusRequest = typeof ZoteroStatusRequest.Type;
 
@@ -249,7 +289,11 @@ export type ScientSourcesRetryImportRequest = typeof ScientSourcesRetryImportReq
 export {
   ScientSourceImportOperation,
   ScientSourceMetadataUpdateResult,
+  ScientSourcePermanentDeletionResult,
   ScientSourceRemovalResult,
+  ScientSourceRestoreResult,
+  ScientSourceRevertResult,
+  ScientSourceTrashListing,
   ZoteroConnectionStatus,
   ZoteroCollection,
   ZoteroCollectionsResult,

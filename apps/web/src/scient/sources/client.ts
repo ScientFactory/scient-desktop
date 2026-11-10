@@ -17,6 +17,11 @@ import {
   preflightEnvironmentZoteroImport,
   refreshEnvironmentScientSourceMetadata,
   removeEnvironmentScientSource,
+  deleteEnvironmentScientSourcesPermanently,
+  listEnvironmentScientSourceRevisions,
+  listEnvironmentScientSourceTrash,
+  restoreEnvironmentScientSource,
+  revertEnvironmentScientSource,
   updateEnvironmentScientSourceMetadata,
   updateEnvironmentScientSourceNote,
   uploadEnvironmentLocalSourcePdf,
@@ -28,6 +33,11 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourceRestoreRequest,
+  ScientSourceRevertRequest,
+  ScientSourceRevisionsRequest,
+  ScientSourcesPermanentDeletionRequest,
+  ScientSourcesTrashRequest,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 
@@ -97,6 +107,48 @@ export async function searchScientSourcesFullText(
 ) {
   return runtime.runPromise(
     searchEnvironmentScientSourcesFullText({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function readScientSourceTrash(
+  environmentId: EnvironmentId,
+  input: ScientSourcesTrashRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientSourceTrash({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function restoreScientSource(
+  environmentId: EnvironmentId,
+  input: ScientSourceRestoreRequest,
+) {
+  return runtime.runPromise(
+    restoreEnvironmentScientSource({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function deleteScientSourcesPermanently(
+  environmentId: EnvironmentId,
+  input: ScientSourcesPermanentDeletionRequest,
+) {
+  return runtime.runPromise(
+    deleteEnvironmentScientSourcesPermanently({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function readScientSourceRevisions(
+  environmentId: EnvironmentId,
+  input: ScientSourceRevisionsRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientSourceRevisions({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function revertScientSource(environmentId: EnvironmentId, input: ScientSourceRevertRequest) {
+  return runtime.runPromise(
+    revertEnvironmentScientSource({ prepared: prepared(environmentId), ...input }),
   );
 }
 
