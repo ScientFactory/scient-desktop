@@ -1565,6 +1565,8 @@ export async function resolveScientSourceInputPdf(
   const resolved = await resolveScientProjectFile(root, relativePath, {
     extensions: [".pdf"],
     description: "PDF",
+    // Library PDFs are opened and annotated from Library storage.
+    allowScientStorage: true,
   });
   return {
     absolutePath: resolved.absolutePath,
