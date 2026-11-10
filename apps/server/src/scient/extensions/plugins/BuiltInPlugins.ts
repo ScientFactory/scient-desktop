@@ -34,6 +34,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
     description: "Project reference library that agents can read and, when asked, update.",
     components: [
       tools("sources:read", [
+        "scient_annotations_read",
         "scient_sources_list",
         "scient_sources_get",
         "scient_sources_search",
@@ -41,6 +42,10 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
         "scient_sources_quote_check",
       ]),
       tools("sources:write", [
+        "scient_annotations_add",
+        "scient_annotations_update",
+        "scient_annotations_remove",
+        "scient_annotations_restore",
         "scient_sources_add",
         "scient_sources_update",
         "scient_sources_note_update",
