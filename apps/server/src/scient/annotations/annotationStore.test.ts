@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Store tests inspect the files the store writes.
 import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { describe, expect, it } from "@effect/vitest";
@@ -223,5 +224,90 @@ describe("annotation files", () => {
     expect(
       (await readScientAnnotationFile(project.root, material.sha256))?.annotations,
     ).toHaveLength(12);
+  });
+
+  it("never reads or writes through a symlinked annotation folder", async () => {
+    await using project = await temporaryProject();
+    const outside = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-outside-"));
+    await using _cleanup = {
+      [Symbol.asyncDispose]: () => NodeFSP.rm(outside, { recursive: true, force: true }),
+    };
+    const stored = `${JSON.stringify({ ...emptyFile(), paths: ["outside.pdf"] })}\n`;
+    await NodeFSP.mkdir(NodePath.join(outside, "v1"));
+    await NodeFSP.writeFile(NodePath.join(outside, "v1", `${material.sha256}.json`), stored);
+    const write = () =>
+      mutateScientAnnotations({
+        canonicalRoot: project.root,
+        material,
+        relativePath: null,
+        command: create(),
+        actor: "user",
+        now: "2026-11-10T12:00:00.000Z",
+      });
+    const parent = NodePath.join(project.root, ".scient", "annotations");
+    for (const link of [parent, NodePath.join(parent, "v1")]) {
+      await NodeFSP.rm(parent, { recursive: true, force: true });
+      if (link !== parent) await NodeFSP.mkdir(parent);
+      await NodeFSP.symlink(link === parent ? outside : NodePath.join(outside, "v1"), link);
+      await expect(readScientAnnotationFile(project.root, material.sha256)).rejects.toThrow();
+      await expect(listScientAnnotationFiles(project.root)).rejects.toThrow();
+      await expect(write()).rejects.toThrow();
+    }
+    expect(await NodeFSP.readdir(NodePath.join(outside, "v1"))).toEqual([
+      `${material.sha256}.json`,
+    ]);
+    expect(
+      await NodeFSP.readFile(NodePath.join(outside, "v1", `${material.sha256}.json`), "utf8"),
+    ).toBe(stored);
+  });
+
+  it("refuses a file that records another PDF and leaves it as it was", async () => {
+    await using project = await temporaryProject();
+    const directory = NodePath.join(project.root, ".scient", "annotations", "v1");
+    await NodeFSP.mkdir(directory, { recursive: true });
+    const filePath = NodePath.join(directory, `${material.sha256}.json`);
+    const misnamed = `${JSON.stringify({
+      ...apply(emptyFile(), create()).file,
+      material: { ...material, sha256: "b".repeat(64) },
+    })}\n`;
+    await NodeFSP.writeFile(filePath, misnamed);
+    await expect(readScientAnnotationFile(project.root, material.sha256)).rejects.toThrow();
+    await expect(
+      mutateScientAnnotations({
+        canonicalRoot: project.root,
+        material,
+        relativePath: null,
+        command: {
+          action: "update",
+          annotationId: "ann_00000001",
+          expectedRevision: 1,
+          note: "x",
+        },
+        actor: "user",
+        now: "2026-11-10T12:00:00.000Z",
+      }),
+    ).rejects.toThrow();
+    expect(await NodeFSP.readFile(filePath, "utf8")).toBe(misnamed);
+  });
+
+  it("treats a file with an absolute path hint as unreadable", async () => {
+    await using project = await temporaryProject();
+    const directory = NodePath.join(project.root, ".scient", "annotations", "v1");
+    await NodeFSP.mkdir(directory, { recursive: true });
+    for (const [index, hint] of [
+      "/private/secret.pdf",
+      "C:\\secret.pdf",
+      "\\\\host\\share\\secret.pdf",
+      "papers/../../secret.pdf",
+    ].entries()) {
+      const sha256 = String(index).repeat(64);
+      await NodeFSP.writeFile(
+        NodePath.join(directory, `${sha256}.json`),
+        JSON.stringify({ ...emptyFile(), material: { ...material, sha256 }, paths: [hint] }),
+      );
+    }
+    const listing = await listScientAnnotationFiles(project.root);
+    expect(listing.files).toEqual([]);
+    expect(listing.unreadable).toHaveLength(4);
   });
 });

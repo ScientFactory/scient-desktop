@@ -90,7 +90,9 @@ export * from "./scientProject.ts";
 export * from "./scientSources.ts";
 export * from "./scientReferences.ts";
 export * from "./scientBibliography.ts";
+// SCIENT-FORK:START — Scient PDF annotation contracts (new file, no upstream edits).
 export * from "./scientAnnotations.ts";
+// SCIENT-FORK:END
 export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";

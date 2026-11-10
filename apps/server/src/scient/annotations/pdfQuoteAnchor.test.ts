@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { scientAnnotationQuote } from "@t3tools/contracts";
 
 import { anchorPdfQuote, type PdfPageText } from "./pdfQuoteAnchor.ts";
 
@@ -41,5 +42,16 @@ describe("anchorPdfQuote", () => {
     const picked = anchorPdfQuote(pages, "p < 0.05", "v", 4);
     expect(picked._tag === "Found" && picked.anchor.selector.pages[0]!.page).toBe(4);
     expect(anchorPdfQuote(pages, "not in the paper", "v")).toEqual({ _tag: "NotFound" });
+  });
+
+  it("reads a quote across a page break back with the words apart", () => {
+    const found = anchorPdfQuote(
+      [page(1, "The result was"), page(2, "significant.")],
+      "The result was significant.",
+      "v",
+    );
+    expect(found._tag === "Found" && scientAnnotationQuote(found)).toBe(
+      "The result was\nsignificant.",
+    );
   });
 });

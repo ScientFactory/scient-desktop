@@ -5,6 +5,7 @@ import * as NodePath from "node:path";
 
 import type { PdfMaterial } from "@scientfactory/document-artifacts";
 import { readScientProjectIdentity } from "@scientfactory/project-init";
+import { assertScientProjectDirectory } from "@scientfactory/scient-sources/project-files";
 import {
   SCIENT_ANNOTATIONS_DIRECTORY,
   ScientAnnotationActor,
@@ -22,6 +23,19 @@ const MAX_HISTORY_PER_ANNOTATION = 10;
 const MAX_SEEN_PATHS = 16;
 const MAX_LISTED_FILES = 10_000;
 const FILE_NAME = /^([0-9a-f]{64})\.json$/u;
+
+/** Slash-separated, inside the project: no root, drive, UNC, backslash or `..` segment. */
+const ProjectPathHint = Schema.String.check(
+  Schema.isMinLength(1),
+  Schema.isMaxLength(4_096),
+  Schema.makeFilter(
+    (value) =>
+      !value.startsWith("/") &&
+      !/^[A-Za-z]:/u.test(value) &&
+      !/[\\\0]/u.test(value) &&
+      value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== ".."),
+  ),
+);
 
 const AnnotationHistoryEntry = Schema.Struct({
   annotationId: ScientPdfAnnotation.fields.annotationId,
@@ -41,7 +55,7 @@ export const ScientAnnotationFile = Schema.Struct({
     byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   }),
   /** Project paths where these bytes were annotated, newest first. A hint, never identity. */
-  paths: Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096))),
+  paths: Schema.Array(ProjectPathHint),
   annotations: Schema.Array(ScientPdfAnnotation),
   history: Schema.Array(AnnotationHistoryEntry),
 });
@@ -235,17 +249,16 @@ function annotationFilePath(root: string, sha256: string): string {
   return NodePath.join(annotationsDirectory(root), `${sha256}.json`);
 }
 
-async function ensureDirectory(directory: string): Promise<void> {
-  await NodeFSP.mkdir(directory, { recursive: true });
-  const stats = await NodeFSP.lstat(directory);
-  if (!stats.isDirectory() || stats.isSymbolicLink()) {
-    throw new Error("The annotation folder is not a safe directory.");
-  }
-}
-
-async function readFileAt(filePath: string): Promise<ScientAnnotationFile | null> {
+/** Reads the file named for `sha256`; a file whose recorded identity differs is refused, never used. */
+async function readFileAt(
+  canonicalRoot: string,
+  sha256: string,
+  byteLength?: number,
+): Promise<ScientAnnotationFile | null> {
+  const filePath = annotationFilePath(canonicalRoot, sha256);
   let stats;
   try {
+    await assertScientProjectDirectory(canonicalRoot, NodePath.dirname(filePath));
     stats = await NodeFSP.lstat(filePath);
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return null;
@@ -258,15 +271,23 @@ async function readFileAt(filePath: string): Promise<ScientAnnotationFile | null
     throw new Error(`${NodePath.basename(filePath)} exceeds the safe size limit.`);
   }
   const value: unknown = JSON.parse(await NodeFSP.readFile(filePath, "utf8"));
-  return decodeFile(value);
+  const file = decodeFile(value);
+  if (file.material.sha256 !== sha256) {
+    throw new Error(`${NodePath.basename(filePath)} records another PDF.`);
+  }
+  if (byteLength !== undefined && file.material.byteLength !== byteLength) {
+    throw new Error("The annotation file belongs to a PDF of a different size.");
+  }
+  return file;
 }
 
-async function writeFileAt(filePath: string, file: ScientAnnotationFile): Promise<void> {
+async function writeFileAt(canonicalRoot: string, file: ScientAnnotationFile): Promise<void> {
+  const filePath = annotationFilePath(canonicalRoot, file.material.sha256);
   const serialized = `${JSON.stringify(file, null, 2)}\n`;
   if (Buffer.byteLength(serialized, "utf8") > MAX_FILE_BYTES) {
     throw new Error("The PDF has too many annotations to save.");
   }
-  await ensureDirectory(NodePath.dirname(filePath));
+  await assertScientProjectDirectory(canonicalRoot, NodePath.dirname(filePath), { create: true });
   const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
   let handle: NodeFSP.FileHandle | null = null;
   try {
@@ -306,7 +327,7 @@ export async function readScientAnnotationFile(
   canonicalRoot: string,
   sha256: string,
 ): Promise<ScientAnnotationFile | null> {
-  return readFileAt(annotationFilePath(canonicalRoot, sha256));
+  return readFileAt(canonicalRoot, sha256);
 }
 
 export async function mutateScientAnnotations(input: {
@@ -319,10 +340,11 @@ export async function mutateScientAnnotations(input: {
 }): Promise<ScientAnnotationMutationResult> {
   const filePath = annotationFilePath(input.canonicalRoot, input.material.sha256);
   return withLock(filePath, async () => {
-    const existing = await readFileAt(filePath);
-    if (existing && existing.material.byteLength !== input.material.byteLength) {
-      throw new Error("The annotation file belongs to a PDF of a different size.");
-    }
+    const existing = await readFileAt(
+      input.canonicalRoot,
+      input.material.sha256,
+      input.material.byteLength,
+    );
     const outcome = applyAnnotationCommand(
       existing ?? emptyFile(input.material),
       input.command,
@@ -330,7 +352,10 @@ export async function mutateScientAnnotations(input: {
       input.now,
     );
     if (outcome.changed) {
-      await writeFileAt(filePath, rememberAnnotationPath(outcome.file, input.relativePath));
+      await writeFileAt(
+        input.canonicalRoot,
+        rememberAnnotationPath(outcome.file, input.relativePath),
+      );
     }
     return outcome.result;
   });
@@ -348,6 +373,7 @@ export async function listScientAnnotationFiles(
   const directory = annotationsDirectory(canonicalRoot);
   let names: string[];
   try {
+    await assertScientProjectDirectory(canonicalRoot, directory);
     names = await NodeFSP.readdir(directory);
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return { files: [], unreadable: [] };
@@ -359,8 +385,8 @@ export async function listScientAnnotationFiles(
     const match = FILE_NAME.exec(name);
     if (!match) continue;
     try {
-      const file = await readFileAt(NodePath.join(directory, name));
-      if (file && file.material.sha256 === match[1]) files.push(file);
+      const file = await readFileAt(canonicalRoot, match[1]!);
+      if (file) files.push(file);
       else unreadable.push(name);
     } catch {
       unreadable.push(name);

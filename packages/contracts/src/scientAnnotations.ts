@@ -173,6 +173,13 @@ export function liveScientAnnotations(
     });
 }
 
-export function scientAnnotationQuote(annotation: ScientPdfAnnotation): string {
-  return annotation.anchor.selector.pages.map((page) => page.quote).join("");
+/** The quoted text; a page break reads as a line break, so words never run together. */
+export function scientAnnotationQuote(annotation: Pick<ScientPdfAnnotation, "anchor">): string {
+  return annotation.anchor.selector.pages.reduce(
+    (text, page) =>
+      text === "" || /\s$/u.test(text) || /^\s/u.test(page.quote)
+        ? text + page.quote
+        : `${text}\n${page.quote}`,
+    "",
+  );
 }
