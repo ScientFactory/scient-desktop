@@ -220,7 +220,7 @@ function formatCloudStatus(status: CloudCliStatus, options?: { readonly json?: b
       : status.reachability === null
         ? [
             "",
-            "No running server answered, so reachability was not checked. Check the background service with `scient service status`.",
+            "No running server answered, so reachability was not checked. Start Scient (the desktop app or `scient serve`), then run `scient connect status` again.",
           ]
         : status.reachability.status === "reachable"
           ? [
@@ -392,7 +392,7 @@ export const waitForReachability = Effect.fn("cloud.cli.wait_for_reachability")(
   yield* Console.error(
     formatAlertBox(
       last === null
-        ? "✕ Could not check Scient Connect\n  The Scient server on this machine did not answer.\n  Fix: run `scient service status`, then `scient connect status`."
+        ? "✕ Could not check Scient Connect\n  The Scient server on this machine did not answer.\n  Fix: start Scient (the desktop app or `scient serve`), then run `scient connect status`."
         : formatReachabilityFailure(last),
     ),
   );
@@ -517,9 +517,7 @@ export const disconnectCloud = Effect.fn("cloud.cli.disconnect")(function* (opti
   });
 
   if (options.clearAuthorization) {
-    yield* Console.log(
-      "Signed out of Scient Connect locally.\nThe background service is managed separately with `scient service`.",
-    );
+    yield* Console.log("Signed out of Scient Connect locally.");
   }
   return liveResult;
 });
