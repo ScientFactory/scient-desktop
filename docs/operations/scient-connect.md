@@ -22,7 +22,8 @@ hosted app, and Alchemy's state store (`alchemy-state-store` Worker with its Sec
 Public ids live in `.env.example` (clients) and in the `scient-connect` GitHub environment
 (deploys). Secrets are in the owner's Scient Accounts vault and in that environment's secrets:
 `CLOUDFLARE_API_TOKEN`, `PLANETSCALE_API_TOKEN_ID`, `PLANETSCALE_API_TOKEN`, `AXIOM_TOKEN`,
-`CLERK_SECRET_KEY`. Never put a secret in `.env.example` or a client build.
+`CLERK_SECRET_KEY`, `CLERK_LEGACY_SECRET_KEY`. Never put a secret in `.env.example` or a client
+build.
 
 ## Deploying
 
@@ -84,6 +85,15 @@ unverified until publisher verification; some organizations block users from app
 
 The old development instance `live-osprey-129` stays for local testing only; release builds use
 the production key in `.env.example`.
+
+Builds up to v0.6.28 still sign in with the development instance, so the relay accepts its tokens
+too while they update (`infra/relay/src/auth/ClerkInstances.ts`). Session tokens go to the instance
+named in their issuer; command-line OAuth tokens try production, then development. The
+`scient-connect` environment holds the development instance's publishable key as the
+`CLERK_LEGACY_PUBLISHABLE_KEY` variable and its secret key as `CLERK_LEGACY_SECRET_KEY`. To end the
+transition, delete both and redeploy; old builds' Connect then stops working. Accounts are separate
+per instance: a person who signed in on both has two relay accounts, and computers linked under one
+don't appear under the other.
 
 ## Alerts
 

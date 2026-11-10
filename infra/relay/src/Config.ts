@@ -82,6 +82,12 @@ export class RelayConfiguration extends Context.Service<
     readonly clerkSecretKey: Redacted.Redacted<string>;
     readonly clerkPublishableKey: string;
     readonly clerkJwtAudience: string;
+    // SCIENT-FORK:START clerk-legacy-instance — the Clerk instance older builds sign in with.
+    readonly clerkLegacy?: {
+      readonly secretKey: Redacted.Redacted<string>;
+      readonly publishableKey: string;
+    };
+    // SCIENT-FORK:END clerk-legacy-instance
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;
