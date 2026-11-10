@@ -2,6 +2,7 @@ import type { ScientSourceCreator, ScientSourceRecord } from "@scientfactory/sci
 
 import { renderCslBibliographyEntry } from "./cslEngine.ts";
 
+export { scientSourceToBibtex } from "./bibtex.ts";
 export { SCIENT_REFERENCE_STYLES } from "./styles.ts";
 export type { ScientReferenceStyleId } from "./styles.ts";
 

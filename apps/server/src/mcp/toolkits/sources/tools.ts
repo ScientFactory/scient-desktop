@@ -14,7 +14,11 @@ import {
   ScientSourceType,
   ScientSourceVerification,
 } from "@scientfactory/scient-sources";
-import { isTrimmedUnadvertised } from "@t3tools/contracts";
+import {
+  isTrimmedUnadvertised,
+  ScientManagedBibliographyFileName,
+  ScientManagedBibliographyStatus,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
@@ -55,9 +59,14 @@ const sourceOperation = (id: string, write: boolean): OperationDefinition => ({
   requiredCapabilities: write ? ["sources:read", "sources:write"] : ["sources:read"],
 });
 
+const CitationKey = NonEmptyString.annotate({
+  description: "The key documents cite this source by: [@key] in Markdown, \\cite{key} in LaTeX.",
+});
+
 export const ScientSourceAgentSummary = Schema.Struct({
   sourceId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  citationKey: Schema.optionalKey(CitationKey),
   type: ScientSourceType,
   title: NullableText,
   creator: NullableText,
@@ -82,6 +91,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
   sourceId: NonEmptyString,
   projectId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  citationKey: Schema.optionalKey(CitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -428,6 +438,27 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.pdf.detach", true));
 
+const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
+  description:
+    "Write this project's references.bib and references.json from the Library and report their state. " +
+    "Documents cite sources by citationKey from these files (Markdown front matter `bibliography: references.bib`, LaTeX `\\bibliography{references}`). " +
+    "A file edited by hand is kept and reported as edited, with the keys added, changed or removed; " +
+    "unmanaged means a file Scient did not write is in the way, and Scient never writes over it. " +
+    "Pass replaceEdited only when the user wants the Library version back.",
+  parameters: Schema.Struct({
+    replaceEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
+  }),
+  success: ScientManagedBibliographyStatus,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Write the project bibliography")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.bibliography", true));
+
 const PageNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const TextOffset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 const SourceTextRange = Schema.Struct({ page: PageNumber, start: TextOffset, end: TextOffset });
@@ -582,6 +613,7 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceAddTool,
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,
+  ScientSourcesBibliographyTool,
   ScientSourcesSearchTool,
   ScientSourceReadTextTool,
   ScientSourceQuoteCheckTool,

@@ -1039,7 +1039,7 @@
   "src/scient/sources/ScientSourcesCoordinator.test.ts": 0.806,
   "src/scient/sources/sourceFileStore.test.ts": 1.526,
   "src/scient/sources/SourceMetadataEnricher.test.ts": 0.338,
-  "src/scient/sources/ZoteroLocalAdapter.test.ts": 0.84,
+  "src/scient/sources/ZoteroItems.test.ts": 0.84,
   "src/scient/storage/QueuedRunWorktreeRetention.test.ts": 3.871,
   "src/scient/threadQueue/Ledger.test.ts": 1.394,
   "src/scient/threadQueue/migration.test.ts": 1.549,

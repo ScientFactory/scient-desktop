@@ -8,6 +8,10 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./bibliography": {
+      "types": "./src/managedBibliography.ts",
+      "import": "./src/managedBibliography.ts"
+    },
     "./styles": {
       "types": "./src/styles.ts",
       "import": "./src/styles.ts"
