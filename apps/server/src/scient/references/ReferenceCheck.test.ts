@@ -338,35 +338,37 @@ describe("checkReferences", () => {
     );
   });
 
-  it("applies a fix to the exact entry when two entries share a key", async () => {
+  // A position among same-key entries stops naming the checked entry once entries move.
+  it("never fixes an entry whose key another entry shares", async () => {
     await using fixture = await project();
-    const first =
-      "@article{duplicate, author = {Smith, J.}, title = {The effect of light on sleep}, journal = {Journal of Sleep Research}, year = {2021}, volume = {12}, pages = {100-110}, doi = {10.1000/smith}}\n";
-    await fixture.write(
-      "refs.bib",
-      `${first}@article{duplicate, author = {Smith, J.}, title = {The effect of light on sleep}, journal = {Journal of Sleep Research}, year = {2020}, volume = {12}, pages = {100-110}, doi = {10.1000/other}}\n`,
-    );
+    const bibText =
+      "@article{duplicate, author = {Smith, J.}, title = {The effect of light on sleep}, journal = {Journal of Sleep Research}, year = {2021}, volume = {12}, pages = {100-110}, doi = {10.1000/smith}}\n" +
+      "@article{duplicate, author = {Smith, J.}, title = {The effect of light on sleep}, journal = {Journal of Sleep Research}, year = {2020}, volume = {12}, pages = {100-110}, doi = {10.1000/other}}\n";
+    await fixture.write("refs.bib", bibText);
     const report = await checkReferences(
       { root: fixture.root, target: { kind: "file", path: "refs.bib" } },
       { resolveIdentifiers: registry({ ...works, "doi:10.1000/other": SMITH }), now },
     );
-    const yearFix = report.findings.find((finding) => finding.fix?.kind === "bibtex-field")!;
-    expect(yearFix.location).toEqual({ path: "refs.bib", line: 2 });
-    const fix = yearFix.fix!;
-    if (fix.kind !== "bibtex-field") throw new Error("Expected a .bib fix");
-    const { occurrence, ...unnamed } = fix;
-    expect(occurrence).toBe(1);
+    expect(report.findings.some((finding) => finding.kind === "details-differ")).toBe(true);
+    expect(report.findings.filter((finding) => finding.fix)).toEqual([]);
 
     const resolution = await resolveReferenceFindings({
       root: fixture.root,
-      apply: [fix, unnamed],
+      apply: [
+        {
+          kind: "bibtex-field",
+          path: "refs.bib",
+          key: "duplicate",
+          field: "year",
+          current: "2020",
+          value: "2021",
+        },
+      ],
       actor: "user",
     });
 
-    expect(resolution.fixes.map(({ outcome }) => outcome)).toEqual(["applied", "stale"]);
-    const bib = await fixture.read("refs.bib");
-    expect(bib.startsWith(first)).toBe(true);
-    expect(bib.slice(first.length)).toContain("year = {2021}");
+    expect(resolution.fixes.map(({ outcome }) => outcome)).toEqual(["stale"]);
+    expect(await fixture.read("refs.bib")).toBe(bibText);
   });
 
   it("checks Library sources and applies a fix as a credited revision", async () => {

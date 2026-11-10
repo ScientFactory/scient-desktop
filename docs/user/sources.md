@@ -388,7 +388,8 @@ The results list what needs attention, most serious first:
 **Apply** writes the registry's value into the `.bib` entry or the Library
 source; **Apply _N_ fixes** does this for every fix in the list. If the file or
 source changed since the check, the fix is refused and the check should be run
-again. **Open** goes to the source or the line in the file, and a notice or
+again. An entry whose key another entry also uses gets no fix until each has
+its own key. **Open** goes to the source or the line in the file, and a notice or
 published version opens in your browser. **Ignore** hides a finding from later
 checks of the same file; **Show ignored** lets you restore it.
 

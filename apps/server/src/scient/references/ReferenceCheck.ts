@@ -137,23 +137,14 @@ const BIBTEX_MISSING_FIELD: Readonly<Record<string, ComparableField | "author">>
   pages: "pages",
 };
 
-/** Subjects for one file's entries; a repeated key's fixes name the exact entry. */
+/** Subjects for one file's entries; an entry whose key repeats gets no fix, as a fix names its entry by key. */
 function bibtexSubjects(entries: ReadonlyArray<ReferenceEntry>, path: string): Array<Subject> {
   const counts = new Map<string, number>();
   for (const { key } of entries) counts.set(key, (counts.get(key) ?? 0) + 1);
-  const seen = new Map<string, number>();
-  return entries.map((entry) => {
-    const occurrence = seen.get(entry.key) ?? 0;
-    seen.set(entry.key, occurrence + 1);
-    return bibtexSubject(entry, path, counts.get(entry.key)! > 1 ? occurrence : undefined);
-  });
+  return entries.map((entry) => bibtexSubject(entry, path, counts.get(entry.key)! > 1));
 }
 
-function bibtexSubject(
-  entry: ReferenceEntry,
-  path: string,
-  occurrence: number | undefined,
-): Subject {
+function bibtexSubject(entry: ReferenceEntry, path: string, keyRepeats: boolean): Subject {
   const { fields } = entry;
   const containerField =
     (["journal", "journaltitle", "booktitle"] as const).find((name) =>
@@ -184,7 +175,8 @@ function bibtexSubject(
       field: BIBTEX_MISSING_FIELD[name] ?? null,
     })),
     fixFor: (field, value) => {
-      if (entry.kind !== "bibtex" || !path.toLowerCase().endsWith(".bib")) return null;
+      if (keyRepeats || entry.kind !== "bibtex" || !path.toLowerCase().endsWith(".bib"))
+        return null;
       const name =
         field === "container"
           ? containerField
@@ -203,7 +195,6 @@ function bibtexSubject(
         kind: "bibtex-field",
         path,
         key: entry.key,
-        ...(occurrence === undefined ? {} : { occurrence }),
         field: name,
         current: fields[name] ?? null,
         value,
