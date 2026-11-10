@@ -32,9 +32,8 @@ describe("hasCloudPublicConfig", () => {
     expect(hasCloudPublicConfig()).toBe(false);
 
     vi.stubEnv("VITE_T3CODE_RELAY_URL", "https://relay.example.test");
-    // D4 keeps the cloud foundation present but disables live startup/route
-    // activation until an explicit selected-user enablement phase.
-    expect(hasCloudPublicConfig()).toBe(false);
+    // Scient Connect is on, so all three values enable it.
+    expect(hasCloudPublicConfig()).toBe(true);
     expect(resolveCloudPublicConfig()).toEqual({
       clerkPublishableKey: "pk_test_example",
       clerkJwtTemplate: "t3-relay",
@@ -76,7 +75,7 @@ describe("hasCloudPublicConfig", () => {
     // SCIENT-FORK:START
 
     function expectCloudConfig(expected: boolean) {
-      expect(hasCloudPublicConfig()).toBe(false);
+      expect(hasCloudPublicConfig()).toBe(expected);
       expect(foundationHasCloudPublicConfig()).toBe(expected);
     }
     // SCIENT-FORK:END

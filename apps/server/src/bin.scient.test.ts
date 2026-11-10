@@ -598,10 +598,13 @@ describe("Restored bin.test.ts", () => {
           runConnectCli(["connect", "status", "--base-dir", baseDir]),
         );
 
-        assert.include(output, "T3 Connect\n  Exposure: disabled");
+        assert.include(output, "Scient Connect\n  Exposure: disabled");
         assert.include(output, "  Authorization: missing");
         assert.include(output, "  Environment link: not provisioned");
-        assert.include(output, "Next: Run `t3 connect link` to authorize and enable T3 Connect.");
+        assert.include(
+          output,
+          "Next: Run `scient connect link` to authorize and enable Scient Connect.",
+        );
       }),
     );
     // regression: 7a820abfdd feat: add headless `t3 connect` setup for SSH hosts (#3749)
@@ -649,7 +652,7 @@ describe("Restored bin.test.ts", () => {
           runConnectCli(["connect", "unlink", "--base-dir", baseDir]),
         );
 
-        assert.equal(output, "T3 Connect is disabled locally.");
+        assert.equal(output, "Scient Connect is disabled locally.");
       }),
     );
     // regression: 22f9f3058b [codex] Rebrand T3 Cloud as T3 Connect (#3011)
@@ -668,10 +671,7 @@ describe("Restored bin.test.ts", () => {
           runConnectCli(["connect", "logout", "--base-dir", baseDir]),
         );
 
-        assert.equal(
-          output,
-          "Signed out of T3 Connect locally.\nThe background service is managed separately with `t3 service`.",
-        );
+        assert.equal(output, "Signed out of Scient Connect locally.");
         assert.isFalse(NodeFS.existsSync(tokenPath));
       }),
     );
