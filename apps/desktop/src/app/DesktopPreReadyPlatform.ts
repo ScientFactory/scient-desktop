@@ -17,6 +17,9 @@ import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
 import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 import { enableAutomaticSpellingLanguages } from "../scient/spelling/macSpelling.ts";
+// SCIENT-FORK:START — development builds can trust a local test site's certificate.
+import { developmentTrustedCertificates } from "../scient/browser/developmentCertificates.ts";
+// SCIENT-FORK:END
 
 export interface DesktopPreReadyCommandLineReader {
   readonly hasSwitch: (switchName: string) => boolean;
@@ -67,6 +70,16 @@ export const make = Effect.gen(function* () {
   return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
     // SCIENT-FORK:START — Chromium reads the macOS spelling setting while it starts.
     if (platform === "darwin") enableAutomaticSpellingLanguages();
+    // SCIENT-FORK:END
+    // SCIENT-FORK:START — development builds can trust a local test site's certificate.
+    const trusted = developmentTrustedCertificates({
+      env: process.env,
+      homeDirectory,
+      joinPath: NodePath.join,
+      readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+    });
+    if (trusted !== null)
+      Electron.app.commandLine.appendSwitch("ignore-certificate-errors-spki-list", trusted);
     // SCIENT-FORK:END
     const linuxPasswordStoreCommandLine =
       platform === "linux"
