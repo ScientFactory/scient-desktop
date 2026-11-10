@@ -557,8 +557,9 @@ same two functions.
   typed numbered lists and identifiers; `bibtex.ts` is the positional BibTeX
   reader the LaTeX editor also uses.
 - A document check reads the file, the `.bib` or CSL-JSON files it names
-  (relative to it, through the same project-file guard as PDF intake), and the
-  Library records whose `citationKey` matches an otherwise unlisted citation.
+  (relative to it, through the project-file guard in `projectFiles.ts`, which
+  refuses paths in or linked into `.scient`), and the Library records whose
+  `citationKey` matches an otherwise unlisted citation.
 - Identifiers go to `resolveSourceIdentifierBatch` in batches; lookups not
   started within 90 seconds count as unavailable and the report says it is
   incomplete. Retractions and corrections come from Crossref `updated-by`,
@@ -567,12 +568,16 @@ same two functions.
 - `referenceComparison.ts` holds the comparisons (different work, registry
   status, field differences). A single-source check before citing reuses them.
 - A finding's `fix` is self-contained: a `.bib` fix carries the field's current
-  text and is refused as stale when the file no longer has it; a Library fix
-  carries the expected revision and goes through `updateScientSource`, credited
-  to the actor. Fixes exist only for registry values; identifiers, retractions
-  and published versions are left to the author.
+  text (and, when the key repeats in the file, which entry) and is refused as
+  stale when the file no longer has it; inserted fields keep the file's line
+  endings. A Library fix carries the expected revision and goes through
+  `updateScientSource`, credited to the actor; fixes from one check to the same
+  source are applied together as one revision. Fixes exist only for registry
+  values; identifiers, retractions and published versions are left to the
+  author.
 - Ignored findings are kept in `.scient/reference-check/ignored.json`, outside
-  the Sources store. A finding ID hashes the checked file, the reference, the
+  the Sources store; a linked `.scient` or `reference-check` folder is never
+  read or written through. A finding ID hashes the checked file, the reference, the
   kind and the registry value, so a changed record is reported again.
 
 ## Collections, saved searches and bulk edit

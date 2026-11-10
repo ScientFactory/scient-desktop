@@ -137,7 +137,23 @@ const BIBTEX_MISSING_FIELD: Readonly<Record<string, ComparableField | "author">>
   pages: "pages",
 };
 
-function bibtexSubject(entry: ReferenceEntry, path: string): Subject {
+/** Subjects for one file's entries; a repeated key's fixes name the exact entry. */
+function bibtexSubjects(entries: ReadonlyArray<ReferenceEntry>, path: string): Array<Subject> {
+  const counts = new Map<string, number>();
+  for (const { key } of entries) counts.set(key, (counts.get(key) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  return entries.map((entry) => {
+    const occurrence = seen.get(entry.key) ?? 0;
+    seen.set(entry.key, occurrence + 1);
+    return bibtexSubject(entry, path, counts.get(entry.key)! > 1 ? occurrence : undefined);
+  });
+}
+
+function bibtexSubject(
+  entry: ReferenceEntry,
+  path: string,
+  occurrence: number | undefined,
+): Subject {
   const { fields } = entry;
   const containerField =
     (["journal", "journaltitle", "booktitle"] as const).find((name) =>
@@ -187,6 +203,7 @@ function bibtexSubject(entry: ReferenceEntry, path: string): Subject {
         kind: "bibtex-field",
         path,
         key: entry.key,
+        ...(occurrence === undefined ? {} : { occurrence }),
         field: name,
         current: fields[name] ?? null,
         value,
@@ -374,9 +391,35 @@ async function readProjectText(root: string, relativePath: string, description: 
   return { ...file, text: await NodeFSP.readFile(file.absolutePath, "utf8") };
 }
 
+const IGNORE_FOLDER_ERROR =
+  "The .scient/reference-check folder must be a plain folder in this project.";
+
+/**
+ * The ignore list's folder under the canonical root, refused when it or `.scient` is a link or
+ * not a folder, so reads and writes never leave the project. Null when it does not exist yet.
+ */
+async function ignoreFolder(root: string, create: boolean): Promise<string | null> {
+  let folder = root;
+  for (const part of NodePath.posix.dirname(SCIENT_REFERENCE_IGNORE_FILE).split("/")) {
+    folder = NodePath.join(folder, part);
+    let stats = await NodeFSP.lstat(folder).catch(() => null);
+    if (stats === null) {
+      if (!create) return null;
+      await NodeFSP.mkdir(folder).catch(() => undefined);
+      stats = await NodeFSP.lstat(folder);
+    }
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new ReferenceCheckError({ message: IGNORE_FOLDER_ERROR });
+    }
+  }
+  return folder;
+}
+
 async function readIgnoreList(root: string): Promise<ScientReferenceIgnoreList> {
-  const path = NodePath.join(root, ...SCIENT_REFERENCE_IGNORE_FILE.split("/"));
   try {
+    const folder = await ignoreFolder(root, false);
+    if (folder === null) return { formatVersion: 1, findings: [] };
+    const path = NodePath.join(folder, NodePath.posix.basename(SCIENT_REFERENCE_IGNORE_FILE));
     const stats = await NodeFSP.lstat(path);
     if (!stats.isFile() || stats.size > MAX_IGNORE_BYTES) return { formatVersion: 1, findings: [] };
     return decodeIgnoreList(JSON.parse(await NodeFSP.readFile(path, "utf8")));
@@ -386,8 +429,8 @@ async function readIgnoreList(root: string): Promise<ScientReferenceIgnoreList> 
 }
 
 async function writeIgnoreList(root: string, list: ScientReferenceIgnoreList): Promise<void> {
-  const path = NodePath.join(root, ...SCIENT_REFERENCE_IGNORE_FILE.split("/"));
-  await NodeFSP.mkdir(NodePath.dirname(path), { recursive: true });
+  const folder = (await ignoreFolder(root, true))!;
+  const path = NodePath.join(folder, NodePath.posix.basename(SCIENT_REFERENCE_IGNORE_FILE));
   const temporary = `${path}.tmp-${NodeCrypto.randomUUID()}`;
   try {
     await NodeFSP.writeFile(temporary, `${JSON.stringify(list, null, 2)}\n`, { flag: "wx" });
@@ -443,9 +486,7 @@ async function collectDocument(root: string, path: string): Promise<Collected> {
     complete = false;
   }
   const files = [document.relativePath];
-  const subjects: Array<Subject> = parsed.entries.map((entry) =>
-    bibtexSubject(entry, document.relativePath),
-  );
+  const subjects: Array<Subject> = bibtexSubjects(parsed.entries, document.relativePath);
   const directory = NodePath.posix.dirname(document.relativePath);
   for (const written of parsed.bibliographyPaths) {
     const relative = NodePath.posix.normalize(NodePath.posix.join(directory, written));
@@ -468,7 +509,7 @@ async function collectDocument(root: string, path: string): Promise<Collected> {
         notes.push(`${bibliography.relativePath}: ${bib.parseError}`);
         complete = false;
       }
-      subjects.push(...bib.entries.map((entry) => bibtexSubject(entry, bibliography.relativePath)));
+      subjects.push(...bibtexSubjects(bib.entries, bibliography.relativePath));
     } catch (error) {
       notes.push(
         isReferenceCheckError(error)
