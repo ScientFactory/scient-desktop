@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
-import { CloudConversation } from "@scientfactory/scient-cloud/api";
-import { MessageId, ThreadId } from "@t3tools/contracts";
+import { CloudConversation, type SnapshotSidecar } from "@scientfactory/scient-cloud/api";
+import { type ConversationSnapshotV1, MessageId, ThreadId } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -17,14 +17,46 @@ import { ShareBuilder, layer } from "./ShareBuilder.ts";
 const SAVED = "lab-db-password-42";
 const decodeDocument = Schema.decodeUnknownSync(Schema.fromJsonString(CloudConversation));
 
-const makeBuilder = Effect.gen(function* () {
+const builderFor = Effect.fn("ShareBuilderTest.builderFor")(function* (
+  snapshot: ConversationSnapshotV1,
+  files: Record<string, string | Uint8Array>,
+  sidecar: SnapshotSidecar = {},
+) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const dir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-share-build-" });
-  const notes = path.join(dir, "notes.txt");
-  const figure = path.join(dir, "figure.png");
-  yield* fs.writeFileString(notes, `connect with ${SAVED}`);
-  yield* fs.writeFile(figure, new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+  const attachmentFiles = new Map<string, string>();
+  for (const [localId, content] of Object.entries(files)) {
+    const file = path.join(dir, localId);
+    yield* typeof content === "string"
+      ? fs.writeFileString(file, content)
+      : fs.writeFile(file, content);
+    attachmentFiles.set(localId, file);
+  }
+  const snapshots = ConversationSnapshotService.of({
+    capture: () => Effect.succeed({ snapshot, attachmentFiles }),
+  });
+  const accounts = {
+    redactionValues: Effect.succeed([Redacted.make(SAVED)]),
+  } as unknown as AccountsService["Service"];
+  const extras = ConversationExtras.of({ read: () => Effect.succeed({ sidecar }) });
+  const builder = yield* ShareBuilder.pipe(
+    Effect.provide(layer),
+    Effect.provideService(ConversationSnapshotService, snapshots),
+    Effect.provideService(AccountsService, accounts),
+    Effect.provideService(ConversationExtras, extras),
+  );
+  return (keep: ReadonlyArray<string> = []) =>
+    builder.build({
+      threadId: ThreadId.make("thread-1"),
+      reasoning: false,
+      workLog: true,
+      excludeMessageIds: [MessageId.make("message-2")],
+      keep,
+    });
+});
+
+const makeBuilder = Effect.gen(function* () {
   const snapshot = {
     ...capturedSnapshot,
     messages: [
@@ -42,35 +74,16 @@ const makeBuilder = Effect.gen(function* () {
     ],
     warnings: [],
   };
-  const snapshots = ConversationSnapshotService.of({
-    capture: () =>
-      Effect.succeed({
-        snapshot,
-        attachmentFiles: new Map([
-          ["a-notes", notes],
-          ["a-figure", figure],
-        ]),
-      }),
+  return yield* builderFor(snapshot, {
+    "a-notes": `connect with ${SAVED}`,
+    "a-figure": new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
   });
-  const accounts = {
-    redactionValues: Effect.succeed([Redacted.make(SAVED)]),
-  } as unknown as AccountsService["Service"];
-  const extras = ConversationExtras.of({ read: () => Effect.succeed({ sidecar: {} }) });
-  const builder = yield* ShareBuilder.pipe(
-    Effect.provide(layer),
-    Effect.provideService(ConversationSnapshotService, snapshots),
-    Effect.provideService(AccountsService, accounts),
-    Effect.provideService(ConversationExtras, extras),
-  );
-  return (keep: ReadonlyArray<string> = []) =>
-    builder.build({
-      threadId: ThreadId.make("thread-1"),
-      reasoning: false,
-      workLog: true,
-      excludeMessageIds: [MessageId.make("message-2")],
-      keep,
-    });
 });
+
+const EMAIL = "ada@lab.example.org";
+const HOME = "/Users/ada";
+const TOKEN = `ghp_${"Z".repeat(36)}`;
+const PLANTED = [SAVED, EMAIL, HOME, TOKEN];
 
 describe("ShareBuilder", () => {
   it.effect("publishes a redacted, renumbered document and reports without values", () =>
@@ -111,6 +124,62 @@ describe("ShareBuilder", () => {
       const second = yield* build([attachmentId]);
       expect(second.blobs.map((blob) => blob.localId).toSorted()).toEqual(["a-figure", "a-notes"]);
       expect(second.kept.map((entry) => entry.id)).toEqual([attachmentId]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+  it.effect("never lets a planted value reach the document, the report or a blob name", () =>
+    Effect.gen(function* () {
+      const message = capturedSnapshot.messages[0]!;
+      const build = yield* builderFor(
+        {
+          ...capturedSnapshot,
+          provenance: {
+            _tag: "import",
+            source: "scic",
+            exportId: "export-1",
+            sourceThreadId: null,
+            packageDigest: `sha256:${"a".repeat(64)}`,
+            sourceFormat: "scient.conversation",
+            sourceFormatVersion: 1,
+            importedAt: "2026-09-27T13:00:00.000Z",
+            notices: [`Exported by ${EMAIL} from ${HOME}/lab with ${TOKEN}`],
+          },
+          messages: [
+            {
+              ...message,
+              text: `Run with ${SAVED} as ${EMAIL} in ${HOME}/lab, token ${TOKEN}`,
+              references: [],
+              attachments: [
+                attachment("a-contacts", "file", "contacts.csv", "text/csv", 40),
+                attachment("a-keys", "file", `keys-${EMAIL}.txt`, "text/plain", 40),
+                attachment("a-plot", "image", `plot-${SAVED}.png`, "image/png", 4),
+              ],
+            },
+          ],
+          warnings: [
+            { _tag: "attachment-unavailable", name: `${HOME}/missing-${SAVED}.csv`, messageN: 1 },
+          ],
+        },
+        {
+          "a-contacts": `name,email\nAda,${EMAIL}\n`,
+          "a-keys": `token=${TOKEN}`,
+          "a-plot": new Uint8Array([0x89, 0x50, 0x4e, 0x47]),
+        },
+        { repository: { webUrl: `https://ada:${SAVED}@github.com/acme/lab`, commit: "abc123" } },
+      );
+      const built = yield* build();
+      const { snapshot } = decodeDocument(built.documentJson);
+      // Only the binary plot travels; both text files hold private text.
+      expect(built.blobs.map((blob) => [blob.localId, blob.name])).toEqual([
+        ["a-plot", "plot-[redacted].png"],
+      ]);
+      expect(
+        Object.fromEntries(snapshot.messages[0]!.attachments.map((a) => [a.localId, a.available])),
+      ).toEqual({ "a-contacts": false, "a-keys": false, "a-plot": true });
+      const served = JSON.stringify({
+        ...built,
+        blobs: built.blobs.map(({ path: _local, ...blob }) => blob),
+      });
+      for (const value of PLANTED) expect(served).not.toContain(value);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 });

@@ -1,11 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Share builds hash attachment bytes and draw the redaction id key with Node's crypto.
+// @effect-diagnostics nodeBuiltinImport:off -- Share builds draw the redaction id key with Node's crypto.
 import * as NodeCrypto from "node:crypto";
 
-import { canonicalSnapshotContent } from "@scientfactory/conversation";
 import { CloudConversation, type SnapshotSidecar } from "@scientfactory/scient-cloud/api";
+import { DEFAULT_CLOUD_LIMITS } from "@scientfactory/scient-cloud/limits";
 import {
-  type ConversationAttachment,
-  type ConversationSnapshotV1,
   type ScientCloudShareBuild,
   type ScientCloudShareBuildRequest,
   ScientCloudError,
@@ -21,6 +19,13 @@ import * as Schema from "effect/Schema";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { ConversationSnapshotService } from "../conversationExport/ConversationSnapshotService.ts";
 import { ConversationExtras } from "./ConversationExtras.ts";
+import {
+  markAttachments,
+  readBounded,
+  sha256Hex,
+  snapshotAttachments,
+  withContentDigest,
+} from "./cloudAttachments.ts";
 import { Redactor, redactSection } from "./shareRedaction.ts";
 
 /** A built share; `blobs` carry local file paths the HTTP layer turns into signed URLs. */
@@ -33,6 +38,8 @@ export interface BuiltShare extends Omit<ScientCloudShareBuild, "blobs"> {
 const TEXT_ATTACHMENT = /^(?:text\/|application\/(?:json|xml|x-yaml|yaml|toml|x-sh|javascript))/u;
 /** Text attachments above this are carried unsearched, like binary ones. */
 const SEARCHED_TEXT_MAX_BYTES = 8 * 1024 * 1024;
+/** A share carries files up to the cloud's per-file limit; larger ones are left out. */
+const CARRIED_MAX_BYTES = DEFAULT_CLOUD_LIMITS.maxBlobBytes;
 
 export class ShareBuilder extends Context.Service<
   ShareBuilder,
@@ -44,9 +51,6 @@ export class ShareBuilder extends Context.Service<
 >()("t3/scient/cloud/ShareBuilder") {}
 
 const encodeConversation = Schema.encodeEffect(Schema.fromJsonString(CloudConversation));
-
-const sha256Hex = (bytes: Uint8Array) =>
-  NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
 const shareError = (reason: ScientCloudError["reason"], message: string) =>
   new ScientCloudError({ reason, message });
@@ -91,78 +95,63 @@ const make = Effect.gen(function* () {
       scope: request.threadId,
     });
     const excluded = new Set<string>(request.excludeMessageIds);
-    const source = captured.snapshot;
-
-    // Text attachments that hold a secret are left out (the person can keep each one).
-    let binaryNotSearched = 0;
-    const leftOut = new Set<string>();
-    const carried = new Map<string, { path: string; bytes: Uint8Array }>();
-    for (const message of source.messages) {
-      if (excluded.has(message.id)) continue;
-      for (const attachment of message.attachments) {
-        const path = captured.attachmentFiles.get(attachment.localId);
-        if (!attachment.available || path === undefined || carried.has(attachment.localId))
-          continue;
-        const bytes = yield* fileSystem.readFile(path).pipe(Effect.orElseSucceed(() => null));
-        if (bytes === null) continue;
-        const searchable =
-          TEXT_ATTACHMENT.test(attachment.mimeType) && bytes.byteLength <= SEARCHED_TEXT_MAX_BYTES;
-        if (!searchable) binaryNotSearched += 1;
-        if (
-          searchable &&
-          redactor.holdsSecret(new TextDecoder().decode(bytes)) &&
-          redactor.excludeItem(
-            { field: "attachment", itemId: attachment.localId },
-            `Attachment with a secret: ${attachment.name}`,
-          )
-        ) {
-          leftOut.add(attachment.localId);
-          continue;
-        }
-        carried.set(attachment.localId, { path, bytes });
-      }
-    }
-
-    const withoutLeftOut = (attachments: ReadonlyArray<ConversationAttachment>) =>
-      attachments.map((attachment) =>
-        leftOut.has(attachment.localId) ? { ...attachment, available: false } : attachment,
-      );
+    const { contentDigest: _captured, ...source } = captured.snapshot;
     const messages = source.messages
       .filter((message) => !excluded.has(message.id))
-      .map((message, index) => ({
-        ...message,
-        n: index + 1,
-        attachments: withoutLeftOut(message.attachments),
-      }));
-    const redactedContent = {
-      ...source,
-      thread: redactSection(redactor, "thread", source.thread),
-      messages: redactSection(redactor, "messages", messages),
-      reasoning: redactSection(redactor, "reasoning", source.reasoning),
-      workLog: redactSection(redactor, "workLog", source.workLog),
-      proposedPlans: redactSection(redactor, "proposedPlans", source.proposedPlans),
-      questionAnswers: redactSection(redactor, "questionAnswers", source.questionAnswers),
-    };
-    const digest = sha256Hex(new TextEncoder().encode(canonicalSnapshotContent(redactedContent)));
-    const snapshot: ConversationSnapshotV1 = {
-      ...redactedContent,
-      contentDigest: `sha256:${digest}`,
-    };
+      .map((message, index) => ({ ...message, n: index + 1 }));
 
-    const byLocalId = new Map(
-      messages.flatMap((message) => message.attachments).map((a) => [a.localId, a] as const),
+    // One file in memory at a time; only hashes are kept. Text holding anything the transcript
+    // would redact is left out whole (the person can keep each one).
+    let binaryNotSearched = 0;
+    const carried = new Map<string, { path: string; sha256: string; bytes: number }>();
+    for (const attachment of snapshotAttachments({ ...source, messages })) {
+      const path = captured.attachmentFiles.get(attachment.localId);
+      if (!attachment.available || path === undefined || carried.has(attachment.localId)) continue;
+      const bytes = yield* readBounded(fileSystem, path, CARRIED_MAX_BYTES);
+      if (bytes === null) continue;
+      const searchable =
+        TEXT_ATTACHMENT.test(attachment.mimeType) && bytes.byteLength <= SEARCHED_TEXT_MAX_BYTES;
+      if (!searchable) binaryNotSearched += 1;
+      if (
+        searchable &&
+        redactor.holdsPrivateText(new TextDecoder().decode(bytes)) &&
+        redactor.excludeItem(
+          { field: "attachment", itemId: attachment.localId },
+          "Attachment with private text",
+        )
+      )
+        continue;
+      carried.set(attachment.localId, { path, sha256: sha256Hex(bytes), bytes: bytes.byteLength });
+    }
+
+    const redactedContent = markAttachments(
+      {
+        ...source,
+        thread: redactSection(redactor, "thread", source.thread),
+        provenance: redactSection(redactor, "provenance", source.provenance),
+        messages: redactSection(redactor, "messages", messages),
+        reasoning: redactSection(redactor, "reasoning", source.reasoning),
+        workLog: redactSection(redactor, "workLog", source.workLog),
+        proposedPlans: redactSection(redactor, "proposedPlans", source.proposedPlans),
+        questionAnswers: redactSection(redactor, "questionAnswers", source.questionAnswers),
+        warnings: redactSection(redactor, "warnings", source.warnings),
+      },
+      (localId) => carried.has(localId),
     );
+    const snapshot = withContentDigest(redactedContent);
+
+    // Names come from the redacted document, so a blob never carries what the text hid.
+    const byLocalId = new Map(snapshotAttachments(snapshot).map((a) => [a.localId, a] as const));
     const blobs: Array<BuiltShare["blobs"][number]> = [];
     const sidecarAttachments: Array<NonNullable<SnapshotSidecar["attachments"]>[number]> = [];
     for (const [localId, file] of carried) {
       const attachment = byLocalId.get(localId);
       if (attachment === undefined) continue;
-      const sha256 = sha256Hex(file.bytes);
-      sidecarAttachments.push({ localId, sha256, bytes: file.bytes.byteLength });
+      sidecarAttachments.push({ localId, sha256: file.sha256, bytes: file.bytes });
       blobs.push({
         localId,
-        sha256,
-        bytes: file.bytes.byteLength,
+        sha256: file.sha256,
+        bytes: file.bytes,
         name: attachment.name,
         mimeType: attachment.mimeType,
         path: file.path,
@@ -170,7 +159,7 @@ const make = Effect.gen(function* () {
     }
     const { sidecar: extra } = yield* extras.read(request.threadId, snapshot);
     const sidecar = {
-      ...extra,
+      ...redactSection(redactor, "sidecar", extra),
       ...(sidecarAttachments.length === 0 ? {} : { attachments: sidecarAttachments }),
     };
     const document: CloudConversation = {

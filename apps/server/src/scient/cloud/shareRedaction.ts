@@ -133,7 +133,7 @@ export class Redactor {
       .slice(0, 22);
   }
 
-  #matches(text: string, secretsOnly: boolean): Match[] {
+  #matches(text: string): Match[] {
     const found: Match[] = [];
     for (const needle of this.#needles) {
       let at = text.indexOf(needle);
@@ -150,7 +150,6 @@ export class Redactor {
       }
     }
     for (const detector of PATTERN_DETECTORS) {
-      if (secretsOnly && detector.kind !== "secret-pattern") continue;
       for (const match of text.matchAll(detector.pattern)) {
         if (match[0].length === 0) continue;
         found.push({
@@ -172,12 +171,12 @@ export class Redactor {
     return accepted.toSorted((a, b) => a.start - b.start);
   }
 
-  /** Whether the text holds a saved secret or a token-shaped string. */
-  holdsSecret(text: string): boolean {
-    return this.#matches(text, true).length > 0;
+  /** Whether `redact` would change anything in the text. */
+  holdsPrivateText(text: string): boolean {
+    return this.#matches(text).length > 0;
   }
 
-  /** Records a whole item (a text attachment) left out because it holds a secret. */
+  /** Records a whole item (a text attachment) left out because it holds private text. */
   excludeItem(location: RedactionLocation, label: string): boolean {
     const id = this.#id("attachment", `${location.field}:${location.itemId ?? ""}`);
     const kept = this.#keep.has(id);
@@ -207,7 +206,7 @@ export class Redactor {
   }
 
   redact(text: string, location: RedactionLocation): string {
-    const matches = this.#matches(text, false);
+    const matches = this.#matches(text);
     if (matches.length === 0) return text;
     let out = "";
     let cursor = 0;
@@ -251,6 +250,9 @@ const SKIPPED_KEY =
 
 const FIELD_OF: Record<string, ScientCloudRedactionField> = {
   thread: "title",
+  provenance: "title",
+  sidecar: "title",
+  warnings: "attachment",
   messages: "message",
   reasoning: "reasoning",
   workLog: "work-log",
