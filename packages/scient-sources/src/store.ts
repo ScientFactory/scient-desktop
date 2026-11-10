@@ -12,6 +12,7 @@ import {
 import * as Schema from "effect/Schema";
 
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
+import { resolveScientProjectFile } from "./projectFiles.ts";
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
 import {
   applyEditableMetadata,
@@ -1007,44 +1008,13 @@ export async function resolveScientSourceInputPdf(
   root: string,
   relativePath: string,
 ): Promise<{ readonly absolutePath: string; readonly fileName: string }> {
-  const requested = relativePath.trim();
-  if (
-    requested.length === 0 ||
-    requested.includes("\0") ||
-    requested.includes("\\") ||
-    NodePath.posix.isAbsolute(requested) ||
-    !requested.toLowerCase().endsWith(".pdf")
-  ) {
-    throw new Error("The PDF path must be a relative project path ending in .pdf.");
-  }
-  const canonicalRoot = await NodeFSP.realpath(root);
-  const lexicalPath = NodePath.resolve(canonicalRoot, ...requested.split("/"));
-  const lexicalRelative = NodePath.relative(canonicalRoot, lexicalPath);
-  if (
-    lexicalRelative === "" ||
-    lexicalRelative === ".." ||
-    lexicalRelative.startsWith(`..${NodePath.sep}`) ||
-    NodePath.isAbsolute(lexicalRelative)
-  ) {
-    throw new Error("The PDF path must remain inside the project.");
-  }
-  const absolutePath = await NodeFSP.realpath(lexicalPath);
-  const realRelative = NodePath.relative(canonicalRoot, absolutePath);
-  if (
-    realRelative === "" ||
-    realRelative === ".." ||
-    realRelative.startsWith(`..${NodePath.sep}`) ||
-    NodePath.isAbsolute(realRelative)
-  ) {
-    throw new Error("The PDF path must remain inside the project.");
-  }
-  const stats = await NodeFSP.lstat(absolutePath);
-  if (!stats.isFile() || stats.isSymbolicLink()) {
-    throw new Error("The selected PDF is not a safe regular file.");
-  }
+  const resolved = await resolveScientProjectFile(root, relativePath, {
+    extensions: [".pdf"],
+    description: "PDF",
+  });
   return {
-    absolutePath,
-    fileName: safeUploadedFileName(NodePath.basename(requested)),
+    absolutePath: resolved.absolutePath,
+    fileName: safeUploadedFileName(NodePath.basename(relativePath.trim())),
   };
 }
 

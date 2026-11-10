@@ -3,3 +3,5 @@ export * from "./duplicates.ts";
 export * from "./editable.ts";
 export * from "./model.ts";
 export * from "./normalize.ts";
+export * from "./referenceCheck.ts";
+export * from "./referenceDocuments.ts";

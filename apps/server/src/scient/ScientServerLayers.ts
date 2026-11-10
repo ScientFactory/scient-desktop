@@ -38,6 +38,7 @@ import * as LatexTexDirectory from "./latex/latexTexDirectory.ts";
 import * as LatexSyncTex from "./latex/LatexSyncTex.ts";
 import * as LatexTikzPreview from "./latex/LatexTikzPreview.ts";
 import { scientSourcesHttpApiLayer } from "./sources/http.ts";
+import { scientReferencesHttpApiLayer } from "./references/http.ts";
 import { scientLatexHttpApiLayer } from "./latex/http.ts";
 import { scientMarkdownHttpApiLayer } from "./markdown/http.ts";
 import { scientPdfHttpApiLayer } from "./pdf/http.ts";
@@ -189,6 +190,7 @@ export function makeScientRouteServices<
       Layer.provide(scientConversationImportHttpApiLayer),
       Layer.provide(scientWordExportHttpApiLayer),
       Layer.provide(scientOverleafHttpApiLayer),
+      Layer.provide(scientReferencesHttpApiLayer),
     );
 
   /** Scient services behind the routes, provided in order. */

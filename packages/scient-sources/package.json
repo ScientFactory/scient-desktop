@@ -8,9 +8,17 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./bibtex": {
+      "types": "./src/bibtex.ts",
+      "import": "./src/bibtex.ts"
+    },
     "./material-selection": {
       "types": "./src/materialSelection.ts",
       "import": "./src/materialSelection.ts"
+    },
+    "./project-files": {
+      "types": "./src/projectFiles.ts",
+      "import": "./src/projectFiles.ts"
     },
     "./store": {
       "types": "./src/store.ts",
