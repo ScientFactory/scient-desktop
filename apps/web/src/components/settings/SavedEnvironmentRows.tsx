@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — the phone-app switch.
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 import { SessionPermissions } from "./SessionPermissions";
 import {
   ChevronRightIcon,
@@ -703,7 +706,9 @@ function ConfiguredCloudLinkRow({
           description="Run `scient connect link` on the host, then restart Scient there."
         />
       ) : null}
-      {signedOut && showSwitch ? null : (
+      {/* SCIENT-FORK:START — publishing feeds the phone app, which Scient has not shipped. */}
+      {(signedOut && showSwitch) || !SCIENT_DESKTOP_IDENTITY.mobileAppEnabled ? null : (
+        /* SCIENT-FORK:END */
         <SettingsRow
           title={searchableSetting("publish-agent-activity").title}
           description={

@@ -87,7 +87,8 @@ appears in Scient on your other devices and at
 
 On a server without a screen, run `scient connect` and open the printed link on
 any device to sign in. `scient connect status` shows whether other devices can
-reach the computer.
+reach the computer. When a connection fails, see
+[Scient Connect troubleshooting](./scient-connect-troubleshooting.md).
 
 How it works: Scient's relay at `relay.scientfactory.com` keeps your account's
 list of computers and creates one private Cloudflare tunnel per computer, at an
