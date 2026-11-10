@@ -339,12 +339,16 @@ email.
 `resolveSourceIdentifierBatch` resolves many identifiers, each as its own work,
 grouping them per registry: arXiv and Open Library answer many per request, DOI
 and PMID lookups run four at a time so none waits out its deadline in the NCBI
-lane, and each request has the 6.5-second deadline. `SourceIdentifierAdd.ts`
+lane, and each request has the 6.5-second deadline. At the deadline an ISBN
+group keeps the books already found and starts no more Google Books requests;
+only the ISBNs still waiting are unavailable. `SourceIdentifierAdd.ts`
 uses it for adds by identifier: `scient_sources_add` with `identifierList` (up
 to 50 entries in any common spelling, outcome `batch` with one result per
 entry) and the user's **Add by identifier** (`POST
 /api/scient/sources/identifiers/add`). Text is read by `detectSourceIdentifier`
-and `parseSourceIdentifierList` in `packages/scient-sources`. An identifier
+and `parseSourceIdentifierList` in `packages/scient-sources`; a comma or
+semicolon splits a list even without a space when a DOI, link or scheme prefix
+follows it, and otherwise stays part of an old DOI. An identifier
 already in the Library (a work-level identifier, or the ISBN of an existing
 book) is reported as a duplicate without a lookup. Only a found identifier is
 added, verified and credited to its actor; not found, unavailable and
@@ -411,7 +415,11 @@ Neither removal nor detaching a PDF deletes PDF files. Permanent deletion
 (one trashed source, or the whole trash) deletes the trash entries and their
 revision history, then deletes every content-addressed PDF that no live or
 trashed record refers to. It deletes no file at all while any record or trash
-entry cannot be read, since that record might refer to it. Revert and history
+entry cannot be read, since that record might refer to it. Deleting one
+trashed source takes the revision the caller saw and compares it under the
+same write lock that deletes, returning `stale` when the source was restored,
+edited or removed again in between; emptying the whole trash takes no
+revision. Revert and history
 listing do not keep PDFs alive: a revert whose revision names a deleted file
 leaves that attachment out and reports `missingAttachmentCount`.
 
@@ -422,11 +430,13 @@ reverted identifiers belong to another live source) without writing. Each
 source keeps its first revision and the most recent ones, 50 including the
 current record; older revisions are pruned after each write.
 
-Listing reads every record file independently. A file that is not valid JSON,
-does not decode, belongs to another project or does not match its file name is
-skipped and reported in the overview's `unreadableRecords` with its
-project-relative path; the UI shows one quiet line naming the files. Reading a
-single source by ID still fails for that source alone.
+Listing reads every record file independently. A `.json` entry that is not a
+regular file (a symlink, for example) is never followed. It, and a file that is
+not valid JSON, does not decode, belongs to another project or does not match
+its file name, is skipped and reported in the overview's `unreadableRecords`
+with its project-relative path; the UI shows one quiet line naming the files.
+The trash listing reports its own entries the same way. Reading a single source
+by ID still fails for that source alone.
 
 The UI moves a source to the trash straight from the row's secondary-click
 menu or the details page and offers Undo in the confirmation toast; the trash
@@ -598,8 +608,9 @@ same two functions.
   typed numbered lists and identifiers; `bibtex.ts` is the positional BibTeX
   reader the LaTeX editor also uses.
 - A document check reads the file, the `.bib` or CSL-JSON files it names
-  (relative to it, through the same project-file guard as PDF intake), and the
-  Library records whose `citationKey` matches an otherwise unlisted citation.
+  (relative to it, through the project-file guard in `projectFiles.ts`, which
+  refuses paths in or linked into `.scient`), and the Library records whose
+  `citationKey` matches an otherwise unlisted citation.
 - Identifiers go to `resolveSourceIdentifierBatch` in batches; lookups not
   started within 90 seconds count as unavailable and the report says it is
   incomplete. Retractions and corrections come from Crossref `updated-by`,
@@ -608,12 +619,16 @@ same two functions.
 - `referenceComparison.ts` holds the comparisons (different work, registry
   status, field differences). A single-source check before citing reuses them.
 - A finding's `fix` is self-contained: a `.bib` fix carries the field's current
-  text and is refused as stale when the file no longer has it; a Library fix
-  carries the expected revision and goes through `updateScientSource`, credited
-  to the actor. Fixes exist only for registry values; identifiers, retractions
-  and published versions are left to the author.
+  text (and, when the key repeats in the file, which entry) and is refused as
+  stale when the file no longer has it; inserted fields keep the file's line
+  endings. A Library fix carries the expected revision and goes through
+  `updateScientSource`, credited to the actor; fixes from one check to the same
+  source are applied together as one revision. Fixes exist only for registry
+  values; identifiers, retractions and published versions are left to the
+  author.
 - Ignored findings are kept in `.scient/reference-check/ignored.json`, outside
-  the Sources store. A finding ID hashes the checked file, the reference, the
+  the Sources store; a linked `.scient` or `reference-check` folder is never
+  read or written through. A finding ID hashes the checked file, the reference, the
   kind and the registry value, so a changed record is reported again.
 
 ## Collections, saved searches and bulk edit
@@ -664,8 +679,8 @@ lock.
   never brought in and records no longer in the Library are "removed for other
   reasons". Identified minus removed always equals screened.
 - Screening is an append-only log; the latest entry per source and stage is
-  the decision in force, so changes stay auditable and `clear-decision`
-  reopens a record. Full-text decisions apply only to records included at
+  the decision in force, so changes stay auditable; `clear-decision` appends a
+  `cleared` entry that reopens the record without erasing its history. Full-text decisions apply only to records included at
   title and abstract. Every entry records `decidedBy`.
 - Repeats are harmless for agents: creating a title in use returns that
   review, and logging the same database, query and date replaces that search.
