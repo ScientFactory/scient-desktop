@@ -1,22 +1,20 @@
 import type { EnvironmentId, ScientSourcesExportRequest } from "@t3tools/contracts";
-import { LoaderCircle, Upload } from "lucide-react";
+import { Upload } from "lucide-react";
 import { useState } from "react";
 
-import { Button } from "../../components/ui/button";
 import {
-  Menu,
   MenuCheckboxItem,
   MenuGroup,
   MenuGroupLabel,
   MenuItem,
   MenuItemDetail,
-  MenuPopup,
   MenuSeparator,
-  MenuTrigger,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
 } from "../../components/ui/menu";
 import { downloadBlob } from "../../components/preview/staticImageActions";
 import { toastManager } from "../../components/ui/toast";
-import { ScientTooltip } from "../presentation/ScientTooltip";
 import { exportScientSources } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
 
@@ -37,21 +35,20 @@ const FORMATS: ReadonlyArray<{
   { format: "endnote-xml", label: "EndNote XML", extension: ".xml", mediaType: "application/xml" },
 ];
 
-/** Exports the selected sources, else the shown ones, else the whole Library, to a reference file. */
-export function SourcesExportMenu(props: {
+export type SourcesExportScope = {
+  readonly kind: "selected" | "shown";
+  readonly sourceIds: ReadonlyArray<string>;
+};
+
+/** Held above the menu, so a running export and "Include notes" survive the menu closing. */
+export function useSourcesExport(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
-  readonly totalCount: number;
   /** The selected or shown sources; null exports everything. */
-  readonly scope: {
-    readonly kind: "selected" | "shown";
-    readonly sourceIds: ReadonlyArray<string>;
-  } | null;
+  readonly scope: SourcesExportScope | null;
 }) {
   const [includeNotes, setIncludeNotes] = useState(false);
   const [exporting, setExporting] = useState(false);
-  const count = props.scope?.sourceIds.length ?? props.totalCount;
-  if (props.totalCount === 0) return null;
 
   const exportAs = async (option: (typeof FORMATS)[number]) => {
     setExporting(true);
@@ -86,18 +83,24 @@ export function SourcesExportMenu(props: {
     }
   };
 
+  return { includeNotes, setIncludeNotes, exporting, exportAs };
+}
+
+/** Exports the selected sources, else the shown ones, else the whole Library, to a reference file. */
+export function SourcesExportSubmenu(props: {
+  readonly exporter: ReturnType<typeof useSourcesExport>;
+  readonly totalCount: number;
+  readonly scope: SourcesExportScope | null;
+}) {
+  const { exporter } = props;
+  const count = props.scope?.sourceIds.length ?? props.totalCount;
   return (
-    <Menu>
-      <ScientTooltip content="Export">
-        <MenuTrigger
-          render={
-            <Button size="icon-xs" variant="ghost" aria-label="Export sources" disabled={exporting}>
-              {exporting ? <LoaderCircle className="animate-spin" /> : <Upload />}
-            </Button>
-          }
-        />
-      </ScientTooltip>
-      <MenuPopup align="end" side="bottom" className="min-w-52">
+    <MenuSub>
+      <MenuSubTrigger disabled={exporter.exporting}>
+        <Upload />
+        Export
+      </MenuSubTrigger>
+      <MenuSubPopup className="min-w-52">
         <MenuGroup>
           <MenuGroupLabel>
             {props.scope
@@ -105,17 +108,20 @@ export function SourcesExportMenu(props: {
               : `Export ${count === 1 ? "1 source" : `all ${count.toLocaleString()} sources`}`}
           </MenuGroupLabel>
           {FORMATS.map((option) => (
-            <MenuItem key={option.format} onClick={() => void exportAs(option)}>
+            <MenuItem key={option.format} onClick={() => void exporter.exportAs(option)}>
               {option.label}
               <MenuItemDetail>{option.extension}</MenuItemDetail>
             </MenuItem>
           ))}
         </MenuGroup>
         <MenuSeparator />
-        <MenuCheckboxItem checked={includeNotes} onCheckedChange={setIncludeNotes}>
+        <MenuCheckboxItem
+          checked={exporter.includeNotes}
+          onCheckedChange={exporter.setIncludeNotes}
+        >
           Include notes
         </MenuCheckboxItem>
-      </MenuPopup>
-    </Menu>
+      </MenuSubPopup>
+    </MenuSub>
   );
 }
