@@ -3173,7 +3173,7 @@ describe("connectors agents make and fix", () => {
         workingFolder: NodePath.join(harness.config.stateDir, "..", "chat"),
         connector: connectorId,
       });
-      expect(copied.log).toContain("starting 3.0.0");
+      expect(copied).toMatchObject({ log: expect.stringContaining("starting 3.0.0") });
       yield* harness.runtime.remove({ connectorId });
       expect(
         yield* Effect.promise(() =>

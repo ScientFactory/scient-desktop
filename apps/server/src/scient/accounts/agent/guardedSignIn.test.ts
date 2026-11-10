@@ -262,9 +262,11 @@ it.effect("a connector signs in again once its session outlived the short pause"
     expect(resolved).toEqual([]);
     // A session that lasted a few minutes ended normally; the page caller still waits longer.
     yield* TestClock.adjust("3 minutes");
-    expect((yield* run(rows[0]!, page)).message).toContain("moments ago");
+    expect(yield* run(rows[0]!, page)).toMatchObject({
+      message: expect.stringContaining("moments ago"),
+    });
     const renewed = yield* run(rows[0]!, connector);
-    expect(renewed.message ?? "").not.toContain("moments ago");
+    expect("message" in renewed ? renewed.message : "").not.toContain("moments ago");
     expect(resolved).not.toEqual([]);
   }),
 );
