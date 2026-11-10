@@ -333,6 +333,41 @@ Incomplete metadata can produce an incomplete citation, so review visible
 warnings before using it in a manuscript. Scient does not silently fill
 unknown values.
 
+## Cite sources in your documents
+
+Every source has a **citation key**, such as `lovelace1843notes`. A key that
+came from Zotero (including Better BibTeX) or a `.bib` file is kept; otherwise
+Scient makes one from the first author, the year and the first word of the
+title, adding a letter when another source already has it. A key never changes
+by itself. To rename one, edit the source and change **Citation key**; citations
+in the project's Markdown and LaTeX documents follow the new key.
+
+- **Markdown:** type `[@` and pick a source from the list (by key, author, year
+  or title). Press Enter or Tab to insert it; Escape closes the list.
+- **LaTeX:** **Insert citation** lists Library sources after the document's own
+  `.bib` entries.
+- **Open a source from a citation:** click it while reading, or Control-click
+  (Command-click on a Mac) while writing.
+
+Scient keeps `references.bib` and `references.json` (CSL-JSON) at the project
+root up to date with the Library, so LaTeX, Pandoc and Overleaf can use them.
+Add `\bibliography{references}` to a LaTeX document, or
+`bibliography: references.bib` to a Markdown document's front matter. If you
+edit one of these files yourself, Scient keeps your edits and says so in the
+Library: choose **Import new entries** to add entries you typed to the Library,
+or **Use Library version** to write the file again from the Library. Scient
+never writes over a `references.bib` it did not create.
+
+### Export to Word with a citation style
+
+Markdown exported to Word formats its citations and bibliography with Pandoc.
+Choose the style in **Settings → Documents → Word → Citation style** (Chicago
+author-date, APA 7 or Vancouver). A document can choose its own with `csl:` in
+its front matter: `apa`, `vancouver`, or the path of a `.csl` file in the
+project. Citations whose keys the document's own references do not define come
+from the Library. Changing the style changes only the exported file, never a
+source.
+
 ## Check references
 
 Choose **Check references** in the Library header, or in the menu of a Markdown
@@ -375,6 +410,13 @@ which reports the same unreadable entries and fields not kept, and write the
 Library to a project file in any of the four formats (`scient_sources_export`),
 never replacing an existing file unless asked to. Everything an agent changes is
 credited to it and can be undone the same way as your own changes.
+
+An agent cites sources with `scient_sources_cite`: it gets the citation to
+write (`[@key]` or `\cite{key}`) after Scient checks each source against its
+registry, and it reports problems such as a DOI that does not resolve, a
+retraction, or a published version of a preprint, without refusing the
+citation. `scient_sources_bibliography` writes or checks the managed
+bibliography files and can import or replace hand edits, as you can.
 
 Before an agent adds a source, Scient looks up its DOI at doi.org, its PMID in
 PubMed, its arXiv ID at arXiv or its ISBN in Open Library and Google Books. An
@@ -436,8 +478,7 @@ them to send.
 
 Sources supports Zotero (on this computer or on zotero.org), direct PDF import
 and reference files (BibTeX, RIS, CSL-JSON, EndNote XML). It does not yet
-provide in-text citation insertion, multi-source bibliography generation, or
-evidence grading. Zotero group libraries and automatic two-way sync are not
-supported; Send to Zotero does not upload PDFs. Highlights need selectable
+provide evidence grading. Zotero group libraries and automatic two-way sync are
+not supported; Send to Zotero does not upload PDFs. Highlights need selectable
 text: a scanned PDF without a text layer, chat attachments and generated PDFs
 cannot be highlighted yet.

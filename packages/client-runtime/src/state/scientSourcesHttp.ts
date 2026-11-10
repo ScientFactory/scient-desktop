@@ -949,6 +949,7 @@ export const syncEnvironmentScientBibliography = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly root: ScientManagedBibliographySyncRequest["root"];
   readonly replaceEdited?: ScientManagedBibliographySyncRequest["replaceEdited"];
+  readonly importEdited?: ScientManagedBibliographySyncRequest["importEdited"];
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -966,6 +967,7 @@ export const syncEnvironmentScientBibliography = Effect.fn(
         payload: {
           root: input.root,
           ...(input.replaceEdited ? { replaceEdited: input.replaceEdited } : {}),
+          ...(input.importEdited ? { importEdited: input.importEdited } : {}),
         },
       }),
   });

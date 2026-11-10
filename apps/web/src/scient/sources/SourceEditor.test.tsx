@@ -99,4 +99,21 @@ describe("SourceEditor", () => {
     expect(invalidOtherMarkup).toContain("Enter the source type.");
     expect(invalidOtherMarkup).toContain('aria-invalid="true"');
   });
+
+  it("shows the citation key for a deliberate rename and refuses one documents cannot read", () => {
+    const render = (citationKey: string) =>
+      renderToStaticMarkup(
+        <SourceEditor
+          environmentId={EnvironmentId.make("environment_test")}
+          root="/project"
+          record={{ ...record, citationKey }}
+          onCancel={() => undefined}
+          onRefreshed={() => undefined}
+          onSaved={() => undefined}
+        />,
+      );
+
+    expect(render("lovelace2026correctable")).toContain('value="lovelace2026correctable"');
+    expect(render("has space")).toContain("in the citation key");
+  });
 });

@@ -19,6 +19,8 @@ export function useManagedBibliography(input: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
   readonly records: ScientSourcesOverviewResult["records"] | null;
+  /** Called after hand-edited entries were imported, so the Library list can refresh. */
+  readonly onImported?: () => void;
 }) {
   const libraryVersion = input.records
     ? `${input.records.length}:${input.records.reduce((latest, record) => {
@@ -51,22 +53,25 @@ export function useManagedBibliography(input: {
     };
   }, [context, input.environmentId, input.root, libraryVersion]);
 
-  const replace = useStableCallback(async (name: ScientManagedBibliographyFileName) => {
-    setReplacing(true);
-    try {
-      const value = await syncScientBibliography(input.environmentId, {
-        root: input.root,
-        replaceEdited: [name],
-      });
-      setStatus({ context, value });
-    } finally {
-      setReplacing(false);
-    }
-  });
+  const resolve = useStableCallback(
+    async (name: ScientManagedBibliographyFileName, action: "replace" | "import") => {
+      setReplacing(true);
+      try {
+        const value = await syncScientBibliography(input.environmentId, {
+          root: input.root,
+          ...(action === "replace" ? { replaceEdited: [name] } : { importEdited: [name] }),
+        });
+        setStatus({ context, value });
+        if (action === "import") input.onImported?.();
+      } finally {
+        setReplacing(false);
+      }
+    },
+  );
 
   return {
     status: status?.context === context ? status.value : null,
     replacing,
-    replace,
+    resolve,
   };
 }
