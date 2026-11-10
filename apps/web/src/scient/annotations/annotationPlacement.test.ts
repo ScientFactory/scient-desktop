@@ -79,4 +79,17 @@ describe("annotationRangeOnPage", () => {
       end: text.lastIndexOf("sleep doubled recall") + "sleep doubled recall".length,
     });
   });
+
+  it("shows nothing at the stored offsets when the quote and its context both repeat", () => {
+    const moved = annotation("same", 0);
+    const page = moved.anchor.selector.pages[0]!;
+    const repeated = {
+      ...moved,
+      anchor: {
+        ...moved.anchor,
+        selector: { ...moved.anchor.selector, pages: [{ ...page, prefix: "", suffix: " first" }] },
+      },
+    };
+    expect(annotationRangeOnPage(repeated, 3, "same first / same first")).toBeNull();
+  });
 });
