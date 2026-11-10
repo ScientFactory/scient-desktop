@@ -3,6 +3,7 @@
 import * as NodeTimersPromises from "node:timers/promises";
 
 import {
+  editorialNoticeKind,
   isbn13,
   canonicalConnectorIdentifier,
   isValidIsbn,
@@ -18,6 +19,7 @@ import {
   type ScientSourceAbstractSection,
   type ScientSourceCandidate,
   type ScientSourceCreator,
+  type ScientSourceEditorialNotice,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
   type ScientSourceType,
@@ -92,6 +94,7 @@ const PubmedSummary = Schema.Struct({
   pages: Schema.optionalKey(Schema.String),
   lang: Schema.optionalKey(Schema.Array(Schema.String)),
   articleids: Schema.optionalKey(Schema.Array(PubmedArticleId)),
+  pubtype: Schema.optionalKey(Schema.Unknown),
   error: Schema.optionalKey(Schema.Unknown),
 });
 export type PubmedSummary = typeof PubmedSummary.Type;
@@ -239,6 +242,8 @@ export interface ResolvedSourceMetadata {
   readonly pages: string | null;
   readonly language: string | null;
   readonly url: string | null;
+  /** Retractions and corrections the registry reported; absent when it keeps no such data. */
+  readonly editorialNotices?: ReadonlyArray<ScientSourceEditorialNotice>;
   readonly updates?: ReadonlyArray<RegistryUpdateNotice>;
   readonly relations?: ReadonlyArray<RegistryRelation>;
 }
@@ -284,6 +289,24 @@ function nonEmpty<K extends string, A>(
   return (values.length > 0 ? { [key]: values } : {}) as { readonly [P in K]?: ReadonlyArray<A> };
 }
 
+/** The retraction, withdrawal, concern and correction notices among a work's registry updates. */
+function editorialNoticesFromUpdates(
+  updates: ReadonlyArray<RegistryUpdateNotice>,
+): ReadonlyArray<ScientSourceEditorialNotice> {
+  return updates.flatMap((update): ReadonlyArray<ScientSourceEditorialNotice> => {
+    const kind = editorialNoticeKind(update.type);
+    if (!kind) return [];
+    return [
+      {
+        kind,
+        ...(update.doi ? { doi: update.doi.toLowerCase() } : {}),
+        ...(update.date ? { date: update.date } : {}),
+        ...(update.source ? { source: update.source } : {}),
+      },
+    ];
+  });
+}
+
 function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata {
   const issued = cslIssuedDate(csl.issued);
   const type = sourceTypeFromCsl(csl.type);
@@ -291,6 +314,7 @@ function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata 
   const issns = typeof csl.ISSN === "string" ? [csl.ISSN] : (csl.ISSN ?? []);
   const isbn = text(csl.ISBN);
   const abstract = normalizeScientSourceAbstractDocument(csl.abstract);
+  const updates = cslUpdates(csl["updated-by"]);
   return {
     type: type === "other" ? null : type,
     title: text(csl.title),
@@ -314,8 +338,9 @@ function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata 
     pages: text(csl.page),
     language: text(csl.language),
     url: text(csl.URL) ?? `https://doi.org/${resolvedDoi}`,
-    ...nonEmpty("updates", cslUpdates(csl["updated-by"])),
+    ...nonEmpty("updates", updates),
     ...nonEmpty("relations", cslRelations(csl.relation)),
+    editorialNotices: editorialNoticesFromUpdates(updates),
   };
 }
 
@@ -355,6 +380,11 @@ function metadataFromPubmed(pmid: string, summary: PubmedSummary): ResolvedSourc
     pages: text(summary.pages),
     language: text(summary.lang?.[0]),
     url: `https://pubmed.ncbi.nlm.nih.gov/${pmid}/`,
+    // PubMed marks the retracted article itself; its notices carry other publication types.
+    editorialNotices:
+      Array.isArray(summary.pubtype) && summary.pubtype.includes("Retracted Publication")
+        ? [{ kind: "retraction", source: "pubmed" }]
+        : [],
   };
 }
 

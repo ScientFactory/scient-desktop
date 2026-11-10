@@ -24,6 +24,7 @@ import {
   listScientSourceFullTextHashes,
   readScientSourceFullText,
   removeScientSourceFullText,
+  scientSourceFullTextByteLength,
   writeScientSourceFullText,
 } from "@scientfactory/scient-sources/full-text-store";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
@@ -38,6 +39,7 @@ import type { ScientSourceAttachment, ScientSourceRecord } from "@scientfactory/
 import * as Predicate from "effect/Predicate";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
+const MAX_FAILURE_BYTES = 4_096;
 const MAX_PDF_BYTES = 512 * 1024 * 1024;
 
 type PdfJs = typeof import("pdfjs-dist/legacy/build/pdf.mjs");
@@ -198,6 +200,57 @@ function inLane<A>(run: () => Promise<A>): Promise<A> {
   return next;
 }
 
+// Stored text never changes for a hash, so extracted text and its folded pages
+// are cached by hash across projects, bounded by characters.
+const MAX_CACHED_CHARACTERS = 48_000_000;
+const textCache = new Map<
+  string,
+  {
+    readonly text: ScientSourceExtractedFullText;
+    readonly document: FullTextSearchDocument;
+    readonly characters: number;
+  }
+>();
+let cachedCharacters = 0;
+
+function cacheText(text: ScientSourceExtractedFullText) {
+  const cached = textCache.get(text.sha256);
+  if (cached) {
+    textCache.delete(text.sha256);
+    textCache.set(text.sha256, cached);
+    return cached;
+  }
+  const entry = {
+    text,
+    document: {
+      key: text.sha256,
+      pages: text.pages.map((page) => ({
+        page: page.page,
+        folded: foldText(page.text, "search").text,
+      })),
+    },
+    characters: 2 * text.pages.reduce((total, page) => total + page.text.length, 0),
+  };
+  textCache.set(text.sha256, entry);
+  cachedCharacters += entry.characters;
+  for (const [key, old] of textCache) {
+    if (cachedCharacters <= MAX_CACHED_CHARACTERS || key === text.sha256) break;
+    textCache.delete(key);
+    cachedCharacters -= old.characters;
+  }
+  return entry;
+}
+
+const searchDocumentFor = (text: ScientSourceExtractedFullText) => cacheText(text).document;
+
+async function readStoredText(root: string, sha256: string): Promise<ScientSourceFullText | null> {
+  const cached = textCache.get(sha256);
+  if (cached) return cached.text;
+  const text = await readScientSourceFullText(root, sha256);
+  if (text?.outcome === "extracted") cacheText(text);
+  return text;
+}
+
 async function needsExtraction(text: ScientSourceFullText | null): Promise<boolean> {
   if (text === null) return true;
   // A failure is retried once the extractor changes; extracted text stays valid.
@@ -215,10 +268,10 @@ async function ensureMaterialText(
   const inFlight = extractionsInFlight.get(key);
   if (inFlight) return inFlight;
   const run = (async () => {
-    const stored = await readScientSourceFullText(root, material.sha256);
+    const stored = await readStoredText(root, material.sha256);
     if (stored && !(await needsExtraction(stored))) return stored;
     return inLane(async () => {
-      const again = await readScientSourceFullText(root, material.sha256);
+      const again = await readStoredText(root, material.sha256);
       if (again && !(await needsExtraction(again))) return again;
       const text = await extractSourcePdfFullText({
         pdfPath: sourceAttachmentAbsolutePath(root, material.attachment),
@@ -226,6 +279,7 @@ async function ensureMaterialText(
         byteLength: material.byteLength,
       });
       await writeScientSourceFullText(root, text);
+      if (text.outcome === "extracted") cacheText(text);
       return text;
     });
   })();
@@ -253,6 +307,12 @@ export async function indexSourceFullText(root: string): Promise<void> {
   const resolvedRoot = await canonicalizeScientSourceRoot(root);
   const materials = libraryMaterials(await listScientSourceRecords(resolvedRoot));
   for (const material of materials.values()) {
+    // Only a missing file or a small one (a recorded failure) can need work, so a
+    // pass over an indexed library reads no text.
+    const stored = textCache.has(material.sha256)
+      ? MAX_FAILURE_BYTES + 1
+      : await scientSourceFullTextByteLength(resolvedRoot, material.sha256).catch(() => null);
+    if (stored !== null && stored > MAX_FAILURE_BYTES) continue;
     await ensureMaterialText(resolvedRoot, material).catch(() => undefined);
   }
   for (const sha256 of await listScientSourceFullTextHashes(resolvedRoot)) {
@@ -282,39 +342,6 @@ export function scheduleSourceFullTextIndexing(root: string): Promise<void> {
   return pass;
 }
 
-// Folded pages are cached by content hash: stored text never changes for a hash.
-const MAX_CACHED_CHARACTERS = 48_000_000;
-const searchCache = new Map<
-  string,
-  { readonly document: FullTextSearchDocument; readonly characters: number }
->();
-let cachedCharacters = 0;
-
-function searchDocumentFor(text: ScientSourceExtractedFullText): FullTextSearchDocument {
-  const cached = searchCache.get(text.sha256);
-  if (cached) {
-    searchCache.delete(text.sha256);
-    searchCache.set(text.sha256, cached);
-    return cached.document;
-  }
-  const document = {
-    key: text.sha256,
-    pages: text.pages.map((page) => ({
-      page: page.page,
-      folded: foldText(page.text, "search").text,
-    })),
-  };
-  const characters = text.pages.reduce((total, page) => total + page.text.length, 0);
-  searchCache.set(text.sha256, { document, characters });
-  cachedCharacters += characters;
-  for (const [key, entry] of searchCache) {
-    if (cachedCharacters <= MAX_CACHED_CHARACTERS || key === text.sha256) break;
-    searchCache.delete(key);
-    cachedCharacters -= entry.characters;
-  }
-  return document;
-}
-
 export interface SourceFullTextStatus {
   /** Distinct PDFs in the library. */
   readonly pdfs: number;
@@ -329,7 +356,7 @@ export interface SourceFullTextStatus {
 async function storedTexts(root: string, materials: Map<string, LibraryMaterial>) {
   const texts = new Map<string, ScientSourceFullText | null>();
   for (const sha256 of materials.keys()) {
-    texts.set(sha256, await readScientSourceFullText(root, sha256));
+    texts.set(sha256, await readStoredText(root, sha256));
   }
   const values = [...texts.values()];
   const status: SourceFullTextStatus = {
@@ -563,7 +590,7 @@ export async function checkSourceQuotes(input: {
       texts.set(
         material.sha256,
         sourceId === undefined
-          ? await readScientSourceFullText(root, material.sha256)
+          ? await readStoredText(root, material.sha256)
           : await ensureMaterialText(root, material).catch(() => null),
       );
     }

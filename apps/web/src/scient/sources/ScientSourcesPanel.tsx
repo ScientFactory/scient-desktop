@@ -13,6 +13,7 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
+  ClipboardList,
   Download,
   ExternalLink,
   FileDown,
@@ -64,6 +65,7 @@ import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SourceAnnotations } from "../annotations/SourceAnnotations";
+import { ReferenceCheckButton } from "../references/ReferenceCheckButton";
 import { AddByIdentifier } from "./AddByIdentifier";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
@@ -86,6 +88,7 @@ import {
   type ScientSourcesImportOutcome,
 } from "./importOutcome";
 import { SourceHistoryDialog } from "./SourceHistory";
+import { sourceTrustLabel } from "./sourceLifecycleLabels";
 import { SourceStoreNotice } from "./SourceStoreNotice";
 import { announceSourceMovedToTrash, SourceTrashButton } from "./SourceTrash";
 import { useScientSources } from "./useScientSources";
@@ -95,6 +98,7 @@ import { announceSourcesMovedToTrash, SourcesBulkBar } from "./SourcesBulkBar";
 import { SourcesFilterMenu } from "./SourcesFilterMenu";
 import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
 import { useSourcesOrganize } from "./useSourcesOrganize";
+import { SystematicReviewsView } from "./SystematicReviews";
 import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesExportMenu } from "./SourcesExportMenu";
@@ -270,6 +274,7 @@ export function ScientSourcesPanel(props: {
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  readonly onOpenFile?: (path: string, line: number) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
   const zoteroSync = useZoteroSync({
@@ -329,6 +334,7 @@ export function ScientSourcesPanel(props: {
     refreshOverview: sources.refreshOverview,
   });
   const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
+  const [showingReviews, setShowingReviews] = useState(false);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -423,6 +429,7 @@ export function ScientSourcesPanel(props: {
   const [previousPanelContext, setPreviousPanelContext] = useState({ context: panelContext });
   if (previousPanelContext.context !== panelContext) {
     setPreviousPanelContext({ context: panelContext });
+    setShowingReviews(false);
     setSelectedSourceId(null);
     setEditingSource(false);
     setImportOutcome(null);
@@ -1160,6 +1167,22 @@ export function ScientSourcesPanel(props: {
     );
   }
 
+  if (showingReviews) {
+    return (
+      <SystematicReviewsView
+        environmentId={props.environmentId}
+        root={props.root}
+        records={sources.overview.records}
+        organization={organize.organization}
+        selectedSourceIds={[...organize.selection]}
+        sourceDetails={sources.sourceDetails}
+        loadSource={sources.loadSource}
+        onOpenSource={openSourceDetails}
+        onBack={() => setShowingReviews(false)}
+      />
+    );
+  }
+
   return (
     <div
       className="flex min-h-0 flex-1 flex-col"
@@ -1223,6 +1246,22 @@ export function ScientSourcesPanel(props: {
         action={
           <div className="flex items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
+            <ScientTooltip content="Systematic reviews">
+              <Button
+                size="icon-xs"
+                variant="ghost"
+                aria-label="Systematic reviews"
+                onClick={() => setShowingReviews(true)}
+              >
+                <ClipboardList />
+              </Button>
+            </ScientTooltip>
+            <ReferenceCheckButton
+              environmentId={props.environmentId}
+              root={props.root}
+              onOpenSource={setSelectedSourceId}
+              {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
+            />
             {sources.overview.trashedCount ? (
               <SourceTrashButton
                 environmentId={props.environmentId}
@@ -1387,7 +1426,10 @@ export function ScientSourcesPanel(props: {
               ? importOutcome
               : null
           }
-          onDismiss={sources.clearOperationSummary}
+          onDismiss={() => {
+            setImportOutcome(null);
+            sources.clearOperationSummary();
+          }}
           onCancel={() => void sources.cancelImport()}
           cancelling={sources.cancelling}
           {...(sources.operation.state !== "cancelled" &&
@@ -1598,6 +1640,7 @@ export function ScientSourcesPanel(props: {
                                 )}
                               </span>
                               {agentVerificationLabel(record)}
+                              {sourceTrustLabel(record)}
                             </span>
                           </span>
                         </button>

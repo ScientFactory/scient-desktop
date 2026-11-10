@@ -69,6 +69,12 @@ import {
   ScientSourcesAdvanceImportRequest,
   ScientSourcesBulkResult,
   ScientSourcesBulkUpdateRequest,
+  ScientSystematicReviewChangeRequest,
+  ScientSystematicReviewChangeResult,
+  ScientSystematicReviewList,
+  ScientSystematicReviewRequest,
+  ScientSystematicReviewResult,
+  ScientSystematicReviewsRequest,
   ScientSourcesOrganizeRequest,
   ScientSourcesOrganizeResult,
   ScientSourcesBeginImportRequest,
@@ -389,6 +395,30 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourcesTrashRequest,
         success: ScientSourceTrashListing,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("systematicReviews", "/api/scient/sources/reviews", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSystematicReviewsRequest,
+        success: ScientSystematicReviewList,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("systematicReview", "/api/scient/sources/reviews/detail", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSystematicReviewRequest,
+        success: ScientSystematicReviewResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("systematicReviewChange", "/api/scient/sources/reviews/change", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSystematicReviewChangeRequest,
+        success: ScientSystematicReviewChangeResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

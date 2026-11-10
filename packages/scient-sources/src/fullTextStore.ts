@@ -70,6 +70,21 @@ export async function readScientSourceFullText(
   }
 }
 
+/** The stored text file's size in bytes, or null when there is none; does not read it. */
+export async function scientSourceFullTextByteLength(
+  root: string,
+  sha256: string,
+): Promise<number | null> {
+  const resolvedRoot = await canonicalizeScientSourceRoot(root);
+  try {
+    const stats = await NodeFSP.lstat(textPath(resolvedRoot, sha256));
+    return stats.isFile() && !stats.isSymbolicLink() ? stats.size : null;
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return null;
+    throw error;
+  }
+}
+
 export async function writeScientSourceFullText(
   root: string,
   text: ScientSourceFullText,

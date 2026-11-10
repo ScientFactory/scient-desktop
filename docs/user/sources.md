@@ -107,6 +107,26 @@ for lookup, not the PDF itself. PubMed metadata is provided through NCBI
 E-utilities and remains subject to the
 [NCBI disclaimer and copyright notice](https://www.ncbi.nlm.nih.gov/home/about/policies/).
 
+## Add by identifier
+
+1. In **Sources**, choose **Import sources → Add by identifier**.
+2. Paste one or more DOIs, PMIDs, arXiv IDs or ISBNs, one per line. Links such
+   as `https://doi.org/…` or `arxiv.org/abs/…` and prefixes such as `PMID:` or
+   `ISBN` work too, and a list may mix them.
+3. Choose **Add** (or press Ctrl+Enter, ⌘+Enter on a Mac).
+
+Scient looks up each identifier at its registry: doi.org for DOIs, PubMed for
+PMIDs, arXiv for arXiv IDs, and Open Library, then Google Books, for ISBNs.
+Each one that is found becomes its own source with the registry's title,
+authors and date, marked as checked. The input then lists anything it did not
+add and why: already in the Library (with **View**), not found, not an
+identifier, or a registry that could not be reached. Entries of the last kind
+stay in the box so **Add** tries them again. Up to 50 identifiers can be added
+at a time.
+
+Open Library is edited by its readers, so a listing there without any author
+is not trusted; Scient asks Google Books instead.
+
 ## Import a reference file
 
 Bring a library from Zotero, Mendeley, EndNote, JabRef, Google Scholar or any
@@ -125,7 +145,7 @@ abbreviations and `crossref` entries are resolved, and Google Scholar's
 "arXiv preprint" entries become preprints with their arXiv ID.
 
 Entries already in the Library are left out, so importing the same file again
-adds only what is new. Up to 500 new references are imported at a time; for a
+adds only what is new, even for entries with little more than a title. Up to 500 new references are imported at a time; for a
 larger file, choose **Import the rest** (or import the file again) to continue.
 After the import, a short note lists entries that could not be read (with
 their line) and fields that have no place in a Scient source, such as `file`
@@ -142,6 +162,9 @@ sources are. Each source is written under its citation key.
 Project notes stay private unless you turn on **Include notes**. Exported
 BibTeX is UTF-8; words with inner capitals (`DNA`, `mRNA`) are braced so
 styles keep their case.
+Identifiers and the preprint type survive in every format. When a format has
+no place for something (for example EndNote XML holds an arXiv ID or a PMID,
+not both), a note after the export names what the file leaves out.
 
 ## Review and manage a source
 
@@ -149,6 +172,14 @@ Select a source to inspect its title, creators, publication details,
 identifiers, abstract, tags, metadata warnings, and imported PDF. Opening the
 PDF uses Scient's normal [PDF reader](pdf-reader.md), so you can move between
 the library, source details, the document, and your conversation.
+
+When the publisher or Retraction Watch has reported that a work was retracted,
+withdrawn, flagged with an expression of concern or corrected, the source says
+so in one line under its authors, with a link to the notice, and the Library
+list shows it beside the source. Scient learns this from Crossref (or PubMed)
+when the source is added and each time you refresh its metadata. If its DOI or
+PMID no longer exists, or now names a different work, the source says that
+instead.
 
 Use **Edit** to correct the metadata. Use **Refresh metadata** when you want
 Scient to recheck the existing PDF and exact DOI or PMID; review the warning
@@ -236,6 +267,37 @@ history and can be restored like any other edit.
 Collections and saved searches are kept in `.scient/sources/collections.json`
 with the rest of the project's Library.
 
+## Run a systematic review
+
+Choose **Systematic reviews** (the clipboard button at the top of the Library)
+to plan and record a systematic, scoping or rapid review. Each review keeps its
+searches, duplicate decisions and screening decisions in the project, in
+`.scient/sources/reviews/`, and draws its PRISMA 2020 flow from them. The
+records it screens are ordinary Library sources, so import them first (for
+example a database export, identifiers, or Zotero) and put each search's records
+in a collection.
+
+- **Records**: use **Log search** for each database search: the database, the
+  search string exactly as run, the date and the number of results the
+  database reported, with the collection or selected sources it brought in.
+  Logging the same database, string and date again replaces that search. Add
+  records found another way, such as from reference lists, with **Add
+  records**. Sources the Library already merged on import count as
+  duplicates; **Possible duplicates** lists pairs with the same title for you
+  to resolve with **Keep first**, **Keep second** or **Not duplicates**.
+- **Screening**: decide each record at **Title and abstract** and then at
+  **Full text** with **Include**, **Maybe** or **Exclude** (choose a reason
+  from the review's list or type another). With the record focused, press I,
+  M or E. **Skip** moves a record to the end; **Undo** in **Recent decisions**
+  reopens one. Only records included at title and abstract reach full text.
+- **PRISMA** shows the flow diagram with every count, including what is still
+  awaiting a decision. **Copy as Mermaid** copies it for a Markdown document.
+
+Deleting a review never removes its sources, and **Undo** restores it. An agent
+can do all of this too, using the built-in **systematic-review** skill; its
+decisions are marked "by agent" and you can change any of them. Agent screening
+is not an independent second reviewer.
+
 ## Copy a formatted reference
 
 Open a source, choose **Vancouver** or **APA 7**, then choose **Copy
@@ -282,19 +344,48 @@ project. Citations whose keys the document's own references do not define come
 from the Library. Changing the style changes only the exported file, never a
 source.
 
+## Check references
+
+Choose **Check references** in the Library header, or in the menu of a Markdown
+or LaTeX document. Scient checks the Library, or the chosen `.md`, `.tex` or
+`.bib` file together with the bibliography files it names and the Library
+sources its citation keys name. Each DOI, PMID, arXiv ID and ISBN is looked up
+in its registry, the same way sources are checked when they are added.
+
+The results list what needs attention, most serious first:
+
+- **Problems**: an identifier that does not exist or belongs to a different
+  work, a retracted work, and a citation with no bibliography entry.
+- **Warnings**: a correction or expression of concern, a title, year, venue,
+  volume or pages that differ from the registry, a missing required field, a
+  duplicate key, and two entries for the same work.
+- **Notes**: a preprint that has a published version, and an entry nobody cites.
+
+**Apply** writes the registry's value into the `.bib` entry or the Library
+source; **Apply _N_ fixes** does this for every fix in the list. If the file or
+source changed since the check, the fix is refused and the check should be run
+again. **Open** goes to the source or the line in the file, and a notice or
+published version opens in your browser. **Ignore** hides a finding from later
+checks of the same file; **Show ignored** lets you restore it.
+
+The check compares records only. It does not judge whether a cited work
+supports the sentence that cites it, and a reference without an identifier is
+counted but not looked up. When a registry does not answer, the results say the
+check is incomplete.
+
 ## Work with agents
 
 In a project conversation, an agent can search and read the same project-owned
 library, maintain source notes, update metadata, attach or detach a project PDF,
 move a source to the trash and restore it, restore an earlier version, or add a
 new one. It can also organize the Library the way you can: create, rename and
-delete collections, save searches, list a collection or a tag, and change tags,
-type or collections on many sources at once. It can import a reference file
-from the project (`scient_sources_import_file`), which reports the same
-unreadable entries and fields not kept, and write the Library to a project file
-in any of the four formats (`scient_sources_export`), never replacing an
-existing file unless asked to. Everything an agent changes is credited to it
-and can be undone the same way as your own changes.
+delete collections, save searches, list a collection or a tag, change tags,
+type or collections on many sources at once, and run a systematic review. It
+can import a reference file from the project (`scient_sources_import_file`),
+which reports the same unreadable entries and fields not kept, and write the
+Library to a project file in any of the four formats (`scient_sources_export`),
+never replacing an existing file unless asked to. Everything an agent changes is
+credited to it and can be undone the same way as your own changes.
 
 An agent cites sources with `scient_sources_cite`: it gets the citation to
 write (`[@key]` or `\cite{key}`) after Scient checks each source against its
@@ -303,8 +394,10 @@ retraction, or a published version of a preprint, without refusing the
 citation. `scient_sources_bibliography` writes or checks the managed
 bibliography files and can import or replace hand edits, as you can.
 
-Before an agent adds a source, Scient looks up its DOI at doi.org or its PMID in
-PubMed. If the identifier does not exist, or it belongs to a paper with a
+Before an agent adds a source, Scient looks up its DOI at doi.org, its PMID in
+PubMed, its arXiv ID at arXiv or its ISBN in Open Library and Google Books. An
+agent can also add a list of identifiers at once, as you can with **Add by
+identifier**. If the identifier does not exist, or it belongs to a paper with a
 different title, nothing is added and the agent is told what the registry
 found. When the identifier checks out, Scient stores the registry's title,
 authors, date and journal instead of the agent's. The source's details show
@@ -312,6 +405,13 @@ that an agent added it and whether its identifier was verified, not yet checked
 because the registry could not be reached, or missing. After an agent changes a
 source, its details say "Edited by agent". You can edit or remove these sources
 like any other.
+
+Agents check references with the same tool the dialog uses
+(`scient_references_check`), and apply fixes or ignore findings with
+`scient_references_resolve`. The built-in **references** skill guides an agent
+through a full reference review: records first, then whether each source
+supports its sentence, missing citations, newer versions and contrary evidence.
+It applies only fixes you asked for and proposes the rest.
 
 Results from the PubMed, Semantic Scholar and OpenAlex connectors become
 sources the same way: the agent passes the paper's PMID, Semantic Scholar ID or

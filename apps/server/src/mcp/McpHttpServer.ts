@@ -103,6 +103,8 @@ import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 import { ScientReferencesToolkitHandlersLive } from "./toolkits/references/handlers.ts";
 import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
+import { ScientSystematicReviewsToolkitHandlersLive } from "./toolkits/systematicReviews/handlers.ts";
+import { ScientSystematicReviewsToolkit } from "./toolkits/systematicReviews/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
@@ -1436,6 +1438,10 @@ const ScientReferencesToolkitRegistrationLive = registerScientToolkit(ScientRefe
   Layer.provide(ScientReferencesToolkitHandlersLive),
 );
 
+const ScientSystematicReviewsToolkitRegistrationLive = registerScientToolkit(
+  ScientSystematicReviewsToolkit,
+).pipe(Layer.provide(ScientSystematicReviewsToolkitHandlersLive));
+
 export const ScientAnnotationsToolkitRegistrationLive = registerScientToolkit(
   ScientAnnotationsToolkit,
 ).pipe(Layer.provide(ScientAnnotationsToolkitHandlersLive), Layer.provide(ScientAnnotationsLive));
@@ -1598,6 +1604,7 @@ export const layerTools = Layer.mergeAll(
   // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,
   ScientReferencesToolkitRegistrationLive,
+  ScientSystematicReviewsToolkitRegistrationLive,
   ScientAnnotationsToolkitRegistrationLive,
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,

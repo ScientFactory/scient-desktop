@@ -93,6 +93,7 @@ their own subtree:
 ├── trash/<source-id>.json   removed sources, whole, until restored or deleted
 ├── text/sha256/<prefix>/    extracted PDF text, one JSON file per PDF hash
 ├── collections.json         collections and saved searches
+├── reviews/<review-id>.json systematic reviews
 ├── operations/              resumable import state
 ├── receipts/                terminal import evidence
 └── staging/                 bounded temporary copies
@@ -263,7 +264,9 @@ Sources MCP toolkit:
   revisioned removal path as the UI, `scient_sources_list` with `inTrash`
   lists the trash, and `permanent` deletes a trashed source for good;
 - `scient_sources_restore` puts a trashed source back; and
-- `scient_sources_revert` makes a kept revision current again.
+- `scient_sources_revert` makes a kept revision current again; and
+- `scient_sources_check` checks a source's DOI or PMID with its registry again
+  and records the verification and editorial status (below).
   `scient_sources_get` returns the kept revisions with who saved each and which
   fields changed.
 
@@ -292,9 +295,65 @@ three creators, year and container. Neither writes a record. A confirmed
 identifier makes the registry's bibliographic fields authoritative, with `doi`
 or `pubmed` field provenance carrying the identifier and retrieval time, and
 stores verification `verified`. An unreachable or unusable registry adds the
-source as given with `unchecked`; a source without a DOI or PMID is
-`unverified`. An exact duplicate is reported without a lookup, and optional
-abstract enrichment runs after the check. Only agent adds record verification.
+source as given with `unchecked`; a source without a DOI, PMID, arXiv ID or ISBN
+is `unverified`. An exact duplicate is reported without a lookup, and optional
+abstract enrichment runs after the check. The same add path serves a person
+adding by identifier (actor `user`), with the same refusals and states.
+
+A found identifier also records `editorialStatus`: the retraction, withdrawal,
+expression-of-concern and correction notices the registry reported, and the
+most serious one as `state` (`none` when it reported none; absent when never
+checked). For DOIs these come from the `updated-by` entries in the same
+doi.org CSL-JSON response, which Crossref fills from publisher updates and
+Retraction Watch; for PMIDs, from PubMed's `Retracted Publication` type.
+Unrecognized or malformed entries are skipped without losing the metadata.
+
+`checkSourceIdentifier` (the `scient_sources_check` tool, and the end of every
+user metadata refresh) re-resolves a source's identifier without touching its
+metadata: found and matching the stored title is `verified` with fresh
+editorial status; not found, or found with a different title, is `unverified`
+with `problem` `not-found` or `mismatch` and no editorial status; an
+unreachable registry keeps an earlier verdict for the same identifier and
+otherwise records `unchecked`. A check that changes nothing but timestamps
+writes no revision; otherwise it writes one credited to the actor. Editing a
+source's identifiers clears both verification and editorial status, since
+they vouched only for the old identifiers; reverting restores the ones saved
+with the reverted identifiers.
+
+arXiv IDs and ISBNs are registry schemes too, checked after DOI and PMID, each
+in its own file registered in the resolver's scheme table
+(`IDENTIFIER_SCHEMES`). An arXiv ID is looked up through the arXiv API
+(`export.arxiv.org/api/query`, up to 50 IDs per `id_list` request, one request
+every three seconds as arXiv asks); an ID missing from the feed does not exist.
+Its record is a `preprint` with publisher `arXiv`, and the published version's
+DOI from `arxiv:doi` joins its identifiers. Version suffixes (`v2`) are not
+part of the identity. An ISBN must have a valid check digit and is stored as
+ISBN-13. Open Library answers first (several ISBNs per request); an entry
+without authors is not accepted, since the openly edited catalogue holds spam
+listings under real ISBNs, and Google Books is asked instead, counting only a
+volume that lists the same ISBN. Not found needs both catalogues to say so;
+otherwise the ISBN is unavailable. Field provenance names `arxiv`,
+`open-library` or `google-books`. None of these requests carries the contact
+email.
+
+`resolveSourceIdentifierBatch` resolves many identifiers, each as its own work,
+grouping them per registry: arXiv and Open Library answer many per request, DOI
+and PMID lookups run four at a time so none waits out its deadline in the NCBI
+lane, and each request has the 6.5-second deadline. `SourceIdentifierAdd.ts`
+uses it for adds by identifier: `scient_sources_add` with `identifierList` (up
+to 50 entries in any common spelling, outcome `batch` with one result per
+entry) and the user's **Add by identifier** (`POST
+/api/scient/sources/identifiers/add`). Text is read by `detectSourceIdentifier`
+and `parseSourceIdentifierList` in `packages/scient-sources`. An identifier
+already in the Library (a work-level identifier, or the ISBN of an existing
+book) is reported as a duplicate without a lookup. Only a found identifier is
+added, verified and credited to its actor; not found, unavailable and
+unrecognized entries add nothing, since an entry has no other metadata to keep.
+
+Agents with `sources:read` in a verified project get a short `## Scient Library`
+awareness block naming the list, search, add and bibliography tools and asking
+them to start literature work there before web search; `scient_sources_list`
+returns the Library's size as `total`.
 
 Connector results reach the Library as identifiers, not copied metadata. The
 resolver also takes an OpenAlex work ID (`openalex`, `W…`) and a Semantic
@@ -481,6 +540,36 @@ the request's `citationStyle` from Settings, else Pandoc's default. Library
 sources are the lowest-precedence references (`fallbackCitations`), after the
 document's front matter and named bibliographies. Export only reads records.
 
+## Reference check
+
+`apps/server/src/scient/references/` checks a document or the Library against
+the shared identifier resolver; the MCP tools (`scient_references_check`,
+`scient_references_resolve`) and the `scientReferences` HTTP group call the
+same two functions.
+
+- Parsing is pure and lives in `packages/scient-sources`:
+  `referenceDocuments.ts` reads citations, named bibliography files, bibitems,
+  typed numbered lists and identifiers; `bibtex.ts` is the positional BibTeX
+  reader the LaTeX editor also uses.
+- A document check reads the file, the `.bib` or CSL-JSON files it names
+  (relative to it, through the same project-file guard as PDF intake), and the
+  Library records whose `citationKey` matches an otherwise unlisted citation.
+- Identifiers go to `resolveSourceIdentifierBatch` in batches; lookups not
+  started within 90 seconds count as unavailable and the report says it is
+  incomplete. Retractions and corrections come from Crossref `updated-by`,
+  published versions from Crossref `relation` or an arXiv record's DOI, both
+  carried on `ResolvedSourceMetadata`.
+- `referenceComparison.ts` holds the comparisons (different work, registry
+  status, field differences). A single-source check before citing reuses them.
+- A finding's `fix` is self-contained: a `.bib` fix carries the field's current
+  text and is refused as stale when the file no longer has it; a Library fix
+  carries the expected revision and goes through `updateScientSource`, credited
+  to the actor. Fixes exist only for registry values; identifiers, retractions
+  and published versions are left to the author.
+- Ignored findings are kept in `.scient/reference-check/ignored.json`, outside
+  the Sources store. A finding ID hashes the checked file, the reference, the
+  kind and the registry value, so a changed record is reported again.
+
 ## Collections, saved searches and bulk edit
 
 `packages/scient-sources/src/collections.ts` owns
@@ -510,6 +599,37 @@ an agent.
   reported; one failure does not stop the rest. Bulk removal is the trash
   removal per source, with one Undo for the batch in the panel.
 
+## Systematic reviews
+
+`packages/scient-sources/src/systematicReview.ts` holds the review schema, the
+action union shared by the `systematicReviewChange` HTTP endpoint and
+`scient_sources_systematic_review_update`, and pure functions for the PRISMA
+2020 counts, possible duplicate pairs and the Mermaid diagram;
+`systematicReviewStore.ts` reads and writes one file per review under one write
+lock.
+
+- Review records are Library source IDs: each logged search's `sourceIds`
+  plus `otherSourceIds`. Nothing is copied out of the Library, and a review
+  never changes a record.
+- Counts follow from the file, never from stored totals. Identified records
+  are each search's reported `resultCount` (or its records when none was
+  given). Overlap between searches, which the Library has already merged on
+  import, plus records marked as duplicates are "duplicates removed"; results
+  never brought in and records no longer in the Library are "removed for other
+  reasons". Identified minus removed always equals screened.
+- Screening is an append-only log; the latest entry per source and stage is
+  the decision in force, so changes stay auditable and `clear-decision`
+  reopens a record. Full-text decisions apply only to records included at
+  title and abstract. Every entry records `decidedBy`.
+- Repeats are harmless for agents: creating a title in use returns that
+  review, and logging the same database, query and date replaces that search.
+- Possible duplicates are pairs with the same normalized title (12 characters
+  or more), ordered by when each entered the review; decided pairs are left
+  out. A review file that cannot be decoded is reported in the list's
+  `issues`, not fatal. Deleting is a soft delete that `restore-review` undoes.
+- The built-in `systematic-review` skill tells agents how to use these tools
+  and that agent screening is not independent dual screening.
+
 ## Reference files
 
 `packages/scient-sources/src/bibliography/` reads and writes BibTeX/BibLaTeX,
@@ -521,9 +641,14 @@ Entries that cannot be parsed are skipped with their line, so one damaged
 entry does not lose the file. `planBibliographyImport` turns a parse into
 candidates: it drops empty entries, repeats within the file (same content or
 same work-level identifier) and entries already in the Library, and only then
-takes the first `SCIENT_SOURCE_IMPORT_ITEM_LIMIT` new ones. Importing the same
+takes the first `SCIENT_SOURCE_IMPORT_ITEM_LIMIT` new ones. An entry counts as
+already imported when a record has the source ID the store derives from its
+deterministic source key (`scientSourceIdFor`), whatever its metadata, and the
+store reports such a repeat as a `same-origin` duplicate. Importing the same
 file again therefore continues a large file instead of re-processing the first
-batch. Field provenance is `file` with `sourceField` `<format>:<field>`.
+batch. The BibTeX reader bounds `@string` expansion (256 Ki characters per
+value, 16 Mi per file) and reports entries past it as unreadable; LaTeX
+decoding and XML traversal do not recurse on plain nesting. Field provenance is `file` with `sourceField` `<format>:<field>`.
 
 The server adapter (`BibliographyFileAdapter.ts`) bounds a file to 32 MB,
 falls back to Windows-1252 when a file is not valid UTF-8, stages the batch as
@@ -542,9 +667,15 @@ before they reach a model.
 Export (`exportBibliography`) writes the Library or a selection under each
 record's citation key; a record without one gets a free key from the same
 rules for that file only. Project notes are excluded unless requested.
-`scient_sources_export` writes a project file atomically, refuses `.scient/`
-and paths outside the project, and replaces an existing file only with
-`overwrite`.
+`exportBibliographyFile` reads the written file back and returns `notKept`:
+identifiers or the source type the format could not carry. arXiv IDs go to RIS
+`AN` and EndNote `accession-num` as `arXiv:<id>`, PMCIDs to RIS `C2` and
+EndNote `custom2`, and preprints to `M3`/`work-type` `Preprint`.
+`scient_sources_export` writes a project file atomically and replaces an
+existing file only with `overwrite`. It refuses paths outside the project,
+`.scient/` and the managed `references.bib`/`references.json`, checked on the
+requested path and again on the destination after resolving its folder's
+symlinks, ignoring case on macOS and Windows.
 
 ## Zotero boundary
 

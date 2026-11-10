@@ -5,7 +5,9 @@ import * as NodePath from "node:path";
 
 import { initializeScientProject } from "@scientfactory/project-init";
 import {
+  importScientSource,
   listScientSourceRecords,
+  readScientSourceStagedFileImport,
   SCIENT_SOURCES_DIRECTORY,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -114,6 +116,38 @@ describe("reference file import", () => {
     expect(await listScientSourceRecords(root)).toHaveLength(3);
   });
 
+  it("continues a large file with sparse entries by their identity, without duplicates", async () => {
+    const root = await project();
+    const text = Array.from(
+      { length: 501 },
+      (_, index) => `@misc{k${index}, title = {Entry ${index}}}`,
+    ).join("\n");
+    const input = { root, fileName: "large.bib", text, actor: "user" as const };
+    const first = await importBibliographyFile({ ...input, operationId: "file_import_large_1" });
+    expect(first.report).toMatchObject({ importCount: 500, remaining: 1 });
+
+    const second = await beginBibliographyFileImport({
+      ...input,
+      operationId: "file_import_large_2",
+    });
+    expect(second.report).toMatchObject({ importCount: 1, alreadyInLibrary: 500, remaining: 0 });
+    const staged = await readScientSourceStagedFileImport(root, "file_import_large_2");
+    expect(staged?.candidates.map((candidate) => candidate.citationKey)).toEqual(["k500"]);
+    const continued = await importBibliographyFile({
+      ...input,
+      operationId: "file_import_large_2",
+    });
+    expect(continued.operation?.items.map((item) => item.state)).toEqual(["imported"]);
+
+    const [candidate] = staged?.candidates ?? [];
+    if (!candidate) throw new Error("Missing staged entry");
+    const again = await importScientSource({ root, operationId: "file_import_large_3", candidate });
+    expect(again.outcome).toBe("duplicate");
+    const records = await listScientSourceRecords(root);
+    expect(new Set(records.map((record) => record.citationKey)).size).toBe(501);
+    expect(records).toHaveLength(501);
+  });
+
   it("returns the same operation for a repeated request and discards the stage on cancel", async () => {
     const root = await project();
     const input = {
@@ -214,7 +248,13 @@ describe("reference file export", () => {
     const root = await project();
     await NodeFSP.mkdir(NodePath.join(root, "refs"));
     const write = (relativePath: string, content: string, overwrite = false) =>
-      writeProjectBibliographyFile({ root, relativePath, content, overwrite });
+      writeProjectBibliographyFile({
+        root,
+        relativePath,
+        content,
+        overwrite,
+        caseInsensitive: false,
+      });
 
     await expect(write("refs/library.bib", "first")).resolves.toEqual({
       outcome: "written",
@@ -230,5 +270,33 @@ describe("reference file export", () => {
     await expect(write(".scient/sources/records/x.json", "x")).rejects.toThrow("outside .scient");
     await expect(write("missing/library.bib", "x")).rejects.toMatchObject({ code: "ENOENT" });
     await expect(write("references.bib", "x")).rejects.toThrow("kept up to date from the Library");
+  });
+
+  it("refuses .scient and managed files reached through a folder symlink or case alias, even with overwrite", async () => {
+    const root = await project();
+    await NodeFSP.symlink(
+      NodePath.join(root, ".scient"),
+      NodePath.join(root, "storage"),
+      "junction",
+    );
+    await NodeFSP.symlink(root, NodePath.join(root, "here"), "junction");
+    const write = (relativePath: string) =>
+      writeProjectBibliographyFile({
+        root,
+        relativePath,
+        content: "x",
+        overwrite: true,
+        caseInsensitive: true,
+      });
+
+    await expect(write("storage/probe.bib")).rejects.toThrow("outside .scient");
+    await expect(write("here/.scient/probe.bib")).rejects.toThrow("outside .scient");
+    await expect(write("here/References.BIB")).rejects.toThrow("kept up to date from the Library");
+    await expect(NodeFSP.stat(NodePath.join(root, ".scient", "probe.bib"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(NodeFSP.stat(NodePath.join(root, "references.bib"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
   });
 });

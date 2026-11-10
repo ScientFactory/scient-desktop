@@ -19,6 +19,10 @@ import {
   ScientSourceWebPage,
   ScientSourcesBulkChange,
   ScientSourcesBulkResult,
+  ScientSystematicReviewAction,
+  ScientSystematicReviewChangeResult,
+  ScientSystematicReviewDetail,
+  ScientSystematicReviewList,
   ScientSourcesOrganization,
   ScientSourcesOrganizeAction,
   ScientSourcesOrganizeResult,
@@ -35,6 +39,7 @@ import {
 } from "@scientfactory/scient-sources";
 import {
   BibliographyFormatSchema,
+  BibliographyFieldLoss,
   BibliographyImportReport,
 } from "@scientfactory/scient-sources/bibliography";
 import * as Schema from "effect/Schema";
@@ -204,6 +209,26 @@ export const ScientSourcesOrganizeRequest = Schema.Struct({
   change: ScientSourcesOrganizeAction,
 });
 export type ScientSourcesOrganizeRequest = typeof ScientSourcesOrganizeRequest.Type;
+
+export const ScientSystematicReviewsRequest = Schema.Struct({ root: NonEmptyString });
+export type ScientSystematicReviewsRequest = typeof ScientSystematicReviewsRequest.Type;
+
+export const ScientSystematicReviewRequest = Schema.Struct({
+  root: NonEmptyString,
+  reviewId: NonEmptyString,
+});
+export type ScientSystematicReviewRequest = typeof ScientSystematicReviewRequest.Type;
+
+export const ScientSystematicReviewResult = Schema.Struct({
+  detail: Schema.NullOr(ScientSystematicReviewDetail),
+});
+export type ScientSystematicReviewResult = typeof ScientSystematicReviewResult.Type;
+
+export const ScientSystematicReviewChangeRequest = Schema.Struct({
+  root: NonEmptyString,
+  change: ScientSystematicReviewAction,
+});
+export type ScientSystematicReviewChangeRequest = typeof ScientSystematicReviewChangeRequest.Type;
 
 export const ScientSourcesBulkUpdateRequest = Schema.Struct({
   root: NonEmptyString,
@@ -377,6 +402,8 @@ export const ScientSourcesExportResult = Schema.Struct({
   content: Schema.String,
   sourceCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   missingSourceIds: Schema.Array(NonEmptyString),
+  /** Details the format has no place for, so the file does not carry them. */
+  notKept: Schema.Array(BibliographyFieldLoss),
 });
 export type ScientSourcesExportResult = typeof ScientSourcesExportResult.Type;
 
@@ -423,6 +450,8 @@ export {
   ScientSourceImportOperation,
   ScientSourcesBulkResult,
   ScientSourcesOrganizeResult,
+  ScientSystematicReviewChangeResult,
+  ScientSystematicReviewList,
   ScientSourceMetadataUpdateResult,
   ScientSourcePermanentDeletionResult,
   ScientSourceRemovalResult,

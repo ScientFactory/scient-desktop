@@ -62,10 +62,8 @@ export const ScientReferenceBibtexField = Schema.Literals([
   "journaltitle",
   "booktitle",
   "volume",
-  "number",
   "pages",
   "publisher",
-  "doi",
 ]);
 export type ScientReferenceBibtexField = typeof ScientReferenceBibtexField.Type;
 
@@ -74,7 +72,6 @@ export const ScientReferenceSourceField = Schema.Literals([
   "issuedYear",
   "containerTitle",
   "volume",
-  "issue",
   "pages",
   "publisher",
 ]);

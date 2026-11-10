@@ -2,6 +2,7 @@ import {
   MAX_SOURCE_IDENTIFIER_BATCH,
   ScientSourceIdentifierAddItem,
   ScientSourceCreator,
+  ScientSourceEditorialStatus,
   ScientSourceExternalReference,
   ScientSourceEditableMetadata,
   ScientSourceFieldProvenance,
@@ -90,6 +91,8 @@ export const ScientSourceAgentSummary = Schema.Struct({
   hasPdf: Schema.Boolean,
   addedBy: Schema.Literals(["user", "agent"]),
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  /** Present only when the registry reported a retraction, withdrawal, concern or correction. */
+  editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus.fields.state),
   removedAt: Schema.optionalKey(NonEmptyString),
   removedBy: Schema.optionalKey(ScientSourceActor),
   tags: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -130,6 +133,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
   fieldProvenance: Schema.Array(ScientSourceFieldProvenance),
   origin: Schema.optionalKey(ScientSourceOrigin),
   verification: Schema.optionalKey(ScientSourceVerification),
+  editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus),
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
   updatedBy: Schema.optionalKey(ScientSourceActor),
@@ -138,7 +142,8 @@ export const ScientSourceAgentDetail = Schema.Struct({
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly. " +
+    "List a page of this project's Library (Sources): the papers, books and other references it cites; total is its size. " +
+    "Use this before literature, citation or source-dependent work and before searching the web; do not scan or edit .scient/sources files directly. " +
     "query matches citation key, title, authors, year, journal, identifiers and tags. Narrow with tags (all must match), collectionId, type or hasPdf, " +
     "or run a saved search with savedSearchId (other filters then narrow it further); scient_sources_collections lists collections, saved searches and tags. " +
     "inTrash lists removed sources instead, newest removal first; restore one with scient_sources_restore.",
@@ -321,6 +326,31 @@ const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.revert", true));
 
+const ScientSourceCheckTool = Tool.make("scient_sources_check", {
+  description:
+    "Check one Source's DOI or PMID against its registry again, for example before citing it. Records the result on the source " +
+    "(credited to you; nothing is written when nothing changed) and never changes its metadata. registry: found, not-found, " +
+    "mismatch (the identifier now names a work with a different title), unavailable (registry unreachable; the earlier result stays) " +
+    "or none (no DOI or PMID). editorialStatus reports retractions, withdrawals, expressions of concern and corrections.",
+  parameters: Schema.Struct({ sourceId: NonEmptyString }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["updated", "unchanged", "stale"]),
+    sourceId: NonEmptyString,
+    revision: Schema.Int.check(Schema.isGreaterThan(0)),
+    registry: Schema.Literals(["found", "not-found", "mismatch", "unavailable", "none"]),
+    verification: Schema.optionalKey(ScientSourceVerification),
+    editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Check a source's identifier")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(ScientOperation, sourceOperation("sources.check", true));
+
 export const ScientSourceAddInput = Schema.Struct({
   type: Schema.optionalKey(ScientSourceType),
   customType: Schema.optionalKey(NullableText),
@@ -390,6 +420,7 @@ export const ScientSourceAddResult = Schema.Struct({
   }),
   validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus.fields.state),
   resolved: Schema.optionalKey(
     Schema.Struct({
       title: NullableText,
@@ -417,6 +448,7 @@ const ScientSourceAddTool = Tool.make("scient_sources_add", {
     "identifier-not-found means the identifier does not exist and identifier-mismatch means it names a different work (see resolved); nothing is added in either case. " +
     "A found identifier's registry metadata replaces the citation fields you gave (verification verified). " +
     "If the registry cannot be reached the source is added as given (unchecked); without one of these identifiers it is unverified. " +
+    "editorialStatus reports a retraction, withdrawal, expression of concern or correction; tell the user before relying on such a work. " +
     "The user sees that you added it. Repeating the same request adds nothing. " +
     "From a PubMed, Semantic Scholar or OpenAlex result, pass only its identifier (scheme pmid, s2 for a paperId or CorpusId:N, or openalex for a W work ID) without citation fields: Scient fetches the record and checks it at the DOI's registry.",
   parameters: ScientSourceAddInput,
@@ -879,6 +911,11 @@ const FileReportEntry = Schema.Struct({
   citationKey: Schema.NullOr(Schema.String),
   reason: Schema.String,
 });
+const FieldLoss = Schema.Struct({
+  field: Schema.String,
+  entryCount: Schema.Int,
+  citationKeys: Schema.Array(Schema.String),
+});
 
 export const ScientSourcesImportFileResult = Schema.Struct({
   format: FileFormat,
@@ -891,13 +928,7 @@ export const ScientSourcesImportFileResult = Schema.Struct({
   failed: Schema.Array(FileReportEntry),
   remaining: Schema.Int,
   unreadable: Schema.Array(FileReportEntry),
-  notKept: Schema.Array(
-    Schema.Struct({
-      field: Schema.String,
-      entryCount: Schema.Int,
-      citationKeys: Schema.Array(Schema.String),
-    }),
-  ),
+  notKept: Schema.Array(FieldLoss),
   withoutCitationKey: Schema.Int,
 });
 
@@ -930,7 +961,7 @@ const ScientSourcesExportTool = Tool.make("scient_sources_export", {
   description:
     "Write this project's Library, or the given sources, to a project file in BibTeX (.bib), RIS (.ris), " +
     "CSL-JSON (.json) or EndNote XML (.xml), each source under its citation key. Project notes are left out unless includeNotes. " +
-    "An existing file is replaced only with overwrite.",
+    "An existing file is replaced only with overwrite. notKept names details the format has no place for (for example an arXiv ID in EndNote XML next to a PMID); tell the user.",
   parameters: Schema.Struct({
     relativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
     format: FileFormat,
@@ -945,6 +976,7 @@ const ScientSourcesExportTool = Tool.make("scient_sources_export", {
     relativePath: NonEmptyString,
     sourceCount: Schema.Int,
     missingSourceIds: Schema.Array(NonEmptyString),
+    notKept: Schema.Array(FieldLoss),
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -1049,6 +1081,7 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceRemoveTool,
   ScientSourceRestoreTool,
   ScientSourceRevertTool,
+  ScientSourceCheckTool,
   ScientSourceAddTool,
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,

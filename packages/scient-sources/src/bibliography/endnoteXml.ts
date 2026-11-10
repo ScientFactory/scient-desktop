@@ -167,10 +167,20 @@ function entryFromRecord(record: XmlElement, index: number): BibliographyEntry {
     else if (clean) builder.notKeep("isbn");
   }
   const accession = text(child("accession-num"));
+  const arxiv = accession?.match(/^arxiv:\s*(\S+)$/iu)?.[1];
   const database = `${text(child("remote-database-name")) ?? ""} ${text(child("remote-database-provider")) ?? ""}`;
-  if (accession && /^\d{1,9}$/u.test(accession) && /pubmed|medline|nlm/iu.test(database)) {
+  if (arxiv) builder.addIdentifier("arxiv", arxiv, "accession-num");
+  else if (accession && /^\d{1,9}$/u.test(accession) && /pubmed|medline|nlm/iu.test(database)) {
     builder.addIdentifier("pmid", accession, "accession-num");
   } else if (accession) builder.notKeep("accession-num");
+  // EndNote's PubMed import keeps the PMCID in Custom 2.
+  const custom2 = text(child("custom2"));
+  const pmcid = custom2?.match(/\bPMC\d+\b/u)?.[0];
+  if (pmcid) builder.addIdentifier("pmcid", pmcid, "custom2");
+  else if (custom2) builder.notKeep("custom2");
+  if (builder.type === "article" && /^preprint$/iu.test(text(child("work-type")) ?? "")) {
+    builder.type = "preprint";
+  }
 
   const keywords = child("keywords");
   if (keywords) {
@@ -207,6 +217,7 @@ function entryFromRecord(record: XmlElement, index: number): BibliographyEntry {
     "electronic-resource-num",
     "isbn",
     "accession-num",
+    "custom2",
     "keywords",
     "urls",
     "label",
@@ -288,6 +299,8 @@ export function formatEndnoteXml(
       .filter((entry) => ["isbn", "issn"].includes(entry.scheme.toLowerCase()))
       .map((entry) => entry.value)
       .join("; ");
+    const pmid = identifier("pmid");
+    const arxiv = identifier("arxiv");
     const isArticle = record.type === "article" || record.type === "preprint";
     const year = record.issuedYear !== null ? String(record.issuedYear) : record.issuedRaw;
     const pubDate = record.issuedRaw && record.issuedRaw !== year ? record.issuedRaw : null;
@@ -310,15 +323,20 @@ export function formatEndnoteXml(
         : "",
       element("publisher", record.publisher),
       element("isbn", standardNumbers),
-      element("accession-num", identifier("pmid")),
+      element("accession-num", pmid ?? (arxiv ? `arXiv:${arxiv}` : null)),
       element("electronic-resource-num", identifier("doi")),
       element("abstract", record.abstract),
       options.includeNotes ? element("notes", record.note ?? null) : "",
       element("label", citationKey),
       record.url ? `<urls><related-urls>${element("url", record.url)}</related-urls></urls>` : "",
-      identifier("pmid") ? element("remote-database-name", "PubMed") : "",
+      pmid || arxiv ? element("remote-database-name", pmid ? "PubMed" : "arXiv") : "",
       element("language", record.language),
-      record.type === "other" && record.customType ? element("work-type", record.customType) : "",
+      record.type === "preprint"
+        ? element("work-type", "Preprint")
+        : record.type === "other" && record.customType
+          ? element("work-type", record.customType)
+          : "",
+      element("custom2", identifier("pmcid")),
     ];
     return `<record>${parts.join("")}</record>`;
   });
