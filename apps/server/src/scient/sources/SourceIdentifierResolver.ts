@@ -21,6 +21,7 @@ import {
 } from "@scientfactory/scient-sources";
 import * as Context from "effect/Context";
 import * as Predicate from "effect/Predicate";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { ARXIV_IDS_PER_REQUEST, lookupArxivIds } from "./ArxivIdentifierLookup.ts";
@@ -332,12 +333,17 @@ async function lookupDoi(doi: string, request: MetadataRequest): Promise<Lookup>
   return { status: "found", metadata: metadataFromCsl(csl, doi) };
 }
 
-async function lookupPmid(pmid: string, request: MetadataRequest): Promise<Lookup> {
+async function lookupPmid(
+  pmid: string,
+  request: MetadataRequest,
+  keys: ResearchKeys = {},
+): Promise<Lookup> {
   const parameters = new URLSearchParams({
     db: "pubmed",
     id: pmid,
     retmode: "json",
     tool: "scient_desktop",
+    ...(keys.ncbi ? { api_key: Redacted.value(keys.ncbi) } : {}),
   });
   const response = await runWithNcbiRequestLimit(() =>
     request(new URL(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?${parameters}`), {
@@ -363,15 +369,21 @@ interface IdentifierScheme {
     values: ReadonlyArray<string>,
     request: MetadataRequest,
     pace: RequestPace | undefined,
+    keys: ResearchKeys,
   ) => Promise<ReadonlyMap<string, Lookup>>;
 }
 
 const one =
-  (lookup: (value: string, request: MetadataRequest) => Promise<Lookup>) =>
-  async (values: ReadonlyArray<string>, request: MetadataRequest) =>
+  (lookup: (value: string, request: MetadataRequest, keys: ResearchKeys) => Promise<Lookup>) =>
+  async (
+    values: ReadonlyArray<string>,
+    request: MetadataRequest,
+    _pace: RequestPace | undefined,
+    keys: ResearchKeys,
+  ) =>
     new Map(
       await Promise.all(
-        values.map(async (value) => [value, await lookup(value, request)] as const),
+        values.map(async (value) => [value, await lookup(value, request, keys)] as const),
       ),
     );
 
@@ -433,6 +445,16 @@ export interface SourceIdentifierResolverOptions {
   readonly deadlineMs?: number;
   /** Replaces the per-registry request spacing, so tests do not wait on it. */
   readonly pace?: RequestPace;
+  readonly keys?: ResearchKeys;
+}
+
+/** The user's keys from Accounts for registries that take one; each is optional. */
+export interface ResearchKeys {
+  readonly openAlex?: Redacted.Redacted<string>;
+  readonly semanticScholar?: Redacted.Redacted<string>;
+  readonly ncbi?: Redacted.Redacted<string>;
+  /** Unpaywall takes an email address instead of a key. */
+  readonly unpaywallEmail?: Redacted.Redacted<string>;
 }
 
 async function lookupBeforeDeadline(
@@ -445,7 +467,7 @@ async function lookupBeforeDeadline(
   );
   return Promise.race([
     IDENTIFIER_SCHEMES[scheme]
-      .lookup(values, options.request ?? requestMetadata, options.pace)
+      .lookup(values, options.request ?? requestMetadata, options.pace, options.keys ?? {})
       .catch(() => unavailable),
     NodeTimersPromises.setTimeout(options.deadlineMs ?? LOOKUP_DEADLINE_MS, unavailable, {
       ref: false,
@@ -537,11 +559,15 @@ export async function resolveSourceIdentifierBatch(
 
 export type ResolveSourceIdentifier = (
   identifiers: ReadonlyArray<ScientSourceIdentifier>,
+  keys?: ResearchKeys,
 ) => Promise<SourceIdentifierResolution | null>;
 
 export const SourceIdentifierLookup = Context.Reference<ResolveSourceIdentifier>(
   "scient/sources/SourceIdentifierLookup",
-  { defaultValue: () => (identifiers) => resolveSourceIdentifier(identifiers) },
+  {
+    defaultValue: () => (identifiers, keys) =>
+      resolveSourceIdentifier(identifiers, keys ? { keys } : {}),
+  },
 );
 
 const TITLE_STOPWORDS = new Set([

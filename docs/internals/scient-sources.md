@@ -171,6 +171,14 @@ metadata, or a researcher is never replaced. Retrieved abstracts retain their
 service, exact identifier, source field, and retrieval time in field
 provenance.
 
+Registry lookups read the user's research keys from Accounts through
+`researchKeys.ts`: the API-key row whose sites match the service (OpenAlex,
+Semantic Scholar, NCBI, and the Unpaywall email), skipping a row set to Off.
+Tools take the resolver through `keyedIdentifierLookup`, which passes the keys
+as `Redacted` values; the Effect HTTP client gets them as `Redacted` URL
+parameters so spans show them redacted. Paper downloads send the OpenAlex key
+and ask Unpaywall only when OpenAlex has no free copy.
+
 All NCBI E-utilities requests share one serialized, interval-limited lane.
 The lane remains owned until the active network request settles and releases
 in `finally`, preventing overlapping requests and avoiding a dead lane after a
