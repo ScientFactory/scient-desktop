@@ -1,14 +1,59 @@
 # Scient rich Markdown editor
 
-Status: accepted architecture and product contract for Scient's file-native rich Markdown
-surface. Reconciled 2026-08-30 with the selected ProseMirror plus source-ledger implementation and
-the removal of the non-product CodeMirror live-preview spike. This document records durable
-invariants, dependency decisions, module boundaries, and acceptance requirements; pull requests
-and their evidence remain the implementation record.
+Status: Draft
+Owner: Yaacov
+Created: 2026-08-23
+Last updated: 2026-11-10
+Purpose: Markdown editing authority, implemented behavior, limitations, and qualification.
+Doc type: Current implementation
+
+Main's 2026-08-30 reconciliation recorded the architecture and product contract
+as accepted. That recorded acceptance is retained; Draft identifies this updated
+current-implementation reconciliation, not a withdrawal of the contract.
+
+This document owns the Markdown editor's architecture, implemented source model,
+and qualification boundaries. The current-behavior sections were reconciled on
+2026-11-10 against `8006e7bbdab5d2a724a628a2f3c4d3c6d81821ea`. Historical foundation
+research and required outcomes are identified separately. Requirements below are
+obligations, not blanket claims that every interaction or platform has passed.
+The [document architecture](./scient-documents.md)
+connects this format owner to other engines; [saving workspace files](./scient-file-saving.md)
+owns publication and recovery details, and [Markdown Help](../user/markdown.md)
+owns user workflows.
+
+## Current capability and boundaries
+
+Writable project `.md` and `.markdown` files have a rendered ProseMirror editor
+and the ordinary Source editor, leasing one accepted-source persistence owner.
+MDX, managed/read-only files, truncated files, and outside-workspace previews use
+other read/source paths. Formatting chrome can be collapsed without making a
+writable rendered document read-only. The controller's internal `read`/`write`
+mode names are not a second public four-mode switch.
+
+Rich prose, headings, lists/tasks, GFM tables, links/wiki links, images, footnotes,
+citation syntax, math, code, scientific fences, and exact-source islands exist.
+Citation keys are not a claim of bibliography resolution or LaTeX citation parity.
+Inline font-size/color/highlight controls are not part of this surface's current
+formatting catalog. Shared menus, math commands, renderers and footer components
+do not merge the Markdown and LaTeX grammars, document models, or undo histories.
+
+Source preservation is bounded. Unchanged ledger ranges are reused exactly;
+changed blocks may normalize, and representability checks can refuse a rich edit.
+The refusal retains live input in memory and blocks publication until corrected
+or undone. It does not protect that input against restart. Whole-document semantic
+fidelity is an acceptance target. The 2026-10-23 issue audit's real-parser model probes reproduced
+duplicated adjacent numbered or bullet lists becoming one list after reparse.
+The image-completion transaction can also replace a neighboring selectable raw
+or math atom at an insertion gap. These are historical model-level reproductions, not fresh runs at this baseline; complete
+mounted command/upload/save flows remain unqualified. Focused math, citation, and
+footnote fields retain native text during an outside update and can then submit
+that older text against the current node. That mechanism is source-confirmed;
+the mounted external-edit interleaving remains unverified. The evidence table
+below separates these boundaries.
 
 ## Outcome
 
-Scient will provide a file-native scientific writing surface in which the rendered document is
+The accepted direction is a file-native scientific writing surface in which the rendered document is
 the editor. Opening the formatting controls or placing a caret must not replace the document,
 change its layout, serialize its contents, or write the file. Markdown files on disk remain
 authoritative, agent-editable, and portable outside Scient.
@@ -38,8 +83,10 @@ document transaction/history authority, including edits from math input tools.
 7. **Local, ownable, and durable.** Runtime editing has no paid API, hosted SDK, or network
    dependency. Dependencies must use permissive licenses and be replaceable behind Scient-owned
    adapters.
-8. **Remote-safe and conflict-honest.** The same typed file operations work through local,
-   desktop-hosted, and remote connections. External agent edits are never silently overwritten.
+8. **Remote-safe and conflict-honest.** Use the same typed operations across local and remote
+   connections and preserve external edits. Current publication and history limits are recorded
+   in [saving workspace files](./scient-file-saving.md); this principle does not establish atomic
+   compare-and-swap against arbitrary external programs.
 9. **Scientific content is first-class.** Math, code, tables, figures, citations, diagrams,
    visualization specifications, RTL, and mixed-direction text are part of the core contract.
 10. **Upstream stays recognizable.** Scient logic lives under owned modules; inherited T3 files
@@ -49,15 +96,15 @@ document transaction/history authority, including edits from math input tools.
 
 ### Document states
 
-Amended 2026-08-29 after human review of the four-mode control: the explicit Read/Write/Source/
-Split mode set is retired. Two presentations remain, mirroring the inherited file panel:
+The historical Read/Write/Source/Split proposal is retired. The file panel exposes two
+presentations:
 
 - **Rendered (eye on):** the rich live-preview surface, always editable on click. No state to
   enter or leave; editing controls appear only while a separate chrome toggle is on.
 - **Source (eye off):** the inherited text-file editor. No second Markdown session or
   Markdown-specific source mode exists behind it.
 
-The eye preference is global (stored exactly as `main` stores it) and a line reveal still wins
+The eye preference is global (`t3code.renderMarkdown`) and a line reveal still wins
 over it, since the revealed line only exists in source. There is no split pane and no second
 Markdown source editor; exact-syntax work happens in the inherited source view or an inline source
 island. Presentation controls never create a document transaction, and switching the eye or
@@ -65,7 +112,7 @@ formatting controls preserves scroll and selection where the surfaces allow.
 
 ### Minimal interaction model
 
-- The file header keeps `main`'s eye toggle contract (same icons, tooltip, and
+- The file header keeps `main`'s eye toggle contract (the source/rendered control and
   `t3code.renderMarkdown` preference). Formatting controls live in the rich surface and remain
   collapsed until the user opens them or begins editing.
 - The editing controls provide text formatting, lists, headings, links, and an overflow home for
@@ -102,16 +149,21 @@ formatting controls preserves scroll and selection where the surfaces allow.
   **Copy full path** without performing navigation. The edit action reuses the ordinary-link
   editor or searchable wiki-link picker. Wiki links also expose that picker after an exact
   selection or double-click.
+  The selection-toolbar picker replaces selected prose with a link to a chosen project file.
+  The Insert-menu and slash `wiki-link` commands are different: the controller runs the ordinary
+  command, which inserts `[[Untitled]]`; those entry points do not open the target picker.
 - An active editable table keeps one quiet, out-of-flow corner handle. Primary click selects the
   complete table. Right-click/two-finger click on that handle, or on an unselected table cell,
   opens the app table menu and reuses the existing row, column, alignment, direction, selection,
   and deletion commands. Link menus take precedence inside cells, while selected prose retains
   the platform text menu. Opening or cancelling the table menu cannot alter source or save state.
-- Internal-link activation verifies the exact workspace entry through the existing server-owned
-  directory operation before changing the active file. Missing files, malformed paths, failed
-  checks, and missing same-document headings keep the current document open and show compact
-  feedback anchored to the activated link; direct file-opening failures retain their normal file
-  surface. External links keep the established shell-opening path.
+- Internal-link activation checks the exact workspace entry through a server-owned directory
+  operation. When that entry is unavailable, the shared file resolver can recover a moved
+  destination or route an ambiguous result to the file panel's choices. Unresolved files,
+  malformed paths, failed checks, and missing same-document headings keep the current document
+  open with compact feedback anchored to the link. An ordinary link outside the workspace can
+  open the host-file read-only surface. External web/mail links keep the established
+  shell-opening path.
 - Mermaid, Vega-Lite, and Plotly cards own their normal hover, pointer, wheel, drag, and
   double-click behavior in both the preview and rendered editor. Source editing is an explicit
   authoring action in the card's More menu or native right-click/two-finger menu; it never follows
@@ -164,11 +216,14 @@ positions are an optimization for that exact snapshot only. Changed-source
 navigation uses conservative text/context matching; an ambiguous match must not
 be highlighted.
 
-Only text selections are supported in this slice. Non-text atoms, source mode,
-and fallback read-only host-file previews do not inherit a fake file selection
-from assistant-message DOM attributes. Future readers can add a concrete quote
-type or capture adapter if needed, without introducing a universal annotation
-store into this workflow.
+Rich capture supports text selections, not whole non-text objects. Source mode
+has its own [`SourceCitationActions`](../../apps/web/src/scient/fileSurfaces/SourceCitationActions.tsx)
+adapter: it captures exact source offsets, lines, text/context and a source hash,
+and marks the quote with `sourceSelection`. The Files panel also mounts that
+adapter for static read-only text. Reopening those quotes selects Source and
+verifies the source selection independently of ProseMirror positions. Rendered
+read-only Markdown and the separate `EnvironmentFilePreview` do not mount the
+rich selection adapter. None of these paths creates a persistent annotation store.
 
 File navigation reuses scoped thread routes and the existing pending-save guard
 before switching file panels, never a basename search in the active project.
@@ -182,20 +237,20 @@ by a citation or grant new workspace permissions.
 
 ### Node behavior
 
-| Node                          | Rendered-editor behavior                                                     | Markdown authority                                                      |
-| ----------------------------- | ---------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| Paragraph and heading         | Direct rich editing with stable typography; headings hold math and citations | Preserve original marks and delimiters until edited                     |
-| Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure                      | Preserve bullet/delimiter style for untouched items                     |
-| Table                         | Editable cells; contextual row, column, and alignment actions                | GFM table with one header row; preserve cell content on save and reopen |
-| Link and `[[wiki link]]`      | Underlined label; click follows, while drag/double-click selects for editing | Keep explicit, reference, GFM-autolink, relative, and wiki syntax       |
-| Code block                    | One persistent syntax-highlighted CodeMirror surface; write mode enables it  | Preserve fence marker, length, language, and metadata when untouched    |
-| Inline/display math           | Typeset while inactive; compact TeX editor when selected                     | Preserve `$…$`, `$$…$$`, `\(…\)`, or `\[…\]` when edited                |
-| Image/figure                  | Rendered with selection, alt text, caption, path, and size controls          | Use portable relative paths and ordinary Markdown where possible        |
-| Citation                      | Bracketed label while reading; one always-present inline field while writing | Preserve citation keys and source syntax                                |
-| Footnote                      | Numbered marker navigates to one directly editable definition with backlinks | Keep generated labels internal and preserve repeated-reference binding  |
-| Mermaid/Vega/Plotly           | Preview-identical interactive card; explicit menu action opens source        | Retain the last valid render during invalid intermediate input          |
-| Reference definition          | Hidden while reading; compact exact-source disclosure while authoring        | Preserve the complete definition verbatim until explicitly edited       |
-| Other raw/unknown construct   | Persistent labeled CodeMirror source; no duplicate preview or HTML execution | Preserve the complete original source verbatim until explicitly edited  |
+| Node                          | Rendered-editor behavior                                                                                         | Markdown authority                                                      |
+| ----------------------------- | ---------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| Paragraph and heading         | Direct rich editing with stable typography; headings hold math and citations                                     | Preserve original marks and delimiters until edited                     |
+| Bulleted, numbered, task list | Rich list editing; Enter/Tab/Shift-Tab change structure                                                          | Preserve bullet/delimiter style for untouched items                     |
+| Table                         | Editable cells; contextual row, column, and alignment actions                                                    | GFM table with one header row; preserve cell content on save and reopen |
+| Link and `[[wiki link]]`      | Underlined label; click follows, while drag/double-click selects for editing                                     | Keep explicit, reference, GFM-autolink, relative, and wiki syntax       |
+| Code block                    | One persistent syntax-highlighted CodeMirror surface; write mode enables it                                      | Preserve fence marker, length, language, and metadata when untouched    |
+| Inline/display math           | Typeset while inactive; compact TeX editor when selected                                                         | Preserve `$…$`, `$$…$$`, `\(…\)`, or `\[…\]` when edited                |
+| Image/figure                  | Selection, alt/source details, title-backed caption, replacement and viewing controls; no width/height authoring | Use portable relative paths and ordinary Markdown where possible        |
+| Citation                      | Bracketed label while reading; one always-present inline field while writing                                     | Preserve citation keys and source syntax                                |
+| Footnote                      | Numbered marker navigates to one directly editable definition with backlinks                                     | Keep generated labels internal and preserve repeated-reference binding  |
+| Mermaid/Vega/Plotly           | Preview-identical interactive card; explicit menu action opens source                                            | Retain the last valid render during invalid intermediate input          |
+| Reference definition          | Hidden while reading; compact exact-source disclosure while authoring                                            | Preserve the complete definition verbatim until explicitly edited       |
+| Other raw/unknown construct   | Persistent labeled CodeMirror source; no duplicate preview or HTML execution                                     | Preserve the complete original source verbatim until explicitly edited  |
 
 Recognized scientific fences remain `code_block` nodes for source fidelity, selection, and nested
 CodeMirror editing. Their NodeView is presentation-neutral while inactive: the same shared
@@ -272,24 +327,33 @@ completions; document removal never deletes an asset or shared definition.
 
 ### File lifecycle
 
-- Create `.md` or `.markdown` from the Files panel with collision-safe naming.
-- Rename from the header using an expected revision; never overwrite an existing path.
-- Paste, drop, or select an image; validate bytes and type on the server; write atomically to a
-  configurable sibling asset directory; insert a relative path only after success.
-- Autosave begins only after a user-authored document transaction and is debounced.
-- Writes use compare-and-swap revisions. A rejection is verified with an ordered read before
-  presenting a real external conflict. Identical already-published bytes converge without rewriting.
-- Routine saves have no status label, pending dot, or live announcement. A verified conflict or
-  exhausted failure has one accessible recovery region; conflicting replacements require confirmation.
-- Closing, switching files, renaming, or changing presentation waits for pending edits to settle
-  or enter visible recovery, without polling loops or fire-and-forget loss.
-- Undo/redo covers document transactions, not presentation changes or server refreshes.
+- **Documents → Markdown** creates at the project root. The Files bar's
+  **New document** menu and a folder's **New document here → Markdown** use the
+  selected folder. All call `useCreateNewDocument`, then the existing placement
+  and new-document owners; no separate Markdown creation form is mounted.
+- An available `untitled.md` starts with `# ` and a one-time title-based naming
+  session. Saved source and focus state admit the rename; collisions are numbered.
+  Further heading edits do not continuously rename the file.
+- Creation, move and rename retain server path/revision authority; changing a
+  heading is not permission to overwrite an existing destination.
+- Image upload validates bytes/type server-side, then inserts a relative asset
+  path through the rich transaction. A successful upload alone does not prove
+  its selected insertion boundary is safe.
+- Autosave begins after authored changes. The shared coordinator retries failed
+  saves and handles outside revisions as described below; routine saves stay quiet.
+- Server file history keeps replaced content. The file header's retained-version
+  menu can review it and make a separate copy. Old retained-inode records and
+  history copies have different mutability/compatibility boundaries; the
+  [saving owner](./scient-file-saving.md) governs publication.
+- File/presentation departure uses renderer guards. Ordinary native app quit
+  does not establish the same editor flush. Undo belongs to its active surface,
+  not to file history or a universal Source/rich stack.
 
 ## Architecture decision
 
-### Open-source landscape review (verified 2026-08-23)
+### Historical foundation selection (2026-08-23)
 
-The investigation reviewed 120 current search results across editor foundations, Markdown-native
+This historical investigation reviewed 120 then-current search results across editor foundations, Markdown-native
 editors, source-preservation behavior, and scientific rendering. The primary documentation,
 repositories, licenses, release state, and relevant round-trip reports of the serious candidates
 were then read directly. Stars are not an architectural criterion; they are useful only as a weak
@@ -318,6 +382,10 @@ not change.
 | [TOAST UI Editor](https://github.com/nhn/tui.editor)                                        | MIT; repository open, latest published editor release found was 2023 | Established GFM Markdown/WYSIWYG editor with plugins                                                         | Reject as a new foundation because of release staleness, dual-mode conversion, and weak fit for our scientific/source contract.                                                                                                                                                                  |
 | [Cherry Markdown](https://github.com/Tencent/cherry-markdown)                               | Apache-2.0; active                                                   | Broad Markdown features, extensible engine, split and rich modes                                             | Useful compatibility reference, not the foundation; it brings a full editor policy and no exact-source guarantee.                                                                                                                                                                                |
 | [coflat](https://github.com/chaoxu/coflat)                                                  | MIT; created in 2026, three stars when reviewed                      | Interesting CodeMirror 6 Typora-style experiment including math/citation editing                             | Watch and borrow ideas only. It is far too new and small to become a core dependency.                                                                                                                                                                                                            |
+
+The package maintenance and release descriptions above are historical observations, not a current
+dependency-health audit. The durable decision is direct ProseMirror plus Scient-owned source
+preservation, with nested CodeMirror.
 
 Several newer projects and demos were also inspected and filtered out because they were thin app
 shells, lacked evidence of file fidelity or accessibility, used copyleft/unclear licensing, or
@@ -358,8 +426,10 @@ that switch, a tab departure, or route navigation can unmount the editor.
 ### Selected foundation
 
 Use ProseMirror as the rich document and transaction layer, behind Scient-owned schema,
-projection, NodeView, and controller adapters. Use `markdown-it` for tokenization and a
-Scient-owned source ledger for bounded source reuse. Use one persistent CodeMirror surface inside
+projection, NodeView, and controller adapters. The rich schema uses `markdown-it`; the
+Scient-owned source ledger uses mdast/micromark extensions to retain bounded source ranges.
+Those parser configurations are distinct and need explicit compatibility tests.
+Use one persistent CodeMirror surface inside
 each ordinary code block and multiline raw source island, read-only in document read mode and
 editable in write mode; it remains a nested source editor and never becomes a second Markdown
 authority.
@@ -417,81 +487,66 @@ Queued reads retain the reconnect subscription just like active reads; idle evic
 does not poll an operation that cannot yet finish. Bootstrap shares an ordered read,
 then creates the entry and acquires its first lease synchronously before any clean sweep.
 
-The coordinator observes every draft transition. Undo-to-baseline cancels debounced work; undo
-during an in-flight write compensates against its acknowledged revision. New typing coalesces
-separately from the immutable in-flight attempt. Transient failures retry that identical attempt
-with a bounded budget; semantic failures do not retry automatically. Older servers remain safe:
-a retry rejected by strict CAS is reconciled with an ordered read.
+The coordinator observes authored draft transitions and retains the immutable
+in-flight attempt separately from newer typing. Save failures retry after
+250 ms, 1 s, 3 s, 10 s, then every 30 s without exhausting a retry budget.
+An explicit save does not wait out that delay. Before retrying over newer typing
+or undo, the coordinator verifies what landed. Read retries have a separate
+bounded path; the save ladder does not imply unbounded read retries.
 
-Watcher events and reconnects are freshness hints, never publication receipts. Generation-checked
-reads use `readFileOrdered`, an existing read RPC scheduled behind earlier writes for the same
-file. A new owner bootstraps from a complete ordered read, not a possibly stale query snapshot;
-concurrent mounts share that admission. Read bytes must match the server's revision and byte
-length before they can establish or acknowledge a baseline. Cached query data is presentation
-only, never persistence authority. A late
-ordinary read cannot replace intervening typing, acknowledge a queued undo, or manufacture an
-external conflict. Real divergence preserves the baseline, local draft, and disk snapshot.
+Watcher/reconnect events are freshness hints, not publication receipts. Ordered
+reads establish verified revision/byte baselines. A late read cannot adopt a
+cached presentation as save authority or silently replace intervening typing.
+Markdown's bounded three-way reconciliation still handles unambiguously separate
+blocks. On an ordinary live conflict that cannot merge, the default
+`keepLocalOverConflicts` path publishes the local version against the observed
+revision; the server keeps replaced bytes in history and the notice offers
+**Use the other version**. The old explicit keep-local/use-disk dialog is not the
+ordinary document-save UI. A restored earlier-session draft is held for
+**Keep my draft / Use the file**; typing counts as keeping it.
 
-Verified divergence may reconcile silently when both writers changed unambiguously separate
-top-level Markdown blocks. The bounded three-way helper compares the acknowledged baseline,
-the latest draft (including typing during a read), and verified disk bytes. It preserves exact
-source slices, deduplicates identical changes, and reparses the result to verify block ownership.
-Lists, tables, paragraphs, quotes and fences are indivisible. Overlap, competing insertions,
-repeated-block ambiguity, changing document-wide context (including nested definitions), or
-uncertain publication ancestry keep the existing explicit conflict choices. No conflict markers
-or speculative publication acknowledgements are introduced. Reconciliation is limited to
-256,000 UTF-16 units, 2,000 blocks, bounded diff work, and three consecutive reconciliation
-attempts before asking for a decision; only a successful conditional write confirms a dirty merge.
+The merge is bounded to 256,000 UTF-16 units and 2,000 blocks, with bounded
+diff work and consecutive reconciliation attempts. A live conflict outside
+those limits takes the local-version/history path instead of merging the
+outside text; it does not restore the old conflict question.
 
-Mounted editors prepare an incremental update before the owner changes its draft. Composition
-defers and rereads on completion; new typing invalidates a stale preparation. Rich updates use
-non-history ProseMirror transactions with mapped selections and retained unchanged NodeViews.
-The opt-in Pierre external-edit path commutes the incoming patches through both undo and redo
-stacks, including selections and line annotations; it declines unsafe history intersections or
-work beyond its budget. Generic source-editor edits retain their existing semantics. Undo removes
-the user's own edit without undoing the incoming contribution. Safe already-saved refreshes use
-the same path; unsupported clean refreshes retain their established full-replacement behavior.
-Dirty updates that cannot safely project into every mounted editor remain explicit conflicts.
+External rich projection uses non-history transactions and retains unaffected
+NodeViews/selection where mapping is safe. Pierre's supported external-edit path
+can map incoming edits through history; unsupported projection/history paths
+have narrower continuity. Rich refusal and active composition remain independent
+input holds: a save retry cannot turn unrepresentable input into accepted source.
+The renderer owns file/panel/route guards. Native quit currently does not flush
+all editors through these guards; `DesktopLifecycle.ts` and the separate
+`EditorFlush` integration define that boundary.
 
-The source input adapter also handles the browser's initial selection ordering: a first
-`beforeinput` may arrive before `selectionchange`. When Pierre has no selection yet, it adopts
-only the native range belonging to that editor before applying the character. Existing
-multi-caret selections and composition handling are left intact.
+Local checkpoints are not server file history or successful saving. Markdown
+keeps ordinary draft copies; every document format can retain exact publication
+intents through the shared writer, while LaTeX has additional recovery owners.
+The registry still requires `flushPublication` before `transport.write`.
+`MarkdownDraftCheckpointWriter.flushPublication` is strict: quota, record/size
+limits, failed compare-and-swap or unavailable/retired ownership can refuse
+transport admission. The current budget is 32 records and 4 MiB of UTF-16
+source across the copies in one record. Retrying does not bypass that admission.
+Ordinary background checkpoint errors can be diagnostic while an exact
+publication checkpoint remains a condition for writing. Thus “typing remains
+available” does not mean “a save can always reach disk.”
 
-Keep-local resolution rereads and compares the presented revision before another conditional
-write. Use-disk resolution retains the replaced local draft in memory for explicit restoration.
-Departure guards remain in place: quick departures are silent; a slow requested departure may
-say “Finishing your changes.” A verified problem cancels the requested action, so resolving it
-later cannot unexpectedly navigate or close the document.
+Admission errors are terminal-classified for immediate notice display; the
+coordinator still schedules retries. At roughly four full source copies, the
+4 MiB budget corresponds to about 524,288 UTF-16 units per copy, from source
+arithmetic rather than a new reproduced size qualification. The exact bound
+depends on the stored sources and rename material. A lost checkpoint CAS sets
+the writer's `disabled` flag; its later publication attempts refuse. The
+writer-reset/reopening journey has not been qualified by this documentation
+update, so neither retrying nor closing another window is promised to repair it.
 
-These guarantees remain renderer-local plus the existing server-process mutation lock. They do
-not provide cross-process filesystem CAS, general collaborative editing, or historical ABA
-detection. App/window/file departure remains guarded while publication is pending.
-
-A small IndexedDB checkpoint keeps the latest pending source, baseline revision/source and
-owned publication attempt per environment/workspace/file. It is a recovery copy, never another
-file writer or evidence of a successful save. Writes coalesce behind a 200 ms leading deadline;
-there is no periodic idle work. Admission compares the checkpoint with an uncached file read:
-already-published bytes need no recovery, unchanged/known-published baselines resume the draft,
-and independent changes use the existing conservative merge. Ambiguous changes open the
-existing conflict flow with both versions intact, before any file write can start.
-
-Checkpoint replacement and removal compare a unique token in one IndexedDB transaction. An
-old acknowledgement cannot erase another editor's checkpoint. A competing owner stops replacing
-that checkpoint rather than overwriting it; this is one latest recovery copy per file, not
-multi-window collaborative history. Storage is capped at 32 files and 4 MiB of UTF-16 source per
-record (including the pending publication). Capacity, quota or storage failures preserve existing
-checkpoints and are diagnostic errors; they do not acknowledge or block ordinary file saves.
-Checkpoint storage uses the current app/browser origin and follows its normal storage lifecycle.
-It does not copy live profiles or send drafts to a hosted service.
-
-Workspace file saves request durability from the shared atomic text writer. It flushes the
-temporary file before replacement, then flushes the
-containing directory on POSIX where supported. Windows retains file flush plus atomic rename;
-its directory handles are not supported by this API. Regenerable caches keep the existing
-atomic-only path so frequent cache updates do not incur filesystem flushes. I/O failures are propagated, and only
-unsupported directory-flush errors are exempt. This is not a guarantee against every filesystem,
-OS or hardware failure. A crash before a checkpoint commits can still lose the newest keystrokes.
+Background-copy diagnostics must not be generalized to the strict publication
+or rename journal. Records are local
+to the app/browser origin; memory-only refused rich input is outside the accepted
+source checkpoint. A crash before a checkpoint commits can lose the newest input.
+A file can be readable while too large for its complete recovery record. The
+[shared saving owner](./scient-file-saving.md) describes ordinary server history,
+plain publication, older-build finishing and separate Overleaf conflicts.
 
 Controller callbacks forward to current host bindings without remounting the rich editor. The
 file adapter keys controller ownership by environment, workspace root, and relative path. The
@@ -522,7 +577,7 @@ from visible prose while technical nodes remain LTR. In an RTL prose block, only
 right-flow arrow glyphs are mirrored with decorations; code, math, links, source bytes, copied
 text, undo history, and save state remain unchanged.
 
-All selected packages are MIT-licensed. The rich surface remains isolated behind the Markdown
+The selected ProseMirror and CodeMirror editor packages are MIT-licensed. The rich surface remains isolated behind the Markdown
 file mount; expensive nested source and scientific renderers load only when their surfaces are
 needed, so the ordinary chat path does not initialize them.
 
@@ -614,8 +669,12 @@ apps/web/src/scient/writing/
 apps/web/src/scient/keyboard/
   presentation.ts  How a shortcut is shown next to a command
 
+apps/server/src/scient/workspace/
+  WorkspaceFileMutations.ts  Shared create/write/rename/delete and publication authority
+apps/server/src/scient/assets/
+  WorkspaceImageFiles.ts     Image validation and asset publication
 apps/server/src/scient/markdown/
-  http.ts                    Typed HTTP handlers for remote-ready clients
+  http.ts                    Typed HTTP image-ingestion handlers
 
 packages/contracts/src/scientMarkdown.ts
 packages/client-runtime/src/state/scientMarkdownHttp.ts
@@ -629,9 +688,9 @@ These are the intentional overlaps to inspect during every bounded T3 alignment:
 | Inherited seam                                                     | Why it remains                                                                              | Composition rule                                                                                                                                                                                                                                    |
 | ------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `FilePreviewPanel.tsx`                                             | The host owns file loading, source preview, breadcrumbs, and save notices.                  | Keep one lazy rich-editor mount for `.md`/`.markdown`; retain T3's ordinary MDX renderer; do not move parser or save policy here.                                                                                                                   |
-| `FileBrowserPanel.tsx`                                             | The Files bar is the discoverable place to start a document.                                | New (Files bar and folder menu) comes from `useScientFolderActions`; documents are created through `useCreateNewDocument`, whose writes refresh every Files view. Keep only the marked calls in the host.                                           |
+| `FileBrowserPanel.tsx`                                             | The inherited file toolbar is the discoverable create location.                             | New (Files bar and folder menu) comes from `useScientFolderActions`; documents are created through `useCreateNewDocument`, whose writes refresh Files views. Keep only marked calls in the host.                                                    |
 | `FileBreadcrumbNavigator.tsx`                                      | Rename belongs on the visible current filename.                                             | Preserve only the generic optional current-file control slot; the rename operation remains owned.                                                                                                                                                   |
-| `ChatView.tsx`                                                     | It owns route and right-panel lifecycle, the points that can unmount a dirty file.          | Call the Scient pending-departure adapter before activation, close, panel, and route actions. `RightPanelTabs` carries Scient's tab strip only through marked calls into `scient/rightPanel` (see `UPSTREAM.md`, "Side panel and Files bar").       |
+| `ChatView.tsx`                                                     | It owns route and right-panel lifecycle, the points that can unmount a dirty file.          | Call the Scient pending-departure adapter before activation, close, panel, and route actions. `RightPanelTabs` mounts the owned tab strip through marked calls into `scient/rightPanel`; see `UPSTREAM.md`.                                         |
 | workspace contracts, RPC composition, and `WorkspaceFileSystem.ts` | Remote clients and filesystem authority must use the host's authenticated project boundary. | Extend the existing typed operation and path authority; never create a Markdown-only filesystem root or client-authoritative path.                                                                                                                  |
 | package manifests and lockfile                                     | The lazy rich bundle still needs local parser/editor dependencies.                          | Keep only runtime dependencies used by the selected product path.                                                                                                                                                                                   |
 | `ChatMarkdown.tsx` and `FileMarkdownPreview.tsx`                   | The editor's code header and figure captions must match the established preview exactly.    | The code-block title and copy/wrap actions live once in `scient/presentation`; when T3 changes that header, port the change there instead of re-inlining it. `imageCaptions` is an opt-in prop; chat rendering keeps its defaults.                  |
@@ -647,82 +706,9 @@ typed failures, exact asset paths, and scope denial without writes. This loopbac
 does not replace remote-client acceptance. An upstream change that supplies equivalent behavior
 should replace the seam only after those acceptance tests still pass.
 
-#### Current main integration (2026-08-31)
-
-The feature was rebased onto owned main `6e608aadf29ad083c46c8552fea6a1ce4b4e7554`, then onto
-freshly fetched main `3b6cd6fda7169be4001461fc4404a327203eb92d` when PR #218 landed during the
-final checks. Main contains the separately qualified T3 integration through `e4f7b14fa`.
-No official upstream merge or divergence-policy change was added to this feature branch.
-The tested checkpoint before that last rebase is `269a78b6c70873b079a992636bccb712acd527fc`.
-
-The subsequent alignment onto owned main `83ffde24dc63c8d883613718aaec47b2362948e6` preserved
-all 46 feature patches unchanged. That main range has no same-file feature overlaps; its shared
-visual-card and appearance changes retain their existing mounts and are covered by the combined
-Markdown/presentation regression lane. It does not change the editor's document or save model.
-
-The main alignments touch these six shared paths:
-
-- `FilePreviewPanel.tsx`: compose the rich plain-Markdown mount alongside main's
-  `FileMarkdownPreview` fallback. Preserve its file-relative image resolution, task updates, MDX,
-  and inherited source editor. The earlier rebase corrected a textual conflict and an older
-  commit's reintroduction of `ChatMarkdown` at that fallback. The final composition also retains
-  main's pending-file guard, agent mutation hints, and binary-image cache invalidation.
-- `ChatView.tsx`: retain main's video-attachment lifecycle alongside Scient's local
-  pending-file-departure adapter, file citations, artifact templates, and mutation hints.
-- `FileBrowserPanel.tsx`: share the tree/link-index refresh between manual refresh, file creation,
-  and main's agent mutation hint. Its callback depends on the current environment and workspace,
-  so a context change cannot refresh an old completion index.
-- `useWorkspaceFileRefresh.ts`: retain main's watcher-primary, mutation-hint fallback alongside
-  the Markdown save-error and conflict callbacks; pending local edits still defer the fallback.
-- `packages/client-runtime/package.json`: retain main's work-log and Codex Markdown exports
-  alongside the Markdown operation exports.
-- `pnpm-lock.yaml`: preserve both directive and frontmatter entries at the only final-rebase
-  textual conflict. The composed lockfile passes the pinned frozen install and supply-chain check.
-
-The editor core, Markdown server operations, and inherited `RightPanelTabs` had no intervening
-main overlap. This is an exact integration record, not a reason to skip the next changed-path audit.
-
-#### Previous owned-main alignment (2026-09-01)
-
-The 51-patch feature branch was subsequently rebased onto freshly fetched owned main
-`06e8489afc9e430da6cf1fd591f7f608a964141d` (PR #223, the current bounded T3 alignment).
-That main commit is an ancestor of the rebased persistence checkpoint
-`ccbb712da0ee17143516cbe27026ac8ee8e99f75`; no merge commit or upstream divergence policy was
-introduced here. The frozen-lockfile install succeeds on the composed tree.
-
-The rebase produced one textual conflict, in `FileBrowserPanel.tsx`. Its resolution retained
-main's directory-expansion state (`areAllDirectoriesExpanded` / `setAllDirectoriesExpanded`) and
-the Scient completion-index refresh (`refreshProjectEntriesQuery` / `setProjectFileQueryData`).
-The latter remains necessary because the inherited tree refresh and wiki-link completion cache
-serve different consumers. No editor-core, source-ledger, save-queue, Markdown transport, or
-`RightPanelTabs` file overlapped the new main range.
-
-A post-rebase changed-path audit again found only the intentional seams listed above. The
-subsequent source-safety review changes are confined to `apps/web/src/scient/markdownEditor/` and
-`packages/scient-markdown/`; they add no inherited T3-file overlap. This is the preferred shape:
-keep source projection, command policy, nested-node behavior, and tests in Scient-owned modules,
-while leaving the host files as lifecycle and transport composition points.
-
-#### Latest owned-main alignment (2026-09-03)
-
-After the source-editing review, the clean feature branch merged freshly fetched owned main
-`cb735ab0acf3c713ca3d2eeba0a68a0b63e468a1` as merge
-`cec1b3856f86741c5f89215a921dce08c8d98937`. The owned-main commit adds the managed-runtime
-catalog reconciler and publication workflow; it does not alter the Markdown editor, source ledger,
-save coordinator, or Markdown transport.
-
-Git auto-merged two paths that the feature branch had changed. In `apps/server/src/server.ts`, the
-result retains both the existing `scientMarkdownHttpApiLayer` and main's
-`ManagedRuntimeCatalogReconciler.layer`. In `docs/README.md`, the provider-runtime operations entry
-and the rich Markdown architecture entry are both present. No conflict resolution or product-policy
-adaptation was required. The official `upstream` remote was refreshed separately and remains
-fetch-only with push URL `DISABLED`; no unreviewed official T3 commit was merged into this feature
-branch.
-
-The exact merged tree passed the frozen-lockfile install and supply-chain check, repository format
-and lint gates, repository-wide typecheck and tests, production build, desktop smoke test, Scient
-brand check, and strict Markdown performance qualification. These automated results do not replace
-the owner's pending visual and interaction acceptance in the development app.
+The August/September 2026 branch alignments and their exact test receipts are historical
+implementation records in Git and the original pull requests. They do not qualify the current
+candidate. The seams above remain maintenance boundaries and must be rechecked after changes.
 
 ### Document session
 
@@ -736,13 +722,13 @@ disk source + revision -> source ledger -> ProseMirror projection
                                       +-> untouched ranges <----+ bounded patch/changed-block serialization
                                                                 |
                                                                 v
-                                                     save intent -> serial CAS write
+                                                     save intent -> serial revision-checked publication
 ```
 
-The workspace owns its editor controller and projects the leased persistence snapshot. Save
+The mounted rich surface owns its editor controller and projects the leased persistence snapshot. Save
 acknowledgements update metadata without replacing ProseMirror state, selection, or undo history.
 Ordered external updates enter through explicit coordinator transitions. A clean editor adopts
-the new source; verified divergence while dirty requires a choice. Programmatic adoption,
+the new source; verified live divergence is reconciled or saves local text with the displaced version retained; restored-session divergence waits for a choice. Programmatic adoption,
 selection, decoration, viewport, and remote-sync transactions do not create save intent.
 
 ### Source preservation
@@ -771,8 +757,8 @@ Preservation is range-based, not a claim that a semantic editor never serializes
   such as comments, display math, footnote definitions), a heading whose inline atom or link
   title spans lines, and a malformed or nested text-direction wrapper.
 - Every rich source change is prepared before publication, including changed-block serialization,
-  object fields, source islands and appended structural transactions. Changed content must reopen
-  with the intended meaning. Reference provenance and derived list spacing are distinguished from
+  object fields, source islands and appended structural transactions. The guard is intended to make changed content reopen
+  with the intended meaning; block-local checks do not establish all inter-block adjacency cases. Reference provenance and derived list spacing are distinguished from
   semantic content; existing in-progress boundary spaces remain permitted. Unicode surrogate halves
   must never be separated by emitted syntax. Source islands are verified in document context when
   their bytes or placement change, so an unfinished comment cannot consume neighbouring content.
@@ -792,7 +778,8 @@ Preservation is range-based, not a claim that a semantic editor never serializes
   unchanged.
 - Invalid mappings, including Unicode boundary hazards, fall back to changed-block serialization
   rather than throwing or touching adjacent ranges.
-- External changes are adopted only while clean or surfaced as a revision conflict while dirty.
+- External changes are adopted while clean, safely reconciled for separate Markdown blocks,
+  or handled by the live local-wins/history path. Restored drafts, nested field state and history have separate boundaries.
 
 GFM tables retain exactly one header row and column-level alignment after structural edits.
 Unsupported spans/width transactions are rejected rather than published lossily. Cell breaks use
@@ -806,25 +793,18 @@ indentation, entity spelling, and whitespace remain unchanged outside the user's
 
 ## Server and security contract
 
-- Reuse inherited workspace-root resolution and authentication scopes.
-- Resolve canonical paths and reject symlinked-ancestor escapes.
-- Create and destination rename are exclusive; existing targets are never replaced.
-- Rename requires the expected content revision and reports a conflict if bytes changed.
-- Saves, binary creates, and renames share canonical-path mutation locks. Root and parent
-  symlink aliases must identify the same lock; re-resolve after waiting and reject a changed
-  target. Rename locks both identities in sorted order and rejects same-file aliases before
-  acquiring them. These are in-process operation guarantees, not a cross-process filesystem
-  transaction against arbitrary external writers.
-- Binary writes validate decoded size, content signature, extension compatibility, and supported
-  image policy. SVG is sanitized or rejected according to the existing preview policy.
-- Use same-directory temporary files, fsync where supported, atomic rename, and cleanup.
-- Refresh workspace entries only after a successful operation.
-- Existing authenticated typed project RPC remains the create/write/rename transport used by
-  connected Scient clients. Authenticated typed HTTP handles multipart binary asset ingestion.
-  Both delegate to the same workspace path/revision authority; duplicate file semantics are not
-  created in the transport layers.
-- Error contracts distinguish invalid input, outside-root path, resolved escape, conflict,
-  existing destination, unsupported media, excessive size, and operational failure.
+The shared [file persistence owner](./scient-file-saving.md) owns revisions, publication,
+history, recovery, rename, and older-build compatibility. The Markdown transport does not
+create an independent filesystem authority. Authenticated project RPC handles text mutations;
+HTTP image ingestion delegates to shared rooted asset operations.
+
+`WorkspaceImageFiles.ts` validates decoded size, signatures, extension compatibility and image
+policy before inserting a relative asset path. A successful upload is required before document
+insertion, but upload success alone does not establish correct neighboring-block selection.
+Workspace-entry refresh follows successful operations. Read-only/truncated previews cannot write
+the partial source. Path containment and Files policy are separate: the text-write RPC checks
+managed/owner paths, while rename/delete policy must be checked at their own server entry points.
+Do not describe UI read-only affordances as an equivalent server mutation restriction.
 
 ## Upstream integration policy
 
@@ -834,8 +814,9 @@ indentation, entity spelling, and whitespace remain unchanged outside the user's
 - Inherited mounts contain no parser, serializer, save, or product-policy logic.
 - Heavy editor code is lazy and does not alter `ChatMarkdown` or the chat composer.
 - Every upstream-overlap file gets a seam test or a stable, easily recomposed mount.
-- Before review, rebase onto the then-current owned main, rerun seam tests, inspect upstream
-  overlap, and record any conscious adaptation. Do not mix an upstream merge into this branch.
+- Before delivery, compare the candidate with current owned main, rerun relevant seam checks,
+  inspect upstream overlap, and record adaptations. Follow branch ownership and AGENTS.md when
+  choosing alignment; this document does not authorize rebasing shared history.
 
 ## Qualification requirements
 
@@ -857,7 +838,7 @@ tests are necessary but do not replace proportional review in the real web/deskt
 | Accessibility              | semantic inspection, keyboard map, focus order, screen-reader announcements    |
 | Remote readiness           | authenticated HTTP tests and remote-connected client exercise                  |
 | Performance                | recorded budgets on representative small, medium, and large fixtures           |
-| Upstream isolation         | changed-path audit, seam tests, current-main rebase, overlap report            |
+| Upstream isolation         | changed-path audit, seam tests, current-main relationship, overlap report      |
 | Ownability                 | license inventory, no hosted dependency, offline runtime exercise              |
 
 ## Incremental work and embedded history
@@ -903,18 +884,63 @@ runtime evidence:
 - Inactive Plotly and Mermaid nodes do not continuously animate or repaint.
 - Repeated presentation switches and file changes show no unbounded listener, DOM, or heap growth.
 
-Run `SCIENT_MARKDOWN_PERF_STRICT=1 pnpm run test:performance` from `apps/web` in an isolated,
-otherwise idle qualification run with headless Chromium installed. This dedicated benchmark lane
-preserves the construction, mounting, mode-switching and typing budgets for 100/500 KiB documents,
-references, large tables and 64 embedded-code surfaces. It also checks LaTeX word counting and
-formula insertion into a document with 3,000 formulas. Ordinary unit and browser tests retain
-correctness and native-editor identity checks without wall-clock assertions. CI web shard 1 runs
-the benchmark lane separately with the strict budgets. Runs without `SCIENT_MARKDOWN_PERF_STRICT=1`
-use the existing wider Markdown interaction ceilings, not the strict qualification targets.
+Run the Markdown browser benchmark from `apps/web` in an isolated, otherwise idle window:
+
+```sh
+SCIENT_MARKDOWN_PERF_STRICT=1 pnpm exec vp test bench --run --project 'browser*' --fileParallelism=false --maxWorkers=1 src/scient/markdownEditor/prosemirror/performance.browser.bench.ts
+```
+
+The maintained [`test:performance`](../../apps/web/package.json) script also includes the
+LaTeX performance fixtures. CI invokes that script separately on web shard 1 with strict
+Markdown budgets. The ordinary correctness suite does not execute these `.bench.ts` fixtures.
+The 100 KiB fixture mounts a real Chromium editor but times synchronous construction, mounting,
+mode changes and dispatch; it is not an input-to-paint measurement. The 500 KiB, table and
+reference fixtures measure session/projection work without a mounted document. The code-dense
+fixture measures mounting 64 persistent code surfaces. Wider non-strict ceilings are available
+for investigation; neither configuration establishes the first-viewport or native-input targets
+above without the corresponding runtime evidence.
 
 ## Change acceptance
 
 A rich Markdown change is reviewable only when every applicable matrix row has current evidence,
-the branch is based on current owned main, the worktree is clean, and the exact candidate has been
+the candidate relationship to current owned main is understood, and the exact candidate has been
 qualified in an isolated Scient development app. Passing narrow unit tests, completing a visual
 shell, or demonstrating plain-text editing is not product acceptance.
+
+## Search, spelling, and evidence boundaries
+
+Rendered **Find & Replace** searches projected inline text, including table-cell prose, with
+case and whole-word options. [`search.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/search.ts)
+explicitly skips nested `code_block` nodes, and atom attributes such as TeX, image metadata,
+citation fields and raw source are not a full-source search domain. Source view is the appropriate
+surface for finding exact syntax. Shared `ScientFindBar` chrome does not give every editor the
+same search scope.
+
+Spelling uses the host's editable-text facilities. Desktop's
+[`spelling`](../../apps/desktop/src/scient/spelling/) integration enables macOS automatic language
+identification, or selects available Windows/Linux dictionaries from system languages and local
+text samples. First-use dictionaries may download. Technical fields can opt out; raw source and
+citation fields do so. Native suggestions come through
+[`DesktopWindow.ts`](../../apps/desktop/src/window/DesktopWindow.ts). These facilities do not
+rewrite source until the user accepts a correction, and do not promise grammar checking or
+identical browser/native behavior.
+
+The following are source-backed coverage pointers, not executed results for this documentation
+change. Remaining scenarios must not be inferred from test filenames or a previous green run.
+
+| Behavior                                            | Implementation and maintained coverage                                                                                                                                                                                                                                                                                                                                                  | Qualification boundary                                                                                                                                                                  |
+| --------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Exact reuse, changed-block validation, raw fallback | [`projection.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/projection.ts), [`projection.test.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/projection.test.ts), [`roundTrip.test.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/roundTrip.test.ts)                                                                                                   | The October issue audit reproduced neighboring duplicate lists merging with the actual parser; that run is historical; ordinary block checks are not a whole-document equivalence proof |
+| Refusal, correction, undo and remount               | [`session.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/session.ts), [`ScientMarkdownWorkspaceSurface.browser.test.tsx`](../../apps/web/src/scient/markdownEditor/ScientMarkdownWorkspaceSurface.browser.test.tsx)                                                                                                                                                          | Pending rich input is memory-only; copy recovery data before restart                                                                                                                    |
+| External source and history                         | [`externalProjection.test.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/externalProjection.test.ts), [`MarkdownSourceSurface.browser.test.tsx`](../../apps/web/src/scient/markdownEditor/persistence/MarkdownSourceSurface.browser.test.tsx)                                                                                                                                | Incremental updates can preserve history; full replacements and switching editor surfaces have different history lifetimes                                                              |
+| Nested math/reference input                         | [`mathNodeView.tsx`](../../apps/web/src/scient/markdownEditor/nodes/mathNodeView.tsx), [`mathNodeView.browser.test.ts`](../../apps/web/src/scient/markdownEditor/nodes/mathNodeView.browser.test.ts), [`referenceNodeView.browser.test.ts`](../../apps/web/src/scient/markdownEditor/nodes/referenceNodeView.browser.test.ts)                                                           | Focused fields keep native text during node refresh and later replace current node attributes; the outside-update/continued-typing flow remains unqualified                             |
+| Upload and structural insertion                     | [`view.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/view.ts), [`images.test.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/images.test.ts), [`commands.test.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/commands.test.ts)                                                                                                                         | The October model probes replaced YAML/math/raw atoms through the insertion transaction; the mounted successful-upload path remains unqualified                                         |
+| IME, nested keys and direction                      | [`view.keyboard.browser.test.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/view.keyboard.browser.test.ts), [`directionPresentation.browser.test.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/directionPresentation.browser.test.ts), [`tableNavigation.browser.test.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/tableNavigation.browser.test.ts) | Synthetic DOM composition and selection tests do not establish native IME, screen-reader or every mixed-script caret path                                                               |
+| Find                                                | [`search.test.ts`](../../apps/web/src/scient/markdownEditor/prosemirror/search.test.ts)                                                                                                                                                                                                                                                                                                 | Rich text scope, not hidden/nested source                                                                                                                                               |
+| Spelling                                            | [`preloadSampler.test.ts`](../../apps/desktop/src/scient/spelling/preloadSampler.test.ts), [`spellingLanguages.test.ts`](../../apps/desktop/src/scient/spelling/spellingLanguages.test.ts)                                                                                                                                                                                              | Dictionary selection/sample tests do not prove OS suggestions on each platform                                                                                                          |
+
+The rich editor, read-only `ChatMarkdown` preview, source ledger/resource inspection, PDF page,
+and Pandoc Word conversion use distinct parser configurations. Front matter, case-sensitive fence
+aliases, math/image parsing, and raw HTML are explicit parity risks. Shared renderers do not
+establish shared grammar. Export qualifications belong to
+[document PDF export](./scient-document-pdf-export.md) and its linked conversion owners.
