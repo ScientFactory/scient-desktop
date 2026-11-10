@@ -21,6 +21,7 @@ import { zoteroKeyLookup } from "./ZoteroAccountKey.ts";
 import {
   advanceSourceImport,
   beginLocalPdfImport,
+  bulkUpdateSources,
   beginZoteroImport,
   beginZoteroScopedImport,
   cancelSourceImport,
@@ -32,6 +33,7 @@ import {
   inspectZoteroConnection,
   listZoteroCollections,
   listZoteroLibrary,
+  organizeSources,
   preflightZoteroImport,
   refreshScientSourceMetadata,
   deleteSourcesPermanently,
@@ -178,6 +180,16 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("remove", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             removeSource(args.payload),
+          ),
+        )
+        .handle("organize", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            organizeSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("bulkUpdate", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            bulkUpdateSources({ ...args.payload, actor: "user" }),
           ),
         )
         .handle("addByIdentifier", (args) =>

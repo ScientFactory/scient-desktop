@@ -2128,3 +2128,13 @@ export function sourceAttachmentAbsolutePath(
   }
   return resolved;
 }
+
+/** For sibling project-store modules (collections, reviews) that share this store's safety rules. */
+export const scientSourceStoreInternals = {
+  sourceStorePaths,
+  snapshot,
+  readBoundedJson,
+  atomicWriteJson,
+  withOperationLock,
+  assertSafeIdentifier,
+};
