@@ -15,7 +15,9 @@ import {
 } from "../../auth/http.ts";
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
+import { searchSourceFullText } from "./SourceFullText.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
+import { zoteroKeyLookup } from "./ZoteroAccountKey.ts";
 import {
   advanceSourceImport,
   beginLocalPdfImport,
@@ -75,6 +77,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const observeImport = yield* makeSourceImportAnalytics("user");
     startManagedBibliographySync();
+    const zotero = { webKey: yield* zoteroKeyLookup({ actor: "user" }) };
     return yield* Effect.succeed(
       handlers
         .handle("overview", (args) =>
@@ -110,8 +113,20 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),
             );
-            return asset;
+            const { sha256, byteLength } = material.attachment;
+            return /^[0-9a-f]{64}$/u.test(sha256) && byteLength >= 1
+              ? { ...asset, material: { sha256, byteLength } }
+              : asset;
           }),
+        )
+        .handle("fullTextSearch", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            searchSourceFullText({
+              root: args.payload.root,
+              query: args.payload.query,
+              limit: args.payload.limit ?? 20,
+            }),
+          ),
         )
         .handle("journalIcon", (args) =>
           Effect.gen(function* () {
@@ -190,19 +205,23 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("zoteroStatus", (args) =>
-          handle(args.endpoint.name, AuthOrchestrationReadScope, () => inspectZoteroConnection()),
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            inspectZoteroConnection({ ...args.payload, zotero }),
+          ),
         )
         .handle("zoteroLibrary", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
-            listZoteroLibrary(args.payload),
+            listZoteroLibrary({ ...args.payload, zotero }),
           ),
         )
         .handle("zoteroCollections", (args) =>
-          handle(args.endpoint.name, AuthOrchestrationReadScope, () => listZoteroCollections()),
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listZoteroCollections({ ...args.payload, zotero }),
+          ),
         )
         .handle("preflight", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
-            preflightZoteroImport(args.payload),
+            preflightZoteroImport({ ...args.payload, zotero }),
           ),
         )
         .handle("localPdfUpload", (args) =>
@@ -231,12 +250,12 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         )
         .handle("beginScopedImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            beginZoteroScopedImport(args.payload),
+            beginZoteroScopedImport({ ...args.payload, zotero }),
           ),
         )
         .handle("advanceImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            advanceSourceImport(args.payload, observeImport),
+            advanceSourceImport({ ...args.payload, zotero }, observeImport),
           ),
         )
         .handle("cancelImport", (args) =>

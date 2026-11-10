@@ -281,6 +281,7 @@ export const ScientSourceCandidate = Schema.Struct({
   pdfAvailable: Schema.Boolean,
   pdfFileName: NullableText,
   pdfAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  note: Schema.optionalKey(ScientSourceNote),
 });
 export type ScientSourceCandidate = typeof ScientSourceCandidate.Type;
 
@@ -443,7 +444,7 @@ export const ScientSourceImportOperation = Schema.Struct({
   formatVersion: Schema.Literal(1),
   operationId: NonEmptyString,
   projectId: NonEmptyString,
-  adapter: Schema.Literals(["zotero", "local-files", "agent"]),
+  adapter: Schema.Literals(["zotero", "local-files", "agent", "zotero-web"]),
   actor: Schema.Literals(["user", "agent"]),
   intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
   state: Schema.Literals(["running", "cancelled", "completed"]),
@@ -491,10 +492,17 @@ export const ZoteroConnectionState = Schema.Literals([
 ]);
 export type ZoteroConnectionState = typeof ZoteroConnectionState.Type;
 
+/** Zotero on this computer (local API) or the user's library on zotero.org (key from Accounts). */
+export const ZoteroConnection = Schema.Literals(["local", "web"]);
+export type ZoteroConnection = typeof ZoteroConnection.Type;
+
 export const ZoteroConnectionStatus = Schema.Struct({
   state: ZoteroConnectionState,
   apiVersion: Schema.NullOr(Schema.Int),
   message: NonEmptyString,
+  // Absent on statuses from before zotero.org support, which were always local.
+  connection: Schema.optionalKey(ZoteroConnection),
+  canWrite: Schema.optionalKey(Schema.Boolean),
 });
 export type ZoteroConnectionStatus = typeof ZoteroConnectionStatus.Type;
 
