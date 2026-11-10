@@ -164,7 +164,7 @@ const browserSession = metadata(
   Tool.make("scient_account_browser_session", {
     ...common,
     description:
-      "Export one site's browser cookies to private Netscape and JSON session files for curl or requests. Choose a profile or website account; requires the profile's script sign-ins permission.",
+      "Export one site's browser cookies to private Netscape and JSON session files for curl or requests. Pass exactly one of accountId (a website account) or profileId; requires the profile's script sign-ins permission.",
     parameters: Schema.Struct({
       accountId: Schema.optional(AccountId),
       profileId: Schema.optional(BrowserProfileId),
@@ -213,7 +213,7 @@ const add = metadata(
       SecretRequests,
     ],
     description:
-      "Ask the user to add an account in a private card here, and wait. api-key: they paste a key. website or university: they sign in on its own page in the card, and Scient keeps it. You only get the account's name and how to use it. A matching account is returned instead, or reported as turned off.",
+      "Ask the user to add an account in a private card, and wait. api-key: a key or token they paste, even one you pass on. website or university: they sign in on its own page. Scient keeps it; you get only its name and how to use it. A matching account is returned instead, or reported as turned off.",
     parameters: Schema.Struct({
       kind: Schema.optional(Schema.Literals(["api-key", "website", "university"])).annotate({
         description: "api-key (default), website, or university.",
@@ -320,7 +320,7 @@ const paperGet = metadata(
     failure: AccountsError,
     dependencies: paperDependencies,
     description:
-      "The first step for any paper: get its PDF by DOI or link and save it in the project, from a free legal copy or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
+      "The first step to fetch any paper's PDF: give its DOI or link (for a title, find one first), and Scient saves it in the project from a free legal copy or the user's university access in the browser. Returns its path, or why it can't arrive yet. For more than a few papers use scient_papers_queue.",
     parameters: Schema.Struct({
       doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
       url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
@@ -356,7 +356,7 @@ const paperQueue = metadata(
     failure: AccountsError,
     dependencies: paperDependencies,
     description:
-      "Queue any number of papers by DOI or link and keep working. Scient fetches them in the background into the project's papers folder, one at a time per publisher, and they continue after this turn. If a sign-in is needed Scient asks the user once and every paper waiting continues. Read results with scient_papers_status.",
+      "Queue any number of papers, each by DOI or link, and keep working. Scient fetches them in the background into the project's papers folder, one at a time per publisher, and they continue after this turn. If a sign-in is needed Scient asks the user once and every paper waiting continues. Read results with scient_papers_status.",
     parameters: Schema.Struct({
       papers: Schema.Array(
         Schema.Struct({ doi: PaperAsked.fields.doi, url: PaperAsked.fields.url }),

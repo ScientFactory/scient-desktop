@@ -4,9 +4,13 @@ import {
   toSkillReleaseSummary,
   type SkillRelease,
 } from "@scientfactory/scient-skills";
+import type { ScientSkillManagementError } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
+import * as PersonalSkills from "../../../scient/skills/PersonalSkills.ts";
+import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
 import { ScientSkillToolError, ScientSkillsToolkit, type ScientSkillListInput } from "./tools.ts";
 
 const compareStrings = (left: string, right: string): number =>
@@ -190,10 +194,78 @@ export const readScientSkillResourceForInvocation = Effect.fn("ScientSkillsToolk
   },
 );
 
-const handlers = {
-  scient_skills_list: listScientSkillsForInvocation,
-  scient_skill_load: loadScientSkillForInvocation,
-  scient_skill_read_resource: readScientSkillResourceForInvocation,
-} satisfies Parameters<typeof ScientSkillsToolkit.toLayer>[0];
+const personalError = (error: ScientSkillManagementError) =>
+  toolError(error.operation === "read" ? "not-found" : "invalid-skill", error.message);
 
-export const ScientSkillsToolkitHandlersLive = ScientSkillsToolkit.toLayer(handlers);
+/** Save the user's own skill; it reaches agents from the next message, like any skill change. */
+const savePersonalSkillForInvocation = Effect.fn("ScientSkillsToolkit.savePersonal")(function* (
+  personal: PersonalSkills.PersonalSkillsShape,
+  input: {
+    readonly name: string;
+    readonly files: ReadonlyArray<{ readonly path: string; readonly content: string }>;
+  },
+) {
+  const paths = new Set<string>();
+  for (const file of input.files) {
+    if (paths.has(file.path))
+      return yield* toolError("invalid-skill", `${file.path} is listed twice.`);
+    paths.add(file.path);
+  }
+  const saved = yield* personal
+    .save({
+      name: input.name,
+      files: Object.fromEntries(input.files.map((file) => [file.path, file.content])),
+    })
+    .pipe(Effect.mapError(personalError));
+  const status = saved.created ? ("created" as const) : ("updated" as const);
+  return {
+    name: input.name,
+    status,
+    active: saved.active,
+    message: saved.withheld
+      ? `Saved ${input.name}, but it is withheld: ${saved.withheld}`
+      : saved.created
+        ? `Saved ${input.name}. It is on for every agent from the user's next message. They can turn it off or undo this from its row in Settings → Extensions → Skills.`
+        : `Updated ${input.name}; the earlier version is kept. ${saved.active ? "It stays on." : "It stays off, as the user set it."} The user can undo this from its row in Settings → Extensions → Skills.`,
+  };
+});
+
+const readPersonalSkillForInvocation = Effect.fn("ScientSkillsToolkit.readPersonal")(function* (
+  personal: PersonalSkills.PersonalSkillsShape,
+  input: { readonly name: string },
+) {
+  const files = yield* personal.read(input.name).pipe(Effect.mapError(personalError));
+  return { name: input.name, files: [...files] };
+});
+
+/**
+ * Which skill an agent loaded: the name of one built into Scient, otherwise only where it came
+ * from, since the user's, a project's and a plugin's skill names are theirs.
+ */
+export const loadedSkillFacts = (release: Pick<SkillRelease, "name" | "origin">) =>
+  release.origin === "scient"
+    ? { feature: "skills.load", variant: "scient", skill: release.name }
+    : { feature: "skills.load", variant: release.origin.split(":", 1)[0] ?? "other" };
+
+export const ScientSkillsToolkitHandlersLive = ScientSkillsToolkit.toLayer(
+  Effect.gen(function* () {
+    const personal = yield* PersonalSkills.PersonalSkills;
+    const analytics = Option.getOrUndefined(yield* Effect.serviceOption(AnalyticsService));
+    return {
+      scient_skills_list: listScientSkillsForInvocation,
+      scient_skill_load: (input) =>
+        loadScientSkillForInvocation(input).pipe(
+          Effect.tap((loaded) =>
+            analytics === undefined
+              ? Effect.void
+              : analytics
+                  .record("feature.used", loadedSkillFacts(loaded.skill))
+                  .pipe(Effect.ignoreCause()),
+          ),
+        ),
+      scient_skill_read_resource: readScientSkillResourceForInvocation,
+      scient_skill_save: (input) => savePersonalSkillForInvocation(personal, input),
+      scient_skill_read: (input) => readPersonalSkillForInvocation(personal, input),
+    } satisfies Parameters<typeof ScientSkillsToolkit.toLayer>[0];
+  }),
+);

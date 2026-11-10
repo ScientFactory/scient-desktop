@@ -21,7 +21,9 @@ import {
   signedOutOfGoogle,
   sitesToKeep,
   activityLine,
-  keysInUse,
+  apiKeyRows,
+  onlyIn,
+  keptAgentKeys,
   agentMayUse,
   libraryLinkTemplate,
   githubIdentities,
@@ -36,6 +38,7 @@ import {
   accountManagePage,
   capturedSignInInput,
   automaticSignIn,
+  fillChoice,
   writableOnePasswordVaults,
   profilePresentation,
   importProfileName,
@@ -50,6 +53,7 @@ import {
   changedSourceProfile,
   toggleScope,
 } from "./accountsView";
+import { keptAgentOf } from "@t3tools/contracts";
 import { siteMatchesUrl } from "@t3tools/shared/scientSiteMatch";
 
 function website(profileId?: string): AccountSummary {
@@ -343,12 +347,57 @@ it("ranks exact-origin sign-ins before recent domain matches and refuses repeate
     userEdited: false,
     hasPassword: true,
     hasValues: false,
+    boxes: [],
   };
   expect(automaticSignIn(form)).toBe(true);
   expect(automaticSignIn({ ...form, userEdited: true })).toBe(false);
   expect(automaticSignIn({ ...form, hasValues: true })).toBe(false);
   expect(automaticSignIn({ ...form, profileId: "incognito" })).toBe(false);
   expect(automaticSignIn({ ...form, url: "http://example.com" })).toBe(false);
+});
+
+it("fills each login box with a saved username that fits it", () => {
+  const signIn = (username: string) => ({
+    details: { kind: "website" as const, sites: ["idp.example.edu"], username },
+    secrets: {},
+  });
+  const id = signIn("123456789");
+  const email = signIn("person@example.edu");
+  const emailBox = { email: true, minLength: -1, maxLength: -1, pattern: "" };
+  const idBox = { email: false, minLength: 9, maxLength: 9, pattern: "" };
+  const textBox = { email: false, minLength: -1, maxLength: -1, pattern: "" };
+  // An ID beside an email: both, whichever row comes first.
+  expect(fillChoice([id, email], [emailBox, idBox])).toEqual({
+    account: email,
+    otherUsername: "123456789",
+  });
+  // Only IDs saved: the ID goes to its box, the email box stays empty.
+  expect(fillChoice([id], [emailBox, idBox])).toEqual({ account: id, otherUsername: undefined });
+  // A box for a 9-digit ID takes the ID row even when an email row comes first.
+  expect(fillChoice([email, id], [{ ...textBox, pattern: "[0-9]{9}" }]).account).toBe(id);
+  expect(fillChoice([email, id], [textBox]).account).toBe(email);
+});
+
+it("fills the newest saved password of the username, and never one the site refused", () => {
+  const row = (changedAt?: string, signIn?: AccountSummary["signIn"]) => ({
+    details: { kind: "website" as const, sites: ["idp.example.edu"], username: "a@example.edu" },
+    secrets: {
+      password: {
+        source: { type: "scient" as const },
+        ...(changedAt ? { changedAt } : {}),
+      },
+    },
+    ...(signIn ? { signIn } : {}),
+  });
+  const box = [{ email: true, minLength: -1, maxLength: -1, pattern: "" }];
+  const older = row("2023-01-01T00:00:00.000Z");
+  const newer = row("2025-01-01T00:00:00.000Z");
+  expect(fillChoice([older, newer], box).account).toBe(newer);
+  // Imported before dates were kept: the one that last worked, never a refused one.
+  const worked = row(undefined, { state: "signed-in", at: "2025-02-01T00:00:00.000Z" });
+  const refused = row(undefined, { state: "password-rejected", at: "2025-03-01T00:00:00.000Z" });
+  expect(fillChoice([row(), refused, worked], box).account).toBe(worked);
+  expect(fillChoice([refused], box).account).toBeUndefined();
 });
 
 it("offers connected vaults until a write rejection marks one read-only", () => {
@@ -539,10 +588,24 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
     previous = new Map() as Parameters<typeof providerManagedAccounts>[2],
     inventory = providers,
   ) => providerManagedAccounts(providers, inventory, previous);
+  const droid = {
+    ...base,
+    instanceId: ProviderInstanceId.make("synthetic-droid"),
+    driver: ProviderDriverKind.make("droid"),
+    mcpServers: [
+      { name: "Linear", status: "connected" as const, signedIn: true },
+      { name: "Local tools", status: "connected" as const },
+      { name: "Notion", status: "needs-auth" as const },
+    ],
+  };
   const first = rows([base, codex]);
   expect(first.rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
     ["codex", "Connected app", codex.instanceId],
     ["claude", "Signed in", base.instanceId],
+  ]);
+  // Droid's own word that it holds the sign-in; a local server or one asking to sign in is not.
+  expect(rows([droid]).rows.map((row) => [row.kind, row.name, row.instanceId])).toEqual([
+    ["droid", "Linear", droid.instanceId],
   ]);
   expect(
     rows([
@@ -575,6 +638,34 @@ it("lists only signed-in provider connections, deduplicating apps across plugins
   expect(rows([restarting("needs-auth"), codex], first.next).rows.map((row) => row.kind)).toEqual([
     "codex",
   ]);
+});
+
+it("shows a connector once when agents signed in to one account both report it", () => {
+  const claude = (id: string, email?: string): ServerProvider => ({
+    instanceId: ProviderInstanceId.make(id),
+    driver: ProviderDriverKind.make("claudeAgent"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+    auth: email ? { status: "authenticated", email } : { status: "authenticated" },
+    checkedAt: "2026-10-27T00:00:00.000Z",
+    version: null,
+    models: [],
+    slashCommands: [],
+    skills: [],
+    mcpServers: [{ name: "claude.ai Claude Docs", status: "connected", scope: "claudeai" }],
+  });
+  const names = (providers: ReadonlyArray<ServerProvider>) =>
+    providerManagedAccounts(providers, providers, new Map()).rows.map((row) => row.name);
+  expect(names([claude("claude", "a@example.com"), claude("work", "a@example.com")])).toEqual([
+    "Claude Docs",
+  ]);
+  expect(names([claude("claude", "a@example.com"), claude("work", "b@example.com")])).toEqual([
+    "Claude Docs",
+    "Claude Docs",
+  ]);
+  // No account reported: nothing says they are one connection.
+  expect(names([claude("claude"), claude("work")])).toEqual(["Claude Docs", "Claude Docs"]);
 });
 
 it("keeps provider rows only under the connection and permission that read them", () => {
@@ -742,31 +833,78 @@ describe("account status", () => {
   });
 });
 
-describe("keys used by Scient", () => {
-  it("lists secret variables by name, one row per name, and never ordinary settings", () => {
-    const keys = keysInUse(
+describe("API keys", () => {
+  const key = (id: string, name: string, token: AccountSummary["secrets"][string]["source"]) =>
+    ({
+      accountId: AccountId.make(id),
+      name,
+      details: { kind: "api-key", sites: [], auth: { type: "bearer" }, envName: "OPENAI_API_KEY" },
+      secrets: { token: { source: token } },
+    }) as never as AccountSummary;
+  const rows = apiKeyRows({
+    accounts: [
+      key("acc_openai01", "OpenAI", { type: "scient" }),
+      key("acc_groq0001", "Groq", { type: "custom-model", connectionId: "groq" }),
       {
-        codex: {
-          driver: "codex",
-          environment: [
-            { name: "OPENAI_API_KEY", sensitive: true },
-            { name: "CODEX_HOME", sensitive: false },
-          ],
-        },
-        work: {
-          driver: "omp",
-          displayName: "Work",
-          environment: [{ name: "OPENAI_API_KEY", sensitive: true }],
-        },
+        accountId: AccountId.make("acc_site0001"),
+        details: { kind: "website", sites: [] },
+      } as never,
+    ],
+    keyLinks: [
+      {
+        accountId: AccountId.make("acc_openai01"),
+        instanceId: "codex",
+        variable: "OPENAI_API_KEY",
       },
-      [{ name: "Groq" }],
-      () => "Codex",
-    );
-    expect(keys.map((key) => [key.name, key.usedBy])).toEqual([
-      ["OPENAI_API_KEY", ["Codex", "Work"]],
-      ["Groq", ["Custom models"]],
+      { accountId: AccountId.make("acc_gone0001"), instanceId: "work", variable: "HF_TOKEN" },
+    ],
+    instances: {
+      codex: {
+        driver: "codex",
+        environment: [
+          { name: "OPENAI_API_KEY", sensitive: true },
+          { name: "CODEX_HOME", sensitive: false },
+        ],
+      },
+      work: {
+        driver: "omp",
+        displayName: "Work",
+        environment: [
+          { name: "HF_TOKEN", sensitive: true },
+          { name: "OPENAI_API_KEY", sensitive: true },
+        ],
+      },
+    },
+    customModelKeys: [
+      { connectionId: "groq", name: "Groq" },
+      { connectionId: "local", name: "Local", origin: "https://models.example" },
+    ],
+    plainKeys: [
+      { file: "/p/.env", name: "WANDB_API_KEY", kept: false },
+      { file: "/home/.zshrc", name: "WANDB_API_KEY", kept: false },
+      { file: "/p/.env", name: "OPENAI_API_KEY", kept: true },
+    ],
+    driverName: () => "Codex",
+  });
+
+  it("shows each key once, with what uses it, and where a key not kept here lives", () => {
+    expect(rows.map((row) => [row.name, row.uses.map((use) => use.label), onlyIn(row)])).toEqual([
+      // Custom models keep their keys in Accounts' sealed store: kept, even without an account.
+      ["Groq", ["Custom models"], undefined],
+      ["Local", ["Custom models"], undefined],
+      ["OpenAI", ["Codex"], undefined],
+      // Its account was removed, so the variable's last key is only in the agent.
+      ["HF_TOKEN", ["Work"], "Only in Work settings"],
+      // Linked by agent and variable: Work's variable of the same name is its own key.
+      ["OPENAI_API_KEY", ["Work"], "Only in Work settings"],
+      // Each file's copy is its own row (their values may differ); one already in Accounts has none.
+      ["WANDB_API_KEY", [], "Only in /p/.env"],
+      ["WANDB_API_KEY", [], "Only in /home/.zshrc"],
     ]);
-    expect(keys[0]?.variables).toHaveLength(2);
+    expect(rows.find((row) => row.name === "OpenAI")?.uses[0]?.link).toEqual({
+      instanceId: "codex",
+      variable: "OPENAI_API_KEY",
+    });
   });
 });
 
@@ -912,4 +1050,27 @@ describe("renamedSourceLabel", () => {
       "Microsoft Edge · Profile 1",
     );
   });
+});
+
+it("offers back the latest key kept for each setting of this kind of agent", () => {
+  const kept = (id: string, agent: string, setting: string, createdAt: string): AccountSummary => ({
+    ...website(),
+    accountId: AccountId.make(`acc_kept_${id}`),
+    details: { kind: "api-key", sites: [], auth: { type: "bearer" }, keptFrom: { agent, setting } },
+    createdAt,
+  });
+  const gemini = keptAgentOf({ driver: "acpRegistry", config: { agentId: "gemini" } });
+  const older = kept("older01", gemini, "GEMINI_API_KEY", "2026-01-01T00:00:00.000Z");
+  const newer = kept("newer01", gemini, "GEMINI_API_KEY", "2026-02-01T00:00:00.000Z");
+  const field = kept("field01", gemini, "config.apiKey", "2026-01-01T00:00:00.000Z");
+  const otherAgent = kept(
+    "other01",
+    "acpRegistry:qwen",
+    "GEMINI_API_KEY",
+    "2026-03-01T00:00:00.000Z",
+  );
+  expect(keptAgentKeys([newer, otherAgent, older, field, website()], gemini)).toEqual([
+    newer,
+    field,
+  ]);
 });

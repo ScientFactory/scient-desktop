@@ -7,7 +7,12 @@ import * as NodeTimersPromises from "node:timers/promises";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { downloadManagedRuntime, verifyManagedRuntimeChecksum } from "./runtimeFiles.ts";
+import {
+  downloadManagedRuntime,
+  ManagedRuntimeFileError,
+  managedRuntimeFailureClass,
+  verifyManagedRuntimeChecksum,
+} from "./runtimeFiles.ts";
 
 vi.mock("node:timers/promises", { spy: true });
 // The retry backoff resolves at once but still honours cancellation; the
@@ -384,5 +389,73 @@ describe("downloads with Scient's own copy first", () => {
       request.fallbackUrl,
     ]);
     await expect(NodeFSP.stat(request.destination)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+});
+
+describe("managed runtime failure classes", () => {
+  const failureOf = (promise: Promise<unknown>) =>
+    promise.then(
+      () => expect.unreachable("the download should fail"),
+      (cause: unknown) => cause,
+    );
+  const fetchFailure = (code: string) =>
+    new TypeError("fetch failed", { cause: Object.assign(new Error("private detail"), { code }) });
+
+  it.each([
+    ["a server error on every try", () => new Response("busy", { status: 504 }), "http_5xx"],
+    ["a missing file", () => new Response("missing", { status: 404 }), "http_4xx"],
+    [
+      "a wrong size",
+      () => new Response("toolong", { headers: { "content-length": "7" } }),
+      "size_mismatch",
+    ],
+    [
+      "a dropped connection on every try",
+      () => Promise.reject(fetchFailure("ECONNRESET")),
+      "network",
+    ],
+    [
+      "an intercepted certificate",
+      () => Promise.reject(fetchFailure("SELF_SIGNED_CERT_IN_CHAIN")),
+      "certificate",
+    ],
+  ])("classifies %s", async (_case, response, failureClass) => {
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(response));
+    expect(managedRuntimeFailureClass(await failureOf(downloadManagedRuntime(await input())))).toBe(
+      failureClass,
+    );
+  });
+
+  it("classifies a damaged download, cancellation and local disk errors without reading messages", async () => {
+    const request = await input();
+    await NodeFSP.writeFile(request.destination, "ko");
+    const damaged = await failureOf(
+      verifyManagedRuntimeChecksum(request.destination, {
+        algorithm: "sha256",
+        digest: "0".repeat(64),
+      }),
+    );
+    expect(managedRuntimeFailureClass(damaged)).toBe("checksum");
+
+    const controller = new AbortController();
+    controller.abort();
+    vi.stubGlobal("fetch", vi.fn());
+    expect(
+      managedRuntimeFailureClass(
+        await failureOf(downloadManagedRuntime(await input(controller.signal))),
+      ),
+    ).toBe("cancelled");
+    expect(
+      managedRuntimeFailureClass(new DOMException("The operation timed out.", "TimeoutError")),
+    ).toBe("timeout");
+
+    const wrapped = (code: string) =>
+      new Error("Scient could not install it.", { cause: Object.assign(new Error("x"), { code }) });
+    expect(managedRuntimeFailureClass(wrapped("ENOSPC"))).toBe("disk_full");
+    expect(managedRuntimeFailureClass(wrapped("EACCES"))).toBe("permission");
+    expect(
+      managedRuntimeFailureClass(new ManagedRuntimeFileError("Unsafe archive path"), "installing"),
+    ).toBe("extract");
+    expect(managedRuntimeFailureClass(new Error("anything"), "downloading")).toBe("other");
   });
 });

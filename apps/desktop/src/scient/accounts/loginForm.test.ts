@@ -103,6 +103,39 @@ it("captures trusted submit controls and Enter once, after guest permission and 
   expect(captured).toHaveLength(4);
 });
 
+it("reads a box's visible label and title, so a masked code box gets no password and no save", () => {
+  document.body.innerHTML =
+    '<form><label for="code">Temporary code</label><input id="code" name="code" type="password"><button type="submit">Enter</button></form>' +
+    '<form hidden><input name="username"><input type="password" name="o_password" title="OTP code"></form>';
+  const [code, , otpBox] = [...document.querySelectorAll("input")] as HTMLInputElement[];
+  using _rect = vi.spyOn(code!, "getClientRects").mockReturnValue({ length: 1 } as DOMRectList);
+  using _page = { [Symbol.dispose]: () => document.body.replaceChildren() };
+  const captured: unknown[] = [];
+  using _capture = {
+    [Symbol.dispose]: installSignInCapture(
+      () => true,
+      (value) => captured.push(value),
+    ),
+  };
+  const secret = NodeCrypto.randomUUID();
+  expect(window.eval(loginFillScript({ password: secret }, location.origin))).toBe(false);
+  expect(code!.value).toBe("");
+  // A code the user typed is not a sign-in to save.
+  code!.value = String(NodeCrypto.randomInt(100_000, 999_999));
+  const submit = new Event("submit", { bubbles: true });
+  Object.defineProperty(submit, "isTrusted", { value: true });
+  document.querySelector("form")!.dispatchEvent(submit);
+  expect(captured).toEqual([]);
+  // HUJI's OTP tab: o_password titled "OTP code" takes only a code.
+  document.querySelector("form")!.toggleAttribute("hidden", true);
+  document.querySelectorAll("form")[1]!.toggleAttribute("hidden", false);
+  using _otpRect = vi
+    .spyOn(otpBox!, "getClientRects")
+    .mockReturnValue({ length: 1 } as DOMRectList);
+  expect(window.eval(loginFillScript({ password: secret }, location.origin))).toBe(false);
+  expect(otpBox!.value).toBe("");
+});
+
 it("never takes a code field masked as a password for the password", () => {
   document.body.innerHTML =
     '<form><input type="password" autocomplete="one-time-code"><button type="submit">Go</button></form>';
@@ -123,7 +156,7 @@ it("never takes a code field masked as a password for the password", () => {
   document.body.replaceChildren();
 });
 
-it("automatically fills one untouched document only and rejects typed values or a stale same-origin page", () => {
+it("automatically fills each box once, never a typed one, and rejects a stale same-origin page", () => {
   using f = fixture();
   using _detection = {
     [Symbol.dispose]: installLoginFormDetection(
@@ -144,11 +177,89 @@ it("automatically fills one untouched document only and rejects typed values or 
   Object.defineProperty(edited, "isTrusted", { value: true });
   f.inputs[0]!.dispatchEvent(edited);
   expect(window.eval(loginFillScript(values, location.origin, options))).toBe(false);
-  state.userEdited = false;
+  state.edited.delete(f.inputs[0]!);
   expect(window.eval(loginFillScript(values, location.origin, options))).toBe(true);
   f.inputs[1]!.value = "";
   expect(window.eval(loginFillScript(values, location.origin, options))).toBe(false);
   expect(window.eval(loginFillScript(values, location.origin))).toBe(true);
+});
+
+it("puts an ID and an email each in its own box, and fills a login tab when it shows", async () => {
+  document.body.innerHTML =
+    '<form id="code"><input name="tz9" minlength="9" maxlength="9"><input type="email" name="email"></form>' +
+    '<form id="password" hidden><input name="username"><input type="password" name="password"></form>';
+  const inputs = [...document.querySelectorAll("input")];
+  const stack = new DisposableStack();
+  for (const input of inputs)
+    stack.use(vi.spyOn(input, "getClientRects").mockReturnValue({ length: 1 } as DOMRectList));
+  using _rects = stack;
+  using _page = { [Symbol.dispose]: () => document.body.replaceChildren() };
+  const [tz9, email, username, password] = inputs as [
+    HTMLInputElement,
+    HTMLInputElement,
+    HTMLInputElement,
+    HTMLInputElement,
+  ];
+  const reports: Array<{ readonly fields: string; readonly boxes: ReadonlyArray<object> }> = [];
+  using _detection = {
+    [Symbol.dispose]: installLoginFormDetection(
+      () => true,
+      (form) => reports.push(form),
+    ),
+  };
+  const id = String(NodeCrypto.randomInt(100_000_000, 999_999_999));
+  const address = `${NodeCrypto.randomBytes(4).toString("hex")}@example.test`;
+  expect(reports).toHaveLength(1);
+  expect(reports[0]!.boxes).toEqual([
+    { email: true, minLength: -1, maxLength: -1, pattern: "" },
+    { email: false, minLength: 9, maxLength: 9, pattern: "" },
+  ]);
+  // An ID never goes into the email box.
+  expect(window.eval(loginFillScript({ username: id }, location.origin))).toBe(true);
+  expect([tz9.value, email.value]).toEqual([id, ""]);
+  tz9.value = "";
+  const options = { documentId: loginDocumentState()!.documentId, automatic: true };
+  expect(
+    window.eval(
+      loginFillScript({ username: address, otherUsername: id }, location.origin, options),
+    ),
+  ).toBe(true);
+  expect([tz9.value, email.value]).toEqual([id, address]);
+  // The password tab shows without a new page: a new report, and its boxes fill.
+  document.querySelector("#code")!.toggleAttribute("hidden", true);
+  document.querySelector("#password")!.toggleAttribute("hidden", false);
+  await vi.waitFor(() => expect(reports).toHaveLength(2));
+  const secret = NodeCrypto.randomUUID();
+  expect(
+    window.eval(loginFillScript({ username: id, password: secret }, location.origin, options)),
+  ).toBe(true);
+  expect([username.value, password.value]).toEqual([id, secret]);
+  // Clicking into an empty login box asks again; one that was filled does not.
+  const focus = (input: HTMLInputElement) => {
+    const event = new FocusEvent("focusin", { bubbles: true });
+    Object.defineProperty(event, "isTrusted", { value: true });
+    input.dispatchEvent(event);
+  };
+  focus(username);
+  expect(reports).toHaveLength(2);
+  username.value = "";
+  focus(username);
+  expect(reports).toHaveLength(3);
+});
+
+it("never fills a password for another username than the one in the username box", () => {
+  using f = fixture();
+  const [username, password] = f.inputs as [HTMLInputElement, HTMLInputElement];
+  username.value = "someone@example.test";
+  const secret = NodeCrypto.randomUUID();
+  expect(window.eval(loginFillScript({ password: secret }, location.origin))).toBe(false);
+  expect(password.value).toBe("");
+  expect(
+    window.eval(
+      loginFillScript({ username: "someone@example.test", password: secret }, location.origin),
+    ),
+  ).toBe(true);
+  expect(password.value).toBe(secret);
 });
 
 it("submits only a complete sign-in, and only when asked", () => {

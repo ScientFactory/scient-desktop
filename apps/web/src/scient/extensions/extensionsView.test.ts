@@ -104,15 +104,15 @@ it("drops the catalog's access words from a connector once its sign-in works", (
   } satisfies Parameters<typeof connectorFacts>[0];
   const borrowed = { type: "source-control", host: "github.com", account: "octo" } as const;
   expect(connectorFacts(entry, { status: "connected", auth: borrowed })).toEqual([
-    "Official",
-    "Signed in as octo",
+    ["Hosting", "Official"],
+    ["Access", "Signed in as octo"],
   ]);
   expect(
     connectorFacts(entry, { status: "connected", auth: { type: "oauth", usesOwnClient: false } }),
-  ).toEqual(["Official"]);
+  ).toEqual([["Hosting", "Official"]]);
   expect(connectorFacts(entry, { status: "needs-credential", auth: borrowed })).toEqual([
-    "Official",
-    "Account needed",
+    ["Hosting", "Official"],
+    ["Access", "Account needed"],
   ]);
 });
 

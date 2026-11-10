@@ -77,6 +77,28 @@ describe("Scient onboarding storage schemas", () => {
     expect(decodeOnboardingState(encoded)).toEqual(started);
   });
 
+  it("still reads a profile saved before field and role were asked", () => {
+    expect(
+      decodePersonalizationProfile({
+        schemaVersion: 1,
+        workKinds: ["scientific"],
+        fieldOrTopic: "",
+        updatedAt: now,
+      }),
+    ).not.toHaveProperty("field");
+    expect(
+      decodePersonalizationProfile({
+        schemaVersion: 1,
+        workKinds: [],
+        fieldOrTopic: "",
+        updatedAt: now,
+        field: "physics",
+        role: "phd-student",
+        askedAt: now,
+      }),
+    ).toMatchObject({ field: "physics", role: "phd-student" });
+  });
+
   it("rejects unknown preference values instead of silently personalizing from them", () => {
     expect(() =>
       decodePersonalizationProfile({

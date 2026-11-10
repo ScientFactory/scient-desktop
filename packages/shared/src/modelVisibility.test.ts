@@ -21,6 +21,7 @@ const models = [
   "openai-codex/gpt-6-luna",
   "openai-codex/gpt-6-sol",
   "openai-codex/gpt-6.1-sol",
+  "openai-codex/gpt-6.1-terra",
   "google-antigravity/gemini-3-flash",
   "google-antigravity/gemini-3.8-flash",
   "google-antigravity/gemini-3.1-pro",
@@ -92,6 +93,7 @@ describe("curated native agent model visibility", () => {
         "openai-codex/gpt-6-astra",
         "openai-codex/gpt-6-luna",
         "openai-codex/gpt-6.1-sol",
+        "openai-codex/gpt-6.1-terra",
         "google-antigravity/gemini-3.8-flash",
         "google-antigravity/gemini-3.1-pro",
         "google-antigravity/claude-opus-4-6",
@@ -119,7 +121,7 @@ describe("curated native agent model visibility", () => {
     "preserves %s saved visibility and order after a reload",
     (driver) => {
       const saved = {
-        hiddenModels: ["anthropic/claude-opus-5-5"],
+        hiddenModels: ["anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-terra"],
         modelOrder: ["openai-codex/gpt-6-luna"],
       };
       expect(resolveProviderModelPreferences(driver, models, saved)).toBe(saved);

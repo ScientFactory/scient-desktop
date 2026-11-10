@@ -78,6 +78,7 @@ import {
 import { LatexReadingAnchor } from "./latexReadingAnchor";
 import { LatexColumnBreaks } from "./latexColumnBreaks";
 import { LatexPagedPresentation, latexPagedKey, visualPageAt } from "./latexPagedPresentation";
+import { latexBlockNeighbours } from "./latexBlockNeighbours";
 import { LatexFootnotes } from "./latexFootnotes";
 import { latexLayoutLength } from "./latexPageLayouts";
 import { observeResize } from "~/lib/observeResize";
@@ -7183,6 +7184,10 @@ function LatexVisualEditorReady(
     LatexInputPriority,
     LatexPageMarkers,
     LatexPagedPresentation.configure({ source: readSetupSource }),
+    Extension.create({
+      name: "latexBlockNeighbours",
+      addProseMirrorPlugins: () => [latexBlockNeighbours()],
+    }),
     LatexReadingAnchor.configure({ syncLayout: syncZoomLayout }),
     richPreviewExtension,
     Extension.create({

@@ -225,6 +225,7 @@ const failFromSnapshot = (
     outputPath: input.outputPath,
     diagnostics,
     toolchain: providerVisibleToolchain(snapshot.toolchain),
+    ...(snapshot.failureClass === undefined ? {} : { failureClass: snapshot.failureClass }),
   } as const;
   if (snapshot.state === "cancelled") {
     return toolError(

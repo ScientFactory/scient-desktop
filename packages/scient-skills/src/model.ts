@@ -10,6 +10,8 @@ export type SkillInvocationPolicy = "automatic" | "explicit";
 export type SkillOrigin =
   | { readonly kind: "scient" }
   | { readonly kind: "project"; readonly projectId: string }
+  /** Added by the user or by an agent for them: one mutable folder in Scient's skills folder. */
+  | { readonly kind: "personal" }
   | {
       readonly kind: "addon";
       readonly addonId: string;
@@ -77,6 +79,8 @@ export function skillOriginKey(origin: SkillOrigin): string {
       return "scient";
     case "project":
       return `project:${origin.projectId}`;
+    case "personal":
+      return "personal";
     case "addon":
       return `addon:${origin.addonId}@${origin.addonVersion}`;
   }

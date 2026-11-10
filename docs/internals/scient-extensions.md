@@ -45,7 +45,7 @@ access.
   link under Discover search results) opens one dialog for everything outside
   the catalog: a connector file or folder, a Scient plugin folder
   (`inspectLocal` answers `kind: "plugin"`), a server another app runs, a pasted
-  `https://` address (handed to the URL form), or Advanced → a command. The
+  `https://` address (handed to the URL form), or **Run a command…** (connectors tab only). The
   import list leaves out servers that cannot start here (program not found, or
   Codex `env_vars` that are neither in the environment nor keys).
 - **Installed** (`/settings/extensions/installed`) — Connected services,

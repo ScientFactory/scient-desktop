@@ -46,3 +46,20 @@ it("keeps :has() off the document root", () => {
   });
   expect(offenders).toEqual([]);
 });
+
+// In Chromium, a sibling :has(+ …) or :has(~ …) restyled every top-level LaTeX block on each
+// block insertion: half the cost of showing a long document. Mark the block from the editor.
+// A relative selector starts with + or ~, first in :has() or after a comma at its top level.
+const siblingHas = /:has\(\s*(?:(?:[^()]|\([^()]*\))*,\s*)?[+~]/u;
+
+it("keeps sibling :has() out of Scient styles", () => {
+  const sibling = ["p:has(+ .a)", "p:has( ~ .a)", "p:has(> em, + .a)", "p:has(:is(.a, .b), ~ .c)"];
+  expect(sibling.filter((selector) => !siblingHas.test(selector))).toEqual([]);
+  const other = ["p:has(> .a)", "p:has(.a + .b)", "p:has(:is(.a, .b) + .c)", "p:has(.a, .b ~ .c)"];
+  expect(other.filter((selector) => siblingHas.test(selector))).toEqual([]);
+  const offenders = sources(NodePath.join(root, "scient")).flatMap((path) => {
+    const text = NodeFS.readFileSync(path, "utf8").replace(/\/\*[\s\S]*?\*\//gu, "");
+    return siblingHas.test(text) ? [NodePath.relative(root, path)] : [];
+  });
+  expect(offenders).toEqual([]);
+});

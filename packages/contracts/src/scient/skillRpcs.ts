@@ -3,6 +3,13 @@ import * as Rpc from "effect/rpc/Rpc";
 
 import { EnvironmentAuthorizationError } from "../auth.ts";
 import {
+  ImportableSkillsResult,
+  PersonalSkillAddInput,
+  PersonalSkillAddResult,
+  PersonalSkillExport,
+  PersonalSkillInspectInput,
+  PersonalSkillInspection,
+  PersonalSkillNameInput,
   ProviderSkillManagementError,
   ProviderSkillReadDocumentInput,
   ProviderSkillDocument,
@@ -26,6 +33,13 @@ export const SCIENT_SKILL_WS_METHODS = {
   skillsSetUserActivation: "skills.setUserActivation",
   providerSkillsReadDocument: "providerSkills.readDocument",
   providerSkillsSetEnabled: "providerSkills.setEnabled",
+  // Personal skills: added by the user or by an agent for them
+  skillsPersonalInspect: "skills.personal.inspect",
+  skillsPersonalAdd: "skills.personal.add",
+  skillsPersonalRemove: "skills.personal.remove",
+  skillsPersonalUndo: "skills.personal.undo",
+  skillsPersonalExport: "skills.personal.export",
+  skillsPersonalImportable: "skills.personal.importable",
 } as const;
 
 export const WsSkillsListRpc = Rpc.make(SCIENT_SKILL_WS_METHODS.skillsList, {
@@ -73,5 +87,47 @@ export const WsProviderSkillsReadDocumentRpc = Rpc.make(
     payload: ProviderSkillReadDocumentInput,
     success: ProviderSkillDocument,
     error: Schema.Union([ProviderSkillManagementError, EnvironmentAuthorizationError]),
+  },
+);
+
+const personalError = Schema.Union([ScientSkillManagementError, EnvironmentAuthorizationError]);
+
+/** What a file, folder, web address or pasted text holds: skills, material, or nothing. */
+export const WsSkillsPersonalInspectRpc = Rpc.make(SCIENT_SKILL_WS_METHODS.skillsPersonalInspect, {
+  payload: PersonalSkillInspectInput,
+  success: PersonalSkillInspection,
+  error: personalError,
+});
+
+export const WsSkillsPersonalAddRpc = Rpc.make(SCIENT_SKILL_WS_METHODS.skillsPersonalAdd, {
+  payload: PersonalSkillAddInput,
+  success: PersonalSkillAddResult,
+  error: personalError,
+});
+
+export const WsSkillsPersonalRemoveRpc = Rpc.make(SCIENT_SKILL_WS_METHODS.skillsPersonalRemove, {
+  payload: PersonalSkillNameInput,
+  success: ScientSkillInventory,
+  error: personalError,
+});
+
+export const WsSkillsPersonalUndoRpc = Rpc.make(SCIENT_SKILL_WS_METHODS.skillsPersonalUndo, {
+  payload: PersonalSkillNameInput,
+  success: ScientSkillInventory,
+  error: personalError,
+});
+
+export const WsSkillsPersonalExportRpc = Rpc.make(SCIENT_SKILL_WS_METHODS.skillsPersonalExport, {
+  payload: PersonalSkillNameInput,
+  success: PersonalSkillExport,
+  error: personalError,
+});
+
+export const WsSkillsPersonalImportableRpc = Rpc.make(
+  SCIENT_SKILL_WS_METHODS.skillsPersonalImportable,
+  {
+    payload: Schema.Struct({}),
+    success: ImportableSkillsResult,
+    error: personalError,
   },
 );

@@ -140,7 +140,7 @@ A personal skill follows the user across projects. A project skill captures guid
 
 Create a project skill at \`.scient/skills/<name>/SKILL.md\`, with the frontmatter name matching the directory. Do not add \`scient.skill.json\`; that filename is reserved for reviewed packaged releases. A newly valid project skill is available automatically from the next message. The user can later choose Agent access, \`$name\` only, or Deactivated in Settings. Do not edit Scient's app-private preference store.
 
-Scient does not yet expose agent-driven personal-skill installation, so present a personal candidate without claiming it was installed.
+Save a personal skill with \`scient_skill_save\`, and read one of the user's skills with \`scient_skill_read\` before improving it. A new personal skill is on for every agent from the user's next message; saving over one keeps the earlier version, and the user can turn it off or undo the change in Settings. When the user gave rough material (notes, a document, a partial skill), keep what they meant and finish the rest; ask only about choices that change what the skill is for.
 
 After checking relevant existing skills when available, give the skill a short, distinct name; this is also its explicit \`$name\` invocation. Choose invocation separately from its home. Allow automatic selection when the description can reliably identify work that normally benefits from the skill. Use explicit invocation when applying it depends on intent the request may not reveal or the user should deliberately choose that mode.
 
@@ -224,7 +224,7 @@ If the thread works in a separate worktree, the tools act on the copy the link b
 
 ## Conflicts
 
-Only a conflict stops a sync. None of the stopped review's changes are applied; the result first says if the sync finished an interrupted sync or applied an earlier attempt before it stopped. Each conflict has a key and allowed choices:
+A conflict stops a sync until you settle it; other problems stop it with a message to report. None of the stopped review's changes are applied; the result first says if the sync finished an interrupted sync or applied an earlier attempt before it stopped. Each conflict has a key and allowed choices:
 
 - \`mine\` keeps this folder's version; \`theirs\` takes Overleaf's.
 - \`markers\` writes both versions into the file between conflict marks (\`<<<<<<<\`, \`=======\`, \`>>>>>>>\`).

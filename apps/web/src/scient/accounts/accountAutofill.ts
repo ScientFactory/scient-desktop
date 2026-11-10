@@ -6,7 +6,7 @@ import { readThreadPreviewState } from "~/previewStateStore";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { environmentThreadShells } from "~/state/threads";
 import { accountsState } from "./accountsState";
-import { agentMayUse, automaticSignIn, fillableAccounts } from "./accountsView";
+import { agentMayUse, automaticSignIn, fillableAccounts, fillChoice } from "./accountsView";
 
 /** Runtime tab ids are `[environmentId, threadId, serverEpoch, tabId]` (`previewRuntimeTabId`). */
 export function runtimeTab(id: string) {
@@ -59,7 +59,6 @@ export function watchAccountAutofill(
 ) {
   const bridge = window.desktopBridge?.accounts;
   if (!bridge?.originBoundFill || !bridge.onLoginFormDetected) return () => undefined;
-  const attempted = new Set<string>();
   const signedBackIn = new Map<string, number>();
   const snapshot = async () => {
     const current = registry.get(accountsState.snapshot({ environmentId, input: {} }));
@@ -69,13 +68,8 @@ export function watchAccountAutofill(
   };
   const fill = async (form: DesktopLoginForm) => {
     const tab = runtimeTab(form.tabId);
-    if (
-      tab?.environmentId !== environmentId ||
-      attempted.has(form.documentId) ||
-      !automaticSignIn(form)
-    )
-      return;
-    attempted.add(form.documentId);
+    // The page reports a form once per set of login boxes, and when the user clicks into one.
+    if (tab?.environmentId !== environmentId || !automaticSignIn(form)) return;
     const accounts = await snapshot();
     if (!accounts) return;
     // A page an agent controls can read what is filled, so it gets only accounts that agent may use.
@@ -86,12 +80,15 @@ export function watchAccountAutofill(
       environmentThreadShells.threadShellAtom(threadRef),
     )?.projectId;
     const matches = fillableAccounts(accounts.accounts, form.url, form.profileId);
-    const account = matches.find(
-      (match) =>
-        !agentTab ||
-        (agentMayUse(match.controls, accounts.agentAccess, projectId) &&
-          match.signIn?.state !== "password-rejected" &&
-          match.signIn?.state !== "limited"),
+    const { account, otherUsername } = fillChoice(
+      matches.filter(
+        (match) =>
+          !agentTab ||
+          (agentMayUse(match.controls, accounts.agentAccess, projectId) &&
+            match.signIn?.state !== "password-rejected" &&
+            match.signIn?.state !== "limited"),
+      ),
+      form.boxes,
     );
     if (!account) return;
     const lastSubmitted = signedBackIn.get(form.url) ?? 0;
@@ -125,6 +122,7 @@ export function watchAccountAutofill(
         automatic: true,
         ...(submit ? { submit: true } : {}),
         ...(values.value.username === undefined ? {} : { username: values.value.username }),
+        ...(otherUsername === undefined ? {} : { otherUsername }),
         ...(values.value.password === undefined ? {} : { password: values.value.password }),
         ...(values.value.otp === undefined ? {} : { otp: values.value.otp }),
       })

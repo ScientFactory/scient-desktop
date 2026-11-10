@@ -9,6 +9,58 @@ import type { ScientReleaseNote } from "./model";
  */
 export const SCIENT_RELEASE_NOTES = [
   {
+    version: "0.6.28",
+    publishedAt: "2026-11-10",
+    format: "paragraphs",
+    headline: "Your skills, your tools, and smoother reading.",
+    highlights: [
+      {
+        id: "personal-skills-0628",
+        title: "Keep your skills across agents",
+        description:
+          "Add a skill from a folder, file, web address or pasted notes, or import skills from your other coding agents. Skills you add or ask an agent to save are available across projects and agents in Scient. Improve them with an agent, export them, or undo the last change from Extensions.",
+      },
+      {
+        id: "local-connectors-0628",
+        title: "Bring your own connected tools",
+        description:
+          "Add local connectors from a bundle, folder or command, or import ones you already use in Claude Desktop, Claude Code, Codex or Cursor. Manage them in Extensions and make them available to your agents. Required keys are kept in Accounts, and missing setup is shown before you get started.",
+      },
+      {
+        id: "office-reader-0628",
+        title: "Read Word files and slides like PDFs",
+        description:
+          "Word and PowerPoint gain page thumbnails, search, zoom and page controls. Select a passage and ask about it in chat, with its page or slide attached. Long Word documents preview more completely, and saving a copy of a filled PDF now keeps the values you entered.",
+      },
+      {
+        id: "document-return-0628",
+        title: "Return to the document you left",
+        description:
+          "Recently opened PDFs, Word files and slide decks stay ready when you switch away and back. Your page, scroll position and zoom stay with them. An unchanged document or data table also stays put while your agent works, instead of reloading after each command.",
+      },
+      {
+        id: "accounts-0628",
+        title: "Keep sign-ins and keys together",
+        description:
+          "Accounts brings API keys into one list showing where each key is kept and what uses it. Keep a key from an agent’s settings in Accounts and update it there later. Removing an agent keeps its saved keys. Browser sign-in and autofill are improved, with a Chrome-window option for sites that refuse embedded sign-in.",
+      },
+      {
+        id: "fresh-context-0628",
+        title: "Start fresh without losing the conversation",
+        description:
+          "Use /clear to give your agent a fresh context while keeping the conversation’s earlier messages visible. Scheduled tasks can also start each run with a fresh context. Provider switching, resuming work and queued follow-ups receive further fixes.",
+      },
+      {
+        id: "streaming-charts-0628",
+        title: "See charts as answers arrive",
+        description:
+          "Charts appear as soon as their chart block is complete, while the agent continues writing. Vega-Lite, Plotly and Mermaid share a more consistent default palette, with clearer chart labels and styling.",
+      },
+    ],
+    alsoIncluded:
+      "Typing and scrolling are smoother with documents open, alongside broader speed and reliability improvements. Julia setup is improved, Scient Agent downloads are smaller, and Droid supports rewinding its conversation context. Browser profiles, Google sign-ins and Overleaf recovery receive fixes.",
+  },
+  {
     version: "0.6.27",
     publishedAt: "2026-11-03",
     format: "paragraphs",

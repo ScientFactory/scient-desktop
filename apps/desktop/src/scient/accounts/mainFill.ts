@@ -69,6 +69,8 @@ export const FillMainInput = Schema.Struct({
   skipSites: Schema.Array(Site).check(Schema.isMaxLength(20_000)),
 });
 export type FillMainInput = typeof FillMainInput.Type;
+/** What a copy into Main may do, whatever it copies from. */
+export type CopyRules = Omit<FillMainInput, "from" | "environmentId">;
 
 /** One lock per environment: Scient's copies into its Main never interleave. */
 const locks = new Map<string, Promise<unknown>>();
@@ -131,7 +133,7 @@ export function jarStore(session: Electron.Session, send: CdpSend): CookieStore 
 export async function copyIntoMain(
   source: Electron.Session,
   main: Electron.Session,
-  input: FillMainInput,
+  input: CopyRules,
   record?: (copies: ReadonlyArray<Omit<MainCopy, "from">>) => Promise<void>,
 ): Promise<DesktopFillMainResult> {
   const tracker = mainInsertTracker(main);
@@ -236,17 +238,37 @@ export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (input: 
       ).catch(() => null),
     );
   }
-  const scope = `scient-import-staging:${crypto.randomUUID()}`;
   const browserImport = yield* BrowserImport;
-  yield* browserImport.importCookies({
-    input: {
-      sourceId: from.importSourceId,
-      sourceProfileDirectory: from.sourceProfileDirectory,
-      targetProfileId: BrowserProfileId.make("scient-import-staging"),
-    },
-    scope,
-    persistent: false,
-  });
+  return yield* fillMainStaged(environmentId, input, (scope) =>
+    browserImport.importCookies({
+      input: {
+        sourceId: from.importSourceId,
+        sourceProfileDirectory: from.sourceProfileDirectory,
+        targetProfileId: BrowserProfileId.make("scient-import-staging"),
+      },
+      scope,
+      persistent: false,
+    }),
+  );
+});
+
+/**
+ * A copy into Main of what `stage` puts in a throwaway in-memory partition, so Main itself is
+ * written only by the copy. Null when refused or when a jar can't be opened.
+ */
+export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(function* <E, R>(
+  environmentId: string,
+  input: CopyRules,
+  stage: (scope: string) => Effect.Effect<unknown, E, R>,
+) {
+  const manager = yield* PreviewManager;
+  const mainScope = resolvePartitionScope(environmentId, DEFAULT_BROWSER_PROFILE_ID);
+  const main = yield* manager
+    .getBrowserSession(mainScope.scope, mainScope.persistent, mainScope.namespace)
+    .pipe(Effect.option);
+  if (main._tag === "None") return null;
+  const scope = `scient-import-staging:${crypto.randomUUID()}`;
+  yield* stage(scope);
   const staging = yield* manager.getBrowserSession(scope, false).pipe(Effect.option);
   if (staging._tag === "None") return null;
   return yield* Effect.promise(() =>

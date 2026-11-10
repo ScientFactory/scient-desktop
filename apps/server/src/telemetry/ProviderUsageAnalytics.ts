@@ -26,7 +26,9 @@ import {
 } from "@t3tools/shared/model";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as AnalyticsService from "./AnalyticsService.ts";
-import { catalogModelLabel } from "./ProviderDimensions.ts";
+// SCIENT-FORK:START — name every model an agent reports, and a turn's main model
+import { reportedModelLabel, turnModelProperties } from "./ScientModelLabels.ts";
+// SCIENT-FORK:END
 
 // Bump when a field changes meaning, so reports can split old and new rows.
 const REPORT_VERSION = 2;
@@ -198,6 +200,9 @@ export function providerTurnProperties(
     otherOutputTokens: usage?.otherUsage?.outputTokens,
     ...selectionProperties(context, label),
     ...modelObservation([usage?.models], label),
+    // SCIENT-FORK:START — the model that did the work when a turn used more than one
+    ...turnModelProperties(usage, label),
+    // SCIENT-FORK:END
     segment: context?.segment,
     childKind: childKind(context),
     durationMs:
@@ -351,6 +356,10 @@ export class RequestUsageLedger {
       terminalStatus: report.status,
       lifecycleObserved,
       ...selectionProperties(entry.context, label),
+      ...turnModelProperties(
+        { models: [...new Set(rootUsage.flatMap((usage) => usage?.models ?? []))] },
+        label,
+      ),
       providerTurns: root.length,
       continuations: root.filter((turn) => turn.segment === "continuation").length,
       steeringRestarts: root.filter((turn) => turn.segment === "steering_restart").length,
@@ -422,7 +431,8 @@ export const layer = Layer.effect(
       registry.getProviders,
       (providers): ModelLabeler =>
         (model) =>
-          catalogModelLabel(providers, model),
+          // SCIENT-FORK: the agent's own name for a model outside the vendor catalogs.
+          reportedModelLabel(providers, model),
     );
     return {
       runStarted: Effect.fn("ProviderTurnAnalytics.runStarted")((input) =>

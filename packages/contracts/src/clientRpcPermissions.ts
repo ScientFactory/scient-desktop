@@ -16,12 +16,16 @@ import { ORCHESTRATION_V2_WS_METHODS } from "./orchestrationV2.ts";
 import { WS_METHODS } from "./rpc.ts";
 // SCIENT-FORK:START — Extensions mutations share the destination settings grant.
 import { SCIENT_EXTENSION_GUARDED_RPC_SCOPES } from "./scient/extensionsPermissions.ts";
+import { SCIENT_SKILL_GUARDED_RPC_SCOPES } from "./scient/skillsPermissions.ts";
 // SCIENT-FORK:END
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
   // SCIENT-FORK:START — provider plugin mutations use the destination settings grant.
   ...SCIENT_EXTENSION_GUARDED_RPC_SCOPES,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — personal skills read local files and change the user's skills.
+  ...SCIENT_SKILL_GUARDED_RPC_SCOPES,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: recheck credential and settings authority at execution.
   [WS_METHODS.accountsSave]: AuthSettingsWriteScope,
@@ -44,6 +48,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.accountsPlainKeys]: AuthSettingsWriteScope,
   [WS_METHODS.accountsKeepPlainKey]: AuthSettingsWriteScope,
   [WS_METHODS.accountsUnlinkKey]: AuthSettingsWriteScope,
+  [WS_METHODS.accountsRestoreKeptKeys]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetControls]: AuthSettingsWriteScope,
   [WS_METHODS.accountsSetAgentAccess]: AuthSettingsWriteScope,
   [WS_METHODS.accountsProfileUpdate]: AuthSettingsWriteScope,

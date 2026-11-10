@@ -10,6 +10,12 @@ import {
   showBitmap,
   type OfficeReaderDocument,
 } from "~/scient/office/ScientOfficeReader";
+import {
+  sessionState,
+  slotSession,
+  type OfficeSession,
+  type OfficeSessionSlot,
+} from "~/scient/office/officeSession";
 // SCIENT-FORK:END
 import { createWorkerClient } from "./worker-rpc";
 import {
@@ -30,98 +36,128 @@ type Opened = {
   complete: boolean; // SCIENT-FORK
 };
 
+// SCIENT-FORK:START — the opened document lives in a session, kept with its file for a reader who
+// comes back (scient/office/officeDocuments.ts); the viewer shows whatever state it has reached.
+type WordState = { opened?: Opened; limited: boolean; error?: unknown };
+
+function openWordSession(bytes: ArrayBuffer): OfficeSession<WordState> {
+  const store = sessionState<WordState>({ limited: false });
+  const controller = new AbortController();
+  const worker = new Worker(new URL("./document.worker.ts", import.meta.url), { type: "module" });
+  const engine = createWorkerClient<WordMethods>(worker);
+  const fail = (error: unknown) => {
+    if (!controller.signal.aborted) store.set({ ...store.get(), error });
+  };
+  worker.addEventListener("error", fail);
+  worker.addEventListener("messageerror", fail);
+  const buffer = bytes.slice(0);
+  const paint: PaintPage = async (index, canvas, scale, signal) => {
+    const bitmap = await engine.call(
+      "paint",
+      { index, scale, ratio: window.devicePixelRatio || 1 },
+      { key: `paint:${index}`, signal },
+    );
+    void engine
+      .call("build", { index: index + 1 }, { key: "build", signal })
+      .catch(() => undefined);
+    if (!bitmap) return;
+    const context = canvas.getContext("bitmaprenderer");
+    if (!context || signal.aborted) {
+      bitmap.close();
+      return;
+    }
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    context.transferFromImageBitmap(bitmap);
+  };
+  // Thumbnails leave the pages built around the view, and find waits for the
+  // whole document's layout, which places every match on its page.
+  const laidOut = Promise.withResolvers<void>();
+  const reader: Opened["reader"] = {
+    thumbnail: async (index, canvas, scale, signal) => {
+      const ratio = window.devicePixelRatio || 1;
+      const bitmap = await engine.call(
+        "paint",
+        { index, scale, ratio, thumbnail: true },
+        { key: `thumbnail:${index}`, signal },
+      );
+      if (bitmap) showBitmap(canvas, bitmap, signal);
+    },
+    find: async (query, signal) => {
+      await laidOut.promise;
+      const hits = await engine.call("find", { query }, { signal });
+      return hits.filter((hit) => hit.index < 1000);
+    },
+  };
+  void engine
+    .call("open", { bytes: buffer }, { transfer: [buffer], signal: controller.signal })
+    .then(async (first) => {
+      if (controller.signal.aborted) return;
+      const opened = { pages: first.pages, paint, engine, reader, complete: !first.loading };
+      store.set({ ...store.get(), opened });
+      if (!first.loading) {
+        laidOut.resolve();
+        return;
+      }
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      while (!controller.signal.aborted) {
+        const step = await engine.call("layout", undefined, { signal: controller.signal });
+        if (!step.done) continue;
+        // Keep the first 1,000 pages rather than replace them with an error.
+        const pages = step.pages.slice(0, 1000);
+        store.set({
+          opened: { pages, paint, engine, reader, complete: true },
+          limited: pages.length < step.pages.length,
+        });
+        laidOut.resolve();
+        break;
+      }
+    })
+    .catch(fail);
+  return {
+    state: store.get,
+    subscribe: store.subscribe,
+    failed: () => store.get().error !== undefined,
+    // Measured in the desktop app: about 120 MB for the engine, and 1.5 MB per laid-out page.
+    memory: () => (120 + 1.5 * (store.get().opened?.pages.length ?? 0)) * 1024 * 1024,
+    close: () => {
+      controller.abort();
+      engine.close();
+    },
+  };
+}
+
 export default function WordDocument(props: {
   bytes: ArrayBuffer;
   onDetails: (text: string) => void;
   onError: (cause: unknown) => void;
   // SCIENT-FORK: the pages past the preview's limit are left out.
   onLimited: () => void;
+  // SCIENT-FORK: where the opened document is kept between visits.
+  session?: OfficeSessionSlot | undefined;
 }) {
-  const { onError, bytes, onDetails, onLimited } = props;
+  const { onError, bytes, onDetails, onLimited, session: slot } = props;
   const [opened, setOpened] = useState<Opened>();
   const scroll = useRef<((index: number, y?: number) => void) | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Own the document worker and cancel its layout and painting requests when the document changes or unmounts.
+  // SCIENT-FORK:START
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Shows the document session's state as it lays out, and leaves the session to its slot's owner, or closes it, on unmount.
   useEffect(() => {
-    const controller = new AbortController();
-    const worker = new Worker(new URL("./document.worker.ts", import.meta.url), { type: "module" });
-    const engine = createWorkerClient<WordMethods>(worker);
-    const fail = (error: unknown) => {
-      if (!controller.signal.aborted) onError(error);
+    const { session, release } = slotSession(slot, () => openWordSession(bytes));
+    const show = (state: WordState) => {
+      if (state.error !== undefined) onError(state.error);
+      if (state.limited) onLimited();
+      setOpened(state.opened);
+      if (state.opened)
+        onDetails(`${state.opened.pages.length}${state.opened.complete ? "" : "+"} pages`);
     };
-    worker.addEventListener("error", fail);
-    worker.addEventListener("messageerror", fail);
-    const buffer = bytes.slice(0);
-    const paint: PaintPage = async (index, canvas, scale, signal) => {
-      const bitmap = await engine.call(
-        "paint",
-        { index, scale, ratio: window.devicePixelRatio || 1 },
-        { key: `paint:${index}`, signal },
-      );
-      void engine
-        .call("build", { index: index + 1 }, { key: "build", signal })
-        .catch(() => undefined);
-      if (!bitmap) return;
-      const context = canvas.getContext("bitmaprenderer");
-      if (!context || signal.aborted) {
-        bitmap.close();
-        return;
-      }
-      canvas.width = bitmap.width;
-      canvas.height = bitmap.height;
-      context.transferFromImageBitmap(bitmap);
-    };
-    // SCIENT-FORK:START — thumbnails leave the pages built around the view, and find waits for the
-    // whole document's layout, which places every match on its page.
-    const laidOut = Promise.withResolvers<void>();
-    const reader: Opened["reader"] = {
-      thumbnail: async (index, canvas, scale, signal) => {
-        const ratio = window.devicePixelRatio || 1;
-        const bitmap = await engine.call(
-          "paint",
-          { index, scale, ratio, thumbnail: true },
-          { key: `thumbnail:${index}`, signal },
-        );
-        if (bitmap) showBitmap(canvas, bitmap, signal);
-      },
-      find: async (query, signal) => {
-        await laidOut.promise;
-        const hits = await engine.call("find", { query }, { signal });
-        return hits.filter((hit) => hit.index < 1000);
-      },
-    };
-    // SCIENT-FORK:END
-    void engine
-      .call("open", { bytes: buffer }, { transfer: [buffer], signal: controller.signal })
-      .then(async (first) => {
-        if (controller.signal.aborted) return;
-        setOpened({ pages: first.pages, paint, engine, reader, complete: !first.loading }); // SCIENT-FORK: reader, complete
-        onDetails(`${first.pages.length}${first.loading ? "+" : ""} pages`);
-        // SCIENT-FORK:START
-        if (!first.loading) {
-          laidOut.resolve();
-          return;
-        }
-        // SCIENT-FORK:END
-        await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        while (!controller.signal.aborted) {
-          const step = await engine.call("layout", undefined, { signal: controller.signal });
-          if (!step.done) continue;
-          // SCIENT-FORK:START — keep the first 1,000 pages rather than replace them with an error.
-          const pages = step.pages.slice(0, 1000);
-          if (pages.length < step.pages.length) onLimited();
-          setOpened({ pages, paint, engine, reader, complete: true });
-          onDetails(`${pages.length} pages`);
-          laidOut.resolve();
-          // SCIENT-FORK:END
-          break;
-        }
-      })
-      .catch(fail);
+    show(session.state());
+    const unsubscribe = session.subscribe(show);
     return () => {
-      controller.abort();
-      engine.close();
+      unsubscribe();
+      release();
     };
-  }, [bytes, onDetails, onError, onLimited]);
+  }, [bytes, slot, onDetails, onError, onLimited]);
+  // SCIENT-FORK:END
   if (!opened) return <FileSurfaceLoading />;
   const follow = (link: WordLink) => {
     if (link.kind === "external") {

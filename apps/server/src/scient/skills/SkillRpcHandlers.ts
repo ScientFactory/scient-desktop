@@ -1,7 +1,6 @@
 /**
- * Scient's skill RPCs: listing Scient skills for a project or thread
- * workspace, reading a skill, setting project and user activation, and
- * switching provider-native skills on or off.
+ * Scient's skill RPCs: listing, reading and switching Scient skills on, managing the user's
+ * own (personal) skills, and switching provider-native skills on or off.
  *
  * @module SkillRpcHandlers
  */
@@ -88,6 +87,7 @@ export const makeSkillRpcHandlers = ({
   );
   const providerSkillManagement =
     ProviderSkillManagement.makeProviderSkillManagement(providerRegistry);
+  const personal = scientSkillManagement.personal;
   return {
     [WS_METHODS.providerSkillsReadDocument]: (input) =>
       observeRpcEffect(
@@ -147,6 +147,41 @@ export const makeSkillRpcHandlers = ({
         scientSkillManagement.setUserActivation(input),
         { "rpc.aggregate": "skills" },
       ),
+    [WS_METHODS.skillsPersonalInspect]: (input) =>
+      observeRpcEffect(WS_METHODS.skillsPersonalInspect, personal.inspect(input.source), {
+        "rpc.aggregate": "skills",
+      }),
+    [WS_METHODS.skillsPersonalAdd]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.skillsPersonalAdd,
+        Effect.gen(function* () {
+          const added = yield* personal.add(input);
+          return { added: [...added], inventory: yield* scientSkillManagement.list() };
+        }),
+        { "rpc.aggregate": "skills" },
+      ),
+    [WS_METHODS.skillsPersonalRemove]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.skillsPersonalRemove,
+        personal.remove(input.name).pipe(Effect.andThen(scientSkillManagement.list())),
+        { "rpc.aggregate": "skills" },
+      ),
+    [WS_METHODS.skillsPersonalUndo]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.skillsPersonalUndo,
+        personal.undo(input.name).pipe(Effect.andThen(scientSkillManagement.list())),
+        { "rpc.aggregate": "skills" },
+      ),
+    [WS_METHODS.skillsPersonalExport]: (input) =>
+      observeRpcEffect(WS_METHODS.skillsPersonalExport, personal.exportZip(input.name), {
+        "rpc.aggregate": "skills",
+      }),
+    [WS_METHODS.skillsPersonalImportable]: () =>
+      observeRpcEffect(
+        WS_METHODS.skillsPersonalImportable,
+        personal.importables.pipe(Effect.map((skills) => ({ skills: [...skills] }))),
+        { "rpc.aggregate": "skills" },
+      ),
   } satisfies ScientRpcHandlerSubset<
     typeof WsServerManagementRpcGroup,
     | typeof WS_METHODS.providerSkillsReadDocument
@@ -155,5 +190,11 @@ export const makeSkillRpcHandlers = ({
     | typeof WS_METHODS.skillsReadDocument
     | typeof WS_METHODS.skillsSetProjectPreference
     | typeof WS_METHODS.skillsSetUserActivation
+    | typeof WS_METHODS.skillsPersonalInspect
+    | typeof WS_METHODS.skillsPersonalAdd
+    | typeof WS_METHODS.skillsPersonalRemove
+    | typeof WS_METHODS.skillsPersonalUndo
+    | typeof WS_METHODS.skillsPersonalExport
+    | typeof WS_METHODS.skillsPersonalImportable
   >;
 };

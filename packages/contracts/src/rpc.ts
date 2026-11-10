@@ -459,6 +459,12 @@ import {
   WsSkillsReadDocumentRpc,
   WsSkillsSetProjectPreferenceRpc,
   WsSkillsSetUserActivationRpc,
+  WsSkillsPersonalAddRpc,
+  WsSkillsPersonalExportRpc,
+  WsSkillsPersonalImportableRpc,
+  WsSkillsPersonalInspectRpc,
+  WsSkillsPersonalRemoveRpc,
+  WsSkillsPersonalUndoRpc,
   WsProviderSkillsSetEnabledRpc,
   WsProviderSkillsReadDocumentRpc,
 } from "./scient/skillRpcs.ts";
@@ -558,6 +564,7 @@ import {
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,
+  WsAccountsRestoreKeptKeysRpc,
 } from "./scient/accountRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
@@ -2505,6 +2512,12 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsSkillsReadDocumentRpc,
   WsSkillsSetProjectPreferenceRpc,
   WsSkillsSetUserActivationRpc,
+  WsSkillsPersonalAddRpc,
+  WsSkillsPersonalExportRpc,
+  WsSkillsPersonalImportableRpc,
+  WsSkillsPersonalInspectRpc,
+  WsSkillsPersonalRemoveRpc,
+  WsSkillsPersonalUndoRpc,
   WsServerDiscoverSourceControlRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
@@ -2796,6 +2809,7 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,
+  WsAccountsRestoreKeptKeysRpc,
 );
 // SCIENT-FORK:END
 

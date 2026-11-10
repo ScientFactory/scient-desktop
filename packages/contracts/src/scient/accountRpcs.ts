@@ -22,7 +22,7 @@ import {
   AccountGoogleSessions,
   AccountId,
   AccountCodeSourcesResult,
-  AccountKeyLink,
+  AccountLinkKeyInput,
   AccountPaperForSourceInput,
   AccountPlainKey,
   AccountPlainKeyInput,
@@ -36,6 +36,7 @@ import {
   AccountSignInAsPersonInput,
   UniversityBrowseInput,
   AccountKeyUnlinkInput,
+  AccountRestoreKeptKeysInput,
   AccountMainBackfilledInput,
   AccountMainFoldedInput,
   AccountsQualifyCase,
@@ -115,6 +116,7 @@ export const SCIENT_ACCOUNT_WS_METHODS = {
   accountsPlainKeys: "accounts.plainKeys.find",
   accountsKeepPlainKey: "accounts.plainKeys.keep",
   accountsUnlinkKey: "accounts.keys.unlink",
+  accountsRestoreKeptKeys: "accounts.keys.restoreKept",
   accountsSetControls: "accounts.setControls",
   accountsSetAgentAccess: "accounts.setAgentAccess",
   accountsProfileUpdate: "accounts.profiles.update",
@@ -304,7 +306,7 @@ export const WsAccountsKeepPlainKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.acco
 });
 
 export const WsAccountsLinkKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsLinkKey, {
-  payload: AccountKeyLink,
+  payload: AccountLinkKeyInput,
   success: Empty,
   error: AccountsRpcError,
 });
@@ -314,6 +316,15 @@ export const WsAccountsUnlinkKeyRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.account
   success: Empty,
   error: AccountsRpcError,
 });
+
+export const WsAccountsRestoreKeptKeysRpc = Rpc.make(
+  SCIENT_ACCOUNT_WS_METHODS.accountsRestoreKeptKeys,
+  {
+    payload: AccountRestoreKeptKeysInput,
+    success: Empty,
+    error: AccountsRpcError,
+  },
+);
 
 export const WsAccountsSetControlsRpc = Rpc.make(SCIENT_ACCOUNT_WS_METHODS.accountsSetControls, {
   payload: AccountSetControlsInput,

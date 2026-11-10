@@ -29,6 +29,7 @@ export class ScientSkillToolError extends Schema.TaggedError<ScientSkillToolErro
       "capability-unavailable",
       "not-found",
       "resource-unavailable",
+      "invalid-skill",
     ]),
     message: NonEmptyString,
   },
@@ -61,7 +62,7 @@ export const ScientSkillResource = Schema.Struct({
 
 export const ScientSkillsListTool = Tool.make("scient_skills_list", {
   description:
-    "List the Scient skills available this turn, or search their names and descriptions by keyword; a miss returns a browse page. Your provider's own skills are not included. Results are summaries: load a skill with scient_skill_load before you follow it. Unless scope.includesAllSkills is true, results are partial, and a pending or incomplete scope does not mean there are none. A full list you already saw stays current while scope.digest is unchanged. Page size 20 by default, up to 50; continue with nextOffset.",
+    "List the Scient skills available this turn, or search their names and descriptions by keyword; a miss returns a browse page. Your provider's own skills are not included. Results are summaries: load a skill with scient_skill_load before you follow it. Unless scope.includesAllSkills is true, results are partial, and a pending or incomplete scope does not mean there are none. Continue with nextOffset.",
   parameters: ScientSkillListInput,
   success: Schema.Struct({
     skills: Schema.Array(
@@ -129,8 +130,71 @@ export const ScientSkillReadResourceTool = Tool.make("scient_skill_read_resource
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, skillOperation("skills.resource.read"));
 
+/** The user's own skills are not tied to this turn's skill scope. */
+const personalSkillOperation = (id: string): OperationDefinition => ({
+  id,
+  scope: "thread",
+  requiredCapabilities: ["skills:write"],
+});
+
+const SkillFile = Schema.Struct({
+  path: NonEmptyString.check(Schema.isMaxLength(512)),
+  content: Schema.String.check(Schema.isMaxLength(1024 * 1024)),
+});
+
+const ScientSkillSaveTool = Tool.make("scient_skill_save", {
+  description:
+    "Save a skill for the user, available in every project and to every agent from their next message. Send SKILL.md (frontmatter `name` equal to `name`, and a `description` of what it does and when to use it) plus any text files it needs. A new skill is on at once; saving over one of the user's skills keeps the earlier version, and the user can undo from the skill's row in Settings. Scient checks it and says what to fix. For a skill that belongs to one project, write `.scient/skills/<name>/SKILL.md` instead.",
+  parameters: Schema.Struct({
+    name: SkillName,
+    files: Schema.Array(SkillFile).pipe(
+      Schema.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+    ),
+  }),
+  success: Schema.Struct({
+    name: NonEmptyString,
+    status: Schema.Literals(["created", "updated"]),
+    active: Schema.Boolean,
+    message: NonEmptyString,
+  }),
+  failure: ScientSkillToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Save a skill for the user")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, personalSkillOperation("skills.personal.save"));
+
+const ScientSkillReadTool = Tool.make("scient_skill_read", {
+  description:
+    "Read every file of one of the user's own skills (one they added, or one saved for them), to improve it and save it back with scient_skill_save.",
+  parameters: Schema.Struct({ name: SkillName }),
+  success: Schema.Struct({
+    name: NonEmptyString,
+    files: Schema.Array(
+      Schema.Struct({
+        path: NonEmptyString,
+        encoding: Schema.Literals(["base64", "utf8"]),
+        content: Schema.String,
+      }),
+    ),
+  }),
+  failure: ScientSkillToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read one of the user's skills")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, personalSkillOperation("skills.personal.read"));
+
 export const ScientSkillsToolkit = Toolkit.make(
   ScientSkillsListTool,
   ScientSkillLoadTool,
   ScientSkillReadResourceTool,
+  ScientSkillSaveTool,
+  ScientSkillReadTool,
 );

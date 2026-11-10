@@ -48,7 +48,7 @@ export function TunnelUsageMeter({
       </div>
       <div
         role="meter"
-        aria-label="T3 Connect tunnels in use"
+        aria-label="Scient Connect tunnels in use"
         aria-valuemin={0}
         aria-valuemax={limit}
         aria-valuenow={used}
@@ -104,13 +104,13 @@ export function TunnelLimitAlert({
   return (
     <Alert variant="warning">
       <TriangleAlertIcon />
-      <AlertTitle>You&apos;re out of tunnels (they cost us money).</AlertTitle>
+      <AlertTitle>All your tunnels are in use.</AlertTitle>
       <AlertDescription>
         {upgrade === "link"
           ? "Switch to Tailscale or get more tunnels by linking your T3 Chat sub (sorry!)"
           : upgrade
             ? "Switch to Tailscale or get more tunnels by upgrading your T3 Chat sub (sorry!)"
-            : "Switch to Tailscale or deregister an environment you no longer use (sorry!)"}
+            : "Remove a computer you no longer use, or reach this one directly over SSH or Tailscale."}
       </AlertDescription>
       {action ? <AlertAction>{action}</AlertAction> : null}
     </Alert>

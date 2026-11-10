@@ -12,6 +12,7 @@ import * as ScientSkillRegistry from "../../../scient/skills/ScientSkillRegistry
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import {
   listScientSkillsForInvocation,
+  loadedSkillFacts,
   loadScientSkillForInvocation,
   readScientSkillResourceForInvocation,
 } from "./handlers.ts";
@@ -320,4 +321,26 @@ describe("Scient skills MCP handlers", () => {
       expect(hidden.code).toBe("not-found");
     }),
   );
+});
+
+describe("loadedSkillFacts", () => {
+  it("names only skills built into Scient", () => {
+    expect(loadedSkillFacts({ name: "latex-paper", origin: "scient" })).toEqual({
+      feature: "skills.load",
+      variant: "scient",
+      skill: "latex-paper",
+    });
+    expect(loadedSkillFacts({ name: "my-lab", origin: "personal" })).toEqual({
+      feature: "skills.load",
+      variant: "personal",
+    });
+    expect(loadedSkillFacts({ name: "x", origin: "addon:acme@1.0.0" })).toEqual({
+      feature: "skills.load",
+      variant: "addon",
+    });
+    expect(loadedSkillFacts({ name: "x", origin: "project:p1" })).toEqual({
+      feature: "skills.load",
+      variant: "project",
+    });
+  });
 });

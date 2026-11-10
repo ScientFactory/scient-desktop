@@ -151,6 +151,8 @@ export const AccountSecretSummary = Schema.Struct({
   hint: Schema.optional(Schema.String.check(Schema.isMaxLength(4))),
   /** Passwords only: when a sign-in with this value last worked. A new value starts without it. */
   verifiedAt: Schema.optional(IsoDateTime),
+  /** Passwords only: when the browser it was imported from last changed it. */
+  changedAt: Schema.optional(IsoDateTime),
 });
 export type AccountSecretSummary = typeof AccountSecretSummary.Type;
 
@@ -221,6 +223,25 @@ export type CliLoginVariable = typeof CliLoginVariable.Type;
 export const PaperRoute = Schema.Literals(["publisher", "university", "library"]);
 export type PaperRoute = typeof PaperRoute.Type;
 
+/** Where a key Scient kept from a removed agent came from, so adding one like it can offer it. */
+export const AccountKeptFrom = Schema.Struct({
+  /** The agent: its driver, or `acpRegistry:<agentId>` for an ACP Registry agent. */
+  agent: TrimmedNonEmptyString,
+  /** The environment variable, or `config.<field>` for a key in the agent's settings. */
+  setting: TrimmedNonEmptyString,
+});
+export type AccountKeptFrom = typeof AccountKeptFrom.Type;
+
+/** `AccountKeptFrom.agent` for a provider instance: two ACP Registry agents are different agents. */
+export function keptAgentOf(instance: { readonly driver: string; readonly config?: unknown }) {
+  const config = instance.config;
+  const agentId =
+    instance.driver === "acpRegistry" && config !== null && typeof config === "object"
+      ? (config as { readonly agentId?: unknown }).agentId
+      : undefined;
+  return typeof agentId === "string" && agentId ? `acpRegistry:${agentId}` : instance.driver;
+}
+
 /** What the account is; secret values are held separately under `secrets`. */
 export const AccountDetails = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("website"), ...WebsiteFields }),
@@ -230,6 +251,7 @@ export const AccountDetails = Schema.Union([
     auth: ApiKeyAuth,
     /** Variable name scripts read the key from, e.g. HF_TOKEN. */
     envName: Schema.optional(EnvironmentVariableName),
+    keptFrom: Schema.optional(AccountKeptFrom),
   }),
   Schema.Struct({
     kind: Schema.Literal("database"),
@@ -678,10 +700,13 @@ export const BrowserProfileChoices = Schema.Struct({
 export type BrowserProfileChoices = typeof BrowserProfileChoices.Type;
 
 export const BrowserProfileChoiceInput = Schema.Union([
-  /** The user switched a conversation's tab to this profile, on this page's site. */
+  /**
+   * The user switched a conversation's tab to this profile, on this page's site. Null clears the
+   * conversation's own profile so the project's applies; its site switches stay.
+   */
   Schema.Struct({
     threadId: ThreadId,
-    profileId: BrowserProfileId,
+    profileId: Schema.NullOr(BrowserProfileId),
     url: Schema.optional(Schema.String.check(Schema.isMaxLength(4096))),
     /** Only this page's site: the conversation's own profile stays as it is. */
     siteOnly: Schema.optional(Schema.Boolean),
@@ -838,6 +863,20 @@ export const AccountKeyLink = Schema.Struct({
 });
 export type AccountKeyLink = typeof AccountKeyLink.Type;
 
+/** Without an account, Scient keeps the variable's own key as an API key and links it to that. */
+export const AccountLinkKeyInput = Schema.Struct({
+  ...AccountKeyLink.fields,
+  accountId: Schema.optional(AccountId),
+});
+export type AccountLinkKeyInput = typeof AccountLinkKeyInput.Type;
+
+/** Kept keys (`keptFrom`) to put back into a newly added agent of the same kind. */
+export const AccountRestoreKeptKeysInput = Schema.Struct({
+  instanceId: TrimmedNonEmptyString,
+  accountIds: Schema.Array(AccountId).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+});
+export type AccountRestoreKeptKeysInput = typeof AccountRestoreKeptKeysInput.Type;
+
 export const AccountKeyUnlinkInput = Schema.Struct({
   instanceId: TrimmedNonEmptyString,
   variable: EnvironmentVariableName,
@@ -915,6 +954,8 @@ export const AccountSecretInput = Schema.Union([
   Schema.Struct({
     type: Schema.Literal("scient"),
     value: SecretValue,
+    /** An import's own date for this password, kept on the saved row as `changedAt`. */
+    changedAt: Schema.optional(IsoDateTime),
     saveTo: Schema.optional(
       Schema.Array(AccountWriteStore).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
     ),

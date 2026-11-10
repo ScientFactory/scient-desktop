@@ -2,7 +2,8 @@ import {
   AccountsError,
   WS_METHODS,
   WsAccountsRpcGroup,
-  type AccountKeyLink,
+  type AccountLinkKeyInput,
+  type AccountRestoreKeptKeysInput,
   type AccountPaperForSourceInput,
   type AccountPaperForSourceResult,
   type PaperItem,
@@ -85,6 +86,7 @@ export const makeAccountsRpcHandlers = ({
   paperForSource,
   papers,
   plainKeys,
+  restoreKeptKeys,
 }: Pick<ScientRpcObservers, "observeRpcEffect" | "observeRpcStream"> & {
   readonly accounts: AccountsServiceShape;
   /** The socket's authenticated session; another computer's copies are bound to it. */
@@ -92,7 +94,10 @@ export const makeAccountsRpcHandlers = ({
   readonly check: (
     input: AccountsCheckInput,
   ) => Effect.Effect<{ checked: number; alreadyRunning?: boolean }, AccountsError>;
-  readonly linkKey: (link: AccountKeyLink) => Effect.Effect<void, AccountsError>;
+  readonly linkKey: (input: AccountLinkKeyInput) => Effect.Effect<void, AccountsError>;
+  readonly restoreKeptKeys: (
+    input: AccountRestoreKeptKeysInput,
+  ) => Effect.Effect<void, AccountsError>;
   readonly paperForSource: (
     input: AccountPaperForSourceInput,
   ) => Effect.Effect<typeof AccountPaperForSourceResult.Type, AccountsError>;
@@ -268,6 +273,12 @@ export const makeAccountsRpcHandlers = ({
       ),
     [WS_METHODS.accountsLinkKey]: (input) =>
       observeRpcEffect(WS_METHODS.accountsLinkKey, linkKey(input).pipe(Effect.as({})), attributes),
+    [WS_METHODS.accountsRestoreKeptKeys]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.accountsRestoreKeptKeys,
+        restoreKeptKeys(input).pipe(Effect.as({})),
+        attributes,
+      ),
     [WS_METHODS.accountsUnlinkKey]: (input) =>
       observeRpcEffect(
         WS_METHODS.accountsUnlinkKey,

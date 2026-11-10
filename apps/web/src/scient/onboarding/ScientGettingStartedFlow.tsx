@@ -14,7 +14,13 @@ import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentSessionState } from "../../state/session";
 import { primaryServerProvidersAtom } from "../../state/server";
 import { providerOnboardingStatusLabel } from "../providerConnection/ProviderOnboardingPicker";
-import { hasSavedScientPreferences, type ScientWorkKind } from "./model";
+import { useRecordScientAnalytics } from "../analytics/client";
+import {
+  hasSavedScientPreferences,
+  type ScientField,
+  type ScientRole,
+  type ScientWorkKind,
+} from "./model";
 import {
   resolveResumableScientOnboardingStep,
   resolveScientOnboardingJourney,
@@ -30,7 +36,10 @@ import {
 import { useScientOnboardingStorage } from "./storage";
 import { ScientProjectImportAction } from "./ScientProjectImportAction";
 
-export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "manual" }) {
+/** `profile` asks only "How will you use Scient?", once, of someone already past onboarding. */
+export function ScientGettingStartedFlow(props: {
+  readonly mode: "automatic" | "manual" | "profile";
+}) {
   const navigate = useNavigate();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const serverProviders = useAtomValue(primaryServerProvidersAtom);
@@ -43,31 +52,39 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
     dismiss: dismissOnboarding,
     complete: completeOnboarding,
     saveProfile,
+    skipProfileQuestion,
   } = useScientOnboardingStorage();
+  const recordAnalytics = useRecordScientAnalytics();
   const [manualStep, setManualStep] = useState<ScientOnboardingStep>("agent");
   const [selectedEntryId, setSelectedEntryId] = useState<string | null>(null);
   const [workKinds, setWorkKinds] = useState<ReadonlyArray<ScientWorkKind>>(profile.workKinds);
   const [otherSelected, setOtherSelected] = useState(profile.fieldOrTopic.trim().length > 0);
   const [otherWork, setOtherWork] = useState(profile.fieldOrTopic);
+  const [field, setField] = useState<ScientField | undefined>(profile.field);
+  const [role, setRole] = useState<ScientRole | undefined>(profile.role);
 
   const instanceEntries = deriveProviderInstanceEntries(serverProviders);
   const providerReady = instanceEntries.some(isProviderInstancePickerReady);
   const preferencesSaved = hasSavedScientPreferences(profile);
   // Omit work already done at entry, then keep Back stable while setup state changes.
   const [journey] = useState<ReadonlyArray<ScientOnboardingStep>>(() =>
-    resolveScientOnboardingJourney({
-      mode: props.mode,
-      providerReady,
-      preferencesSaved,
-    }),
+    props.mode === "profile"
+      ? ["preferences"]
+      : resolveScientOnboardingJourney({
+          mode: props.mode,
+          providerReady,
+          preferencesSaved,
+        }),
   );
   const activeStep =
-    props.mode === "manual"
-      ? manualStep
-      : resolveResumableScientOnboardingStep({
-          journey,
-          lastStep: onboardingState.lastStep,
-        });
+    props.mode === "profile"
+      ? "preferences"
+      : props.mode === "manual"
+        ? manualStep
+        : resolveResumableScientOnboardingStep({
+            journey,
+            lastStep: onboardingState.lastStep,
+          });
   const activeIndex = Math.max(0, journey.indexOf(activeStep));
   const previousStep = activeIndex > 0 ? journey[activeIndex - 1] : null;
   const nextStep = journey[activeIndex + 1] ?? null;
@@ -135,7 +152,13 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
   ]);
 
   const skip = () => {
+    if (props.mode === "profile") {
+      skipProfileQuestion();
+      return;
+    }
     if (props.mode === "automatic") {
+      // Skipping past "How will you use Scient?" counts as being asked.
+      if (journey.slice(activeIndex).includes("preferences")) skipProfileQuestion();
       dismissOnboarding();
       return;
     }
@@ -201,12 +224,28 @@ export function ScientGettingStartedFlow(props: { readonly mode: "automatic" | "
       ) : activeStep === "preferences" ? (
         <GettingStartedPreferencesStep
           onContinue={() => {
+            const fieldOrTopic = otherSelected ? otherWork.trim() : "";
             saveProfile({
               workKinds,
-              fieldOrTopic: otherSelected ? otherWork : "",
+              fieldOrTopic,
+              ...(field === undefined ? {} : { field }),
+              ...(role === undefined ? {} : { role }),
+            });
+            recordAnalytics({
+              name: "install.profile_observed",
+              properties: {
+                workKinds: workKinds.join(","),
+                ...(field === undefined ? {} : { field }),
+                ...(role === undefined ? {} : { role }),
+                ...(fieldOrTopic === "" ? {} : { otherWork: fieldOrTopic }),
+              },
             });
             goNext();
           }}
+          field={field}
+          onFieldChange={setField}
+          onRoleChange={setRole}
+          role={role}
           onOtherSelectedChange={setOtherSelected}
           onOtherWorkChange={setOtherWork}
           onToggleWorkKind={(kind) =>

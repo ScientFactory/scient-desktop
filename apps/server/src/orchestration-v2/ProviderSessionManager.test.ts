@@ -2289,6 +2289,9 @@ it.effect(
             "sources:write",
             "threads:read",
             "skills:read",
+            // SCIENT-FORK:START — every agent can save the user's own skills.
+            "skills:write",
+            // SCIENT-FORK:END
             // SCIENT-FORK:START — Scient Accounts: provider sessions receive account tools.
             "accounts",
             // SCIENT-FORK:END
@@ -2418,6 +2421,9 @@ it.effect(
             "sources:write",
             "threads:read",
             "skills:read",
+            // SCIENT-FORK:START — every agent can save the user's own skills.
+            "skills:write",
+            // SCIENT-FORK:END
             // SCIENT-FORK:START — Scient Accounts: browser-disabled sessions retain account tools.
             "accounts",
             // SCIENT-FORK:END
