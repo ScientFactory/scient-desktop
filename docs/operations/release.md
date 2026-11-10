@@ -35,6 +35,9 @@ the stable scheduler and production gate.
   monitor, omit unused Claude SDK platform executables, and package only the
   target Windows `node-pty` architecture. These optimizations do not relax the
   exact-source CI, signing, assembly, or publication gates.
+- macOS packages run on matching host architectures: Intel uses `macos-26-intel`
+  and Apple Silicon uses `macos-26`. Intel's prepared server bytecode is generated
+  natively, without Rosetta, under the same cache-generation timeout and checks.
 - Windows packaging runs on Ubuntu 24.04 with pinned `cargo-xwin` and `jsign`.
   Both Linux-hosted packaging targets install `libsecret-1-dev` and `pkg-config`:
   the desktop build task compiles the Linux browser helper on its host, including
