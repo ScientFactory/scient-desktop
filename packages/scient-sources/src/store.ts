@@ -20,6 +20,7 @@ import {
   citationKeyComparisonValue,
   citationKeyValidationMessage,
   takenCitationKeys,
+  uniqueCitationKey,
 } from "./citationKeys.ts";
 import {
   applyEditableMetadata,
@@ -773,9 +774,10 @@ export async function restoreScientSource(input: {
     if ((await snapshot(recordPath)) !== "missing") {
       return { ...empty, outcome: "exists", matchingSourceIds: [input.sourceId] };
     }
+    const existing = await listScientSourceRecordsFromPaths(paths);
     const duplicate = assessSourceMetadataDuplicate({
       source: editableMetadataFromRecord(entry.record),
-      existing: await listScientSourceRecordsFromPaths(paths),
+      existing,
     });
     if (duplicate.kind === "same-identifier") {
       return { ...empty, outcome: "duplicate", matchingSourceIds: duplicate.matchingSourceIds };
@@ -787,6 +789,10 @@ export async function restoreScientSource(input: {
     );
     const restored: ScientSourceRecord = {
       ...entry.record,
+      // Another source may have taken the key while this one was in the trash.
+      ...(entry.record.citationKey
+        ? { citationKey: uniqueCitationKey(entry.record.citationKey, takenCitationKeys(existing)) }
+        : {}),
       revision: revision + 1,
       updatedAt: new Date().toISOString(),
       updatedBy: input.actor ?? "user",

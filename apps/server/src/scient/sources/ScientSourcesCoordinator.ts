@@ -7,8 +7,6 @@ import {
   applyResolvedSourceMetadata,
   creatorDisplayName,
   resolveSourceIdentifier,
-  sourceIdentifierLabel as identifierLabel,
-  sourceIdentifierRegistryName as registryName,
   titlesAgree,
   type ResolveSourceIdentifier,
 } from "./SourceIdentifierResolver.ts";
@@ -20,6 +18,8 @@ import {
   refreshExistingSourceCandidate,
 } from "./LocalPdfSourceAdapter.ts";
 import {
+  sourceIdentifierLabel as identifierLabel,
+  sourceIdentifierRegistryName as registryName,
   abstractDocumentFromSections,
   changedEditableMetadataFields,
   editableMetadataFromRecord,

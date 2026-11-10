@@ -122,6 +122,7 @@ const ROUTE_FEATURES: Readonly<Record<string, FeatureUsage>> = {
   "/api/scient/sources/import/begin": use("sources.import", "zotero"),
   "/api/scient/sources/zotero/import-scope/begin": use("sources.import", "zotero_collection"),
   "/api/scient/sources/import/retry": use("sources.import.retry"),
+  "/api/scient/sources/identifiers/add": use("sources.import", "identifier"),
   "/api/scient/references/v1/check": use("references.check"),
   "/api/scient/references/v1/resolve": use("references.resolve"),
   "/api/scient/latex/toolchain/install": use("latex.toolchain.install"),

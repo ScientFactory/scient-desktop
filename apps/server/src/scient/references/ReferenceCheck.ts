@@ -24,6 +24,8 @@ import {
   type ScientSourceIdentifier,
   type ScientSourceRecord,
   type ScientSourceType,
+  sourceIdentifierLabel,
+  sourceIdentifierRegistryName,
 } from "@scientfactory/scient-sources";
 import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
@@ -32,8 +34,6 @@ import * as Schema from "effect/Schema";
 
 import {
   resolveSourceIdentifierBatch,
-  sourceIdentifierLabel,
-  sourceIdentifierRegistryName,
   verifiableSourceIdentifier,
   type SourceIdentifierResolution,
 } from "../sources/SourceIdentifierResolver.ts";

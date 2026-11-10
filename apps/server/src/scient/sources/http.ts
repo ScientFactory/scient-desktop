@@ -45,6 +45,7 @@ import {
   updateSourceNote,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
+import { addScientSourcesByIdentifier } from "./SourceIdentifierAdd.ts";
 import {
   beginBibliographyFileImport,
   exportBibliography,
@@ -183,6 +184,19 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             removeSource(args.payload),
           ),
+        )
+        .handle("addByIdentifier", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, async () => ({
+            results: await addScientSourcesByIdentifier(
+              {
+                root: args.payload.root,
+                entries: args.payload.entries,
+                actor: "user",
+                enrich: true,
+              },
+              observeImport,
+            ),
+          })),
         )
         .handle("trash", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>

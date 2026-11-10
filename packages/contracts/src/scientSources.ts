@@ -1,4 +1,6 @@
 import {
+  MAX_SOURCE_IDENTIFIER_BATCH,
+  ScientSourceIdentifierAddItem,
   ScientSourceEditableMetadata,
   ScientSourceImportOperation,
   ScientSourceMetadataDiagnostic,
@@ -165,6 +167,19 @@ export const ScientSourceRemovalRequest = Schema.Struct({
   expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
 });
 export type ScientSourceRemovalRequest = typeof ScientSourceRemovalRequest.Type;
+
+export const ScientSourcesAddByIdentifierRequest = Schema.Struct({
+  root: NonEmptyString,
+  entries: Schema.Array(Schema.String.check(Schema.isMaxLength(1_000))).pipe(
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_SOURCE_IDENTIFIER_BATCH)),
+  ),
+});
+export type ScientSourcesAddByIdentifierRequest = typeof ScientSourcesAddByIdentifierRequest.Type;
+
+export const ScientSourcesAddByIdentifierResult = Schema.Struct({
+  results: Schema.Array(ScientSourceIdentifierAddItem),
+});
+export type ScientSourcesAddByIdentifierResult = typeof ScientSourcesAddByIdentifierResult.Type;
 
 export const ScientSourcesTrashRequest = Schema.Struct({ root: NonEmptyString });
 export type ScientSourcesTrashRequest = typeof ScientSourcesTrashRequest.Type;
