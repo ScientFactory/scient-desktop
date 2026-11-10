@@ -537,30 +537,6 @@ export function verifiableSourceIdentifier(
   return null;
 }
 
-const SCHEME_LABELS: Record<SourceAddIdentifierScheme, { label: string; registry: string }> = {
-  doi: { label: "DOI", registry: "doi.org" },
-  pmid: { label: "PMID", registry: "PubMed" },
-  arxiv: { label: "arXiv ID", registry: "arXiv" },
-  isbn: { label: "ISBN", registry: "Open Library or Google Books" },
-  openalex: { label: "OpenAlex work", registry: "OpenAlex" },
-  s2: { label: "Semantic Scholar paper", registry: "Semantic Scholar" },
-};
-
-function schemeLabels(identifier: ScientSourceIdentifier) {
-  const scheme = identifier.scheme as SourceAddIdentifierScheme;
-  return SCHEME_LABELS[scheme] ?? { label: identifier.scheme, registry: "its registry" };
-}
-
-/** "DOI 10.1000/x", for messages to people and agents. */
-export function sourceIdentifierLabel(identifier: ScientSourceIdentifier): string {
-  return `${schemeLabels(identifier).label} ${identifier.value}`;
-}
-
-/** The registry an identifier is checked against, for messages to people and agents. */
-export function sourceIdentifierRegistryName(identifier: ScientSourceIdentifier): string {
-  return schemeLabels(identifier).registry;
-}
-
 export interface SourceIdentifierResolverOptions {
   readonly request?: MetadataRequest;
   readonly now?: () => Date;

@@ -6,6 +6,7 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourcesAddByIdentifierRequest,
   ScientSourceRestoreRequest,
   ScientSourceRevertRequest,
   ScientSourceRevisionsRequest,
@@ -275,6 +276,32 @@ export const removeEnvironmentScientSource = Effect.fn(
           sourceId: input.sourceId,
           expectedRevision: input.expectedRevision,
         },
+      }),
+  });
+});
+
+export const addEnvironmentScientSourcesByIdentifier = Effect.fn(
+  "clientRuntime.state.addEnvironmentScientSourcesByIdentifier",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: ScientSourcesAddByIdentifierRequest["root"];
+  readonly entries: ScientSourcesAddByIdentifierRequest["entries"];
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.addByIdentifier(),
+    // Registry rate limits (arXiv asks for one request every three seconds) make large lists slow.
+    timeoutMs: IMPORT_STEP_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) =>
+      client.addByIdentifier({
+        headers,
+        payload: { root: input.root, entries: input.entries },
       }),
   });
 });
