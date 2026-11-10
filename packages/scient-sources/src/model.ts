@@ -67,7 +67,7 @@ export type ScientSourceExternalReference = typeof ScientSourceExternalReference
 
 export const ScientSourceOrigin = Schema.Struct({
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper"]),
   operationId: NonEmptyString,
   // Older records may still say "pending"; nothing gates on it any more.
   review: Schema.Literals(["none", "pending"]),
@@ -100,12 +100,21 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "arxiv",
     "open-library",
     "google-books",
+    "openalex",
   ]),
   sourceField: NullableText,
   sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),
   retrievedAt: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceFieldProvenance = typeof ScientSourceFieldProvenance.Type;
+
+/** How a downloaded PDF was reached, and which version of the work it is. */
+export const ScientSourceAttachmentRetrieval = Schema.Struct({
+  route: Schema.Literals(["open-access", "publisher", "university", "library"]),
+  /** "unknown" is a free copy whose repository did not say which version it holds. */
+  version: Schema.Literals(["published", "accepted", "preprint", "unknown"]),
+});
+export type ScientSourceAttachmentRetrieval = typeof ScientSourceAttachmentRetrieval.Type;
 
 export const ScientSourceAttachment = Schema.Struct({
   attachmentId: NonEmptyString,
@@ -116,6 +125,7 @@ export const ScientSourceAttachment = Schema.Struct({
   byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   relativePath: NonEmptyString,
   importedAt: NonEmptyString,
+  retrieval: Schema.optionalKey(ScientSourceAttachmentRetrieval),
 });
 export type ScientSourceAttachment = typeof ScientSourceAttachment.Type;
 
@@ -329,8 +339,79 @@ export const ScientSourceRemovalResult = Schema.Struct({
   revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   removedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   retainedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** A removed source waits in the project trash until it is restored or the trash is emptied. */
+  restorable: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientSourceRemovalResult = typeof ScientSourceRemovalResult.Type;
+
+/** A removed source, kept whole with its attachment references until the trash is emptied. */
+export const ScientSourceTrashEntry = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  sourceId: NonEmptyString,
+  projectId: NonEmptyString,
+  removedAt: NonEmptyString,
+  removedBy: ScientSourceActor,
+  record: ScientSourceRecord,
+});
+export type ScientSourceTrashEntry = typeof ScientSourceTrashEntry.Type;
+
+export const ScientSourceTrashSummary = Schema.Struct({
+  sourceId: NonEmptyString,
+  revision: ScientSourceRecord.fields.revision,
+  type: ScientSourceType,
+  title: NullableText,
+  creators: Schema.Array(ScientSourceCreator),
+  issuedYear: Schema.NullOr(Schema.Int),
+  removedAt: NonEmptyString,
+  removedBy: ScientSourceActor,
+});
+export type ScientSourceTrashSummary = typeof ScientSourceTrashSummary.Type;
+
+export const ScientSourceStoreIssue = Schema.Struct({
+  /** Project-relative path with forward slashes. */
+  path: Schema.String,
+  message: Schema.String,
+});
+export type ScientSourceStoreIssue = typeof ScientSourceStoreIssue.Type;
+
+export const ScientSourceTrashListing = Schema.Struct({
+  entries: Schema.Array(ScientSourceTrashSummary),
+  issues: Schema.Array(ScientSourceStoreIssue),
+});
+export type ScientSourceTrashListing = typeof ScientSourceTrashListing.Type;
+
+export const ScientSourceRestoreResult = Schema.Struct({
+  outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
+  sourceId: NonEmptyString,
+  record: Schema.NullOr(ScientSourceRecord),
+  matchingSourceIds: Schema.Array(NonEmptyString),
+});
+export type ScientSourceRestoreResult = typeof ScientSourceRestoreResult.Type;
+
+export const ScientSourcePermanentDeletionResult = Schema.Struct({
+  deletedSourceIds: Schema.Array(NonEmptyString),
+  removedFileCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type ScientSourcePermanentDeletionResult = typeof ScientSourcePermanentDeletionResult.Type;
+
+export const ScientSourceRevisionSummary = Schema.Struct({
+  revision: ScientSourceRecord.fields.revision,
+  savedAt: NonEmptyString,
+  savedBy: ScientSourceActor,
+  /** Fields that differ from the previous kept revision; empty for the first one. */
+  changes: Schema.Array(NonEmptyString),
+  current: Schema.Boolean,
+});
+export type ScientSourceRevisionSummary = typeof ScientSourceRevisionSummary.Type;
+
+export const ScientSourceRevertResult = Schema.Struct({
+  outcome: Schema.Literals(["reverted", "unchanged", "stale", "not-found", "duplicate"]),
+  record: ScientSourceRecord,
+  /** PDFs of the earlier revision whose files were already deleted when the trash was emptied. */
+  missingAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  matchingSourceIds: Schema.Array(NonEmptyString),
+});
+export type ScientSourceRevertResult = typeof ScientSourceRevertResult.Type;
 
 export const ScientSourcePreflightItem = Schema.Struct({
   candidate: ScientSourceCandidate,
@@ -394,6 +475,9 @@ export const ScientSourcesOverview = Schema.Struct({
   ),
   records: Schema.Array(ScientSourceRecord),
   activeOperation: Schema.NullOr(ScientSourceImportOperation),
+  /** Record files that could not be read; the rest of the Library still lists. */
+  unreadableRecords: Schema.optionalKey(Schema.Array(ScientSourceStoreIssue)),
+  trashedCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type ScientSourcesOverview = typeof ScientSourcesOverview.Type;
 
