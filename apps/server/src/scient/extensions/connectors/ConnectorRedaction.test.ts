@@ -335,4 +335,19 @@ describe("session cookie values", () => {
       "xs6k9xqy and lab12x and ab12",
     );
   });
+
+  it("are hidden in base64 of any length and alignment, as whole tokens after decoding", () => {
+    const short = credentialSet([], ["s6k9xq"]);
+    const long = credentialSet([], ["long-session-cookie-value-0123456789"]);
+    for (const prefix of ["", ";", "; "])
+      for (const encoding of ["base64", "base64url"] as const) {
+        const encode = (text: string) => Buffer.from(text).toString(encoding);
+        expect(redactString(encode(`${prefix}s6k9xq;`), short)).toBe(REDACTED);
+        const longText = encode(`${prefix}sid=long-session-cookie-value-0123456789 end`);
+        expect(redactString(longText, long)).toBe(REDACTED);
+      }
+    // Decoded bytes that only contain the cookie inside a word stay.
+    const inWord = Buffer.from("xs6k9xqy").toString("base64");
+    expect(redactString(inWord, short)).toBe(inWord);
+  });
 });

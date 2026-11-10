@@ -25,8 +25,8 @@ export const MAX_JSON_DEPTH = 512;
 const MAX_SSE_RETRY_MS = 600_000;
 
 const PERCENT_DECODE_ROUNDS = 3;
-/** Base64 of the shortest credential is at least this long. */
-const MIN_BASE64_RUN = Math.ceil((MIN_CREDENTIAL_LENGTH * 4) / 3) - 3;
+/** Base64 of `length` bytes holds a run at least this long at any alignment. */
+const base64RunFor = (length: number) => Math.ceil((length * 4) / 3) - 3;
 
 export const isProtectableCredential = (value: string): boolean =>
   value.length >= MIN_CREDENTIAL_LENGTH;
@@ -41,6 +41,8 @@ export interface CredentialSet {
   readonly secretBytes: ReadonlyArray<string>;
   /** Session cookie values: shorter than keys, so matched only as whole tokens, never in words. */
   readonly tokens: ReadonlyArray<string>;
+  /** The same cookie values as latin1 byte strings, for matching decoded base64. */
+  readonly tokenBytes: ReadonlyArray<string>;
 }
 
 export const credentialSet = (
@@ -50,10 +52,13 @@ export const credentialSet = (
   const unique = [
     ...new Set([...secrets].filter((secret): secret is string => secret !== undefined)),
   ];
+  const cookies = [...new Set(tokens)].filter((token) => token.length >= MIN_COOKIE_LENGTH);
+  const bytes = (value: string) => Buffer.from(value, "utf8").toString("latin1");
   return {
     secrets: unique,
-    secretBytes: unique.map((secret) => Buffer.from(secret, "utf8").toString("latin1")),
-    tokens: [...new Set(tokens)].filter((token) => token.length >= MIN_COOKIE_LENGTH),
+    secretBytes: unique.map(bytes),
+    tokens: cookies,
+    tokenBytes: cookies.map(bytes),
   };
 };
 
@@ -146,6 +151,7 @@ const base64RunCarries = (run: string, credentials: CredentialSet): boolean => {
     // Node decodes an unpadded final group, so the run's tail is not lost.
     const decoded = Buffer.from(normalized.slice(shift), "base64").toString("latin1");
     if (containsAny(decoded, credentials.secretBytes)) return true;
+    if (credentials.tokenBytes.some((token) => containsToken(decoded, token))) return true;
   }
   return false;
 };
@@ -156,13 +162,17 @@ const base64RunCarries = (run: string, credentials: CredentialSet): boolean => {
  * single linear scan.
  */
 const base64Carries = (text: string, credentials: CredentialSet): boolean => {
+  const shortest = Math.min(
+    ...[...credentials.secretBytes, ...credentials.tokenBytes].map((value) => value.length),
+  );
+  const minRun = base64RunFor(shortest);
   let start = -1;
   for (let index = 0; index <= text.length; index += 1) {
     if (index < text.length && isBase64Char(text.charCodeAt(index))) {
       if (start === -1) start = index;
       continue;
     }
-    if (start !== -1 && index - start >= MIN_BASE64_RUN) {
+    if (start !== -1 && index - start >= minRun) {
       if (base64RunCarries(text.slice(start, index), credentials)) return true;
     }
     start = -1;
@@ -176,7 +186,6 @@ const isTainted = (text: string, credentials: CredentialSet): boolean => {
     return false;
   for (const variant of decodedVariants(text)) {
     if (credentials.tokens.some((token) => containsToken(variant, token))) return true;
-    if (credentials.secrets.length === 0) continue;
     if (containsAny(variant, credentials.secrets)) return true;
     if (base64Carries(variant, credentials)) return true;
   }
