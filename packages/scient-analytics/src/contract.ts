@@ -82,7 +82,129 @@ export const ANALYTICS_EVENT_NAMES = [
   "scient.operation.failed",
   "scient.operation.cancelled",
   "scient.operation.skipped",
+  "provider.commands.observed",
 ] as const;
+
+/**
+ * Who a failure belongs to: Scient itself, the code or document being run, a request's input,
+ * the computer's environment, an outside service, or a cancellation. `unknown` keeps doubt.
+ */
+const FAILURE_OWNERS = [
+  "scient",
+  "code",
+  "input",
+  "environment",
+  "external",
+  "cancelled",
+  "unknown",
+] as const;
+export type FailureOwner = (typeof FAILURE_OWNERS)[number];
+
+/** The closed reasons a failure is filed under; an error's own name is never one of them. */
+const FAILURE_CATEGORIES = [
+  // Compute runs
+  "code-error",
+  "syntax",
+  "assertion",
+  "data",
+  "filesystem",
+  "permission",
+  "network",
+  "missing-dependency",
+  "out-of-memory",
+  "interrupted",
+  "exited",
+  "runtime-reported",
+  "dispatch",
+  "runtime-start",
+  "app-restart",
+  "runtime-connection",
+  "runtime-exited",
+  // Run file
+  "nonzero-exit",
+  "not-started",
+  "failed-after-exit",
+  // LaTeX builds
+  "compile_error",
+  "missing_package",
+  "missing_engine",
+  "no_output",
+  "timeout",
+  "sources_changed",
+  "publish",
+  "workspace",
+  "internal",
+  // Figure and table capture
+  "scan-timeout",
+  "scan-entry-limit",
+  "scan-depth-limit",
+  "scan-unreadable",
+  "observation-unavailable",
+  "output-limit",
+  "image-limit",
+  "unsafe-image",
+  "invalid-image",
+  "image-changed",
+  "missing-resource",
+  "resource-mismatch",
+  "persistence-failed",
+  "artifact-collection-failed",
+  "unknown",
+] as const;
+export type FailureCategory = (typeof FAILURE_CATEGORIES)[number];
+
+/** The kinds of program an agent runs in its own terminal, read locally from the command. */
+const COMMAND_CATEGORIES = [
+  "python",
+  "python-package-install",
+  "jupyter",
+  "r",
+  "julia",
+  "matlab",
+  "octave",
+  "stata",
+  "sas",
+  "sql",
+  "latex",
+  "document-convert",
+  "quarto",
+  "workflow",
+  "hpc",
+  "remote",
+  "container",
+  "compile",
+  "javascript",
+  "system-package-install",
+  "version-control",
+  "download",
+  "file-inspection",
+  "file-management",
+  "shell-other",
+] as const;
+export type CommandCategory = (typeof COMMAND_CATEGORIES)[number];
+
+const COMPUTE_ACTORS = new Set(["user", "agent"]);
+const COMPUTE_ENTRIES = new Set(["console", "file", "selection", "cell", "run-file"]);
+const COMPUTE_RUNTIME_SOURCES = new Set([
+  "managed",
+  "configured",
+  "project",
+  "path",
+  "conventional",
+]);
+
+function attributionProperties(input: Readonly<Record<string, unknown>>) {
+  return {
+    ...(property(input, "failureOwner") === undefined
+      ? {}
+      : { failureOwner: closedCategory(property(input, "failureOwner"), FAILURE_OWNERS) }),
+    ...(property(input, "failureCategory") === undefined
+      ? {}
+      : {
+          failureCategory: closedCategory(property(input, "failureCategory"), FAILURE_CATEGORIES),
+        }),
+  };
+}
 
 export const AnalyticsConsent = ["off", "essential", "product", "diagnostic"] as const;
 export type AnalyticsConsent = (typeof AnalyticsConsent)[number];
@@ -306,6 +428,12 @@ const VOICE_CANCELLATION_STAGES = new Set([
   "correcting",
   "unknown",
 ]);
+
+function countOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? Math.min(value, 1_000_000)
+    : 0;
+}
 
 function closedCategory(value: unknown, allowed: ReadonlyArray<string>): string {
   return typeof value === "string" && allowed.includes(value) ? value : "unknown";
@@ -812,6 +940,27 @@ function normalizeEvent(
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           reviewRequired: normalizedBoolean(property(input, "reviewRequired")),
           ...captureProperties(input, name !== "scient.operation.started"),
+          ...(name === "scient.operation.started" ? {} : attributionProperties(input)),
+          ...optionalProperties(input, {
+            language: "identifier",
+            actor: COMPUTE_ACTORS,
+            entry: COMPUTE_ENTRIES,
+            runtimeSource: COMPUTE_RUNTIME_SOURCES,
+          }),
+        },
+      };
+    case "provider.commands.observed":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          provider,
+          modelKey: modelKey(property(input, "model")),
+          commandCategory: closedCategory(property(input, "commandCategory"), COMMAND_CATEGORIES),
+          commandCount: countOrZero(property(input, "commandCount")),
+          failedCount: countOrZero(property(input, "failedCount")),
+          ...optionalProperties(input, { stoppedCount: "count" }),
         },
       };
     case "app.session.started":
@@ -981,6 +1130,7 @@ function normalizeEvent(
             delivery: "identifier",
             bindToCurrentThread: "boolean",
           }),
+          ...attributionProperties(input),
         },
       };
     case "mcp.delegated_task.finished":
