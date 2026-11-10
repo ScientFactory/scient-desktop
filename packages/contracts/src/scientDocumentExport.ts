@@ -305,7 +305,7 @@ export const ScientDocumentExportInput = Schema.Struct({
     description: "Project-relative .md or .markdown file.",
   }),
   outputPath: ProjectDocumentPath.annotate({
-    description: "Project-relative output path. Its extension picks the format; .pdf is available.",
+    description: "Project-relative .pdf path. An existing file is replaced.",
   }),
 });
 export type ScientDocumentExportInput = typeof ScientDocumentExportInput.Type;
