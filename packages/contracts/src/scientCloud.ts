@@ -99,6 +99,13 @@ export const ScientCloudMovedThread = Schema.Struct({
 });
 export type ScientCloudMovedThread = typeof ScientCloudMovedThread.Type;
 
+/** A thread this computer continued from another computer's cloud copy. */
+export const ScientCloudContinuedThread = Schema.Struct({
+  threadId: ThreadId,
+  from: ScientCloudThreadRef,
+});
+export type ScientCloudContinuedThread = typeof ScientCloudContinuedThread.Type;
+
 export const ScientCloudStatus = Schema.Struct({
   cloudUrl: ShortText(512),
   environmentId: EnvironmentId,
@@ -120,6 +127,7 @@ export const ScientCloudStatus = Schema.Struct({
   usedBytes: Schema.NullOr(NonNegativeInt),
   freeBytes: Schema.NullOr(NonNegativeInt),
   movedThreads: Schema.Array(ScientCloudMovedThread),
+  continuedThreads: Schema.Array(ScientCloudContinuedThread),
 });
 export type ScientCloudStatus = typeof ScientCloudStatus.Type;
 

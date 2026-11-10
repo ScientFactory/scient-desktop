@@ -93,6 +93,10 @@ const make = Effect.gen(function* () {
         threadId: threadId as ThreadId,
         ...moved,
       })),
+      continuedThreads: Object.entries(state.continuedFrom).map(([threadId, from]) => ({
+        threadId: threadId as ThreadId,
+        from: { environmentId: from.env, threadId: from.thread },
+      })),
     } satisfies ScientCloudStatus;
   });
 

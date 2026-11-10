@@ -1,7 +1,7 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { CloudIcon } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 
 import type { ComposerBannerStackItem } from "~/components/chat/ComposerBannerStack";
 import { Button } from "~/components/ui/button";
@@ -10,36 +10,72 @@ import { useEnvironments } from "~/state/environments";
 import { buildThreadRouteParams } from "~/threadRoutes";
 
 import { useCloudAccount } from "./useCloudAccount";
+import { useCloudList } from "./useCloudList";
 import { useCloudStatus } from "./useCloudStatus";
 import { useContinueHere } from "./useContinueHere";
 
 /**
- * The banner on a conversation another of the person's computers continued. This computer
- * refuses new turns on it; "Take it back" continues the latest copy here.
+ * Cloud facts about the open conversation: the banner when another of the person's computers
+ * continued it (this computer refuses new turns; "Take it back" continues the latest copy here),
+ * and the computer it was continued from, for the import banner.
  */
-export function useCloudMovedBanner(
+export function useCloudThreadBanner(
   thread: { readonly id: string; readonly environmentId: EnvironmentId } | null,
-): ComposerBannerStackItem | null {
+): { readonly moved: ComposerBannerStackItem | null; readonly continuedFrom: ReactNode } {
   const { status } = useCloudStatus(thread === null ? null : thread.environmentId);
-  const { environments } = useEnvironments();
+  const continued =
+    thread === null
+      ? undefined
+      : status?.continuedThreads.find((entry) => entry.threadId === thread.id);
+  const continuedFrom =
+    continued === undefined ? null : <ComputerName environmentId={continued.from.environmentId} />;
   const moved =
     thread === null
       ? undefined
       : status?.movedThreads.find((entry) => entry.threadId === thread.id);
-  if (thread === null || moved === undefined) return null;
-  const label =
-    environments.find((environment) => environment.environmentId === moved.movedTo)?.label ??
-    "another computer";
+  if (thread === null || moved === undefined) return { moved: null, continuedFrom };
   return {
-    id: "scient-cloud-moved",
-    variant: "info",
-    icon: <CloudIcon />,
-    title: `Continued on ${label}`,
-    description: "New messages go to that computer now. This conversation stays as it was here.",
-    ...(hasCloudPublicConfig()
-      ? { actions: <TakeBackButton environmentId={thread.environmentId} threadId={thread.id} /> }
-      : {}),
+    continuedFrom,
+    moved: {
+      id: "scient-cloud-moved",
+      variant: "info",
+      icon: <CloudIcon />,
+      title: (
+        <>
+          Continued on <ComputerName environmentId={moved.movedTo} />
+        </>
+      ),
+      description: "New messages go to that computer now. This conversation stays as it was here.",
+      ...(hasCloudPublicConfig()
+        ? { actions: <TakeBackButton environmentId={thread.environmentId} threadId={thread.id} /> }
+        : {}),
+    },
   };
+}
+
+/** A computer's name: a connected environment's label, else its name in Scient Cloud. */
+function ComputerName({ environmentId }: { environmentId: EnvironmentId }) {
+  const { environments } = useEnvironments();
+  const label = environments.find(
+    (environment) => environment.environmentId === environmentId,
+  )?.label;
+  if (label !== undefined) return label;
+  return hasCloudPublicConfig() ? (
+    <CloudComputerName environmentId={environmentId} />
+  ) : (
+    "another computer"
+  );
+}
+
+function CloudComputerName({ environmentId }: { environmentId: EnvironmentId }) {
+  const { api, userId } = useCloudAccount();
+  const { items } = useCloudList(
+    () => (userId === null ? Promise.resolve([]) : api.computers()),
+    `computers:${userId}`,
+  );
+  return (
+    items?.find((computer) => computer.environmentId === environmentId)?.label ?? "another computer"
+  );
 }
 
 function TakeBackButton({
