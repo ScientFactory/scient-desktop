@@ -337,6 +337,9 @@ import {
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { captureScientWsServices } from "./scient/ScientWsServices.ts";
+// SCIENT-FORK:START — a guest link needs Connect to reach this server.
+import { requireReachableGuestHost } from "./scient/guest/guestLinkReachability.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Browser: history and search suggestions.
 import { BrowserHistory } from "./scient/browserHistory/BrowserHistory.ts";
 import { searchSuggestions } from "./scient/browserHistory/searchSuggestions.ts";
@@ -2768,6 +2771,9 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            // SCIENT-FORK:START
+            Effect.andThen(requireReachableGuestHost()),
+            // SCIENT-FORK:END
             Effect.andThen(guestShares.create(input)),
           ),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
