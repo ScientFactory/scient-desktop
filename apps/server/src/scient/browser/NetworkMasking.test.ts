@@ -1,6 +1,13 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { maskBody, maskHeaders, maskUrl } from "./NetworkMasking.ts";
+import {
+  checkBody,
+  knownMasker,
+  maskBody,
+  maskHeaders,
+  maskKnown,
+  maskUrl,
+} from "./NetworkMasking.ts";
 
 describe("network study masking", () => {
   it("hides cookies, authorization and token-looking values, and keeps the rest readable", () => {
@@ -29,6 +36,10 @@ describe("network study masking", () => {
     ).toEqual({ user: { name: "Ada", sesskey: "<hidden 2 chars>" }, courses: [1, 2] });
     expect(maskBody("username=ada&password=hunter22", "application/x-www-form-urlencoded")).toBe(
       "username=ada&password=%3Chidden+8+chars%3E",
+    );
+    // Repeated fields stay repeated, each hidden.
+    expect(maskBody("token=one-a&token=two-b&x=1", "application/x-www-form-urlencoded")).toBe(
+      "token=%3Chidden+5+chars%3E&token=%3Chidden+5+chars%3E&x=1",
     );
   });
 
@@ -143,4 +154,233 @@ describe("network study masking", () => {
     // A format Scient cannot parse is left out rather than shown raw.
     expect(maskBody("\u0000\u0001raw", "application/octet-stream", context)).toBeUndefined();
   });
+
+  it("hides a known secret in every listed encoding, in URLs, headers and bodies", () => {
+    const secrets = ["short-secret", `p@ss w+rd/é&"'<>~`, "pw🔑key-42"];
+    const context = { secrets, base: "https://app.test/" };
+    for (const secret of secrets) {
+      const forms = writtenForms(secret);
+      for (const [label, form] of forms) {
+        const carriers: Array<[string, string | undefined]> = [
+          ["text", maskBody(`before ${form} after`, "text/plain", context)],
+          [
+            "html",
+            maskBody(
+              `<p>${form}</p><a title="${form}" href="/x?v=${form}">x</a>`,
+              "text/html",
+              context,
+            ),
+          ],
+          ["json", jsonCarrier(form, context)],
+          ["form", maskBody(`a=1&v=${form}`, "application/x-www-form-urlencoded", context)],
+          [
+            "multipart",
+            maskBody(
+              `--b\r\nContent-Disposition: form-data; name=note\r\n\r\n${form}\r\n--b--\r\n`,
+              "multipart/form-data; boundary=b",
+              context,
+            ),
+          ],
+          ["header", maskHeaders({ "x-echo": `sent ${form}` }, context)["x-echo"]],
+          ["url", maskKnown(maskUrl(`https://app.test/p/${form}?q=${form}#${form}`), context)],
+        ];
+        for (const [carrier, output] of carriers) {
+          if (output === undefined) continue;
+          for (const [otherLabel, other] of forms)
+            expect(output.includes(other), `${label} in ${carrier} shows ${otherLabel}`).toBe(
+              false,
+            );
+          expect(base64Shows(output, secret), `${label} in ${carrier} shows base64`).toBe(false);
+        }
+      }
+    }
+    // A text cut at its limit hides a value cut off at its end.
+    const known = knownMasker(secrets);
+    expect(known("ends with short-sec", true)).toBe("ends with <hidden 12 chars>");
+    expect(known("ends with short-sec")).toBe("ends with short-sec");
+  });
+
+  it("leaves out markup and JSON nested past the limits, without running out of stack", () => {
+    const deepXml = `${"<token>".repeat(5000)}x${"</token>".repeat(5000)}`;
+    expect(maskBody(deepXml, "application/xml")).toBeUndefined();
+    expect(checkBody(deepXml, "application/xml")).toEqual({ leftOut: "too-deep" });
+    const deepJson = `${"[".repeat(100_000)}${"]".repeat(100_000)}`;
+    expect(checkBody(deepJson, "application/json")).toEqual({ leftOut: "too-deep" });
+    // Ordinary elements nest as deep as they like; nothing is kept for them.
+    const deepHtml = `${"<div>".repeat(5000)}<input type=password value=deep-pass>${"</div>".repeat(5000)}`;
+    const masked = maskBody(deepHtml, "text/html")!;
+    expect(masked).not.toContain("deep-pass");
+    expect(masked.startsWith("<div><div>")).toBe(true);
+  });
+
+  it("masks 64 KB of adversarial input in under 200 ms", () => {
+    const size = 64 * 1024;
+    const fill = (unit: string) => unit.repeat(Math.ceil(size / unit.length)).slice(0, size);
+    const context = {
+      secrets: [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaab",
+        "eyJeyJeyJeyJ-cookie",
+        "&#38;&#38;-secret",
+        "%%%%-secret",
+        "abcdefghij-123456",
+        ...Array.from({ length: 30 }, (_, index) => `cookie-value-${index}-xyz`),
+      ],
+      base: "https://app.test/",
+    };
+    const inputs: Array<[string, () => unknown]> = [
+      ["letters", () => maskBody(fill("a"), "text/plain", context)],
+      ["open quote", () => maskBody(`"${fill("a")}`, "text/plain", context)],
+      ["quoted keys", () => maskBody(fill(`"a":`), "text/plain", context)],
+      ["jwt starts", () => maskBody(fill("eyJ"), "text/plain", context)],
+      ["pairs", () => maskBody(fill("a=b;"), "text/plain", context)],
+      ["urls", () => maskBody(fill("https://a.test/?token="), "text/plain", context)],
+      ["secret prefixes", () => maskBody(fill("abcdefghij-12345"), "text/plain", context)],
+      ["references", () => maskBody(fill("&#38;"), "text/plain", context)],
+      ["percents", () => maskBody(fill("%"), "text/plain", context)],
+      ["escapes", () => maskBody(fill("\\u00"), "text/plain", context)],
+      ["base64", () => maskBody(fill("Y29va2llLXZhbHVl"), "text/plain", context)],
+      ["tag spaces", () => maskBody(`<a${fill(" ")}>`, "text/html", context)],
+      ["attributes", () => maskBody(`<a${fill(" b=c")}>`, "text/html", context)],
+      ["open tags", () => maskBody(fill("<"), "text/html", context)],
+      ["refresh", () => maskBody(`<meta content="${fill("url=")}">`, "text/html", context)],
+      ["srcset", () => maskBody(`<img srcset="${fill("a.png 1x,")}">`, "text/html", context)],
+      ["secret elements", () => maskBody(fill("<token>a</token>"), "application/xml", context)],
+      ["data json", () => maskBody(`<b data-x="${fill("[")}">`, "text/html", context)],
+      ["deep json", () => maskBody(fill("["), "application/json", context)],
+      [
+        "json strings",
+        () => maskBody(`[${fill('"[1]",').slice(0, -1)}]`, "application/json", context),
+      ],
+      [
+        "multipart",
+        () => maskBody(fill("--b\r\n\r\n"), "multipart/form-data; boundary=b", context),
+      ],
+      ["form", () => maskBody(fill("a=&"), "application/x-www-form-urlencoded", context)],
+      [
+        "secret fields",
+        () => maskBody(fill("token=a&"), "application/x-www-form-urlencoded", context),
+      ],
+      ["secret query", () => maskUrl(`https://a.test/?${fill("token=a&")}`)],
+      [
+        "headers",
+        () =>
+          maskHeaders(
+            { link: fill("<"), refresh: fill("url="), referer: fill("a"), "x-a": fill("a") },
+            context,
+          ),
+      ],
+    ];
+    const slowest = inputs
+      .map(([label, run]) => {
+        // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- the bound is the requirement; the old masking took seconds.
+        const started = performance.now();
+        run();
+        // oxlint-disable-next-line t3code/no-wall-clock-in-tests -- see above.
+        return { label, ms: performance.now() - started };
+      })
+      .filter((timing) => timing.ms >= 200);
+    expect(slowest).toEqual([]);
+  });
 });
+
+/** Every encoding of `secret` the masking guarantees to find, by name. */
+const writtenForms = (secret: string): ReadonlyArray<readonly [string, string]> => {
+  const points = Array.from(secret, (char) => char.codePointAt(0)!);
+  const isAlnum = (point: number) => /^[A-Za-z0-9]$/u.test(String.fromCodePoint(point));
+  const each = (write: (point: number) => string, all = false) =>
+    points
+      .map((point) => (all || !isAlnum(point) ? write(point) : String.fromCodePoint(point)))
+      .join("");
+  const bytes = (point: number) => [...Buffer.from(String.fromCodePoint(point), "utf8")];
+  const named: Record<string, string> = {
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&apos;",
+    "/": "&sol;",
+    "@": "&commat;",
+    "+": "&plus;",
+  };
+  const units = (point: number) => {
+    const text = String.fromCodePoint(point);
+    return Array.from({ length: text.length }, (_, index) => text.charCodeAt(index));
+  };
+  const uri = encodeURIComponent(secret);
+  return [
+    ["raw", secret],
+    ["percent", uri],
+    ["percent lower", uri.replace(/%[0-9A-F]{2}/gu, (escape) => escape.toLowerCase())],
+    ["form", uri.replaceAll("%20", "+")],
+    [
+      "percent all",
+      each(
+        (point) =>
+          bytes(point)
+            .map((byte) => `%${byte.toString(16).toUpperCase().padStart(2, "0")}`)
+            .join(""),
+        true,
+      ),
+    ],
+    ["json", JSON.stringify(secret).slice(1, -1)],
+    [
+      "json unicode",
+      each((point) =>
+        units(point)
+          .map((unit) => `\\u${unit.toString(16).padStart(4, "0")}`)
+          .join(""),
+      ),
+    ],
+    [
+      "json unicode upper",
+      each(
+        (point) =>
+          units(point)
+            .map((unit) => `\\u${unit.toString(16).toUpperCase().padStart(4, "0")}`)
+            .join(""),
+        true,
+      ),
+    ],
+    ["html named", Array.from(secret, (char) => named[char] ?? char).join("")],
+    ["html decimal", each((point) => `&#${point};`)],
+    ["html decimal zeros", each((point) => `&#000${point};`)],
+    ["html decimal all", each((point) => `&#${point};`, true)],
+    ["html hex", each((point) => `&#x${point.toString(16)};`)],
+    ["html hex upper", each((point) => `&#X${point.toString(16).toUpperCase()};`, true)],
+    ...[0, 1, 2].flatMap((shift) => {
+      const encoded = Buffer.concat([Buffer.alloc(shift, 0x2e), Buffer.from(secret)]);
+      const core = (text: string) =>
+        text.slice(
+          Math.ceil((8 * shift) / 6),
+          Math.floor((8 * (shift + Buffer.byteLength(secret))) / 6),
+        );
+      return [
+        [`base64 at ${shift}`, core(encoded.toString("base64"))],
+        [`base64url at ${shift}`, core(encoded.toString("base64url"))],
+      ] as const;
+    }),
+  ];
+};
+
+/** Whether any base64 or base64url run in `text`, decoded at any alignment, holds `secret`. */
+const base64Shows = (text: string, secret: string) => {
+  const needle = Buffer.from(secret).toString("latin1");
+  for (const run of text.match(/[A-Za-z0-9+/_-]{6,}/gu) ?? []) {
+    const normalized = run.replaceAll("-", "+").replaceAll("_", "/");
+    for (let shift = 0; shift < 4; shift += 1)
+      if (Buffer.from(normalized.slice(shift), "base64").toString("latin1").includes(needle))
+        return true;
+  }
+  return false;
+};
+
+/** `form` written inside a JSON string, when it is valid JSON there. */
+const jsonCarrier = (form: string, context: { secrets: ReadonlyArray<string>; base: string }) => {
+  const body = `{"v":"${form}","n":1}`;
+  try {
+    JSON.parse(body);
+  } catch {
+    return maskBody(JSON.stringify({ v: form, n: 1 }), "application/json", context);
+  }
+  return maskBody(body, "application/json", context);
+};
