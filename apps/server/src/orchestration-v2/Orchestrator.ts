@@ -215,6 +215,9 @@ import {
   runtimeModeCeilingRefusal,
   threadsStartingWork,
 } from "./DispatchModeLimit.ts";
+// SCIENT-FORK:START — Scient Cloud: threads continued on another computer take no new turns.
+import { CloudLeaseGuard } from "../scient/cloud/CloudSyncState.ts";
+// SCIENT-FORK:END
 import {
   applyToProjection,
   emptyProjection,
@@ -1428,6 +1431,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const runtimePolicy = yield* RuntimePolicyV2;
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
+  // SCIENT-FORK:START — Scient Cloud lease guard; absent where the cloud state is not mounted.
+  const cloudLeaseGuard = yield* Effect.serviceOption(CloudLeaseGuard);
+  // SCIENT-FORK:END
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -15559,6 +15565,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (Option.isSome(existingReceipt)) {
       return yield* replayCommandReceipt(command, existingReceipt.value);
     }
+
+    // SCIENT-FORK:START — Scient Cloud: refuse a new turn on a thread another computer continued.
+    if (
+      command.type === "message.dispatch" &&
+      command.notification === undefined &&
+      command.delegatedCompletion === undefined &&
+      Option.isSome(cloudLeaseGuard) &&
+      (yield* cloudLeaseGuard.value.movedTo(command.threadId)) !== undefined
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: new Error(
+          "This conversation continued on another computer. Take it back to keep working here.",
+        ),
+      });
+    }
+    // SCIENT-FORK:END
 
     // Recheck under the lock; the user may have raised modes since sender preflight.
     const limit = yield* DispatchModeLimit;
