@@ -39,7 +39,7 @@ import {
   type AnnotationHistoryEntry,
   type ScientAnnotationFile,
 } from "./annotationStore.ts";
-import { extractSourcePdfFullText } from "../sources/SourceFullText.ts";
+import { extractSourcePdfFileFullText } from "../sources/SourceFullText.ts";
 import { anchorPdfQuote, type PdfPageText } from "./pdfQuoteAnchor.ts";
 
 export class ScientAnnotationsError extends Schema.TaggedError<ScientAnnotationsError>()(
@@ -139,7 +139,7 @@ async function pdfPageTexts(
   const text =
     stored?.outcome === "extracted" && stored.complete
       ? stored
-      : await extractSourcePdfFullText({
+      : await extractSourcePdfFileFullText({
           pdfPath: pdf.absolutePath,
           sha256: pdf.material.sha256,
           byteLength: pdf.material.byteLength,

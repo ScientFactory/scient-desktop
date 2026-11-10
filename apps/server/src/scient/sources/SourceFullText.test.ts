@@ -125,11 +125,8 @@ describe("source full text", () => {
   });
 
   it("reads every page of a PDF, not only the first two", async () => {
-    await using fixture = await project();
-    const pdfPath = NodePath.join(fixture.root, "trial.pdf");
-    await NodeFSP.writeFile(pdfPath, textPdf(trialPages));
     const text = await extractSourcePdfFullText({
-      pdfPath,
+      data: new Uint8Array(textPdf(trialPages)),
       sha256: "ab".repeat(32),
       byteLength: 1,
     });
@@ -141,12 +138,43 @@ describe("source full text", () => {
   });
 
   it("marks a file that is not a readable PDF instead of failing the pass", async () => {
-    await using fixture = await project();
-    const pdfPath = NodePath.join(fixture.root, "broken.pdf");
-    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nnot really a pdf\n");
     await expect(
-      extractSourcePdfFullText({ pdfPath, sha256: "cd".repeat(32), byteLength: 24 }),
+      extractSourcePdfFullText({
+        data: new TextEncoder().encode("%PDF-1.7\nnot really a pdf\n"),
+        sha256: "cd".repeat(32),
+        byteLength: 24,
+      }),
     ).resolves.toMatchObject({ outcome: "failed", reason: "unreadable" });
+  });
+
+  it("never reads a stored PDF through a symlink to a file or folder outside the project", async () => {
+    await using outside = await project();
+    const secret = NodePath.join(outside.root, "secret.pdf");
+    await NodeFSP.writeFile(secret, textPdf([["OUTSIDE_PROJECT_SYNTHETIC_SECRET"]]));
+    for (const link of ["file", "folder"] as const) {
+      await using fixture = await project();
+      const trial = await addPdfSource(fixture.root, "trial", "Trial", trialPages);
+      const attachment = trial.attachments[0]!;
+      const stored = NodePath.join(fixture.root, ".scient/sources", attachment.relativePath);
+      if (link === "file") {
+        await NodeFSP.rm(stored);
+        await NodeFSP.symlink(secret, stored);
+      } else {
+        const folder = NodePath.join(outside.root, `${link}-store`);
+        await NodeFSP.mkdir(folder);
+        await NodeFSP.copyFile(secret, NodePath.join(folder, NodePath.basename(stored)));
+        await NodeFSP.rm(NodePath.dirname(stored), { recursive: true });
+        await NodeFSP.symlink(folder, NodePath.dirname(stored), "dir");
+      }
+      await expect(
+        readSourceText({
+          root: fixture.root,
+          sourceId: trial.sourceId,
+          fromPage: 1,
+          maxCharacters: 10_000,
+        }),
+      ).resolves.toEqual({ outcome: "unreadable", attachmentId: attachment.attachmentId });
+    }
   });
 
   it("indexes library PDFs by hash and searches them by passage", async () => {
