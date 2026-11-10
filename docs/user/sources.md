@@ -317,7 +317,9 @@ in a collection.
 - **PRISMA** shows the flow diagram with every count, including what is still
   awaiting a decision. **Copy as Mermaid** copies it for a Markdown document.
 
-Deleting a review never removes its sources, and **Undo** restores it. An agent
+Choose **Edit review** from the review's actions to set its title, review
+question and the exclusion reasons offered when you exclude a record. Deleting a
+review never removes its sources, and **Undo** restores it. An agent
 can do all of this too, using the built-in **systematic-review** skill; its
 decisions are marked "by agent" and you can change any of them. Agent screening
 is not an independent second reviewer.

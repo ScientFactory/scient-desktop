@@ -660,8 +660,8 @@ lock.
   never brought in and records no longer in the Library are "removed for other
   reasons". Identified minus removed always equals screened.
 - Screening is an append-only log; the latest entry per source and stage is
-  the decision in force, so changes stay auditable and `clear-decision`
-  reopens a record. Full-text decisions apply only to records included at
+  the decision in force, so changes stay auditable; `clear-decision` appends a
+  `cleared` entry that reopens the record without erasing its history. Full-text decisions apply only to records included at
   title and abstract. Every entry records `decidedBy`.
 - Repeats are harmless for agents: creating a title in use returns that
   review, and logging the same database, query and date replaces that search.
