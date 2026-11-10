@@ -142,4 +142,40 @@ describe("citing Library sources", () => {
     );
     expect((await readScientSourceRecord(root, record.sourceId))?.citationKey).toBe("ada-notes");
   });
+
+  // regression: a rename stopped after 300 documents and six folder levels, without a word.
+  it("reaches every document at any depth and reports what it could not rename", async () => {
+    const root = await project();
+    const record = await add(root, candidate("A", "Notes on the engine", []));
+    const deep = NodePath.join(root, "a", "b", "c", "d", "e", "f", "g");
+    await NodeFSP.mkdir(deep, { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(root, "docs"));
+    const cited = "[@lovelace1843notes]\r\n";
+    for (let index = 0; index <= 300; index++) {
+      await NodeFSP.writeFile(
+        NodePath.join(root, "docs", `${String(index).padStart(3, "0")}.md`),
+        cited,
+      );
+    }
+    await NodeFSP.writeFile(NodePath.join(deep, "deep.md"), cited);
+    const outside = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-outside-"));
+    fixtures.push(outside);
+    await NodeFSP.writeFile(NodePath.join(outside, "linked.md"), cited);
+    await NodeFSP.symlink(NodePath.join(outside, "linked.md"), NodePath.join(root, "linked.md"));
+
+    const result = await updateScientSource({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      metadata: { ...editableMetadataFromRecord(record), citationKey: "ada-notes" },
+    });
+
+    expect(result.citationKeyRenamedIn).toHaveLength(302);
+    expect(await NodeFSP.readFile(NodePath.join(root, "docs", "300.md"), "utf8")).toBe(
+      "[@ada-notes]\r\n",
+    );
+    expect(await NodeFSP.readFile(NodePath.join(deep, "deep.md"), "utf8")).toBe("[@ada-notes]\r\n");
+    expect(result.citationKeyRenameSkipped?.map((entry) => entry.path)).toEqual(["linked.md"]);
+    expect(await NodeFSP.readFile(NodePath.join(outside, "linked.md"), "utf8")).toBe(cited);
+  });
 });

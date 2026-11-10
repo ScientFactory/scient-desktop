@@ -101,7 +101,7 @@ import {
   type ZoteroTransport,
 } from "./ZoteroLibraryReader.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
-import { renameCitationKeyInProject } from "./LibraryCitation.ts";
+import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import {
   syncManagedBibliography,
   type ManagedBibliographyFileName,
@@ -305,13 +305,27 @@ export async function updateScientSource(input: Parameters<typeof updateScientSo
   const previousKey = input.metadata.citationKey
     ? (await readScientSourceRecord(input.root, input.sourceId))?.citationKey
     : undefined;
+  // Find the documents before the key changes, so a scan failure leaves the old key in place.
+  const scan =
+    previousKey && previousKey !== input.metadata.citationKey
+      ? await scanCitationKeyRenameDocuments(input.root)
+      : undefined;
   const result = await updateScientSourceMetadata(input);
   const nextKey = result.record.citationKey;
   if (result.outcome !== "updated" || !previousKey || !nextKey || previousKey === nextKey) {
     return result;
   }
-  const citationKeyRenamedIn = await renameCitationKeyInProject(input.root, previousKey, nextKey);
-  return { ...result, citationKeyRenamedIn };
+  const { renamedIn, skipped } = await renameCitationKeyInProject(
+    input.root,
+    previousKey,
+    nextKey,
+    scan,
+  );
+  return {
+    ...result,
+    citationKeyRenamedIn: renamedIn,
+    ...(skipped.length > 0 ? { citationKeyRenameSkipped: skipped } : {}),
+  };
 }
 
 export async function updateSourceNote(input: Parameters<typeof updateScientSourceNote>[0]) {

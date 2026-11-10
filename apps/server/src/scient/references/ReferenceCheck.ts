@@ -67,7 +67,13 @@ const PARALLEL_CHUNKS = 2;
 /** Lookups not started by then count as unavailable, so a slow registry cannot hold a check open. */
 const LOOKUP_BUDGET_MS = 90_000;
 const DOCUMENT_EXTENSIONS = [".md", ".markdown", ".qmd", ".rmd", ".tex", ".ltx", ".bib"];
-const SKIPPED_DIRECTORIES = new Set(["node_modules", "__pycache__", "venv", "build", "dist"]);
+export const SKIPPED_DIRECTORIES = new Set([
+  "node_modules",
+  "__pycache__",
+  "venv",
+  "build",
+  "dist",
+]);
 
 /** The shared resolver's batch lookup; each identifier resolves as its own work. */
 export type ResolveIdentifierBatch = (

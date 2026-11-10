@@ -376,6 +376,10 @@ export const ScientSourceMetadataUpdateResult = Schema.Struct({
   validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
   /** Project documents whose citations followed a deliberate key rename. */
   citationKeyRenamedIn: Schema.optionalKey(Schema.Array(NonEmptyString)),
+  /** Documents a key rename could not reach, with why; their citations still use the old key. */
+  citationKeyRenameSkipped: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ path: NonEmptyString, reason: NonEmptyString })),
+  ),
 });
 export type ScientSourceMetadataUpdateResult = typeof ScientSourceMetadataUpdateResult.Type;
 

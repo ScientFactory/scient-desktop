@@ -471,6 +471,9 @@ export const updateScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.u
       duplicate: result.duplicate,
       validationIssues: result.validationIssues,
       ...(result.citationKeyRenamedIn ? { citationKeyRenamedIn: result.citationKeyRenamedIn } : {}),
+      ...(result.citationKeyRenameSkipped
+        ? { citationKeyRenameSkipped: result.citationKeyRenameSkipped }
+        : {}),
     };
   },
 );
