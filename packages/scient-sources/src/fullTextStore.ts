@@ -6,6 +6,7 @@ import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 
 import { ScientSourceFullText } from "./fullText.ts";
+import { assertScientProjectDirectory } from "./projectFiles.ts";
 import { canonicalizeScientSourceRoot, SCIENT_SOURCES_DIRECTORY } from "./store.ts";
 
 export const SCIENT_SOURCE_TEXT_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/text/sha256`;
@@ -24,27 +25,6 @@ function textPath(root: string, sha256: string): string {
   return NodePath.join(root, SCIENT_SOURCE_TEXT_DIRECTORY, sha256.slice(0, 2), `${sha256}.json`);
 }
 
-/** Checks each directory below the project root, optionally creating missing ones, never through a symlink. */
-async function assertSafeDirectory(root: string, directory: string, create = false): Promise<void> {
-  let current = root;
-  for (const segment of NodePath.relative(root, directory).split(NodePath.sep).filter(Boolean)) {
-    current = NodePath.join(current, segment);
-    let stats;
-    try {
-      stats = await NodeFSP.lstat(current);
-    } catch (error) {
-      if (!create || !isNodeError(error, "ENOENT")) throw error;
-      await NodeFSP.mkdir(current).catch((mkdirError: unknown) => {
-        if (!isNodeError(mkdirError, "EEXIST")) throw mkdirError;
-      });
-      stats = await NodeFSP.lstat(current);
-    }
-    if (!stats.isDirectory() || stats.isSymbolicLink()) {
-      throw new Error(`${segment} is not a safe directory.`);
-    }
-  }
-}
-
 /** The stored text for a PDF hash, or null when none is stored or it no longer decodes. */
 export async function readScientSourceFullText(
   root: string,
@@ -60,7 +40,7 @@ export async function readScientSourceFullText(
     throw error;
   }
   if (!stats.isFile() || stats.isSymbolicLink() || stats.size > MAX_TEXT_FILE_BYTES) return null;
-  await assertSafeDirectory(resolvedRoot, NodePath.dirname(filePath));
+  await assertScientProjectDirectory(resolvedRoot, NodePath.dirname(filePath));
   try {
     const decoded = decodeFullText(JSON.parse(await NodeFSP.readFile(filePath, "utf8")));
     return decoded.sha256 === sha256 ? decoded : null;
@@ -96,7 +76,7 @@ export async function writeScientSourceFullText(
     throw new Error("The extracted text exceeds the safe size limit.");
   }
   const directory = NodePath.dirname(filePath);
-  await assertSafeDirectory(resolvedRoot, directory, true);
+  await assertScientProjectDirectory(resolvedRoot, directory, { create: true });
   const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
   let handle: NodeFSP.FileHandle | null = null;
   try {
@@ -118,7 +98,7 @@ export async function listScientSourceFullTextHashes(root: string): Promise<Read
   const base = NodePath.join(resolvedRoot, SCIENT_SOURCE_TEXT_DIRECTORY);
   let prefixes;
   try {
-    await assertSafeDirectory(resolvedRoot, base);
+    await assertScientProjectDirectory(resolvedRoot, base);
     prefixes = await NodeFSP.readdir(base, { withFileTypes: true });
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return [];
@@ -142,8 +122,10 @@ export async function listScientSourceFullTextHashes(root: string): Promise<Read
 export async function removeScientSourceFullText(root: string, sha256: string): Promise<void> {
   const resolvedRoot = await canonicalizeScientSourceRoot(root);
   const filePath = textPath(resolvedRoot, sha256);
-  await assertSafeDirectory(resolvedRoot, NodePath.dirname(filePath)).catch((error: unknown) => {
-    if (!isNodeError(error, "ENOENT")) throw error;
-  });
+  await assertScientProjectDirectory(resolvedRoot, NodePath.dirname(filePath)).catch(
+    (error: unknown) => {
+      if (!isNodeError(error, "ENOENT")) throw error;
+    },
+  );
   await NodeFSP.rm(filePath, { force: true });
 }

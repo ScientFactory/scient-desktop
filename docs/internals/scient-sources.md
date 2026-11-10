@@ -549,7 +549,12 @@ Highlights and notes on project PDFs live in `.scient/annotations/v1/`, one
 `scient_annotations_*` tools share). Keying by the PDF's bytes means a Source
 attachment and the same file elsewhere in the project share annotations, and a
 changed file starts clean rather than showing marks on the wrong text. The file
-records the project paths where the PDF was annotated as hints only.
+records the project paths where the PDF was annotated as hints only; a file
+whose hints are not portable project-relative paths, or whose recorded hash or
+size differs from its name or the PDF, is treated as unreadable. The store
+checks every folder from the canonical project root down and refuses
+symlinked ones (`assertScientProjectDirectory` in
+`packages/scient-sources/src/projectFiles.ts`, shared with the full-text store).
 
 An annotation stores the reader's `PdfTarget` text selector and extractor, not
 its document identity, so stored records hold no absolute paths. It needs a
@@ -562,7 +567,8 @@ over and is reported, not hidden, in listings. Writes are serialized per PDF
 inside the server process, like the Sources store.
 
 The reader paints annotations per rendered page with the CSS Custom Highlight
-API. Stored offsets are kept when they still select the stored quote;
+API. Stored offsets are kept when they still select the stored quote with its
+stored context;
 otherwise the quote is searched on its page with its context, then alone, and
 shown only when it occurs once. A create names the PDF path and is refused
 (`material-changed`) when the file's bytes are no longer the ones the reader
@@ -574,7 +580,11 @@ and line-end hyphens; repeats are reported as ambiguous with their pages.
 "Quote in my document" inserts into the Markdown or LaTeX editor of the same
 project that was focused last in the window, using the PDF's Source citation
 key (`[@key, p. N]`, `\cite[p.~N]{key}`), and copies Markdown when no editor
-can take it. Page numbers are PDF page indices, not printed page labels.
+can take it. Page numbers are PDF page indices, not printed page labels. A
+passage that crosses a page break keeps a line break there, so words stay apart
+and a word split by a hyphen rejoins. The passage is inserted as literal text:
+the Markdown serializer escapes `$`, and the copied Markdown is written by the
+same serializer, so math or `[@…]` in the PDF text never becomes syntax.
 
 ## Reference check
 
