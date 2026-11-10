@@ -10,6 +10,7 @@ import type { Page, Request, Response } from "playwright-core";
 import {
   type CheckedBody,
   checkBody,
+  type KnownMask,
   knownMasker,
   maskHeaders,
   maskUrl,
@@ -26,8 +27,12 @@ const URL_CHARS = 2048;
 const EAGER_TYPES = new Set(["document", "xhr", "fetch", "eventsource", "other"]);
 const EAGER_BODY_BYTES = 2 * 1024 * 1024;
 const EAGER_TOTAL_BYTES = 24 * 1024 * 1024;
-/** How long to wait for the browser when gathering what is secret. */
-const LOOKUP_MS = 1500;
+/** How long to wait for a request's full headers. */
+const HEADERS_MS = 1000;
+/** How long to wait for the page's cookies or password fields. */
+const PAGE_MS = 300;
+/** How long a reading of the tab's cookies or password fields is reused. */
+const FRESH_MS = 3000;
 
 const isText = (contentType: string) =>
   /^(text\/|application\/(json|.*\+json|javascript|xml|.*\+xml|x-www-form-urlencoded|graphql))/iu.test(
@@ -36,22 +41,25 @@ const isText = (contentType: string) =>
 
 type Headers = Readonly<Record<string, string>>;
 
+/** Headers as read, and the secret values Scient learned with them. */
+interface Learned {
+  readonly headers: Headers;
+  readonly secrets: ReadonlyArray<string>;
+}
+
 interface Entry {
   readonly id: string;
   readonly request: Request;
   readonly startedAt: number;
+  /** What was secret when the request was recorded: its headers, cookies and password fields. */
+  readonly sent: Promise<Learned>;
   response: Response | undefined;
+  /** What was secret in its answer's headers, once it came. */
+  received: Promise<Learned> | undefined;
   status: number | null;
   failed: string | undefined;
   finishedAt: number | undefined;
   body: Buffer | undefined;
-  /** The full headers, read once the request (and again once its answer) is known. */
-  headers:
-    | {
-        readonly answered: boolean;
-        readonly read: Promise<{ request: Headers; response?: Headers }>;
-      }
-    | undefined;
 }
 
 export interface NetworkListItem {
@@ -78,10 +86,23 @@ export interface NetworkDetail {
   readonly note?: string;
 }
 
-/** The promise's value, or `fallback` if it fails or the browser takes too long. */
-const within = <A>(promise: Promise<A>, fallback: A): Promise<A> =>
+/** A value that never throws, even from a browser object that cannot answer. */
+const safely = <A>(read: () => A, fallback: A): A => {
+  try {
+    return read();
+  } catch {
+    return fallback;
+  }
+};
+
+/**
+ * What `read` gives, or `fallback` if it throws, fails or takes longer than `ms`. These run in
+ * the browser's own listeners, so they must never throw.
+ */
+const within = <A>(read: () => Promise<A>, fallback: A, ms: number): Promise<A> =>
   new Promise((resolve) => {
-    const timer = setTimeout(() => resolve(fallback), LOOKUP_MS);
+    const promise = safely(read, Promise.resolve(fallback));
+    const timer = setTimeout(() => resolve(fallback), ms);
     promise.then(
       (value) => {
         clearTimeout(timer);
@@ -94,63 +115,75 @@ const within = <A>(promise: Promise<A>, fallback: A): Promise<A> =>
     );
   });
 
-const headersOf = (entry: Entry) => {
-  const answered = entry.response !== undefined;
-  if (entry.headers === undefined || (answered && !entry.headers.answered)) {
-    const { request, response } = entry;
-    entry.headers = {
-      answered,
-      read: Promise.all([
-        within(request.allHeaders(), request.headers()),
-        response === undefined
-          ? Promise.resolve(undefined)
-          : within(response.allHeaders(), response.headers()),
-      ]).then(([sent, received]) =>
-        received === undefined ? { request: sent } : { request: sent, response: received },
-      ),
-    };
-  }
-  return entry.headers.read;
-};
-
-/** The tab's cookies for these addresses and what its password fields hold now. */
-const knownToTab = async (page: Page, urls: ReadonlyArray<string>) => {
-  const web = [...new Set(urls.filter((url) => /^https?:/iu.test(url)))];
-  const [cookies, passwords] = await Promise.all([
-    web.length === 0
-      ? Promise.resolve([])
-      : within(
-          page
-            .context()
-            .cookies(web)
-            .then((found) => found.map((cookie) => cookie.value)),
-          [] as ReadonlyArray<string>,
-        ),
-    within(
-      page.evaluate(
-        "Array.from(document.querySelectorAll('input[type=password]'), (input) => input.value)",
-      ),
-      [] as unknown,
-    ),
-  ]);
-  return [
-    ...cookies,
-    ...(Array.isArray(passwords)
-      ? passwords.filter((value): value is string => typeof value === "string")
-      : []),
-  ];
-};
+const NONE: ReadonlyArray<string> = [];
 
 const leftOutNote = (checked: CheckedBody, contentType: string) =>
   "leftOut" in checked && checked.leftOut === "too-deep"
     ? "The body nests too deeply for Scient to check it for secrets, so it is left out."
-    : `Scient cannot check ${contentType || "this body"} for secrets, so it is left out.`;
+    : "leftOut" in checked && checked.leftOut === "too-costly"
+      ? "The body is too costly to mask, so it is left out."
+      : `Scient cannot check ${contentType || "this body"} for secrets, so it is left out.`;
+
+const TOO_COSTLY = "The body is too costly to mask, so it is left out.";
+
+/** Known values hidden; a short text too costly to check is hidden whole. */
+const shownWith =
+  (known: KnownMask) =>
+  (text: string, cut = false) =>
+    known(text, cut) ?? `<hidden ${text.length} chars>`;
 
 const makeNetworkStudy = (page: Page) => {
   const entries: Entry[] = [];
   const byRequest = new WeakMap<Request, Entry>();
   let sequence = 0;
   let eagerBytes = 0;
+
+  /** A tab reading reused for a few seconds, so recording and listing never wait long. */
+  const fresh = <A>(read: (key: string) => Promise<A>) => {
+    const cache = new Map<string, { readonly at: number; readonly value: Promise<A> }>();
+    return (key: string) => {
+      const kept = cache.get(key);
+      if (kept !== undefined && Date.now() - kept.at < FRESH_MS) return kept.value;
+      if (cache.size > KEEP) cache.clear();
+      const value = read(key);
+      cache.set(key, { at: Date.now(), value });
+      return value;
+    };
+  };
+  const passwords = fresh(() =>
+    within(
+      () =>
+        page
+          .evaluate(
+            "Array.from(document.querySelectorAll('input[type=password]'), (input) => input.value)",
+          )
+          .then((values) =>
+            Array.isArray(values)
+              ? values.filter((value): value is string => typeof value === "string")
+              : [],
+          ),
+      NONE,
+      PAGE_MS,
+    ),
+  );
+  /** The tab's cookies for an address; cookies depend on its host and path, not its query. */
+  const cookiesAt = fresh((address) =>
+    /^https?:/iu.test(address)
+      ? within(
+          () =>
+            page
+              .context()
+              .cookies(address)
+              .then((found) => found.map((cookie) => cookie.value)),
+          NONE,
+          PAGE_MS,
+        )
+      : Promise.resolve(NONE),
+  );
+  const cookiesFor = (url: string) => {
+    const at = url.search(/[?#]/u);
+    return cookiesAt(at === -1 ? url : url.slice(0, at));
+  };
 
   const forget = () => {
     while (entries.length > KEEP) {
@@ -159,51 +192,59 @@ const makeNetworkStudy = (page: Page) => {
     }
   };
 
-  /**
-   * Hides every value Scient knows is secret in the tab: the Cookie, Authorization and
-   * Set-Cookie values of every kept request, the tab's cookies for their addresses, and what its
-   * password fields hold.
-   */
-  const knownMask = async () => {
-    const kept = [...entries];
-    const [headers, tab] = await Promise.all([
-      Promise.all(kept.map(headersOf)),
-      knownToTab(
-        page,
-        kept.map((entry) => entry.request.url()),
+  /** Everything known secret for these entries: what each learned when recorded, and now. */
+  const knownFor = async (kept: ReadonlyArray<Entry>) => {
+    const learned = await Promise.all(
+      kept.flatMap((entry) =>
+        entry.received === undefined ? [entry.sent] : [entry.sent, entry.received],
       ),
+    );
+    const now = await Promise.all([
+      passwords("tab"),
+      ...[...new Set(kept.map((entry) => entry.request.url()))].map(cookiesFor),
     ]);
-    return knownMasker([
-      ...headers.flatMap((read) => secretsInHeaders(read.request, read.response)),
-      ...tab,
-    ]);
+    return knownMasker([...learned.flatMap((read) => read.secrets), ...now.flat()]);
   };
 
-  const shownUrl = (raw: string, known: (text: string, cut?: boolean) => string) => {
+  const shownUrl = (raw: string, shown: (text: string, cut?: boolean) => string) => {
     const url = maskUrl(raw);
-    return known(url, url.length >= URL_CHARS);
+    return shown(url, url.length >= URL_CHARS);
   };
 
-  const knownHeaders = (headers: Headers, base: string, known: (text: string) => string) =>
+  const knownHeaders = (headers: Headers, base: string, shown: (text: string) => string) =>
     Object.fromEntries(
       Object.entries(maskHeaders(headers, { secrets: [], base })).map(([name, value]) => [
-        known(name),
-        known(value),
+        shown(name),
+        shown(value),
       ]),
     );
 
   return {
     onRequest: (request: Request) => {
+      const url = request.url();
+      const sent = Promise.all([
+        within(
+          () => request.allHeaders(),
+          safely(() => request.headers(), {}),
+          HEADERS_MS,
+        ),
+        cookiesFor(url),
+        passwords("tab"),
+      ]).then(([headers, tabCookies, typed]) => ({
+        headers,
+        secrets: [...secretsInHeaders(headers, undefined), ...tabCookies, ...typed],
+      }));
       const entry: Entry = {
         id: `r${++sequence}`,
         request,
         startedAt: Date.now(),
+        sent,
         response: undefined,
+        received: undefined,
         status: null,
         failed: undefined,
         finishedAt: undefined,
         body: undefined,
-        headers: undefined,
       };
       entries.push(entry);
       byRequest.set(request, entry);
@@ -213,6 +254,11 @@ const makeNetworkStudy = (page: Page) => {
       const entry = byRequest.get(response.request());
       if (entry === undefined) return;
       entry.response = response;
+      entry.received = within(
+        () => response.allHeaders(),
+        safely(() => response.headers(), {}),
+        HEADERS_MS,
+      ).then((headers) => ({ headers, secrets: secretsInHeaders({}, headers) }));
       entry.status = response.status();
       entry.finishedAt = Date.now();
       if (!EAGER_TYPES.has(response.request().resourceType())) return;
@@ -236,8 +282,11 @@ const makeNetworkStudy = (page: Page) => {
       entry.finishedAt = Date.now();
     },
     list: async (filter?: string): Promise<ReadonlyArray<NetworkListItem>> => {
-      const known = await knownMask();
-      return entries
+      // One snapshot: the secrets gathered are those of exactly the requests listed.
+      const kept = entries.map((entry) => ({ ...entry }));
+      if (kept.length === 0) return [];
+      const shown = shownWith(await knownFor(kept));
+      return kept
         .filter(
           (entry) =>
             filter === undefined ||
@@ -245,52 +294,58 @@ const makeNetworkStudy = (page: Page) => {
         )
         .map((entry) => ({
           id: entry.id,
-          method: known(entry.request.method()),
-          url: shownUrl(entry.request.url(), known),
+          method: shown(entry.request.method()),
+          url: shownUrl(entry.request.url(), shown),
           status: entry.status,
           type: entry.request.resourceType(),
           ...(entry.finishedAt === undefined ? {} : { ms: entry.finishedAt - entry.startedAt }),
-          ...(entry.failed === undefined ? {} : { failed: known(entry.failed) }),
+          ...(entry.failed === undefined ? {} : { failed: shown(entry.failed) }),
         }));
     },
     detail: async (id: string): Promise<NetworkDetail | undefined> => {
-      const entry = entries.find((item) => item.id === id);
+      const kept = entries.map((item) => ({ ...item }));
+      const entry = kept.find((item) => item.id === id);
       if (entry === undefined) return undefined;
       const { request, response } = entry;
-      const [known, read] = await Promise.all([knownMask(), headersOf(entry)]);
+      const known = await knownFor(kept);
+      const shown = shownWith(known);
+      const sent = await entry.sent;
+      const received = await entry.received;
       const base = request.url();
       const structure = { secrets: [], base };
       const posted = request.postData();
-      const requestType = read.request["content-type"] ?? "";
+      const requestType = sent.headers["content-type"] ?? "";
       const requestBody =
         posted === null
           ? undefined
           : checkBody(posted.slice(0, REQUEST_BODY_CHARS), requestType, structure);
-      const shown = {
+      const postedText =
+        requestBody === undefined || !("text" in requestBody)
+          ? undefined
+          : known(requestBody.text, posted!.length > REQUEST_BODY_CHARS);
+      const shownRequest = {
         id,
-        method: known(request.method()),
-        url: shownUrl(base, known),
+        method: shown(request.method()),
+        url: shownUrl(base, shown),
         status: entry.status,
-        requestHeaders: knownHeaders(read.request, base, known),
+        requestHeaders: knownHeaders(sent.headers, base, shown),
         ...(requestBody === undefined
           ? {}
           : {
               requestBody:
-                "text" in requestBody
-                  ? known(requestBody.text, posted!.length > REQUEST_BODY_CHARS)
-                  : leftOutNote(requestBody, known(requestType)),
+                postedText ??
+                ("text" in requestBody ? TOO_COSTLY : leftOutNote(requestBody, shown(requestType))),
             }),
       };
-      const responseHeaders = read.response;
-      if (response === undefined || responseHeaders === undefined)
-        return { ...shown, note: known(entry.failed ?? "No answer yet.") };
-      const contentType = responseHeaders["content-type"] ?? "";
+      if (response === undefined || received === undefined)
+        return { ...shownRequest, note: shown(entry.failed ?? "No answer yet.") };
+      const contentType = received.headers["content-type"] ?? "";
       const withHeaders = {
-        ...shown,
-        responseHeaders: knownHeaders(responseHeaders, base, known),
+        ...shownRequest,
+        responseHeaders: knownHeaders(received.headers, base, shown),
       };
       if (!isText(contentType))
-        return { ...withHeaders, note: known(`The body is ${contentType}, not text.`) };
+        return { ...withHeaders, note: shown(`The body is ${contentType}, not text.`) };
       const body = entry.body ?? (await response.body().catch(() => undefined));
       if (body === undefined)
         return { ...withHeaders, note: "The browser no longer has this body. Repeat the action." };
@@ -299,8 +354,9 @@ const makeNetworkStudy = (page: Page) => {
       const inline = !cutAtSave && text.length <= RESPONSE_BODY_CHARS;
       const checked = checkBody(text, contentType, structure);
       if (!("text" in checked))
-        return { ...withHeaders, note: leftOutNote(checked, known(contentType)) };
+        return { ...withHeaders, note: leftOutNote(checked, shown(contentType)) };
       const masked = known(checked.text, cutAtSave);
+      if (masked === undefined) return { ...withHeaders, note: TOO_COSTLY };
       if (inline) return { ...withHeaders, responseBody: masked };
       return {
         ...withHeaders,

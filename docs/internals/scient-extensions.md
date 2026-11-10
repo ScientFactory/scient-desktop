@@ -563,16 +563,25 @@ It is deleted with the connector.
 **Studying a site.** `preview_network` lists a tab's recent requests and shows one request's
 headers and bodies. Its masking is defence in depth, not the boundary, because an agent can
 already run `preview_evaluate` in the same tab. What it guarantees: no value Scient knows is
-secret for the tab appears in any URL, header or body it returns. Those values are the tab's
-cookies for the listed addresses, the Cookie, Authorization and Set-Cookie values of its kept
-requests, and its password fields. Each one is searched for as written raw, percent- or
-form-encoded, JSON-escaped, as HTML references (decimal, hex or named), and as standard or URL-safe
-base64 at each alignment. The output is searched for these forms and never decoded. Best effort:
-values named like secrets, and unknown token-looking values, are hidden by parsing HTML and XML
-(with CDATA and `srcset`), multipart, forms, and JSON (and JSON inside JSON strings or `data-`
-attributes, one level deep). A format Scient cannot parse is left out. The work is linear: bodies
-are cut to their output limit before masking (32 KB shown, 1 MB saved to a file), the tokenizers
-use no recursion, and nesting past the limits leaves the body out with a note.
+secret for the tab, of 4 characters or more, appears in any URL, header or body it returns.
+Those values are the tab's cookies for the listed addresses, the Cookie, Authorization and
+Set-Cookie values of its kept requests, and its password fields. Each request keeps the values
+learned when it was recorded, and a listing covers exactly the requests it returns. Each value
+is searched for as written raw, percent- or form-encoded, JSON-escaped, as HTML references
+(decimal, hex or any named one), and as standard or URL-safe base64 at each alignment, with no
+minimum length. The output is searched for these forms and never decoded. Values of 1 to 3
+characters are not hidden: hiding "en" or "1" everywhere would garble pages and protect nothing.
+Best effort: values named like secrets, and unknown token-looking values, are hidden by parsing
+HTML and XML (with CDATA and `srcset`), multipart, forms, and JSON (and JSON inside JSON strings
+or `data-` attributes, one level deep). A format Scient cannot parse is left out.
+
+The work is linear. Bodies are cut to their output limit before masking (32 KB shown, 1 MB saved
+to a file), the tokenizers use no recursion, and nesting past the limits leaves the body out with
+a note. Known values are found by one Aho-Corasick automaton per written form, so the work does
+not depend on how long the values are. Each masking call also has a fixed budget of 32 million
+character comparisons; past it the body is left out as too costly to mask, never shown unmasked.
+Reading the tab's cookies and password fields waits at most 300 ms and is reused for 3 seconds,
+and an empty list returns at once.
 
 ### Signed-in connectors
 
