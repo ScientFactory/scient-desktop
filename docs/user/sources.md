@@ -135,6 +135,8 @@ like any other.
 Results from the PubMed, Semantic Scholar and OpenAlex connectors become
 sources the same way: the agent passes the paper's PMID, Semantic Scholar ID or
 OpenAlex ID, and Scient fetches the record and checks it at the DOI's registry.
+A paper whose DOI does not exist is refused; one that only the catalogue knows,
+with no DOI, PMID or arXiv ID, is added as unverified.
 You can paste those IDs or links when you add by identifier, too.
 
 When you ask an agent to get papers for your library, it fetches them with

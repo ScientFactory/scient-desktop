@@ -181,7 +181,9 @@ Semantic Scholar, NCBI, and the Unpaywall email), skipping a row set to Off.
 Tools take the resolver through `keyedIdentifierLookup`, which passes the keys
 as `Redacted` values; the Effect HTTP client gets them as `Redacted` URL
 parameters so spans show them redacted. Paper downloads send the OpenAlex key
-and ask Unpaywall only when OpenAlex has no free copy.
+and ask Unpaywall only when OpenAlex has no free copy. The Library's registry
+contact email goes to OpenAlex as `mailto` and to Unpaywall when no Unpaywall
+email is saved.
 
 All NCBI E-utilities requests share one serialized, interval-limited lane.
 The lane remains owned until the active network request settles and releases
@@ -297,9 +299,16 @@ Scholar paper ID (`s2`, a 40-character paper ID or `CorpusId:N`), tried after
 every registry scheme. `ConnectorIdentifierLookup.ts` reads the catalogue entry
 (OpenAlex at 10 requests a second, Semantic Scholar at one), follows its DOI,
 then PMID, then arXiv ID through the ordinary scheme lookups, and keeps the
-catalogue ID among the record's identifiers. Only when no registry has the work
-does the catalogue's own record stand, with `openalex` or `semantic-scholar`
-provenance. A catalogue that does not know the ID returns not found.
+catalogue ID among the record's identifiers (both Semantic Scholar IDs, paper ID
+and `CorpusId`, when it gives them). A registry that does not have the
+identifier the catalogue names refuses the work like any other add
+(`identifier-not-found`, naming that identifier in `named`). A registry that
+cannot be reached returns unavailable with the catalogue's record, which the
+agent add keeps as unchecked with the registry identifiers. A work no registry
+names is the catalogue's own record (`catalogueOnly`, `openalex` or
+`semantic-scholar` provenance) and is added unverified. A catalogue that does
+not know the ID returns not found. OpenAlex and Semantic Scholar IDs are
+work-level identifiers in exact duplicate matching.
 
 Agent-added sources are not held for approval. Trust comes from that check,
 from attribution (origin actor, field provenance, `updatedBy` and revision

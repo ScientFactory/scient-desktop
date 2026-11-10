@@ -1,9 +1,10 @@
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import type * as Redacted from "effect/Redacted";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientRequest, type HttpClientResponse } from "effect/http";
+import { registryContactEmail } from "../sources/metadataHttp.ts";
 import type { ResearchKeys } from "../sources/SourceIdentifierResolver.ts";
 
 const MAX_PDF_BYTES = 200 * 1024 * 1024;
@@ -189,12 +190,13 @@ export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (
 ) {
   const http = yield* HttpClient.HttpClient;
   const doi = doiIn(input.doi) ?? doiIn(input.url);
+  // The Library's registry contact email goes to OpenAlex as mailto and stands in for Unpaywall's.
+  const contact = registryContactEmail();
   if (doi) {
-    const text = yield* getText(
-      http,
-      `${OPENALEX}/works/doi:${encodeURI(doi)}`,
-      keys.openAlex ? { api_key: keys.openAlex } : {},
-    );
+    const text = yield* getText(http, `${OPENALEX}/works/doi:${encodeURI(doi)}`, {
+      ...(keys.openAlex ? { api_key: keys.openAlex } : {}),
+      ...(contact ? { mailto: contact } : {}),
+    });
     const work = text === undefined ? Option.none() : decodeWork(text);
     const paper = Option.isSome(work)
       ? paperFrom(work.value, doi, input.url)
@@ -205,8 +207,9 @@ export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (
         } satisfies Paper);
     // OpenAlex is unreachable, or knows no free copy: Unpaywall may still have one.
     const missingCopies = Option.isNone(work) || paper.openAccess.length === 0;
-    if (!missingCopies || !keys.unpaywallEmail) return paper;
-    const more = yield* unpaywallCopies(http, doi, keys.unpaywallEmail);
+    const email = keys.unpaywallEmail ?? (contact ? Redacted.make(contact) : undefined);
+    if (!missingCopies || !email) return paper;
+    const more = yield* unpaywallCopies(http, doi, email);
     return more.length === 0
       ? paper
       : { ...paper, openAccess: publishedFirst([...more, ...paper.openAccess]) };
