@@ -63,6 +63,8 @@ export function assessSourceDuplicate(input: {
   readonly candidate: ScientSourceCandidate;
   readonly existing: ReadonlyArray<ScientSourceRecord>;
   readonly pdfSha256?: string;
+  /** The ID the store derives from the candidate's source key; a record with it is the same import. */
+  readonly sourceId?: string;
 }): ScientSourceDuplicateAssessment {
   const originMatches = input.existing.filter((record) =>
     input.candidate.externalReferences.some((candidateReference) =>
@@ -101,5 +103,12 @@ export function assessSourceDuplicate(input: {
     }
   }
 
+  if (input.sourceId && input.existing.some((record) => record.sourceId === input.sourceId)) {
+    return {
+      kind: "same-origin",
+      matchingSourceIds: [input.sourceId],
+      reason: "This source was already imported from the same origin.",
+    };
+  }
   return metadataDuplicate;
 }

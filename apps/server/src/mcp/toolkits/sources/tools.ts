@@ -707,6 +707,11 @@ const FileReportEntry = Schema.Struct({
   citationKey: Schema.NullOr(Schema.String),
   reason: Schema.String,
 });
+const FieldLoss = Schema.Struct({
+  field: Schema.String,
+  entryCount: Schema.Int,
+  citationKeys: Schema.Array(Schema.String),
+});
 
 export const ScientSourcesImportFileResult = Schema.Struct({
   format: FileFormat,
@@ -719,13 +724,7 @@ export const ScientSourcesImportFileResult = Schema.Struct({
   failed: Schema.Array(FileReportEntry),
   remaining: Schema.Int,
   unreadable: Schema.Array(FileReportEntry),
-  notKept: Schema.Array(
-    Schema.Struct({
-      field: Schema.String,
-      entryCount: Schema.Int,
-      citationKeys: Schema.Array(Schema.String),
-    }),
-  ),
+  notKept: Schema.Array(FieldLoss),
   withoutCitationKey: Schema.Int,
 });
 
@@ -758,7 +757,7 @@ const ScientSourcesExportTool = Tool.make("scient_sources_export", {
   description:
     "Write this project's Library, or the given sources, to a project file in BibTeX (.bib), RIS (.ris), " +
     "CSL-JSON (.json) or EndNote XML (.xml), each source under its citation key. Project notes are left out unless includeNotes. " +
-    "An existing file is replaced only with overwrite.",
+    "An existing file is replaced only with overwrite. notKept names details the format has no place for (for example an arXiv ID in EndNote XML next to a PMID); tell the user.",
   parameters: Schema.Struct({
     relativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
     format: FileFormat,
@@ -773,6 +772,7 @@ const ScientSourcesExportTool = Tool.make("scient_sources_export", {
     relativePath: NonEmptyString,
     sourceCount: Schema.Int,
     missingSourceIds: Schema.Array(NonEmptyString),
+    notKept: Schema.Array(FieldLoss),
   }),
   failure: ScientSourcesToolError,
   dependencies,

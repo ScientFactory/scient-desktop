@@ -92,7 +92,7 @@ abbreviations and `crossref` entries are resolved, and Google Scholar's
 "arXiv preprint" entries become preprints with their arXiv ID.
 
 Entries already in the Library are left out, so importing the same file again
-adds only what is new. Up to 500 new references are imported at a time; for a
+adds only what is new, even for entries with little more than a title. Up to 500 new references are imported at a time; for a
 larger file, choose **Import the rest** (or import the file again) to continue.
 After the import, a short note lists entries that could not be read (with
 their line) and fields that have no place in a Scient source, such as `file`
@@ -109,6 +109,9 @@ sources are. Each source is written under its citation key.
 Project notes stay private unless you turn on **Include notes**. Exported
 BibTeX is UTF-8; words with inner capitals (`DNA`, `mRNA`) are braced so
 styles keep their case.
+Identifiers and the preprint type survive in every format. When a format has
+no place for something (for example EndNote XML holds an arXiv ID or a PMID,
+not both), a note after the export names what the file leaves out.
 
 ## Review and manage a source
 

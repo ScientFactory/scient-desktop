@@ -128,17 +128,31 @@ class BibtexScanner {
     throw new Error("A quotation mark is not closed.");
   }
 
-  readValue(macros: ReadonlyMap<string, string>): string {
+  readValue(macros: ReadonlyMap<string, string>, budget: ExpansionBudget): string {
     const parts: string[] = [];
+    let length = 0;
     for (;;) {
       this.skipSpace();
       const character = this.peek();
-      if (character === "{") parts.push(this.readBraced());
-      else if (character === '"') parts.push(this.readQuoted());
+      let part: string;
+      if (character === "{") part = this.readBraced();
+      else if (character === '"') part = this.readQuoted();
       else {
         const name = this.readName();
-        parts.push(/^\d+$/u.test(name) ? name : (macros.get(name.toLowerCase()) ?? name));
+        const macro = /^\d+$/u.test(name) ? undefined : macros.get(name.toLowerCase());
+        if (macro !== undefined) {
+          budget.expanded += macro.length;
+          if (budget.expanded > MAX_EXPANDED_CHARACTERS) {
+            throw new Error("@string macros expand to more text than a reference file can hold.");
+          }
+        }
+        part = macro ?? name;
       }
+      length += part.length;
+      if (length > MAX_VALUE_CHARACTERS) {
+        throw new Error("A field value is too long once @string macros are expanded.");
+      }
+      parts.push(part);
       this.skipSpace();
       if (this.peek() !== "#") return parts.join("");
       this.position += 1;
@@ -146,10 +160,18 @@ class BibtexScanner {
   }
 }
 
+/** Characters that `@string` references add across one file; repeated doubling can otherwise allocate gigabytes. */
+interface ExpansionBudget {
+  expanded: number;
+}
+const MAX_VALUE_CHARACTERS = 256 * 1024;
+const MAX_EXPANDED_CHARACTERS = 16 * 1024 * 1024;
+
 function readEntryBody(
   scanner: BibtexScanner,
   close: string,
   macros: ReadonlyMap<string, string>,
+  budget: ExpansionBudget,
 ): { key: string | null; fields: Map<string, string>; duplicateFields: Set<string> } {
   scanner.skipSpace();
   const keyPattern = /[^,\s{}()=]*/uy;
@@ -179,7 +201,7 @@ function readEntryBody(
     }
     const name = scanner.readName().toLowerCase();
     scanner.expect("=");
-    const value = scanner.readValue(macros);
+    const value = scanner.readValue(macros, budget);
     if (fields.has(name)) duplicateFields.add(name);
     else fields.set(name, value);
     scanner.skipSpace();
@@ -205,6 +227,7 @@ function readBibtex(text: string): {
 } {
   const scanner = new BibtexScanner(text);
   const macros = new Map(Object.entries(MONTH_MACROS));
+  const budget: ExpansionBudget = { expanded: 0 };
   const entries: RawBibtexEntry[] = [];
   const unreadable: BibliographyUnreadableEntry[] = [];
   for (;;) {
@@ -229,11 +252,11 @@ function readBibtex(text: string): {
     try {
       scanner.position += 1;
       if (type === "string") {
-        const { fields } = readEntryBody(scanner, close, macros);
+        const { fields } = readEntryBody(scanner, close, macros, budget);
         for (const [name, value] of fields) macros.set(name, value);
         continue;
       }
-      const body = readEntryBody(scanner, close, macros);
+      const body = readEntryBody(scanner, close, macros, budget);
       entries.push({ type, line, ...body });
     } catch (error) {
       const keyMatch = /\s*([^,\s{}()=]+)\s*,/uy;
@@ -516,8 +539,8 @@ function entryFromRaw(raw: RawBibtexEntry, index: number): BibliographyEntry {
   const arxivInContainer = preprintText.match(ARXIV_IN_TEXT)?.[1];
   if (arxivInContainer) builder.addIdentifier("arxiv", arxivInContainer, "journal");
   if (
-    (type === "article" || type === "other") &&
-    !fields.has("volume") &&
+    // A volume marks a published article that also lists its arXiv version; @misc has no such reading.
+    (type === "other" || (type === "article" && !fields.has("volume"))) &&
     (eprintType === "arxiv" ||
       PREPRINT_CONTAINER.test(preprintText) ||
       (type === "other" && eprint))

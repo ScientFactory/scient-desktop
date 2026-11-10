@@ -31,6 +31,7 @@ import {
 } from "@scientfactory/scient-sources";
 import {
   BibliographyFormatSchema,
+  BibliographyFieldLoss,
   BibliographyImportReport,
 } from "@scientfactory/scient-sources/bibliography";
 import * as Schema from "effect/Schema";
@@ -328,6 +329,8 @@ export const ScientSourcesExportResult = Schema.Struct({
   content: Schema.String,
   sourceCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   missingSourceIds: Schema.Array(NonEmptyString),
+  /** Details the format has no place for, so the file does not carry them. */
+  notKept: Schema.Array(BibliographyFieldLoss),
 });
 export type ScientSourcesExportResult = typeof ScientSourcesExportResult.Type;
 

@@ -24,6 +24,7 @@ import {
   restoreScientSource,
   revertScientSource,
 } from "@scientfactory/scient-sources/store";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
@@ -31,6 +32,7 @@ import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalyt
 import type { BibliographyFormat } from "@scientfactory/scient-sources/bibliography";
 import {
   bibliographyFileErrorMessage,
+  caseInsensitiveFileSystem,
   exportBibliography,
   readBibliographyFile,
   resolveProjectBibliographyFile,
@@ -881,6 +883,7 @@ export const exportScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.
         includeNotes: input.includeNotes ?? false,
       }),
     );
+    const platform = yield* HostProcess.Platform;
     const written = yield* Effect.tryPromise({
       try: () =>
         writeProjectBibliographyFile({
@@ -888,6 +891,7 @@ export const exportScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.
           relativePath: input.relativePath,
           content: exported.content,
           overwrite: input.overwrite ?? false,
+          caseInsensitive: caseInsensitiveFileSystem(platform),
         }),
       catch: (error) =>
         toolError(
@@ -900,6 +904,7 @@ export const exportScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.
       relativePath: written.relativePath,
       sourceCount: exported.sourceCount,
       missingSourceIds: exported.missingSourceIds,
+      notKept: exported.notKept,
     };
   },
 );

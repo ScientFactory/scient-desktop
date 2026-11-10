@@ -479,9 +479,14 @@ Entries that cannot be parsed are skipped with their line, so one damaged
 entry does not lose the file. `planBibliographyImport` turns a parse into
 candidates: it drops empty entries, repeats within the file (same content or
 same work-level identifier) and entries already in the Library, and only then
-takes the first `SCIENT_SOURCE_IMPORT_ITEM_LIMIT` new ones. Importing the same
+takes the first `SCIENT_SOURCE_IMPORT_ITEM_LIMIT` new ones. An entry counts as
+already imported when a record has the source ID the store derives from its
+deterministic source key (`scientSourceIdFor`), whatever its metadata, and the
+store reports such a repeat as a `same-origin` duplicate. Importing the same
 file again therefore continues a large file instead of re-processing the first
-batch. Field provenance is `file` with `sourceField` `<format>:<field>`.
+batch. The BibTeX reader bounds `@string` expansion (256 Ki characters per
+value, 16 Mi per file) and reports entries past it as unreadable; LaTeX
+decoding and XML traversal do not recurse on plain nesting. Field provenance is `file` with `sourceField` `<format>:<field>`.
 
 The server adapter (`BibliographyFileAdapter.ts`) bounds a file to 32 MB,
 falls back to Windows-1252 when a file is not valid UTF-8, stages the batch as
@@ -500,9 +505,15 @@ before they reach a model.
 Export (`exportBibliography`) writes the Library or a selection under each
 record's citation key; a record without one gets a free key from the same
 rules for that file only. Project notes are excluded unless requested.
-`scient_sources_export` writes a project file atomically, refuses `.scient/`
-and paths outside the project, and replaces an existing file only with
-`overwrite`.
+`exportBibliographyFile` reads the written file back and returns `notKept`:
+identifiers or the source type the format could not carry. arXiv IDs go to RIS
+`AN` and EndNote `accession-num` as `arXiv:<id>`, PMCIDs to RIS `C2` and
+EndNote `custom2`, and preprints to `M3`/`work-type` `Preprint`.
+`scient_sources_export` writes a project file atomically and replaces an
+existing file only with `overwrite`. It refuses paths outside the project,
+`.scient/` and the managed `references.bib`/`references.json`, checked on the
+requested path and again on the destination after resolving its folder's
+symlinks, ignoring case on macOS and Windows.
 
 ## Zotero boundary
 

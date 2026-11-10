@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import {
   bibliographyExportItems,
   detectBibliographyFormat,
-  formatBibliography,
+  exportBibliographyFile,
   parseBibliography,
   planBibliographyImport,
   BIBLIOGRAPHY_FILE_EXTENSIONS,
@@ -29,6 +29,7 @@ import {
   readSourceImportOperation,
   removeScientSourceStagedFileImport,
   SCIENT_SOURCES_DIRECTORY,
+  scientSourceIdFor,
   writeScientSourceStagedFileImport,
 } from "@scientfactory/scient-sources/store";
 import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
@@ -93,10 +94,14 @@ async function plan(
   if (!format) {
     throw new Error(`Scient could not tell what kind of reference file this is. ${FORMAT_HELP}`);
   }
+  const existing = await listScientSourceRecords(root);
+  // Every listed record belongs to this project, so any one carries its ID.
+  const projectId = existing[0]?.projectId;
   return planBibliographyImport({
     parse: parseBibliography(input.text, format),
-    existing: await listScientSourceRecords(root),
+    existing,
     sourceKeyFor: fileImportSourceKey,
+    sourceIdFor: (sourceKey) => (projectId ? scientSourceIdFor(projectId, sourceKey) : sourceKey),
     limit: SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   });
 }
@@ -207,29 +212,52 @@ export async function exportBibliography(input: {
   const ordered = selected.toSorted((left, right) =>
     (left.citationKey ?? left.sourceId).localeCompare(right.citationKey ?? right.sourceId),
   );
+  const { content, notKept } = exportBibliographyFile(
+    bibliographyExportItems(ordered),
+    input.format,
+    { includeNotes: input.includeNotes ?? false },
+  );
   return {
     format: input.format,
     fileName: `references${BIBLIOGRAPHY_FILE_EXTENSIONS[input.format]}`,
-    content: formatBibliography(bibliographyExportItems(ordered), input.format, {
-      includeNotes: input.includeNotes ?? false,
-    }),
+    content,
     sourceCount: ordered.length,
     missingSourceIds: missing,
+    notKept,
   };
 }
 
 /** Written only by the managed bibliography service. */
 const MANAGED_BIBLIOGRAPHY_PATHS = new Set(["references.bib", "references.json"]);
 
+/** Default macOS and Windows volumes treat names that differ only in case as one file. */
+export function caseInsensitiveFileSystem(platform: NodeJS.Platform): boolean {
+  return platform === "darwin" || platform === "win32";
+}
+
+function protectedExportPathError(relativePath: string, caseInsensitive: boolean): string | null {
+  const path = caseInsensitive ? relativePath.toLowerCase() : relativePath;
+  if (path === ".scient" || path.startsWith(".scient/")) {
+    return "The export path must stay inside the project, outside .scient.";
+  }
+  if (MANAGED_BIBLIOGRAPHY_PATHS.has(path)) {
+    return "references.bib and references.json are kept up to date from the Library by Scient. Choose another file name.";
+  }
+  return null;
+}
+
 /**
  * Writes an export inside the project, never into Library storage, replacing
- * an existing file only when asked. The write is atomic.
+ * an existing file only when asked. The write is atomic. Protected paths are
+ * checked on the requested spelling and again after resolving the folder, so
+ * a symlinked folder cannot reach them.
  */
 export async function writeProjectBibliographyFile(input: {
   readonly root: string;
   readonly relativePath: string;
   readonly content: string;
   readonly overwrite: boolean;
+  readonly caseInsensitive: boolean;
 }): Promise<{ readonly outcome: "written" | "exists"; readonly relativePath: string }> {
   const requested = input.relativePath.trim();
   if (
@@ -243,21 +271,28 @@ export async function writeProjectBibliographyFile(input: {
   }
   const canonicalRoot = await canonicalizeScientSourceRoot(input.root);
   const normalized = NodePath.posix.normalize(requested);
-  if (normalized === ".." || normalized.startsWith("../") || normalized.startsWith(".scient/")) {
+  if (normalized === ".." || normalized.startsWith("../")) {
     throw new Error("The export path must stay inside the project, outside .scient.");
   }
-  if (MANAGED_BIBLIOGRAPHY_PATHS.has(normalized.toLowerCase())) {
-    throw new Error(
-      "references.bib and references.json are kept up to date from the Library by Scient. Choose another file name.",
-    );
-  }
+  const requestedError = protectedExportPathError(normalized, input.caseInsensitive);
+  if (requestedError) throw new Error(requestedError);
   const target = NodePath.join(canonicalRoot, ...normalized.split("/"));
   const directory = await NodeFSP.realpath(NodePath.dirname(target));
-  const relativeDirectory = NodePath.relative(canonicalRoot, directory);
-  if (relativeDirectory.startsWith("..") || NodePath.isAbsolute(relativeDirectory)) {
+  const finalPath = NodePath.join(directory, NodePath.basename(target));
+  const relative = NodePath.relative(canonicalRoot, finalPath);
+  if (
+    !relative ||
+    relative === ".." ||
+    relative.startsWith(`..${NodePath.sep}`) ||
+    NodePath.isAbsolute(relative)
+  ) {
     throw new Error("The export path must stay inside the project.");
   }
-  const finalPath = NodePath.join(directory, NodePath.basename(target));
+  const resolvedError = protectedExportPathError(
+    relative.split(NodePath.sep).join("/"),
+    input.caseInsensitive,
+  );
+  if (resolvedError) throw new Error(resolvedError);
   const existing = await NodeFSP.lstat(finalPath).catch(() => null);
   if (existing && (!existing.isFile() || existing.isSymbolicLink())) {
     throw new Error("The export path is not a regular file.");

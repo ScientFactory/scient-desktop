@@ -63,6 +63,18 @@ export function SourcesExportMenu(props: {
         includeNotes,
       });
       downloadBlob(new Blob([result.content], { type: option.mediaType }), result.fileName);
+      if (result.notKept.length > 0) {
+        const lost = result.notKept
+          .map(({ field, entryCount }) =>
+            entryCount === 1 ? `${field} (1 source)` : `${field} (${entryCount} sources)`,
+          )
+          .join(", ");
+        toastManager.add({
+          type: "warning",
+          title: "Some details are not in this file",
+          description: `${option.label} has no place for: ${lost}.`,
+        });
+      }
     } catch (cause) {
       toastManager.add({
         type: "error",
