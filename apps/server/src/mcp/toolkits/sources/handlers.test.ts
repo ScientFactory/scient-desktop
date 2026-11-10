@@ -1386,6 +1386,7 @@ describe("Scient Sources MCP handlers", () => {
         relativePath: "library.bib",
         sourceCount: 1,
         missingSourceIds: [],
+        notKept: [],
       });
       const written = yield* Effect.promise(() =>
         NodeFSP.readFile(NodePath.join(root, "library.bib"), "utf8"),

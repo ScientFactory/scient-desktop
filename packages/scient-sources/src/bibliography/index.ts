@@ -126,6 +126,14 @@ const REPORT_LIST_LIMIT = 50;
 const WORK_LEVEL_SCHEMES = new Set(["arxiv", "doi", "pmcid", "pmid"]);
 const REPORT_KEY_LIMIT = 5;
 
+/** A field that some entries could not keep, with the first few entries' keys. */
+export const BibliographyFieldLoss = Schema.Struct({
+  field: Schema.String,
+  entryCount: Schema.Int,
+  citationKeys: Schema.Array(Schema.String),
+});
+export type BibliographyFieldLoss = typeof BibliographyFieldLoss.Type;
+
 export const BibliographyImportReport = Schema.Struct({
   format: BibliographyFormatSchema,
   /** Entries recognised in the file, readable or not. */
@@ -143,13 +151,7 @@ export const BibliographyImportReport = Schema.Struct({
       reason: Schema.String,
     }),
   ),
-  notKept: Schema.Array(
-    Schema.Struct({
-      field: Schema.String,
-      entryCount: Schema.Int,
-      citationKeys: Schema.Array(Schema.String),
-    }),
-  ),
+  notKept: Schema.Array(BibliographyFieldLoss),
   withoutCitationKey: Schema.Int,
 });
 export type BibliographyImportReport = typeof BibliographyImportReport.Type;
@@ -175,6 +177,8 @@ export function planBibliographyImport(input: {
   readonly parse: BibliographyParseResult;
   readonly existing: ReadonlyArray<ScientSourceRecord>;
   readonly sourceKeyFor: (identity: string) => string;
+  /** The store's source ID for a source key, so entries imported before count as present whatever their metadata. */
+  readonly sourceIdFor: (sourceKey: string) => string;
   readonly limit: number;
 }): BibliographyImportPlan {
   const { parse } = input;
@@ -234,7 +238,8 @@ export function planBibliographyImport(input: {
       continue;
     }
     for (const key of workKeys) seenWorks.set(key, entry.line);
-    if (assessSourceDuplicate({ candidate, existing: input.existing }).kind !== "new") {
+    const sourceId = input.sourceIdFor(sourceKey);
+    if (assessSourceDuplicate({ candidate, existing: input.existing, sourceId }).kind !== "new") {
       alreadyInLibrary += 1;
       continue;
     }
@@ -257,5 +262,59 @@ export function planBibliographyImport(input: {
         .map(([field, summary]) => ({ field, ...summary })),
       withoutCitationKey,
     },
+  };
+}
+
+const IDENTIFIER_LABELS: Readonly<Record<string, string>> = {
+  arxiv: "arXiv ID",
+  doi: "DOI",
+  isbn: "ISBN",
+  issn: "ISSN",
+  pmcid: "PMCID",
+  pmid: "PMID",
+};
+
+/**
+ * Writes the file, then reads it back to name what the format could not
+ * hold (identifiers, the source type), so a backup or move is not silently
+ * poorer than the Library. Notes are left out on purpose and not reported.
+ */
+export function exportBibliographyFile(
+  items: ReadonlyArray<BibliographyExportItem>,
+  format: BibliographyFormat,
+  options: BibliographyExportOptions,
+): { readonly content: string; readonly notKept: ReadonlyArray<BibliographyFieldLoss> } {
+  const content = formatBibliography(items, format, options);
+  const entries = parseBibliography(content, format).entries;
+  const byKey = new Map(entries.map((entry) => [entry.citationKey, entry]));
+  const lost = new Map<string, { entryCount: number; citationKeys: string[] }>();
+  items.forEach(({ record, citationKey }, index) => {
+    const entry = byKey.get(citationKey) ?? entries[index];
+    const kept = new Set(
+      entry?.identifiers.map((identifier) =>
+        normalizePersistentIdentifier(identifier.scheme, identifier.value),
+      ),
+    );
+    const fields = new Set(
+      record.identifiers.flatMap((identifier) => {
+        const scheme = identifier.scheme.toLowerCase();
+        return kept.has(normalizePersistentIdentifier(identifier.scheme, identifier.value))
+          ? []
+          : [IDENTIFIER_LABELS[scheme] ?? scheme];
+      }),
+    );
+    if (entry?.type !== record.type) fields.add("Source type");
+    for (const field of fields) {
+      const summary = lost.get(field) ?? { entryCount: 0, citationKeys: [] };
+      summary.entryCount += 1;
+      if (summary.citationKeys.length < REPORT_KEY_LIMIT) summary.citationKeys.push(citationKey);
+      lost.set(field, summary);
+    }
+  });
+  return {
+    content,
+    notKept: [...lost.entries()]
+      .toSorted((left, right) => right[1].entryCount - left[1].entryCount)
+      .map(([field, summary]) => ({ field, ...summary })),
   };
 }

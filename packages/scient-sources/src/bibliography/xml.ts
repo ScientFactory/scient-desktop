@@ -125,17 +125,26 @@ export function childElements(element: XmlElement, name?: string): XmlElement[] 
   );
 }
 
+function pushReversed<T>(stack: T[], items: ReadonlyArray<T>): void {
+  for (const item of items.toReversed()) stack.push(item);
+}
+
 export function findElements(element: XmlElement, name: string): XmlElement[] {
   const found: XmlElement[] = [];
-  for (const child of childElements(element)) {
-    if (child.name === name) found.push(child);
-    else found.push(...findElements(child, name));
+  const pending = childElements(element).toReversed();
+  for (let next = pending.pop(); next; next = pending.pop()) {
+    if (next.name === name) found.push(next);
+    else pushReversed(pending, childElements(next));
   }
   return found;
 }
 
 export function textContent(element: XmlElement): string {
-  return element.children
-    .map((child) => (typeof child === "string" ? child : textContent(child)))
-    .join("");
+  let output = "";
+  const pending: Array<XmlElement | string> = [element];
+  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
+    if (typeof next === "string") output += next;
+    else pushReversed(pending, next.children);
+  }
+  return output;
 }

@@ -218,9 +218,9 @@ class LatexReader {
   }
 }
 
-function decodeAccentArgument(reader: LatexReader): string {
+function decodeAccentArgument(reader: LatexReader, depth: number): string {
   reader.skipSpaces();
-  if (reader.peek() === "{") return decodeLatex(reader.readGroup());
+  if (reader.peek() === "{") return decode(reader.readGroup(), depth + 1);
   if (reader.peek() === "\\") {
     reader.position += 1;
     const name = reader.readCommandName();
@@ -231,11 +231,11 @@ function decodeAccentArgument(reader: LatexReader): string {
   return character;
 }
 
-function decodeCommand(reader: LatexReader): string {
+function decodeCommand(reader: LatexReader, depth: number): string {
   const name = reader.readCommandName();
   const accent = COMBINING_ACCENTS[name];
   if (accent !== undefined) {
-    const [head = "", ...rest] = [...decodeAccentArgument(reader)];
+    const [head = "", ...rest] = [...decodeAccentArgument(reader, depth)];
     if (!head) return "";
     const dotless = head === "ı" ? "i" : head === "ȷ" ? "j" : head;
     return `${dotless}${accent}${rest.join("")}`.normalize("NFC");
@@ -253,7 +253,7 @@ function decodeCommand(reader: LatexReader): string {
     reader.skipSpaces();
     if (reader.peek() === "{") reader.readGroup();
     reader.skipSpaces();
-    return reader.peek() === "{" ? decodeLatex(reader.readGroup()) : "";
+    return reader.peek() === "{" ? decode(reader.readGroup(), depth + 1) : "";
   }
   // Unknown or formatting command (\emph, \textit, \url, \mkbibquote...):
   // keep the text of its argument, drop the markup.
@@ -264,7 +264,7 @@ function decodeCommand(reader: LatexReader): string {
   }
   if (reader.peek() === "{") {
     const argument = reader.readGroup();
-    return IGNORED_ARGUMENT_COMMANDS.has(name) ? "" : decodeLatex(argument);
+    return IGNORED_ARGUMENT_COMMANDS.has(name) ? "" : decode(argument, depth + 1);
   }
   return "";
 }
@@ -275,20 +275,24 @@ function decodeCommand(reader: LatexReader): string {
  * braces (used for case protection) are dropped.
  */
 export function decodeLatex(text: string): string {
+  return decode(text, 0);
+}
+
+/** Command arguments nest; past this depth the rest is kept as plain text so a hostile file cannot exhaust the stack. */
+const MAX_COMMAND_DEPTH = 32;
+
+function decode(text: string, depth: number): string {
+  if (depth > MAX_COMMAND_DEPTH) return text.replace(/\\[A-Za-z]*|[{}$]/gu, "");
   const reader = new LatexReader(text);
   let output = "";
   while (!reader.done) {
     const character = reader.peek();
     if (character === "\\") {
       reader.position += 1;
-      output += decodeCommand(reader);
+      output += decodeCommand(reader, depth);
       continue;
     }
-    if (character === "{") {
-      output += decodeLatex(reader.readGroup());
-      continue;
-    }
-    if (character === "}" || character === "$") {
+    if (character === "{" || character === "}" || character === "$") {
       reader.position += 1;
       continue;
     }

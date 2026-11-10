@@ -10,12 +10,14 @@ import {
   BIBLIOGRAPHY_FORMATS,
   bibliographyExportItems,
   detectBibliographyFormat,
+  exportBibliographyFile,
   formatBibliography,
   parseBibliography,
   planBibliographyImport,
   type BibliographyEntry,
   type BibliographyFormat,
 } from "./index.ts";
+import { parseBibtex } from "./bibtex.ts";
 import { decodeLatex, encodeLatexTitle } from "./latex.ts";
 
 const fixture = (name: string) =>
@@ -52,6 +54,12 @@ describe("LaTeX text", () => {
     [String.raw`$\alpha$-helix \href{https://x.org}{site}`, "α-helix site"],
   ])("decodes %s", (input, expected) => {
     expect(decodeLatex(input)).toBe(expected);
+  });
+
+  it("decodes deeply nested groups and commands without exhausting the stack", () => {
+    const depth = 12_000;
+    expect(decodeLatex(`${"{".repeat(depth)}deep${"}".repeat(depth)}`)).toBe("deep");
+    expect(decodeLatex(`${String.raw`\emph{`.repeat(depth)}deep${"}".repeat(depth)}`)).toBe("deep");
   });
 
   it("protects acronyms and escapes specials in titles", () => {
@@ -149,6 +157,26 @@ describe("BibTeX import", () => {
       notKept: ["author (“and others”)"],
     });
     expect(entry?.creators).toHaveLength(3);
+  });
+
+  it("refuses @string expansions past the value and file budgets instead of allocating them", () => {
+    const doubling = Array.from(
+      { length: 24 },
+      (_, index) => `@string{a${index + 1} = a${index} # a${index}}`,
+    );
+    const copies = Array.from({ length: 130 }, (_, index) => `@string{c${index} = a17}`);
+    const text = [
+      '@string{a0 = "X"}',
+      ...doubling,
+      ...copies,
+      "@misc{doubled, title = a24}",
+      "@misc{copied, title = c129}",
+    ].join("\n");
+    const { entries, unreadable } = parseBibtex(text);
+    const reasons = unreadable.map((entry) => entry.reason).join("\n");
+    expect(reasons).toContain("A field value is too long once @string macros are expanded.");
+    expect(reasons).toContain("@string macros expand to more text than a reference file can hold.");
+    for (const entry of entries) expect(entry.title?.length ?? 0).toBeLessThanOrEqual(256 * 1024);
   });
 
   it("skips a damaged entry with its line and keeps reading", () => {
@@ -327,6 +355,7 @@ describe("import plan", () => {
       existing: [existingRecord("10.1000/one")],
       sourceKeyFor: (identity) =>
         `file_${identity.length}_${identity.slice(-24).replace(/\W/gu, "")}`,
+      sourceIdFor: (sourceKey) => `source_${sourceKey}`,
       limit,
     });
 
@@ -356,6 +385,7 @@ describe("import plan", () => {
       parse: parsed,
       existing: [],
       sourceKeyFor: (identity) => `file_${identity.length}`,
+      sourceIdFor: (sourceKey) => `source_${sourceKey}`,
       limit: 10,
     });
     const article = decodeCandidate(candidates[0]);
@@ -441,6 +471,38 @@ describe("export", () => {
     expect(entry?.creators).toEqual(record.creators);
     expect(entry?.identifiers).toEqual(expect.arrayContaining([...record.identifiers]));
     expect(entry?.abstract?.replace(/\s+/gu, " ")).toBe("Line one. Line two.");
+  });
+
+  it.each(BIBLIOGRAPHY_FORMATS)("keeps a preprint's arXiv ID and PMCID in %s", (format) => {
+    const preprint = decodeRecord({
+      ...record,
+      type: "preprint",
+      identifiers: [
+        { scheme: "arxiv", value: "2401.12345" },
+        { scheme: "pmcid", value: "PMC12345" },
+      ],
+    });
+    const exported = exportBibliographyFile([{ record: preprint, citationKey: "p" }], format, {
+      includeNotes: false,
+    });
+    expect(exported.notKept).toEqual([]);
+    const [entry] = parseBibliography(exported.content, format).entries;
+    expect(entry?.type).toBe("preprint");
+    expect(entry?.identifiers).toEqual(expect.arrayContaining([...preprint.identifiers]));
+  });
+
+  it("reports an identifier the format has no place for", () => {
+    const both = decodeRecord({
+      ...record,
+      identifiers: [
+        { scheme: "pmid", value: "30000001" },
+        { scheme: "arxiv", value: "2401.12345" },
+      ],
+    });
+    const exported = exportBibliographyFile([{ record: both, citationKey: "b" }], "endnote-xml", {
+      includeNotes: false,
+    });
+    expect(exported.notKept).toEqual([{ field: "arXiv ID", entryCount: 1, citationKeys: ["b"] }]);
   });
 
   it("exports each source under its own key and gives keyless sources a free one", () => {

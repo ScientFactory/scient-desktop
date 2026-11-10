@@ -206,6 +206,11 @@ function entryFromRaw(raw: RawRisRecord, index: number): BibliographyEntry {
     }
   }
   for (const value of values("AN")) {
+    const arxiv = value.match(/^arxiv:\s*(\S+)$/iu)?.[1];
+    if (arxiv) {
+      builder.addIdentifier("arxiv", arxiv, "AN");
+      continue;
+    }
     const prefixed = value.match(/^pmid:?\s*(\d{1,9})$/iu)?.[1];
     const plain = value.match(/^\d{1,9}$/u)?.[0];
     const fromPubmed = /pubmed|medline/iu.test([...values("DB"), ...values("DP")].join(" "));
@@ -234,8 +239,10 @@ function entryFromRaw(raw: RawRisRecord, index: number): BibliographyEntry {
   const key = first("ID");
   if (key && !/^\d+$/u.test(key)) builder.citationKey = normalizeImportedCitationKey(key);
   if (
-    builder.type === "article" &&
-    /\b(?:arxiv|biorxiv|medrxiv|ssrn)\b/iu.test(builder.get("containerTitle") ?? "")
+    (builder.type === "article" &&
+      /\b(?:arxiv|biorxiv|medrxiv|ssrn)\b/iu.test(builder.get("containerTitle") ?? "")) ||
+    ((builder.type === "article" || risType === "GEN") &&
+      values("M3").some((value) => /^preprint$/iu.test(value.trim())))
   ) {
     builder.type = "preprint";
   }
@@ -322,14 +329,15 @@ export function formatRis(
         else if (scheme === "pmid") {
           add("AN", identifier.value);
           add("DB", "PubMed");
-        } else if (scheme === "arxiv") add("UR", `https://arxiv.org/abs/${identifier.value}`);
+        } else if (scheme === "arxiv") add("AN", `arXiv:${identifier.value}`);
       }
       add("UR", record.url);
       add("LA", record.language);
       add("AB", record.abstract);
       for (const tag of record.tags) add("KW", tag);
       if (options.includeNotes) add("N1", record.note ?? null, true);
-      if (record.type === "other" && record.customType) add("M3", record.customType);
+      if (record.type === "preprint") add("M3", "Preprint");
+      else if (record.type === "other" && record.customType) add("M3", record.customType);
       lines.push("ER  - ");
       return lines.join("\r\n");
     })

@@ -1544,9 +1544,10 @@ export async function cancelSourceImportOperation(
   });
 }
 
-function makeSourceId(projectId: string, candidate: ScientSourceCandidate): string {
+/** Importing the same source key into the same project always yields the same source ID. */
+export function scientSourceIdFor(projectId: string, sourceKey: string): string {
   const digest = NodeCrypto.createHash("sha256")
-    .update([projectId, candidate.sourceKey].join("\0"))
+    .update([projectId, sourceKey].join("\0"))
     .digest("hex")
     .slice(0, 32);
   return `source_${digest}`;
@@ -2109,15 +2110,16 @@ async function importScientSourceWithRecordLookup(
           importedAt,
         })
       : null;
+    const sourceId = scientSourceIdFor(paths.identity.projectId, input.candidate.sourceKey);
     const duplicate = assessSourceDuplicate({
       candidate: input.candidate,
       existing,
+      sourceId,
       ...(attachment ? { pdfSha256: attachment.sha256 } : {}),
     });
     if (duplicateBlocksImport(duplicate, input.allowPossibleMetadataMatch ?? false)) {
       return { outcome: "duplicate", record: null, duplicate };
     }
-    const sourceId = makeSourceId(paths.identity.projectId, input.candidate);
     const citationKey = assignCitationKey({
       preferred: input.candidate.citationKey,
       creators: input.candidate.creators,
@@ -2184,6 +2186,7 @@ async function importScientSourceWithRecordLookup(
       const concurrentDuplicate = assessSourceDuplicate({
         candidate: input.candidate,
         existing: concurrentRecords,
+        sourceId,
         ...(attachment ? { pdfSha256: attachment.sha256 } : {}),
       });
       if (concurrentDuplicate.kind === "new") {
