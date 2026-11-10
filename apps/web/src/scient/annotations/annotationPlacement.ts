@@ -12,10 +12,9 @@ function uniqueIndex(haystack: string, needle: string): number {
 }
 
 /**
- * Where an annotation's part on one page sits in that page's rendered text.
- * Stored offsets are kept when they still select the stored quote in its stored
- * context; otherwise the quote is searched on the page, with its context first,
- * and must occur once. Never guesses between repeats.
+ * Where an annotation's part on one page sits in that page's rendered text: the
+ * quote with its stored context, or else the bare quote, and either must occur
+ * once. Stored offsets are not trusted alone, so it never guesses between repeats.
  */
 export function annotationRangeOnPage(
   annotation: ScientPdfAnnotation,
@@ -24,13 +23,6 @@ export function annotationRangeOnPage(
 ): PageRange | null {
   const stored = annotation.anchor.selector.pages.find((entry) => entry.page === page);
   if (!stored) return null;
-  if (
-    text.slice(stored.start, stored.end) === stored.quote &&
-    text.slice(stored.start - stored.prefix.length, stored.start) === stored.prefix &&
-    text.slice(stored.end, stored.end + stored.suffix.length) === stored.suffix
-  ) {
-    return { start: stored.start, end: stored.end };
-  }
   const withContext = uniqueIndex(text, stored.prefix + stored.quote + stored.suffix);
   if (withContext !== -1) {
     const start = withContext + stored.prefix.length;

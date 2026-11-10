@@ -577,10 +577,9 @@ over and is reported, not hidden, in listings. Writes are serialized per PDF
 inside the server process, like the Sources store.
 
 The reader paints annotations per rendered page with the CSS Custom Highlight
-API. Stored offsets are kept when they still select the stored quote with its
-stored context;
-otherwise the quote is searched on its page with its context, then alone, and
-shown only when it occurs once. A create names the PDF path and is refused
+API. The quote is searched on its page with its stored context, then alone, and
+shown only when it occurs once; stored offsets alone never decide between
+repeats. A create names the PDF path and is refused
 (`material-changed`) when the file's bytes are no longer the ones the reader
 loaded. An agent's quote is anchored server-side against the Sources full text
 when it is complete, otherwise against a fresh pdf.js extraction in the same
