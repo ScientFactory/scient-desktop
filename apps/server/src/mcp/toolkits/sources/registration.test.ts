@@ -25,6 +25,8 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       "scient_sources_list",
       "scient_sources_note_update",
       "scient_sources_remove",
+      "scient_sources_restore",
+      "scient_sources_revert",
       "scient_sources_update",
     ]);
     for (const { tool } of sourceTools.filter(({ tool }) =>
@@ -42,6 +44,8 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
         "scient_sources_detach_pdf",
         "scient_sources_note_update",
         "scient_sources_remove",
+        "scient_sources_restore",
+        "scient_sources_revert",
         "scient_sources_update",
       ].includes(tool.name),
     );

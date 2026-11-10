@@ -14,10 +14,12 @@ import {
   Download,
   ExternalLink,
   FileText,
+  History,
   LoaderCircle,
   MoreHorizontal,
   Pencil,
   RefreshCw,
+  Trash2,
 } from "lucide-react";
 import {
   useEffect,
@@ -37,18 +39,17 @@ import {
   PopoverTitle,
 } from "../../components/ui/popover";
 import { ScrollArea } from "../../components/ui/scroll-area";
+import { toastManager } from "../../components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { readLocalApi } from "../../localApi";
 import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { scientSourcesErrorMessage } from "./errorMessage";
 import { agentVerificationLabel } from "./sourceLabels";
 import { SourceReference } from "./SourceReference";
 import { useSourceNoteControls } from "./SourceNote";
-import {
-  SourceRemovalConfirmation,
-  type SourceRemovalAnchorPoint,
-} from "./SourceRemovalConfirmation";
+import type { SourceAnchorPoint } from "./sourceAnchor";
 
 type SourceRecord = ScientSourceDetailResult;
 type SourceDiagnostic =
@@ -512,7 +513,7 @@ function SourceTags(props: { readonly tags: ReadonlyArray<string> }) {
 }
 
 function MetadataRefreshConfirmation(props: {
-  readonly anchorPoint: SourceRemovalAnchorPoint;
+  readonly anchorPoint: SourceAnchorPoint;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRefresh: () => Promise<void>;
 }) {
@@ -611,6 +612,7 @@ export function SourceDetails(props: {
   ) => Promise<ScientSourceNoteUpdateResult>;
   readonly onRefreshMetadata: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
+  readonly onOpenHistory?: () => void;
   readonly onGetPdf?: () => Promise<void>;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
@@ -618,10 +620,7 @@ export function SourceDetails(props: {
     readonly fileName: string;
   }) => void;
 }) {
-  const [removeAnchorPoint, setRemoveAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(null);
-  const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(
-    null,
-  );
+  const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
   const record = props.record;
   const sourceNote = useSourceNoteControls({ record, onSave: props.onSaveNote });
@@ -736,18 +735,27 @@ export function SourceDetails(props: {
               <RefreshCw />
               Refresh metadata
             </MenuItem>
+            {props.onOpenHistory ? (
+              <MenuItem onClick={props.onOpenHistory}>
+                <History />
+                History
+              </MenuItem>
+            ) : null}
             <MenuSeparator />
             <MenuItem
               variant="destructive"
-              onClick={(event) => {
-                const target = event.currentTarget.getBoundingClientRect();
-                setRemoveAnchorPoint({
-                  x: event.clientX || target.right,
-                  y: event.clientY || target.top + target.height / 2,
+              onClick={() => {
+                void props.onRemove().catch((cause: unknown) => {
+                  toastManager.add({
+                    type: "error",
+                    title: "Source could not be moved to Trash",
+                    description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+                  });
                 });
               }}
             >
-              Remove from Sources
+              <Trash2 />
+              Move to Trash
             </MenuItem>
           </MenuPopup>
         </Menu>
@@ -863,19 +871,6 @@ export function SourceDetails(props: {
             if (!open) setRefreshAnchorPoint(null);
           }}
           onRefresh={props.onRefreshMetadata}
-        />
-      ) : null}
-
-      {removeAnchorPoint ? (
-        <SourceRemovalConfirmation
-          key={record.sourceId}
-          open
-          record={record}
-          anchorPoint={removeAnchorPoint}
-          onOpenChange={(open) => {
-            if (!open) setRemoveAnchorPoint(null);
-          }}
-          onRemove={props.onRemove}
         />
       ) : null}
     </div>
