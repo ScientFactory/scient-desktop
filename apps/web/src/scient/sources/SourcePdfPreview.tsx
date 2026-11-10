@@ -1,4 +1,4 @@
-import type { PdfSourceResolver } from "@scientfactory/document-artifacts";
+import type { PdfMaterial, PdfSourceResolver } from "@scientfactory/document-artifacts";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 import { FileText, LoaderCircle } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
@@ -19,11 +19,13 @@ const ScientPdfReader = lazy(() =>
 
 type SourcePreviewAssetState = AssetUrlState & {
   readonly requestKey: string;
+  readonly material?: PdfMaterial;
 };
 /** Held without its retry, which the render attaches. */
 type StoredSourcePreviewAsset = RuntimeAssetUrlState & {
   readonly requestKey: string;
   readonly waiting?: boolean;
+  readonly material?: PdfMaterial;
 };
 
 export function SourcePdfPreview(props: {
@@ -87,6 +89,7 @@ export function SourcePdfPreview(props: {
             url: result.url,
             expiresAt: result.expiresAt,
             ...(result.sourcePath ? { sourcePath: result.sourcePath } : {}),
+            ...(result.material ? { material: result.material } : {}),
             requestKey,
           });
         }
@@ -124,13 +127,14 @@ export function SourcePdfPreview(props: {
             sourceId: props.sourceId,
             attachmentId: props.attachmentId,
           },
+          ...(currentAsset.material ? { material: currentAsset.material } : {}),
         })
       : null;
   // Keyed by its inputs, not its identity: a reauthorization keeps the open reader.
   const requestedSourceKey =
     requestedSource === null
       ? null
-      : `${props.environmentId}\0${props.fileName}\0${props.root}\0${sourceRelativePath}\0${props.sourceId}\0${props.attachmentId}`;
+      : `${props.environmentId}\0${props.fileName}\0${props.root}\0${sourceRelativePath}\0${props.sourceId}\0${props.attachmentId}\0${currentAsset.material?.sha256 ?? ""}`;
   const [retainedSource, setRetainedSource] = useState<{
     requestKey: string;
     sourceKey: string;

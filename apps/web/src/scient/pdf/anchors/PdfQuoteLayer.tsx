@@ -31,7 +31,7 @@ import {
 } from "./pdfQuoteReveal";
 import { takePdfReveal, useOwnedPdfReveal } from "./pdfRevealRequests";
 import { PDF_SELECTION_REFUSAL_COPY, readPdfTextSelection } from "./pdfTextLayer";
-import { pdfDocumentIdentity, pdfTextTarget } from "./pdfTextTarget";
+import { pdfDocumentIdentity, pdfDocumentMaterial, pdfTextTarget } from "./pdfTextTarget";
 
 type Captured =
   | { readonly citation: PdfCitation; readonly range: Range }
@@ -180,7 +180,11 @@ function PdfAskInChat(props: {
     if (read._tag === "Empty") return null;
     const range = selection!.getRangeAt(0);
     if (read._tag === "Refused") return { refusal: PDF_SELECTION_REFUSAL_COPY[read.reason], range };
-    const built = pdfTextTarget({ document: identity, material: null, pages: read.pages });
+    const built = pdfTextTarget({
+      document: identity,
+      material: pdfDocumentMaterial(source),
+      pages: read.pages,
+    });
     if (built._tag === "Refused") {
       return { refusal: PDF_SELECTION_REFUSAL_COPY[built.reason], range };
     }

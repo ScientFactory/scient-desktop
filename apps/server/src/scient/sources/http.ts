@@ -103,7 +103,10 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),
             );
-            return asset;
+            const { sha256, byteLength } = material.attachment;
+            return /^[0-9a-f]{64}$/u.test(sha256) && byteLength >= 1
+              ? { ...asset, material: { sha256, byteLength } }
+              : asset;
           }),
         )
         .handle("journalIcon", (args) =>

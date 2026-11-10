@@ -45,7 +45,16 @@ export const ScientSourceAttachmentPreviewRequest = Schema.Struct({
 });
 export type ScientSourceAttachmentPreviewRequest = typeof ScientSourceAttachmentPreviewRequest.Type;
 
-export const ScientSourceAttachmentPreviewResult = AssetCreateUrlResult;
+export const ScientSourceAttachmentPreviewResult = Schema.Struct({
+  ...AssetCreateUrlResult.fields,
+  /** The attachment's content-addressed bytes, so reader quotes can record them. */
+  material: Schema.optional(
+    Schema.Struct({
+      sha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+      byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    }),
+  ),
+});
 export type ScientSourceAttachmentPreviewResult = typeof ScientSourceAttachmentPreviewResult.Type;
 
 export const ScientSourceJournalIconRequest = Schema.Struct({
