@@ -234,7 +234,8 @@
     },
     "infra/scient-cloud": {
       // Alchemy loads src/worker.ts as the Worker entry; scripts/dev.ts serves it locally.
-      "entry": ["alchemy.run.ts!", "src/worker.ts!", "scripts/*.ts"],
+      // share/vite.config.ts builds the share page from apps/web (apps/web/vite/sharePage.ts).
+      "entry": ["alchemy.run.ts!", "src/worker.ts!", "scripts/*.ts", "share/vite.config.ts"],
     },
     "packages/*": {
       // These workspace packages are private to this monorepo.

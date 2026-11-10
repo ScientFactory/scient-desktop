@@ -22,7 +22,7 @@ import * as Schema from "effect/Schema";
 import { decodeCloudConversation } from "./cloudConversationCodec";
 
 /** The cloud API. Local development points it at a Worker with `VITE_SCIENT_CLOUD_URL`. */
-function cloudApiOrigin(): string {
+export function cloudApiOrigin(): string {
   const configured = (import.meta.env.VITE_SCIENT_CLOUD_URL as string | undefined)?.trim();
   return configured || SCIENT_CLOUD_ORIGIN;
 }

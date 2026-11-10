@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useEffectEvent, useState, type FormEvent } from "react";
 
 import * as Schema from "effect/Schema";
 
@@ -34,6 +34,8 @@ export interface SharePageProps {
   readonly getToken?: (() => Promise<string | null>) | undefined;
   /** Where to sign in when a share needs it; the link's fragment rides along. */
   readonly signInHref?: string | undefined;
+  /** Signs in on this page instead, where the page has an account of its own. */
+  readonly onSignIn?: (() => void) | undefined;
 }
 
 type LoadState =
@@ -55,11 +57,14 @@ function SharePageContent({
   contentOrigin,
   getToken,
   signInHref,
+  onSignIn,
   onRetry,
 }: SharePageProps & { readonly onRetry: () => void }) {
   const [state, setState] = useState<LoadState>(
     address === null ? { status: "failed", reason: "not-found" } : { status: "loading" },
   );
+
+  const readToken = useEffectEvent(async () => (await getToken?.()) ?? null);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- loads and decrypts the share from the cloud
   useEffect(() => {
@@ -67,7 +72,7 @@ function SharePageContent({
     let cancelled = false;
     void (async () => {
       try {
-        const token = (await getToken?.()) ?? null;
+        const token = await readToken();
         const share = await openSharedConversation({ apiOrigin, address, token });
         if (!cancelled) setState({ status: "ready", share });
       } catch (error) {
@@ -82,7 +87,7 @@ function SharePageContent({
     return () => {
       cancelled = true;
     };
-  }, [address, apiOrigin, getToken]);
+  }, [address, apiOrigin]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the document title follows the loaded conversation
   useEffect(() => {
@@ -107,7 +112,11 @@ function SharePageContent({
               Try again
             </Button>
           ) : null}
-          {state.reason === "sign-in" && signInHref ? (
+          {state.reason === "sign-in" && onSignIn ? (
+            <Button size="sm" onClick={onSignIn}>
+              Sign in
+            </Button>
+          ) : state.reason === "sign-in" && signInHref ? (
             <Button size="sm" render={<a href={signInHref} />}>
               Sign in
             </Button>
