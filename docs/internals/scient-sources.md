@@ -706,8 +706,13 @@ lock.
   review, and logging the same database, query and date replaces that search.
 - Possible duplicates are pairs with the same normalized title (12 characters
   or more), ordered by when each entered the review; decided pairs are left
-  out. A review file that cannot be decoded is reported in the list's
-  `issues`, not fatal. Deleting is a soft delete that `restore-review` undoes.
+  out. A review file that cannot be decoded, or whose `reviewId` differs from
+  its file name, is reported in the list's `issues`, not fatal; reading or
+  changing it by ID fails instead. Writes go to the file that was read and
+  validated, never to an ID taken from its contents, and a new review is
+  created exclusively. Every directory from the project root to `reviews/` is
+  checked for symlinks before any read or write (`assertScientProjectDirectory`).
+  Deleting is a soft delete that `restore-review` undoes.
 - The built-in `systematic-review` skill tells agents how to use these tools
   and that agent screening is not independent dual screening.
 

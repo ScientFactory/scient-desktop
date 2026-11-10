@@ -328,4 +328,57 @@ describe("Systematic reviews", () => {
       ".scient/sources/reviews/review_broken.json could not be read.",
     ]);
   });
+  it("never writes through a review file that names another review", async () => {
+    const { root } = await project([]);
+    const create = async (title: string) =>
+      (
+        await changeScientSystematicReview({
+          root,
+          change: { action: "create-review", title },
+          actor: "user",
+        })
+      ).reviewId ?? "";
+    const first = await create("First");
+    const second = await create("Second");
+    const directory = NodePath.join(root, ".scient/sources/reviews");
+    const firstPath = NodePath.join(directory, `${first}.json`);
+    const secondPath = NodePath.join(directory, `${second}.json`);
+    const copied = (await NodeFSP.readFile(firstPath, "utf8")).replace(first, second);
+    await NodeFSP.writeFile(firstPath, copied, "utf8");
+    await NodeFSP.writeFile(secondPath, "{", "utf8");
+
+    await expect(
+      changeScientSystematicReview({
+        root,
+        change: { action: "update-review", reviewId: first, title: "Changed" },
+        actor: "agent",
+      }),
+    ).rejects.toThrow("holds a different review");
+    expect(await NodeFSP.readFile(firstPath, "utf8")).toBe(copied);
+    expect(await NodeFSP.readFile(secondPath, "utf8")).toBe("{");
+    expect((await listScientSystematicReviews(root)).issues).toHaveLength(2);
+  });
+
+  it("does not follow a symlinked reviews directory when listing or reading", async () => {
+    const { root } = await project([]);
+    const { reviewId } = await changeScientSystematicReview({
+      root,
+      change: { action: "create-review", title: "Outside" },
+      actor: "user",
+    });
+    const outside = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-review-out-"));
+    fixtures.push(outside);
+    const directory = NodePath.join(root, ".scient/sources/reviews");
+    await NodeFSP.rename(
+      NodePath.join(directory, `${reviewId}.json`),
+      NodePath.join(outside, `${reviewId}.json`),
+    );
+    await NodeFSP.rm(directory, { recursive: true });
+    await NodeFSP.symlink(outside, directory, "junction");
+
+    await expect(listScientSystematicReviews(root)).rejects.toThrow("not a safe directory");
+    await expect(readScientSystematicReview(root, reviewId ?? "")).rejects.toThrow(
+      "not a safe directory",
+    );
+  });
 });

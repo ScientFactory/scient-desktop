@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 
 import { readScientSourcesOrganization } from "./collections.ts";
 import type { ScientSourceActor, ScientSourceRecord } from "./model.ts";
+import { assertScientProjectDirectory } from "./projectFiles.ts";
 import {
   listScientSourceRecords,
   SCIENT_SOURCES_DIRECTORY,
@@ -37,39 +38,60 @@ const {
   snapshot,
   readBoundedJson,
   atomicWriteJson,
+  atomicCreateJson,
   withOperationLock,
   assertSafeIdentifier,
 } = scientSourceStoreInternals;
 const validateReview = Schema.decodeSync(ScientSystematicReview);
 
+function reviewsDirectory(root: string): string {
+  return NodePath.join(root, SCIENT_SOURCE_REVIEWS_DIRECTORY);
+}
+
 function reviewPath(root: string, reviewId: string): string {
   assertSafeIdentifier(reviewId, "Review ID");
-  return NodePath.join(root, SCIENT_SOURCE_REVIEWS_DIRECTORY, `${reviewId}.json`);
+  return NodePath.join(reviewsDirectory(root), `${reviewId}.json`);
+}
+
+/** Every directory from the project root down is checked, so a symlinked ancestor is refused. */
+async function reviewsDirectoryExists(root: string): Promise<boolean> {
+  try {
+    await assertScientProjectDirectory(root, reviewsDirectory(root));
+    return true;
+  } catch (error) {
+    if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+/** A review is stored under its own ID; a file naming another review is damaged, never followed. */
+async function readReviewEntry(root: string, fileName: string) {
+  const review = await readBoundedJson(
+    NodePath.join(reviewsDirectory(root), fileName),
+    MAX_REVIEW_BYTES,
+    ScientSystematicReview,
+  );
+  if (`${review.reviewId}.json` !== fileName) {
+    throw new Error(`${fileName} holds a different review.`);
+  }
+  return review;
 }
 
 async function readReviewFile(root: string, reviewId: string) {
   const filePath = reviewPath(root, reviewId);
+  if (!(await reviewsDirectoryExists(root))) return null;
   if ((await snapshot(filePath)) === "missing") return null;
-  return readBoundedJson(filePath, MAX_REVIEW_BYTES, ScientSystematicReview);
+  return readReviewEntry(root, `${reviewId}.json`);
 }
 
 async function readAllReviews(root: string) {
-  const directory = NodePath.join(root, SCIENT_SOURCE_REVIEWS_DIRECTORY);
-  const state = await snapshot(directory);
-  if (state === "missing") return { reviews: [], issues: [] };
-  if (state !== "directory") throw new Error("The systematic review store is unsafe.");
+  if (!(await reviewsDirectoryExists(root))) return { reviews: [], issues: [] };
   const reviews: ScientSystematicReview[] = [];
   const issues: string[] = [];
-  for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
+  for (const entry of await NodeFSP.readdir(reviewsDirectory(root), { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
     try {
-      reviews.push(
-        await readBoundedJson(
-          NodePath.join(directory, entry.name),
-          MAX_REVIEW_BYTES,
-          ScientSystematicReview,
-        ),
-      );
+      reviews.push(await readReviewEntry(root, entry.name));
     } catch {
       issues.push(`${SCIENT_SOURCE_REVIEWS_DIRECTORY}/${entry.name} could not be read.`);
     }
@@ -452,11 +474,20 @@ export async function changeScientSystematicReview(input: {
       collectionMembers,
     });
     if (applied.review) {
-      await atomicWriteJson(
-        reviewPath(paths.root, applied.review.reviewId),
-        validateReview(applied.review),
-        MAX_REVIEW_BYTES,
-      );
+      await assertScientProjectDirectory(paths.root, reviewsDirectory(paths.root), {
+        create: true,
+      });
+      const next = validateReview(applied.review);
+      if (change.action === "create-review") {
+        if (
+          !(await atomicCreateJson(reviewPath(paths.root, next.reviewId), next, MAX_REVIEW_BYTES))
+        ) {
+          throw new Error("The new review could not be saved. Try again.");
+        }
+      } else {
+        // The destination is the file that was read and validated, never an ID from its contents.
+        await atomicWriteJson(reviewPath(paths.root, change.reviewId), next, MAX_REVIEW_BYTES);
+      }
     }
     return applied.result;
   });
