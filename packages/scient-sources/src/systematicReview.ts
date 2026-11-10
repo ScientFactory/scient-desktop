@@ -40,6 +40,8 @@ export const ScientReviewScreening = Schema.Struct({
   decision: ScientReviewDecision,
   reason: Schema.optionalKey(Reason),
   note: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_000))),
+  // Marks an undone decision; the record is open again and the history stays.
+  cleared: Schema.optionalKey(Schema.Literal(true)),
   decidedAt: NonEmptyString,
   decidedBy: ScientSourceActor,
 });
@@ -250,7 +252,9 @@ export function scientReviewDecisions(
 ): ReadonlyMap<string, ScientReviewScreening> {
   const decisions = new Map<string, ScientReviewScreening>();
   for (const entry of review.screening) {
-    if (entry.stage === stage) decisions.set(entry.sourceId, entry);
+    if (entry.stage !== stage) continue;
+    if (entry.cleared) decisions.delete(entry.sourceId);
+    else decisions.set(entry.sourceId, entry);
   }
   return decisions;
 }
