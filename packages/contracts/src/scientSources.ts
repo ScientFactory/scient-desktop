@@ -17,7 +17,7 @@ import {
   ScientSourceTrashListing,
   ScientSourcePreflightItem,
   ScientSourceWebPage,
-  ScientSourcesBulkChange,
+  ScientSourcesBulkRequestChange,
   ScientSourcesBulkResult,
   ScientSystematicReviewAction,
   ScientSystematicReviewChangeResult,
@@ -236,7 +236,7 @@ export type ScientSystematicReviewChangeRequest = typeof ScientSystematicReviewC
 
 export const ScientSourcesBulkUpdateRequest = Schema.Struct({
   root: NonEmptyString,
-  change: ScientSourcesBulkChange,
+  change: ScientSourcesBulkRequestChange,
 });
 export type ScientSourcesBulkUpdateRequest = typeof ScientSourcesBulkUpdateRequest.Type;
 export const ScientSourcesAddByIdentifierRequest = Schema.Struct({

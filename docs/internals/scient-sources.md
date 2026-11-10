@@ -94,6 +94,7 @@ their own subtree:
 ├── text/sha256/<prefix>/    extracted PDF text, one JSON file per PDF hash
 ├── collections.json         collections and saved searches
 ├── reviews/<review-id>.json systematic reviews
+├── bulk-edits/<batch-id>.json what a bulk edit changed, for Undo
 ├── operations/              resumable import state
 ├── receipts/                terminal import evidence
 └── staging/                 bounded temporary copies
@@ -679,6 +680,15 @@ an agent.
   one retry on a stale revision, then membership changes. Each source is
   reported; one failure does not stop the rest. Bulk removal is the trash
   removal per source, with one Undo for the batch in the panel.
+- A bulk edit that changed something writes a receipt to
+  `.scient/sources/bulk-edits/<batch-id>.json` (latest 50 kept): each updated
+  source's type, custom type and tags before and after, and each collection's
+  exact added and removed members. The result's `undo.batchId` passed back as
+  `{ undoBatchId }` (HTTP and `scient_sources_bulk_update`) reverses it once,
+  credited to the actor: a type is restored only while it still has the bulk
+  value, tags and memberships are reversed as the recorded additions and
+  removals (restoring the original order when the tags are untouched), and
+  anything left as it is comes back in `conflicts`.
 
 ## Systematic reviews
 

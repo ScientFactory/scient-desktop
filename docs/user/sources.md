@@ -291,7 +291,11 @@ Command-click (Ctrl-click on Windows and Linux) a source. Then select more and
 use the bar at the top of the list to add or remove a tag, add them to or take
 them out of a collection, set their type, or move them to the Trash. Tag and
 type changes are saved as a new version of each source, so they appear in its
-history and can be restored like any other edit.
+history and can be restored like any other edit. **Undo** in the message that
+appears reverses the whole change: each source gets back its type, the tags
+that were added or removed, and its collections. A change someone made to a
+source since then is kept, and the message says what was kept. The latest 50
+bulk changes can be undone.
 
 Collections and saved searches are kept in `.scient/sources/collections.json`
 with the rest of the project's Library.
