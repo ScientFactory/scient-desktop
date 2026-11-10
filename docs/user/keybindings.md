@@ -15,6 +15,11 @@ The Shortcuts page uses the same source selector as Skills. Choose **General**, 
 part of the product. General contains application commands; the other sections
 contain document-authoring and reading commands. The selected section stays open.
 
+In Scient Desktop, **General → Application & windows** also lists **New Window**
+(`Cmd+Option+Shift+N` on macOS, `Ctrl+Alt+Shift+N` on Windows and Linux).
+It is labeled **Fixed shortcut** because it belongs to the desktop File menu and
+cannot be changed here. See [Multiple windows](./multiple-windows.md).
+
 Use the page search to filter the selected section. Click a document shortcut to
 edit it in place, or use **+** to add an alternative. The row menu can disable a
 command or reset it to its defaults. A command without a keyboard binding remains
