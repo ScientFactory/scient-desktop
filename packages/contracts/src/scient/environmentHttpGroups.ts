@@ -4,6 +4,14 @@ import {
   ScientPdfEditError,
 } from "../scientPdfEdits.ts";
 import { KEEP_AWAKE_WORK_PATH, KeepAwakeWork } from "../scientKeepAwake.ts";
+import {
+  ScientAnnotationMutationRequest,
+  ScientAnnotationMutationResult,
+  ScientAnnotationsDocumentRequest,
+  ScientAnnotationsDocumentResult,
+  ScientAnnotationsSourceRequest,
+  ScientAnnotationsSourceResult,
+} from "../scientAnnotations.ts";
 import * as Schema from "effect/Schema";
 import * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import * as HttpApiGroup from "effect/http-api/HttpApiGroup";
@@ -192,6 +200,7 @@ export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "scient_conversation_import_failed",
   "scient_word_export_failed",
   "scient_overleaf_operation_failed",
+  "scient_annotations_operation_failed",
 ] as const;
 
 export class ScientThreadQueueOperationError extends Schema.TaggedError<ScientThreadQueueOperationError>()(
@@ -591,14 +600,39 @@ export function makeScientEnvironmentHttpGroups({
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}
 
-  class EnvironmentScientPdfHttpApi extends HttpApiGroup.make("scientPdf").add(
-    HttpApiEndpoint.post("save", "/api/scient/pdf/save", {
-      headers: OptionalBearerHeaders,
-      payload: ScientPdfEditSaveRequest,
-      success: ScientPdfEditSaveResult,
-      error: [EnvironmentHttpCommonError, ScientPdfEditError],
-    }).middleware(EnvironmentAuthenticatedAuth),
-  ) {}
+  class EnvironmentScientPdfHttpApi extends HttpApiGroup.make("scientPdf")
+    .add(
+      HttpApiEndpoint.post("save", "/api/scient/pdf/save", {
+        headers: OptionalBearerHeaders,
+        payload: ScientPdfEditSaveRequest,
+        success: ScientPdfEditSaveResult,
+        error: [EnvironmentHttpCommonError, ScientPdfEditError],
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("annotationsForDocument", "/api/scient/pdf/annotations/document", {
+        headers: OptionalBearerHeaders,
+        payload: ScientAnnotationsDocumentRequest,
+        success: ScientAnnotationsDocumentResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("annotationsForSource", "/api/scient/pdf/annotations/source", {
+        headers: OptionalBearerHeaders,
+        payload: ScientAnnotationsSourceRequest,
+        success: ScientAnnotationsSourceResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("annotationsMutate", "/api/scient/pdf/annotations/mutate", {
+        headers: OptionalBearerHeaders,
+        payload: ScientAnnotationMutationRequest,
+        success: ScientAnnotationMutationResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    ) {}
 
   class EnvironmentScientMarkdownHttpApi extends HttpApiGroup.make("scientMarkdown").add(
     HttpApiEndpoint.post("imageUpload", "/api/scient/markdown/images/upload", {

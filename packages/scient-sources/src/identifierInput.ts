@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 
+import { CONNECTOR_IDENTIFIER_SCHEMES, detectConnectorIdentifier } from "./connectorIdentifiers.ts";
 import { ScientSourceIdentifier, ScientSourceVerification } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
 
@@ -7,7 +8,13 @@ import { normalizePersistentIdentifier } from "./normalize.ts";
 export const MAX_SOURCE_IDENTIFIER_BATCH = 50;
 
 /** Schemes a person or agent can add a source by; each resolves against its registry. */
-export const SOURCE_ADD_IDENTIFIER_SCHEMES = ["doi", "pmid", "arxiv", "isbn"] as const;
+export const SOURCE_ADD_IDENTIFIER_SCHEMES = [
+  "doi",
+  "pmid",
+  "arxiv",
+  "isbn",
+  ...CONNECTOR_IDENTIFIER_SCHEMES,
+] as const;
 export type SourceAddIdentifierScheme = (typeof SOURCE_ADD_IDENTIFIER_SCHEMES)[number];
 
 const SCHEME_NAMES: Readonly<
@@ -17,6 +24,8 @@ const SCHEME_NAMES: Readonly<
   pmid: { label: "PMID", registry: "PubMed" },
   arxiv: { label: "arXiv ID", registry: "arXiv" },
   isbn: { label: "ISBN", registry: "Open Library or Google Books" },
+  openalex: { label: "OpenAlex work", registry: "OpenAlex" },
+  s2: { label: "Semantic Scholar paper", registry: "Semantic Scholar" },
 };
 
 function schemeNames(scheme: string) {
@@ -121,9 +130,9 @@ function isbnIdentifier(raw: string): ScientSourceIdentifier | null {
 }
 
 /**
- * Reads one DOI, PMID, arXiv ID or ISBN written in any common form: a bare value, a
- * "scheme:" prefix, or a doi.org, PubMed or arXiv link. Returns null when the text is
- * not exactly one identifier.
+ * Reads one DOI, PMID, arXiv ID, ISBN, OpenAlex work or Semantic Scholar paper written in any
+ * common form: a bare value, a "scheme:" prefix, or a link. Returns null when the text is not
+ * exactly one identifier.
  */
 export function detectSourceIdentifier(text: string): ScientSourceIdentifier | null {
   const value = trimTrailingPunctuation(text.trim().replace(/^<|>$/gu, ""));
@@ -156,7 +165,7 @@ export function detectSourceIdentifier(text: string): ScientSourceIdentifier | n
     if (digits.length >= 10) return isbnIdentifier(value);
     if (!value.includes("-") && isWellFormedPmid(digits)) return identifier("pmid", digits);
   }
-  return null;
+  return detectConnectorIdentifier(value);
 }
 
 export interface SourceIdentifierListEntry {

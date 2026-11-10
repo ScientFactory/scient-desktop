@@ -395,7 +395,8 @@ const ScientSourceAddTool = Tool.make("scient_sources_add", {
     "identifier-not-found means the identifier does not exist and identifier-mismatch means it names a different work (see resolved); nothing is added in either case. " +
     "A found identifier's registry metadata replaces the citation fields you gave (verification verified). " +
     "If the registry cannot be reached the source is added as given (unchecked); without one of these identifiers it is unverified. " +
-    "The user sees that you added it. Repeating the same request adds nothing.",
+    "The user sees that you added it. Repeating the same request adds nothing. " +
+    "From a PubMed, Semantic Scholar or OpenAlex result, pass only its identifier (scheme pmid, s2 for a paperId or CorpusId:N, or openalex for a W work ID) without citation fields: Scient fetches the record and checks it at the DOI's registry.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
   failure: ScientSourcesToolError,
