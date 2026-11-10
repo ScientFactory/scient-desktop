@@ -10,6 +10,7 @@ import {
   ScientSourceSummary,
   ScientSourcePreflightItem,
   ScientSourcesOverview as ScientSourcesStoreOverview,
+  ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,
   ZoteroCollectionsResult,
@@ -104,7 +105,10 @@ export const ScientSourceRemovalRequest = Schema.Struct({
 });
 export type ScientSourceRemovalRequest = typeof ScientSourceRemovalRequest.Type;
 
-export const ZoteroStatusRequest = Schema.Struct({});
+/** Without a connection, Zotero on this computer is preferred, then zotero.org. */
+export const ZoteroStatusRequest = Schema.Struct({
+  connection: Schema.optionalKey(ZoteroConnection),
+});
 export type ZoteroStatusRequest = typeof ZoteroStatusRequest.Type;
 
 export const ZoteroLibraryRequest = Schema.Struct({
@@ -112,16 +116,20 @@ export const ZoteroLibraryRequest = Schema.Struct({
   query: Schema.String,
   start: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   limit: BoundedPageSize,
+  connection: Schema.optionalKey(ZoteroConnection),
 });
 export type ZoteroLibraryRequest = typeof ZoteroLibraryRequest.Type;
 
-export const ZoteroCollectionsRequest = Schema.Struct({});
+export const ZoteroCollectionsRequest = Schema.Struct({
+  connection: Schema.optionalKey(ZoteroConnection),
+});
 export type ZoteroCollectionsRequest = typeof ZoteroCollectionsRequest.Type;
 
 export const ZoteroScopedImportRequest = Schema.Struct({
   root: NonEmptyString,
   operationId: NonEmptyString,
   scope: ZoteroImportScope,
+  connection: Schema.optionalKey(ZoteroConnection),
 });
 export type ZoteroScopedImportRequest = typeof ZoteroScopedImportRequest.Type;
 
@@ -130,6 +138,7 @@ export const ScientSourcesPreflightRequest = Schema.Struct({
   itemKeys: Schema.Array(NonEmptyString).pipe(
     Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   ),
+  connection: Schema.optionalKey(ZoteroConnection),
 });
 export type ScientSourcesPreflightRequest = typeof ScientSourcesPreflightRequest.Type;
 
@@ -173,6 +182,7 @@ export const ScientSourcesBeginImportRequest = Schema.Struct({
   possibleMetadataMatchOverrides: Schema.Array(NonEmptyString).pipe(
     Schema.check(Schema.isMaxLength(500)),
   ),
+  connection: Schema.optionalKey(ZoteroConnection),
 });
 export type ScientSourcesBeginImportRequest = typeof ScientSourcesBeginImportRequest.Type;
 
@@ -198,6 +208,7 @@ export {
   ScientSourceImportOperation,
   ScientSourceMetadataUpdateResult,
   ScientSourceRemovalResult,
+  ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,
   ZoteroCollectionsResult,

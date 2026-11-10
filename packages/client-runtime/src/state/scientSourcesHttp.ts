@@ -5,6 +5,7 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 
@@ -249,7 +250,7 @@ export const removeEnvironmentScientSource = Effect.fn(
 
 export const getEnvironmentZoteroStatus = Effect.fn(
   "clientRuntime.state.getEnvironmentZoteroStatus",
-)(function* (prepared: PreparedConnection) {
+)(function* (prepared: PreparedConnection, connection?: ZoteroConnection) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -260,7 +261,8 @@ export const getEnvironmentZoteroStatus = Effect.fn(
     url: (urls) => urls.zoteroStatus(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
-    request: ({ client, headers }) => client.zoteroStatus({ headers, payload: {} }),
+    request: ({ client, headers }) =>
+      client.zoteroStatus({ headers, payload: connection ? { connection } : {} }),
   });
 });
 
@@ -272,6 +274,7 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
   readonly query: string;
   readonly start: number;
   readonly limit: number;
+  readonly connection?: ZoteroConnection;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -291,6 +294,7 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
           query: input.query,
           start: input.start,
           limit: input.limit,
+          ...(input.connection ? { connection: input.connection } : {}),
         },
       }),
   });
@@ -298,7 +302,7 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
 
 export const listEnvironmentZoteroCollections = Effect.fn(
   "clientRuntime.state.listEnvironmentZoteroCollections",
-)(function* (prepared: PreparedConnection) {
+)(function* (prepared: PreparedConnection, connection?: ZoteroConnection) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -309,7 +313,8 @@ export const listEnvironmentZoteroCollections = Effect.fn(
     url: (urls) => urls.zoteroCollections(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
-    request: ({ client, headers }) => client.zoteroCollections({ headers, payload: {} }),
+    request: ({ client, headers }) =>
+      client.zoteroCollections({ headers, payload: connection ? { connection } : {} }),
   });
 });
 
@@ -319,6 +324,7 @@ export const preflightEnvironmentZoteroImport = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly root: string;
   readonly itemKeys: ReadonlyArray<string>;
+  readonly connection?: ZoteroConnection;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -333,7 +339,11 @@ export const preflightEnvironmentZoteroImport = Effect.fn(
     request: ({ client, headers }) =>
       client.preflight({
         headers,
-        payload: { root: input.root, itemKeys: input.itemKeys },
+        payload: {
+          root: input.root,
+          itemKeys: input.itemKeys,
+          ...(input.connection ? { connection: input.connection } : {}),
+        },
       }),
   });
 });
@@ -346,6 +356,7 @@ export const beginEnvironmentZoteroImport = Effect.fn(
   readonly operationId: string;
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+  readonly connection?: ZoteroConnection;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -365,6 +376,7 @@ export const beginEnvironmentZoteroImport = Effect.fn(
           operationId: input.operationId,
           itemKeys: input.itemKeys,
           possibleMetadataMatchOverrides: input.possibleMetadataMatchOverrides,
+          ...(input.connection ? { connection: input.connection } : {}),
         },
       }),
   });
@@ -377,6 +389,7 @@ export const beginEnvironmentZoteroScopedImport = Effect.fn(
   readonly root: string;
   readonly operationId: string;
   readonly scope: ZoteroImportScope;
+  readonly connection?: ZoteroConnection;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -395,6 +408,7 @@ export const beginEnvironmentZoteroScopedImport = Effect.fn(
           root: input.root,
           operationId: input.operationId,
           scope: input.scope,
+          ...(input.connection ? { connection: input.connection } : {}),
         },
       }),
   });

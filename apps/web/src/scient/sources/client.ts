@@ -27,6 +27,7 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 
@@ -116,8 +117,8 @@ export async function readScientSourceJournalIcon(
   return url ? { ...result.icon, url } : null;
 }
 
-export function readZoteroStatus(environmentId: EnvironmentId) {
-  return runtime.runPromise(getEnvironmentZoteroStatus(prepared(environmentId)));
+export function readZoteroStatus(environmentId: EnvironmentId, connection?: ZoteroConnection) {
+  return runtime.runPromise(getEnvironmentZoteroStatus(prepared(environmentId), connection));
 }
 
 export function readZoteroLibrary(
@@ -127,6 +128,7 @@ export function readZoteroLibrary(
     readonly query: string;
     readonly start: number;
     readonly limit: number;
+    readonly connection?: ZoteroConnection;
   },
 ) {
   return runtime.runPromise(
@@ -134,13 +136,17 @@ export function readZoteroLibrary(
   );
 }
 
-export function readZoteroCollections(environmentId: EnvironmentId) {
-  return runtime.runPromise(listEnvironmentZoteroCollections(prepared(environmentId)));
+export function readZoteroCollections(environmentId: EnvironmentId, connection?: ZoteroConnection) {
+  return runtime.runPromise(listEnvironmentZoteroCollections(prepared(environmentId), connection));
 }
 
 export function preflightZoteroItems(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly itemKeys: ReadonlyArray<string> },
+  input: {
+    readonly root: string;
+    readonly itemKeys: ReadonlyArray<string>;
+    readonly connection?: ZoteroConnection;
+  },
 ) {
   return runtime.runPromise(
     preflightEnvironmentZoteroImport({ prepared: prepared(environmentId), ...input }),
@@ -154,6 +160,7 @@ export function beginZoteroItemsImport(
     readonly operationId: string;
     readonly itemKeys: ReadonlyArray<string>;
     readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+    readonly connection?: ZoteroConnection;
   },
 ) {
   return runtime.runPromise(
@@ -167,6 +174,7 @@ export function beginZoteroScopeImport(
     readonly root: string;
     readonly operationId: string;
     readonly scope: ZoteroImportScope;
+    readonly connection?: ZoteroConnection;
   },
 ) {
   return runtime.runPromise(
