@@ -233,7 +233,8 @@ Scient reads the text of every page of every PDF in the Library and keeps it
 with the project, so you can search inside the papers. Type at least three
 characters in the Library search: under the sources whose title, authors or
 other details match, **In full text** lists passages from the PDFs that match,
-with their page. Choose a passage to open the PDF with it highlighted. Put a
+with their page. While a filter is on, only the sources it keeps are searched.
+Choose a passage to open the PDF with it highlighted. Put a
 phrase in quotes to require it; longer words also match words that start with
 them, so `randomis` finds "randomised".
 
@@ -253,10 +254,14 @@ passage first to keep it in the source's note.
   states, checks it at its registry and saves the work with the registry's
   details, the same check an agent's add gets. A page that names an identifier
   that does not exist is not saved.
+- When the page's own title does not match the work its identifier names, or
+  the page has no title, it is saved as a web page instead, so a passage is
+  never filed under a paper the page may only claim to be.
 - Any other page is saved as a web page with its title and address.
 - On a PDF tab, Scient downloads the PDF with the tab's sign-in and imports it
   like a PDF you dropped on the Library.
 
+A saved passage starts with the address of the page it was selected on.
 Saving a page that is already in the Library adds only a new passage to its
 note.
 
@@ -317,7 +322,9 @@ in a collection.
 - **PRISMA** shows the flow diagram with every count, including what is still
   awaiting a decision. **Copy as Mermaid** copies it for a Markdown document.
 
-Deleting a review never removes its sources, and **Undo** restores it. An agent
+Choose **Edit review** from the review's actions to set its title, review
+question and the exclusion reasons offered when you exclude a record. Deleting a
+review never removes its sources, and **Undo** restores it. An agent
 can do all of this too, using the built-in **systematic-review** skill; its
 decisions are marked "by agent" and you can change any of them. Agent screening
 is not an independent second reviewer.

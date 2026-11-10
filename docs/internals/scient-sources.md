@@ -339,12 +339,16 @@ email.
 `resolveSourceIdentifierBatch` resolves many identifiers, each as its own work,
 grouping them per registry: arXiv and Open Library answer many per request, DOI
 and PMID lookups run four at a time so none waits out its deadline in the NCBI
-lane, and each request has the 6.5-second deadline. `SourceIdentifierAdd.ts`
+lane, and each request has the 6.5-second deadline. At the deadline an ISBN
+group keeps the books already found and starts no more Google Books requests;
+only the ISBNs still waiting are unavailable. `SourceIdentifierAdd.ts`
 uses it for adds by identifier: `scient_sources_add` with `identifierList` (up
 to 50 entries in any common spelling, outcome `batch` with one result per
 entry) and the user's **Add by identifier** (`POST
 /api/scient/sources/identifiers/add`). Text is read by `detectSourceIdentifier`
-and `parseSourceIdentifierList` in `packages/scient-sources`. An identifier
+and `parseSourceIdentifierList` in `packages/scient-sources`; a comma or
+semicolon splits a list even without a space when a DOI, link or scheme prefix
+follows it, and otherwise stays part of an old DOI. An identifier
 already in the Library (a work-level identifier, or the ISBN of an existing
 book) is reported as a duplicate without a lookup. Only a found identifier is
 added, verified and credited to its actor; not found, unavailable and
@@ -614,8 +618,9 @@ same two functions.
   typed numbered lists and identifiers; `bibtex.ts` is the positional BibTeX
   reader the LaTeX editor also uses.
 - A document check reads the file, the `.bib` or CSL-JSON files it names
-  (relative to it, through the same project-file guard as PDF intake), and the
-  Library records whose `citationKey` matches an otherwise unlisted citation.
+  (relative to it, through the project-file guard in `projectFiles.ts`, which
+  refuses paths in or linked into `.scient`), and the Library records whose
+  `citationKey` matches an otherwise unlisted citation.
 - Identifiers go to `resolveSourceIdentifierBatch` in batches; lookups not
   started within 90 seconds count as unavailable and the report says it is
   incomplete. Retractions and corrections come from Crossref `updated-by`,
@@ -624,12 +629,16 @@ same two functions.
 - `referenceComparison.ts` holds the comparisons (different work, registry
   status, field differences). A single-source check before citing reuses them.
 - A finding's `fix` is self-contained: a `.bib` fix carries the field's current
-  text and is refused as stale when the file no longer has it; a Library fix
-  carries the expected revision and goes through `updateScientSource`, credited
-  to the actor. Fixes exist only for registry values; identifiers, retractions
-  and published versions are left to the author.
+  text (and, when the key repeats in the file, which entry) and is refused as
+  stale when the file no longer has it; inserted fields keep the file's line
+  endings. A Library fix carries the expected revision and goes through
+  `updateScientSource`, credited to the actor; fixes from one check to the same
+  source are applied together as one revision. Fixes exist only for registry
+  values; identifiers, retractions and published versions are left to the
+  author.
 - Ignored findings are kept in `.scient/reference-check/ignored.json`, outside
-  the Sources store. A finding ID hashes the checked file, the reference, the
+  the Sources store; a linked `.scient` or `reference-check` folder is never
+  read or written through. A finding ID hashes the checked file, the reference, the
   kind and the registry value, so a changed record is reported again.
 
 ## Collections, saved searches and bulk edit
@@ -680,8 +689,8 @@ lock.
   never brought in and records no longer in the Library are "removed for other
   reasons". Identified minus removed always equals screened.
 - Screening is an append-only log; the latest entry per source and stage is
-  the decision in force, so changes stay auditable and `clear-decision`
-  reopens a record. Full-text decisions apply only to records included at
+  the decision in force, so changes stay auditable; `clear-decision` appends a
+  `cleared` entry that reopens the record without erasing its history. Full-text decisions apply only to records included at
   title and abstract. Every entry records `decidedBy`.
 - Repeats are harmless for agents: creating a title in use returns that
   review, and logging the same database, query and date replaces that search.
@@ -890,6 +899,12 @@ shape and pure search (`/full-text`) and its filesystem store
   a trashed source stays while its PDF does.
 - Writes are atomic and every directory below the project root is checked one
   segment at a time, so a symlinked `text/` folder cannot redirect them.
+- Extraction reads the PDF through `readScientSourceAttachmentPdf` (store):
+  the canonical path must be the attachment's own path inside the project (no
+  symlinked file or folder), and the bytes are read once and must have the
+  attachment's size and `sha256` before pdf.js sees them. Any other PDF
+  (annotations of a project file) goes through `readScientSourcePdfBytes`
+  with its expected hash.
 
 Search is a pure-JS scan of cached, folded page text rather than SQLite FTS5:
 the text is project data in project files, while the server's SQLite holds app
@@ -897,13 +912,20 @@ state, and a second persistent index could drift from the files. Folding
 lowercases, strips accents and punctuation and joins line-end hyphenation.
 Terms score by rarity across PDFs and repetition inside a 360-character window,
 quoted phrases are required, and terms of four or more characters also match as
-prefixes. The cache is capped by characters and keyed by hash, since stored
-text never changes for a hash.
+prefixes. The cache is keyed by hash, since stored text never changes for a
+hash, and bounded by entries and by cost: characters plus a fixed charge per
+page and per entry. Text with no characters (a scan) is cached without pages.
+A Library filter is sent as `sourceIds` and applied before ranking and the
+result limit.
 
 Quote checking matches verbatim first, then after folding spacing, ligatures,
-quote marks, dashes, and line-end and intra-word hyphens on both sides. It
-works across page boundaries, returns the stored text with its page offsets
-and context, and calls a repeated quote ambiguous instead of choosing one.
+quote marks, dashes, and line-end and intra-word hyphens on both sides. A
+quote may span consecutive pages that have text; an empty page (unread, cut by
+the size limit or blank) or a gap in page numbers ends the run, so text on
+either side is never joined. Pages are joined by a line break that is not
+stored, so a match across pages is `normalized`, never `exact`. It returns the
+stored text with its page offsets and context, and calls a repeated quote
+ambiguous instead of choosing one.
 OpenAlex full text is not used: its content downloads need a key and are paid
 per file.
 
@@ -920,13 +942,20 @@ so such targets are found again by their text rather than by offsets.
 `SourceWebPage.ts` saves a page through the same identifier-checked add path
 as agent adds and downloaded papers (`origin.intake: "web"`). Identifiers come
 from Highwire Press, Dublin Core and PRISM tags, then from DOI, PubMed and
-arXiv addresses (`packages/scient-sources/src/webPage.ts`); the page's title is
-not treated as a claim about the identified work. A page without an identifier
-is a `web` source and is the same source as another with the same address. The
-selection is appended to the note once. On desktop, a fixed script reads the
-tab's title, selection and meta tags; the address comes from the tab itself,
-and a PDF tab is fetched again through the tab's session and handed to the
-Library's normal PDF import.
+arXiv addresses (`packages/scient-sources/src/webPage.ts`). A valid identifier
+proves the work exists, not that the page is that work, so the page's
+bibliographic title (`citation_title`, `dc.title`; the tab title only when
+neither exists) must agree with the registry's title, or, for an identifier
+already in the Library, with that source's title. Otherwise, or without any
+title, the page is saved as a `web` source with no identifiers. A `web` source
+is the same source as another with the same address (only an identifier-less
+one when the page stated identifiers). The selection is appended to the note
+once, headed by the page's address. On desktop, a fixed script reads the
+tab's title, selection and meta tags; the address comes from the tab itself.
+A PDF tab is fetched again through the tab's session (two-minute limit); the
+response must have a PDF media type and `%PDF-` bytes, and its body is read
+within 100 MB and cancelled once over, before it goes to the Library's normal
+PDF import.
 
 ## Deliberate exclusions
 

@@ -65,7 +65,8 @@ export function SystematicReviewScreening(props: {
   ];
   const current = ordered[0] ?? null;
   const decisions = scientReviewDecisions(detail.review, stage);
-  const eligible = queue.length + [...decisions.keys()].filter((id) => present.has(id)).length;
+  const eligible =
+    stage === "title-abstract" ? detail.prisma.screened : detail.prisma.fullText.assessed;
   const recent = [...decisions.values()].toReversed().slice(0, 5);
   const record = current ? props.records.get(current) : undefined;
   const sourceDetail = current ? props.sourceDetails[current] : undefined;

@@ -245,6 +245,14 @@ describe("Systematic reviews", () => {
     expect(scientReviewPendingIds(cleared!.review, "title-abstract", new Set([only]))).toEqual([
       only,
     ]);
+    // Undoing keeps every earlier decision in the review's history.
+    expect(
+      cleared?.review.screening.map((entry) => [entry.decision, entry.cleared ?? false]),
+    ).toEqual([
+      ["exclude", false],
+      ["include", false],
+      ["include", true],
+    ]);
   });
 
   it("logs a search from a collection and counts a trashed record as removed", async () => {

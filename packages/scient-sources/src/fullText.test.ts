@@ -46,7 +46,7 @@ describe("full-text quotes", () => {
       match: "exact",
       ranges: [{ page: 2, start: 0, end: 21 }],
       text: "Mortality fell by 12%",
-      prefix: "Introduction\nThe cohort was large.",
+      prefix: "Introduction\nThe cohort was large.\n",
       suffix: "\nin treated pa-\ntients over two years.",
     });
   });
@@ -61,16 +61,31 @@ describe("full-text quotes", () => {
     });
   });
 
-  it("finds a quote that crosses a page boundary", () => {
-    const located = locateFullTextQuote(pages, "was large.Mortality fell");
+  it("finds a quote that crosses into the next page, never as exact", () => {
+    const located = locateFullTextQuote(pages, "was large. Mortality fell");
     expect(located).toMatchObject({
       _tag: "Found",
-      match: "exact",
+      match: "normalized",
       ranges: [
         { page: 1, start: 24, end: 34 },
         { page: 2, start: 0, end: 14 },
       ],
     });
+  });
+
+  it("never joins text across an unread page or a gap in page numbers", () => {
+    const quote = "The drug is effective.";
+    const failedMiddle = [
+      { page: 1, text: "The drug is " },
+      { page: 2, text: "" },
+      { page: 3, text: "effective." },
+    ];
+    expect(locateFullTextQuote(failedMiddle, quote)).toEqual({ _tag: "NotFound" });
+    const omitted = [
+      { page: 1, text: "The drug is " },
+      { page: 3, text: "effective." },
+    ];
+    expect(locateFullTextQuote(omitted, quote)).toEqual({ _tag: "NotFound" });
   });
 
   it("never guesses between repeats and reports what is absent", () => {

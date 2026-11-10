@@ -18,14 +18,26 @@ function insideRoot(root: string, path: string): boolean {
   );
 }
 
+/** Scient's own storage; compared without regard to case, as macOS and Windows volumes do. */
+function insideScientStorage(root: string, path: string): boolean {
+  return NodePath.relative(root, path)
+    .split(NodePath.sep)
+    .some((part) => part.toLowerCase() === ".scient");
+}
+
 /**
  * Resolves a slash-separated project-relative path to a regular file that stays inside the
- * project after symlinks are followed. Messages never contain absolute paths.
+ * project after symlinks are followed, and outside any `.scient` folder unless
+ * `allowScientStorage` is set. Messages never contain absolute paths.
  */
 export async function resolveScientProjectFile(
   root: string,
   relativePath: string,
-  options: { readonly extensions: ReadonlyArray<string>; readonly description: string },
+  options: {
+    readonly extensions: ReadonlyArray<string>;
+    readonly description: string;
+    readonly allowScientStorage?: boolean;
+  },
 ): Promise<{
   readonly absolutePath: string;
   readonly relativePath: string;
@@ -48,11 +60,18 @@ export async function resolveScientProjectFile(
   if (!insideRoot(canonicalRoot, lexicalPath)) {
     throw new Error(`The ${options.description} path must remain inside the project.`);
   }
+  const scientStorageError = `The ${options.description} path must stay outside .scient, where Scient keeps its own files.`;
+  if (!options.allowScientStorage && insideScientStorage(canonicalRoot, lexicalPath)) {
+    throw new Error(scientStorageError);
+  }
   const absolutePath = await NodeFSP.realpath(lexicalPath).catch(() => {
     throw new Error(`The ${options.description} ${requested} was not found.`);
   });
   if (!insideRoot(canonicalRoot, absolutePath)) {
     throw new Error(`The ${options.description} path must remain inside the project.`);
+  }
+  if (!options.allowScientStorage && insideScientStorage(canonicalRoot, absolutePath)) {
+    throw new Error(scientStorageError);
   }
   const stats = await NodeFSP.lstat(absolutePath);
   if (!stats.isFile() || stats.isSymbolicLink()) {

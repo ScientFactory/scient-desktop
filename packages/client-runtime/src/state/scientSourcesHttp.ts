@@ -87,6 +87,7 @@ export const searchEnvironmentScientSourcesFullText = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly root: string;
   readonly query: string;
+  readonly sourceIds?: ReadonlyArray<string>;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -101,7 +102,11 @@ export const searchEnvironmentScientSourcesFullText = Effect.fn(
     request: ({ client, headers }) =>
       client.fullTextSearch({
         headers,
-        payload: { root: input.root, query: input.query },
+        payload: {
+          root: input.root,
+          query: input.query,
+          ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
+        },
       }),
   });
 });

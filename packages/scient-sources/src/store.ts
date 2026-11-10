@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The store is Scient's explicit project filesystem boundary.
 // @effect-diagnostics globalDate:off -- Portable records and receipts use interoperable ISO timestamps.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -1616,6 +1617,8 @@ export async function resolveScientSourceInputPdf(
   const resolved = await resolveScientProjectFile(root, relativePath, {
     extensions: [".pdf"],
     description: "PDF",
+    // Library PDFs are opened and annotated from Library storage.
+    allowScientStorage: true,
   });
   return {
     absolutePath: resolved.absolutePath,
@@ -1634,8 +1637,16 @@ async function readValidatedPdf(
   if (sourceStats.size > MAX_PDF_BYTES) {
     throw new Error("The source PDF exceeds the 512 MiB import limit.");
   }
-  const sourceHandle = await NodeFSP.open(sourcePath, "r");
+  // O_NOFOLLOW is undefined on Windows; there the lstat check above and the identity check below stand.
+  const sourceHandle = await NodeFSP.open(
+    sourcePath,
+    NodeFS.constants.O_RDONLY | (NodeFS.constants.O_NOFOLLOW ?? 0),
+  );
   try {
+    const openedStats = await sourceHandle.stat();
+    if (openedStats.ino !== sourceStats.ino || openedStats.dev !== sourceStats.dev) {
+      throw new Error("The source PDF changed while Scient was reading it. Try again.");
+    }
     const digest = NodeCrypto.createHash("sha256");
     let byteLength = 0;
     let header = Buffer.alloc(0);
@@ -1671,6 +1682,51 @@ export async function inspectScientSourcePdf(
   sourcePath: string,
 ): Promise<ScientSourcePdfInspection> {
   return readValidatedPdf(sourcePath);
+}
+
+/** A PDF's bytes, read once without following a final symlink; refused unless they have the expected size and hash. */
+export async function readScientSourcePdfBytes(
+  sourcePath: string,
+  expected: ScientSourcePdfInspection,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const bytes = new Uint8Array(expected.byteLength);
+  let offset = 0;
+  const read = await readValidatedPdf(sourcePath, async (chunk) => {
+    if (offset + chunk.byteLength > bytes.byteLength) {
+      throw new Error("The PDF does not match its recorded size.");
+    }
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  });
+  if (read.byteLength !== expected.byteLength || read.sha256 !== expected.sha256) {
+    throw new Error("The PDF does not match its recorded size and hash.");
+  }
+  return bytes;
+}
+
+/**
+ * A stored attachment's PDF bytes: canonically inside the source store, reached
+ * through no symlink, with the attachment's recorded size and hash.
+ */
+export async function readScientSourceAttachmentPdf(
+  root: string,
+  attachment: ScientSourceAttachment,
+): Promise<Uint8Array<ArrayBuffer>> {
+  const canonicalRoot = await NodeFSP.realpath(root);
+  const lexicalPath = sourceAttachmentAbsolutePath(canonicalRoot, attachment);
+  const requested = NodePath.relative(canonicalRoot, lexicalPath).split(NodePath.sep).join("/");
+  const resolved = await resolveScientProjectFile(canonicalRoot, requested, {
+    extensions: [".pdf"],
+    description: "source PDF",
+    allowScientStorage: true,
+  });
+  if (resolved.relativePath !== requested) {
+    throw new Error("The source PDF is reached through a symlink.");
+  }
+  return readScientSourcePdfBytes(resolved.absolutePath, {
+    sha256: attachment.sha256,
+    byteLength: attachment.byteLength,
+  });
 }
 
 function stagedLocalMaterialPaths(

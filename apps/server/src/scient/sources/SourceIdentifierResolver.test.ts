@@ -134,8 +134,8 @@ describe("resolveSourceIdentifier", () => {
       request: () => new Promise(() => undefined),
       deadlineMs: 25,
     });
-    expect(timer).toHaveBeenCalledWith(25, expect.any(Map), { ref: false });
-    deadline.resolve(new Map([["10.1000/abc.123", { status: "unavailable" }]]));
+    expect(timer).toHaveBeenCalledWith(25, null, { ref: false, signal: expect.any(AbortSignal) });
+    deadline.resolve(null);
     await expect(pending).resolves.toMatchObject({ status: "unavailable" });
   });
 

@@ -438,6 +438,12 @@ type Lookup = IdentifierLookup;
 /** Spaces requests to one registry; lookups default to each registry's shared lane. */
 export type RequestPace = <A>(run: () => Promise<A>) => Promise<A>;
 
+/** Lets a multi-request lookup keep answers it has at the deadline and start no more requests. */
+export interface LookupProgress {
+  readonly signal: AbortSignal;
+  readonly answer: (value: string, lookup: Lookup) => void;
+}
+
 const isSuccess = (status: number) => status >= 200 && status < 300;
 
 async function lookupDoi(doi: string, request: MetadataRequest): Promise<Lookup> {
@@ -491,6 +497,7 @@ interface IdentifierScheme {
     request: MetadataRequest,
     pace: RequestPace | undefined,
     keys: ResearchKeys,
+    progress?: LookupProgress,
   ) => Promise<ReadonlyMap<string, Lookup>>;
 }
 
@@ -517,7 +524,12 @@ const IDENTIFIER_SCHEMES: Readonly<Record<SourceAddIdentifierScheme, IdentifierS
     perRequest: ARXIV_IDS_PER_REQUEST,
     lookup: lookupArxivIds,
   },
-  isbn: { wellFormed: isValidIsbn, perRequest: ISBNS_PER_REQUEST, lookup: lookupIsbns },
+  isbn: {
+    wellFormed: isValidIsbn,
+    perRequest: ISBNS_PER_REQUEST,
+    lookup: (values, request, pace, _keys, progress) =>
+      lookupIsbns(values, request, pace, progress),
+  },
   openalex: {
     wellFormed: isWellFormedOpenAlexWorkId,
     perRequest: 1,
@@ -610,17 +622,26 @@ async function lookupBeforeDeadline(
   values: ReadonlyArray<string>,
   options: SourceIdentifierResolverOptions,
 ): Promise<ReadonlyMap<string, Lookup>> {
-  const unavailable = new Map<string, Lookup>(
-    values.map((value) => [value, { status: "unavailable" }]),
+  const answered = new Map<string, Lookup>();
+  const stop = new AbortController();
+  const lookup = IDENTIFIER_SCHEMES[scheme]
+    .lookup(values, options.request ?? requestMetadata, options.pace, options.keys ?? {}, {
+      signal: stop.signal,
+      answer: (value, answer) => answered.set(value, answer),
+    })
+    .catch(() => null);
+  const deadline = NodeTimersPromises.setTimeout(options.deadlineMs ?? LOOKUP_DEADLINE_MS, null, {
+    ref: false,
+    signal: stop.signal,
+  }).catch(() => null);
+  const result = await Promise.race([lookup, deadline]);
+  stop.abort();
+  return new Map(
+    values.map((value) => [
+      value,
+      result?.get(value) ?? answered.get(value) ?? { status: "unavailable" },
+    ]),
   );
-  return Promise.race([
-    IDENTIFIER_SCHEMES[scheme]
-      .lookup(values, options.request ?? requestMetadata, options.pace, options.keys ?? {})
-      .catch(() => unavailable),
-    NodeTimersPromises.setTimeout(options.deadlineMs ?? LOOKUP_DEADLINE_MS, unavailable, {
-      ref: false,
-    }),
-  ]);
 }
 
 function resolutionFrom(

@@ -393,12 +393,21 @@ function applyChange(input: {
       return touched({ ...current, screening: [...current.screening, ...entries] }, extra);
     }
     case "clear-decision": {
-      if (!scientReviewDecisions(current, change.stage).has(change.sourceId)) return unchanged();
+      const previous = scientReviewDecisions(current, change.stage).get(change.sourceId);
+      if (!previous) return unchanged();
       return touched({
         ...current,
-        screening: current.screening.filter(
-          (entry) => !(entry.stage === change.stage && entry.sourceId === change.sourceId),
-        ),
+        screening: [
+          ...current.screening,
+          {
+            sourceId: change.sourceId,
+            stage: change.stage,
+            decision: previous.decision,
+            cleared: true,
+            decidedAt: now,
+            decidedBy: actor,
+          },
+        ],
       });
     }
   }

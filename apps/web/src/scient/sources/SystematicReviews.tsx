@@ -193,6 +193,89 @@ function LogSearchDialog(props: {
   );
 }
 
+function EditReviewDialog(props: {
+  readonly reviews: SystematicReviews;
+  readonly open: boolean;
+  readonly onClose: () => void;
+}) {
+  const review = props.reviews.detail?.review;
+  const [title, setTitle] = useState(review?.title ?? "");
+  const [question, setQuestion] = useState(review?.question ?? "");
+  const [reasons, setReasons] = useState((review?.exclusionReasons ?? []).join("\n"));
+  if (!review) return null;
+  const submit = async () => {
+    const result = await props.reviews.change(
+      {
+        action: "update-review",
+        reviewId: review.reviewId,
+        ...(title.trim() ? { title: title.trim() } : {}),
+        question,
+        exclusionReasons: [
+          ...new Set(
+            reasons
+              .split(/\r?\n/u)
+              .map((reason) => reason.trim())
+              .filter(Boolean),
+          ),
+        ].slice(0, 50),
+      },
+      "Review was not saved",
+    );
+    if (result) props.onClose();
+  };
+  return (
+    <Dialog open={props.open} onOpenChange={(open) => (!open ? props.onClose() : undefined)}>
+      <DialogPopup className="max-w-md">
+        <DialogHeader>
+          <DialogTitle>Edit review</DialogTitle>
+        </DialogHeader>
+        <DialogPanel>
+          <div className="grid gap-3">
+            <Field>
+              <FieldLabel>Title</FieldLabel>
+              <Input
+                value={title}
+                maxLength={200}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Review question</FieldLabel>
+              <Textarea
+                value={question}
+                rows={3}
+                placeholder="Population, intervention, comparator, outcomes"
+                onChange={(event) => setQuestion(event.target.value)}
+              />
+            </Field>
+            <Field>
+              <FieldLabel>Exclusion reasons, one per line</FieldLabel>
+              <Textarea
+                value={reasons}
+                rows={6}
+                onChange={(event) => setReasons(event.target.value)}
+              />
+            </Field>
+          </div>
+        </DialogPanel>
+        <DialogFooter>
+          <Button type="button" variant="outline" size="sm" onClick={props.onClose}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            disabled={!title.trim() || props.reviews.pending}
+            onClick={() => void submit()}
+          >
+            Save
+          </Button>
+        </DialogFooter>
+      </DialogPopup>
+    </Dialog>
+  );
+}
+
 function RecordsTab(props: {
   readonly reviews: SystematicReviews;
   readonly records: ReadonlyMap<string, SourceSummary>;
@@ -495,6 +578,7 @@ export function SystematicReviewsView(props: {
     setStageState(next);
   };
   const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
+  const [editing, setEditing] = useState(false);
   const records = new Map(props.records.map((record) => [record.sourceId, record]));
   const detail = reviews.detail;
   const openId = reviews.reviewId;
@@ -560,23 +644,7 @@ export function SystematicReviewsView(props: {
               <MoreHorizontal />
             </MenuTrigger>
             <MenuPopup align="end">
-              <MenuItem
-                onClick={() =>
-                  setNameRequest({
-                    title: "Rename review",
-                    label: "Review title",
-                    initialName: detail.review.title,
-                    action: "Rename",
-                    onSubmit: async (title) =>
-                      (await reviews.change(
-                        { action: "update-review", reviewId: detail.review.reviewId, title },
-                        "Review was not renamed",
-                      )) !== null,
-                  })
-                }
-              >
-                Rename…
-              </MenuItem>
+              <MenuItem onClick={() => setEditing(true)}>Edit review…</MenuItem>
               <MenuSeparator />
               <MenuItem
                 variant="destructive"
@@ -706,6 +774,9 @@ export function SystematicReviewsView(props: {
         </div>
       </ScrollArea>
       <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
+      {editing && detail ? (
+        <EditReviewDialog reviews={reviews} open onClose={() => setEditing(false)} />
+      ) : null}
     </div>
   );
 }

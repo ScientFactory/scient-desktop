@@ -3,19 +3,16 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeURL from "node:url";
 
 import {
   fullTextHasText,
   fullTextPassage,
-  foldText,
   locateFullTextQuote,
   parseFullTextQuery,
   searchFullText,
   SCIENT_SOURCE_FULL_TEXT_LIMITS,
   SCIENT_SOURCE_FULL_TEXT_PROFILE,
   type FullTextRange,
-  type FullTextSearchDocument,
   type ScientSourceExtractedFullText,
   type ScientSourceFullText,
   type ScientSourceFullTextPage,
@@ -31,12 +28,15 @@ import { selectScientSourceMaterial } from "@scientfactory/scient-sources/materi
 import {
   canonicalizeScientSourceRoot,
   listScientSourceRecords,
+  readScientSourceAttachmentPdf,
+  readScientSourcePdfBytes,
   readScientSourceRecord,
   SCIENT_SOURCE_FILES_DIRECTORY,
-  sourceAttachmentAbsolutePath,
 } from "@scientfactory/scient-sources/store";
 import type { ScientSourceAttachment, ScientSourceRecord } from "@scientfactory/scient-sources";
 import * as Predicate from "effect/Predicate";
+
+import { makeSourceFullTextCache } from "./SourceFullTextCache.ts";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const MAX_FAILURE_BYTES = 4_096;
@@ -63,29 +63,39 @@ function pageText(items: ReadonlyArray<unknown>): string {
 
 const yieldToEventLoop = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-/**
- * Reads the text of every page. A page that cannot be read is kept empty and
- * marks the result incomplete, so one damaged page does not hide the rest.
- */
-export async function extractSourcePdfFullText(input: {
-  readonly pdfPath: string;
+interface PdfMaterialIdentity {
   readonly sha256: string;
   readonly byteLength: number;
-}): Promise<ScientSourceFullText> {
-  const { getDocument, version } = await loadPdfJs();
-  const extractor = { name: "pdfjs" as const, version };
-  const failed = (reason: "unreadable" | "too-large"): ScientSourceFullText => ({
+}
+
+async function failedText(
+  material: PdfMaterialIdentity,
+  reason: "unreadable" | "too-large",
+): Promise<ScientSourceFullText> {
+  return {
     formatVersion: 1,
     outcome: "failed",
-    sha256: input.sha256,
-    byteLength: input.byteLength,
-    extractor,
+    sha256: material.sha256,
+    byteLength: material.byteLength,
+    extractor: { name: "pdfjs", version: await sourceFullTextExtractorVersion() },
     failedAt: new Date().toISOString(),
     reason,
-  });
-  if (input.byteLength > MAX_PDF_BYTES) return failed("too-large");
+  };
+}
+
+/**
+ * Reads the text of every page of PDF bytes already checked against their
+ * hash. A page that cannot be read is kept empty and marks the result
+ * incomplete, so one damaged page does not hide the rest.
+ */
+export async function extractSourcePdfFullText(
+  input: PdfMaterialIdentity & { readonly data: Uint8Array },
+): Promise<ScientSourceFullText> {
+  const { getDocument, version } = await loadPdfJs();
+  const extractor = { name: "pdfjs" as const, version };
+  if (input.byteLength > MAX_PDF_BYTES) return failedText(input, "too-large");
   const task = getDocument({
-    url: NodeURL.pathToFileURL(input.pdfPath),
+    data: input.data,
     disableAutoFetch: true,
     disableFontFace: true,
     useSystemFonts: false,
@@ -145,10 +155,30 @@ export async function extractSourcePdfFullText(input: {
       await document.cleanup();
     }
   } catch {
-    return failed("unreadable");
+    return failedText(input, "unreadable");
   } finally {
     await task.destroy().catch(() => undefined);
   }
+}
+
+/** Extracts a PDF file's text after reading its bytes once and checking them against the expected hash. */
+export async function extractSourcePdfFileFullText(
+  input: PdfMaterialIdentity & { readonly pdfPath: string },
+): Promise<ScientSourceFullText> {
+  if (input.byteLength > MAX_PDF_BYTES) return failedText(input, "too-large");
+  const data = await readScientSourcePdfBytes(input.pdfPath, input).catch(() => null);
+  return data ? extractSourcePdfFullText({ ...input, data }) : failedText(input, "unreadable");
+}
+
+async function extractMaterialText(
+  root: string,
+  material: LibraryMaterial,
+): Promise<ScientSourceFullText> {
+  if (material.byteLength > MAX_PDF_BYTES) return failedText(material, "too-large");
+  const data = await readScientSourceAttachmentPdf(root, material.attachment).catch(() => null);
+  return data
+    ? extractSourcePdfFullText({ ...material, data })
+    : failedText(material, "unreadable");
 }
 
 interface LibraryMaterial {
@@ -201,45 +231,9 @@ function inLane<A>(run: () => Promise<A>): Promise<A> {
 }
 
 // Stored text never changes for a hash, so extracted text and its folded pages
-// are cached by hash across projects, bounded by characters.
-const MAX_CACHED_CHARACTERS = 48_000_000;
-const textCache = new Map<
-  string,
-  {
-    readonly text: ScientSourceExtractedFullText;
-    readonly document: FullTextSearchDocument;
-    readonly characters: number;
-  }
->();
-let cachedCharacters = 0;
-
-function cacheText(text: ScientSourceExtractedFullText) {
-  const cached = textCache.get(text.sha256);
-  if (cached) {
-    textCache.delete(text.sha256);
-    textCache.set(text.sha256, cached);
-    return cached;
-  }
-  const entry = {
-    text,
-    document: {
-      key: text.sha256,
-      pages: text.pages.map((page) => ({
-        page: page.page,
-        folded: foldText(page.text, "search").text,
-      })),
-    },
-    characters: 2 * text.pages.reduce((total, page) => total + page.text.length, 0),
-  };
-  textCache.set(text.sha256, entry);
-  cachedCharacters += entry.characters;
-  for (const [key, old] of textCache) {
-    if (cachedCharacters <= MAX_CACHED_CHARACTERS || key === text.sha256) break;
-    textCache.delete(key);
-    cachedCharacters -= old.characters;
-  }
-  return entry;
-}
+// are cached by hash across projects.
+const textCache = makeSourceFullTextCache();
+const cacheText = (text: ScientSourceExtractedFullText) => textCache.add(text);
 
 const searchDocumentFor = (text: ScientSourceExtractedFullText) => cacheText(text).document;
 
@@ -273,11 +267,7 @@ async function ensureMaterialText(
     return inLane(async () => {
       const again = await readStoredText(root, material.sha256);
       if (again && !(await needsExtraction(again))) return again;
-      const text = await extractSourcePdfFullText({
-        pdfPath: sourceAttachmentAbsolutePath(root, material.attachment),
-        sha256: material.sha256,
-        byteLength: material.byteLength,
-      });
+      const text = await extractMaterialText(root, material);
       await writeScientSourceFullText(root, text);
       if (text.outcome === "extracted") cacheText(text);
       return text;

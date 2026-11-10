@@ -1715,14 +1715,14 @@ export function ScientSourcesPanel(props: {
               query={sourceQuery}
               metadataMatchCount={filteredSourceRecords.length}
               sourceIds={
-                new Set(
-                  filterScientSourceSearchIndex(
-                    sourceSearchIndex,
-                    "",
-                    organize.filter,
-                    organize.organization,
-                  ).map((record) => record.sourceId),
-                )
+                organize.filterActive
+                  ? filterScientSourceSearchIndex(
+                      sourceSearchIndex,
+                      "",
+                      organize.filter,
+                      organize.organization,
+                    ).map((record) => record.sourceId)
+                  : undefined
               }
               onOpenHit={(hit) => {
                 requestSourceTextReveal(props.root, hit);
