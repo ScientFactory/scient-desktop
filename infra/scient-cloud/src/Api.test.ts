@@ -465,6 +465,19 @@ describe("shares", () => {
 });
 
 describe("browser access", () => {
+  it.effect("serves the content frame sandboxed and frameable only by Scient pages", () =>
+    Effect.gen(function* () {
+      const frame = yield* call("GET", "/frame");
+      const policy = frame.headers.get("content-security-policy") ?? "";
+      expect(policy).toContain("sandbox allow-scripts");
+      expect(policy).toContain("connect-src 'none'");
+      expect(policy).toContain(
+        "frame-ancestors http://localhost:8787 https://app.scientfactory.com",
+      );
+      expect(yield* Effect.promise(() => frame.text())).toContain("scient-content-frame:ready");
+    }).pipe(Effect.provide(cloud())),
+  );
+
   it.effect("allows Scient origins and nothing else", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(NOW);
