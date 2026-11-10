@@ -24,10 +24,11 @@ const pageHeaders = (config: CloudSettings, indexable: boolean) => ({
   "cross-origin-opener-policy": "same-origin",
   "permissions-policy": "camera=(), microphone=(), geolocation=()",
   ...(indexable ? {} : { "x-robots-tag": "noindex, nofollow" }),
-  // Rendered math and diagrams set inline styles; scripts come only from this origin.
+  // Rendered math and diagrams set inline styles; scripts come only from this origin. Code
+  // highlighting compiles WebAssembly, which needs 'wasm-unsafe-eval' (not JavaScript eval).
   "content-security-policy": [
     "default-src 'none'",
-    "script-src 'self'",
+    "script-src 'self' 'wasm-unsafe-eval'",
     "style-src 'self' 'unsafe-inline'",
     "img-src 'self' blob: data:",
     "font-src 'self' data:",
