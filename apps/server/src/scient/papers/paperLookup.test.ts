@@ -64,7 +64,7 @@ describe("openAccessPdf", () => {
   it.effect("keeps the PDF when a link is the PDF itself", () =>
     Effect.gen(function* () {
       const url = "https://example.org/paper.pdf";
-      const bytes = yield* openAccessPdf({ pageUrl: url, published: true }).pipe(
+      const bytes = yield* openAccessPdf({ pageUrl: url, version: "published" as const }).pipe(
         Effect.provide(serving({ [url]: new Response(PDF) })),
       );
       expect(bytes && Buffer.from(bytes).equals(Buffer.from(PDF))).toBe(true);
@@ -76,7 +76,7 @@ describe("openAccessPdf", () => {
       const html = '<meta name="citation_pdf_url" content="/pdf/1.pdf">';
       const bytes = yield* openAccessPdf({
         pageUrl: "https://doi.org/10.1/x",
-        published: true,
+        version: "published" as const,
       }).pipe(
         Effect.provide(
           serving(

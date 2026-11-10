@@ -14,6 +14,12 @@ import { AccountsService } from "../accounts/AccountsService.ts";
 import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
 import type * as PaperAttempt from "./paperAttempt.ts";
 import { listPapers, requestPapers, resumePapers, type PaperRequester } from "./paperQueue.ts";
+import { initializeScientProject } from "@scientfactory/project-init";
+import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
+import {
+  SourceIdentifierLookup,
+  verifiableSourceIdentifier,
+} from "../sources/SourceIdentifierResolver.ts";
 
 const fetched = vi.hoisted(() => ({
   calls: [] as Array<{ doi: string | undefined; requester: PaperRequester }>,
@@ -26,6 +32,15 @@ vi.mock("./paperAttempt.ts", async (importOriginal) => {
   const paper = { landingUrl: "https://doi.org/10.1/x", openAccess: [] };
   const fetchOnePaper: typeof actual.fetchOnePaper = (asked, requester) => {
     fetched.calls.push({ doi: asked.doi, requester });
+    if (asked.doi?.endsWith("preprint"))
+      return succeed({
+        state: "saved" as const,
+        paper: { ...paper, doi: asked.doi, title: "A preprint", openAccess: [] },
+        bytes: Buffer.from("%PDF-1.7\npreprint\n"),
+        route: "open-access" as const,
+        published: false,
+        version: "preprint" as const,
+      });
     return succeed(
       asked.doi?.endsWith("needs-you")
         ? {
@@ -174,5 +189,61 @@ it.effect("forgets who asked once a paper is finished", () =>
       expect(stored.items).toMatchObject([{ doi: "10.1/gone", state: "not-found" }]);
       expect(stored.requesters).toEqual({});
     }),
+  ),
+);
+
+it.effect("files a paper asked for the Library on a new source, credited to the agent", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      yield* Effect.promise(() => initializeScientProject({ root }));
+      yield* requestPapers(root, [{ doi: "10.1/preprint", library: true }], agent);
+      yield* settled(root);
+
+      const records = yield* Effect.promise(() => listScientSourceRecords(root));
+      expect(records).toMatchObject([
+        {
+          title: "The registry's title",
+          origin: { actor: "agent", intake: "paper" },
+          verification: { state: "verified" },
+          attachments: [{ retrieval: { route: "open-access", version: "preprint" } }],
+        },
+      ]);
+      expect(yield* listPapers(root)).toMatchObject([
+        {
+          state: "saved",
+          version: "preprint",
+          path: "papers/A-preprint.pdf",
+          sourceId: records[0]!.sourceId,
+        },
+      ]);
+    }).pipe(
+      Effect.provideService(SourceIdentifierLookup, async (identifiers) => {
+        const identifier = verifiableSourceIdentifier(identifiers)!;
+        return {
+          status: "found",
+          identifier,
+          retrievedAt: "2026-11-10T00:00:00.000Z",
+          metadata: {
+            type: "article",
+            title: "The registry's title",
+            creators: [],
+            issuedRaw: "2026",
+            issuedYear: 2026,
+            identifiers: [identifier],
+            abstract: "An abstract, so no enrichment is looked up.",
+            abstractSections: [],
+            containerTitle: null,
+            publisher: null,
+            volume: null,
+            issue: null,
+            pages: null,
+            language: null,
+            url: null,
+          },
+        };
+      }),
+    ),
   ),
 );

@@ -35,6 +35,7 @@ import {
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   type ScientSourceActor,
   type ScientSourceAttachment,
+  type ScientSourceAttachmentRetrieval,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
   type ScientSourceDuplicateKind,
@@ -42,6 +43,7 @@ import {
   type ScientSourceFieldProvenance,
   type ScientSourceMetadataUpdateResult,
   type ScientSourceNoteUpdateResult,
+  type ScientSourceOrigin,
   type ScientSourceStagedMaterial as ScientSourceStagedMaterialType,
   type ScientSourceRemovalResult,
   type ScientSourcesOverview,
@@ -1288,6 +1290,7 @@ async function stagePdf(input: {
   readonly fileName?: string;
   readonly expectedPdf?: ScientSourcePdfInspection;
   readonly importedAt: string;
+  readonly retrieval?: ScientSourceAttachmentRetrieval;
 }): Promise<ScientSourceAttachment> {
   const stagingDirectory = NodePath.join(input.paths.staging, input.operationId);
   await ensureDirectory(stagingDirectory);
@@ -1369,6 +1372,7 @@ async function stagePdf(input: {
       byteLength,
       relativePath,
       importedAt: input.importedAt,
+      ...(input.retrieval ? { retrieval: input.retrieval } : {}),
     };
   } finally {
     await targetHandle?.close();
@@ -1392,6 +1396,7 @@ export async function attachScientSourcePdf(input: {
   readonly pdfPath: string;
   readonly fileName?: string;
   readonly actor?: ScientSourceActor;
+  readonly retrieval?: ScientSourceAttachmentRetrieval;
 }): Promise<ScientSourcePdfAttachmentResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
@@ -1410,6 +1415,7 @@ export async function attachScientSourcePdf(input: {
       operationId: `attach_${NodeCrypto.randomUUID()}`,
       sourcePath: input.pdfPath,
       ...(input.fileName ? { fileName: input.fileName } : {}),
+      ...(input.retrieval ? { retrieval: input.retrieval } : {}),
       importedAt: new Date().toISOString(),
     });
     const currentAttachment = current.attachments.some(
@@ -1532,8 +1538,9 @@ interface ImportScientSourceInput {
   readonly expectedPdf?: ScientSourcePdfInspection;
   readonly allowPossibleMetadataMatch?: boolean;
   readonly actor?: ScientSourceActor;
-  readonly intake?: "zotero" | "local-pdf" | "identifier";
+  readonly intake?: ScientSourceOrigin["intake"];
   readonly verification?: ScientSourceVerification;
+  readonly pdfRetrieval?: ScientSourceAttachmentRetrieval;
 }
 
 async function importScientSourceWithRecordLookup(
@@ -1559,6 +1566,7 @@ async function importScientSourceWithRecordLookup(
           sourcePath: input.pdfPath,
           ...(input.candidate.pdfFileName ? { fileName: input.candidate.pdfFileName } : {}),
           ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
+          ...(input.pdfRetrieval ? { retrieval: input.pdfRetrieval } : {}),
           importedAt,
         })
       : null;

@@ -8,6 +8,7 @@ import {
   ScientSourceMetadataValidationIssue,
   ScientSourceNote,
   ScientSourceActor,
+  ScientSourceAttachmentRetrieval,
   ScientSourceOrigin,
   ScientSourceType,
   ScientSourceVerification,
@@ -36,6 +37,7 @@ const ScientSourceAgentAttachment = Schema.Struct({
   sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
   byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   importedAt: NonEmptyString,
+  retrieval: Schema.optionalKey(ScientSourceAttachmentRetrieval),
 });
 
 export class ScientSourcesToolError extends Schema.TaggedError<ScientSourcesToolError>()(
