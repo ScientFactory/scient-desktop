@@ -229,6 +229,10 @@
       // Alchemy loads src/worker.ts as the Worker entry and reads its default export.
       "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!", "src/worker.ts!"],
     },
+    "infra/scient-cloud": {
+      // Alchemy loads src/worker.ts as the Worker entry; scripts/dev.ts serves it locally.
+      "entry": ["alchemy.run.ts!", "src/worker.ts!", "scripts/*.ts"],
+    },
     "packages/*": {
       // These workspace packages are private to this monorepo.
       "includeEntryExports": true,
