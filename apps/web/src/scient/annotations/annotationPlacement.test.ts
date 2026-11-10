@@ -62,4 +62,21 @@ describe("annotationRangeOnPage", () => {
     const changed = "sleep doubled recall / sleep doubled recall";
     expect(annotationRangeOnPage(second, 3, changed)).toBeNull();
   });
+
+  it("does not keep stored offsets that now hold a repeat in another context", () => {
+    const moved = annotation("sleep doubled recall", 0);
+    const page = moved.anchor.selector.pages[0]!;
+    const stale = {
+      ...moved,
+      anchor: {
+        ...moved.anchor,
+        selector: { ...moved.anchor.selector, pages: [{ ...page, prefix: "", suffix: " first" }] },
+      },
+    };
+    const text = "sleep doubled recall second / sleep doubled recall first";
+    expect(annotationRangeOnPage(stale, 3, text)).toEqual({
+      start: text.lastIndexOf("sleep doubled recall"),
+      end: text.lastIndexOf("sleep doubled recall") + "sleep doubled recall".length,
+    });
+  });
 });
