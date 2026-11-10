@@ -1,4 +1,5 @@
 import {
+  normalizeImportedCitationKey,
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   type ScientSourceCandidate,
   type ZoteroCollection,
@@ -290,8 +291,10 @@ export async function readZoteroItemMaterial(
   const material = zoteroItemMaterial(item, children);
   if (material.citationKey || !transport.citationKeys) return material;
   const keys = await transport.citationKeys([item.key]).catch(() => new Map<string, string>());
-  const citationKey = keys.get(item.key)?.trim();
-  return citationKey ? { ...material, citationKey } : material;
+  const citationKey = normalizeImportedCitationKey(keys.get(item.key));
+  return citationKey
+    ? { ...material, citationKey, candidate: { ...material.candidate, citationKey } }
+    : material;
 }
 
 export async function getZoteroItemWith(

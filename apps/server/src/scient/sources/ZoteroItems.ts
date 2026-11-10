@@ -1,4 +1,6 @@
 import {
+  citationKeyFromZoteroExtra,
+  normalizeImportedCitationKey,
   normalizeScientSourceAbstractDocument,
   scientSourceTypeFromZotero,
   type ScientSourceCandidate,
@@ -122,7 +124,6 @@ function publicationYear(date: string | undefined): number | null {
 }
 
 const EXTRA_FIELDS: Readonly<Record<string, string>> = {
-  "citation key": "citationKey",
   pmid: "pmid",
   pmcid: "pmcid",
   arxiv: "arxiv",
@@ -130,8 +131,8 @@ const EXTRA_FIELDS: Readonly<Record<string, string>> = {
 };
 
 /**
- * Zotero keeps fields its schema lacks as `Name: value` lines in Extra. Better BibTeX
- * pins citation keys there too, and PubMed imports put PMIDs there.
+ * Zotero keeps fields its schema lacks as `Name: value` lines in Extra; PubMed
+ * imports put PMIDs there.
  */
 function zoteroExtraFields(extra: string | undefined): Readonly<Record<string, string>> {
   const fields: Record<string, string> = {};
@@ -145,7 +146,7 @@ function zoteroExtraFields(extra: string | undefined): Readonly<Record<string, s
 
 /** The Better BibTeX or Zotero citation key the item carries itself, if any. */
 function zoteroCitationKey(data: ZoteroRawItem["data"]): string | null {
-  return text(data.citationKey) ?? text(zoteroExtraFields(data.extra).citationKey);
+  return normalizeImportedCitationKey(data.citationKey) ?? citationKeyFromZoteroExtra(data.extra);
 }
 
 function identifierEntries(
@@ -373,6 +374,7 @@ export function zoteroItemMaterial(
   return {
     candidate: {
       ...zoteroItemToCandidate(item),
+      ...(citationKey ? { citationKey } : {}),
       pdfAvailable: primaryPdf !== undefined,
       pdfFileName: primaryPdf ? text(primaryPdf.data.filename) : null,
       pdfAttachmentCount: pdfs.length,

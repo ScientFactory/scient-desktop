@@ -80,6 +80,49 @@ describe("Zotero import", () => {
     expect(record?.origin).toMatchObject({ actor: "user", intake: "zotero" });
   });
 
+  it("keeps the citation key Zotero or Better BibTeX gives", async () => {
+    const root = await project();
+    const zotero = fakeZoteroAccess(
+      fakeZoteroTransport({
+        items: new Map([
+          [
+            "ABCD2345",
+            {
+              item: zoteroItem("ABCD2345", {
+                title: "Pinned",
+                abstractNote: "A.",
+                extra: "Citation Key: pinned2026",
+              }),
+              children: [],
+            },
+          ],
+          [
+            "EFGH2345",
+            {
+              item: zoteroItem("EFGH2345", { title: "Unpinned", abstractNote: "A." }),
+              children: [],
+            },
+          ],
+        ]),
+        citationKeys: new Map([["EFGH2345", "fromBetterBibTeX"]]),
+      }),
+    );
+
+    await beginZoteroScopedImport({
+      root,
+      operationId: "keys",
+      scope: { kind: "library" },
+      zotero,
+    });
+    await advanceSourceImport({ root, operationId: "keys", zotero });
+    await advanceSourceImport({ root, operationId: "keys", zotero });
+
+    const keys = (await listScientSourceRecords(root))
+      .map((record) => record.citationKey)
+      .toSorted();
+    expect(keys).toEqual(["fromBetterBibTeX", "pinned2026"]);
+  });
+
   it("imports metadata when Zotero has no copy of the PDF file", async () => {
     const root = await project();
     const zotero = fakeZoteroAccess(
