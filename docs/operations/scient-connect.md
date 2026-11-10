@@ -77,6 +77,25 @@ set. The free Axiom plan allows 3 monitors and the relay defines 15, so the vari
 until the org moves to Axiom Cloud. The email notifiers exist already: alerts
 `eIxJI9kHKNNauiewYh`, warnings `VtZtPzOCgWVaX32B4p`.
 
+## Aligning with T3
+
+Scient Connect is T3 Connect with Scient's names and settings, so T3's Connect improvements arrive
+in ordinary alignments. Review the Connect `SCIENT-FORK` regions in `infra/relay`, `apps/desktop`,
+`apps/web`, `apps/server`, `packages` and `.github/workflows` (including `release.yml`), and the
+public build settings in `.env.example`. The hosted-app workflow (`deploy-hosted-web.yml`) and
+`infra/scient-web` are Scient's own.
+
+Merging to `main` deploys the relay and applies its migrations to the live database. When an
+alignment changes `infra/relay`:
+
+- Read each new migration in `infra/relay/migrations/postgres`. Stop for a decision if one drops or
+  rewrites existing data.
+- Before merging, add any new relay variable or secret to the `scient-connect` environment and
+  `deploy-relay.yml`.
+- Keep T3-only services (T3 Chat, phone notifications) off unless the owner turns them on.
+- After merging, check the **Deploy Scient Connect relay** run and
+  `https://relay.scientfactory.com/health`.
+
 ## Not yet on
 
 - The phone app: `SCIENT_DESKTOP_IDENTITY.mobileAppEnabled` hides phone offers, and the relay runs
