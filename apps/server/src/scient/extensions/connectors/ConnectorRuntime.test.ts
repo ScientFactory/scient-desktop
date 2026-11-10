@@ -3104,17 +3104,21 @@ describe("connectors agents make and fix", () => {
         missing: ["API key"],
         manifest: { name: "agent-made", version: "2.0.0", runtime: "node" },
       });
-      // A later copy of the same connector may replace this one; other files may not be.
+      // A later copy of the same connector replaces this one; other files are never touched.
       yield* harness.runtime.copyForAgent({ workingFolder: chat, connector: connectorId });
       const other = NodePath.join(chat, "connectors", "elsewhere");
       yield* Effect.promise(async () => {
         await NodeFSP.mkdir(other, { recursive: true });
         await NodeFSP.writeFile(NodePath.join(other, "notes.txt"), "mine");
       });
-      const refused = yield* harness.runtime
-        .copyForAgent({ workingFolder: chat, name: "Elsewhere" })
-        .pipe(Effect.flip);
-      expect(refused.message).toContain("already holds other files");
+      const beside = yield* harness.runtime.copyForAgent({
+        workingFolder: chat,
+        name: "Elsewhere",
+      });
+      expect(beside.folder).toBe(NodePath.join(chat, "connectors", "elsewhere-2"));
+      expect(
+        yield* Effect.promise(() => NodeFSP.readFile(NodePath.join(other, "notes.txt"), "utf8")),
+      ).toBe("mine");
 
       yield* writeConnectorFolder(copied.folder, { version: "2.0.1" });
       const forked = yield* harness.runtime.saveFolder(

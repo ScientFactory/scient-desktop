@@ -50,6 +50,8 @@ const CALL_TIMEOUT_MS = 60_000;
 const MAX_CALLS = 10;
 const MAX_RESULT_CHARS = 4_000;
 const MAX_LOG_CHARS = 8_000;
+/** Folder names tried for a copy before giving up: `name`, `name-2`, … */
+const MAX_COPY_NAMES = 20;
 
 const decodeRecord = Schema.decodeUnknownExit(Schema.fromJsonString(ConnectorRecord));
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(ConnectorRecord));
@@ -235,21 +237,26 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     const record =
       input.connector === undefined ? undefined : yield* findConnector(input.connector);
     const displayName = (record?.displayName ?? input.name ?? "").trim() || "Connector";
-    const target = NodePath.join(input.workingFolder, "connectors", slug(displayName));
-    const previous = yield* Effect.promise(async () => {
-      const entries = await NodeFSP.readdir(target).catch(() => [] as string[]);
-      if (entries.length === 0) return "empty" as const;
-      const marker = await NodeFSP.readFile(NodePath.join(target, COPY_MARKER), "utf8").catch(
-        () => "",
-      );
-      const decoded = decodeMarker(marker);
-      return decoded._tag === "Success" && decoded.value.connectorId === record?.connectorId
-        ? ("earlier-copy" as const)
-        : ("taken" as const);
+    // Never over someone's files: an earlier copy of this connector is replaced, else the
+    // first free name (`name`, `name-2`, …) is used.
+    const base = NodePath.join(input.workingFolder, "connectors", slug(displayName));
+    const target = yield* Effect.promise(async () => {
+      for (let turn = 1; turn <= MAX_COPY_NAMES; turn++) {
+        const candidate = turn === 1 ? base : `${base}-${turn}`;
+        const entries = await NodeFSP.readdir(candidate).catch(() => [] as string[]);
+        if (entries.length === 0) return candidate;
+        const marker = await NodeFSP.readFile(NodePath.join(candidate, COPY_MARKER), "utf8").catch(
+          () => "",
+        );
+        const decoded = decodeMarker(marker);
+        if (decoded._tag === "Success" && decoded.value.connectorId === record?.connectorId)
+          return candidate;
+      }
+      return undefined;
     });
-    if (previous === "taken")
+    if (target === undefined)
       return yield* invalid(
-        `${target} already holds other files. Move them, or work in that folder and check it with scient_connector_check.`,
+        `${base} and the next ${MAX_COPY_NAMES - 1} names all hold other files. Tidy the connectors folder first.`,
       );
     yield* Effect.tryPromise({
       try: async () => {
