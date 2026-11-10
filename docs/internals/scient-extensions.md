@@ -560,6 +560,20 @@ Summaries carry `changedBy`, `updatedAt`, `forkedFrom` and whether Undo is possi
 `<stateDir>/connector-logs/<connectorId>.log`, across restarts, with keys and cookies removed.
 It is deleted with the connector.
 
+**Studying a site.** `preview_network` lists a tab's recent requests and shows one request's
+headers and bodies. Its masking is defence in depth, not the boundary, because an agent can
+already run `preview_evaluate` in the same tab. What it guarantees: no value Scient knows is
+secret for the tab appears in any URL, header or body it returns. Those values are the tab's
+cookies for the listed addresses, the Cookie, Authorization and Set-Cookie values of its kept
+requests, and its password fields. Each one is searched for as written raw, percent- or
+form-encoded, JSON-escaped, as HTML references (decimal, hex or named), and as standard or URL-safe
+base64 at each alignment. The output is searched for these forms and never decoded. Best effort:
+values named like secrets, and unknown token-looking values, are hidden by parsing HTML and XML
+(with CDATA and `srcset`), multipart, forms, and JSON (and JSON inside JSON strings or `data-`
+attributes, one level deep). A format Scient cannot parse is left out. The work is linear: bodies
+are cut to their output limit before masking (32 KB shown, 1 MB saved to a file), the tokenizers
+use no recursion, and nesting past the limits leaves the body out with a note.
+
 ### Signed-in connectors
 
 A manifest's `_meta["com.scientfactory.scient"].signIn: { site }` (https, or `http://localhost`
@@ -577,7 +591,8 @@ sign-in's browser profile in a hidden tab, writes them as owner-only files under
 The program never gets the password. Every response event is checked against the connector's
 current credentials, so cookies from a new sign-in during a call are covered too, and earlier
 values stay. Keys are redacted from 16 characters wherever they appear. Cookie values are
-redacted from 6 characters, but only as whole tokens, so ordinary output is never mangled. Every exchange checks the sign-in again: whether it exists, covers the site,
+redacted from 6 characters, but only as whole tokens, so ordinary output is never mangled. Base64 of
+either is redacted too, and for cookies the whole-token test is applied after decoding. Every exchange checks the sign-in again: whether it exists, covers the site,
 is on, has global agent access and is in the project's scope. If not, the running copies stop and
 the session files are deleted. A university's own sign-in service stays in the browser.
 
