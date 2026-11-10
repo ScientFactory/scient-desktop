@@ -10,8 +10,10 @@ import type {
 import { normalizePersistentIdentifier } from "./normalize.ts";
 import { normalizeScientSourceAbstract } from "./abstract.ts";
 import { normalizeScientSourceAbstractDocument } from "./abstract.ts";
+import { CITATION_KEY_SYNTAX_MESSAGE, isValidCitationKey } from "./citationKeys.ts";
 
 const SCIENT_SOURCE_EDITABLE_FIELDS = [
+  "citationKey",
   "type",
   "customType",
   "title",
@@ -66,6 +68,7 @@ export function editableMetadataFromRecord(
   record: ScientSourceRecord,
 ): ScientSourceEditableMetadata {
   return {
+    ...(record.citationKey ? { citationKey: record.citationKey } : {}),
     type: record.type,
     customType: record.customType ?? null,
     title: record.title,
@@ -108,6 +111,9 @@ export function normalizeScientSourceEditableMetadata(
   }
 
   return {
+    ...(metadata.citationKey === undefined
+      ? {}
+      : { citationKey: metadata.citationKey.normalize("NFC").trim() }),
     type: metadata.type,
     customType: metadata.type === "other" ? nullableText(metadata.customType) : null,
     title: nullableText(metadata.title),
@@ -134,6 +140,12 @@ export function validateScientSourceEditableMetadata(
   metadata: ScientSourceEditableMetadata,
 ): ReadonlyArray<ScientSourceMetadataValidationIssue> {
   const issues: ScientSourceMetadataValidationIssue[] = [];
+  if (metadata.citationKey !== undefined && !isValidCitationKey(metadata.citationKey)) {
+    issues.push({
+      field: "citationKey",
+      message: CITATION_KEY_SYNTAX_MESSAGE,
+    });
+  }
   if (metadata.type === "other" && !metadata.customType?.trim()) {
     issues.push({ field: "customType", message: "Enter the source type." });
   }
@@ -166,20 +178,23 @@ export function validateScientSourceEditableMetadata(
   return issues;
 }
 
-export function editableMetadataEquals(
-  left: ScientSourceEditableMetadata,
-  right: ScientSourceEditableMetadata,
-): boolean {
-  return JSON.stringify(left) === JSON.stringify(right);
-}
-
+/** `next` without a citation key keeps the current key, so it never counts as a change. */
 export function changedEditableMetadataFields(
   previous: ScientSourceEditableMetadata,
   next: ScientSourceEditableMetadata,
 ): ReadonlyArray<ScientSourceEditableField> {
   return SCIENT_SOURCE_EDITABLE_FIELDS.filter(
-    (field) => JSON.stringify(previous[field]) !== JSON.stringify(next[field]),
+    (field) =>
+      !(field === "citationKey" && next.citationKey === undefined) &&
+      JSON.stringify(previous[field]) !== JSON.stringify(next[field]),
   );
+}
+
+export function editableMetadataEquals(
+  previous: ScientSourceEditableMetadata,
+  next: ScientSourceEditableMetadata,
+): boolean {
+  return changedEditableMetadataFields(previous, next).length === 0;
 }
 
 function belongsToChangedField(
