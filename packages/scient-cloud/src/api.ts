@@ -261,7 +261,10 @@ export const CreateShareRequest = Schema.Struct({
   expiresAt: Schema.optionalKey(Schema.NullOr(IsoDateTime)),
   indexable: Schema.Boolean,
   card: Schema.optionalKey(ShareCard),
-});
+}).check(
+  // A card is readable by the service, so an encrypted share must not carry one.
+  Schema.makeFilter((request) => !(request.encrypted && request.card !== undefined)),
+);
 export type CreateShareRequest = typeof CreateShareRequest.Type;
 
 export const CreateShareResponse = Schema.Struct({ id: ShareId });

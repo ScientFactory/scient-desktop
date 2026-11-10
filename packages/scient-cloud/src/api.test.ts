@@ -2,8 +2,10 @@ import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Base64Url from "effect/encoding/Base64Url";
+import * as Schema from "effect/Schema";
 
 import {
+  CreateShareRequest,
   decodeThreadMetaHeader,
   encodeThreadMetaHeader,
   THREAD_META_HEADER_MAX_BYTES,
@@ -42,4 +44,21 @@ describe("thread meta header", () => {
       expect(yield* reason("A".repeat(THREAD_META_HEADER_MAX_BYTES + 1))).toBe("too_large");
     }),
   );
+});
+
+describe("share requests", () => {
+  it("refuses a preview card on an encrypted share", () => {
+    const request = {
+      source: { env: "env-a", thread: "thread-a" },
+      encrypted: true,
+      access: { mode: "link" },
+      indexable: false,
+    };
+    const decode = Schema.decodeUnknownExit(CreateShareRequest);
+    expect(decode(request)._tag).toBe("Success");
+    expect(decode({ ...request, card: { title: "Private findings" } })._tag).toBe("Failure");
+    expect(decode({ ...request, encrypted: false, card: { title: "Findings" } })._tag).toBe(
+      "Success",
+    );
+  });
 });
