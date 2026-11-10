@@ -42,6 +42,8 @@ import {
   ScientSourceNoteUpdateResult,
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
+  ScientSourcesAddByIdentifierRequest,
+  ScientSourcesAddByIdentifierResult,
   ScientSourcesAdvanceImportRequest,
   ScientSourcesBeginImportRequest,
   ScientSourcesCancelImportRequest,
@@ -298,6 +300,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourceRemovalRequest,
         success: ScientSourceRemovalResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("addByIdentifier", "/api/scient/sources/identifiers/add", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesAddByIdentifierRequest,
+        success: ScientSourcesAddByIdentifierResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

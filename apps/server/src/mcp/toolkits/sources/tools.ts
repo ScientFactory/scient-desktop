@@ -1,4 +1,6 @@
 import {
+  MAX_SOURCE_IDENTIFIER_BATCH,
+  ScientSourceIdentifierAddItem,
   ScientSourceCreator,
   ScientSourceExternalReference,
   ScientSourceEditableMetadata,
@@ -259,6 +261,15 @@ export const ScientSourceAddInput = Schema.Struct({
     }),
   ),
   allowPossibleMetadataMatch: Schema.optionalKey(AllowPossibleMetadataMatch),
+  identifierList: Schema.optionalKey(
+    Schema.Array(Schema.String.pipe(Schema.check(Schema.isMaxLength(1_000))))
+      .pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_SOURCE_IDENTIFIER_BATCH)))
+      .annotate({
+        description:
+          "Add several works at once: one DOI, PMID, arXiv ID or ISBN per entry, bare, prefixed or as a link (identifiers from search or connector results go here). " +
+          "Each entry becomes its own source from its registry's metadata; give no citation fields or PDF with it. See results.",
+      }),
+  ),
 });
 export type ScientSourceAddInput = typeof ScientSourceAddInput.Type;
 
@@ -269,6 +280,7 @@ export const ScientSourceAddResult = Schema.Struct({
     "invalid",
     "identifier-not-found",
     "identifier-mismatch",
+    "batch",
   ]),
   sourceId: Schema.NullOr(NonEmptyString),
   revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
@@ -294,16 +306,24 @@ export const ScientSourceAddResult = Schema.Struct({
     }),
   ),
   message: Schema.optionalKey(NonEmptyString),
+  results: Schema.optionalKey(
+    Schema.Array(ScientSourceIdentifierAddItem).annotate({
+      description:
+        "One per identifierList entry, in order: imported (added, verified), duplicate (already in the Library; sourceId names it), " +
+        "identifier-not-found (does not exist; nothing added), unavailable (registry unreachable; nothing added, try again later), or unrecognized (not an identifier).",
+    }),
+  ),
 });
 
 const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
-    "Add one source to this project after the user explicitly asks. List existing Sources first. " +
+    "Add a source, or several by identifier, to this project's Library after the user explicitly asks. List existing Sources first. " +
+    "To add works you know by DOI, PMID, arXiv ID or ISBN, pass identifierList (up to 50, mixed); outcome is batch and results says what happened to each. " +
     "For a PDF in the project, pass its relative path as pdfRelativePath; Scient reads metadata from it, " +
-    "so citation fields are optional. A DOI or PMID is checked against doi.org or PubMed first: " +
+    "so citation fields are optional. A DOI, PMID, arXiv ID or ISBN is checked against its registry first: " +
     "identifier-not-found means the identifier does not exist and identifier-mismatch means it names a different work (see resolved); nothing is added in either case. " +
     "A found identifier's registry metadata replaces the citation fields you gave (verification verified). " +
-    "If the registry cannot be reached the source is added as given (unchecked); without a DOI or PMID it is unverified. " +
+    "If the registry cannot be reached the source is added as given (unchecked); without one of these identifiers it is unverified. " +
     "The user sees that you added it. Repeating the same request adds nothing.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
