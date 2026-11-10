@@ -159,7 +159,10 @@ malformed optional field cannot discard already readable metadata or prevent
 first-page identifier extraction. It reads bounded document metadata and text
 from at most the first two pages. A single unambiguous DOI or explicitly
 labelled PMID may be resolved through the public DOI CSL JSON or NCBI ESummary
-endpoint for bibliographic identity.
+endpoint for bibliographic identity. The embedded date counts as the
+publication date only from XMP `prism:coverDate` or `prism:publicationDate`;
+the document-info `CreationDate` and Dublin Core `dc:date` describe the file
+and are ignored. Records imported before this keep their stored date.
 
 After a Zotero or local-PDF adapter has built its candidate, a shared
 provider-neutral enrichment seam may fill a missing abstract using only that
@@ -176,6 +179,16 @@ All NCBI E-utilities requests share one serialized, interval-limited lane.
 The lane remains owned until the active network request settles and releases
 in `finally`, preventing overlapping requests and avoiding a dead lane after a
 failure.
+
+Every registry request goes through `metadataHttp.ts`, which sends the
+versioned `METADATA_USER_AGENT`. The Library setting
+`scientSources.registryContactEmail` (Settings ▸ Documents) is followed by
+`RegistryContact.layer`; when it holds an address, requests to
+`api.crossref.org` and `api.openalex.org` (including redirect hops, such as
+doi.org to Crossref) carry it as the `mailto` parameter and in the
+User-Agent. No other host receives it, and an empty or malformed value sends
+nothing. Adapters that pass the address another way (Unpaywall's `email`)
+read `registryContactEmail()`; none keeps its own setting.
 
 All metadata responses are HTTPS-only, time- and size-bounded, and
 schema-decoded. Only the exact identifier leaves the project environment; the
