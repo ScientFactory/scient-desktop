@@ -4,8 +4,11 @@ import * as NodeTimersPromises from "node:timers/promises";
 
 import {
   isbn13,
+  canonicalConnectorIdentifier,
   isValidIsbn,
   isWellFormedArxivId,
+  isWellFormedOpenAlexWorkId,
+  isWellFormedSemanticScholarId,
   isWellFormedDoi,
   isWellFormedPmid,
   normalizePersistentIdentifier,
@@ -25,6 +28,11 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { ARXIV_IDS_PER_REQUEST, lookupArxivIds } from "./ArxivIdentifierLookup.ts";
+import {
+  lookupOpenAlexWork,
+  lookupSemanticScholarPaper,
+  type FollowIdentifier,
+} from "./ConnectorIdentifierLookup.ts";
 import { ISBNS_PER_REQUEST, lookupIsbns } from "./IsbnIdentifierLookup.ts";
 import { METADATA_USER_AGENT, requestMetadata, type MetadataRequest } from "./metadataHttp.ts";
 import { runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
@@ -290,7 +298,7 @@ function metadataFromPubmed(pmid: string, summary: PubmedSummary): ResolvedSourc
 /** The registry whose record supplied resolved metadata, as recorded in field provenance. */
 export type RegistryOrigin = Extract<
   ScientSourceFieldProvenance["origin"],
-  "doi" | "pubmed" | "arxiv" | "open-library" | "google-books"
+  "doi" | "pubmed" | "arxiv" | "open-library" | "google-books" | "openalex" | "semantic-scholar"
 >;
 
 export type SourceIdentifierResolution =
@@ -397,14 +405,63 @@ const IDENTIFIER_SCHEMES: Readonly<Record<SourceAddIdentifierScheme, IdentifierS
     lookup: lookupArxivIds,
   },
   isbn: { wellFormed: isValidIsbn, perRequest: ISBNS_PER_REQUEST, lookup: lookupIsbns },
+  openalex: {
+    wellFormed: isWellFormedOpenAlexWorkId,
+    perRequest: 1,
+    lookup: catalogue(lookupOpenAlexWork),
+  },
+  s2: {
+    wellFormed: isWellFormedSemanticScholarId,
+    perRequest: 1,
+    lookup: catalogue(lookupSemanticScholarPaper),
+  },
 };
 
+function catalogue(lookup: typeof lookupOpenAlexWork) {
+  return async (
+    values: ReadonlyArray<string>,
+    request: MetadataRequest,
+    pace: RequestPace | undefined,
+    keys: ResearchKeys,
+  ) =>
+    new Map(
+      await Promise.all(
+        values.map(
+          async (value) =>
+            [
+              value,
+              await lookup(value, request, keys, followRegistry(request, keys, pace), pace),
+            ] as const,
+        ),
+      ),
+    );
+}
+
+/** A catalogue entry's registry record, through the same lookups as any identifier. */
+function followRegistry(
+  request: MetadataRequest,
+  keys: ResearchKeys,
+  pace: RequestPace | undefined,
+): FollowIdentifier {
+  return async (scheme, value) => {
+    const canonical = canonicalIdentifier(scheme, value);
+    if (!IDENTIFIER_SCHEMES[scheme].wellFormed(canonical)) return { status: "not-found" };
+    const answers = await IDENTIFIER_SCHEMES[scheme].lookup([canonical], request, pace, keys);
+    return answers.get(canonical) ?? { status: "unavailable" };
+  };
+}
+
 function canonicalIdentifier(scheme: SourceAddIdentifierScheme, value: string): string {
+  if (scheme === "openalex" || scheme === "s2")
+    return canonicalConnectorIdentifier(scheme, value) ?? value.trim();
   const normalized = normalizePersistentIdentifier(scheme, value).slice(scheme.length + 1);
   return scheme === "isbn" ? (isbn13(normalized) ?? normalized) : normalized;
 }
 
-/** The identifier a source is checked against: DOI, then PMID, then arXiv ID, then ISBN. */
+/**
+ * The identifier a source is checked against: DOI, then PMID, arXiv ID, ISBN, and last an
+ * OpenAlex or Semantic Scholar ID, which is followed to its registry.
+ */
 export function verifiableSourceIdentifier(
   identifiers: ReadonlyArray<ScientSourceIdentifier>,
 ): ScientSourceIdentifier | null {
@@ -422,6 +479,8 @@ const SCHEME_LABELS: Record<SourceAddIdentifierScheme, { label: string; registry
   pmid: { label: "PMID", registry: "PubMed" },
   arxiv: { label: "arXiv ID", registry: "arXiv" },
   isbn: { label: "ISBN", registry: "Open Library or Google Books" },
+  openalex: { label: "OpenAlex work", registry: "OpenAlex" },
+  s2: { label: "Semantic Scholar paper", registry: "Semantic Scholar" },
 };
 
 function schemeLabels(identifier: ScientSourceIdentifier) {
@@ -699,6 +758,38 @@ const REGISTRY_SOURCE_FIELDS = {
     language: "language",
     url: "canonicalVolumeLink",
     identifiers: "industryIdentifiers",
+  },
+  openalex: {
+    type: "type",
+    title: "title",
+    creators: "authorships",
+    issuedRaw: "publication_year",
+    issuedYear: "publication_year",
+    abstract: null,
+    containerTitle: "primary_location.source",
+    publisher: null,
+    volume: "biblio.volume",
+    issue: "biblio.issue",
+    pages: "biblio",
+    language: "language",
+    url: "id",
+    identifiers: "id",
+  },
+  "semantic-scholar": {
+    type: null,
+    title: "title",
+    creators: "authors",
+    issuedRaw: "publicationDate",
+    issuedYear: "year",
+    abstract: null,
+    containerTitle: "journal",
+    publisher: null,
+    volume: "journal.volume",
+    issue: null,
+    pages: "journal.pages",
+    language: null,
+    url: "paperId",
+    identifiers: "paperId",
   },
 } as const satisfies Record<RegistryOrigin, Record<string, string | null>>;
 type RegistryField = keyof (typeof REGISTRY_SOURCE_FIELDS)["doi"];

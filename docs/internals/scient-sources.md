@@ -278,6 +278,16 @@ source as given with `unchecked`; a source without a DOI or PMID is
 `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. Only agent adds record verification.
 
+Connector results reach the Library as identifiers, not copied metadata. The
+resolver also takes an OpenAlex work ID (`openalex`, `W…`) and a Semantic
+Scholar paper ID (`s2`, a 40-character paper ID or `CorpusId:N`), tried after
+every registry scheme. `ConnectorIdentifierLookup.ts` reads the catalogue entry
+(OpenAlex at 10 requests a second, Semantic Scholar at one), follows its DOI,
+then PMID, then arXiv ID through the ordinary scheme lookups, and keeps the
+catalogue ID among the record's identifiers. Only when no registry has the work
+does the catalogue's own record stand, with `openalex` or `semantic-scholar`
+provenance. A catalogue that does not know the ID returns not found.
+
 Agent-added sources are not held for approval. Trust comes from that check,
 from attribution (origin actor, field provenance, `updatedBy` and revision
 history, all shown in the Sources panel) and from ordinary edit and removal.
