@@ -260,6 +260,30 @@ native offering and adopted provider work retain their receipt-aware control.
 Preserve upstream's effect ordering and transaction/cancellation machinery.
 The maintained boundaries are in [the separation map](docs/internals/scient-fork-divergence.md#extracted-owners-and-host-mounts).
 
+Scient's switch planning also runs on ordinary sends, so a project-folder move replaces the
+native binding. For providers that negotiate per-thread workspaces in a pooled process,
+`ProviderSwitchService.ts` compares the last bound workspace recorded by
+`ProviderTurnStartService.ts` in the optional `nativeMetadata.cwd`, not the pooled process's
+launch cwd; older records keep the conservative session-cwd fallback. Marked seams in
+`ProviderEventIngestor.ts` and `RunExecutionService.ts` apply
+`scient-provider/RecordedWorkspace.ts`, so the recorded value wins over an adapter's cached copy
+of the same session's row. Detach passes Scient's optional `awaitRelease` (`provider-core`
+`ProviderAdapter.ts`), and a marked block in `Adapters/CodexAdapterV2.ts` then waits up to 5
+seconds for `thread/closed`, including a close still pending from an earlier idle unsubscribe,
+because the next owner may be another app-server process. `ProviderSessionManager.ts` remembers
+threads an idle unload released (`idleUnloadedProviderThreads`) so a later handoff detach still
+joins that release. Preserve these divergences.
+
+The same change pre-adopts two open upstream fixes in their touched hunks:
+[#30647](https://github.com/pingdotgg/t3code/pull/30647)'s detach of the held native thread
+(`ProviderSessionManager.ts`, without its per-thread config fixture churn) and
+[#33767](https://github.com/pingdotgg/t3code/pull/33767)'s Codex unload delay launch argument and
+closing-thread resume retry. When syncing, take upstream's version of those hunks, then reapply
+the marked Scient additions inside them: the `awaitRelease` detach argument and
+`idleUnloadedProviderThreads` fallback in `ProviderSessionManager.ts`, the release wait in
+`CodexAdapterV2.unloadThread`, the `expectedRuntime` release argument, and the linked-environments
+test assertions. See [provider lifecycle](docs/internals/providers.md#registry-and-routing).
+
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
 policy, identity, scientific behavior, release decisions, and every deliberate

@@ -1712,6 +1712,12 @@ export const layer: Layer.Layer<
       // SCIENT-FORK:END
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
+        // SCIENT-FORK:START — retain binding authority across later project/worktree relocation.
+        nativeMetadata: {
+          ...loadedProviderThread.nativeMetadata,
+          cwd: resolvedRuntimePolicy.cwd ?? session.providerSession.cwd,
+        },
+        // SCIENT-FORK:END
         contextUsage: handoffUsage,
         id: providerThread.id,
         driver: session.driver,

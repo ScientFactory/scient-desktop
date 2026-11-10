@@ -4091,8 +4091,8 @@ it.layer(
           assert.deepStrictEqual(
             spawnedCommands.filter((probe) => probe.command === firstMissing),
             [
-              { command: firstMissing, args: ["app-server"] },
-              { command: firstMissing, args: ["app-server"] },
+              { command: firstMissing, args: ["app-server", "-c", "thread_unload_delay_secs=0"] },
+              { command: firstMissing, args: ["app-server", "-c", "thread_unload_delay_secs=0"] },
             ],
           );
           // Disabled managed providers still perform their existing passive runtime
@@ -4134,8 +4134,8 @@ it.layer(
           const [reprobedCodex] = yield* rebuiltError;
           assert.deepStrictEqual(spawnedCommands, [
             ...initialProbes,
-            { command: secondMissing, args: ["app-server"] },
-            { command: secondMissing, args: ["app-server"] },
+            { command: secondMissing, args: ["app-server", "-c", "thread_unload_delay_secs=0"] },
+            { command: secondMissing, args: ["app-server", "-c", "thread_unload_delay_secs=0"] },
           ]);
           assert.strictEqual(reprobedCodex?.status, "error");
           assert.strictEqual(reprobedCodex?.installed, false);
