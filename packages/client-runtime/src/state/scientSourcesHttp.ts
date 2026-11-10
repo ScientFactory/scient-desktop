@@ -1,11 +1,18 @@
 import * as Effect from "effect/Effect";
 
 import type {
+  ScientManagedBibliographySyncRequest,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
   ScientSourcesAddByIdentifierRequest,
+  ScientSourceRestoreRequest,
+  ScientSourceRevertRequest,
+  ScientSourceRevisionsRequest,
+  ScientSourcesPermanentDeletionRequest,
+  ScientSourcesTrashRequest,
+  ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 
@@ -61,6 +68,31 @@ export const getEnvironmentScientSourceDetail = Effect.fn(
       client.detail({
         headers,
         payload: { root: input.root, sourceId: input.sourceId },
+      }),
+  });
+});
+
+export const searchEnvironmentScientSourcesFullText = Effect.fn(
+  "clientRuntime.state.searchEnvironmentScientSourcesFullText",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: string;
+  readonly query: string;
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.fullTextSearch(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) =>
+      client.fullTextSearch({
+        headers,
+        payload: { root: input.root, query: input.query },
       }),
   });
 });
@@ -274,9 +306,101 @@ export const addEnvironmentScientSourcesByIdentifier = Effect.fn(
   });
 });
 
+export const listEnvironmentScientSourceTrash = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientSourceTrash",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourcesTrashRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.trash(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.trash({ headers, payload }),
+  });
+});
+
+export const restoreEnvironmentScientSource = Effect.fn(
+  "clientRuntime.state.restoreEnvironmentScientSource",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceRestoreRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.restore(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.restore({ headers, payload }),
+  });
+});
+
+export const deleteEnvironmentScientSourcesPermanently = Effect.fn(
+  "clientRuntime.state.deleteEnvironmentScientSourcesPermanently",
+)(function* (
+  input: { readonly prepared: PreparedConnection } & ScientSourcesPermanentDeletionRequest,
+) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.deletePermanently(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.deletePermanently({ headers, payload }),
+  });
+});
+
+export const listEnvironmentScientSourceRevisions = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientSourceRevisions",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceRevisionsRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.revisions(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.revisions({ headers, payload }),
+  });
+});
+
+export const revertEnvironmentScientSource = Effect.fn(
+  "clientRuntime.state.revertEnvironmentScientSource",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceRevertRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.revert(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.revert({ headers, payload }),
+  });
+});
+
 export const getEnvironmentZoteroStatus = Effect.fn(
   "clientRuntime.state.getEnvironmentZoteroStatus",
-)(function* (prepared: PreparedConnection) {
+)(function* (prepared: PreparedConnection, connection?: ZoteroConnection) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -287,7 +411,8 @@ export const getEnvironmentZoteroStatus = Effect.fn(
     url: (urls) => urls.zoteroStatus(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
-    request: ({ client, headers }) => client.zoteroStatus({ headers, payload: {} }),
+    request: ({ client, headers }) =>
+      client.zoteroStatus({ headers, payload: connection ? { connection } : {} }),
   });
 });
 
@@ -299,6 +424,7 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
   readonly query: string;
   readonly start: number;
   readonly limit: number;
+  readonly connection?: ZoteroConnection;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -318,6 +444,7 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
           query: input.query,
           start: input.start,
           limit: input.limit,
+          ...(input.connection ? { connection: input.connection } : {}),
         },
       }),
   });
@@ -325,7 +452,7 @@ export const listEnvironmentZoteroLibrary = Effect.fn(
 
 export const listEnvironmentZoteroCollections = Effect.fn(
   "clientRuntime.state.listEnvironmentZoteroCollections",
-)(function* (prepared: PreparedConnection) {
+)(function* (prepared: PreparedConnection, connection?: ZoteroConnection) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -336,7 +463,8 @@ export const listEnvironmentZoteroCollections = Effect.fn(
     url: (urls) => urls.zoteroCollections(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
-    request: ({ client, headers }) => client.zoteroCollections({ headers, payload: {} }),
+    request: ({ client, headers }) =>
+      client.zoteroCollections({ headers, payload: connection ? { connection } : {} }),
   });
 });
 
@@ -346,6 +474,7 @@ export const preflightEnvironmentZoteroImport = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly root: string;
   readonly itemKeys: ReadonlyArray<string>;
+  readonly connection?: ZoteroConnection;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -360,7 +489,11 @@ export const preflightEnvironmentZoteroImport = Effect.fn(
     request: ({ client, headers }) =>
       client.preflight({
         headers,
-        payload: { root: input.root, itemKeys: input.itemKeys },
+        payload: {
+          root: input.root,
+          itemKeys: input.itemKeys,
+          ...(input.connection ? { connection: input.connection } : {}),
+        },
       }),
   });
 });
@@ -373,6 +506,7 @@ export const beginEnvironmentZoteroImport = Effect.fn(
   readonly operationId: string;
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+  readonly connection?: ZoteroConnection;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -392,6 +526,7 @@ export const beginEnvironmentZoteroImport = Effect.fn(
           operationId: input.operationId,
           itemKeys: input.itemKeys,
           possibleMetadataMatchOverrides: input.possibleMetadataMatchOverrides,
+          ...(input.connection ? { connection: input.connection } : {}),
         },
       }),
   });
@@ -404,6 +539,7 @@ export const beginEnvironmentZoteroScopedImport = Effect.fn(
   readonly root: string;
   readonly operationId: string;
   readonly scope: ZoteroImportScope;
+  readonly connection?: ZoteroConnection;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -422,6 +558,7 @@ export const beginEnvironmentZoteroScopedImport = Effect.fn(
           root: input.root,
           operationId: input.operationId,
           scope: input.scope,
+          ...(input.connection ? { connection: input.connection } : {}),
         },
       }),
   });
@@ -588,6 +725,34 @@ export const retryEnvironmentScientSourcesImport = Effect.fn(
           root: input.root,
           operationId: input.operationId,
           itemKeys: input.itemKeys,
+        },
+      }),
+  });
+});
+
+export const syncEnvironmentScientBibliography = Effect.fn(
+  "clientRuntime.state.syncEnvironmentScientBibliography",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: ScientManagedBibliographySyncRequest["root"];
+  readonly replaceEdited?: ScientManagedBibliographySyncRequest["replaceEdited"];
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.syncBibliography(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) =>
+      client.syncBibliography({
+        headers,
+        payload: {
+          root: input.root,
+          ...(input.replaceEdited ? { replaceEdited: input.replaceEdited } : {}),
         },
       }),
   });

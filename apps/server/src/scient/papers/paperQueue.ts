@@ -22,7 +22,11 @@ import * as Schema from "effect/Schema";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { userRunInvocation } from "../accounts/checkAccounts.ts";
+import type { ScientSourceAttachmentRetrieval } from "@scientfactory/scient-sources";
 import { attachSourcePdf } from "../sources/ScientSourcesCoordinator.ts";
+import { addPaperToLibrary, type PaperIntakeResult } from "../sources/paperIntake.ts";
+import { SourceIdentifierLookup } from "../sources/SourceIdentifierResolver.ts";
+import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import {
   PAPERS_THREAD,
   clearHolds,
@@ -182,6 +186,7 @@ const attach = Effect.fn("Papers.attach")(function* (
   root: string,
   source: NonNullable<PaperAsked["source"]>,
   relative: string,
+  retrieval: ScientSourceAttachmentRetrieval | undefined,
 ) {
   const path = yield* Path.Path;
   return yield* Effect.tryPromise({
@@ -192,6 +197,7 @@ const attach = Effect.fn("Papers.attach")(function* (
         expectedRevision: source.expectedRevision,
         pdfPath: path.join(root, relative),
         fileName: path.basename(relative),
+        ...(retrieval ? { retrieval } : {}),
       }),
     catch: () =>
       new AccountsError({
@@ -199,6 +205,44 @@ const attach = Effect.fn("Papers.attach")(function* (
         message: `The PDF is in ${relative}, but it could not be attached to this source.`,
       }),
   });
+});
+
+/** An agent's request carries its conversation; the user's own does not. */
+const actorOf = (requester: PaperRequester) =>
+  requester.threadId === undefined ? ("user" as const) : ("agent" as const);
+
+const intoLibrary = Effect.fn("Papers.intoLibrary")(function* (
+  root: string,
+  paper: Paper,
+  relative: string,
+  retrieval: ScientSourceAttachmentRetrieval | undefined,
+  requester: PaperRequester,
+) {
+  const resolveIdentifier = yield* SourceIdentifierLookup;
+  const observer = yield* makeSourceImportAnalytics(actorOf(requester));
+  return yield* Effect.tryPromise({
+    try: () =>
+      addPaperToLibrary(
+        {
+          root,
+          pdfRelativePath: relative,
+          ...(paper.doi ? { doi: paper.doi } : {}),
+          ...(paper.arxiv ? { arxiv: paper.arxiv } : {}),
+          actor: actorOf(requester),
+          resolveIdentifier,
+          fallback: {
+            ...(paper.title ? { title: paper.title } : {}),
+            ...(paper.year ? { year: paper.year } : {}),
+          },
+          ...(retrieval ? { retrieval } : {}),
+        },
+        observer,
+      ),
+    catch: (): PaperIntakeResult => ({
+      outcome: "not-added",
+      message: "The Library could not be updated.",
+    }),
+  }).pipe(Effect.catch(Effect.succeed));
 });
 
 const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: PaperItem) {
@@ -229,12 +273,13 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
     queue.browserDown = true;
     return;
   }
-  const { itemId, doi, url, source } = item;
+  const { itemId, doi, url, source, library } = item;
   const base = {
     itemId,
     ...(doi ? { doi } : {}),
     ...(url ? { url } : {}),
     ...(source ? { source } : {}),
+    ...(library ? { library } : {}),
     title: ("paper" in fetched ? fetched.paper?.title : undefined) ?? item.title,
   };
   const known = base.title === undefined ? (({ title: _, ...rest }) => rest)(base) : base;
@@ -249,16 +294,35 @@ const runItem = Effect.fn("Papers.queue.item")(function* (queue: Queue, item: Pa
           } as const)
         : ({ ...known, state: fetched.state, message: fetched.message } as const);
     const saved = fetched.path ?? (yield* savePdf(queue.root, fetched.paper, fetched.bytes!));
-    const attached = source ? yield* attach(queue.root, source, saved) : undefined;
+    const version = fetched.version ?? (fetched.published ? "published" : "unknown");
+    const retrieval =
+      fetched.route === "saved-before" ? undefined : { route: fetched.route, version };
+    const attached = source ? yield* attach(queue.root, source, saved, retrieval) : undefined;
+    const added =
+      !source && library
+        ? yield* intoLibrary(queue.root, fetched.paper, saved, retrieval, requester)
+        : undefined;
+    const sourceId =
+      attached && attached.outcome !== "stale"
+        ? attached.record.sourceId
+        : added && added.outcome !== "not-added"
+          ? added.sourceId
+          : undefined;
+    const message =
+      attached?.outcome === "stale"
+        ? `This source changed meanwhile; attach ${saved} from there.`
+        : added?.outcome === "not-added"
+          ? `The PDF is in ${saved}, but it is not in the Library. ${added.message}`
+          : undefined;
     return {
       ...known,
       state: "saved",
       route: fetched.route,
       published: fetched.published,
+      ...(fetched.route === "saved-before" ? {} : { version }),
       path: saved,
-      ...(attached?.outcome === "stale"
-        ? { message: `This source changed meanwhile; attach ${saved} from there.` }
-        : {}),
+      ...(sourceId ? { sourceId } : {}),
+      ...(message ? { message } : {}),
     } as const;
   }).pipe(
     Effect.catch((error) =>
@@ -348,9 +412,20 @@ export const requestPapers = Effect.fn("Papers.queue.request")(function* (
     queue.requesters.clear();
   }
   const items = papers.map((asked) => {
+    const forLibrary = asked.library === true || asked.source !== undefined;
     const existing = [...queue.items.values()].find(
-      (item) => sameAsked(item, asked) && item.state !== "no-access" && item.state !== "not-found",
+      (item) =>
+        sameAsked(item, asked) &&
+        item.state !== "no-access" &&
+        item.state !== "not-found" &&
+        // A saved paper not yet in the Library goes again, to find its saved copy and file it.
+        !(item.state === "saved" && forLibrary && item.sourceId === undefined),
     );
+    if (existing && asked.library && !existing.library && existing.state !== "saved") {
+      const joined = { ...existing, library: true };
+      queue.items.set(existing.itemId, joined);
+      return joined;
+    }
     if (existing) return existing;
     const item: PaperItem = { ...asked, itemId: NodeCrypto.randomUUID(), state: "waiting" };
     queue.items.set(item.itemId, item);

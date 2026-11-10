@@ -38,6 +38,8 @@ import {
 } from "react";
 
 import { Button } from "../../components/ui/button";
+import { ManagedBibliographyNotice } from "./ManagedBibliographyNotice";
+import { useManagedBibliography } from "./useManagedBibliography";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
@@ -52,6 +54,7 @@ import {
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { toastManager } from "../../components/ui/toast";
+import { scientSourcesErrorMessage } from "./errorMessage";
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { initializeScientProjectForOpening } from "../../lib/scientProjectInitialization";
 import { readLocalApi } from "../../localApi";
@@ -60,7 +63,9 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
 import { AddByIdentifier } from "./AddByIdentifier";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
+import { SourceFullTextResults } from "./SourceFullTextResults";
 import { SourceJournalIcon } from "./SourceJournalIcon";
+import { requestSourceTextReveal } from "./sourceTextReveal";
 import { agentVerificationLabel, newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
 import {
   filterScientSourceSearchIndex,
@@ -75,10 +80,9 @@ import {
   importedSourceIds,
   type ScientSourcesImportOutcome,
 } from "./importOutcome";
-import {
-  SourceRemovalConfirmation,
-  type SourceRemovalAnchorPoint,
-} from "./SourceRemovalConfirmation";
+import { SourceHistoryDialog } from "./SourceHistory";
+import { SourceStoreNotice } from "./SourceStoreNotice";
+import { announceSourceMovedToTrash, SourceTrashButton } from "./SourceTrash";
 import { useScientSources } from "./useScientSources";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest, UniversityRow } from "../accounts/University";
@@ -88,10 +92,6 @@ import { useAccountCommand, useAccounts } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
 type SourceContextAction = "view" | "edit" | "open-pdf" | "remove";
-type PendingSourceRemoval = {
-  readonly record: SourceRecord;
-  readonly anchorPoint: SourceRemovalAnchorPoint;
-};
 type SourceDiagnostic =
   ScientSourcesOverviewResult["recordDiagnostics"][number]["diagnostics"][number];
 const RECENT_SOURCE_ADD_TTL_MS = 10 * 60 * 1000;
@@ -258,6 +258,11 @@ export function ScientSourcesPanel(props: {
   }) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const bibliography = useManagedBibliography({
+    environmentId: props.environmentId,
+    root: props.root,
+    records: sources.overview?.records ?? null,
+  });
   const getPaper = useAccountCommand(accountsState.paperForSource, props.environmentId);
   const requestPapers = useAccountCommand(accountsState.requestPapers, props.environmentId);
   const listPapers = useStableCallback(
@@ -307,9 +312,7 @@ export function ScientSourcesPanel(props: {
     recentSourcesStore.getSnapshot,
   );
   const setRecentlyAddedSourceIds = recentSourcesStore.publish;
-  const [sourcePendingRemoval, setSourcePendingRemoval] = useState<PendingSourceRemoval | null>(
-    null,
-  );
+  const [historySourceId, setHistorySourceId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const localFileInput = useRef<HTMLInputElement>(null);
   const panelMounted = useRef(true);
@@ -365,7 +368,7 @@ export function ScientSourcesPanel(props: {
     setSelectedSourceId(null);
     setEditingSource(false);
     setImportOutcome(null);
-    setSourcePendingRemoval(null);
+    setHistorySourceId(null);
     setSourceQuery("");
   }
 
@@ -467,6 +470,32 @@ export function ScientSourcesPanel(props: {
     ? sources.zoteroCollections.find((collection) => collection.key === selectedZoteroCollectionKey)
     : null;
 
+  const moveToTrash = async (record: {
+    readonly sourceId: string;
+    readonly revision: number;
+    readonly title: string | null;
+  }) => {
+    const result = await sources.removeSource(record.sourceId, record.revision);
+    if (result.outcome === "stale") {
+      throw new Error(
+        "This source changed after you opened it. Review the latest version, then try again.",
+      );
+    }
+    if (selectedSourceId === record.sourceId) {
+      setEditingSource(false);
+      setSelectedSourceId(null);
+    }
+    if (result.outcome === "removed") {
+      announceSourceMovedToTrash({
+        environmentId: props.environmentId,
+        root: props.root,
+        sourceId: record.sourceId,
+        title: record.title,
+        onRestored: sources.refreshOverview,
+      });
+    }
+  };
+
   const showSourceContextMenuAt = async (
     record: SourceRecord,
     anchorPoint: { readonly x: number; readonly y: number },
@@ -481,7 +510,7 @@ export function ScientSourcesPanel(props: {
       ...(pdf ? ([{ id: "open-pdf", label: "Open PDF" }] as const) : []),
       {
         id: "remove",
-        label: "Remove from Sources",
+        label: "Move to Trash",
         destructive: true,
         disabled: sources.busy,
         icon: "trash",
@@ -511,7 +540,13 @@ export function ScientSourcesPanel(props: {
         }
         break;
       case "remove":
-        setSourcePendingRemoval({ record, anchorPoint });
+        void moveToTrash(record).catch((cause: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Source could not be moved to Trash",
+            description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+          });
+        });
         break;
       case null:
         break;
@@ -819,13 +854,15 @@ export function ScientSourcesPanel(props: {
   if (sources.zoteroStatus && sources.zoteroStatus.state !== "ready") {
     const status = sources.zoteroStatus;
     const connectionMessage =
-      status.state === "unreachable"
-        ? "Open Zotero on this computer to continue."
-        : status.state === "access-disabled"
-          ? "Allow local Zotero access to continue."
-          : status.state === "incompatible"
-            ? "This Zotero version is not supported."
-            : "Scient could not verify Zotero.";
+      status.connection === "web"
+        ? status.message
+        : status.state === "unreachable"
+          ? "Open Zotero on this computer to continue."
+          : status.state === "access-disabled"
+            ? "Allow local Zotero access to continue."
+            : status.state === "incompatible"
+              ? "This Zotero version is not supported."
+              : "Scient could not verify Zotero.";
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <PanelHeader
@@ -894,6 +931,10 @@ export function ScientSourcesPanel(props: {
                       </li>
                       <li>Return here and choose Check again.</li>
                     </ol>
+                    <p className="text-muted-foreground">
+                      Without Zotero on this computer, add a Zotero API key in Accounts to use your
+                      library on zotero.org.
+                    </p>
                   </div>
                 </PopoverPopup>
               </Popover>
@@ -930,87 +971,92 @@ export function ScientSourcesPanel(props: {
       );
     }
     return (
-      <SourceDetails
-        key={selectedRecord.sourceId}
-        record={selectedRecord}
-        diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
-        onBack={() => {
-          setEditingSource(false);
-          setSelectedSourceId(null);
-        }}
-        onEdit={() => setEditingSource(true)}
-        onSaveNote={(note, expectedRevision) =>
-          sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note)
-        }
-        onRefreshMetadata={async () => {
-          const result = await sources.refreshSourceMetadata(
-            selectedRecord.sourceId,
-            selectedRecord.revision,
-          );
-          if (!panelMounted.current || panelContextRef.current !== panelContext) return;
-          sources.acceptSourceRecord(result.record);
-          if (result.outcome === "refreshed") void sources.reloadOverview();
-          toastManager.add({
-            type:
-              result.outcome === "refreshed" || result.outcome === "unchanged"
-                ? "success"
-                : "warning",
-            title:
-              result.outcome === "refreshed"
-                ? "Metadata refreshed"
-                : result.outcome === "unchanged"
-                  ? "Metadata is already up to date"
-                  : result.outcome === "stale"
-                    ? "Source changed while metadata was refreshed"
-                    : result.outcome === "duplicate"
-                      ? "Metadata refresh stopped"
-                      : "Metadata cannot be refreshed yet",
-            description: result.message ?? undefined,
-          });
-        }}
-        onRemove={async () => {
-          const result = await sources.removeSource(
-            selectedRecord.sourceId,
-            selectedRecord.revision,
-          );
-          if (result.outcome === "stale") {
-            throw new Error(
-              "This source changed after you opened it. Review the latest version, then try again.",
+      <>
+        <SourceDetails
+          key={selectedRecord.sourceId}
+          record={selectedRecord}
+          diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
+          onBack={() => {
+            setEditingSource(false);
+            setSelectedSourceId(null);
+          }}
+          onEdit={() => setEditingSource(true)}
+          onSaveNote={(note, expectedRevision) =>
+            sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note)
+          }
+          onRefreshMetadata={async () => {
+            const result = await sources.refreshSourceMetadata(
+              selectedRecord.sourceId,
+              selectedRecord.revision,
             );
-          }
-          setEditingSource(false);
-          setSelectedSourceId(null);
-        }}
-        onGetPdf={async () => {
-          const doi = selectedRecord.identifiers.find(
-            (identifier) => identifier.scheme.toLowerCase() === "doi",
-          )?.value;
-          const result = await getPaper({
-            root: props.root,
-            sourceId: selectedRecord.sourceId,
-            expectedRevision: selectedRecord.revision,
-            ...(doi ? { doi } : {}),
-            ...(selectedRecord.url ? { url: selectedRecord.url } : {}),
-          });
-          if (!result.ok) return;
-          if (result.value.status === "attached") {
-            await sources.refreshOverview();
+            if (!panelMounted.current || panelContextRef.current !== panelContext) return;
+            sources.acceptSourceRecord(result.record);
+            if (result.outcome === "refreshed") void sources.reloadOverview();
             toastManager.add({
-              type: "success",
-              title: result.value.published
-                ? "PDF attached"
-                : "PDF attached: an accepted manuscript or preprint",
+              type:
+                result.outcome === "refreshed" || result.outcome === "unchanged"
+                  ? "success"
+                  : "warning",
+              title:
+                result.outcome === "refreshed"
+                  ? "Metadata refreshed"
+                  : result.outcome === "unchanged"
+                    ? "Metadata is already up to date"
+                    : result.outcome === "stale"
+                      ? "Source changed while metadata was refreshed"
+                      : result.outcome === "duplicate"
+                        ? "Metadata refresh stopped"
+                        : "Metadata cannot be refreshed yet",
+              description: result.message ?? undefined,
             });
-            return;
-          }
-          // Anything waiting for the user is on the band above Sources, with its action.
-          toastManager.add({
-            type: result.value.status === "needs-you" ? "info" : "error",
-            title: result.value.message,
-          });
-        }}
-        onOpenPdf={props.onOpenPdf}
-      />
+          }}
+          onRemove={() => moveToTrash(selectedRecord)}
+          onOpenHistory={() => setHistorySourceId(selectedRecord.sourceId)}
+          onGetPdf={async () => {
+            const doi = selectedRecord.identifiers.find(
+              (identifier) => identifier.scheme.toLowerCase() === "doi",
+            )?.value;
+            const result = await getPaper({
+              root: props.root,
+              sourceId: selectedRecord.sourceId,
+              expectedRevision: selectedRecord.revision,
+              ...(doi ? { doi } : {}),
+              ...(selectedRecord.url ? { url: selectedRecord.url } : {}),
+            });
+            if (!result.ok) return;
+            if (result.value.status === "attached") {
+              await sources.refreshOverview();
+              toastManager.add({
+                type: "success",
+                title: result.value.published
+                  ? "PDF attached"
+                  : "PDF attached: an accepted manuscript or preprint",
+              });
+              return;
+            }
+            // Anything waiting for the user is on the band above Sources, with its action.
+            toastManager.add({
+              type: result.value.status === "needs-you" ? "info" : "error",
+              title: result.value.message,
+            });
+          }}
+          onOpenPdf={props.onOpenPdf}
+        />
+        {historySourceId === selectedRecord.sourceId ? (
+          <SourceHistoryDialog
+            key={`${selectedRecord.sourceId}:${selectedRecord.revision}`}
+            environmentId={props.environmentId}
+            root={props.root}
+            sourceId={selectedRecord.sourceId}
+            revision={selectedRecord.revision}
+            onClose={() => setHistorySourceId(null)}
+            onReverted={(record) => {
+              sources.acceptSourceRecord(record);
+              void sources.reloadOverview();
+            }}
+          />
+        ) : null}
+      </>
     );
   }
 
@@ -1059,6 +1105,14 @@ export function ScientSourcesPanel(props: {
         action={
           <div className="flex items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
+            {sources.overview.trashedCount ? (
+              <SourceTrashButton
+                environmentId={props.environmentId}
+                root={props.root}
+                count={sources.overview.trashedCount}
+                onChanged={sources.refreshOverview}
+              />
+            ) : null}
             {missingPdfs.length > 0 ? (
               <ScientTooltip
                 content={
@@ -1139,6 +1193,14 @@ export function ScientSourcesPanel(props: {
       ) : null}
       {sources.error ? (
         <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
+      ) : null}
+      <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
+      {bibliography.status ? (
+        <ManagedBibliographyNotice
+          files={bibliography.status.files}
+          replacing={bibliography.replacing}
+          onReplace={(name) => void bibliography.replace(name)}
+        />
       ) : null}
       {addingByIdentifier ? (
         <AddByIdentifier
@@ -1389,40 +1451,19 @@ export function ScientSourcesPanel(props: {
                 </div>
               );
             })}
-            {filteredSourceRecords.length === 0 ? (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                No matching sources were found.
-              </div>
-            ) : null}
+            <SourceFullTextResults
+              environmentId={props.environmentId}
+              root={props.root}
+              query={sourceQuery}
+              metadataMatchCount={filteredSourceRecords.length}
+              onOpenHit={(hit) => {
+                requestSourceTextReveal(props.root, hit);
+                props.onOpenPdf(hit);
+              }}
+            />
           </div>
         </ScrollArea>
       )}
-      {sourcePendingRemoval ? (
-        <SourceRemovalConfirmation
-          key={sourcePendingRemoval.record.sourceId}
-          open
-          record={sourcePendingRemoval.record}
-          anchorPoint={sourcePendingRemoval.anchorPoint}
-          onOpenChange={(open) => {
-            if (!open) setSourcePendingRemoval(null);
-          }}
-          onRemove={async () => {
-            const result = await sources.removeSource(
-              sourcePendingRemoval.record.sourceId,
-              sourcePendingRemoval.record.revision,
-            );
-            if (result.outcome === "stale") {
-              throw new Error(
-                "This source changed after you opened it. Review the latest version, then try again.",
-              );
-            }
-            if (selectedSourceId === sourcePendingRemoval.record.sourceId) {
-              setEditingSource(false);
-              setSelectedSourceId(null);
-            }
-          }}
-        />
-      ) : null}
     </div>
   );
 }

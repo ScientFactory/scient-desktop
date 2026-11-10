@@ -8,10 +8,16 @@ import {
   ScientSourceNote,
   ScientSourceNoteUpdateResult,
   ScientSourceRecord,
+  ScientSourcePermanentDeletionResult,
   ScientSourceRemovalResult,
+  ScientSourceRestoreResult,
+  ScientSourceRevertResult,
+  ScientSourceRevisionSummary,
   ScientSourceSummary,
+  ScientSourceTrashListing,
   ScientSourcePreflightItem,
   ScientSourcesOverview as ScientSourcesStoreOverview,
+  ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,
   ZoteroCollectionsResult,
@@ -47,8 +53,60 @@ export const ScientSourceAttachmentPreviewRequest = Schema.Struct({
 });
 export type ScientSourceAttachmentPreviewRequest = typeof ScientSourceAttachmentPreviewRequest.Type;
 
-export const ScientSourceAttachmentPreviewResult = AssetCreateUrlResult;
+export const ScientSourceAttachmentPreviewResult = Schema.Struct({
+  ...AssetCreateUrlResult.fields,
+  /** The attachment's content-addressed bytes, so reader quotes can record them. */
+  material: Schema.optional(
+    Schema.Struct({
+      sha256: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+      byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+    }),
+  ),
+});
 export type ScientSourceAttachmentPreviewResult = typeof ScientSourceAttachmentPreviewResult.Type;
+
+export const ScientSourcesFullTextSearchRequest = Schema.Struct({
+  root: NonEmptyString,
+  query: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+});
+export type ScientSourcesFullTextSearchRequest = typeof ScientSourcesFullTextSearchRequest.Type;
+
+const TextOffset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+export const ScientSourcesFullTextSearchResult = Schema.Struct({
+  hits: Schema.Array(
+    Schema.Struct({
+      sourceId: NonEmptyString,
+      attachmentId: NonEmptyString,
+      fileName: NonEmptyString,
+      title: Schema.NullOr(Schema.String),
+      page: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+      start: TextOffset,
+      end: TextOffset,
+      passage: Schema.String,
+      matchedTerms: Schema.Array(Schema.String),
+      selector: Schema.Struct({
+        extractorVersion: NonEmptyString,
+        viewBox: Schema.Tuple([Schema.Finite, Schema.Finite, Schema.Finite, Schema.Finite]),
+        rotation: Schema.Int,
+        userUnit: Schema.Finite,
+        pageTextHash: Schema.String.check(Schema.isPattern(/^[0-9a-f]{64}$/u)),
+        quote: Schema.String,
+        prefix: Schema.String,
+        suffix: Schema.String,
+      }),
+    }),
+  ),
+  status: Schema.Struct({
+    pdfs: TextOffset,
+    searchable: TextOffset,
+    pending: TextOffset,
+    withoutText: TextOffset,
+    unreadable: TextOffset,
+  }),
+});
+export type ScientSourcesFullTextSearchResult = typeof ScientSourcesFullTextSearchResult.Type;
 
 export const ScientSourceJournalIconRequest = Schema.Struct({
   root: NonEmptyString,
@@ -119,7 +177,45 @@ export const ScientSourcesAddByIdentifierResult = Schema.Struct({
 });
 export type ScientSourcesAddByIdentifierResult = typeof ScientSourcesAddByIdentifierResult.Type;
 
-export const ZoteroStatusRequest = Schema.Struct({});
+export const ScientSourcesTrashRequest = Schema.Struct({ root: NonEmptyString });
+export type ScientSourcesTrashRequest = typeof ScientSourcesTrashRequest.Type;
+
+export const ScientSourceRestoreRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+});
+export type ScientSourceRestoreRequest = typeof ScientSourceRestoreRequest.Type;
+
+/** Without sourceIds the whole trash is emptied. */
+export const ScientSourcesPermanentDeletionRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceIds: Schema.optionalKey(
+    Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+  ),
+});
+export type ScientSourcesPermanentDeletionRequest =
+  typeof ScientSourcesPermanentDeletionRequest.Type;
+
+export const ScientSourceRevisionsRequest = ScientSourceDetailRequest;
+export type ScientSourceRevisionsRequest = typeof ScientSourceRevisionsRequest.Type;
+
+export const ScientSourceRevisionsResult = Schema.Struct({
+  revisions: Schema.Array(ScientSourceRevisionSummary),
+});
+export type ScientSourceRevisionsResult = typeof ScientSourceRevisionsResult.Type;
+
+export const ScientSourceRevertRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceId: NonEmptyString,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  toRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type ScientSourceRevertRequest = typeof ScientSourceRevertRequest.Type;
+
+/** Without a connection, Zotero on this computer is preferred, then zotero.org. */
+export const ZoteroStatusRequest = Schema.Struct({
+  connection: Schema.optionalKey(ZoteroConnection),
+});
 export type ZoteroStatusRequest = typeof ZoteroStatusRequest.Type;
 
 export const ZoteroLibraryRequest = Schema.Struct({
@@ -127,16 +223,20 @@ export const ZoteroLibraryRequest = Schema.Struct({
   query: Schema.String,
   start: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   limit: BoundedPageSize,
+  connection: Schema.optionalKey(ZoteroConnection),
 });
 export type ZoteroLibraryRequest = typeof ZoteroLibraryRequest.Type;
 
-export const ZoteroCollectionsRequest = Schema.Struct({});
+export const ZoteroCollectionsRequest = Schema.Struct({
+  connection: Schema.optionalKey(ZoteroConnection),
+});
 export type ZoteroCollectionsRequest = typeof ZoteroCollectionsRequest.Type;
 
 export const ZoteroScopedImportRequest = Schema.Struct({
   root: NonEmptyString,
   operationId: NonEmptyString,
   scope: ZoteroImportScope,
+  connection: Schema.optionalKey(ZoteroConnection),
 });
 export type ZoteroScopedImportRequest = typeof ZoteroScopedImportRequest.Type;
 
@@ -145,6 +245,7 @@ export const ScientSourcesPreflightRequest = Schema.Struct({
   itemKeys: Schema.Array(NonEmptyString).pipe(
     Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   ),
+  connection: Schema.optionalKey(ZoteroConnection),
 });
 export type ScientSourcesPreflightRequest = typeof ScientSourcesPreflightRequest.Type;
 
@@ -188,6 +289,7 @@ export const ScientSourcesBeginImportRequest = Schema.Struct({
   possibleMetadataMatchOverrides: Schema.Array(NonEmptyString).pipe(
     Schema.check(Schema.isMaxLength(500)),
   ),
+  connection: Schema.optionalKey(ZoteroConnection),
 });
 export type ScientSourcesBeginImportRequest = typeof ScientSourcesBeginImportRequest.Type;
 
@@ -212,7 +314,12 @@ export type ScientSourcesRetryImportRequest = typeof ScientSourcesRetryImportReq
 export {
   ScientSourceImportOperation,
   ScientSourceMetadataUpdateResult,
+  ScientSourcePermanentDeletionResult,
   ScientSourceRemovalResult,
+  ScientSourceRestoreResult,
+  ScientSourceRevertResult,
+  ScientSourceTrashListing,
+  ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,
   ZoteroCollectionsResult,

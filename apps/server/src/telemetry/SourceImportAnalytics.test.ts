@@ -27,15 +27,14 @@ import {
   observeSourceImport,
   type SourceImportObserver,
 } from "../scient/sources/SourceImportObservation.ts";
-import { getZoteroImportMaterial } from "../scient/sources/ZoteroLocalAdapter.ts";
+import {
+  fakeZoteroAccess,
+  fakeZoteroTransport,
+  zoteroItem,
+} from "../scient/sources/Zotero.testkit.ts";
 import { discardLocalPdfImportMaterial } from "../scient/sources/LocalPdfSourceAdapter.ts";
 import { AnalyticsService, type AnalyticsStatus } from "./AnalyticsService.ts";
 import { makeSourceImportAnalytics } from "./SourceImportAnalytics.ts";
-
-vi.mock("../scient/sources/ZoteroLocalAdapter.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../scient/sources/ZoteroLocalAdapter.ts")>()),
-  getZoteroImportMaterial: vi.fn(),
-}));
 
 vi.mock("../scient/sources/LocalPdfSourceAdapter.ts", async (importOriginal) => {
   const original =
@@ -274,19 +273,37 @@ describe("source import outcome analytics", () => {
         const observer = yield* f.observer();
         yield* Effect.promise(async () => {
           const root = await project();
-          vi.mocked(getZoteroImportMaterial)
-            .mockResolvedValueOnce({ candidate, pdfPath: null })
-            .mockRejectedValueOnce(new Error(`secret /private/path ${privateMarker}`));
+          const zotero = fakeZoteroAccess(
+            fakeZoteroTransport({
+              items: new Map([
+                [
+                  "ABCD2345",
+                  {
+                    item: zoteroItem("ABCD2345", {
+                      title: privateMarker,
+                      abstractNote: privateMarker,
+                      DOI: "10.1000/private-research",
+                    }),
+                    children: [],
+                  },
+                ],
+              ]),
+              failures: new Map([["ABCD2346", new Error(`secret /private/path ${privateMarker}`)]]),
+            }),
+          );
           await beginZoteroImport({
             root,
             operationId: "zotero",
             itemKeys: ["ABCD2345", "ABCD2346"],
             possibleMetadataMatchOverrides: [],
           });
-          expect((await advanceSourceImport({ root, operationId: "zotero" }, observer)).state).toBe(
-            "running",
+          expect(
+            (await advanceSourceImport({ root, operationId: "zotero", zotero }, observer)).state,
+          ).toBe("running");
+          const completed = await advanceSourceImport(
+            { root, operationId: "zotero", zotero },
+            observer,
           );
-          const completed = await advanceSourceImport({ root, operationId: "zotero" }, observer);
           expect(completed.items.map((item) => item.state)).toEqual(["imported", "failed"]);
           expect(f.events.map((event) => event.name)).toEqual([
             "scient.operation.started",

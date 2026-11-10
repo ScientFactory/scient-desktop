@@ -10,11 +10,17 @@ import {
   ScientSourceMetadataValidationIssue,
   ScientSourceNote,
   ScientSourceActor,
+  ScientSourceAttachmentRetrieval,
   ScientSourceOrigin,
+  ScientSourceRevisionSummary,
   ScientSourceType,
   ScientSourceVerification,
 } from "@scientfactory/scient-sources";
-import { isTrimmedUnadvertised } from "@t3tools/contracts";
+import {
+  isTrimmedUnadvertised,
+  ScientManagedBibliographyFileName,
+  ScientManagedBibliographyStatus,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
@@ -38,6 +44,7 @@ const ScientSourceAgentAttachment = Schema.Struct({
   sha256: Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
   byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   importedAt: NonEmptyString,
+  retrieval: Schema.optionalKey(ScientSourceAttachmentRetrieval),
 });
 
 export class ScientSourcesToolError extends Schema.TaggedError<ScientSourcesToolError>()(
@@ -54,9 +61,14 @@ const sourceOperation = (id: string, write: boolean): OperationDefinition => ({
   requiredCapabilities: write ? ["sources:read", "sources:write"] : ["sources:read"],
 });
 
+const CitationKey = NonEmptyString.annotate({
+  description: "The key documents cite this source by: [@key] in Markdown, \\cite{key} in LaTeX.",
+});
+
 export const ScientSourceAgentSummary = Schema.Struct({
   sourceId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  citationKey: Schema.optionalKey(CitationKey),
   type: ScientSourceType,
   title: NullableText,
   creator: NullableText,
@@ -66,6 +78,8 @@ export const ScientSourceAgentSummary = Schema.Struct({
   hasPdf: Schema.Boolean,
   addedBy: Schema.Literals(["user", "agent"]),
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  removedAt: Schema.optionalKey(NonEmptyString),
+  removedBy: Schema.optionalKey(ScientSourceActor),
 });
 
 export const ScientSourcesListResult = Schema.Struct({
@@ -79,6 +93,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
   sourceId: NonEmptyString,
   projectId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  citationKey: Schema.optionalKey(CitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -105,13 +120,16 @@ export const ScientSourceAgentDetail = Schema.Struct({
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
   updatedBy: Schema.optionalKey(ScientSourceActor),
+  revisions: Schema.Array(ScientSourceRevisionSummary),
 });
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly.",
+    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly. " +
+    "inTrash lists removed sources instead, newest removal first; restore one with scient_sources_restore.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
+    inTrash: Schema.optionalKey(Schema.Boolean),
     offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
   }),
@@ -128,7 +146,7 @@ const ScientSourcesListTool = Tool.make("scient_sources_list", {
 
 const ScientSourceGetTool = Tool.make("scient_sources_get", {
   description:
-    "Read one of this project's Sources by source ID: its metadata, revision, provenance and attachments. An abstract over 50,000 characters is cut, and abstractTruncated says so.",
+    "Read one of this project's Sources by source ID: its metadata, revision, provenance, attachments and kept revisions (newest first, with who saved each and which fields it changed). An abstract over 50,000 characters is cut, and abstractTruncated says so.",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
   success: ScientSourceAgentDetail,
   failure: ScientSourcesToolError,
@@ -208,15 +226,20 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
 
 const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   description:
-    "Remove one Source from this project after the user explicitly asks. Read the source first and pass its current revision. If stale, read it again and redo the change on what you read.",
+    "Remove one Source from this project after the user explicitly asks. It moves to the project trash with its PDFs (restorable: scient_sources_restore). " +
+    "Read the source first and pass its current revision. If stale, read it again and redo the change on what you read. " +
+    "permanent deletes a source that is already in the trash, with its saved revisions and any PDF nothing else uses; only when the user asks for that, since it cannot be undone. " +
+    "Pass the revision shown by scient_sources_list with inTrash.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+    permanent: Schema.optionalKey(Schema.Boolean),
   }),
   success: Schema.Struct({
-    outcome: Schema.Literals(["removed", "not-found", "stale"]),
+    outcome: Schema.Literals(["removed", "not-found", "stale", "deleted"]),
     sourceId: NonEmptyString,
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+    restorable: Schema.optionalKey(Schema.Boolean),
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -227,6 +250,54 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.remove", true));
+
+const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
+  description:
+    "Put a removed Source back from the project trash, with its PDFs, as a new revision credited to you. " +
+    "exists means a source with this ID is already in the Library; duplicate means another source now has its identifier (see matchingSourceIds).",
+  parameters: Schema.Struct({ sourceId: NonEmptyString }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
+    sourceId: NonEmptyString,
+    revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+    matchingSourceIds: Schema.Array(NonEmptyString),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Restore a removed source")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.restore", true));
+
+const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
+  description:
+    "Make an earlier revision of a Source current again, as a new revision credited to you. Read the source first: pass its current revision as expectedRevision " +
+    "and a kept revision from its revisions list as toRevision. Metadata, note, tags, identifiers and attachments return to that revision; " +
+    "missingAttachmentCount counts PDFs whose files were deleted when the trash was emptied. If stale, read it again.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+    toRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals(["reverted", "unchanged", "stale", "not-found", "duplicate"]),
+    sourceId: NonEmptyString,
+    revision: Schema.Int.check(Schema.isGreaterThan(0)),
+    missingAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    matchingSourceIds: Schema.Array(NonEmptyString),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Revert a source to an earlier revision")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.revert", true));
 
 export const ScientSourceAddInput = Schema.Struct({
   type: Schema.optionalKey(ScientSourceType),
@@ -364,7 +435,8 @@ const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
 const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   description:
     "Remove one PDF attachment from a Source, keeping its metadata, after the user explicitly asks. " +
-    "Read the source first and pass its current revision. If stale, read it again and redo the change on what you read.",
+    "Read the source first and pass its current revision. If stale, read it again and redo the change on what you read. " +
+    "The file stays in the project until the trash is emptied, so scient_sources_revert can bring it back.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     attachmentId: NonEmptyString,
@@ -375,8 +447,6 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
     sourceId: NonEmptyString,
     attachmentId: NonEmptyString,
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
-    removedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-    retainedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -388,13 +458,183 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.pdf.detach", true));
 
+const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
+  description:
+    "Write this project's references.bib and references.json from the Library and report their state. " +
+    "Documents cite sources by citationKey from these files (Markdown front matter `bibliography: references.bib`, LaTeX `\\bibliography{references}`). " +
+    "A file edited by hand is kept and reported as edited, with the keys added, changed or removed; " +
+    "unmanaged means a file Scient did not write is in the way, and Scient never writes over it. " +
+    "Pass replaceEdited only when the user wants the Library version back.",
+  parameters: Schema.Struct({
+    replaceEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
+  }),
+  success: ScientManagedBibliographyStatus,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Write the project bibliography")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.bibliography", true));
+
+const PageNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+const TextOffset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const SourceTextRange = Schema.Struct({ page: PageNumber, start: TextOffset, end: TextOffset });
+
+export const ScientSourcesFullTextStatus = Schema.Struct({
+  pdfs: TextOffset,
+  searchable: TextOffset,
+  pending: TextOffset,
+  withoutText: TextOffset,
+  unreadable: TextOffset,
+});
+
+const ScientSourcesSearchTool = Tool.make("scient_sources_search", {
+  description:
+    "Search the full text of this project's Source PDFs. Returns ranked passages with source, PDF and page; " +
+    'quote a "phrase" to require it. If status.pending is above zero, text is still being read; search again shortly. ' +
+    "Read around a hit with scient_sources_read_text, and check a quote with scient_sources_quote_check before giving it.",
+  parameters: Schema.Struct({
+    query: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+    sourceIds: Schema.optionalKey(
+      Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(100))),
+    ),
+    limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 }))),
+  }),
+  success: Schema.Struct({
+    hits: Schema.Array(
+      Schema.Struct({
+        sourceId: NonEmptyString,
+        attachmentId: NonEmptyString,
+        title: NullableText,
+        page: PageNumber,
+        start: TextOffset,
+        end: TextOffset,
+        passage: Schema.String,
+        matchedTerms: Schema.Array(Schema.String),
+      }),
+    ),
+    status: ScientSourcesFullTextStatus,
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Search source full text")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.search", false));
+
+const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
+  description:
+    "Read the text of one Source's PDF, page by page, from fromPage. Continue at nextPage until it is null. " +
+    "choose-pdf lists the PDFs when a source has several; pass one as attachmentId. no-text means the PDF has no text layer (often a scan).",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    attachmentId: Schema.optionalKey(NonEmptyString),
+    fromPage: Schema.optionalKey(PageNumber),
+    maxCharacters: Schema.optionalKey(
+      Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60_000 })),
+    ),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals([
+      "read",
+      "no-text",
+      "unreadable",
+      "no-pdf",
+      "source-not-found",
+      "choose-pdf",
+    ]),
+    attachmentId: Schema.optionalKey(NonEmptyString),
+    pageCount: Schema.optionalKey(TextOffset),
+    complete: Schema.optionalKey(Schema.Boolean),
+    pages: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ page: PageNumber, text: Schema.String })),
+    ),
+    nextPage: Schema.optionalKey(Schema.NullOr(PageNumber)),
+    attachments: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ attachmentId: NonEmptyString, fileName: NonEmptyString })),
+    ),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read source text")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.text.read", false));
+
+const ScientSourceQuoteCheckTool = Tool.make("scient_sources_quote_check", {
+  description:
+    "Check quotes against the stored text of this project's Source PDFs before you give them. " +
+    "exact matched character for character; normalized matched once spacing, ligatures, quote marks, dashes and line-break hyphens are evened out; " +
+    "both return the stored text and its page location, so quote that text. ambiguous means the quote appears more than once; lengthen it. " +
+    "not-found returns the closest passages. Without sourceId the whole Library is checked.",
+  parameters: Schema.Struct({
+    quotes: Schema.Array(
+      Schema.Struct({
+        quote: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(4_000))),
+        sourceId: Schema.optionalKey(NonEmptyString),
+      }),
+    ).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(25))),
+  }),
+  success: Schema.Struct({
+    results: Schema.Array(
+      Schema.Struct({
+        outcome: Schema.Literals([
+          "exact",
+          "normalized",
+          "ambiguous",
+          "not-found",
+          "not-indexed",
+          "no-text",
+          "source-not-found",
+        ]),
+        sourceId: Schema.optionalKey(NonEmptyString),
+        attachmentId: Schema.optionalKey(NonEmptyString),
+        ranges: Schema.optionalKey(Schema.Array(SourceTextRange)),
+        text: Schema.optionalKey(Schema.String),
+        prefix: Schema.optionalKey(Schema.String),
+        suffix: Schema.optionalKey(Schema.String),
+        sourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
+        closest: Schema.optionalKey(
+          Schema.Array(
+            Schema.Struct({ sourceId: NonEmptyString, page: PageNumber, passage: Schema.String }),
+          ),
+        ),
+        pending: Schema.optionalKey(TextOffset),
+      }),
+    ),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Check quotes against sources")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.quote.check", false));
+
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,
   ScientSourceGetTool,
   ScientSourceNoteUpdateTool,
   ScientSourceMetadataUpdateTool,
   ScientSourceRemoveTool,
+  ScientSourceRestoreTool,
+  ScientSourceRevertTool,
   ScientSourceAddTool,
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,
+  ScientSourcesBibliographyTool,
+  ScientSourcesSearchTool,
+  ScientSourceReadTextTool,
+  ScientSourceQuoteCheckTool,
 );

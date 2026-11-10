@@ -19,7 +19,8 @@ const author = (familyName: string | null, literalName: string | null = null) =>
 describe("citation keys", () => {
   it.each([
     ["smith2020deep", true],
-    ["Müller_2019:a.b-c+d/e", true],
+    ["Müller_2019:a.b-c", true],
+    ["plus+sign", false],
     ["_leading", true],
     ["trailing.", false],
     ["has space", false],
