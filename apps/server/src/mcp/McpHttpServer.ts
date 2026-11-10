@@ -101,6 +101,8 @@ import { ScientAnnotationsToolkitHandlersLive } from "./toolkits/annotations/han
 import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
 import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { ScientReferencesToolkitHandlersLive } from "./toolkits/references/handlers.ts";
+import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
@@ -1430,6 +1432,10 @@ export const ScientSourcesToolkitRegistrationLive = registerScientToolkit(
   ScientSourcesToolkit,
 ).pipe(Layer.provide(ScientSourcesToolkitHandlersLive));
 
+const ScientReferencesToolkitRegistrationLive = registerScientToolkit(ScientReferencesToolkit).pipe(
+  Layer.provide(ScientReferencesToolkitHandlersLive),
+);
+
 export const ScientAnnotationsToolkitRegistrationLive = registerScientToolkit(
   ScientAnnotationsToolkit,
 ).pipe(Layer.provide(ScientAnnotationsToolkitHandlersLive), Layer.provide(ScientAnnotationsLive));
@@ -1591,6 +1597,7 @@ export const layerTools = Layer.mergeAll(
   ),
   // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,
+  ScientReferencesToolkitRegistrationLive,
   ScientAnnotationsToolkitRegistrationLive,
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,

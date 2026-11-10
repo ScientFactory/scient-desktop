@@ -3,7 +3,15 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient, HttpClientResponse } from "effect/http";
 
-import { citationPdfUrl, doiIn, isPdf, openAccessPdf, paperFileName } from "./paperLookup.ts";
+import * as Redacted from "effect/Redacted";
+import {
+  citationPdfUrl,
+  doiIn,
+  isPdf,
+  lookUpPaper,
+  openAccessPdf,
+  paperFileName,
+} from "./paperLookup.ts";
 
 describe("paper lookup", () => {
   it("finds a DOI in links and citations, without trailing punctuation", () => {
@@ -89,6 +97,75 @@ describe("openAccessPdf", () => {
         ),
       );
       expect(bytes).toBeDefined();
+    }),
+  );
+});
+
+describe("lookUpPaper", () => {
+  const doi = "10.1000/x";
+  const work = { doi: `https://doi.org/${doi}`, title: "A paper", locations: [] };
+  const unpaywall = {
+    oa_locations: [
+      { url_for_pdf: "https://repo.example/accepted.pdf", version: "acceptedVersion" },
+      { url: "https://journal.example/x", version: "publishedVersion" },
+    ],
+  };
+  /** Answers OpenAlex and Unpaywall, keeping each request's address and parameters. */
+  const registries = (openAlex: Response) => {
+    const asked: Array<{ url: string; params: Record<string, string> }> = [];
+    const layer = Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make((request) => {
+        asked.push({
+          url: request.url,
+          params: Object.fromEntries(
+            [...request.urlParams].map(([key, value]) => [
+              key,
+              Redacted.isRedacted(value) ? Redacted.value(value) : value,
+            ]),
+          ),
+        });
+        const body = request.url.startsWith("https://api.openalex.org/")
+          ? openAlex.clone()
+          : new Response(JSON.stringify(unpaywall));
+        return Effect.succeed(HttpClientResponse.fromWeb(request, body as never));
+      }),
+    );
+    return { asked, layer };
+  };
+
+  it.effect("sends the user's OpenAlex key and asks Unpaywall only for a free copy it lacks", () =>
+    Effect.gen(function* () {
+      const { asked, layer } = registries(new Response(JSON.stringify(work)));
+      const paper = yield* lookUpPaper(
+        { doi },
+        { openAlex: Redacted.make("oa-key"), unpaywallEmail: Redacted.make("me@example.org") },
+      ).pipe(Effect.provide(layer));
+      expect(asked[0]).toEqual({
+        url: `https://api.openalex.org/works/doi:${doi}`,
+        params: { api_key: "oa-key" },
+      });
+      expect(asked[1]).toEqual({
+        url: `https://api.unpaywall.org/v2/${doi}`,
+        params: { email: "me@example.org" },
+      });
+      expect(paper?.openAccess).toEqual([
+        { pageUrl: "https://journal.example/x", version: "published" },
+        { pdfUrl: "https://repo.example/accepted.pdf", version: "accepted" },
+      ]);
+    }),
+  );
+
+  it.effect("asks no one else without an Unpaywall email", () =>
+    Effect.gen(function* () {
+      const { asked, layer } = registries(new Response(null, { status: 503 }));
+      const paper = yield* lookUpPaper({ doi }).pipe(Effect.provide(layer));
+      expect(asked.map(({ url, params }) => [url, params])).toEqual([
+        [`https://api.openalex.org/works/doi:${doi}`, {}],
+      ]);
+      expect(paper?.openAccess).toEqual([
+        { pageUrl: `https://doi.org/${doi}`, version: "published" },
+      ]);
     }),
   );
 });

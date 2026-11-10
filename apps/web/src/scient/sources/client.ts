@@ -1,8 +1,10 @@
 import {
+  addEnvironmentScientSourcesByIdentifier,
   advanceEnvironmentScientSourcesImport,
   beginEnvironmentLocalSourceImport,
   beginEnvironmentZoteroImport,
   beginEnvironmentZoteroScopedImport,
+  bulkUpdateEnvironmentScientSources,
   cancelEnvironmentScientSourcesImport,
   retryEnvironmentScientSourcesImport,
   discardEnvironmentLocalSourcePdfs,
@@ -14,6 +16,7 @@ import {
   getEnvironmentZoteroStatus,
   listEnvironmentZoteroLibrary,
   listEnvironmentZoteroCollections,
+  organizeEnvironmentScientSources,
   preflightEnvironmentZoteroImport,
   refreshEnvironmentScientSourceMetadata,
   removeEnvironmentScientSource,
@@ -35,6 +38,8 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourcesBulkUpdateRequest,
+  ScientSourcesOrganizeRequest,
   ScientSourceRestoreRequest,
   ScientSourceRevertRequest,
   ScientSourceRevisionsRequest,
@@ -101,6 +106,24 @@ export function removeScientSource(
 ) {
   return runtime.runPromise(
     removeEnvironmentScientSource({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function organizeScientSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesOrganizeRequest,
+) {
+  return runtime.runPromise(
+    organizeEnvironmentScientSources({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function bulkUpdateScientSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesBulkUpdateRequest,
+) {
+  return runtime.runPromise(
+    bulkUpdateEnvironmentScientSources({ prepared: prepared(environmentId), ...input }),
   );
 }
 
@@ -179,6 +202,15 @@ export async function readScientSourceJournalIcon(
   if (!result.icon) return null;
   const url = resolveAssetUrl(connection.httpBaseUrl, result.icon.relativeUrl);
   return url ? { ...result.icon, url } : null;
+}
+
+export function addScientSourcesByIdentifier(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly entries: ReadonlyArray<string> },
+) {
+  return runtime.runPromise(
+    addEnvironmentScientSourcesByIdentifier({ prepared: prepared(environmentId), ...input }),
+  );
 }
 
 export function readZoteroStatus(environmentId: EnvironmentId, connection?: ZoteroConnection) {

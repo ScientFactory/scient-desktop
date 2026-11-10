@@ -21,6 +21,7 @@ import { zoteroKeyLookup } from "./ZoteroAccountKey.ts";
 import {
   advanceSourceImport,
   beginLocalPdfImport,
+  bulkUpdateSources,
   beginZoteroImport,
   beginZoteroScopedImport,
   cancelSourceImport,
@@ -32,6 +33,7 @@ import {
   inspectZoteroConnection,
   listZoteroCollections,
   listZoteroLibrary,
+  organizeSources,
   preflightZoteroImport,
   refreshScientSourceMetadata,
   deleteSourcesPermanently,
@@ -45,6 +47,7 @@ import {
   updateSourceNote,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
+import { addScientSourcesByIdentifier } from "./SourceIdentifierAdd.ts";
 import { startManagedBibliographySync, syncManagedBibliography } from "./ManagedBibliography.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
@@ -178,6 +181,29 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             removeSource(args.payload),
           ),
+        )
+        .handle("organize", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            organizeSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("bulkUpdate", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            bulkUpdateSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("addByIdentifier", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, async () => ({
+            results: await addScientSourcesByIdentifier(
+              {
+                root: args.payload.root,
+                entries: args.payload.entries,
+                actor: "user",
+                enrich: true,
+              },
+              observeImport,
+            ),
+          })),
         )
         .handle("trash", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>

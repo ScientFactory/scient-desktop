@@ -1,4 +1,6 @@
 import {
+  MAX_SOURCE_IDENTIFIER_BATCH,
+  ScientSourceIdentifierAddItem,
   ScientSourceEditableMetadata,
   ScientSourceImportOperation,
   ScientSourceMetadataDiagnostic,
@@ -14,6 +16,11 @@ import {
   ScientSourceSummary,
   ScientSourceTrashListing,
   ScientSourcePreflightItem,
+  ScientSourcesBulkChange,
+  ScientSourcesBulkResult,
+  ScientSourcesOrganization,
+  ScientSourcesOrganizeAction,
+  ScientSourcesOrganizeResult,
   ScientSourcesOverview as ScientSourcesStoreOverview,
   ZoteroConnection,
   ZoteroConnectionStatus,
@@ -162,6 +169,30 @@ export const ScientSourceRemovalRequest = Schema.Struct({
 });
 export type ScientSourceRemovalRequest = typeof ScientSourceRemovalRequest.Type;
 
+export const ScientSourcesOrganizeRequest = Schema.Struct({
+  root: NonEmptyString,
+  change: ScientSourcesOrganizeAction,
+});
+export type ScientSourcesOrganizeRequest = typeof ScientSourcesOrganizeRequest.Type;
+
+export const ScientSourcesBulkUpdateRequest = Schema.Struct({
+  root: NonEmptyString,
+  change: ScientSourcesBulkChange,
+});
+export type ScientSourcesBulkUpdateRequest = typeof ScientSourcesBulkUpdateRequest.Type;
+export const ScientSourcesAddByIdentifierRequest = Schema.Struct({
+  root: NonEmptyString,
+  entries: Schema.Array(Schema.String.check(Schema.isMaxLength(1_000))).pipe(
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_SOURCE_IDENTIFIER_BATCH)),
+  ),
+});
+export type ScientSourcesAddByIdentifierRequest = typeof ScientSourcesAddByIdentifierRequest.Type;
+
+export const ScientSourcesAddByIdentifierResult = Schema.Struct({
+  results: Schema.Array(ScientSourceIdentifierAddItem),
+});
+export type ScientSourcesAddByIdentifierResult = typeof ScientSourcesAddByIdentifierResult.Type;
+
 export const ScientSourcesTrashRequest = Schema.Struct({ root: NonEmptyString });
 export type ScientSourcesTrashRequest = typeof ScientSourcesTrashRequest.Type;
 
@@ -298,6 +329,8 @@ export type ScientSourcesRetryImportRequest = typeof ScientSourcesRetryImportReq
 
 export {
   ScientSourceImportOperation,
+  ScientSourcesBulkResult,
+  ScientSourcesOrganizeResult,
   ScientSourceMetadataUpdateResult,
   ScientSourcePermanentDeletionResult,
   ScientSourceRemovalResult,
@@ -321,5 +354,7 @@ export const ScientSourcesOverviewResult = Schema.Struct({
   ...ScientSourcesStoreOverview.fields,
   records: Schema.Array(ScientSourceSummary),
   recordDiagnostics: Schema.Array(ScientSourceRecordDiagnostics),
+  // Optional so a client can read an older server's overview.
+  organization: Schema.optionalKey(ScientSourcesOrganization),
 });
 export type ScientSourcesOverviewResult = typeof ScientSourcesOverviewResult.Type;

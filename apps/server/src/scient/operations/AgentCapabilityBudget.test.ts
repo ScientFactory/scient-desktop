@@ -163,7 +163,7 @@ it.live(
         );
       expect(size(500)).toBeGreaterThan(size(100) * 4);
       expect(size(100)).toBeGreaterThan(size(31) * 2);
-      expect(scientTools).toHaveLength(60);
+      expect(scientTools).toHaveLength(65);
       expect(schemas.map((tool) => tool.name).sort()).toEqual([
         "scient_account_add",
         "scient_account_browser_session",
@@ -205,6 +205,8 @@ it.live(
         "scient_papers_queue",
         "scient_papers_status",
         "scient_pdf_build",
+        "scient_references_check",
+        "scient_references_resolve",
         "scient_skill_load",
         "scient_skill_read",
         "scient_skill_read_resource",
@@ -213,11 +215,14 @@ it.live(
         "scient_sources_add",
         "scient_sources_attach_pdf",
         "scient_sources_bibliography",
+        "scient_sources_bulk_update",
         "scient_sources_check",
+        "scient_sources_collections",
         "scient_sources_detach_pdf",
         "scient_sources_get",
         "scient_sources_list",
         "scient_sources_note_update",
+        "scient_sources_organize",
         "scient_sources_quote_check",
         "scient_sources_read_text",
         "scient_sources_remove",

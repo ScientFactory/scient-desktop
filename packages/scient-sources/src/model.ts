@@ -124,6 +124,7 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "open-library",
     "google-books",
     "openalex",
+    "semantic-scholar",
   ]),
   sourceField: NullableText,
   sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),
@@ -214,6 +215,8 @@ export const ScientSourceSummary = Schema.Struct({
   identifiers: ScientSourceRecord.fields.identifiers,
   containerTitle: ScientSourceRecord.fields.containerTitle,
   url: ScientSourceRecord.fields.url,
+  // Optional so a client can read an older server's list.
+  tags: Schema.optional(ScientSourceRecord.fields.tags),
   externalReferences: ScientSourceRecord.fields.externalReferences,
   attachments: Schema.Array(ScientSourceAttachmentSummary),
   importedAt: ScientSourceRecord.fields.importedAt,
@@ -236,6 +239,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
     identifiers: record.identifiers,
     containerTitle: record.containerTitle,
     url: record.url,
+    tags: record.tags,
     externalReferences: record.externalReferences,
     attachments: record.attachments.map((attachment) => ({
       attachmentId: attachment.attachmentId,

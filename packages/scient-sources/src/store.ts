@@ -12,12 +12,14 @@ import {
 import * as Schema from "effect/Schema";
 
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
+import { resolveScientProjectFile } from "./projectFiles.ts";
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
 import {
   assignCitationKey,
   citationKeyComparisonValue,
   citationKeyValidationMessage,
   takenCitationKeys,
+  uniqueCitationKey,
 } from "./citationKeys.ts";
 import {
   applyEditableMetadata,
@@ -825,9 +827,10 @@ export async function restoreScientSource(input: {
     if ((await snapshot(recordPath)) !== "missing") {
       return { ...empty, outcome: "exists", matchingSourceIds: [input.sourceId] };
     }
+    const existing = await listScientSourceRecordsFromPaths(paths);
     const duplicate = assessSourceMetadataDuplicate({
       source: editableMetadataFromRecord(entry.record),
-      existing: await listScientSourceRecordsFromPaths(paths),
+      existing,
     });
     if (duplicate.kind === "same-identifier") {
       return { ...empty, outcome: "duplicate", matchingSourceIds: duplicate.matchingSourceIds };
@@ -839,6 +842,10 @@ export async function restoreScientSource(input: {
     );
     const restored: ScientSourceRecord = {
       ...entry.record,
+      // Another source may have taken the key while this one was in the trash.
+      ...(entry.record.citationKey
+        ? { citationKey: uniqueCitationKey(entry.record.citationKey, takenCitationKeys(existing)) }
+        : {}),
       revision: revision + 1,
       updatedAt: new Date().toISOString(),
       updatedBy: input.actor ?? "user",
@@ -1549,44 +1556,13 @@ export async function resolveScientSourceInputPdf(
   root: string,
   relativePath: string,
 ): Promise<{ readonly absolutePath: string; readonly fileName: string }> {
-  const requested = relativePath.trim();
-  if (
-    requested.length === 0 ||
-    requested.includes("\0") ||
-    requested.includes("\\") ||
-    NodePath.posix.isAbsolute(requested) ||
-    !requested.toLowerCase().endsWith(".pdf")
-  ) {
-    throw new Error("The PDF path must be a relative project path ending in .pdf.");
-  }
-  const canonicalRoot = await NodeFSP.realpath(root);
-  const lexicalPath = NodePath.resolve(canonicalRoot, ...requested.split("/"));
-  const lexicalRelative = NodePath.relative(canonicalRoot, lexicalPath);
-  if (
-    lexicalRelative === "" ||
-    lexicalRelative === ".." ||
-    lexicalRelative.startsWith(`..${NodePath.sep}`) ||
-    NodePath.isAbsolute(lexicalRelative)
-  ) {
-    throw new Error("The PDF path must remain inside the project.");
-  }
-  const absolutePath = await NodeFSP.realpath(lexicalPath);
-  const realRelative = NodePath.relative(canonicalRoot, absolutePath);
-  if (
-    realRelative === "" ||
-    realRelative === ".." ||
-    realRelative.startsWith(`..${NodePath.sep}`) ||
-    NodePath.isAbsolute(realRelative)
-  ) {
-    throw new Error("The PDF path must remain inside the project.");
-  }
-  const stats = await NodeFSP.lstat(absolutePath);
-  if (!stats.isFile() || stats.isSymbolicLink()) {
-    throw new Error("The selected PDF is not a safe regular file.");
-  }
+  const resolved = await resolveScientProjectFile(root, relativePath, {
+    extensions: [".pdf"],
+    description: "PDF",
+  });
   return {
-    absolutePath,
-    fileName: safeUploadedFileName(NodePath.basename(requested)),
+    absolutePath: resolved.absolutePath,
+    fileName: safeUploadedFileName(NodePath.basename(relativePath.trim())),
   };
 }
 
@@ -2208,3 +2184,13 @@ export function sourceAttachmentAbsolutePath(
   }
   return resolved;
 }
+
+/** For sibling project-store modules (collections, reviews) that share this store's safety rules. */
+export const scientSourceStoreInternals = {
+  sourceStorePaths,
+  snapshot,
+  readBoundedJson,
+  atomicWriteJson,
+  withOperationLock,
+  assertSafeIdentifier,
+};
