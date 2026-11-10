@@ -1,3 +1,4 @@
+import type { ScientLatexBuildFailureClass } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Clock from "effect/Clock";
@@ -14,7 +15,7 @@ export interface OperationObservation {
   readonly startedAt: number;
   readonly finishedAt?: number;
   readonly trigger?: "user" | "agent" | "automation" | "other";
-  readonly failureClass?: "process-crash" | "unknown";
+  readonly failureClass?: "process-crash" | "unknown" | ScientLatexBuildFailureClass;
   /** The compute language, such as `python` or `r`; a closed runtime id, never a path. */
   readonly language?: string;
   readonly capture?: ComputeCaptureSummary;

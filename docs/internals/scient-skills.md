@@ -1,7 +1,7 @@
 # Scient skills core
 
-Status: personal, project-owned, and add-on (Scient plugin bundle) skill
-management implemented.
+Status: built-in, user-added (personal), project-owned, and add-on (Scient plugin
+bundle) skill management implemented.
 
 ## Purpose
 
@@ -57,6 +57,88 @@ collisions, and reserved manifests are withheld with diagnostics. Per-skill
 limits are supplemented by project-wide directory and snapshot-memory bounds.
 Creating a valid project skill requires no registration step and makes it
 available on the next turn.
+
+### Personal skills
+
+A personal skill is one the user added, or an agent saved for them. Each is a
+mutable folder in `<stateDir>/skills/<name>/`, loaded with the project-skill
+checks: `loadPersonalSkillRelease` derives id `personal.<name>`, version
+`0.0.0`, origin `personal`, scope `user` and policy `automatic`, and refuses a
+`scient.skill.json`. `loadPersonalSkillCatalog` checks each folder on its own,
+skips names starting with a dot (Scient's in-progress folders), and caps the
+catalog at 200 skills and 100 MiB.
+
+`PersonalSkills` (server) re-reads the folder when its file signature changes
+(every list and every turn plan asks) and publishes it to the registry through
+`replacePersonalReleases`. Scient and add-on skills keep their names: the
+registry keeps every personal skill on disk and recomputes which are withheld
+whenever personal skills or add-ons change, so enabling a plugin with the same
+name withholds the personal skill (`personal-skill-collision`) and disabling it
+brings the personal skill back. Reading the folder and changing it share one
+lock, so a turn never sees a skill mid-save; a folder that fails the checks is reported as
+`personal-skill-invalid` with its absolute path, so Settings can show it with
+what is wrong.
+
+Every write goes through one atomic folder swap: files go to a hidden folder,
+the previous version (or the fact that the skill is new) moves to
+`<stateDir>/skill-history/<name>/<time>-<created|replaced|removed>`, and the
+new folder takes its place. Undo restores the newest entry (a new skill is
+removed); the last ten entries are kept. A save whose final rename fails puts
+the previous folder back. Saves that would pass 200 skills or 100 MiB are
+refused before anything is written. `<stateDir>/personal-skills.json`
+records each skill's source label, last change and whether the user or an
+agent made it.
+
+**Adding.** `skills.personal.inspect` reads a file, folder, archive (`.zip`,
+`.skill`), web address or pasted text into candidates. A candidate is `ready`
+after the fixes Scient can make on its own (`prepareSkillDocument`: a missing
+or unusable name taken from the file name, a byte-order mark), or
+`needs-agent` with a plain reason (no header, no description, no
+instructions). A Scient plugin folder (`scient.plugin.json`) always answers
+`none`, so the plugin installer keeps its skills and connectors together.
+Other folders are searched four levels down for `SKILL.md`; a folder with no
+skill but a connector marker answers `none` so the connector path handles it.
+A folder mixing standalone skills and connectors adds only the skills. Web addresses are classified by `webSkillSource`: GitHub
+repositories, folders and `SKILL.md` links download the repository archive;
+`.zip`/`.skill` and `.md`/`.txt` links download directly; anything else is
+`none` and goes to the URL connector form. Downloads are capped at 50 MiB
+(archives) and 1 MiB (text); archives skip links and clutter and refuse paths
+outside their folder. Candidates are staged in memory for an hour;
+`skills.personal.add` writes the chosen ones. Material for an agent stays in
+`<stateDir>/skill-drafts/` for a week.
+
+**Activation.** The registry's default for origin `personal` is active, and
+`preferenceKey` binds a personal skill's choice to its stable id, not its
+digest, so edits keep the user's on or off. A newly created skill is set
+active explicitly, so re-adding a removed one starts on.
+
+**Agent tools.** `scient_skill_save` takes a skill's files (text, by content,
+not a path, so sandboxed and remote agents can use it) and runs the same
+checks; `scient_skill_read` returns every file of one personal skill. Both are
+thread-scoped and need the `skills:write` grant, which every provider session
+receives. A save reaches agents from the next turn. The built-in
+`scient-skill-authoring` skill tells agents to use them.
+
+**Other agents.** `skills.personal.importable` lists `SKILL.md` folders in
+`~/.claude/skills` (or `CLAUDE_CONFIG_DIR`), `~/.codex/skills` (or
+`CODEX_HOME`, skipping `.system`), `~/.cursor/skills` and `~/.agents/skills`.
+Adding one copies it through the normal inspect and add path.
+
+**Analytics.** Each inspect, add, save, remove, undo and export records one
+`feature.used` (`skills.personal.<step>`) when it ends, with `trigger` (user or
+agent), `outcome`, `durationMs`, and on failure `failureClass`: the
+`reason` code every `ScientSkillManagementError` from these steps carries
+(`PersonalSkillFailure`). Inspect and add also record `variant`, where the skill
+came from (`folder`, `zip`, `skill-file`, `document`, `text`, `web`, or the
+other app's id when the path is in its skills folder), and counts found, ready
+and added; save records `created` or `updated`. A web source on a public code
+host adds `publicSource`, its host and path without scheme
+(`publicSkillAddress`); Scient downloads without signing in, so a download that
+worked was public. An address with a query is left out, since a query can carry a
+token. Skill names, paths and text are never recorded. Loading a
+skill records `skills.load` with the name only for Scient's own skills, and
+the web records opening the add dialog and each agent chat it starts
+(`skills.personal.agent_chat`: finish, rename, improve or fix).
 
 ### Add-on releases
 
@@ -142,6 +224,9 @@ For supported adapters the existing authenticated Scient MCP session receives:
 - the exact immutable release objects visible in that turn; and
 - `scient_skills_list`, `scient_skill_load`, and
   `scient_skill_read_resource`.
+
+Every provider session also receives `skills:write` and the thread-scoped
+`scient_skill_save` and `scient_skill_read` for the user's own skills.
 
 Muse uses its native session-MCP configuration for this scoped delivery, with a
 host-issued bearer and an explicit native grant. Disabling MCP or lacking that
@@ -332,6 +417,20 @@ Changing these catalog defaults affects only skills without an explicit user
 preference. Enabling or disabling a skill always creates a durable preference,
 so a later product-default change cannot override that choice.
 
+**Your skills** (Settings → Extensions → Installed → Skills) lists personal
+skills with their source and who changed them last. Each row has the on/off
+switch and policy, **Undo** when an agent made the last change, and a menu with
+**Improve with an agent**, **Show in folder**, **Export as .zip**, **Undo last
+change** and **Remove** (which shows **Undo** in its notice). Broken folders are
+listed with what is wrong and **Fix with an agent**. "With an agent" opens a new
+chat outside any project with a first message written for the user, who reads
+it and sends it.
+
+**Add your own** on the Skills tab offers other agents' skills; everywhere, a
+file, folder, web address or pasted text is read for skills first. Ready skills
+are added with one click (**Replace** when one of the user's skills has the
+name); rough material offers **Finish with an agent**.
+
 **Settings → Skills → Project skills** opens a dedicated page scoped to one
 selected app-known project. Entering the page or selecting another project
 refreshes its live skill inventory. Project Settings shows the selected
@@ -409,7 +508,8 @@ the provider state instead of claiming that an unverified choice succeeded.
   releases and connector definitions), and nothing in them is executed;
 - no arbitrary third-party JavaScript or executable loading;
 - no script execution from a skill resource;
-- no personal skill import/upload or agent-authored personal publication; and
+- no update-from-source for skills added from a web address (the source is
+  recorded); and
 - no organization sync or automatic project writes.
 
 ## Verification invariants
@@ -442,7 +542,10 @@ Automated coverage must continue to prove:
 12. add-on releases bound to their plugin's exact origin, never active by
     default, activated only for their exact release digest, withheld while the
     plugin is disabled or its installed copy no longer matches its digest, and
-    unable to reuse a registered id or name.
+    unable to reuse a registered id or name; and
+13. personal skills that are on by default, keep the user's choice across
+    edits, cannot take a Scient or add-on name, report broken folders, and
+    undo their last change (including removal) from history.
 
 The fork-owned roots and inherited integration points are recorded in
 `scient-skills-seams.json` and checked by `pnpm skills:seams:check`.

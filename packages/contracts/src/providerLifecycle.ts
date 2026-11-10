@@ -57,6 +57,13 @@ export const ProviderConnectionAccount = Schema.Struct({
    * their status and their sign-out, and the account is shown once.
    */
   sameAccountAs: Schema.optionalKey(ProviderConnectionAccountId),
+  /** The signed-in account's email, when the provider reports it. */
+  email: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(254))),
+  emails: Schema.optionalKey(
+    Schema.Array(TrimmedNonEmptyString.check(Schema.isMaxLength(254))).check(
+      Schema.isMaxLength(32),
+    ),
+  ),
 });
 export type ProviderConnectionAccount = typeof ProviderConnectionAccount.Type;
 
@@ -167,6 +174,24 @@ export const ProviderRuntimeOperationStatus = Schema.Literals([
 ]);
 export type ProviderRuntimeOperationStatus = typeof ProviderRuntimeOperationStatus.Type;
 
+/** Why a failed runtime operation failed, from its error types; never its message. */
+export const ProviderRuntimeFailureClass = Schema.Literals([
+  "network",
+  "timeout",
+  "http_4xx",
+  "http_5xx",
+  "checksum",
+  "size_mismatch",
+  "certificate",
+  "disk_full",
+  "permission",
+  "extract",
+  "cancelled",
+  "busy",
+  "other",
+]);
+export type ProviderRuntimeFailureClass = typeof ProviderRuntimeFailureClass.Type;
+
 export const ProviderRuntimeOperation = Schema.Struct({
   operationId: TrimmedNonEmptyString,
   action: ProviderManagedRuntimeAction,
@@ -187,6 +212,8 @@ export const ProviderRuntimeOperation = Schema.Struct({
    * try again; `message` says why and which try. Optional for older clients.
    */
   retrying: Schema.optionalKey(Schema.Boolean),
+  /** Set on a failed operation. Optional for older clients. */
+  failureClass: Schema.optionalKey(ProviderRuntimeFailureClass),
 });
 export type ProviderRuntimeOperation = typeof ProviderRuntimeOperation.Type;
 

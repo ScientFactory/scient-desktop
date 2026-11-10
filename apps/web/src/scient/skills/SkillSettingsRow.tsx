@@ -1,5 +1,6 @@
 import type { ScientSkillCatalogItem, ScientSkillInvocationPolicy } from "@t3tools/contracts";
 import { ChevronDownIcon } from "lucide-react";
+import type { ReactNode } from "react";
 
 import { SettingsRow } from "../../components/settings/settingsLayout";
 import {
@@ -26,8 +27,10 @@ export function SkillSettingsRow(props: {
   readonly skill: ScientSkillCatalogItem;
   readonly pending: boolean;
   readonly disabled: boolean;
-  readonly status: string;
+  readonly status: ReactNode;
   readonly onOpen?: (() => void) | undefined;
+  /** Buttons before the switch, such as a row's menu. */
+  readonly actions?: ReactNode;
   readonly onUpdate: (patch: {
     readonly active?: boolean;
     readonly invocationPolicy?: ScientSkillInvocationPolicy;
@@ -82,13 +85,16 @@ export function SkillSettingsRow(props: {
       description={skill.description}
       status={props.status}
       control={
-        <Switch
-          checked={skill.active}
-          motion="none"
-          disabled={pending || disabled}
-          aria-label={`Make ${skill.name} available`}
-          onCheckedChange={(checked) => onUpdate({ active: Boolean(checked) })}
-        />
+        <span className="flex items-center gap-1">
+          {props.actions}
+          <Switch
+            checked={skill.active}
+            motion="none"
+            disabled={pending || disabled}
+            aria-label={`Make ${skill.name} available`}
+            onCheckedChange={(checked) => onUpdate({ active: Boolean(checked) })}
+          />
+        </span>
       }
     />
   );

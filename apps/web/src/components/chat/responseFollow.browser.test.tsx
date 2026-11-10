@@ -522,10 +522,28 @@ it("keeps a follow cancelled by scrolling up cancelled across a thread switch", 
   _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
   await _setupFixture0(_fixture);
 
+  // CI machines deliver the list's size updates late, so its scroll offset trails the page. Hold
+  // them from the send until after the reader scrolls up, as on a slow machine.
+  let holdSizes = false;
+  const heldSizes: Array<() => void> = [];
+  const NativeResizeObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class extends NativeResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      super((entries, observer) => {
+        if (holdSizes) heldSizes.push(() => callback(entries, observer));
+        else callback(entries, observer);
+      });
+    }
+  };
+  _fixture.cleanup.defer(() => {
+    globalThis.ResizeObserver = NativeResizeObserver;
+  });
+
   const key = "follow:cancel-sticks";
   const { history, runs } = await answeredThread(_fixture, key);
   const prompt = message(10, "user", { text: "Short follow-up", runId: "run-10" });
   const runningRuns = [...runs, run("run-10", "message-10", "running")];
+  holdSizes = true;
   await _fixtureAct(() => _fixture.chat.sendAtEnd("message-10"));
   await render(_fixture, key, [...history, prompt, ...steps(1, "run-10")], runningRuns);
   await playUntil(_fixture, () => toEnd(_fixture) <= 1);
@@ -533,6 +551,8 @@ it("keeps a follow cancelled by scrolling up cancelled across a thread switch", 
   viewport(_fixture).dispatchEvent(new WheelEvent("wheel", { deltaY: -20, bubbles: true }));
   viewport(_fixture).scrollTop -= 20;
   viewport(_fixture).dispatchEvent(new Event("scroll"));
+  holdSizes = false;
+  for (const deliver of heldSizes.splice(0)) deliver();
   await play(_fixture, 64);
   // Still at the end, but they ended the follow: new work does not pull them along.
   const resting = viewport(_fixture).scrollTop;

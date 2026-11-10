@@ -278,6 +278,7 @@ it.live.each(
           "compute",
           "sources:read",
           "sources:write",
+          "skills:write",
           "threads:read",
           // SCIENT-FORK:START — Scient Accounts: retain account grants during skill-scope changes.
           "accounts",

@@ -59,6 +59,9 @@ const SignInList = Schema.Struct({
       stored: Schema.optional(Schema.Boolean),
       // The id the sign-in is stored under; absent from older agent builds.
       store: Schema.optional(Schema.String),
+      // The signed-in account's email; absent from older agent builds.
+      email: Schema.optional(Schema.String),
+      emails: Schema.optional(Schema.Array(Schema.String)),
     }),
   ),
 });
@@ -82,12 +85,24 @@ export const readScientAgentAccounts = (
         if (entry.kind === undefined || entry.stored === undefined) return undefined;
         const name = entry.name.trim().slice(0, 128);
         if (!isAccountId(entry.id) || name.length === 0) continue;
+        const email = entry.email?.trim();
+        const emails = [
+          ...new Set(
+            (entry.emails ?? [])
+              .map((value) => value.trim())
+              .filter(
+                (value) => value.length > 0 && value.length <= 254 && !hasControlCharacter(value),
+              ),
+          ),
+        ].slice(0, 32);
         accounts.push({
           id: entry.id,
           name,
           kind: entry.kind,
           connected: entry.authenticated,
           canDisconnect: entry.stored,
+          ...(email && email.length <= 254 && !hasControlCharacter(email) ? { email } : {}),
+          ...(emails.length > 0 ? { emails } : {}),
         });
       }
       // Two entries stored under one id sign in to one account. The entry

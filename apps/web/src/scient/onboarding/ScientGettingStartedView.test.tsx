@@ -51,6 +51,10 @@ describe("GettingStartedPreferencesStep", () => {
         otherSelected={false}
         otherWork=""
         workKinds={["scientific"]}
+        field={undefined}
+        role={undefined}
+        onFieldChange={() => undefined}
+        onRoleChange={() => undefined}
       />,
     );
     const withOther = renderToStaticMarkup(
@@ -62,6 +66,10 @@ describe("GettingStartedPreferencesStep", () => {
         otherSelected
         otherWork="Lesson planning"
         workKinds={["academic"]}
+        field="neuroscience"
+        role="postdoc"
+        onFieldChange={() => undefined}
+        onRoleChange={() => undefined}
       />,
     );
 
@@ -69,6 +77,44 @@ describe("GettingStartedPreferencesStep", () => {
     expect(withOther).toContain('placeholder="Tell us what you do"');
     expect(withOther).toContain('maxLength="120"');
     expect(withOther).toContain('value="Lesson planning"');
+  });
+
+  it("asks for field and role and shows the chosen answers", () => {
+    const unanswered = renderToStaticMarkup(
+      <GettingStartedPreferencesStep
+        onContinue={() => undefined}
+        onOtherSelectedChange={() => undefined}
+        onOtherWorkChange={() => undefined}
+        onToggleWorkKind={() => undefined}
+        otherSelected={false}
+        otherWork=""
+        workKinds={[]}
+        field={undefined}
+        role={undefined}
+        onFieldChange={() => undefined}
+        onRoleChange={() => undefined}
+      />,
+    );
+    const answered = renderToStaticMarkup(
+      <GettingStartedPreferencesStep
+        onContinue={() => undefined}
+        onOtherSelectedChange={() => undefined}
+        onOtherWorkChange={() => undefined}
+        onToggleWorkKind={() => undefined}
+        otherSelected={false}
+        otherWork=""
+        workKinds={[]}
+        field="neuroscience"
+        role="postdoc"
+        onFieldChange={() => undefined}
+        onRoleChange={() => undefined}
+      />,
+    );
+
+    expect(unanswered).toContain("Your field");
+    expect(unanswered).toContain("Your role");
+    expect(answered).toContain("Neuroscience &amp; psychology");
+    expect(answered).toContain("Postdoc");
   });
 });
 

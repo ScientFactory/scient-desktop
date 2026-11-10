@@ -16,9 +16,9 @@ import {
 } from "./model.ts";
 import { parseSkillDocument } from "./skillDocument.ts";
 
-const MAX_RELEASE_FILES = 200;
-const MAX_RELEASE_BYTES = 5 * 1024 * 1024;
-const MAX_RESOURCE_BYTES = 1024 * 1024;
+export const MAX_RELEASE_FILES = 200;
+export const MAX_RELEASE_BYTES = 5 * 1024 * 1024;
+export const MAX_RESOURCE_BYTES = 1024 * 1024;
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const SKILL_ID_PATTERN = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/u;
 const SEMVER_NUMBER = "(?:0|[1-9]\\d*)";
@@ -293,7 +293,7 @@ function releaseFromFiles(
   }
   if (derivedManifest && manifestBytes) {
     throw new SkillReleaseValidationError(
-      `Project skills must not contain reserved file ${SCIENT_SKILL_MANIFEST_FILE}.`,
+      `Project and personal skills must not contain reserved file ${SCIENT_SKILL_MANIFEST_FILE}.`,
     );
   }
   const manifest =
@@ -394,6 +394,52 @@ export async function loadProjectSkillRelease(
     defaultInvocationPolicy: "automatic",
     origin: { kind: "project", projectId },
   });
+}
+
+const personalManifest = (name: string): SkillReleaseManifest => ({
+  apiVersion: "scient.skills/v1alpha1",
+  id: `personal.${name}`,
+  version: "0.0.0",
+  category: "Your skills",
+  categoryDescription: "Skills you or an agent added for you.",
+  displayOrder: 0,
+  supportedScopes: ["user"],
+  defaultInvocationPolicy: "automatic",
+  origin: { kind: "personal" },
+});
+
+/**
+ * Snapshot one mutable personal skill folder. Like project skills, identity and policy are
+ * derived from the folder name; a reviewed `scient.skill.json` is refused.
+ */
+export async function loadPersonalSkillRelease(root: string): Promise<SkillRelease> {
+  const requestedRoot = NodePath.resolve(root);
+  const requestedRootStat = await NodeFSP.lstat(requestedRoot);
+  if (!requestedRootStat.isDirectory() || requestedRootStat.isSymbolicLink()) {
+    throw new SkillReleaseValidationError("A personal skill must be a real directory.");
+  }
+  const rootPath = await NodeFSP.realpath(requestedRoot);
+  const directoryName = NodePath.basename(rootPath);
+  return releaseFromFiles(
+    directoryName,
+    await collectReleaseFiles(rootPath),
+    personalManifest(directoryName),
+  );
+}
+
+/**
+ * Check a personal skill given as files, before anything is written. Throws the same messages
+ * a saved folder would.
+ */
+export function personalSkillReleaseFromFiles(
+  name: string,
+  files: Readonly<Record<string, Uint8Array>>,
+): SkillRelease {
+  return releaseFromFiles(
+    name,
+    Object.entries(files).map(([relativePath, bytes]) => ({ relativePath, bytes })),
+    personalManifest(name),
+  );
 }
 
 /** Build a verified immutable release from files embedded in a server bundle. */

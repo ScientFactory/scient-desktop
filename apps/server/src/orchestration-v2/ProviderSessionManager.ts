@@ -800,6 +800,9 @@ export const layerWithOptions = (
               "compute",
               "sources:read",
               "sources:write",
+              // SCIENT-FORK:START — every agent can save the user's own skills.
+              "skills:write",
+              // SCIENT-FORK:END
               "threads:read",
             ]);
             if (scientSkillDeliveryForProvider(adapter.driver) === "mcp")

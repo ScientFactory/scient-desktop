@@ -57,6 +57,8 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   // A completed load reads "Used Latex Authoring", the wording skill loads already use.
   t3_skill_load: tool(["Load", "Loading", "Used", "a skill"], "scient-skills"),
   t3_skill_read_resource: tool(["Read", "Reading", "Read", "a skill file"], "scient-skills"),
+  t3_skill_save: tool(["Save", "Saving", "Saved", "a skill"], "scient-skills"),
+  t3_skill_read: tool(["Read", "Reading", "Read", "a skill to improve it"], "scient-skills"),
   t3_sources_list: tool(["List", "Listing", "Listed", "sources"], "scient-sources"),
   t3_sources_get: tool(["Read", "Reading", "Read", "a source"], "scient-sources"),
   t3_sources_add: tool(["Add", "Adding", "Added", "a source"], "scient-sources"),
@@ -138,11 +140,14 @@ export function scientMcpToolTarget(
   definition: T3McpToolDefinition,
   input: Record<string, unknown> | null,
 ): string | undefined {
-  const isLoad = definition === SCIENT_MCP_TOOLS.t3_skill_load;
-  if (!isLoad && definition !== SCIENT_MCP_TOOLS.t3_skill_read_resource) return undefined;
+  const namesSkill =
+    definition === SCIENT_MCP_TOOLS.t3_skill_load ||
+    definition === SCIENT_MCP_TOOLS.t3_skill_save ||
+    definition === SCIENT_MCP_TOOLS.t3_skill_read;
+  if (!namesSkill && definition !== SCIENT_MCP_TOOLS.t3_skill_read_resource) return undefined;
   const skill = scientSkillDisplayName(input);
   if (!skill) return undefined;
-  return isLoad ? skill : `a file of ${skill}`;
+  return namesSkill ? skill : `a file of ${skill}`;
 }
 
 /** Collapsed-group label for calls to one family of Scient's tools. */
