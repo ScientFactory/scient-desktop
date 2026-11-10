@@ -342,7 +342,9 @@ describe("source import outcome analytics", () => {
           { ...f.service, record: () => Effect.die("analytics record failure") },
         ]) {
           const observer = yield* f.observer("agent", service);
-          yield* Effect.promise(() => addAgentSource({ root, candidate }, observer));
+          yield* Effect.promise(() =>
+            addAgentSource({ root, candidate, resolveIdentifier: async () => null }, observer),
+          );
         }
         expect(yield* Effect.promise(() => listScientSourceRecords(root))).toHaveLength(1);
         expect(f.events).toHaveLength(0);

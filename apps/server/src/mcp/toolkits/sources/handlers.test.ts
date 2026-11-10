@@ -24,6 +24,11 @@ import {
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
 import {
+  SourceIdentifierLookup,
+  verifiableSourceIdentifier,
+  type ResolveSourceIdentifier,
+} from "../../../scient/sources/SourceIdentifierResolver.ts";
+import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
   addScientSourceForInvocation,
@@ -223,16 +228,23 @@ const makeInvocation = (
     issuedAt: 1,
   });
 
+const offlineLookup: ResolveSourceIdentifier = async (identifiers) => {
+  const identifier = verifiableSourceIdentifier(identifiers);
+  return identifier ? { status: "unavailable", identifier } : null;
+};
+
 const provideContext = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   input: {
     readonly invocation: AgentInvocationContext.AgentInvocationScope;
     readonly query: WorkspaceBindingResolver["Service"];
+    readonly lookup?: ResolveSourceIdentifier;
   },
 ) =>
   effect.pipe(
     Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
     Effect.provideService(WorkspaceBindingResolver, input.query),
+    Effect.provideService(SourceIdentifierLookup, input.lookup ?? offlineLookup),
   );
 
 afterEach(async () => {
@@ -406,6 +418,7 @@ describe("Scient Sources MCP handlers", () => {
         context,
       );
       expect(detail.note).toBe("Compare with the **replication** cohort.");
+      expect(detail.updatedBy).toBe("agent");
 
       const stale = yield* provideContext(
         updateScientSourceNoteForInvocation({
@@ -419,7 +432,7 @@ describe("Scient Sources MCP handlers", () => {
     }),
   );
 
-  it.effect("adds an idempotent metadata-only agent source with pending provenance", () =>
+  it.effect("adds an idempotent metadata-only agent source with agent provenance", () =>
     Effect.gen(function* () {
       const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] =
         [];
@@ -473,8 +486,7 @@ describe("Scient Sources MCP handlers", () => {
       const added = yield* provideContext(addScientSourceForInvocation(input), context).pipe(
         Effect.provideService(AnalyticsService, analytics),
       );
-      expect(added.outcome).toBe("imported");
-      expect(added.review).toBe("pending");
+      expect(added).toMatchObject({ outcome: "imported", verification: "unchecked" });
       expect(added.sourceId).toMatch(/^source_/);
       expect(added.revision).toBe(1);
       expect(added.validationIssues).toEqual([]);
@@ -508,7 +520,7 @@ describe("Scient Sources MCP handlers", () => {
       expect(detail.origin).toMatchObject({
         actor: "agent",
         intake: "identifier",
-        review: "pending",
+        review: "none",
       });
       expect(detail.fieldProvenance.some((entry) => entry.origin === "agent")).toBe(true);
       expect(detail.fieldProvenance).toEqual(
@@ -550,6 +562,15 @@ describe("Scient Sources MCP handlers", () => {
         revision: 2,
         validationIssues: [],
       });
+      const edited = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: detail.sourceId }),
+        context,
+      );
+      expect(edited.updatedBy).toBe("agent");
+      expect(edited.fieldProvenance).toEqual(
+        expect.arrayContaining([{ field: "title", origin: "agent", sourceField: null }]),
+      );
+      expect(edited.verification).toEqual(detail.verification);
     }),
   );
 
@@ -598,7 +619,7 @@ describe("Scient Sources MCP handlers", () => {
         }),
         context,
       );
-      expect(added).toMatchObject({ outcome: "imported", review: "pending", revision: 1 });
+      expect(added).toMatchObject({ outcome: "imported", verification: "unchecked", revision: 1 });
       const detail = yield* provideContext(
         getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),
         context,
@@ -671,7 +692,59 @@ describe("Scient Sources MCP handlers", () => {
         addScientSourceForInvocation({ pdfRelativePath: "papers/untitled.pdf" }),
         context,
       );
-      expect(added).toMatchObject({ outcome: "imported", review: "pending", revision: 1 });
+      expect(added).toMatchObject({ outcome: "imported", verification: "unverified", revision: 1 });
+    }),
+  );
+
+  it.effect("verifies a PDF's DOI without treating its filename title as a claim", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-pdf-doi-"));
+      yield* Effect.promise(() => writeProjectPdf(root, "papers/paper_final.pdf", "file-doi"));
+      const projectId = ProjectId.make("project-agent-pdf-doi");
+      const threadId = ThreadId.make("thread-agent-pdf-doi");
+      const identifier = { scheme: "doi", value: "10.1000/registered-pdf" };
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+        lookup: (async () => ({
+          status: "found",
+          identifier,
+          retrievedAt: now,
+          metadata: {
+            type: "article",
+            title: "Registered Title of the Work",
+            creators: [],
+            issuedRaw: null,
+            issuedYear: null,
+            identifiers: [identifier],
+            abstract: null,
+            abstractSections: [],
+            containerTitle: null,
+            publisher: null,
+            volume: null,
+            issue: null,
+            pages: null,
+            language: null,
+            url: null,
+          },
+        })) satisfies ResolveSourceIdentifier,
+      };
+      const added = yield* provideContext(
+        addScientSourceForInvocation({
+          pdfRelativePath: "papers/paper_final.pdf",
+          identifiers: [identifier],
+        }),
+        context,
+      );
+      expect(added).toMatchObject({ outcome: "imported", verification: "verified" });
+      const detail = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),
+        context,
+      );
+      expect(detail.title).toBe("Registered Title of the Work");
     }),
   );
 
@@ -894,6 +967,101 @@ describe("Scient Sources MCP handlers", () => {
       expect(companion.attachments[0]?.sha256).toBe(pdfSource.attachments[0]?.sha256);
       expect(companion.attachments[0]?.attachmentId).not.toBe(
         pdfSource.attachments[0]?.attachmentId,
+      );
+    }),
+  );
+
+  it.effect("checks an agent's DOI and stores the registry's metadata", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-verified-"));
+      const projectId = ProjectId.make("project-agent-verified");
+      const threadId = ThreadId.make("thread-agent-verified");
+      const identifier = { scheme: "doi", value: "10.1000/registered" };
+      const lookup: ResolveSourceIdentifier = async () => ({
+        status: "found",
+        identifier,
+        retrievedAt: now,
+        metadata: {
+          type: "article",
+          title: "Registered Title of the Work",
+          creators: [
+            { creatorType: "author", givenName: "Grace", familyName: "Hopper", literalName: null },
+          ],
+          issuedRaw: "1952-05-01",
+          issuedYear: 1952,
+          identifiers: [identifier],
+          abstract: null,
+          abstractSections: [],
+          containerTitle: "Registry Journal",
+          publisher: null,
+          volume: "7",
+          issue: null,
+          pages: null,
+          language: null,
+          url: "https://doi.org/10.1000/registered",
+        },
+      });
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+        lookup,
+      };
+      const claim = {
+        type: "article" as const,
+        creators: [
+          { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
+        ],
+        issuedYear: 2026,
+        identifiers: [identifier],
+      };
+
+      const mismatch = yield* provideContext(
+        addScientSourceForInvocation({ ...claim, title: "An Unrelated Paper About Rivers" }),
+        context,
+      );
+      expect(mismatch).toMatchObject({
+        outcome: "identifier-mismatch",
+        sourceId: null,
+        revision: null,
+        resolved: {
+          title: "Registered Title of the Work",
+          creators: ["Grace Hopper"],
+          issuedYear: 1952,
+          containerTitle: "Registry Journal",
+        },
+        message: expect.stringContaining("10.1000/registered"),
+      });
+      expect((yield* provideContext(listScientSourcesForInvocation({}), context)).total).toBe(0);
+
+      const added = yield* provideContext(
+        addScientSourceForInvocation({ ...claim, title: "registered title of the work" }),
+        context,
+      );
+      expect(added).toMatchObject({ outcome: "imported", verification: "verified" });
+      const detail = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),
+        context,
+      );
+      expect(detail).toMatchObject({
+        title: "Registered Title of the Work",
+        creators: [{ familyName: "Hopper" }],
+        issuedYear: 1952,
+        containerTitle: "Registry Journal",
+        verification: { state: "verified", identifier, checkedAt: now },
+      });
+      expect(detail.fieldProvenance).toEqual(
+        expect.arrayContaining([
+          {
+            field: "title",
+            origin: "doi",
+            sourceField: "title",
+            sourceIdentifier: identifier,
+            retrievedAt: now,
+          },
+        ]),
       );
     }),
   );

@@ -4,7 +4,6 @@ import type {
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
-  ScientSourceReviewUpdateRequest,
   ScientSourceRemovalRequest,
   ZoteroImportScope,
 } from "@t3tools/contracts";
@@ -243,37 +242,6 @@ export const removeEnvironmentScientSource = Effect.fn(
           root: input.root,
           sourceId: input.sourceId,
           expectedRevision: input.expectedRevision,
-        },
-      }),
-  });
-});
-
-export const updateEnvironmentScientSourceReview = Effect.fn(
-  "clientRuntime.state.updateEnvironmentScientSourceReview",
-)(function* (input: {
-  readonly prepared: PreparedConnection;
-  readonly root: ScientSourceReviewUpdateRequest["root"];
-  readonly sourceId: ScientSourceReviewUpdateRequest["sourceId"];
-  readonly expectedRevision: ScientSourceReviewUpdateRequest["expectedRevision"];
-}) {
-  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
-  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
-  return yield* executeAuthenticatedEnvironmentHttpRequest({
-    prepared: input.prepared,
-    signer,
-    remoteAuthorization,
-    method: "POST",
-    url: (urls) => urls.updateReview(),
-    timeoutMs: REQUEST_TIMEOUT_MS,
-    group: "scientSources",
-    request: ({ client, headers }) =>
-      client.updateReview({
-        headers,
-        payload: {
-          root: input.root,
-          sourceId: input.sourceId,
-          expectedRevision: input.expectedRevision,
-          review: "none",
         },
       }),
   });

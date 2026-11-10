@@ -18,7 +18,6 @@ import {
   removeEnvironmentScientSource,
   updateEnvironmentScientSourceMetadata,
   updateEnvironmentScientSourceNote,
-  updateEnvironmentScientSourceReview,
   uploadEnvironmentLocalSourcePdf,
 } from "@t3tools/client-runtime/state/scient-sources";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
@@ -240,14 +239,5 @@ export function retrySourcesImport(
 ) {
   return runtime.runPromise(
     retryEnvironmentScientSourcesImport({ prepared: prepared(environmentId), ...input }),
-  );
-}
-
-export function approveScientSource(
-  environmentId: EnvironmentId,
-  input: { readonly root: string; readonly sourceId: string; readonly expectedRevision: number },
-) {
-  return runtime.runPromise(
-    updateEnvironmentScientSourceReview({ prepared: prepared(environmentId), ...input }),
   );
 }

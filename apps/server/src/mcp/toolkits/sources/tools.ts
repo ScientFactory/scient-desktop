@@ -7,8 +7,10 @@ import {
   ScientSourceAbstractSection,
   ScientSourceMetadataValidationIssue,
   ScientSourceNote,
+  ScientSourceActor,
   ScientSourceOrigin,
   ScientSourceType,
+  ScientSourceVerification,
 } from "@scientfactory/scient-sources";
 import { isTrimmedUnadvertised } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
@@ -60,8 +62,8 @@ export const ScientSourceAgentSummary = Schema.Struct({
   containerTitle: NullableText,
   doi: NullableText,
   hasPdf: Schema.Boolean,
-  review: Schema.Literals(["none", "pending"]),
   addedBy: Schema.Literals(["user", "agent"]),
+  verification: Schema.optionalKey(ScientSourceVerification.fields.state),
 });
 
 export const ScientSourcesListResult = Schema.Struct({
@@ -97,8 +99,10 @@ export const ScientSourceAgentDetail = Schema.Struct({
   attachments: Schema.Array(ScientSourceAgentAttachment),
   fieldProvenance: Schema.Array(ScientSourceFieldProvenance),
   origin: Schema.optionalKey(ScientSourceOrigin),
+  verification: Schema.optionalKey(ScientSourceVerification),
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
+  updatedBy: Schema.optionalKey(ScientSourceActor),
 });
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
@@ -166,7 +170,7 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
     "Replace one Source's metadata and tags after the user explicitly asks. metadata is the complete new record, not a patch: " +
     "read the source first, keep every field you are not changing, and pass its current revision. " +
     "If the read says abstractTruncated, do not replace from it; tell the user. If stale, read it again and redo the change on what you read. " +
-    "Changed fields are recorded as set by the user; review state and attachments stay as they are.",
+    "Changed fields are recorded as set by the agent; attachments stay as they are. Changing identifiers clears the source's identifier check.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -222,30 +226,6 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.remove", true));
 
-const ScientSourceReviewTool = Tool.make("scient_sources_review", {
-  description:
-    "Approve or reject an agent-added Source after the user explicitly asks. Read the source first and pass its current revision. Approval clears pending review; rejection removes the source. If stale, read it again and redo the change on what you read.",
-  parameters: Schema.Struct({
-    sourceId: NonEmptyString,
-    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
-    action: Schema.Literals(["approve", "reject"]),
-  }),
-  success: Schema.Struct({
-    action: Schema.Literals(["approve", "reject"]),
-    outcome: Schema.Literals(["updated", "unchanged", "stale", "removed", "not-found"]),
-    sourceId: NonEmptyString,
-    revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
-  }),
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Review a project source")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, true)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, sourceOperation("sources.review", true));
-
 export const ScientSourceAddInput = Schema.Struct({
   type: Schema.optionalKey(ScientSourceType),
   customType: Schema.optionalKey(NullableText),
@@ -283,7 +263,13 @@ export const ScientSourceAddInput = Schema.Struct({
 export type ScientSourceAddInput = typeof ScientSourceAddInput.Type;
 
 export const ScientSourceAddResult = Schema.Struct({
-  outcome: Schema.Literals(["imported", "duplicate", "invalid"]),
+  outcome: Schema.Literals([
+    "imported",
+    "duplicate",
+    "invalid",
+    "identifier-not-found",
+    "identifier-mismatch",
+  ]),
   sourceId: Schema.NullOr(NonEmptyString),
   revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   duplicate: Schema.Struct({
@@ -298,14 +284,27 @@ export const ScientSourceAddResult = Schema.Struct({
     reason: NonEmptyString,
   }),
   validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
-  review: Schema.Literals(["none", "pending"]),
+  verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  resolved: Schema.optionalKey(
+    Schema.Struct({
+      title: NullableText,
+      creators: Schema.Array(Schema.String),
+      issuedYear: Schema.NullOr(Schema.Int),
+      containerTitle: NullableText,
+    }),
+  ),
+  message: Schema.optionalKey(NonEmptyString),
 });
 
 const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
     "Add one source to this project after the user explicitly asks. List existing Sources first. " +
     "For a PDF in the project, pass its relative path as pdfRelativePath; Scient reads metadata from it, " +
-    "so citation fields are optional. Sources you add wait for the user's review. Repeating the same request adds nothing.",
+    "so citation fields are optional. A DOI or PMID is checked against doi.org or PubMed first: " +
+    "identifier-not-found means the identifier does not exist and identifier-mismatch means it names a different work (see resolved); nothing is added in either case. " +
+    "A found identifier's registry metadata replaces the citation fields you gave (verification verified). " +
+    "If the registry cannot be reached the source is added as given (unchecked); without a DOI or PMID it is unverified. " +
+    "The user sees that you added it. Repeating the same request adds nothing.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
   failure: ScientSourcesToolError,
@@ -375,7 +374,6 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceNoteUpdateTool,
   ScientSourceMetadataUpdateTool,
   ScientSourceRemoveTool,
-  ScientSourceReviewTool,
   ScientSourceAddTool,
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,

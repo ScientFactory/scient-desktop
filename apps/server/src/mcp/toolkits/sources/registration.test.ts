@@ -25,7 +25,6 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       "scient_sources_list",
       "scient_sources_note_update",
       "scient_sources_remove",
-      "scient_sources_review",
       "scient_sources_update",
     ]);
     for (const { tool } of sourceTools.filter(({ tool }) =>
@@ -43,18 +42,13 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
         "scient_sources_detach_pdf",
         "scient_sources_note_update",
         "scient_sources_remove",
-        "scient_sources_review",
         "scient_sources_update",
       ].includes(tool.name),
     );
     for (const { tool } of writeTools) {
       expect(tool.annotations).toMatchObject({
         readOnlyHint: false,
-        destructiveHint: [
-          "scient_sources_detach_pdf",
-          "scient_sources_remove",
-          "scient_sources_review",
-        ].includes(tool.name),
+        destructiveHint: ["scient_sources_detach_pdf", "scient_sources_remove"].includes(tool.name),
         idempotentHint: true,
         openWorldHint: tool.name === "scient_sources_add",
       });

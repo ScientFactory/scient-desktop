@@ -15,13 +15,17 @@ import {
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import {
-  addAgentSource,
+  addAgentSource as addAgentSourceWithLookup,
   attachSourcePdf,
   advanceSourceImport,
   beginLocalPdfImport,
   retrySourceImport,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
+import {
+  verifiableSourceIdentifier,
+  type ResolveSourceIdentifier,
+} from "./SourceIdentifierResolver.ts";
 
 const fixtures: string[] = [];
 
@@ -30,6 +34,22 @@ afterEach(async () => {
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
 });
+
+const offlineLookup: ResolveSourceIdentifier = async (identifiers) => {
+  const identifier = verifiableSourceIdentifier(identifiers);
+  return identifier ? { status: "unavailable", identifier } : null;
+};
+
+async function addAgentSource(
+  input: Omit<Parameters<typeof addAgentSourceWithLookup>[0], "resolveIdentifier">,
+  resolveIdentifier: ResolveSourceIdentifier = offlineLookup,
+) {
+  const result = await addAgentSourceWithLookup({ ...input, resolveIdentifier });
+  if (result.outcome === "identifier-not-found" || result.outcome === "identifier-mismatch") {
+    throw new Error(`Unexpected ${result.outcome}`);
+  }
+  return result;
+}
 
 async function project(): Promise<string> {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-agent-add-"));
@@ -68,7 +88,7 @@ function candidate(sourceKey: string, doi: string): ScientSourceCandidate {
 }
 
 describe("agent identifier add", () => {
-  it("imports a metadata-only agent source as pending review without a durable import operation file", async () => {
+  it("imports a metadata-only agent source without a durable import operation file", async () => {
     const root = await project();
     const added = await addAgentSource({
       root,
@@ -81,7 +101,11 @@ describe("agent identifier add", () => {
         origin: {
           actor: "agent",
           intake: "identifier",
-          review: "pending",
+          review: "none",
+        },
+        verification: {
+          state: "unchecked",
+          identifier: { scheme: "doi", value: "10.1000/agent-one" },
         },
         attachments: [],
       },
@@ -126,7 +150,7 @@ describe("agent identifier add", () => {
     expect(added).toMatchObject({
       outcome: "imported",
       record: {
-        origin: { actor: "agent", intake: "local-pdf", review: "pending" },
+        origin: { actor: "agent", intake: "local-pdf", review: "none" },
         attachments: [{ fileName: "original-name.pdf", mediaType: "application/pdf" }],
       },
     });
@@ -138,7 +162,7 @@ describe("agent identifier add", () => {
     ).resolves.toBe("%PDF-1.7\nagent attachment\n");
   });
 
-  it("attaches a PDF to a pending metadata-only agent source with revision protection", async () => {
+  it("attaches a PDF to a metadata-only agent source with revision protection", async () => {
     const root = await project();
     const added = await addAgentSource({
       root,
@@ -184,16 +208,49 @@ describe("agent identifier add", () => {
     expect(repeated.outcome).toBe("unchanged");
   });
 
+  it("refuses a DOI that does not exist and writes nothing", async () => {
+    const root = await project();
+    const result = await addAgentSourceWithLookup({
+      root,
+      candidate: candidate("AGENTMISSING", "10.1000/missing"),
+      resolveIdentifier: async (identifiers) => {
+        const identifier = verifiableSourceIdentifier(identifiers);
+        return identifier ? { status: "not-found", identifier } : null;
+      },
+    });
+
+    expect(result).toMatchObject({
+      outcome: "identifier-not-found",
+      identifier: { scheme: "doi", value: "10.1000/missing" },
+      message:
+        "The DOI 10.1000/missing does not exist at doi.org. Check the identifier; do not guess.",
+    });
+    await expect(listScientSourceRecords(root)).resolves.toEqual([]);
+  });
+
+  it("marks an agent source without a DOI or PMID as unverified", async () => {
+    const root = await project();
+    const added = await addAgentSource({
+      root,
+      candidate: {
+        ...candidate("AGENTISBN", "unused"),
+        identifiers: [{ scheme: "isbn", value: "9780262033848" }],
+      },
+    });
+
+    expect(added.record?.verification).toEqual({ state: "unverified" });
+  });
+
   it("does not create a second record for the same DOI under a different source key", async () => {
     const root = await project();
     await addAgentSource({
       root,
       candidate: candidate("AGENT1", "10.1000/agent-doi"),
     });
-    const second = await addAgentSource({
-      root,
-      candidate: candidate("AGENT2", "10.1000/agent-doi"),
-    });
+    const second = await addAgentSource(
+      { root, candidate: candidate("AGENT2", "10.1000/agent-doi") },
+      () => Promise.reject(new Error("An exact duplicate must not consult the registry.")),
+    );
 
     expect(second).toMatchObject({
       outcome: "duplicate",

@@ -16,6 +16,7 @@ import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
+import { SourceIdentifierLookup } from "../../../scient/sources/SourceIdentifierResolver.ts";
 import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
@@ -28,7 +29,6 @@ import {
   prepareAgentProjectPdf,
   removeSource,
   updateScientSource,
-  updateSourceReview,
   updateSourceNote,
 } from "../../../scient/sources/ScientSourcesCoordinator.ts";
 
@@ -230,8 +230,8 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         containerTitle: record.containerTitle,
         doi: doiValue(record),
         hasPdf: record.attachments.some((attachment) => attachment.kind === "pdf"),
-        review: record.origin?.review ?? "none",
         addedBy: record.origin?.actor ?? "user",
+        ...(record.verification ? { verification: record.verification.state } : {}),
       })),
       total: matching.length,
       nextOffset: offset + page.length < matching.length ? offset + page.length : null,
@@ -282,6 +282,7 @@ export const updateScientSourceNoteForInvocation = Effect.fn("ScientSourcesToolk
         sourceId: input.sourceId,
         expectedRevision: input.expectedRevision,
         note: input.note,
+        actor: "agent",
       }),
     );
     return {
@@ -308,6 +309,7 @@ export const updateScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.u
         expectedRevision: input.expectedRevision,
         metadata: input.metadata,
         allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+        actor: "agent",
       }),
     );
     return {
@@ -334,53 +336,6 @@ export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
       outcome: result.outcome,
       sourceId: result.sourceId,
       revision: result.revision,
-    };
-  },
-);
-
-export const reviewScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.review")(
-  function* (input: {
-    readonly sourceId: string;
-    readonly expectedRevision: number;
-    readonly action: "approve" | "reject";
-  }) {
-    const { root } = yield* resolveScientSourcesProject();
-    const current = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
-    if (!current) return yield* toolError("not-found", "The source was not found in this project.");
-    if (input.action === "reject") {
-      if (current.origin?.actor !== "agent" || current.origin.review !== "pending") {
-        return yield* toolError(
-          "operation-failed",
-          "Only pending agent-added sources can be rejected through review.",
-        );
-      }
-      const result = yield* attempt(() =>
-        removeSource({
-          root,
-          sourceId: input.sourceId,
-          expectedRevision: input.expectedRevision,
-        }),
-      );
-      return {
-        action: input.action,
-        outcome: result.outcome,
-        sourceId: result.sourceId,
-        revision: result.revision,
-      };
-    }
-    const result = yield* attempt(() =>
-      updateSourceReview({
-        root,
-        sourceId: input.sourceId,
-        expectedRevision: input.expectedRevision,
-        review: "none",
-      }),
-    );
-    return {
-      action: input.action,
-      outcome: result.outcome,
-      sourceId: result.record.sourceId,
-      revision: result.record.revision,
     };
   },
 );
@@ -439,9 +394,9 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
         reason: "The source metadata did not pass validation.",
       },
       validationIssues,
-      review: "none" as const,
     };
   }
+  const resolveIdentifier = yield* SourceIdentifierLookup;
   const observeImport = yield* makeSourceImportAnalytics("agent");
   const result = yield* attempt(() =>
     addAgentSource(
@@ -450,6 +405,8 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
         candidate,
         enrich: input.enrich ?? false,
         allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+        resolveIdentifier,
+        claimedTitle: input.title ?? null,
         ...(resolvedPdf
           ? {
               pdfPath: resolvedPdf.absolutePath,
@@ -461,6 +418,17 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
       observeImport,
     ),
   );
+  if (result.outcome === "identifier-not-found" || result.outcome === "identifier-mismatch") {
+    return {
+      outcome: result.outcome,
+      sourceId: null,
+      revision: null,
+      duplicate: { kind: "new" as const, matchingSourceIds: [], reason: result.message },
+      validationIssues,
+      ...(result.outcome === "identifier-mismatch" ? { resolved: result.resolved } : {}),
+      message: result.message,
+    };
+  }
   const duplicateSourceId =
     result.record?.sourceId ?? result.duplicate.matchingSourceIds[0] ?? null;
   const duplicateRecord =
@@ -474,7 +442,7 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
     revision: duplicateRecord?.revision ?? null,
     duplicate: result.duplicate,
     validationIssues,
-    review: duplicateRecord?.origin?.review ?? "none",
+    ...(duplicateRecord?.verification ? { verification: duplicateRecord.verification.state } : {}),
   };
 });
 
@@ -495,6 +463,7 @@ export const attachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
         expectedRevision: input.expectedRevision,
         pdfPath: resolvedPdf.absolutePath,
         fileName: resolvedPdf.fileName,
+        actor: "agent",
       }),
     );
     return {
@@ -512,7 +481,7 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
     readonly expectedRevision: number;
   }) {
     const { root } = yield* resolveScientSourcesProject();
-    const result = yield* attempt(() => detachSourcePdf({ root, ...input }));
+    const result = yield* attempt(() => detachSourcePdf({ root, ...input, actor: "agent" }));
     return {
       outcome: result.outcome,
       sourceId: result.record?.sourceId ?? input.sourceId,
@@ -530,7 +499,6 @@ const handlers = {
   scient_sources_note_update: updateScientSourceNoteForInvocation,
   scient_sources_update: updateScientSourceForInvocation,
   scient_sources_remove: removeScientSourceForInvocation,
-  scient_sources_review: reviewScientSourceForInvocation,
   scient_sources_add: addScientSourceForInvocation,
   scient_sources_attach_pdf: attachScientSourcePdfForInvocation,
   scient_sources_detach_pdf: detachScientSourcePdfForInvocation,

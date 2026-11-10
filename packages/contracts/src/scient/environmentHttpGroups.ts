@@ -39,9 +39,7 @@ import {
   ScientSourceMetadataUpdateRequest,
   ScientSourceMetadataUpdateResult,
   ScientSourceNoteUpdateRequest,
-  ScientSourceReviewUpdateRequest,
   ScientSourceNoteUpdateResult,
-  ScientSourceReviewUpdateResult,
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
   ScientSourcesAdvanceImportRequest,
@@ -292,14 +290,6 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourceNoteUpdateRequest,
         success: ScientSourceNoteUpdateResult,
-        error: EnvironmentHttpCommonError,
-      }).middleware(EnvironmentAuthenticatedAuth),
-    )
-    .add(
-      HttpApiEndpoint.post("updateReview", "/api/scient/sources/review/update", {
-        headers: OptionalBearerHeaders,
-        payload: ScientSourceReviewUpdateRequest,
-        success: ScientSourceReviewUpdateResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

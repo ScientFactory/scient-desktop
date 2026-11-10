@@ -1,6 +1,5 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Metadata enrichment uses bounded HTTPS requests.
+// @effect-diagnostics nodeBuiltinImport:off -- The enrichment deadline uses an unref'ed native timer.
 // @effect-diagnostics globalDate:off -- Retrieval evidence records an interoperable timestamp.
-import * as NodeHttps from "node:https";
 import * as NodeTimersPromises from "node:timers/promises";
 
 import {
@@ -16,13 +15,14 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { XMLParser } from "fast-xml-parser";
 
+import {
+  METADATA_USER_AGENT as USER_AGENT,
+  requestMetadataJson,
+  requestMetadataText,
+} from "./metadataHttp.ts";
 import { runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
 
-const METADATA_TIMEOUT_MS = 5_000;
 const ENRICHMENT_DEADLINE_MS = 6_500;
-const MAX_METADATA_RESPONSE_BYTES = 2 * 1024 * 1024;
-const USER_AGENT =
-  "Scient/0.0 (https://github.com/ScientFactory/scient-desktop; source metadata resolution)";
 
 const CrossrefResponse = Schema.Struct({
   message: Schema.Struct({
@@ -97,56 +97,6 @@ function trimmed(value: unknown): string | null {
   if (!Predicate.isString(value)) return null;
   const result = value.trim();
   return result ? result : null;
-}
-
-function requestMetadataText(
-  url: URL,
-  headers: Readonly<Record<string, string>>,
-  redirects = 0,
-): Promise<string> {
-  if (url.protocol !== "https:") throw new Error("Metadata requests must use HTTPS.");
-  if (redirects > 4) throw new Error("The metadata service redirected too many times.");
-  return new Promise((resolve, reject) => {
-    const request = NodeHttps.get(url, { headers }, (response) => {
-      const status = response.statusCode ?? 0;
-      if (status >= 300 && status < 400 && response.headers.location) {
-        response.resume();
-        void requestMetadataText(
-          new URL(response.headers.location, url),
-          headers,
-          redirects + 1,
-        ).then(resolve, reject);
-        return;
-      }
-      if (status < 200 || status >= 300) {
-        response.resume();
-        reject(new Error(`The metadata service returned HTTP ${status}.`));
-        return;
-      }
-      const chunks: Buffer[] = [];
-      let length = 0;
-      response.on("data", (chunk: Buffer) => {
-        length += chunk.byteLength;
-        if (length > MAX_METADATA_RESPONSE_BYTES) {
-          request.destroy(new Error("The metadata service returned too much data."));
-          return;
-        }
-        chunks.push(chunk);
-      });
-      response.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
-    });
-    request.setTimeout(METADATA_TIMEOUT_MS, () => {
-      request.destroy(new Error("The metadata request timed out."));
-    });
-    request.on("error", reject);
-  });
-}
-
-export async function requestMetadataJson(
-  url: URL,
-  headers: Readonly<Record<string, string>>,
-): Promise<unknown> {
-  return JSON.parse(await requestMetadataText(url, headers)) as unknown;
 }
 
 function record(value: unknown): Readonly<Record<string, unknown>> | null {

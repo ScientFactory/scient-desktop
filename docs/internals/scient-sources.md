@@ -197,7 +197,10 @@ researcher opened, increments the record revision exactly once, preserves the
 previous record in immutable history, and atomically replaces the current
 record. A normalized no-op does not create another revision and may safely
 acknowledge a retry whose first response was lost. Changed fields receive
-explicit `user` provenance; provenance for unchanged fields is preserved.
+provenance naming their writer (`user`, or `agent` for edits through the
+Sources toolkit); provenance for unchanged fields is preserved. Metadata, note
+and attachment writes also record the writer as the record's `updatedBy`, and
+an edit that changes identifiers drops the record's identifier verification.
 The stable source-type enum remains deliberately small; records classified as
 `other` may carry an optional researcher-defined label without widening the
 transport or citation type systems for every new scholarly genre.
@@ -219,19 +222,38 @@ italic controls in this slice. Their text direction is resolved by the browser
 from the note itself, so Hebrew, Arabic, English, and mixed research notes do
 not inherit an unrelated application direction.
 
-Provider agents use the same canonical store through a bounded nine-tool Sources
-MCP toolkit:
+Provider agents use the same canonical store through a bounded eight-tool
+Sources MCP toolkit:
 
 - `scient_sources_list` and `scient_sources_get` are bounded, read-only views;
 - `scient_sources_note_update` and `scient_sources_update` use optimistic
   revision safety for notes and canonical metadata;
 - `scient_sources_add` creates an idempotent source from supplied metadata or a
-  project-relative PDF and marks every agent-added source pending review;
+  project-relative PDF after checking its identifier (below);
 - `scient_sources_attach_pdf` and `scient_sources_detach_pdf` change canonical
-  attachments without exposing host paths;
-- `scient_sources_review` approves or rejects a pending agent-added source; and
+  attachments without exposing host paths; and
 - `scient_sources_remove` removes a canonical source only through the same
   revisioned removal path as the UI.
+
+Before an agent add writes anything, the server checks the source's DOI at
+doi.org (CSL-JSON), or failing that its PMID through PubMed esummary on the
+shared NCBI request lane, within a 6.5-second deadline. A DOI that doi.org
+itself reports as unregistered, or a PMID PubMed has no summary for, returns
+`identifier-not-found`; a registered work whose title does not match the
+title the agent supplied returns `identifier-mismatch` with the registry's title, first
+three creators, year and container. Neither writes a record. A confirmed
+identifier makes the registry's bibliographic fields authoritative, with `doi`
+or `pubmed` field provenance carrying the identifier and retrieval time, and
+stores verification `verified`. An unreachable or unusable registry adds the
+source as given with `unchecked`; a source without a DOI or PMID is
+`unverified`. An exact duplicate is reported without a lookup, and optional
+abstract enrichment runs after the check. Only agent adds record verification.
+
+Agent-added sources are not held for approval. Trust comes from that check,
+from attribution (origin actor, field provenance, `updatedBy` and revision
+history, all shown in the Sources panel) and from ordinary edit and removal.
+New records always store origin review `none`; older records that still say
+`pending` decode unchanged, and nothing gates on the value.
 
 The toolkit is project-scoped, does not write Zotero, and does not create a
 second agent-owned notes or source format. Read and write capabilities are

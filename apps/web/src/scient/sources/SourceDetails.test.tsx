@@ -215,7 +215,7 @@ describe("SourceDetails", () => {
     expect(markup).not.toContain(">Other source<");
   });
 
-  it("offers approve and reject actions for a pending agent source", () => {
+  it("credits agent work instead of asking for approval", () => {
     const markup = renderToStaticMarkup(
       <SourceDetails
         record={{
@@ -226,21 +226,24 @@ describe("SourceDetails", () => {
             operationId: "agent-operation",
             review: "pending",
           },
+          verification: { state: "verified" },
+          updatedBy: "agent",
         }}
         diagnostics={[]}
         onBack={() => undefined}
         onEdit={() => undefined}
         onSaveNote={saveNote}
         onRefreshMetadata={async () => undefined}
-        onApproveReview={async () => undefined}
         onRemove={async () => undefined}
         onOpenPdf={() => undefined}
       />,
     );
 
-    expect(markup).toContain("Approve review");
-    expect(markup).toContain(">Reject</button>");
-    expect(markup).toContain("Pending review");
+    expect(markup).toContain("Added by agent");
+    expect(markup).toContain("Identifier verified");
+    expect(markup).toContain("Edited by agent");
+    expect(markup).not.toContain("Pending review");
+    expect(markup).not.toContain("Approve");
   });
 });
 

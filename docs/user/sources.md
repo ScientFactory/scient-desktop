@@ -100,8 +100,17 @@ unknown values.
 
 In a project conversation, an agent can search and read the same project-owned
 library, maintain source notes, update metadata, attach or detach a project PDF,
-remove a source, or propose a new one. Agent-proposed sources are marked for
-your review; approve one to add it normally or reject it to remove the proposal.
+remove a source, or add a new one.
+
+Before an agent adds a source, Scient looks up its DOI at doi.org or its PMID in
+PubMed. If the identifier does not exist, or it belongs to a paper with a
+different title, nothing is added and the agent is told what the registry
+found. When the identifier checks out, Scient stores the registry's title,
+authors, date and journal instead of the agent's. The source's details show
+that an agent added it and whether its identifier was verified, not yet checked
+because the registry could not be reached, or missing. After an agent changes a
+source, its details say "Edited by agent". You can edit or remove these sources
+like any other.
 
 The conversation's [permission mode](permission-modes.md) and provider approval
 flow still apply to writes. Sources tools stay scoped to the current project:

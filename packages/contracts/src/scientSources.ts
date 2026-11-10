@@ -5,7 +5,6 @@ import {
   ScientSourceMetadataUpdateResult,
   ScientSourceNote,
   ScientSourceNoteUpdateResult,
-  ScientSourceReviewUpdateResult,
   ScientSourceRecord,
   ScientSourceRemovalResult,
   ScientSourceSummary,
@@ -82,15 +81,6 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
 });
 export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
 export { ScientSourceNoteUpdateResult };
-
-export const ScientSourceReviewUpdateRequest = Schema.Struct({
-  root: NonEmptyString,
-  sourceId: NonEmptyString,
-  expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
-  review: Schema.Literal("none"),
-});
-export type ScientSourceReviewUpdateRequest = typeof ScientSourceReviewUpdateRequest.Type;
-export { ScientSourceReviewUpdateResult };
 
 export const ScientSourceMetadataRefreshRequest = Schema.Struct({
   root: NonEmptyString,

@@ -4,6 +4,13 @@ import * as NodeCrypto from "node:crypto";
 import { observeSourceImport, type SourceImportObserver } from "./SourceImportObservation.ts";
 import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
 import {
+  applyResolvedSourceMetadata,
+  creatorDisplayName,
+  resolveSourceIdentifier,
+  titlesAgree,
+  type ResolveSourceIdentifier,
+} from "./SourceIdentifierResolver.ts";
+import {
   discardLocalPdfImportMaterial,
   getLocalPdfImportMaterial,
   prepareLocalPdfSource,
@@ -24,7 +31,9 @@ import {
   type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
   type ScientSourceFieldProvenance,
+  type ScientSourceIdentifier,
   type ScientSourceRecord,
+  type ScientSourceVerification,
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
@@ -46,7 +55,6 @@ import {
   updateSourceImportOperationItem,
   updateScientSourceMetadata,
   updateScientSourceNote,
-  updateScientSourceReview,
   sourceAttachmentAbsolutePath,
 } from "@scientfactory/scient-sources/store";
 
@@ -166,9 +174,32 @@ export async function updateSourceNote(input: Parameters<typeof updateScientSour
   return updateScientSourceNote(input);
 }
 
-export async function updateSourceReview(input: Parameters<typeof updateScientSourceReview>[0]) {
-  return updateScientSourceReview(input);
+export interface ResolvedSourceSummary {
+  readonly title: string | null;
+  readonly creators: ReadonlyArray<string>;
+  readonly issuedYear: number | null;
+  readonly containerTitle: string | null;
 }
+
+export type AgentSourceAddResult =
+  | Awaited<ReturnType<typeof importScientSource>>
+  | {
+      readonly outcome: "identifier-not-found";
+      readonly identifier: ScientSourceIdentifier;
+      readonly message: string;
+    }
+  | {
+      readonly outcome: "identifier-mismatch";
+      readonly identifier: ScientSourceIdentifier;
+      readonly resolved: ResolvedSourceSummary;
+      readonly message: string;
+    };
+
+const identifierLabel = (identifier: ScientSourceIdentifier) =>
+  `${identifier.scheme === "doi" ? "DOI" : "PMID"} ${identifier.value}`;
+
+const registryName = (identifier: ScientSourceIdentifier) =>
+  identifier.scheme === "doi" ? "doi.org" : "PubMed";
 
 export async function addAgentSource(
   input: {
@@ -179,15 +210,69 @@ export async function addAgentSource(
     readonly pdfPath?: string;
     readonly pdfFileName?: string;
     readonly expectedPdf?: { readonly sha256: string; readonly byteLength: number };
+    readonly resolveIdentifier?: ResolveSourceIdentifier;
+    /** The title the agent asserted; PDF-derived and filename titles are not claims. */
+    readonly claimedTitle?: string | null;
   },
   observer?: SourceImportObserver,
-) {
-  return observeSourceImport(
+): Promise<AgentSourceAddResult> {
+  return observeSourceImport<AgentSourceAddResult>(
     observer,
     async () => {
-      const candidate = input.enrich
-        ? await enrichScientSourceCandidate(input.candidate)
-        : input.candidate;
+      const preliminary = assessSourceDuplicate({
+        candidate: input.candidate,
+        existing: await listScientSourceRecords(input.root),
+        ...(input.expectedPdf ? { pdfSha256: input.expectedPdf.sha256 } : {}),
+      });
+      // An exact duplicate is reported as before, without asking a registry.
+      const exactDuplicate =
+        preliminary.kind !== "new" && preliminary.kind !== "possible-metadata-match";
+      const resolution = exactDuplicate
+        ? null
+        : await (input.resolveIdentifier ?? resolveSourceIdentifier)(input.candidate.identifiers);
+      if (resolution?.status === "not-found") {
+        return {
+          outcome: "identifier-not-found",
+          identifier: resolution.identifier,
+          message: `The ${identifierLabel(resolution.identifier)} does not exist at ${registryName(resolution.identifier)}. Check the identifier; do not guess.`,
+        };
+      }
+      if (
+        resolution?.status === "found" &&
+        input.claimedTitle &&
+        resolution.metadata.title &&
+        !titlesAgree(input.claimedTitle, resolution.metadata.title)
+      ) {
+        return {
+          outcome: "identifier-mismatch",
+          identifier: resolution.identifier,
+          resolved: {
+            title: resolution.metadata.title,
+            creators: resolution.metadata.creators
+              .slice(0, 3)
+              .flatMap((creator) => creatorDisplayName(creator) ?? []),
+            issuedYear: resolution.metadata.issuedYear,
+            containerTitle: resolution.metadata.containerTitle,
+          },
+          message: `The ${identifierLabel(resolution.identifier)} belongs to a work with a different title. Check whether the identifier or the title is wrong; do not guess. If the resolved work is the one meant, add it again without a title.`,
+        };
+      }
+      const verification: ScientSourceVerification | null = exactDuplicate
+        ? null
+        : resolution === null
+          ? { state: "unverified" }
+          : resolution.status === "found"
+            ? {
+                state: "verified",
+                identifier: resolution.identifier,
+                checkedAt: resolution.retrievedAt,
+              }
+            : { state: "unchecked", identifier: resolution.identifier };
+      const resolved =
+        resolution?.status === "found"
+          ? applyResolvedSourceMetadata(input.candidate, resolution)
+          : input.candidate;
+      const candidate = input.enrich ? await enrichScientSourceCandidate(resolved) : resolved;
       const candidateWithPdfName =
         input.pdfPath && input.pdfFileName
           ? { ...candidate, pdfFileName: input.pdfFileName }
@@ -198,7 +283,7 @@ export async function addAgentSource(
         candidate: candidateWithPdfName,
         actor: "agent",
         intake: input.pdfPath ? "local-pdf" : "identifier",
-        review: "pending",
+        ...(verification ? { verification } : {}),
         allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
         ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
         ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
@@ -670,7 +755,6 @@ export async function advanceSourceImport(
             candidate,
             actor: operation.actor,
             intake: operation.intake,
-            review: operation.actor === "agent" ? "pending" : "none",
             ...(pdfPath ? { pdfPath } : {}),
             ...(expectedPdf ? { expectedPdf } : {}),
             allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,

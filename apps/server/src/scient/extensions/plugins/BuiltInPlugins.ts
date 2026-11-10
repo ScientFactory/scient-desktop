@@ -38,7 +38,6 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
         "scient_sources_add",
         "scient_sources_update",
         "scient_sources_note_update",
-        "scient_sources_review",
         "scient_sources_remove",
         "scient_sources_attach_pdf",
         "scient_sources_detach_pdf",

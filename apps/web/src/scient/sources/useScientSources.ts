@@ -10,7 +10,6 @@ import { useEffect, useLayoutEffect, useReducer, useRef } from "react";
 import { randomUUID } from "../../lib/utils";
 import {
   advanceSourcesImport,
-  approveScientSource,
   beginLocalSourcesImport,
   beginZoteroItemsImport,
   beginZoteroScopeImport,
@@ -214,30 +213,6 @@ export function useScientSources(input: {
     });
     if (isCurrentContext()) acceptSourceRecord(result.record);
     return result;
-  };
-
-  const approveSource = async (sourceId: string, expectedRevision: number) => {
-    dispatch({ type: "busyChanged", busy: true });
-    dispatch({ type: "errorCleared" });
-    return await (async () => {
-      const result = await approveScientSource(input.environmentId, {
-        root: input.root,
-        sourceId,
-        expectedRevision,
-      });
-      if (isCurrentContext()) {
-        acceptSourceRecord(result.record);
-        await refreshOverview();
-      }
-      return result;
-    })()
-      .catch(async (cause) => {
-        if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
-        throw cause;
-      })
-      .finally(() => {
-        if (isCurrentContext()) dispatch({ type: "busyChanged", busy: false });
-      });
   };
 
   const resetSourceContext = useStableCallback((expectedContext: string) => {
@@ -870,7 +845,6 @@ export function useScientSources(input: {
     loadSource,
     refreshSourceMetadata,
     saveSourceNote,
-    approveSource,
     removeSource,
     clearError: () => dispatch({ type: "errorCleared" }),
     clearOperationSummary: () => dispatch({ type: "importReviewDismissed" }),

@@ -15,7 +15,6 @@ import {
   type ScientSourceIdentifier,
   type ScientSourcePreflightItem,
   type ScientSourceRecord,
-  type ScientSourceType,
 } from "@scientfactory/scient-sources";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
@@ -31,7 +30,18 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import { runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
-import { enrichScientSourceCandidate, requestMetadataJson } from "./SourceMetadataEnricher.ts";
+import { requestMetadataJson } from "./metadataHttp.ts";
+import {
+  cslCreators,
+  cslIssuedDate,
+  decodeCslMetadata,
+  decodePubmedResponse,
+  decodePubmedSummary,
+  sourceTypeFromCsl,
+  type CslMetadata,
+  type PubmedSummary,
+} from "./SourceIdentifierResolver.ts";
+import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
 
 const MAX_EXTRACTED_TEXT_LENGTH = 64 * 1024;
 
@@ -43,60 +53,7 @@ const PdfInfo = Schema.Struct({
   CreationDate: Schema.optionalKey(Schema.Unknown),
 });
 
-const CslCreator = Schema.Struct({
-  given: Schema.optionalKey(Schema.String),
-  family: Schema.optionalKey(Schema.String),
-  literal: Schema.optionalKey(Schema.String),
-});
-const CslDate = Schema.Struct({
-  "date-parts": Schema.optionalKey(
-    Schema.Array(Schema.Array(Schema.Union([Schema.String, Schema.Number]))),
-  ),
-  raw: Schema.optionalKey(Schema.String),
-});
-const CslMetadata = Schema.Struct({
-  type: Schema.optionalKey(Schema.String),
-  title: Schema.optionalKey(Schema.String),
-  author: Schema.optionalKey(Schema.Array(CslCreator)),
-  issued: Schema.optionalKey(CslDate),
-  DOI: Schema.optionalKey(Schema.String),
-  ISBN: Schema.optionalKey(Schema.String),
-  ISSN: Schema.optionalKey(Schema.Union([Schema.String, Schema.Array(Schema.String)])),
-  abstract: Schema.optionalKey(Schema.String),
-  "container-title": Schema.optionalKey(Schema.String),
-  publisher: Schema.optionalKey(Schema.String),
-  volume: Schema.optionalKey(Schema.String),
-  issue: Schema.optionalKey(Schema.String),
-  page: Schema.optionalKey(Schema.String),
-  language: Schema.optionalKey(Schema.String),
-  URL: Schema.optionalKey(Schema.String),
-});
-type CslMetadata = typeof CslMetadata.Type;
-
-const PubmedAuthor = Schema.Struct({ name: Schema.optionalKey(Schema.String) });
-const PubmedArticleId = Schema.Struct({
-  idtype: Schema.optionalKey(Schema.String),
-  value: Schema.optionalKey(Schema.String),
-});
-const PubmedSummary = Schema.Struct({
-  title: Schema.optionalKey(Schema.String),
-  authors: Schema.optionalKey(Schema.Array(PubmedAuthor)),
-  pubdate: Schema.optionalKey(Schema.String),
-  fulljournalname: Schema.optionalKey(Schema.String),
-  source: Schema.optionalKey(Schema.String),
-  volume: Schema.optionalKey(Schema.String),
-  issue: Schema.optionalKey(Schema.String),
-  pages: Schema.optionalKey(Schema.String),
-  lang: Schema.optionalKey(Schema.Array(Schema.String)),
-  articleids: Schema.optionalKey(Schema.Array(PubmedArticleId)),
-});
-const PubmedResponse = Schema.Struct({
-  result: Schema.Record(Schema.String, Schema.Unknown),
-});
 const decodePdfInfo = Schema.decodeUnknownSync(PdfInfo);
-const decodeCslMetadata = Schema.decodeUnknownSync(CslMetadata);
-const decodePubmedResponse = Schema.decodeUnknownSync(PubmedResponse);
-const decodePubmedSummary = Schema.decodeUnknownSync(PubmedSummary);
 
 function textValues(value: unknown): ReadonlyArray<string> {
   const values = Array.isArray(value) ? value : [value];
@@ -164,39 +121,6 @@ function normalizeEmbeddedPdfDate(value: unknown): string | null {
   return [pdfYear, pdfDate[2], pdfDate[3]].filter(Boolean).join("-");
 }
 
-function cslIssuedDate(issued: CslMetadata["issued"]): {
-  readonly raw: string | null;
-  readonly year: number | null;
-} {
-  const raw = text(issued?.raw);
-  const datePart = issued?.["date-parts"]?.[0] ?? [];
-  const values = datePart
-    .slice(0, 3)
-    .map((value) => (typeof value === "number" ? value : Number.parseInt(value, 10)));
-  const [issuedYear, month, day] = values;
-  const validYear =
-    issuedYear !== undefined && issuedYear >= 1500 && issuedYear <= 2199 ? issuedYear : null;
-  const validMonth = month !== undefined && month >= 1 && month <= 12 ? month : null;
-  const validDay =
-    day !== undefined && validMonth !== null
-      ? day >= 1 && day <= new Date(Date.UTC(validYear ?? 2000, validMonth, 0)).getUTCDate()
-        ? day
-        : null
-      : null;
-  const formatted =
-    validYear === null
-      ? null
-      : [
-          String(validYear),
-          ...(validMonth === null ? [] : [String(validMonth).padStart(2, "0")]),
-          ...(validDay === null ? [] : [String(validDay).padStart(2, "0")]),
-        ].join("-");
-  return {
-    raw: raw ?? formatted,
-    year: validYear ?? year(raw),
-  };
-}
-
 function embeddedCreatorNames(value: unknown): ReadonlyArray<string> {
   return textValues(value).flatMap((entry) => {
     const explicitlySeparated = entry
@@ -236,44 +160,6 @@ function embeddedCreators(value: unknown): ReadonlyArray<ScientSourceCreator> {
             literalName: name,
           };
     });
-}
-
-function cslCreators(values: ReadonlyArray<typeof CslCreator.Type> | undefined) {
-  return (values ?? []).flatMap((value): ReadonlyArray<ScientSourceCreator> => {
-    const givenName = text(value.given);
-    const familyName = text(value.family);
-    const literalName = text(value.literal);
-    return givenName || familyName || literalName
-      ? [{ creatorType: "author", givenName, familyName, literalName }]
-      : [];
-  });
-}
-
-function sourceTypeFromCsl(value: string | undefined): ScientSourceType {
-  switch (value) {
-    case "article-journal":
-    case "journal-article":
-    case "article-magazine":
-    case "article-newspaper":
-      return "article";
-    case "paper-conference":
-      return "conference-paper";
-    case "chapter":
-      return "book-chapter";
-    case "book":
-      return "book";
-    case "thesis":
-      return "thesis";
-    case "report":
-      return "report";
-    case "dataset":
-      return "dataset";
-    case "webpage":
-    case "post-weblog":
-      return "web";
-    default:
-      return "other";
-  }
 }
 
 function deduplicateIdentifiers(
@@ -368,7 +254,7 @@ function candidateFromCsl(input: {
 
 function candidateFromPubmed(input: {
   readonly pmid: string;
-  readonly summary: typeof PubmedSummary.Type;
+  readonly summary: PubmedSummary;
   readonly fallback: ScientSourceCandidate;
 }): ScientSourceCandidate {
   const creators = (input.summary.authors ?? []).flatMap(
@@ -450,7 +336,7 @@ async function resolveDoi(doi: string): Promise<CslMetadata | null> {
   return null;
 }
 
-async function resolvePubmed(pmid: string): Promise<typeof PubmedSummary.Type | null> {
+async function resolvePubmed(pmid: string): Promise<PubmedSummary | null> {
   try {
     const parameters = new URLSearchParams({
       db: "pubmed",
@@ -465,7 +351,7 @@ async function resolvePubmed(pmid: string): Promise<typeof PubmedSummary.Type | 
       ),
     );
     const decoded = decodePubmedResponse(value);
-    const summary = decoded.result[pmid];
+    const summary = decoded.result?.[pmid];
     return summary === undefined ? null : decodePubmedSummary(summary);
   } catch {
     return null;

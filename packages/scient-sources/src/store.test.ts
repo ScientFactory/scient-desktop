@@ -554,9 +554,11 @@ describe("Scient source store", () => {
       root,
       operationId: NodeCrypto.randomUUID(),
       candidate,
+      verification: { state: "verified", identifier: { scheme: "doi", value: "10.1000/local" } },
     });
     const record = imported.record;
     if (!record) throw new Error("Expected an imported record.");
+    expect(record.verification?.state).toBe("verified");
 
     const result = await updateScientSourceMetadata({
       root,
@@ -606,6 +608,8 @@ describe("Scient source store", () => {
     );
     expect(result.record.externalReferences).toEqual(record.externalReferences);
     expect(result.record.attachments).toEqual(record.attachments);
+    expect(result.record.updatedBy).toBe("user");
+    expect(result.record).not.toHaveProperty("verification");
     const history = JSON.parse(
       await NodeFSP.readFile(
         NodePath.join(

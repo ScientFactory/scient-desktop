@@ -59,7 +59,7 @@ import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceJournalIcon } from "./SourceJournalIcon";
-import { newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
+import { agentVerificationLabel, newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
 import {
   filterScientSourceSearchIndex,
   indexScientSourceSummaries,
@@ -978,17 +978,6 @@ export function ScientSourcesPanel(props: {
           setEditingSource(false);
           setSelectedSourceId(null);
         }}
-        onApproveReview={async () => {
-          const result = await sources.approveSource(
-            selectedRecord.sourceId,
-            selectedRecord.revision,
-          );
-          if (result.outcome === "stale") {
-            throw new Error(
-              "This source changed after you opened it. Review the latest version, then try again.",
-            );
-          }
-        }}
         onGetPdf={async () => {
           const doi = selectedRecord.identifiers.find(
             (identifier) => identifier.scheme.toLowerCase() === "doi",
@@ -1300,7 +1289,7 @@ export function ScientSourcesPanel(props: {
                                   record.origin?.actor === "agent",
                                 )}
                               </span>
-                              {record.origin?.review === "pending" ? " · Pending review" : ""}
+                              {agentVerificationLabel(record)}
                             </span>
                           </span>
                         </button>

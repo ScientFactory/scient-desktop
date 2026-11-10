@@ -18,7 +18,6 @@ vi.mock("./client", () => ({
   readScientSources: mocks.readScientSources,
   readScientSource: vi.fn(),
   advanceSourcesImport: vi.fn(),
-  approveScientSource: vi.fn(),
   beginLocalSourcesImport: vi.fn(),
   beginZoteroItemsImport: vi.fn(),
   beginZoteroScopeImport: vi.fn(),

@@ -15,6 +15,7 @@ import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicat
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
 import {
   applyEditableMetadata,
+  changedEditableMetadataFields,
   editableMetadataEquals,
   editableMetadataFromRecord,
   normalizeScientSourceEditableMetadata,
@@ -26,6 +27,7 @@ import {
   ScientSourceRecord,
   ScientSourceStagedMaterial,
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
+  type ScientSourceActor,
   type ScientSourceAttachment,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
@@ -34,10 +36,10 @@ import {
   type ScientSourceFieldProvenance,
   type ScientSourceMetadataUpdateResult,
   type ScientSourceNoteUpdateResult,
-  type ScientSourceReviewUpdateResult,
   type ScientSourceStagedMaterial as ScientSourceStagedMaterialType,
   type ScientSourceRemovalResult,
   type ScientSourcesOverview,
+  type ScientSourceVerification,
 } from "./model.ts";
 
 export const SCIENT_SOURCES_DIRECTORY = ".scient/sources";
@@ -386,6 +388,7 @@ export async function updateScientSourceMetadata(input: {
   readonly fieldProvenance?: ReadonlyArray<ScientSourceFieldProvenance>;
   readonly allowPossibleMetadataMatch?: boolean;
   readonly allowExistingValidationIssues?: boolean;
+  readonly actor?: ScientSourceActor;
 }): Promise<ScientSourceMetadataUpdateResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
@@ -428,11 +431,18 @@ export async function updateScientSourceMetadata(input: {
       return { outcome: "duplicate", record: current, duplicate, validationIssues };
     }
 
-    const updated = applyEditableMetadata({
+    const applied = applyEditableMetadata({
       record: current,
       metadata: normalized,
       updatedAt: new Date().toISOString(),
+      actor: input.actor ?? "user",
     });
+    const identifiersChanged = changedEditableMetadataFields(currentMetadata, normalized).includes(
+      "identifiers",
+    );
+    const { verification: _staleVerification, ...unverified } = applied;
+    // A verification vouches only for the identifiers it checked.
+    const updated = identifiersChanged ? unverified : applied;
     const next = input.fieldProvenance
       ? { ...updated, fieldProvenance: [...input.fieldProvenance] }
       : updated;
@@ -452,6 +462,7 @@ export async function updateScientSourceNote(input: {
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly note: string | null;
+  readonly actor?: ScientSourceActor;
 }): Promise<ScientSourceNoteUpdateResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
@@ -471,33 +482,7 @@ export async function updateScientSourceNote(input: {
       note,
       revision: current.revision + 1,
       updatedAt: new Date().toISOString(),
-    };
-    await persistSourceRevision(paths, current, next);
-    return { outcome: "updated", record: next };
-  });
-}
-
-export async function updateScientSourceReview(input: {
-  readonly root: string;
-  readonly sourceId: string;
-  readonly expectedRevision: number;
-  readonly review: "none" | "pending";
-}): Promise<ScientSourceReviewUpdateResult> {
-  const paths = await sourceStorePaths(input.root);
-  assertSafeIdentifier(input.sourceId, "Source ID");
-
-  return withOperationLock(`${paths.root}:source-write`, async () => {
-    const current = await readSourceRecordFromPaths(paths, input.sourceId);
-    const currentReview = current.origin?.review ?? "none";
-    if (currentReview === input.review) return { outcome: "unchanged", record: current };
-    if (current.revision !== input.expectedRevision) {
-      return { outcome: "stale", record: current };
-    }
-    const next: ScientSourceRecord = {
-      ...current,
-      ...(current.origin ? { origin: { ...current.origin, review: input.review } } : {}),
-      revision: current.revision + 1,
-      updatedAt: new Date().toISOString(),
+      updatedBy: input.actor ?? "user",
     };
     await persistSourceRevision(paths, current, next);
     return { outcome: "updated", record: next };
@@ -1384,6 +1369,7 @@ export async function attachScientSourcePdf(input: {
   readonly expectedRevision: number;
   readonly pdfPath: string;
   readonly fileName?: string;
+  readonly actor?: ScientSourceActor;
 }): Promise<ScientSourcePdfAttachmentResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
@@ -1415,6 +1401,7 @@ export async function attachScientSourcePdf(input: {
       revision: current.revision + 1,
       attachments: [...current.attachments, attachment],
       updatedAt: new Date().toISOString(),
+      updatedBy: input.actor ?? "user",
     };
     await persistSourceRevision(paths, current, next);
     return { outcome: "attached", record: next, duplicate: emptyDuplicate };
@@ -1434,6 +1421,7 @@ export async function detachScientSourcePdf(input: {
   readonly sourceId: string;
   readonly attachmentId: string;
   readonly expectedRevision: number;
+  readonly actor?: ScientSourceActor;
 }): Promise<ScientSourcePdfDetachmentResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
@@ -1476,6 +1464,7 @@ export async function detachScientSourcePdf(input: {
         (attachment) => attachment.attachmentId !== input.attachmentId,
       ),
       updatedAt: new Date().toISOString(),
+      updatedBy: input.actor ?? "user",
     };
     await persistSourceRevision(paths, current, next);
 
@@ -1520,9 +1509,9 @@ interface ImportScientSourceInput {
   readonly pdfPath?: string;
   readonly expectedPdf?: ScientSourcePdfInspection;
   readonly allowPossibleMetadataMatch?: boolean;
-  readonly actor?: "user" | "agent";
+  readonly actor?: ScientSourceActor;
   readonly intake?: "zotero" | "local-pdf" | "identifier";
-  readonly review?: "none" | "pending";
+  readonly verification?: ScientSourceVerification;
 }
 
 async function importScientSourceWithRecordLookup(
@@ -1600,10 +1589,11 @@ async function importScientSourceWithRecordLookup(
               actor: input.actor,
               intake: input.intake ?? "local-pdf",
               operationId: input.operationId,
-              review: input.review ?? (input.actor === "agent" ? "pending" : "none"),
+              review: "none",
             },
           }
         : {}),
+      ...(input.verification ? { verification: input.verification } : {}),
       importedAt,
     };
     const recordPath = sourceRecordPath(paths, sourceId);

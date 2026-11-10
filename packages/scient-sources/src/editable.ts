@@ -1,4 +1,5 @@
 import type {
+  ScientSourceActor,
   ScientSourceCreator,
   ScientSourceEditableMetadata,
   ScientSourceFieldProvenance,
@@ -193,7 +194,9 @@ export function applyEditableMetadata(input: {
   readonly record: ScientSourceRecord;
   readonly metadata: ScientSourceEditableMetadata;
   readonly updatedAt: string;
+  readonly actor?: ScientSourceActor;
 }): ScientSourceRecord {
+  const actor = input.actor ?? "user";
   const previous = normalizeScientSourceEditableMetadata(editableMetadataFromRecord(input.record));
   const next = normalizeScientSourceEditableMetadata(input.metadata);
   const changed = changedEditableMetadataFields(previous, next);
@@ -201,9 +204,7 @@ export function applyEditableMetadata(input: {
   const fieldProvenance = input.record.fieldProvenance.filter(
     (entry) => !belongsToChangedField(entry, changedSet),
   );
-  fieldProvenance.push(
-    ...changed.map((field) => ({ field, origin: "user" as const, sourceField: null })),
-  );
+  fieldProvenance.push(...changed.map((field) => ({ field, origin: actor, sourceField: null })));
   const abstractChanged = changedSet.has("abstract");
   const abstract = abstractChanged ? normalizeScientSourceAbstractDocument(next.abstract) : null;
   const updated = {
@@ -212,6 +213,7 @@ export function applyEditableMetadata(input: {
     revision: input.record.revision + 1,
     fieldProvenance,
     updatedAt: input.updatedAt,
+    updatedBy: actor,
   };
   if (!abstractChanged) return updated;
   if (abstract) return { ...updated, abstractSections: [...abstract.sections] };

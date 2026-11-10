@@ -30,6 +30,20 @@ export function newlyObservedSourceIds(
     .map((record) => record.sourceId);
 }
 
+const VERIFICATION_LABELS = {
+  verified: "Identifier verified",
+  unchecked: "Not yet checked",
+  unverified: "No identifier",
+} as const;
+
+export function agentVerificationLabel(record: {
+  readonly origin?: { readonly actor?: string } | null | undefined;
+  readonly verification?: { readonly state: keyof typeof VERIFICATION_LABELS } | undefined;
+}): string {
+  if (record.origin?.actor !== "agent" || !record.verification) return "";
+  return ` · ${VERIFICATION_LABELS[record.verification.state]}`;
+}
+
 export function sourceAddedLabel(
   importedAt: string,
   recentlyAdded: boolean,

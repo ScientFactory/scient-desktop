@@ -69,9 +69,21 @@ export const ScientSourceOrigin = Schema.Struct({
   actor: Schema.Literals(["user", "agent"]),
   intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
   operationId: NonEmptyString,
+  // Older records may still say "pending"; nothing gates on it any more.
   review: Schema.Literals(["none", "pending"]),
 });
 export type ScientSourceOrigin = typeof ScientSourceOrigin.Type;
+
+export const ScientSourceActor = Schema.Literals(["user", "agent"]);
+export type ScientSourceActor = typeof ScientSourceActor.Type;
+
+/** Whether an agent-added source's identifier was confirmed against its registry. */
+export const ScientSourceVerification = Schema.Struct({
+  state: Schema.Literals(["verified", "unchecked", "unverified"]),
+  identifier: Schema.optionalKey(ScientSourceIdentifier),
+  checkedAt: Schema.optionalKey(NonEmptyString),
+});
+export type ScientSourceVerification = typeof ScientSourceVerification.Type;
 
 export const ScientSourceFieldProvenance = Schema.Struct({
   field: NonEmptyString,
@@ -139,8 +151,10 @@ export const ScientSourceRecord = Schema.Struct({
   attachments: Schema.Array(ScientSourceAttachment),
   fieldProvenance: Schema.Array(ScientSourceFieldProvenance),
   origin: Schema.optionalKey(ScientSourceOrigin),
+  verification: Schema.optionalKey(ScientSourceVerification),
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
+  updatedBy: Schema.optionalKey(ScientSourceActor),
 });
 export type ScientSourceRecord = typeof ScientSourceRecord.Type;
 
@@ -163,6 +177,7 @@ export const ScientSourceSummary = Schema.Struct({
   importedAt: ScientSourceRecord.fields.importedAt,
   updatedAt: ScientSourceRecord.fields.updatedAt,
   origin: Schema.optional(ScientSourceOrigin),
+  verification: Schema.optional(ScientSourceVerification),
 });
 export type ScientSourceSummary = typeof ScientSourceSummary.Type;
 
@@ -187,6 +202,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
     importedAt: record.importedAt,
     ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
     ...(record.origin ? { origin: record.origin } : {}),
+    ...(record.verification ? { verification: record.verification } : {}),
   };
 }
 
@@ -293,12 +309,6 @@ export const ScientSourceNoteUpdateResult = Schema.Struct({
   record: ScientSourceRecord,
 });
 export type ScientSourceNoteUpdateResult = typeof ScientSourceNoteUpdateResult.Type;
-
-export const ScientSourceReviewUpdateResult = Schema.Struct({
-  outcome: Schema.Literals(["updated", "unchanged", "stale"]),
-  record: ScientSourceRecord,
-});
-export type ScientSourceReviewUpdateResult = typeof ScientSourceReviewUpdateResult.Type;
 
 export const ScientSourceRemovalResult = Schema.Struct({
   outcome: Schema.Literals(["removed", "not-found", "stale"]),

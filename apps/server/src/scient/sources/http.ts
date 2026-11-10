@@ -36,7 +36,6 @@ import {
   retrySourceImport,
   updateScientSource,
   updateSourceNote,
-  updateSourceReview,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
 
@@ -146,11 +145,6 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("updateNote", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             updateSourceNote(args.payload),
-          ),
-        )
-        .handle("updateReview", (args) =>
-          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            updateSourceReview(args.payload),
           ),
         )
         .handle("refreshMetadata", (args) =>
