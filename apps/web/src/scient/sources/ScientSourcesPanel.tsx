@@ -63,6 +63,7 @@ import { initializeScientProjectForOpening } from "../../lib/scientProjectInitia
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { SourceAnnotations } from "../annotations/SourceAnnotations";
 import { ReferenceCheckButton } from "../references/ReferenceCheckButton";
 import { AddByIdentifier } from "./AddByIdentifier";
 import { SourceDetails } from "./SourceDetails";
@@ -1133,6 +1134,14 @@ export function ScientSourcesPanel(props: {
             });
           }}
           onOpenPdf={props.onOpenPdf}
+          annotations={
+            <SourceAnnotations
+              environmentId={props.environmentId}
+              root={props.root}
+              record={selectedRecord}
+              onOpenPdf={props.onOpenPdf}
+            />
+          }
         />
         {historySourceId === selectedRecord.sourceId ? (
           <SourceHistoryDialog

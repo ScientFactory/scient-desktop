@@ -319,7 +319,8 @@ history, all shown in the Sources panel) and from ordinary edit and removal.
 New records always store origin review `none`; older records that still say
 `pending` decode unchanged, and nothing gates on the value.
 
-The toolkit is project-scoped, does not write Zotero, and does not create a
+The toolkit is project-scoped, writes Zotero only through
+`scient_sources_zotero_send`, and does not create a
 second agent-owned notes or source format. Read and write capabilities are
 separate, mutating tool descriptions require an explicit user request, and
 normal agent tool authorization remains the approval boundary rather than a
@@ -546,42 +547,90 @@ and paths outside the project, and replaces an existing file only with
 
 ## Zotero boundary
 
-The adapter uses Zotero's read-only local API v3 at the fixed loopback endpoint
-`127.0.0.1:23119`. It does not scan Zotero's database, accept arbitrary hosts,
-store credentials, write library data, or depend on Zotero cloud sync. Responses
-are time- and size-bounded and decoded through explicit schemas. PDF paths come
-from Zotero's local attachment endpoint and are revalidated by the store.
+One reader (`ZoteroLibraryReader.ts`) works over two transports. The local
+transport (`ZoteroLocalAdapter.ts`) uses Zotero's read-only local API v3 at the
+fixed loopback endpoint `127.0.0.1:23119`, plus Better BibTeX's local JSON-RPC
+`item.citationkey` for keys an item does not carry itself. The web transport
+(`ZoteroWebAdapter.ts`) reads and writes the key owner's personal library at
+`api.zotero.org`. Neither scans Zotero's database or accepts arbitrary hosts.
+Responses are time- and size-bounded and decoded through explicit schemas;
+mapping lives in `ZoteroItems.ts`.
 
-Connection states distinguish ready, local access disabled, incompatible API,
-malformed response, and unreachable. The local API alone cannot honestly prove
-whether an unreachable Zotero installation is absent or merely not running, so
-the product does not invent that distinction.
+The zotero.org key comes from Accounts (`ZoteroAccountKey.ts`): the newest
+API-key account whose site is zotero.org or whose variable is `ZOTERO_API_KEY`.
+Off always stops its use. For agents, the global agent switch and the account's
+project scope apply and Ask counts as allowed, as for connector bindings: the
+saved key is the user's approval. Each use is recorded in Accounts activity
+without the value. The key is read on the server, sent only to
+`api.zotero.org` (file redirects drop it), and never appears in tool output.
+Key checks (`/keys/current`) are cached for five minutes by key digest; writes
+check again.
+
+Without a requested connection, the status check prefers Zotero on this
+computer and falls back to zotero.org when a key works; the chosen connection
+travels with browse, preflight and import requests, and a zotero.org import is
+recorded with the `zotero-web` operation adapter so resumed steps read the same
+library. Local item keys and zotero.org keys name the same items in the user's
+personal library (local library ID `0` and the zotero.org user ID are the same
+library). Group libraries are not supported.
+
+Connection states distinguish ready, access disabled (or a refused key),
+incompatible API, malformed response, and unreachable. The local API alone
+cannot honestly prove whether an unreachable Zotero installation is absent or
+merely not running, so the product does not invent that distinction.
 
 Library pagination advances by the number of raw Zotero items received, even
-when unsupported note or annotation items are filtered from the Scient view.
-Import re-fetches each selected item immediately before storing it.
+when notes, annotations and attachments are filtered from the Scient view.
+Import re-fetches each selected item with all its children immediately before
+storing it. Child notes (HTML) become the source note as plain text with
+Markdown bold and italic; every stored or linked PDF is copied (the first with
+the record, the rest attached), and a PDF Zotero cannot provide is skipped
+rather than failing the item. zotero.org PDFs are streamed to a temporary file
+that is removed after import. Identifiers Zotero keeps in Extra (PMID, PMCID,
+arXiv, DOI for types without a DOI field) and the citation key (Zotero's field,
+then Better BibTeX's `Citation Key:` line, then Better BibTeX's JSON-RPC) are
+read; S2's key rules keep it.
 
-Zotero collections are treated only as adapter-side intake scopes; they never
-enter the canonical Scient source record. The UI exposes the flat Zotero
-collection graph as readable parent/child paths. Browsing and importing a
-selected collection uses Zotero's bounded server-side pagination for that
-exact collection; nested collections are selected explicitly. This avoids
-materializing an entire collection tree merely to render one page. **My
-Library** remains available as an explicit whole-library scope. Scope discovery
-is read-only, capped at 500 importable references per operation, and fails
-with a request to choose a smaller scope above that bound.
+Zotero collections are intake scopes when browsing. After an item is imported
+it joins a Library collection (`collections.json`) named after each Zotero
+collection it belongs to, nested ones as `Parent / Child`; a collection problem
+never fails the import. Scope discovery is capped at 500 importable references
+per operation and fails with a request to choose a smaller scope above that
+bound. Collection and whole-library actions skip the separate preflight
+screen; each item is still validated, duplicate-assessed and committed by the
+normal importer, and exact or possible matches are skipped. A zotero.org
+preflight does not hash PDFs (that would download every file); identifier,
+origin and metadata duplicate checks still run.
 
-Collection and whole-library actions deliberately skip a separate preflight
-screen. Each item is still re-fetched, validated, duplicate-assessed, and
-committed by the normal importer. Exact matches and possible metadata matches
-are safely skipped rather than overwriting project-owned corrections; selected
-single-item intake retains the explicit possible-match override workflow.
+### Refresh and Send to Zotero
 
-Zotero items may have several PDF children. The adapter counts all of them and
-selects one deterministically by portable filename and item key. Preflight
-identifies the chosen filename and warns that the remaining PDFs are outside
-this first slice. Full multi-attachment intake requires attachment-level
-duplicate and presentation decisions and is deliberately deferred.
+`ZoteroSync.ts` keeps, per source, what Zotero held at the last import,
+refresh or send in `.scient/sources/sync/zotero/<sourceId>.json`, apart from
+the record. Refresh (`ZoteroRefreshPlan.ts`) is a three-way merge against it:
+a field Zotero changed is taken unless it was edited here (field provenance
+`user` or `agent`), in which case the value here is kept and reported as a
+conflict. A conflict keeps its old merge base, so it is reported again until
+the user takes Zotero's value (`useZotero`) or keeps theirs (`keepLocal`).
+Empty Zotero values never clear a field; tags merge as additions and removals;
+notes follow the same rule as fields; new PDFs (by attachment key) are
+attached; the record's Zotero item version is updated; an item gone from Zotero
+is reported and left alone. Without a sync file (sources imported before this
+existed), every difference counts as a Zotero change. The citation key is never
+changed by a refresh.
+
+Send to Zotero (`ZoteroWrite.ts`) is one way and needs the zotero.org key with
+write access. A source without a Zotero item is created with a write token
+derived from its project, ID and revision (a retry creates nothing new), with
+the source note as a child note, and the source is linked to the new item. A
+linked source is patched with only the fields that differ, using the item's
+own field set and `If-Unmodified-Since-Version`; if the item changed in Zotero
+since Scient last read it, nothing is sent and the user is asked to refresh.
+Empty values here are never sent. Extra keeps its unmanaged lines and carries
+the citation key and identifiers without a Zotero field. PDFs are not uploaded.
+
+Agent tools `scient_sources_zotero_browse`, `_import`, `_refresh` and `_send`
+give agents the same power; their messages pass through only Zotero's own
+explanations, never local paths.
 
 ## Operations and recovery
 
@@ -687,7 +736,8 @@ Library's normal PDF import.
 
 ## Deliberate exclusions
 
-This slice does not implement Zotero write-back or sync, attaching PDFs named
+This slice does not implement two-way Zotero sync, Zotero group libraries,
+uploading PDFs to Zotero, attaching PDFs named
 in a reference file's `file` field, source merging,
 automatic possible-duplicate merging, multi-source
 bibliographies, arbitrary CSL style installation, annotations, evidence claims,

@@ -329,3 +329,25 @@ it.effect("files a waiting paper on the source a later request names", () =>
     }),
   ),
 );
+
+it.effect("keeps the credit of a named source when a Library request joins it", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      const source = yield* sourceFor(root, "10.1/joined-later");
+      fetched.released = false;
+      yield* requestPapers(root, [{ doi: "10.1/joined-later", source }], user);
+      yield* settled(root);
+      yield* requestPapers(root, [{ doi: "10.1/joined-later", library: true }], agent);
+      yield* settled(root);
+      fetched.released = true;
+      yield* continuePapers(root, user);
+      yield* settled(root);
+
+      expect(yield* Effect.promise(() => listScientSourceRecords(root))).toMatchObject([
+        { sourceId: source.sourceId, updatedBy: "user", attachments: [{}] },
+      ]);
+    }),
+  ),
+);

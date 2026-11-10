@@ -195,7 +195,7 @@ export const lookUpPaper = Effect.fn("Papers.lookUp")(function* (
   if (doi) {
     const text = yield* getText(http, `${OPENALEX}/works/doi:${encodeURI(doi)}`, {
       ...(keys.openAlex ? { api_key: keys.openAlex } : {}),
-      ...(contact ? { mailto: contact } : {}),
+      ...(contact ? { mailto: Redacted.make(contact) } : {}),
     });
     const work = text === undefined ? Option.none() : decodeWork(text);
     const paper = Option.isSome(work)
