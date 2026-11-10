@@ -53,11 +53,11 @@ async function applyBibtexFix(
   const entries = bibtexEntries(source).entries.filter((candidate) => candidate.key === fix.key);
   if (entries.length === 0)
     return { outcome: "not-found", message: `${fix.key} is no longer in ${file.relativePath}.` };
-  const entry = entries[fix.occurrence ?? 0];
-  if (!entry || (fix.occurrence === undefined && entries.length > 1)) {
+  const [entry] = entries;
+  if (!entry || entries.length > 1) {
     return {
       outcome: "stale",
-      message: `The entries using ${fix.key} changed since the check. Check the references again.`,
+      message: `More than one entry uses ${fix.key}. Give each its own key, then check again.`,
     };
   }
   const field = entry.fields.find((candidate) => candidate.name === fix.field);

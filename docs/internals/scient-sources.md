@@ -637,10 +637,11 @@ same two functions.
   carried on `ResolvedSourceMetadata`.
 - `referenceComparison.ts` holds the comparisons (different work, registry
   status, field differences). A single-source check before citing reuses them.
-- A finding's `fix` is self-contained: a `.bib` fix carries the field's current
-  text (and, when the key repeats in the file, which entry) and is refused as
-  stale when the file no longer has it; inserted fields keep the file's line
-  endings. A Library fix carries the expected revision and goes through
+- A finding's `fix` is self-contained: a `.bib` fix names its entry by key,
+  carries the field's current text and is refused as stale when the file no
+  longer has it; inserted fields keep the file's line endings. An entry whose
+  key repeats in the file gets no fix, and a fix for such a key is refused, since
+  no stable name tells the entries apart. A Library fix carries the expected revision and goes through
   `updateScientSource`, credited to the actor; fixes from one check to the same
   source are applied together as one revision. Fixes exist only for registry
   values; identifiers, retractions and published versions are left to the
