@@ -108,6 +108,35 @@ Incomplete metadata can produce an incomplete citation, so review visible
 warnings before using it in a manuscript. Scient does not silently fill
 unknown values.
 
+## Check references
+
+Choose **Check references** in the Library header, or in the menu of a Markdown
+or LaTeX document. Scient checks the Library, or the chosen `.md`, `.tex` or
+`.bib` file together with the bibliography files it names and the Library
+sources its citation keys name. Each DOI, PMID, arXiv ID and ISBN is looked up
+in its registry, the same way sources are checked when they are added.
+
+The results list what needs attention, most serious first:
+
+- **Problems**: an identifier that does not exist or belongs to a different
+  work, a retracted work, and a citation with no bibliography entry.
+- **Warnings**: a correction or expression of concern, a title, year, venue,
+  volume or pages that differ from the registry, a missing required field, a
+  duplicate key, and two entries for the same work.
+- **Notes**: a preprint that has a published version, and an entry nobody cites.
+
+**Apply** writes the registry's value into the `.bib` entry or the Library
+source; **Apply all** does this for every fix in the list. If the file or
+source changed since the check, the fix is refused and the check should be run
+again. **Open** goes to the source or the line in the file, and a notice or
+published version opens in your browser. **Ignore** hides a finding from later
+checks of the same file; **Show ignored** lets you restore it.
+
+The check compares records only. It does not judge whether a cited work
+supports the sentence that cites it, and a reference without an identifier is
+counted but not looked up. When a registry does not answer, the results say the
+check is incomplete.
+
 ## Work with agents
 
 In a project conversation, an agent can search and read the same project-owned
@@ -125,6 +154,13 @@ that an agent added it and whether its identifier was verified, not yet checked
 because the registry could not be reached, or missing. After an agent changes a
 source, its details say "Edited by agent". You can edit or remove these sources
 like any other.
+
+Agents check references with the same tool the dialog uses
+(`scient_references_check`), and apply fixes or ignore findings with
+`scient_references_resolve`. The built-in **references** skill guides an agent
+through a full reference review: records first, then whether each source
+supports its sentence, missing citations, newer versions and contrary evidence.
+It applies only fixes you asked for and proposes the rest.
 
 When you ask an agent to get papers for your library, it fetches them with
 `scient_paper_get` or `scient_papers_queue` and files each PDF on the paper's

@@ -58,6 +58,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
       ]),
       tools("sources:read", ["scient_references_check"]),
       tools("sources:write", ["scient_references_resolve"]),
+      { type: "skill", name: "references" },
       { type: "panel", name: "Sources" },
     ],
   }),
