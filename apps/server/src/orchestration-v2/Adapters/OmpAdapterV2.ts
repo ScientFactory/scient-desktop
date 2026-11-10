@@ -1882,6 +1882,26 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               effect.pipe(Effect.provideService(Scope.Scope, scope), Effect.mapError(safeFailure)),
           ),
           beforeOwnerClose: Effect.suspend(() => processLossPublished ?? Effect.void),
+          // SCIENT-FORK: Scient Agent predicts the user's next message; an agent without the
+          // command, or one that fails to answer, offers none.
+          ...(target.driverKind === "scient"
+            ? {
+                predictNextMessage: client.command({ type: "predict_next_message" }).pipe(
+                  Effect.map((result) =>
+                    isRecord(result.data) && typeof result.data.text === "string"
+                      ? result.data.text
+                      : null,
+                  ),
+                  Effect.catchTags({
+                    OmpRpcCommandError: (cause) =>
+                      Effect.logDebug("orchestration-v2.omp-next-message-unavailable", {
+                        detail: cause.detail,
+                      }).pipe(Effect.as(null)),
+                  }),
+                  Effect.mapError(safeFailure),
+                ),
+              }
+            : {}),
           interrupt: interrupt().pipe(Effect.mapError(safeFailure)),
           resume,
           respond: Effect.fn("OmpAdapterV2.respond")(

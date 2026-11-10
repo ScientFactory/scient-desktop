@@ -107,6 +107,7 @@ const harness = Effect.fnUntraced(function* (
     readonly shutdownUncertain?: boolean;
     readonly shutdownSignalConfirmed?: boolean;
     readonly makeProcess?: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
+    readonly promptSuggestions?: boolean;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -281,6 +282,9 @@ const harness = Effect.fnUntraced(function* (
     ...(behavior?.initialNativeThreadId === undefined
       ? {}
       : { initialNativeThreadId: behavior.initialNativeThreadId }),
+    ...(behavior?.promptSuggestions === undefined
+      ? {}
+      : { promptSuggestions: Effect.succeed(behavior.promptSuggestions) }),
   };
   yield* behavior?.prepareOpen?.(openInput, adapter) ?? Effect.void;
   const runtime = yield* adapter.openSession(openInput);
@@ -979,6 +983,66 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           assert.equal(sent.frame.images![0]!.mimeType, "image/png");
         }),
       ),
+  );
+
+  it.effect("offers Scient Agent's prediction of the next message after a completed turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"], contextWindow: null }],
+          initial: { provider: "test", id: "selected" },
+          responseData: (frame) =>
+            frame.type === "predict_next_message" ? { text: " Plot the residuals " } : undefined,
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+          promptSuggestions: true,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.finish();
+        const offered = yield* h.takeUntil((event) => event.type === "prompt_suggestion.updated");
+        assert.deepInclude(offered, {
+          threadId: h.input.threadId,
+          runId: h.input.runId,
+          text: "Plot the residuals",
+        });
+      }),
+    ),
+  );
+  it.effect("keeps a session working when its agent has no next-message command", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"], contextWindow: null }],
+          initial: { provider: "test", id: "selected" },
+          commandError: (frame) =>
+            frame.type === "predict_next_message"
+              ? "Unknown command: predict_next_message"
+              : undefined,
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+          promptSuggestions: true,
+        });
+        for (const ordinal of [1, 2]) {
+          yield* h.runtime.startTurn({
+            ...h.input,
+            runId: RunId.make(`suggestion-run-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`suggestion-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`suggestion-root-${ordinal}`),
+          });
+          yield* peer.finish();
+          const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+          assert.deepInclude(terminal, { status: "completed" });
+        }
+        assert.isTrue(peer.state.frames.some((frame) => frame.type === "predict_next_message"));
+        assert.isFalse(h.recorded.some((event) => event.type === "prompt_suggestion.updated"));
+      }),
+    ),
   );
 
   it.effect("budgets several native OMP images together against one serialized frame", () =>

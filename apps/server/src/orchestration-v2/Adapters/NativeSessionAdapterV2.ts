@@ -27,6 +27,7 @@ import {
   type ToolActivitySource,
   type ToolActivitySurface,
   type ToolHostPermission,
+  isDelegatedAppThread,
 } from "@t3tools/contracts";
 import { mergeSubagentPresentation } from "./SubagentPresentation.ts";
 import { MODEL_TOKEN_LIMIT_MESSAGE } from "@t3tools/shared/model";
@@ -228,6 +229,8 @@ export interface NativeSession {
   readonly stopSubagent?: (
     nativeTaskId: string,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  /** The user's likely next message after a completed turn; null when the agent has no guess. */
+  readonly predictNextMessage?: Effect.Effect<string | null, NativeSessionOperationError>;
   readonly interrupt: Effect.Effect<void, NativeSessionOperationError>;
   readonly interruptBreaksSession?: boolean;
   // SCIENT-FORK:START — bounded graceful Stop can still require destructive fallback.
@@ -393,6 +396,29 @@ export function makeNativeSessionAdapterV2(
           );
         });
         const emit = (event: ProviderAdapter.ProviderAdapterV2Event) => emitBatch([event], true);
+        const promptSuggestionsEnabled = input.promptSuggestions ?? Effect.succeed(false);
+        // Best effort, beside the event stream: a prediction never holds up the next turn, and a
+        // stale one is dropped because the composer shows it only for the latest completed run.
+        // Delegated threads have no one typing, so they never ask.
+        const offerPromptSuggestion = Effect.fn("NativeSessionAdapterV2.offerPromptSuggestion")(
+          function* (turn: ProviderAdapter.ProviderAdapterV2TurnInput) {
+            if (isDelegatedAppThread(turn.appThread) || !(yield* promptSuggestionsEnabled)) return;
+            const native = yield* Deferred.await(nativeReady);
+            if (!native.predictNextMessage) return;
+            const text = (yield* native.predictNextMessage)?.trim() ?? "";
+            if (text.length === 0) return;
+            yield* emit({
+              type: "prompt_suggestion.updated",
+              driver,
+              threadId: turn.threadId,
+              runId: turn.runId,
+              text,
+            });
+          },
+          Effect.catchCause((cause) =>
+            Effect.logDebug("orchestration-v2.native-prompt-suggestion-failed", { cause }),
+          ),
+        );
         const updateSession = Effect.fn("NativeSessionAdapterV2.updateSession")(function* (
           status: typeof providerSession.status,
           publish: typeof emit = emit,
@@ -643,6 +669,8 @@ export function makeNativeSessionAdapterV2(
                 }
               : { ...terminal, type: "turn.terminal", status, failure: null },
           );
+          if (status === "completed" && !update.broken)
+            yield* offerPromptSuggestion(running.input).pipe(Effect.forkIn(ownerScope));
           if (options.eventQueueLimits && !update.broken && backgroundPending)
             yield* emitBatch(
               [{ type: "provider_thread.updated", driver, providerThread: thread }],
