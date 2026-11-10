@@ -341,6 +341,10 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
   ) {
     if (session.stopping) return;
     session.stopping = true;
+    // A new sign-in waiting for other calls stops waiting; it then sees the session is gone.
+    const drained = session.drained;
+    session.drained = undefined;
+    drained?.();
     sessions.delete(session.id);
     session.inFlight.clear();
     session.held = undefined;
@@ -586,8 +590,15 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
   const replaceProcess = Effect.fn("LocalConnectorHost.replaceProcess")(function* (
     session: Session,
   ): Effect.fn.Return<void, { readonly message: string }> {
+    const gone = { message: `${session.identity.displayName} was closed.` };
     const prepared = yield* session.start;
+    if (session.stopping) return yield* Effect.fail(gone);
     const next = yield* spawn(session.identity, prepared, session.id);
+    // The session stopped while this one started: it must not outlive it.
+    if (session.stopping) {
+      yield* Scope.close(next.scope, Exit.void);
+      return yield* Effect.fail(gone);
+    }
     const previous = session.scope;
     session.scope = next.scope;
     session.process = next.process;
@@ -657,6 +668,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       ).pipe(Effect.timeoutOption(options.inFlightGraceMs ?? IN_FLIGHT_GRACE_MS));
       session.drained = undefined;
     }
+    if (session.stopping) return;
     const unknown = `${session.identity.displayName} restarted to sign in again while this call was running, so its outcome is unknown. Check whether it took effect before trying it again.`;
     for (const message of outstanding(session)) {
       const pending = idKey(message.id);
@@ -671,6 +683,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       );
     }
     const replaced = yield* replaceProcess(session).pipe(Effect.result);
+    if (session.stopping) return;
     if (replaced._tag === "Failure") {
       const message = `${session.identity.displayName} could not start again after signing in: ${replaced.failure.message}`;
       answerAwaiting(session, message);

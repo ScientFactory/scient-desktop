@@ -5,7 +5,9 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 
 import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
@@ -40,7 +42,9 @@ createInterface({ input: process.stdin }).on("line", (line) => {
   else if (message.method === "tools/call" && message.params.name === "write") {
     // Something that must not happen twice: recorded at once, answered late or never.
     appendFileSync(process.env.WRITES_FILE, "write\\n");
-    if (message.params.arguments?.hang !== true)
+    if (message.params.arguments?.exitAfterMs !== undefined)
+      setTimeout(() => process.exit(1), message.params.arguments.exitAfterMs);
+    else if (message.params.arguments?.hang !== true)
       setTimeout(() => send({ jsonrpc: "2.0", id: message.id,
         result: { content: [{ type: "text", text: "written" }] } }), 300);
   } else if (message.method === "tools/call")
@@ -88,7 +92,10 @@ const setup = Effect.fn("setup")(function* (
     ...hostOptions,
   });
   const identity = { connectorId: "con_site", displayName: "Site" };
-  const start = Effect.succeed({
+  /** Done when the program starts a second time: only a replacement after a sign-in does that. */
+  const restarted = yield* Deferred.make<void>();
+  let launches = 0;
+  const launch = Effect.succeed({
     launch: {
       executable: process.execPath,
       args: [NodePath.join(root, "server.mjs")],
@@ -103,6 +110,12 @@ const setup = Effect.fn("setup")(function* (
     hide: [],
     signInGeneration: 0,
   });
+  const start = launch.pipe(
+    Effect.tap(() => {
+      launches += 1;
+      return launches === 2 ? Deferred.succeed(restarted, undefined) : Effect.void;
+    }),
+  );
   const handler = signIn(root);
   const post = (sessionId: string | undefined, message: unknown) =>
     host.exchange(
@@ -133,12 +146,15 @@ const setup = Effect.fn("setup")(function* (
       params: { name: "courses", arguments: {} },
     }).pipe(Effect.flatMap(readEvents));
   /** Starts a write and returns its answer still to be read. */
-  const startWrite = (id: number, hang = false) =>
+  const startWrite = (id: number, hang = false, exitAfterMs?: number) =>
     post(sessionId, {
       jsonrpc: "2.0",
       id,
       method: "tools/call",
-      params: { name: "write", arguments: { hang } },
+      params: {
+        name: "write",
+        arguments: exitAfterMs === undefined ? { hang } : { exitAfterMs },
+      },
     });
   const writes = Effect.promise(async () =>
     (await NodeFSP.readFile(NodePath.join(root, "writes"), "utf8")).split("\n").filter(Boolean),
@@ -146,7 +162,7 @@ const setup = Effect.fn("setup")(function* (
   const starts = Effect.promise(async () =>
     (await NodeFSP.readFile(NodePath.join(root, "starts"), "utf8")).split("\n").filter(Boolean),
   );
-  return { host, call, startWrite, writes, starts, events };
+  return { host, call, post, sessionId, startWrite, writes, starts, events, restarted };
 });
 
 const layer = LocalDuplexProcess.layer.pipe(Layer.provideMerge(NodeServices.layer));
@@ -237,12 +253,27 @@ describe("signed-in local connectors", () => {
         });
         const writing = yield* startWrite(2, true);
         expect(textOf((yield* call(3))[0])).toBe("courses: 3");
-        const [cut] = yield* readEvents(writing);
+        // Bounded: without the fix the write is never answered.
+        const [cut] = yield* readEvents(writing).pipe(Effect.timeout("5 seconds"));
         expect(cut).toMatchObject({ result: { isError: true } });
         expect(textOf(cut)).toContain("its outcome is unknown");
         expect(yield* writes).toEqual(["write"]);
         yield* host.stop("con_site", "done");
       }).pipe(Effect.provide(layer)),
+  );
+
+  it.live("starts no replacement when the session ends while a new sign-in waits", () =>
+    Effect.gen(function* () {
+      const { call, startWrite, restarted } = yield* setup(freshAfterSignIn, {
+        inFlightGraceMs: 3_000,
+      });
+      // The running write ends its program 300 ms in, while the swap waits for it to finish.
+      yield* startWrite(2, false, 300);
+      yield* call(3).pipe(Effect.timeout("5 seconds"));
+      // regression: once the wait ran out it started a replacement nothing would ever stop.
+      const replaced = yield* Deferred.await(restarted).pipe(Effect.timeoutOption("5 seconds"));
+      expect(Option.isNone(replaced)).toBe(true);
+    }).pipe(Effect.provide(layer)),
   );
 });
 
