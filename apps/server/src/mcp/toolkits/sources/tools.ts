@@ -368,6 +368,149 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.pdf.detach", true));
 
+const PageNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
+const TextOffset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+const SourceTextRange = Schema.Struct({ page: PageNumber, start: TextOffset, end: TextOffset });
+
+export const ScientSourcesFullTextStatus = Schema.Struct({
+  pdfs: TextOffset,
+  searchable: TextOffset,
+  pending: TextOffset,
+  withoutText: TextOffset,
+  unreadable: TextOffset,
+});
+
+const ScientSourcesSearchTool = Tool.make("scient_sources_search", {
+  description:
+    "Search the full text of this project's Source PDFs. Returns ranked passages with source, PDF and page; " +
+    'quote a "phrase" to require it. If status.pending is above zero, text is still being read; search again shortly. ' +
+    "Read around a hit with scient_sources_read_text, and check a quote with scient_sources_quote_check before giving it.",
+  parameters: Schema.Struct({
+    query: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+    sourceIds: Schema.optionalKey(
+      Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(100))),
+    ),
+    limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 }))),
+  }),
+  success: Schema.Struct({
+    hits: Schema.Array(
+      Schema.Struct({
+        sourceId: NonEmptyString,
+        attachmentId: NonEmptyString,
+        title: NullableText,
+        page: PageNumber,
+        start: TextOffset,
+        end: TextOffset,
+        passage: Schema.String,
+        matchedTerms: Schema.Array(Schema.String),
+      }),
+    ),
+    status: ScientSourcesFullTextStatus,
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Search source full text")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.search", false));
+
+const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
+  description:
+    "Read the text of one Source's PDF, page by page, from fromPage. Continue at nextPage until it is null. " +
+    "choose-pdf lists the PDFs when a source has several; pass one as attachmentId. no-text means the PDF has no text layer (often a scan).",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    attachmentId: Schema.optionalKey(NonEmptyString),
+    fromPage: Schema.optionalKey(PageNumber),
+    maxCharacters: Schema.optionalKey(
+      Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60_000 })),
+    ),
+  }),
+  success: Schema.Struct({
+    outcome: Schema.Literals([
+      "read",
+      "no-text",
+      "unreadable",
+      "no-pdf",
+      "source-not-found",
+      "choose-pdf",
+    ]),
+    attachmentId: Schema.optionalKey(NonEmptyString),
+    pageCount: Schema.optionalKey(TextOffset),
+    complete: Schema.optionalKey(Schema.Boolean),
+    pages: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ page: PageNumber, text: Schema.String })),
+    ),
+    nextPage: Schema.optionalKey(Schema.NullOr(PageNumber)),
+    attachments: Schema.optionalKey(
+      Schema.Array(Schema.Struct({ attachmentId: NonEmptyString, fileName: NonEmptyString })),
+    ),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Read source text")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.text.read", false));
+
+const ScientSourceQuoteCheckTool = Tool.make("scient_sources_quote_check", {
+  description:
+    "Check quotes against the stored text of this project's Source PDFs before you give them. " +
+    "exact matched character for character; normalized matched once spacing, ligatures, quote marks, dashes and line-break hyphens are evened out; " +
+    "both return the stored text and its page location, so quote that text. ambiguous means the quote appears more than once; lengthen it. " +
+    "not-found returns the closest passages. Without sourceId the whole Library is checked.",
+  parameters: Schema.Struct({
+    quotes: Schema.Array(
+      Schema.Struct({
+        quote: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(4_000))),
+        sourceId: Schema.optionalKey(NonEmptyString),
+      }),
+    ).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(25))),
+  }),
+  success: Schema.Struct({
+    results: Schema.Array(
+      Schema.Struct({
+        outcome: Schema.Literals([
+          "exact",
+          "normalized",
+          "ambiguous",
+          "not-found",
+          "not-indexed",
+          "no-text",
+          "source-not-found",
+        ]),
+        sourceId: Schema.optionalKey(NonEmptyString),
+        attachmentId: Schema.optionalKey(NonEmptyString),
+        ranges: Schema.optionalKey(Schema.Array(SourceTextRange)),
+        text: Schema.optionalKey(Schema.String),
+        prefix: Schema.optionalKey(Schema.String),
+        suffix: Schema.optionalKey(Schema.String),
+        sourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
+        closest: Schema.optionalKey(
+          Schema.Array(
+            Schema.Struct({ sourceId: NonEmptyString, page: PageNumber, passage: Schema.String }),
+          ),
+        ),
+        pending: Schema.optionalKey(TextOffset),
+      }),
+    ),
+  }),
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Check quotes against sources")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.quote.check", false));
+
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,
   ScientSourceGetTool,
@@ -377,4 +520,7 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceAddTool,
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,
+  ScientSourcesSearchTool,
+  ScientSourceReadTextTool,
+  ScientSourceQuoteCheckTool,
 );

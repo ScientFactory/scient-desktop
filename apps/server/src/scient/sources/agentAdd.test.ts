@@ -228,13 +228,13 @@ describe("agent identifier add", () => {
     await expect(listScientSourceRecords(root)).resolves.toEqual([]);
   });
 
-  it("marks an agent source without a DOI or PMID as unverified", async () => {
+  it("marks an agent source without a checkable identifier as unverified", async () => {
     const root = await project();
     const added = await addAgentSource({
       root,
       candidate: {
-        ...candidate("AGENTISBN", "unused"),
-        identifiers: [{ scheme: "isbn", value: "9780262033848" }],
+        ...candidate("AGENTISSN", "unused"),
+        identifiers: [{ scheme: "issn", value: "1234-5678" }],
       },
     });
 
