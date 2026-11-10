@@ -55,6 +55,7 @@ import {
 } from "./tools.ts";
 import {
   addAgentSource,
+  checkSourceIdentifier,
   attachSourcePdf,
   bulkUpdateSources,
   importBibliographyFile,
@@ -296,6 +297,9 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         hasPdf: record.attachments.some((attachment) => attachment.kind === "pdf"),
         addedBy: record.origin?.actor ?? "user",
         ...(record.verification ? { verification: record.verification.state } : {}),
+        ...(record.editorialStatus && record.editorialStatus.state !== "none"
+          ? { editorialStatus: record.editorialStatus.state }
+          : {}),
         ...(trash?.has(record.sourceId)
           ? {
               removedAt: trash.get(record.sourceId)!.removedAt,
@@ -689,8 +693,41 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
     duplicate: result.duplicate,
     validationIssues,
     ...(duplicateRecord?.verification ? { verification: duplicateRecord.verification.state } : {}),
+    ...(duplicateRecord?.editorialStatus && duplicateRecord.editorialStatus.state !== "none"
+      ? {
+          editorialStatus: duplicateRecord.editorialStatus.state,
+          message: `The registry reports this work as ${EDITORIAL_WORDS[duplicateRecord.editorialStatus.state]}. Tell the user before relying on it.`,
+        }
+      : {}),
   };
 });
+
+const EDITORIAL_WORDS = {
+  retracted: "retracted",
+  withdrawn: "withdrawn",
+  "expression-of-concern": "under an expression of concern",
+  corrected: "corrected",
+} as const;
+
+export const checkScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.check")(
+  function* (input: { readonly sourceId: string }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const current = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
+    if (!current) return yield* toolError("not-found", "The source was not found in this project.");
+    const resolveIdentifier = yield* keyedIdentifierLookup();
+    const result = yield* attempt(() =>
+      checkSourceIdentifier({ root, sourceId: input.sourceId, actor: "agent", resolveIdentifier }),
+    );
+    return {
+      outcome: result.outcome,
+      sourceId: result.record.sourceId,
+      revision: result.record.revision,
+      registry: result.registry,
+      ...(result.record.verification ? { verification: result.record.verification } : {}),
+      ...(result.record.editorialStatus ? { editorialStatus: result.record.editorialStatus } : {}),
+    };
+  },
+);
 
 export const attachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolkit.attachPdf")(
   function* (input: {
@@ -951,6 +988,7 @@ const handlers = {
   scient_sources_remove: removeScientSourceForInvocation,
   scient_sources_restore: restoreScientSourceForInvocation,
   scient_sources_revert: revertScientSourceForInvocation,
+  scient_sources_check: checkScientSourceForInvocation,
   scient_sources_add: addScientSourceForInvocation,
   scient_sources_attach_pdf: attachScientSourcePdfForInvocation,
   scient_sources_detach_pdf: detachScientSourcePdfForInvocation,

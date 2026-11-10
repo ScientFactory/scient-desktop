@@ -85,6 +85,7 @@ describe("resolveSourceIdentifier", () => {
         pages: "1-9",
         language: null,
         url: "https://doi.org/10.1000/abc.123",
+        editorialNotices: [],
       },
     });
   });

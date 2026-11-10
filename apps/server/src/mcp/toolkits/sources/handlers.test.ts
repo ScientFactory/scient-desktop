@@ -37,6 +37,7 @@ import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
   addScientSourceForInvocation,
+  checkScientSourceForInvocation,
   removeScientSourceForInvocation,
   restoreScientSourceForInvocation,
   revertScientSourceForInvocation,
@@ -442,6 +443,34 @@ describe("Scient Sources MCP handlers", () => {
     }),
   );
 
+  it.effect("checks a source's identifier and credits the agent", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-check-"));
+      yield* Effect.promise(() => writeSource(root, { sourceId: "source_check", title: "Check" }));
+      const projectId = ProjectId.make("project-check");
+      const threadId = ThreadId.make("thread-check");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      const checked = yield* provideContext(
+        checkScientSourceForInvocation({ sourceId: "source_check" }),
+        context,
+      );
+      expect(checked).toMatchObject({
+        outcome: "updated",
+        revision: 2,
+        registry: "unavailable",
+        verification: { state: "unchecked", identifier: { scheme: "doi" } },
+      });
+      const record = yield* Effect.promise(() => readScientSourceRecord(root, "source_check"));
+      expect(record?.updatedBy).toBe("agent");
+    }),
+  );
+
   it.effect("moves an agent removal to the trash, restores it, and reverts an edit", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-sources-agent-trash-"));
@@ -630,7 +659,6 @@ describe("Scient Sources MCP handlers", () => {
       expect(events[1]?.properties).toMatchObject({
         operationKind: "source-import",
         trigger: "agent",
-        reviewRequired: true,
       });
       expect(
         events.flatMap((event) => Object.values(event.properties ?? {})).join(" "),

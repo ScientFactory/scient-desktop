@@ -87,6 +87,7 @@ import {
   type ScientSourcesImportOutcome,
 } from "./importOutcome";
 import { SourceHistoryDialog } from "./SourceHistory";
+import { sourceTrustLabel } from "./sourceLifecycleLabels";
 import { SourceStoreNotice } from "./SourceStoreNotice";
 import { announceSourceMovedToTrash, SourceTrashButton } from "./SourceTrash";
 import { useScientSources } from "./useScientSources";
@@ -1394,7 +1395,10 @@ export function ScientSourcesPanel(props: {
               ? importOutcome
               : null
           }
-          onDismiss={sources.clearOperationSummary}
+          onDismiss={() => {
+            setImportOutcome(null);
+            sources.clearOperationSummary();
+          }}
           onCancel={() => void sources.cancelImport()}
           cancelling={sources.cancelling}
           {...(sources.operation.state !== "cancelled" &&
@@ -1605,6 +1609,7 @@ export function ScientSourcesPanel(props: {
                                 )}
                               </span>
                               {agentVerificationLabel(record)}
+                              {sourceTrustLabel(record)}
                             </span>
                           </span>
                         </button>

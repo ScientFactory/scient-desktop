@@ -64,6 +64,7 @@ function overviewWith(sourceIds: ReadonlyArray<string>): ScientSourcesOverviewRe
 
 interface HookProbe {
   overview: ScientSourcesOverviewResult | null;
+  clearOperationSummary: () => void;
   preflight: ScientSourcesPreflightResult | null;
   busy: boolean;
   error: string | null;
@@ -199,6 +200,33 @@ describe("useScientSources mounted behavior", () => {
       ]);
       expect(probe.current.busy).toBe(false);
       expect(probe.current.error).toBeNull();
+    });
+  });
+
+  it("dismisses a finished import summary", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    mocks.readScientSources.mockResolvedValue({
+      ...overviewWith(["one"]),
+      activeOperation: {
+        formatVersion: 1,
+        operationId: "operation-1",
+        projectId: "project-1",
+        adapter: "local-files",
+        actor: "user",
+        intake: "local-pdf",
+        state: "completed",
+        createdAt: "2026-08-13T00:00:00.000Z",
+        updatedAt: "2026-08-13T00:00:00.000Z",
+        items: [{ itemKey: "one", state: "imported", sourceId: "one", message: null }],
+      },
+    });
+
+    await withMountedHook(_fixture, async (probe) => {
+      expect(probe.current.operation?.operationId).toBe("operation-1");
+      await act(async () => probe.current.clearOperationSummary());
+      expect(probe.current.operation).toBeNull();
     });
   });
 

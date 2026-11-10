@@ -207,6 +207,7 @@ export const SCIENT_ACTION_TOOLS: ReadonlySet<string> = new Set([
   "scient_sources_bulk_update",
   "scient_sources_restore",
   "scient_sources_revert",
+  "scient_sources_check",
   "scient_account_add",
   "scient_account_sign_in",
   "scient_account_fill",
