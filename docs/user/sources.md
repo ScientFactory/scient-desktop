@@ -103,6 +103,39 @@ source stays available to restore until the trash is emptied.
 If a source's file in the project cannot be read, the Library still lists the
 others and says which file it skipped.
 
+## Search the full text
+
+Scient reads the text of every page of every PDF in the Library and keeps it
+with the project, so you can search inside the papers. Type at least three
+characters in the Library search: under the sources whose title, authors or
+other details match, **In full text** lists passages from the PDFs that match,
+with their page. Choose a passage to open the PDF with it highlighted. Put a
+phrase in quotes to require it; longer words also match words that start with
+them, so `randomis` finds "randomised".
+
+Reading runs in the background after a PDF is added. While it is still going,
+the results say how many PDFs are left. A scanned PDF without a text layer
+cannot be searched.
+
+A quote you take from a Library PDF with **Ask in chat** records which file it
+came from, so it can be found again exactly.
+
+## Save from the Browser
+
+In the Browser, choose **Save to Library** from the tab's menu. Select a
+passage first to keep it in the source's note.
+
+- On an article page, Scient reads the DOI, PMID, arXiv ID or ISBN the page
+  states, checks it at its registry and saves the work with the registry's
+  details, the same check an agent's add gets. A page that names an identifier
+  that does not exist is not saved.
+- Any other page is saved as a web page with its title and address.
+- On a PDF tab, Scient downloads the PDF with the tab's sign-in and imports it
+  like a PDF you dropped on the Library.
+
+Saving a page that is already in the Library adds only a new passage to its
+note.
+
 ## Copy a formatted reference
 
 Open a source, choose **Vancouver** or **APA 7**, then choose **Copy
@@ -145,6 +178,14 @@ back to a free accepted manuscript or preprint; the source's details then say
 "PDF is a preprint" or "PDF is the accepted manuscript". Each PDF also records
 how it arrived: a free copy, the publisher, your university sign-in, or your
 library's link.
+
+Agents also search and read the PDFs' text, and check quotes against it before
+they give them to you: `scient_sources_search` finds passages,
+`scient_sources_read_text` reads a paper page by page, and
+`scient_sources_quote_check` says whether a quote is exactly in a paper (or the
+same once spacing, ligatures and line-break hyphens are evened out), on which
+page, and what the paper says instead when it is not there. An agent can also
+save a web page with `scient_sources_save_page`, keeping a passage as you would.
 
 The conversation's [permission mode](permission-modes.md) and provider approval
 flow still apply to writes. Sources tools stay scoped to the current project:

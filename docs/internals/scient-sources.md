@@ -91,6 +91,7 @@ their own subtree:
 ├── files/sha256/<prefix>/   content-addressed PDF copies
 ├── history/<source-id>/     kept prior revisions (first one plus the latest 49)
 ├── trash/<source-id>.json   removed sources, whole, until restored or deleted
+├── text/sha256/<prefix>/    extracted PDF text, one JSON file per PDF hash
 ├── operations/              resumable import state
 ├── receipts/                terminal import evidence
 └── staging/                 bounded temporary copies
@@ -516,12 +517,74 @@ and the normal single-server write paths invalidate cached snapshots. True
 multi-process writers would require an explicit cross-process locking protocol
 rather than a larger in-process map.
 
+## Full text
+
+Full text is derived data keyed by PDF `sha256`, never part of a record, so
+several sources sharing one PDF share one text file and no record revision
+changes when text is extracted. `packages/scient-sources` owns the stored
+shape and pure search (`/full-text`) and its filesystem store
+(`/full-text-store`); the server owns extraction (`SourceFullText.ts`).
+
+- Each page is stored in the reader's text profile
+  (`PDF_TEXT_PROFILE`: raw pdf.js item strings, a newline after `hasEOL`
+  items) with its view box, rotation and user unit, so stored offsets and
+  reader quotes describe the same text. A test pins the two profile names
+  together.
+- A background pass starts when the Library loads or a full-text tool runs. It
+  parses one PDF at a time across all projects and yields between pages, since
+  pdf.js shares the server's event loop. Library-wide search never waits for it
+  and reports `pending`; reading one source's text or checking a quote against
+  one source extracts that PDF on demand through the same lane.
+- An unreadable PDF is recorded as `failed` and retried only after the pdf.js
+  version changes. A text file that does not decode is treated as missing and
+  extracted again. Text whose PDF file is gone from `files/` is pruned; text of
+  a trashed source stays while its PDF does.
+- Writes are atomic and every directory below the project root is checked one
+  segment at a time, so a symlinked `text/` folder cannot redirect them.
+
+Search is a pure-JS scan of cached, folded page text rather than SQLite FTS5:
+the text is project data in project files, while the server's SQLite holds app
+state, and a second persistent index could drift from the files. Folding
+lowercases, strips accents and punctuation and joins line-end hyphenation.
+Terms score by rarity across PDFs and repetition inside a 360-character window,
+quoted phrases are required, and terms of four or more characters also match as
+prefixes. The cache is capped by characters and keyed by hash, since stored
+text never changes for a hash.
+
+Quote checking matches verbatim first, then after folding spacing, ligatures,
+quote marks, dashes, and line-end and intra-word hyphens on both sides. It
+works across page boundaries, returns the stored text with its page offsets
+and context, and calls a repeated quote ambiguous instead of choosing one.
+OpenAlex full text is not used: its content downloads need a key and are paid
+per file.
+
+The attachment-preview endpoint returns the attachment's content-addressed
+hash and size; the Sources PDF reader carries them as the descriptor's
+`material`, so quotes from Library PDFs record proven bytes. A Library search
+hit opens through the reader's quote reveal: the panel files the hit, and the
+PDF preview turns it into a target with its own document identity once the
+authorized preview names the file. Server and web pdf.js versions can differ,
+so such targets are found again by their text rather than by offsets.
+
+## Saving browser pages
+
+`SourceWebPage.ts` saves a page through the same identifier-checked add path
+as agent adds and downloaded papers (`origin.intake: "web"`). Identifiers come
+from Highwire Press, Dublin Core and PRISM tags, then from DOI, PubMed and
+arXiv addresses (`packages/scient-sources/src/webPage.ts`); the page's title is
+not treated as a claim about the identified work. A page without an identifier
+is a `web` source and is the same source as another with the same address. The
+selection is appended to the note once. On desktop, a fixed script reads the
+tab's title, selection and meta tags; the address comes from the tab itself,
+and a PDF tab is fetched again through the tab's session and handed to the
+Library's normal PDF import.
+
 ## Deliberate exclusions
 
 This slice does not implement Zotero write-back or sync, source merging,
 automatic possible-duplicate merging, multi-source
 bibliographies, arbitrary CSL style installation, annotations, evidence claims,
-OCR, fuzzy metadata search, mobile UI, or a separate Studio route.
+OCR of scanned PDFs, fuzzy metadata search, mobile UI, or a separate Studio route.
 Later source systems should add adapters into the same domain and store rather
 than add provider-shaped fields to the host application.
 
