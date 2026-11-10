@@ -126,7 +126,8 @@ export async function publishScientProjectFile(input: {
       });
     }
   } finally {
-    await Promise.all([
+    // A failed cleanup leaves a stray hidden file; it must not replace the publication result.
+    await Promise.allSettled([
       NodeFSP.rm(temporary, { force: true }),
       holdsOnlyCopy ? undefined : NodeFSP.rm(displaced, { force: true }),
     ]);

@@ -61,4 +61,49 @@ describe("publishScientProjectFile", () => {
       }
     }
   });
+
+  it("reports where the previous text is kept even when cleanup also fails", async () => {
+    const expected = "Original manuscript — [@old]\n";
+    const fsPromises: {
+      link: typeof NodeFSP.link;
+      rename: typeof NodeFSP.rename;
+      rm: typeof NodeFSP.rm;
+    } = NodeModule.createRequire(import.meta.url)("node:fs/promises");
+    const original = { link: fsPromises.link, rename: fsPromises.rename, rm: fsPromises.rm };
+    const fail = (code: string) => Object.assign(new Error(`synthetic ${code}`), { code });
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-publication-"));
+    const target = NodePath.join(directory, "manuscript.md");
+    try {
+      await NodeFSP.writeFile(target, expected);
+      fsPromises.link = async (source, destination) => {
+        if (destination === target) throw fail("ENOSPC");
+        return original.link(source, destination);
+      };
+      fsPromises.rename = async (source, destination) => {
+        if (String(destination).includes(".kept-")) throw fail("EACCES");
+        return original.rename(source, destination);
+      };
+      fsPromises.rm = async () => {
+        throw fail("EACCES");
+      };
+      NodeModule.syncBuiltinESMExports();
+
+      const error = await publishScientProjectFile({
+        filePath: target,
+        expected,
+        contents: "Original manuscript — [@new]\n",
+      }).then(
+        () => null,
+        (cause: unknown) => cause,
+      );
+
+      expect(isPublicationError(error)).toBe(true);
+      const recoveryPath = isPublicationError(error) ? error.recoveryPath : target;
+      expect(await NodeFSP.readFile(recoveryPath, "utf8")).toBe(expected);
+    } finally {
+      Object.assign(fsPromises, original);
+      NodeModule.syncBuiltinESMExports();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
 });
