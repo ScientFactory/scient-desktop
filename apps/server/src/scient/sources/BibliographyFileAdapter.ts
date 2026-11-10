@@ -28,7 +28,6 @@ import {
   readScientSourceStagedFileImport,
   readSourceImportOperation,
   removeScientSourceStagedFileImport,
-  SCIENT_SOURCES_DIRECTORY,
   scientSourceIdFor,
   writeScientSourceStagedFileImport,
 } from "@scientfactory/scient-sources/store";
@@ -73,17 +72,12 @@ export async function readBibliographyFile(filePath: string): Promise<string> {
 
 const REFERENCE_FILE_EXTENSIONS = [".bib", ".bibtex", ".biblatex", ".ris", ".json", ".xml", ".txt"];
 
+/** A project reference file; Library storage and the rest of `.scient` are refused. */
 export async function resolveProjectBibliographyFile(root: string, relativePath: string) {
-  const resolved = await resolveScientProjectFile(root, relativePath, {
+  return resolveScientProjectFile(root, relativePath, {
     extensions: REFERENCE_FILE_EXTENSIONS,
     description: "reference file",
   });
-  const canonicalRoot = await canonicalizeScientSourceRoot(root);
-  const relative = NodePath.relative(canonicalRoot, resolved.absolutePath).split(NodePath.sep);
-  if (relative.join("/").startsWith(`${SCIENT_SOURCES_DIRECTORY}/`)) {
-    throw new Error("Library storage files cannot be imported as reference files.");
-  }
-  return resolved;
 }
 
 async function plan(

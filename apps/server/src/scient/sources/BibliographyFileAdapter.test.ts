@@ -198,7 +198,7 @@ describe("reference file import", () => {
     await NodeFSP.writeFile(NodePath.join(root, SCIENT_SOURCES_DIRECTORY, "x.json"), "[]");
     await expect(
       resolveProjectBibliographyFile(root, `${SCIENT_SOURCES_DIRECTORY}/x.json`),
-    ).rejects.toThrow("Library storage files cannot be imported");
+    ).rejects.toThrow("outside .scient");
   });
 
   it("does not pass filesystem paths through error messages", async () => {

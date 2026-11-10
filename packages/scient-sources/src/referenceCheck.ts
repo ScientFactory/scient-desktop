@@ -83,6 +83,8 @@ export const ScientReferenceFix = Schema.Union([
     kind: Schema.Literal("bibtex-field"),
     path: ProjectPath,
     key: NonEmptyString,
+    /** Which of the file's entries with this key, counting from 0; set when the key repeats. */
+    occurrence: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     field: ScientReferenceBibtexField,
     /** The field's current text, or null when the entry lacks it; a mismatch makes the fix stale. */
     current: NullableText,
