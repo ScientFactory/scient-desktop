@@ -23,6 +23,7 @@ import { Route as ChatSettingsRouteImport } from './routes/_chat.settings'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatNewRouteImport } from './routes/_chat.new'
 import { Route as ChatGettingStartedRouteImport } from './routes/_chat.getting-started'
+import { Route as ChatCloudIndexRouteImport } from './routes/_chat.cloud.index'
 import { Route as ThreadsEnvironmentIdThreadIdRouteImport } from './routes/threads.$environmentId.$threadId'
 import { Route as ChatSettingsWorktreesRouteImport } from './routes/_chat.settings.worktrees'
 import { Route as ChatSettingsVoiceRouteImport } from './routes/_chat.settings.voice'
@@ -65,6 +66,7 @@ import { Route as ChatSettingsSkillsExternalRouteImport } from './routes/_chat.s
 import { Route as ChatSettingsScientificComputingLanguageIdRouteImport } from './routes/_chat.settings.scientific-computing_.$languageId'
 import { Route as ChatSettingsExtensionsInstalledRouteImport } from './routes/_chat.settings.extensions_.installed'
 import { Route as ChatSettingsExtensionsAllRouteImport } from './routes/_chat.settings.extensions_.all'
+import { Route as ChatCloudEnvironmentIdThreadIdRouteImport } from './routes/_chat.cloud.$environmentId.$threadId'
 import { Route as ChatSettingsExtensionsStoreInstanceIdRouteImport } from './routes/_chat.settings.extensions_.store.$instanceId'
 import { Route as ChatSettingsExtensionsCategoryCategoryRouteImport } from './routes/_chat.settings.extensions_.category.$category'
 import { Route as ChatSettingsExtensionsItemServerSplatRouteImport } from './routes/_chat.settings.extensions_.item.server.$'
@@ -141,6 +143,11 @@ const ChatNewRoute = ChatNewRouteImport.update({
 const ChatGettingStartedRoute = ChatGettingStartedRouteImport.update({
   id: '/getting-started',
   path: '/getting-started',
+  getParentRoute: () => ChatRoute,
+} as any)
+const ChatCloudIndexRoute = ChatCloudIndexRouteImport.update({
+  id: '/cloud/',
+  path: '/cloud/',
   getParentRoute: () => ChatRoute,
 } as any)
 const ThreadsEnvironmentIdThreadIdRoute =
@@ -367,6 +374,12 @@ const ChatSettingsExtensionsAllRoute =
     path: '/extensions/all',
     getParentRoute: () => ChatSettingsRoute,
   } as any)
+const ChatCloudEnvironmentIdThreadIdRoute =
+  ChatCloudEnvironmentIdThreadIdRouteImport.update({
+    id: '/cloud/$environmentId/$threadId',
+    path: '/cloud/$environmentId/$threadId',
+    getParentRoute: () => ChatRoute,
+  } as any)
 const ChatSettingsExtensionsStoreInstanceIdRoute =
   ChatSettingsExtensionsStoreInstanceIdRouteImport.update({
     id: '/extensions_/store/$instanceId',
@@ -469,6 +482,8 @@ export interface FileRoutesByFullPath {
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/cloud/': typeof ChatCloudIndexRoute
+  '/cloud/$environmentId/$threadId': typeof ChatCloudEnvironmentIdThreadIdRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -534,6 +549,8 @@ export interface FileRoutesByTo {
   '/settings/voice': typeof ChatSettingsVoiceRoute
   '/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/cloud': typeof ChatCloudIndexRoute
+  '/cloud/$environmentId/$threadId': typeof ChatCloudEnvironmentIdThreadIdRoute
   '/settings/extensions/all': typeof ChatSettingsExtensionsAllRoute
   '/settings/extensions/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/settings/scientific-computing/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -601,6 +618,8 @@ export interface FileRoutesById {
   '/_chat/settings/voice': typeof ChatSettingsVoiceRoute
   '/_chat/settings/worktrees': typeof ChatSettingsWorktreesRoute
   '/threads/$environmentId/$threadId': typeof ThreadsEnvironmentIdThreadIdRoute
+  '/_chat/cloud/': typeof ChatCloudIndexRoute
+  '/_chat/cloud/$environmentId/$threadId': typeof ChatCloudEnvironmentIdThreadIdRoute
   '/_chat/settings/extensions_/all': typeof ChatSettingsExtensionsAllRoute
   '/_chat/settings/extensions_/installed': typeof ChatSettingsExtensionsInstalledRoute
   '/_chat/settings/scientific-computing_/$languageId': typeof ChatSettingsScientificComputingLanguageIdRoute
@@ -668,6 +687,8 @@ export interface FileRouteTypes {
     | '/settings/voice'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/cloud/'
+    | '/cloud/$environmentId/$threadId'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
     | '/settings/scientific-computing/$languageId'
@@ -733,6 +754,8 @@ export interface FileRouteTypes {
     | '/settings/voice'
     | '/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/cloud'
+    | '/cloud/$environmentId/$threadId'
     | '/settings/extensions/all'
     | '/settings/extensions/installed'
     | '/settings/scientific-computing/$languageId'
@@ -799,6 +822,8 @@ export interface FileRouteTypes {
     | '/_chat/settings/voice'
     | '/_chat/settings/worktrees'
     | '/threads/$environmentId/$threadId'
+    | '/_chat/cloud/'
+    | '/_chat/cloud/$environmentId/$threadId'
     | '/_chat/settings/extensions_/all'
     | '/_chat/settings/extensions_/installed'
     | '/_chat/settings/scientific-computing_/$languageId'
@@ -924,6 +949,13 @@ declare module '@tanstack/react-router' {
       path: '/getting-started'
       fullPath: '/getting-started'
       preLoaderRoute: typeof ChatGettingStartedRouteImport
+      parentRoute: typeof ChatRoute
+    }
+    '/_chat/cloud/': {
+      id: '/_chat/cloud/'
+      path: '/cloud'
+      fullPath: '/cloud/'
+      preLoaderRoute: typeof ChatCloudIndexRouteImport
       parentRoute: typeof ChatRoute
     }
     '/threads/$environmentId/$threadId': {
@@ -1220,6 +1252,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatSettingsExtensionsAllRouteImport
       parentRoute: typeof ChatSettingsRoute
     }
+    '/_chat/cloud/$environmentId/$threadId': {
+      id: '/_chat/cloud/$environmentId/$threadId'
+      path: '/cloud/$environmentId/$threadId'
+      fullPath: '/cloud/$environmentId/$threadId'
+      preLoaderRoute: typeof ChatCloudEnvironmentIdThreadIdRouteImport
+      parentRoute: typeof ChatRoute
+    }
     '/_chat/settings/extensions_/store/$instanceId': {
       id: '/_chat/settings/extensions_/store/$instanceId'
       path: '/extensions/store/$instanceId'
@@ -1401,6 +1440,8 @@ interface ChatRouteChildren {
   ChatIndexRoute: typeof ChatIndexRoute
   ChatEnvironmentIdThreadIdRoute: typeof ChatEnvironmentIdThreadIdRoute
   ChatDraftDraftIdRoute: typeof ChatDraftDraftIdRoute
+  ChatCloudIndexRoute: typeof ChatCloudIndexRoute
+  ChatCloudEnvironmentIdThreadIdRoute: typeof ChatCloudEnvironmentIdThreadIdRoute
 }
 
 const ChatRouteChildren: ChatRouteChildren = {
@@ -1412,6 +1453,8 @@ const ChatRouteChildren: ChatRouteChildren = {
   ChatIndexRoute: ChatIndexRoute,
   ChatEnvironmentIdThreadIdRoute: ChatEnvironmentIdThreadIdRoute,
   ChatDraftDraftIdRoute: ChatDraftDraftIdRoute,
+  ChatCloudIndexRoute: ChatCloudIndexRoute,
+  ChatCloudEnvironmentIdThreadIdRoute: ChatCloudEnvironmentIdThreadIdRoute,
 }
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
