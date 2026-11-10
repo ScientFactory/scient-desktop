@@ -1,6 +1,8 @@
 /* oxlint-disable react/no-array-index-key -- A match keeps its place among a page's matches while the query stands. */
 import { useEffect, useRef, useState } from "react";
 
+import { observeResize } from "~/lib/observeResize";
+
 import { findBoxes, type FindMatch } from "./officeFind";
 
 /**
@@ -27,7 +29,11 @@ export function OfficeFindMarks(props: {
       if (records.some((record) => !own.contains(record.target))) mark();
     });
     observer.observe(page, { childList: true, subtree: true, characterData: true });
-    return () => observer.disconnect();
+    const unobserve = observeResize(page, mark);
+    return () => {
+      observer.disconnect();
+      unobserve();
+    };
   }, [query]);
   // Each match find moves to is brought into view once, so the person can scroll away from it.
   const shown = useRef<string | null>(null);

@@ -10,7 +10,7 @@ import { expect, it, vi } from "vite-plus/test";
 
 import type { ChatComposerHandle } from "~/components/chat/ChatComposer";
 import { ComposerHandleContext } from "~/composerHandleContext";
-import { act, fakeTimers, render } from "../../../test/render";
+import { act, fakeTimers, render, stubGlobal } from "../../../test/render";
 import { OfficeFileContext, openOfficeCitation } from "./officeQuote";
 import { ScientOfficeReader, type OfficeReaderDocument } from "./ScientOfficeReader";
 import "~/index.css";
@@ -32,6 +32,29 @@ function fakeDocument(): OfficeReaderDocument {
 }
 
 it("finds across pages, marks each match and moves to the next page that has one", async () => {
+  let releaseWidth: (() => void) | undefined;
+  let measured = false;
+  using _resize = stubGlobal(
+    "ResizeObserver",
+    class extends ResizeObserver {
+      constructor(callback: ResizeObserverCallback) {
+        super((entries, observer) => {
+          const held = entries.filter((entry) => entry.target.hasAttribute("data-office-pages"));
+          if (measured || held.length === 0) callback(entries, observer);
+          else {
+            releaseWidth = () => {
+              measured = true;
+              callback(held, observer);
+            };
+            callback(
+              entries.filter((entry) => !held.includes(entry)),
+              observer,
+            );
+          }
+        });
+      }
+    },
+  );
   const scrollRef = createRef<(index: number, y?: number) => void>();
   await using _screen = await render(
     <div style={{ display: "flex", height: 600, width: 700 }}>
@@ -55,6 +78,8 @@ it("finds across pages, marks each match and moves to the next page that has one
   );
   await page.getByRole("textbox", { name: "Search document" }).fill("study");
   await expect.element(page.getByText("1/3")).toBeVisible();
+  await vi.waitFor(() => expect(releaseWidth).toBeDefined());
+  await act(() => releaseWidth!());
   // Page 2's two body matches and its header's are marked; find stands on the first body one.
   await vi.waitFor(() => {
     const marks = document.querySelectorAll('[aria-label="Page 2"] [aria-hidden] > div');
