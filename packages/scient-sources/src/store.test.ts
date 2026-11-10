@@ -1454,6 +1454,40 @@ describe("Scient source store", () => {
     ).resolves.toBe("%PDF-1.7\nshared\n");
   });
 
+  it("keeps how a downloaded PDF was reached on its attachment", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const pdfPath = NodePath.join(root, "papers", "preprint.pdf");
+    await NodeFSP.mkdir(NodePath.dirname(pdfPath), { recursive: true });
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\npreprint\n", "utf8");
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: { ...candidate, externalReferences: [] },
+      actor: "agent",
+      intake: "paper",
+      pdfPath,
+      pdfRetrieval: { route: "open-access", version: "preprint" },
+    });
+    if (!imported.record) throw new Error("Expected an imported source.");
+    const publishedPath = NodePath.join(root, "papers", "published.pdf");
+    await NodeFSP.writeFile(publishedPath, "%PDF-1.7\npublished\n", "utf8");
+    await attachScientSourcePdf({
+      root,
+      sourceId: imported.record.sourceId,
+      expectedRevision: imported.record.revision,
+      pdfPath: publishedPath,
+      retrieval: { route: "university", version: "published" },
+    });
+
+    const stored = await readScientSourceRecord(root, imported.record.sourceId);
+    expect(stored?.origin?.intake).toBe("paper");
+    expect(stored?.attachments.map((attachment) => attachment.retrieval)).toEqual([
+      { route: "open-access", version: "preprint" },
+      { route: "university", version: "published" },
+    ]);
+  });
+
   it("resolves only regular project-relative PDFs and rejects traversal or symlink escapes", async () => {
     const root = await fixture();
     await initializeScientProject({ root });

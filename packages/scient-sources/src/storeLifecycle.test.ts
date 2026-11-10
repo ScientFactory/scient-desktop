@@ -263,6 +263,26 @@ describe("Scient source revisions", () => {
     ).resolves.toMatchObject({ outcome: "unchanged", record: { revision: 3 } });
   });
 
+  it("keeps the current citation key when reverting", async () => {
+    const root = await project();
+    const record = await add(root, "A", "10.1000/a");
+    const keyed = await updateScientSourceMetadata({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: 1,
+      metadata: { ...editableMetadataFromRecord(record), citationKey: "lovelace2026work" },
+    });
+    expect(keyed.record.citationKey).toBe("lovelace2026work");
+    const reverted = await revertScientSource({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: keyed.record.revision,
+      toRevision: 1,
+    });
+    expect(reverted.outcome).toBe("unchanged");
+    expect(reverted.record.citationKey).toBe("lovelace2026work");
+  });
+
   it("brings a detached PDF back until the trash is emptied", async () => {
     const root = await project();
     const record = await add(root, "A", "10.1000/a", "a");

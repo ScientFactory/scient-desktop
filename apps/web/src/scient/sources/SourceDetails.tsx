@@ -47,6 +47,7 @@ import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { agentVerificationLabel } from "./sourceLabels";
+import { pdfVersionLabel } from "./sourcePdfVersion";
 import { SourceReference } from "./SourceReference";
 import { useSourceNoteControls } from "./SourceNote";
 import type { SourceAnchorPoint } from "./sourceAnchor";
@@ -143,7 +144,7 @@ function importedLabel(record: SourceRecord): string {
         ? "Imported from Zotero"
         : "Added to Scient";
   const editedLabel = record.updatedBy === "agent" ? " · Edited by agent" : "";
-  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${agentVerificationLabel(record)}${editedLabel}`;
+  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${agentVerificationLabel(record)}${editedLabel}${pdfVersionLabel(record.attachments)}`;
 }
 
 function openExternal(url: string): void {

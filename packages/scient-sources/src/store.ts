@@ -14,6 +14,12 @@ import * as Schema from "effect/Schema";
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
 import {
+  assignCitationKey,
+  citationKeyComparisonValue,
+  citationKeyValidationMessage,
+  takenCitationKeys,
+} from "./citationKeys.ts";
+import {
   applyEditableMetadata,
   changedEditableMetadataFields,
   editableMetadataEquals,
@@ -29,6 +35,7 @@ import {
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   type ScientSourceActor,
   type ScientSourceAttachment,
+  type ScientSourceAttachmentRetrieval,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
   type ScientSourceDuplicateKind,
@@ -36,6 +43,7 @@ import {
   type ScientSourceFieldProvenance,
   type ScientSourceMetadataUpdateResult,
   type ScientSourceNoteUpdateResult,
+  type ScientSourceOrigin,
   type ScientSourceStagedMaterial as ScientSourceStagedMaterialType,
   type ScientSourcePermanentDeletionResult,
   type ScientSourceRemovalResult,
@@ -448,6 +456,10 @@ export async function updateScientSourceMetadata(input: {
     const currentMetadata = normalizeScientSourceEditableMetadata(
       editableMetadataFromRecord(current),
     );
+    const requested =
+      normalized.citationKey === undefined && current.citationKey
+        ? { citationKey: current.citationKey, ...normalized }
+        : normalized;
     const existingValidationIssues = input.allowExistingValidationIssues
       ? validateScientSourceEditableMetadata(currentMetadata)
       : [];
@@ -463,10 +475,10 @@ export async function updateScientSourceMetadata(input: {
     const existing = (await listScientSourceRecords(paths.root)).filter(
       (record) => record.sourceId !== current.sourceId,
     );
-    const duplicate = assessSourceMetadataDuplicate({ source: normalized, existing });
+    const duplicate = assessSourceMetadataDuplicate({ source: requested, existing });
 
     // A client that lost the successful response may retry with the old revision.
-    if (editableMetadataEquals(currentMetadata, normalized)) {
+    if (editableMetadataEquals(currentMetadata, requested)) {
       return { outcome: "unchanged", record: current, duplicate, validationIssues };
     }
     if (current.revision !== input.expectedRevision) {
@@ -479,13 +491,25 @@ export async function updateScientSourceMetadata(input: {
       return { outcome: "duplicate", record: current, duplicate, validationIssues };
     }
 
+    if (
+      requested.citationKey !== undefined &&
+      citationKeyComparisonValue(requested.citationKey) !==
+        citationKeyComparisonValue(current.citationKey ?? "")
+    ) {
+      const message = citationKeyValidationMessage(
+        requested.citationKey,
+        takenCitationKeys(existing),
+      );
+      if (message) throw new Error(message);
+    }
+
     const applied = applyEditableMetadata({
       record: current,
-      metadata: normalized,
+      metadata: requested,
       updatedAt: new Date().toISOString(),
       actor: input.actor ?? "user",
     });
-    const identifiersChanged = changedEditableMetadataFields(currentMetadata, normalized).includes(
+    const identifiersChanged = changedEditableMetadataFields(currentMetadata, requested).includes(
       "identifiers",
     );
     const { verification: _staleVerification, ...unverified } = applied;
@@ -790,15 +814,19 @@ async function collectUnreferencedSourceFiles(paths: SourceStorePaths): Promise<
 const REVERT_IGNORED_FIELDS = new Set(["revision", "updatedAt", "updatedBy"]);
 const UNLISTED_CHANGE_FIELDS = new Set(["fieldProvenance"]);
 
-/** Fields that describe the source rather than one revision of it; reverting keeps them current. */
+/**
+ * Fields that describe the source rather than one revision of it; reverting keeps them current.
+ * The citation key stays because documents may already cite it.
+ */
 function revertPreservedFields(
   current: ScientSourceRecord,
-): Pick<ScientSourceRecord, "sourceId" | "projectId" | "importedAt" | "origin"> {
+): Pick<ScientSourceRecord, "sourceId" | "projectId" | "importedAt" | "origin" | "citationKey"> {
   return {
     sourceId: current.sourceId,
     projectId: current.projectId,
     importedAt: current.importedAt,
     ...(current.origin ? { origin: current.origin } : {}),
+    ...(current.citationKey ? { citationKey: current.citationKey } : {}),
   };
 }
 
@@ -928,6 +956,7 @@ export async function revertScientSource(input: {
       updatedAt: _updatedAt,
       updatedBy: _updatedBy,
       origin: _origin,
+      citationKey: _citationKey,
       ...content
     } = target;
     const next: ScientSourceRecord = {
@@ -1676,6 +1705,7 @@ async function stagePdf(input: {
   readonly fileName?: string;
   readonly expectedPdf?: ScientSourcePdfInspection;
   readonly importedAt: string;
+  readonly retrieval?: ScientSourceAttachmentRetrieval;
 }): Promise<ScientSourceAttachment> {
   const stagingDirectory = NodePath.join(input.paths.staging, input.operationId);
   await ensureDirectory(stagingDirectory);
@@ -1757,6 +1787,7 @@ async function stagePdf(input: {
       byteLength,
       relativePath,
       importedAt: input.importedAt,
+      ...(input.retrieval ? { retrieval: input.retrieval } : {}),
     };
   } finally {
     await targetHandle?.close();
@@ -1780,6 +1811,7 @@ export async function attachScientSourcePdf(input: {
   readonly pdfPath: string;
   readonly fileName?: string;
   readonly actor?: ScientSourceActor;
+  readonly retrieval?: ScientSourceAttachmentRetrieval;
 }): Promise<ScientSourcePdfAttachmentResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
@@ -1798,6 +1830,7 @@ export async function attachScientSourcePdf(input: {
       operationId: `attach_${NodeCrypto.randomUUID()}`,
       sourcePath: input.pdfPath,
       ...(input.fileName ? { fileName: input.fileName } : {}),
+      ...(input.retrieval ? { retrieval: input.retrieval } : {}),
       importedAt: new Date().toISOString(),
     });
     const currentAttachment = current.attachments.some(
@@ -1897,8 +1930,9 @@ interface ImportScientSourceInput {
   readonly expectedPdf?: ScientSourcePdfInspection;
   readonly allowPossibleMetadataMatch?: boolean;
   readonly actor?: ScientSourceActor;
-  readonly intake?: "zotero" | "local-pdf" | "identifier";
+  readonly intake?: ScientSourceOrigin["intake"];
   readonly verification?: ScientSourceVerification;
+  readonly pdfRetrieval?: ScientSourceAttachmentRetrieval;
 }
 
 async function importScientSourceWithRecordLookup(
@@ -1924,6 +1958,7 @@ async function importScientSourceWithRecordLookup(
           sourcePath: input.pdfPath,
           ...(input.candidate.pdfFileName ? { fileName: input.candidate.pdfFileName } : {}),
           ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
+          ...(input.pdfRetrieval ? { retrieval: input.pdfRetrieval } : {}),
           importedAt,
         })
       : null;
@@ -1936,6 +1971,13 @@ async function importScientSourceWithRecordLookup(
       return { outcome: "duplicate", record: null, duplicate };
     }
     const sourceId = makeSourceId(paths.identity.projectId, input.candidate);
+    const citationKey = assignCitationKey({
+      preferred: input.candidate.citationKey,
+      creators: input.candidate.creators,
+      issuedYear: input.candidate.issuedYear,
+      title: input.candidate.title,
+      taken: takenCitationKeys(existing),
+    });
     // Removing a source removes its current record but deliberately keeps prior
     // immutable revisions. Re-importing that same external source must continue
     // after those revisions rather than collide on the next metadata edit.
@@ -1948,6 +1990,7 @@ async function importScientSourceWithRecordLookup(
       sourceId,
       projectId: paths.identity.projectId,
       revision,
+      citationKey,
       type: input.candidate.type,
       customType: input.candidate.customType ?? null,
       title: input.candidate.title,

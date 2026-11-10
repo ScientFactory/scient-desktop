@@ -3,8 +3,15 @@
 import * as NodeTimersPromises from "node:timers/promises";
 
 import {
+  isbn13,
+  isValidIsbn,
+  isWellFormedArxivId,
+  isWellFormedDoi,
+  isWellFormedPmid,
   normalizePersistentIdentifier,
   normalizeScientSourceAbstractDocument,
+  SOURCE_ADD_IDENTIFIER_SCHEMES,
+  type SourceAddIdentifierScheme,
   type ScientSourceAbstractSection,
   type ScientSourceCandidate,
   type ScientSourceCreator,
@@ -16,6 +23,8 @@ import * as Context from "effect/Context";
 import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
+import { ARXIV_IDS_PER_REQUEST, lookupArxivIds } from "./ArxivIdentifierLookup.ts";
+import { ISBNS_PER_REQUEST, lookupIsbns } from "./IsbnIdentifierLookup.ts";
 import { METADATA_USER_AGENT, requestMetadata, type MetadataRequest } from "./metadataHttp.ts";
 import { runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
 
@@ -277,19 +286,35 @@ function metadataFromPubmed(pmid: string, summary: PubmedSummary): ResolvedSourc
   };
 }
 
+/** The registry whose record supplied resolved metadata, as recorded in field provenance. */
+export type RegistryOrigin = Extract<
+  ScientSourceFieldProvenance["origin"],
+  "doi" | "pubmed" | "arxiv" | "open-library" | "google-books"
+>;
+
 export type SourceIdentifierResolution =
   | {
       readonly status: "found";
       readonly identifier: ScientSourceIdentifier;
       readonly metadata: ResolvedSourceMetadata;
       readonly retrievedAt: string;
+      /** Absent for DOI and PMID, whose registry follows from the scheme. */
+      readonly origin?: RegistryOrigin;
     }
   | { readonly status: "not-found"; readonly identifier: ScientSourceIdentifier }
   | { readonly status: "unavailable"; readonly identifier: ScientSourceIdentifier };
 
-type Lookup =
-  | { readonly status: "found"; readonly metadata: ResolvedSourceMetadata }
+export type IdentifierLookup =
+  | {
+      readonly status: "found";
+      readonly metadata: ResolvedSourceMetadata;
+      readonly origin?: RegistryOrigin;
+    }
   | { readonly status: "not-found" | "unavailable" };
+type Lookup = IdentifierLookup;
+
+/** Spaces requests to one registry; lookups default to each registry's shared lane. */
+export type RequestPace = <A>(run: () => Promise<A>) => Promise<A>;
 
 const isSuccess = (status: number) => status >= 200 && status < 300;
 
@@ -330,28 +355,117 @@ async function lookupPmid(pmid: string, request: MetadataRequest): Promise<Looku
   return { status: "found", metadata: metadataFromPubmed(pmid, summary) };
 }
 
-/** The identifier an agent add is checked against: DOI first, then PMID. */
+interface IdentifierScheme {
+  readonly wellFormed: (value: string) => boolean;
+  /** Identifiers one lookup call answers; DOI and PMID go one at a time. */
+  readonly perRequest: number;
+  readonly lookup: (
+    values: ReadonlyArray<string>,
+    request: MetadataRequest,
+    pace: RequestPace | undefined,
+  ) => Promise<ReadonlyMap<string, Lookup>>;
+}
+
+const one =
+  (lookup: (value: string, request: MetadataRequest) => Promise<Lookup>) =>
+  async (values: ReadonlyArray<string>, request: MetadataRequest) =>
+    new Map(
+      await Promise.all(
+        values.map(async (value) => [value, await lookup(value, request)] as const),
+      ),
+    );
+
+/** Every scheme the resolver checks, in the order a source's identifiers are tried. */
+const IDENTIFIER_SCHEMES: Readonly<Record<SourceAddIdentifierScheme, IdentifierScheme>> = {
+  doi: { wellFormed: isWellFormedDoi, perRequest: 1, lookup: one(lookupDoi) },
+  pmid: { wellFormed: isWellFormedPmid, perRequest: 1, lookup: one(lookupPmid) },
+  arxiv: {
+    wellFormed: isWellFormedArxivId,
+    perRequest: ARXIV_IDS_PER_REQUEST,
+    lookup: lookupArxivIds,
+  },
+  isbn: { wellFormed: isValidIsbn, perRequest: ISBNS_PER_REQUEST, lookup: lookupIsbns },
+};
+
+function canonicalIdentifier(scheme: SourceAddIdentifierScheme, value: string): string {
+  const normalized = normalizePersistentIdentifier(scheme, value).slice(scheme.length + 1);
+  return scheme === "isbn" ? (isbn13(normalized) ?? normalized) : normalized;
+}
+
+/** The identifier a source is checked against: DOI, then PMID, then arXiv ID, then ISBN. */
 export function verifiableSourceIdentifier(
   identifiers: ReadonlyArray<ScientSourceIdentifier>,
 ): ScientSourceIdentifier | null {
-  for (const scheme of ["doi", "pmid"] as const) {
+  for (const scheme of SOURCE_ADD_IDENTIFIER_SCHEMES) {
     const found = identifiers.find(
       (identifier) => identifier.scheme.trim().toLowerCase() === scheme && identifier.value.trim(),
     );
-    if (found) {
-      return {
-        scheme,
-        value: normalizePersistentIdentifier(scheme, found.value).slice(scheme.length + 1),
-      };
-    }
+    if (found) return { scheme, value: canonicalIdentifier(scheme, found.value) };
   }
   return null;
+}
+
+const SCHEME_LABELS: Record<SourceAddIdentifierScheme, { label: string; registry: string }> = {
+  doi: { label: "DOI", registry: "doi.org" },
+  pmid: { label: "PMID", registry: "PubMed" },
+  arxiv: { label: "arXiv ID", registry: "arXiv" },
+  isbn: { label: "ISBN", registry: "Open Library or Google Books" },
+};
+
+function schemeLabels(identifier: ScientSourceIdentifier) {
+  const scheme = identifier.scheme as SourceAddIdentifierScheme;
+  return SCHEME_LABELS[scheme] ?? { label: identifier.scheme, registry: "its registry" };
+}
+
+/** "DOI 10.1000/x", for messages to people and agents. */
+export function sourceIdentifierLabel(identifier: ScientSourceIdentifier): string {
+  return `${schemeLabels(identifier).label} ${identifier.value}`;
+}
+
+/** The registry an identifier is checked against, for messages to people and agents. */
+export function sourceIdentifierRegistryName(identifier: ScientSourceIdentifier): string {
+  return schemeLabels(identifier).registry;
 }
 
 export interface SourceIdentifierResolverOptions {
   readonly request?: MetadataRequest;
   readonly now?: () => Date;
   readonly deadlineMs?: number;
+  /** Replaces the per-registry request spacing, so tests do not wait on it. */
+  readonly pace?: RequestPace;
+}
+
+async function lookupBeforeDeadline(
+  scheme: SourceAddIdentifierScheme,
+  values: ReadonlyArray<string>,
+  options: SourceIdentifierResolverOptions,
+): Promise<ReadonlyMap<string, Lookup>> {
+  const unavailable = new Map<string, Lookup>(
+    values.map((value) => [value, { status: "unavailable" }]),
+  );
+  return Promise.race([
+    IDENTIFIER_SCHEMES[scheme]
+      .lookup(values, options.request ?? requestMetadata, options.pace)
+      .catch(() => unavailable),
+    NodeTimersPromises.setTimeout(options.deadlineMs ?? LOOKUP_DEADLINE_MS, unavailable, {
+      ref: false,
+    }),
+  ]);
+}
+
+function resolutionFrom(
+  identifier: ScientSourceIdentifier & { readonly scheme: SourceAddIdentifierScheme },
+  outcome: Lookup,
+  now: () => Date,
+): SourceIdentifierResolution {
+  if (outcome.status !== "found") return { status: outcome.status, identifier };
+  return {
+    status: "found",
+    identifier,
+    metadata: outcome.metadata,
+    retrievedAt: now().toISOString(),
+    ...(outcome.origin ? { origin: outcome.origin } : {}),
+  };
 }
 
 export async function resolveSourceIdentifier(
@@ -360,31 +474,65 @@ export async function resolveSourceIdentifier(
 ): Promise<SourceIdentifierResolution | null> {
   const identifier = verifiableSourceIdentifier(identifiers);
   if (!identifier) return null;
-  const wellFormed =
-    identifier.scheme === "doi"
-      ? /^10\.\d{4,9}\/\S+$/u.test(identifier.value)
-      : /^\d{1,9}$/u.test(identifier.value);
-  if (!wellFormed) return { status: "not-found", identifier };
-  const request = options.request ?? requestMetadata;
-  const lookup =
-    identifier.scheme === "doi"
-      ? lookupDoi(identifier.value, request)
-      : lookupPmid(identifier.value, request);
-  const unavailable: Lookup = { status: "unavailable" };
-  const outcome = await Promise.race([
-    lookup.catch(() => unavailable),
-    NodeTimersPromises.setTimeout(options.deadlineMs ?? LOOKUP_DEADLINE_MS, unavailable, {
-      ref: false,
-    }),
-  ]);
-  if (outcome.status !== "found") return { status: outcome.status, identifier };
+  const [resolution] = await resolveSourceIdentifierBatch([identifier], options);
+  return resolution ?? null;
+}
+
+/**
+ * Resolves each identifier as its own work, grouping lookups per registry so arXiv and
+ * Open Library answer many in one request. Results keep the input order; an identifier of
+ * a scheme the resolver does not check is not found.
+ */
+export async function resolveSourceIdentifierBatch(
+  identifiers: ReadonlyArray<ScientSourceIdentifier>,
+  options: SourceIdentifierResolverOptions = {},
+): Promise<ReadonlyArray<SourceIdentifierResolution>> {
   const now = options.now ?? (() => new Date());
-  return {
-    status: "found",
-    identifier,
-    metadata: outcome.metadata,
-    retrievedAt: now().toISOString(),
-  };
+  const checked = identifiers.map((input) => {
+    const identifier = verifiableSourceIdentifier([input]);
+    return identifier && IDENTIFIER_SCHEMES[identifier.scheme as SourceAddIdentifierScheme]
+      ? { identifier: identifier as ScientSourceIdentifier & { scheme: SourceAddIdentifierScheme } }
+      : { identifier: null, input };
+  });
+  const pending = new Map<SourceAddIdentifierScheme, Array<string>>();
+  for (const entry of checked) {
+    const identifier = entry.identifier;
+    if (!identifier || !IDENTIFIER_SCHEMES[identifier.scheme].wellFormed(identifier.value))
+      continue;
+    const values = pending.get(identifier.scheme) ?? [];
+    if (!values.includes(identifier.value)) values.push(identifier.value);
+    pending.set(identifier.scheme, values);
+  }
+  const answers = new Map<string, Lookup>();
+  await Promise.all(
+    [...pending].map(async ([scheme, values]) => {
+      const size = IDENTIFIER_SCHEMES[scheme].perRequest;
+      // DOI and PMID lookups run a few at a time so no lookup waits out its deadline in a lane.
+      const parallel = size === 1 ? 4 : 1;
+      const chunks = Array.from({ length: Math.ceil(values.length / size) }, (_, index) =>
+        values.slice(index * size, (index + 1) * size),
+      );
+      for (let start = 0; start < chunks.length; start += parallel) {
+        const settled = await Promise.all(
+          chunks
+            .slice(start, start + parallel)
+            .map((chunk) => lookupBeforeDeadline(scheme, chunk, options)),
+        );
+        for (const result of settled) {
+          for (const [value, lookup] of result) answers.set(`${scheme}:${value}`, lookup);
+        }
+      }
+    }),
+  );
+  return checked.map((entry): SourceIdentifierResolution => {
+    if (!entry.identifier) {
+      return { status: "not-found", identifier: entry.input };
+    }
+    const lookup = answers.get(`${entry.identifier.scheme}:${entry.identifier.value}`) ?? {
+      status: "not-found",
+    };
+    return resolutionFrom(entry.identifier, lookup, now);
+  });
 }
 
 export type ResolveSourceIdentifier = (
@@ -478,7 +626,55 @@ const REGISTRY_SOURCE_FIELDS = {
     url: "pmid",
     identifiers: "articleids",
   },
-} as const;
+  arxiv: {
+    type: null,
+    title: "title",
+    creators: "author",
+    issuedRaw: "published",
+    issuedYear: "published",
+    abstract: "summary",
+    containerTitle: null,
+    publisher: null,
+    volume: null,
+    issue: null,
+    pages: null,
+    language: null,
+    url: "id",
+    identifiers: "arxiv:doi",
+  },
+  "open-library": {
+    type: null,
+    title: "title",
+    creators: "authors",
+    issuedRaw: "publish_date",
+    issuedYear: "publish_date",
+    abstract: null,
+    containerTitle: null,
+    publisher: "publishers",
+    volume: null,
+    issue: null,
+    pages: null,
+    language: null,
+    url: "url",
+    identifiers: "identifiers",
+  },
+  "google-books": {
+    type: null,
+    title: "title",
+    creators: "authors",
+    issuedRaw: "publishedDate",
+    issuedYear: "publishedDate",
+    abstract: null,
+    containerTitle: null,
+    publisher: "publisher",
+    volume: null,
+    issue: null,
+    pages: null,
+    language: "language",
+    url: "canonicalVolumeLink",
+    identifiers: "industryIdentifiers",
+  },
+} as const satisfies Record<RegistryOrigin, Record<string, string | null>>;
 type RegistryField = keyof (typeof REGISTRY_SOURCE_FIELDS)["doi"];
 
 /**
@@ -490,7 +686,7 @@ export function applyResolvedSourceMetadata(
   resolution: Extract<SourceIdentifierResolution, { readonly status: "found" }>,
 ): ScientSourceCandidate {
   const { metadata } = resolution;
-  const origin = resolution.identifier.scheme === "doi" ? "doi" : "pubmed";
+  const origin = resolution.origin ?? (resolution.identifier.scheme === "doi" ? "doi" : "pubmed");
   const identifiers = mergeIdentifiers([...candidate.identifiers, ...metadata.identifiers]);
   const supplied: Record<RegistryField, boolean> = {
     type: metadata.type !== null,

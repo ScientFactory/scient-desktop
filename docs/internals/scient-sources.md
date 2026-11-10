@@ -241,6 +241,21 @@ Sources MCP toolkit:
   `scient_sources_get` returns the kept revisions with who saved each and which
   fields changed.
 
+Paper downloads reach the store through `paperIntake.ts`. A `scient_paper_get`
+or `scient_papers_queue` request with `addToLibrary` (or `sourceId`) needs the
+`sources:write` grant; without it the PDF is only saved and the result says so.
+Once the queue has saved the PDF, the intake attaches it to the source whose DOI
+or arXiv ID matches, at that source's current revision, or creates a source
+through the same resolver as an agent add (`origin.intake: "paper"`, credited to
+the agent, or to the user for their own queue). Its candidate holds only the
+asked identifier; OpenAlex's title and year are kept, with `openalex`
+provenance, only when no registry answers. The DOI in the PDF's own text is not
+used, since it can be a cited work. A not-found DOI adds nothing, and a possible
+metadata match is reported for the agent to decide. Each downloaded attachment
+records `retrieval`: the route (`open-access`, `publisher`, `university`,
+`library`) and the version (`published`, `accepted`, `preprint`, or `unknown`
+when the repository did not say). A copy already in `papers/` records none.
+
 Before an agent add writes anything, the server checks the source's DOI at
 doi.org (CSL-JSON), or failing that its PMID through PubMed esummary on the
 shared NCBI request lane, within a 6.5-second deadline. A DOI that doi.org
@@ -352,6 +367,27 @@ selected local Zotero PDF before presenting the decision. Import revalidates
 and hashes while copying, so the review and durable write use the same content
 identity without trusting a stale path.
 
+## Citation keys
+
+Each record carries an optional `citationKey`, the key documents cite it by
+(`[@key]`, `\cite{key}`). The rules live in
+`packages/scient-sources/src/citationKeys.ts` and are applied by the store when
+a record is created, under the same write lock as duplicate assessment:
+
+- A key the importer brings (Zotero, Better BibTeX, a `.bib` entry) is kept;
+  characters Pandoc or BibTeX cannot read are dropped. Importers set
+  `citationKey` on the candidate and never generate keys themselves.
+- Otherwise the key is generated from the lead author's family name, the year
+  and the first significant title word in ASCII (`smith2020deep`).
+- Keys are unique per project, compared case-insensitively as BibTeX does; a
+  clash adds `a`, `b`, … `z`, `aa`.
+- A key never changes on its own. Editable metadata without `citationKey`
+  keeps the current key; a different value is a deliberate rename, validated
+  for syntax and uniqueness and credited to the actor like any other field.
+
+Records written before keys existed decode unchanged and have no key until one
+is assigned.
+
 ## Zotero boundary
 
 The adapter uses Zotero's read-only local API v3 at the fixed loopback endpoint
@@ -434,7 +470,7 @@ rather than a larger in-process map.
 ## Deliberate exclusions
 
 This slice does not implement Zotero write-back or sync, source merging,
-automatic possible-duplicate merging, in-text citations, multi-source
+automatic possible-duplicate merging, multi-source
 bibliographies, arbitrary CSL style installation, annotations, evidence claims,
 OCR, fuzzy metadata search, mobile UI, or a separate Studio route.
 Later source systems should add adapters into the same domain and store rather
