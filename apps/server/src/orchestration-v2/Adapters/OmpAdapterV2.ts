@@ -105,6 +105,13 @@ import {
   browserActionText,
   browserActionDiagnostic,
 } from "../../provider/omp/OmpBrowserAction.ts";
+import {
+  ompComputerPermissionsNeeded,
+  ompComputerPresentation,
+  ompComputerStatusErrors,
+  ompToolImages,
+  retainedComputerPresentation,
+} from "../../provider/omp/OmpComputerPresentation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
@@ -813,10 +820,35 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               const previous = ordinaryTools.get(update.toolCallId);
               if (previous && previous.status !== "running") return Effect.void;
               const rawOutput = nativeToolText(update.data) ?? update.detail;
+              const name = update.name === "tool" && previous ? previous.name : update.name;
+              const computer =
+                ompComputerPresentation(
+                  name,
+                  update.input ?? previous?.input,
+                  update.data,
+                  client.redaction.text,
+                ) ?? retainedComputerPresentation(previous);
+              const images = computer ? ompToolImages(update.data) : [];
+              const permissionsNeeded = computer
+                ? ompComputerPermissionsNeeded(
+                    [rawOutput, ...ompComputerStatusErrors(update.data)].join("\n"),
+                  )
+                : [];
               const item: Extract<NativeSessionUpdate, { type: "tool" }> = {
                 type: "tool",
                 id: update.toolCallId,
-                name: update.name === "tool" && previous ? previous.name : update.name,
+                name,
+                ...computer,
+                ...(images.length > 0
+                  ? { images }
+                  : previous?.images === undefined
+                    ? {}
+                    : { images: previous.images }),
+                ...(permissionsNeeded.length > 0
+                  ? { permissionsNeeded }
+                  : previous?.permissionsNeeded === undefined
+                    ? {}
+                    : { permissionsNeeded: previous.permissionsNeeded }),
                 status: update.status === "inProgress" ? "running" : update.status,
                 ...(update.input === undefined
                   ? previous?.input === undefined

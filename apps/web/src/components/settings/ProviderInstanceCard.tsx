@@ -81,6 +81,9 @@ import { providerSettingsTabClassName } from "./providerSettingsTabs";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
+// SCIENT-FORK:START — Scient Agent computer control permissions.
+import { ScientAgentComputerControlPermissionsRow } from "~/scient/computerControl/ComputerControlPermissions";
+// SCIENT-FORK:END
 import type { DriverOption } from "./providerDriverMeta";
 import {
   getProviderVersionAdvisoryPresentation,
@@ -1496,6 +1499,14 @@ export function ProviderInstanceCard({
               />
             ) : null}
             {runtimeFields}
+            {/* SCIENT-FORK:START — computer control lists the macOS panes it needs. */}
+            {instance.driver === "scient" ? (
+              <ScientAgentComputerControlPermissionsRow
+                config={instance.config}
+                environmentId={environmentId}
+              />
+            ) : null}
+            {/* SCIENT-FORK:END */}
           </SettingsSection>
         ) : null}
 

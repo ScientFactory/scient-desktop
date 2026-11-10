@@ -20,6 +20,7 @@ import {
   type ChatAttachment,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ompProcessEnvironment } from "../../provider/omp/OmpEnvironment.ts";
@@ -2030,6 +2031,39 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect("redacts credentials from a computer call's title and app before projection", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const secret = "opaque-fixture-credential-abcdefghijk";
+        const h = yield* ordinaryToolsHarness({ SYNTHETIC_API_KEY: secret });
+        yield* h.peer.emit([
+          nativeToolStart("look", "eval", {
+            language: "js",
+            title: `Type ${secret}`,
+            code: `await computer.window({ app: "${secret}" });`,
+          }),
+        ]);
+        yield* h.untilTool("look", "running");
+        assert.equal(h.tool("look")?.toolSurface, "computer");
+        assert.notInclude(encodeDiagnostic(h.tool("look")), secret.slice(0, -1));
+        yield* h.peer.emit([
+          {
+            type: "tool_execution_update",
+            toolCallId: "look",
+            toolName: "eval",
+            partialResult: {
+              details: { statusEvents: [{ op: "computer", detail: `desktop.window(${secret})` }] },
+            },
+          },
+          nativeToolEnd("look", "eval", { content: [{ type: "text", text: "done" }] }),
+        ]);
+        yield* h.untilTool("look", "completed");
+        assert.notInclude(encodeDiagnostic(h.tool("look")), secret.slice(0, -1));
+        yield* h.stop();
+      }),
+    ),
+  );
+
   it.effect("preserves native OMP pre-execution stream identity and adopts finalized input", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3334,6 +3368,78 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(completed.turnItem.toolName, "read");
         assert.deepEqual(completed.turnItem.input, { path: "result.txt" });
         assert.equal(completed.turnItem.output, "Measured result");
+      }),
+    ),
+  );
+
+  it.effect("shows computer calls on the computer surface with their screenshots", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness();
+        yield* h.runtime.startTurn(h.input);
+        const screenshot = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+        for (const event of [
+          {
+            type: "tool_execution_start",
+            toolCallId: "look",
+            toolName: "eval",
+            args: {
+              language: "js",
+              title: "Look at the document",
+              code: 'const win = await computer.window({ app: "TextEdit" }); await win.screenshot();',
+            },
+          },
+          {
+            type: "tool_execution_end",
+            toolCallId: "look",
+            toolName: "eval",
+            result: { content: [{ type: "text", text: "screenshot 14214" }, screenshot] },
+          },
+          {
+            type: "tool_execution_start",
+            toolCallId: "read-tree",
+            toolName: "eval",
+            args: { language: "js", code: "console.log(await win.ax());" },
+          },
+          {
+            type: "tool_execution_end",
+            toolCallId: "read-tree",
+            toolName: "eval",
+            isError: true,
+            result: {
+              content: [{ type: "text", text: "ToolError: PermissionDenied" }],
+              details: {
+                statusEvents: [
+                  {
+                    op: "computer",
+                    error:
+                      "PermissionDenied: macOS Accessibility permission is not granted to Scient, which macOS holds responsible for omp",
+                  },
+                ],
+              },
+            },
+          },
+        ])
+          yield* Queue.offer(h.notifications, { _tag: "Event", event });
+        const seen = new Map<string, OrchestrationV2TurnItem>();
+        yield* h.takeUntil((event) => {
+          if (event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool")
+            seen.set(event.turnItem.id, event.turnItem);
+          return [...seen.values()].filter((item) => item.status !== "running").length === 2;
+        });
+        const items = [...seen.values()];
+        const look = items.find((item) => item.title === "Look at the document");
+        const tree = items.find((item) => item !== look);
+        if (look?.type !== "dynamic_tool" || tree?.type !== "dynamic_tool")
+          return yield* Effect.die("Missing computer items");
+        assert.equal(look.toolSurface, "computer");
+        assert.equal(look.toolSource?.name, "TextEdit");
+        assert.deepEqual(look.output, {
+          content: [{ type: "text", text: "screenshot 14214" }, screenshot],
+        });
+        assert.equal(tree.toolSurface, "computer");
+        assert.equal(tree.title, "Computer use");
+        assert.deepEqual(tree.toolPermissionsNeeded, ["accessibility"]);
       }),
     ),
   );

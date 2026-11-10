@@ -95,8 +95,17 @@ export function makeScientProviderSettings<BinaryPath extends Schema.Top>({
         Schema.withDecodingDefault(Effect.succeed([])),
         Schema.annotateKey({ providerSettingsForm: { hidden: true } }),
       ),
+      computerControl: Schema.Boolean.pipe(
+        Schema.withDecodingDefault(Effect.succeed(true)),
+        Schema.annotateKey({
+          title: "Computer control",
+          description:
+            "Lets Scient Agent see and use the apps on this computer: it takes screenshots, reads windows, clicks and types, mostly in the background without moving your pointer. It follows the conversation's access setting.",
+          providerSettingsForm: { control: "switch" },
+        }),
+      ),
     },
-    { order: ["binaryPath"] },
+    { order: ["binaryPath", "computerControl"] },
   );
 
   const DroidSettings = makeProviderSettingsSchema(
