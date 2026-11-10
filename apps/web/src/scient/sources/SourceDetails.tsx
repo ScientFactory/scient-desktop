@@ -624,6 +624,8 @@ export function SourceDetails(props: {
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  /** The Source's highlights and notes, shown after its reference. */
+  readonly annotations?: ReactNode;
 }) {
   const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
@@ -867,6 +869,8 @@ export function SourceDetails(props: {
             ) : null)}
 
           <SourceReference record={record} />
+
+          {props.annotations}
 
           {sourceNote.section}
 

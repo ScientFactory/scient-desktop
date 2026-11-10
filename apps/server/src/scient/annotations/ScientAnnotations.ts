@@ -308,18 +308,22 @@ export const layer = Layer.succeed(ScientAnnotations, {
     const now = yield* nowIso;
     return yield* attempt("operation-failed", async () => {
       const canonicalRoot = await annotationProjectRoot(request.root);
-      const pdf = await projectPdf(canonicalRoot, request.relativePath);
-      if (
-        request.command.action === "create" &&
-        (pdf.material.sha256 !== request.material.sha256 ||
-          pdf.material.byteLength !== request.material.byteLength)
-      ) {
-        return { outcome: "material-changed", annotation: null } as const;
+      let relativePath: string | null = null;
+      if (request.command.action === "create") {
+        if (request.relativePath === undefined) throw new Error("A create names its PDF.");
+        const pdf = await projectPdf(canonicalRoot, request.relativePath);
+        if (
+          pdf.material.sha256 !== request.material.sha256 ||
+          pdf.material.byteLength !== request.material.byteLength
+        ) {
+          return { outcome: "material-changed", annotation: null } as const;
+        }
+        relativePath = pdf.relativePath;
       }
       return mutateScientAnnotations({
         canonicalRoot,
         material: request.material,
-        relativePath: pdf.material.sha256 === request.material.sha256 ? pdf.relativePath : null,
+        relativePath,
         command: request.command,
         actor,
         now,
