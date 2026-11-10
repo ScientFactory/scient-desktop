@@ -60,6 +60,7 @@ import {
   LATEX_COMPILATION_STORAGE_KEY,
   normalizeLatexCompilation,
 } from "../latex/latexCompilation";
+import { LibrarySettings } from "../sources/LibrarySettings";
 import { PandocSettingsRow } from "../wordExport/PandocSettingsRow";
 import { pandocToolSummary } from "../wordExport/pandocToolModel";
 import { usePandocTool, type PandocToolController } from "../wordExport/usePandocTool";
@@ -571,6 +572,7 @@ function EnvironmentDocumentsSettings(props: {
           </div>
         }
       />
+      <LibrarySettings environmentId={props.environmentId} />
     </SettingsPageContainer>
   );
 }

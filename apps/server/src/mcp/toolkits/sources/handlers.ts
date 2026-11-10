@@ -21,7 +21,12 @@ import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
-import { SourceIdentifierLookup } from "../../../scient/sources/SourceIdentifierResolver.ts";
+import { keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
+import {
+  addScientSourcesByIdentifier,
+  SourceIdentifierBatchLookup,
+  summarizeIdentifierAdd,
+} from "../../../scient/sources/SourceIdentifierAdd.ts";
 import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
@@ -449,9 +454,57 @@ export const revertScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
   },
 );
 
+const IDENTIFIER_LIST_OPTIONS = new Set(["identifierList", "enrich", "allowPossibleMetadataMatch"]);
+
+const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolkit.addByIdentifier")(
+  function* (input: ScientSourceAddInputType, identifierList: ReadonlyArray<string>) {
+    const { root } = yield* resolveScientSourcesProject();
+    const extra = Object.keys(input).find((field) => !IDENTIFIER_LIST_OPTIONS.has(field));
+    if (extra) {
+      const message =
+        "Give identifierList alone. Add a source from citation fields or a PDF in a separate call.";
+      return {
+        outcome: "invalid" as const,
+        sourceId: null,
+        revision: null,
+        duplicate: { kind: "new" as const, matchingSourceIds: [], reason: message },
+        validationIssues: [{ field: extra, message }],
+      };
+    }
+    const resolveIdentifiers = yield* SourceIdentifierBatchLookup;
+    const observeImport = yield* makeSourceImportAnalytics("agent");
+    const results = yield* attempt(() =>
+      addScientSourcesByIdentifier(
+        {
+          root,
+          entries: identifierList,
+          actor: "agent",
+          enrich: input.enrich ?? false,
+          allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+          resolveIdentifiers,
+        },
+        observeImport,
+      ),
+    );
+    const summary = summarizeIdentifierAdd(results);
+    return {
+      outcome: "batch" as const,
+      sourceId: null,
+      revision: null,
+      duplicate: { kind: "new" as const, matchingSourceIds: [], reason: summary },
+      validationIssues: [],
+      results,
+      message: summary,
+    };
+  },
+);
+
 export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add")(function* (
   input: ScientSourceAddInputType,
 ) {
+  if (input.identifierList) {
+    return yield* addScientSourcesByIdentifierForInvocation(input, input.identifierList);
+  }
   const { root } = yield* resolveScientSourcesProject();
   const { candidate: initialCandidate, validationIssues: initialIssues } =
     candidateFromAgentInput(input);
@@ -505,7 +558,7 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
       validationIssues,
     };
   }
-  const resolveIdentifier = yield* SourceIdentifierLookup;
+  const resolveIdentifier = yield* keyedIdentifierLookup();
   const observeImport = yield* makeSourceImportAnalytics("agent");
   const result = yield* attempt(() =>
     addAgentSource(

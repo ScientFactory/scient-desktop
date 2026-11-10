@@ -91,6 +91,16 @@ import { registerShortcutClaim } from "../../keyboard/ownership";
 import { subscribeKeyboardPreferences } from "../../keyboard/preferences";
 import { markdownMathController } from "~/scient/math/input/markdownAdapter";
 import { isScientMessageCopyHtml } from "~/scient/clipboard/messageCopyMarker";
+import {
+  citationGroupKeys,
+  filterLibraryCitations,
+  type LibraryCitationCandidate,
+} from "~/scient/sources/libraryCitations";
+import {
+  insertLibraryCitation,
+  libraryCitationQuery,
+  type LibraryCitationQuery,
+} from "./libraryCitation";
 
 export interface ScientMarkdownUploadedImage {
   readonly src: string;
@@ -129,6 +139,8 @@ export interface ScientMarkdownEditorViewOptions {
   readonly onImageUploadFailure?: (error: unknown) => void;
   readonly selectImage?: () => void;
   readonly wikiLinkTargetExists?: (target: string) => boolean | null;
+  /** Opens the Library source a clicked citation names; false leaves the click to the editor. */
+  readonly onOpenCitation?: (keys: ReadonlyArray<string>) => boolean;
 }
 
 export interface ScientMarkdownEditorSnapshot {
@@ -141,6 +153,9 @@ export interface ScientMarkdownEditorSnapshot {
   readonly canRedo: boolean;
   readonly canSetWikiLink: boolean;
   readonly canUndo: boolean;
+  readonly citationActiveIndex: number;
+  /** Library sources matching what follows `[@`; empty when the menu is closed. */
+  readonly citationItems: ReadonlyArray<LibraryCitationCandidate>;
   readonly editable: boolean;
   readonly headingLevel: number | null;
   readonly findActiveIndex: number;
@@ -337,6 +352,9 @@ export class ScientMarkdownEditorView {
   private linkPointerOrigin: { readonly x: number; readonly y: number } | null = null;
   private linkPointerDragged = false;
   private slashActiveIndex = 0;
+  private citationCandidates: ReadonlyArray<LibraryCitationCandidate> = [];
+  private citationActiveIndex = 0;
+  private citationDismissedFrom: number | null = null;
   private findOpen = false;
   private findFocusRequest = 0;
   private findReturnFocus: HTMLElement | null = null;
@@ -502,6 +520,7 @@ export class ScientMarkdownEditorView {
       this.syncViewProps();
     }
     this.slashActiveIndex = 0;
+    this.citationActiveIndex = 0;
     this.publishSnapshot();
   }
 
@@ -1094,10 +1113,19 @@ export class ScientMarkdownEditorView {
         ...(this.options.wikiLinkTargetExists
           ? { wikiLinkTargetExists: this.options.wikiLinkTargetExists }
           : {}),
+        openCitation: (source) => this.options.onOpenCitation?.(citationGroupKeys(source)) ?? false,
       }),
       handleKeyDown: (_view, event) => this.handleEditorKeyDown(event),
-      handleClickOn: (_view, _position, node, _nodePosition, event, direct) =>
-        direct && event.button === 0 && node.type === scientMarkdownSchema.nodes.wiki_link,
+      handleClickOn: (_view, _position, node, _nodePosition, event, direct) => {
+        if (!direct || event.button !== 0) return false;
+        if (node.type === scientMarkdownSchema.nodes.citation) {
+          if (modeIsEditable(this.mode) && !(event.metaKey || event.ctrlKey)) return false;
+          return (
+            this.options.onOpenCitation?.(citationGroupKeys(String(node.attrs.source))) ?? false
+          );
+        }
+        return node.type === scientMarkdownSchema.nodes.wiki_link;
+      },
       handleDoubleClickOn: (view, _position, node, nodePosition, event, direct) => {
         if (
           !direct ||
@@ -1753,6 +1781,7 @@ export class ScientMarkdownEditorView {
       if (item.position <= selection.from) outlineActiveIndex = index;
     });
     const slashItems = slashQuery === null ? [] : filterScientMarkdownSlashCommands(slashQuery);
+    const citationItems = this.citationMenu()?.items ?? [];
     return {
       activeMarks,
       blockType,
@@ -1763,6 +1792,11 @@ export class ScientMarkdownEditorView {
       canRedo: redoDepth(state) > 0,
       canSetWikiLink: modeIsEditable(this.mode) && wikiLinkSelection !== null,
       canUndo: undoDepth(state) > 0,
+      citationActiveIndex: Math.min(
+        this.citationActiveIndex,
+        Math.max(0, citationItems.length - 1),
+      ),
+      citationItems,
       editable: modeIsEditable(this.mode),
       findActiveIndex: find.activeIndex,
       findCaseSensitive: find.caseSensitive,
@@ -1807,6 +1841,60 @@ export class ScientMarkdownEditorView {
     const before = selection.$from.parent.textBetween(0, selection.$from.parentOffset, "\0", "\0");
     const match = /^\/([^\s/]*)$/u.exec(before);
     return match?.[1] ?? null;
+  }
+
+  /** The Library sources a writer can pick after typing `[@`. */
+  setLibraryCitations(candidates: ReadonlyArray<LibraryCitationCandidate>): void {
+    if (candidates === this.citationCandidates) return;
+    this.citationCandidates = candidates;
+    this.publishSnapshot(false);
+  }
+
+  private citationMenu(): {
+    readonly query: LibraryCitationQuery;
+    readonly items: ReadonlyArray<LibraryCitationCandidate>;
+  } | null {
+    if (!modeIsEditable(this.mode) || this.citationCandidates.length === 0) return null;
+    const query = libraryCitationQuery(this.editorView?.state ?? this.session.state);
+    if (!query || query.from === this.citationDismissedFrom) return null;
+    const items = filterLibraryCitations(this.citationCandidates, query.query);
+    return items.length > 0 ? { query, items } : null;
+  }
+
+  /** Replaces the `[@…` being typed with a citation of one Library source. */
+  insertLibraryCitation(citationKey: string): boolean {
+    const view = this.editorView;
+    const menu = this.citationMenu();
+    if (!view || !menu) return false;
+    const transaction = insertLibraryCitation(view.state, menu.query, citationKey);
+    if (!transaction) return false;
+    view.dispatch(transaction.scrollIntoView());
+    view.focus();
+    return true;
+  }
+
+  private handleCitationKeyDown(event: KeyboardEvent): boolean {
+    const menu = this.citationMenu();
+    if (!menu) return false;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      this.citationActiveIndex =
+        (this.citationActiveIndex + direction + menu.items.length) % menu.items.length;
+      this.publishSnapshot(false);
+      return true;
+    }
+    if (event.key === "Escape") {
+      event.preventDefault();
+      this.citationDismissedFrom = menu.query.from;
+      this.publishSnapshot(false);
+      return true;
+    }
+    if (event.key !== "Enter" && event.key !== "Tab") return false;
+    const item = menu.items[Math.min(this.citationActiveIndex, menu.items.length - 1)];
+    if (!item) return false;
+    event.preventDefault();
+    return this.insertLibraryCitation(item.citationKey);
   }
 
   private handleSlashKeyDown(event: KeyboardEvent): boolean {
@@ -1873,7 +1961,7 @@ export class ScientMarkdownEditorView {
       event.preventDefault();
       return true;
     }
-    return this.handleSlashKeyDown(event);
+    return this.handleCitationKeyDown(event) || this.handleSlashKeyDown(event);
   }
 
   /**
