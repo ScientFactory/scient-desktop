@@ -1,11 +1,11 @@
 import base64
 import datetime
 import os
-from pathlib import Path
 import plistlib
 import re
 import subprocess
 import tempfile
+from pathlib import Path
 
 
 def validate_profile(profile, team_id, app_id, domains, now):
@@ -88,7 +88,9 @@ def main():
         source.write_bytes(content)
         source.chmod(0o600)
         decoded = subprocess.run(
-            ["security", "cms", "-D", "-i", str(source)], capture_output=True
+            ["security", "cms", "-D", "-i", str(source)],
+            check=False,
+            capture_output=True,
         )
         if decoded.returncode:
             raise ValueError("Apple security could not decode the provisioning profile")

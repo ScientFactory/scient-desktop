@@ -2,13 +2,12 @@ import copy
 import datetime
 import importlib.util
 import os
-from pathlib import Path
 import plistlib
 import tempfile
-from types import SimpleNamespace
 import unittest
+from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
-
 
 spec = importlib.util.spec_from_file_location(
     "profile_stage", Path(__file__).with_name("stage-macos-connect-profile.py")
@@ -120,9 +119,9 @@ class ProfileTests(unittest.TestCase):
                 mock.patch.object(
                     stage.subprocess, "run", return_value=SimpleNamespace(returncode=1)
                 ),
+                self.assertRaises(ValueError),
             ):
-                with self.assertRaises(ValueError):
-                    stage.main()
+                stage.main()
             self.assertFalse(env_file.exists())
 
 
