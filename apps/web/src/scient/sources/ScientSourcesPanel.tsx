@@ -69,6 +69,7 @@ import { SourceEditor } from "./SourceEditor";
 import { SourceFullTextResults } from "./SourceFullTextResults";
 import { SourceJournalIcon } from "./SourceJournalIcon";
 import { requestSourceTextReveal } from "./sourceTextReveal";
+import { useLibraryFileImport } from "./libraryFileHandoff";
 import { agentVerificationLabel, newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
 import {
   filterScientSourceSearchIndex,
@@ -398,6 +399,9 @@ export function ScientSourcesPanel(props: {
       }
     });
   };
+  useLibraryFileImport(props.root, sources.overview !== null, (files) =>
+    revealImportedSource(sources.uploadLocalFiles(files), files.length === 1),
+  );
 
   const importReferenceFile = (file: File) => {
     setSelectedSourceId(null);
@@ -1657,6 +1661,16 @@ export function ScientSourcesPanel(props: {
               root={props.root}
               query={sourceQuery}
               metadataMatchCount={filteredSourceRecords.length}
+              sourceIds={
+                new Set(
+                  filterScientSourceSearchIndex(
+                    sourceSearchIndex,
+                    "",
+                    organize.filter,
+                    organize.organization,
+                  ).map((record) => record.sourceId),
+                )
+              }
               onOpenHit={(hit) => {
                 requestSourceTextReveal(props.root, hit);
                 props.onOpenPdf(hit);

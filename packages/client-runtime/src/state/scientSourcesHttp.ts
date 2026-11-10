@@ -6,6 +6,7 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourceSavePageRequest,
   ScientSourcesAddByIdentifierRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
@@ -99,6 +100,28 @@ export const searchEnvironmentScientSourcesFullText = Effect.fn(
         headers,
         payload: { root: input.root, query: input.query },
       }),
+  });
+});
+
+export const saveEnvironmentScientSourcePage = Effect.fn(
+  "clientRuntime.state.saveEnvironmentScientSourcePage",
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: string;
+  readonly page: ScientSourceSavePageRequest["page"];
+}) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared: input.prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.savePage(),
+    timeoutMs: METADATA_REFRESH_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) =>
+      client.savePage({ headers, payload: { root: input.root, page: input.page } }),
   });
 });
 

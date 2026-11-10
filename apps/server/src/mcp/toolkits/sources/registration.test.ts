@@ -35,6 +35,7 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       "scient_sources_remove",
       "scient_sources_restore",
       "scient_sources_revert",
+      "scient_sources_save_page",
       "scient_sources_search",
       "scient_sources_update",
       "scient_sources_zotero_browse",
@@ -71,6 +72,7 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
         "scient_sources_remove",
         "scient_sources_restore",
         "scient_sources_revert",
+        "scient_sources_save_page",
         "scient_sources_update",
       ].includes(tool.name),
     );
@@ -79,7 +81,7 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
         readOnlyHint: false,
         destructiveHint: ["scient_sources_detach_pdf", "scient_sources_remove"].includes(tool.name),
         idempotentHint: true,
-        openWorldHint: tool.name === "scient_sources_add",
+        openWorldHint: ["scient_sources_add", "scient_sources_save_page"].includes(tool.name),
       });
     }
     for (const { tool } of sourceTools.filter(({ tool }) => tool.name.includes("_zotero_"))) {

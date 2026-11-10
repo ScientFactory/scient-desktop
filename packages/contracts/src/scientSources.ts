@@ -16,6 +16,7 @@ import {
   ScientSourceSummary,
   ScientSourceTrashListing,
   ScientSourcePreflightItem,
+  ScientSourceWebPage,
   ScientSourcesBulkChange,
   ScientSourcesBulkResult,
   ScientSourcesOrganization,
@@ -119,6 +120,28 @@ export const ScientSourcesFullTextSearchResult = Schema.Struct({
   }),
 });
 export type ScientSourcesFullTextSearchResult = typeof ScientSourcesFullTextSearchResult.Type;
+
+export const ScientSourceSavePageRequest = Schema.Struct({
+  root: NonEmptyString,
+  page: ScientSourceWebPage,
+});
+export type ScientSourceSavePageRequest = typeof ScientSourceSavePageRequest.Type;
+
+export const ScientSourceSavePageResult = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.Literals(["added", "existing"]),
+    sourceId: NonEmptyString,
+    revision: Schema.Int.check(Schema.isGreaterThan(0)),
+    passageSaved: Schema.Boolean,
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("not-added"),
+    reason: Schema.Literals(["identifier-not-found", "identifier-mismatch", "possible-duplicate"]),
+    message: Schema.String,
+    matchingSourceIds: Schema.Array(NonEmptyString),
+  }),
+]);
+export type ScientSourceSavePageResult = typeof ScientSourceSavePageResult.Type;
 
 export const ScientSourceJournalIconRequest = Schema.Struct({
   root: NonEmptyString,

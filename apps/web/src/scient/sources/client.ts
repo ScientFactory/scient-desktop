@@ -10,6 +10,7 @@ import {
   discardEnvironmentLocalSourcePdfs,
   getEnvironmentScientSourceAttachmentPreview,
   searchEnvironmentScientSourcesFullText,
+  saveEnvironmentScientSourcePage,
   getEnvironmentScientSourceDetail,
   getEnvironmentScientSourceJournalIcon,
   getEnvironmentScientSourcesOverview,
@@ -42,6 +43,7 @@ import type {
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourceSavePageRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
   ScientSourcesExportRequest,
@@ -140,6 +142,15 @@ export async function searchScientSourcesFullText(
 ) {
   return runtime.runPromise(
     searchEnvironmentScientSourcesFullText({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export async function saveScientSourcePage(
+  environmentId: EnvironmentId,
+  input: ScientSourceSavePageRequest,
+) {
+  return runtime.runPromise(
+    saveEnvironmentScientSourcePage({ prepared: prepared(environmentId), ...input }),
   );
 }
 

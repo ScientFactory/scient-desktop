@@ -56,6 +56,8 @@ export function SourceFullTextResults(props: {
   readonly root: string;
   readonly query: string;
   readonly metadataMatchCount: number;
+  /** Sources the Library's filters keep; passages from others are not shown. */
+  readonly sourceIds?: ReadonlySet<string>;
   readonly onOpenHit: (hit: FullTextHit) => void;
 }) {
   const query = props.query.trim();
@@ -85,7 +87,9 @@ export function SourceFullTextResults(props: {
 
   const answered = searchable && state._tag !== "Idle" && state.query === query;
   const result = answered && state._tag === "Done" ? state.result : null;
-  const hits = result?.hits ?? [];
+  const hits = (result?.hits ?? []).filter(
+    (hit) => props.sourceIds === undefined || props.sourceIds.has(hit.sourceId),
+  );
   const pending = result?.status.pending ?? 0;
 
   if (props.metadataMatchCount === 0 && hits.length === 0 && (answered || !searchable)) {
