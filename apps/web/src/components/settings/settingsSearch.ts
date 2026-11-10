@@ -1092,6 +1092,15 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   ...KEYBINDING_SEARCH_ITEMS,
+  // SCIENT-FORK: New Window is a native menu accelerator, outside the server command catalog.
+  {
+    id: "keybinding-new-window",
+    title: "New Window",
+    to: "/settings/keybindings",
+    desktopOnly: true,
+    secondary: true,
+    searchTerms: ["application windows fixed shortcut file mod+alt+shift+n duplicate app"],
+  },
   {
     id: "authoring",
     title: "Markdown, Math, and PDF shortcuts",
