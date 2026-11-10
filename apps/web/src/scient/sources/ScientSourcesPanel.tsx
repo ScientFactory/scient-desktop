@@ -1204,7 +1204,10 @@ export function ScientSourcesPanel(props: {
               ? importOutcome
               : null
           }
-          onDismiss={sources.clearOperationSummary}
+          onDismiss={() => {
+            setImportOutcome(null);
+            sources.clearOperationSummary();
+          }}
           onCancel={() => void sources.cancelImport()}
           cancelling={sources.cancelling}
           {...(sources.operation.state !== "cancelled" &&

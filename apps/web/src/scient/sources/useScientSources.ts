@@ -861,7 +861,7 @@ export function useScientSources(input: {
     saveSourceNote,
     removeSource,
     clearError: () => dispatch({ type: "errorCleared" }),
-    clearOperationSummary: () => dispatch({ type: "importReviewDismissed" }),
+    clearOperationSummary: () => dispatch({ type: "operationCleared" }),
     closeZoteroStatus: () => dispatch({ type: "zoteroStatusDismissed" }),
     closeLibrary: () => dispatch({ type: "zoteroLibraryClosed" }),
     resetImport: () => {

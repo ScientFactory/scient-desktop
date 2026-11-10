@@ -205,8 +205,8 @@ describe("source import outcome analytics", () => {
           expect(f.events[1]?.properties).toMatchObject({
             operationKind: "source-import",
             trigger: "user",
-            reviewRequired: false,
           });
+          expect(f.events[1]?.properties).not.toHaveProperty("reviewRequired");
           expect(encodeJson(f.events)).not.toMatch(
             /PRIVATE_RESEARCH_CONTENT|scient-import-analytics|\.pdf|sourceKey|sourceId|operationId/u,
           );
@@ -418,7 +418,8 @@ describe("source import outcome analytics", () => {
         "scient.operation.started",
         "scient.operation.completed",
       ]);
-      expect(f.events[1]?.properties).toMatchObject({ trigger: "agent", reviewRequired: true });
+      expect(f.events[1]?.properties).toMatchObject({ trigger: "agent" });
+      expect(f.events[1]?.properties).not.toHaveProperty("reviewRequired");
     }),
   );
 
