@@ -2273,6 +2273,8 @@ export function parseNetscapeCookies(text) {
       name,
       value: value.join("\\t"),
       domain: includeSubdomains === "TRUE" && !domain.startsWith(".") ? \`.\${domain}\` : domain,
+      // Without the include-subdomains flag the cookie belongs to that exact host.
+      hostOnly: includeSubdomains !== "TRUE",
       path: path || "/",
       expires: Number(expires) || -1,
       secure: secure === "TRUE",
@@ -2312,11 +2314,22 @@ function cookieSource(env) {
 // ---------------------------------------------------------------------------------------------
 // Cookie matching (RFC 6265, simplified: enough for one site's own cookies)
 
-const domainMatches = (host, cookieDomain) => {
-  const domain = String(cookieDomain ?? "")
+/** A host-only cookie goes to its exact host; a domain cookie to that domain and its subdomains. */
+const domainMatches = (host, cookie) => {
+  const domain = String(cookie.domain ?? "")
     .replace(/^\\./, "")
     .toLowerCase();
-  return domain !== "" && (host === domain || host.endsWith(\`.\${domain}\`));
+  if (domain === "") return false;
+  return cookie.hostOnly === true
+    ? host === domain
+    : host === domain || host.endsWith(\`.\${domain}\`);
+};
+
+/** RFC 6265 5.1.4: a cookie set without Path belongs to the response's directory. */
+const defaultPath = (url) => {
+  const path = url.pathname;
+  if (!path.startsWith("/") || path.lastIndexOf("/") === 0) return "/";
+  return path.slice(0, path.lastIndexOf("/"));
 };
 
 const pathMatches = (path, cookiePath = "/") =>
@@ -2337,7 +2350,8 @@ function parseSetCookie(header, url) {
     name: pair.slice(0, eq).trim(),
     value: pair.slice(eq + 1).trim(),
     domain: url.hostname,
-    path: "/",
+    hostOnly: true,
+    path: defaultPath(url),
     expires: -1,
     secure: false,
     httpOnly: false,
@@ -2346,8 +2360,10 @@ function parseSetCookie(header, url) {
     const [rawKey, ...rest] = attribute.split("=");
     const key = rawKey.trim().toLowerCase();
     const value = rest.join("=").trim();
-    if (key === "domain" && value) cookie.domain = \`.\${value.replace(/^\\./, "")}\`;
-    else if (key === "path" && value.startsWith("/")) cookie.path = value;
+    if (key === "domain" && value) {
+      cookie.domain = \`.\${value.replace(/^\\./, "")}\`;
+      cookie.hostOnly = false;
+    } else if (key === "path" && value.startsWith("/")) cookie.path = value;
     else if (key === "max-age") cookie.expires = Date.now() / 1000 + Number(value);
     else if (key === "expires" && cookie.expires === -1) {
       const date = Date.parse(value);
@@ -2404,7 +2420,7 @@ export function createSession({
     return cookies()
       .filter(
         (c) =>
-          domainMatches(host, c.domain) &&
+          domainMatches(host, c) &&
           pathMatches(url.pathname, c.path) &&
           (!c.secure || url.protocol === "https:" || isLocal(host)) &&
           alive(c, now),
@@ -2442,8 +2458,10 @@ export function createSession({
     let url = new URL(pathOrUrl, site);
     let method = (init.method ?? "GET").toUpperCase();
     let body = init.body;
+    // Carried from hop to hop; credentials never follow a redirect to another origin.
+    const headers = new Headers(init.headers);
     for (let hop = 0; hop < 10; hop++) {
-      const headers = new Headers(init.headers);
+      headers.delete("cookie");
       const cookie = cookieHeader(url);
       if (cookie) headers.set("cookie", cookie);
       // Some sites end a session that arrives from another browser than the one that made it.
@@ -2468,6 +2486,12 @@ export function createSession({
         if (toGet) {
           method = "GET";
           body = undefined;
+          headers.delete("content-type");
+          headers.delete("content-length");
+        }
+        if (next.origin !== url.origin) {
+          headers.delete("authorization");
+          headers.delete("proxy-authorization");
         }
         url = next;
         continue;
