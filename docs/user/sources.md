@@ -340,7 +340,10 @@ came from Zotero (including Better BibTeX) or a `.bib` file is kept; otherwise
 Scient makes one from the first author, the year and the first word of the
 title, adding a letter when another source already has it. A key never changes
 by itself. To rename one, edit the source and change **Citation key**; citations
-in the project's Markdown and LaTeX documents follow the new key.
+in the project's Markdown and LaTeX documents follow the new key. Code, math,
+links and LaTeX comments or verbatim text are left as written. If a document
+cannot be changed (for example a linked file), Scient lists it so you can
+update it yourself.
 
 - **Markdown:** type `[@` and pick a source from the list (by key, author, year
   or title). Press Enter or Tab to insert it; Escape closes the list.
@@ -356,7 +359,9 @@ Add `\bibliography{references}` to a LaTeX document, or
 edit one of these files yourself, Scient keeps your edits and says so in the
 Library: choose **Import new entries** to add entries you typed to the Library,
 or **Use Library version** to write the file again from the Library. Scient
-never writes over a `references.bib` it did not create.
+never writes over a `references.bib` it did not create, or over a change you
+save while it is writing. These files hold the same entries as **Export** to
+BibTeX or CSL-JSON.
 
 ### Export to Word with a citation style
 

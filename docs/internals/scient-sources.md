@@ -502,7 +502,10 @@ is assigned.
 `apps/server/src/scient/sources/ManagedBibliography.ts` is the only writer of
 the project's `references.bib` and `references.json` (CSL-JSON, `id` = citation
 key), rendered by `@scientfactory/scient-citations/bibliography` and sorted by
-key. The store reports every settled write through
+key. Entries come from the same writers as Library export (`formatBibtex`,
+`cslJsonItem` in `@scientfactory/scient-sources/bibliography`; notes stay
+out), so a managed file and an export hold the same entry for a source; Word
+export and reference formatting read sources through the same CSL-JSON writer. The store reports every settled write through
 `onScientSourceRecordsChanged`; the server coalesces those into one sync per
 project, so writes from people, agents and every import path keep both files
 current. A sync first gives keyless legacy records a key (oldest first).
@@ -514,6 +517,15 @@ is `unmanaged` and is never written over. Only an explicit `replaceEdited` from
 the user or an agent restores the Library version. The project file is written
 before the copy, so an interrupted write is adopted on the next sync instead
 of reported as an edit. Nothing is written for a project without a Library.
+
+Project files are published with `publishScientProjectFile`
+(`@scientfactory/scient-sources/project-files`): a new file is linked in
+without replacing one created meanwhile, and an existing file is moved aside
+and checked against what the sync read; a save that landed in between goes back
+in place (or is kept beside the file as `<name>.kept-<id>`) and the file reports
+as `edited`. The copies folder is reached only through real folders
+(`assertScientProjectDirectory`); a link anywhere on that path makes both files
+`unmanaged`.
 
 `importEdited` sends an edited file through the ordinary reference-file import
 (`importBibliographyFile`). Only when the edit added entries and every added
@@ -529,10 +541,18 @@ node; the LaTeX citation dialog appends Library sources after the document's
 own `.bib` entries. A citation opens its source through
 `librarySourceRequest.ts`, which the Library panel acts on once loaded.
 
-A deliberate key rename goes through `updateScientSource`, which then rewrites
-the key in project Markdown citations (outside code) and LaTeX `\cite`-family
-key lists (`renameCitationKeyInDocument`); `citationKeyRenamedIn` lists the
-files. Nothing else changes a key, so a key a document uses stays frozen.
+A deliberate key rename goes through `updateScientSource`. It finds every
+Markdown and LaTeX document first (any depth; hidden, tool and build folders
+skipped; links never followed), then commits the key and rewrites only what the
+parsers call a citation (`citationKeyRename.ts`): Markdown prose spans from
+`markdownProseTextSpans`, so code, math, links, URLs and HTML keep their text,
+and LaTeX `\cite`-family commands found by unified-latex, so comments and
+verbatim text keep theirs. Each document is published like the managed files,
+so a save made during the rename is never overwritten. `citationKeyRenamedIn`
+lists the files changed and `citationKeyRenameSkipped` every document the
+rename could not process (a link, too large, unreadable, kept changing, or
+beyond 20,000 documents), with why. Nothing else changes a key, so a key a
+document uses stays frozen.
 
 `scient_sources_cite` (`LibraryCitation.ts`) runs the shared reference check
 (`checkReferences` with a Library `sourceIds` target) on the sources about to
