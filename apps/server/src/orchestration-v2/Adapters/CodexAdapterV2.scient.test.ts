@@ -1911,6 +1911,17 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
         assert.deepEqual(turnItem.turnItem.attachments, first.message.attachments);
         assert.equal(turnItem.turnItem.text, first.message.text);
         assert.equal(first.message.streaming, false);
+        // The image call keeps its own tool row beside the image message.
+        const toolRow = harness.events.findLast(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.toolName === "image_gen.imagegen",
+        );
+        if (toolRow?.type !== "turn_item.updated")
+          return yield* Effect.die("Missing image tool row");
+        assert.equal(toolRow.turnItem.status, outcome === "failed" ? "failed" : "completed");
+        assert.notEqual(toolRow.turnItem.id, turnItem.turnItem.id);
         if (outcome === "saved" || outcome === "default-path") {
           assert.equal(first.message.text, "");
           assert.lengthOf(first.message.attachments, 1);

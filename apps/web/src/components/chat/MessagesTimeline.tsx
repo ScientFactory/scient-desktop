@@ -990,6 +990,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
         };
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
+  const [minimapAtEnd, setMinimapAtEnd] = useState(false);
   const handleAnchorReady = (info: { anchorIndex: number | undefined }) => {
     if (anchorMessageId !== null && info.anchorIndex !== undefined) {
       onAnchorReady(anchorMessageId, info.anchorIndex);
@@ -1090,17 +1091,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
     setMinimapCurrentIndex((current) =>
       current === nextCurrentIndex ? current : nextCurrentIndex,
     );
+    // The exact bottom, not the follow re-arm zone: Next can still scroll inside that zone.
+    setMinimapAtEnd(
+      viewport !== undefined &&
+        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 1,
+    );
   });
 
   const minimapRefreshFrameRef = useRef<number | null>(null);
-  const scheduleMinimapRefresh = () => {
+  const scheduleMinimapRefresh = useStableCallback(() => {
     if (minimapRefreshFrameRef.current !== null) return;
     // LegendList recycles row containers before React commits their positions.
     minimapRefreshFrameRef.current = requestAnimationFrame(() => {
       minimapRefreshFrameRef.current = null;
       refreshMinimap();
     });
-  };
+  });
+
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the minimap skips refreshes until the restore commits, and the restore can land without a scroll event
+  useLayoutEffect(() => {
+    if (!restoringThreadPosition) scheduleMinimapRefresh();
+  }, [restoringThreadPosition, scheduleMinimapRefresh]);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- cancels the pending minimap refresh frame on unmount
   useEffect(
@@ -1263,14 +1274,17 @@ const ConversationTimeline = memo(function ConversationTimeline({
 
     const frame = requestAnimationFrame(measure);
 
-    const stopObserving = observeResize(timelineViewportElement, measure);
+    const stopObserving = observeResize(timelineViewportElement, () => {
+      measure();
+      scheduleMinimapRefresh();
+    });
 
     return () => {
       cancelAnimationFrame(frame);
       stopObserving();
     };
     // oxlint-disable-next-line react/exhaustive-effect-dependencies -- Rows and chat width resize the content without resizing the viewport.
-  }, [timelineViewportElement, rows.length, chatWidth]);
+  }, [timelineViewportElement, rows.length, chatWidth, scheduleMinimapRefresh]);
 
   // Built from props after the last hook so the compiler can memoize the row context; a map
   // made before a hook would rebuild it, and re-render every row, on each streamed update.
@@ -1632,6 +1646,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
                 hasPersistentGutter={minimapHasPersistentGutter}
                 hitStripWidth={minimapHitStripWidth}
                 currentIndex={minimapCurrentIndex}
+                atEnd={minimapAtEnd}
                 stripMap={minimapStripMap}
                 onWheel={forwardMinimapWheel}
                 onSelect={(item) => {

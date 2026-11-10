@@ -1,3 +1,4 @@
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { AssistantCitation } from "@t3tools/contracts";
 // SCIENT-FORK:START — quotes from Markdown files (scient-file-citation://) share this chip; its
 // labels, copy text and navigation come from the composer-citation owners.
@@ -49,10 +50,11 @@ import {
   type AssistantCitationSourceAnchor,
 } from "~/lib/assistantTextSelection";
 import {
-  assistantCitationHash,
   assistantCitationNavigation,
+  assistantCitationRoute,
 } from "../../lib/assistantCitationNavigation";
 import { cn } from "~/lib/utils";
+import { useQuietThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
 import { ContextChipPopover } from "../contextChipParts";
 import { Button } from "../ui/button";
@@ -93,6 +95,9 @@ export function AssistantCitationChip({
   };
 }) {
   const navigate = useNavigate();
+  const sourceThread = useQuietThreadShell(
+    scopeThreadRef(citation.environmentId, citation.threadId),
+  );
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
@@ -183,21 +188,27 @@ export function AssistantCitationChip({
           : "assistant text";
   // SCIENT-FORK:END
   const sourceLinkProps = {
-    to: "/$environmentId/$threadId" as const,
-    params: { environmentId: citation.environmentId, threadId: citation.threadId },
-    // SCIENT-FORK:START — file quotes label, copy and link to their file.
-    hash: isPdfCitation(citation)
-      ? pdfCitationHash(citation)
-      : isComputeCitation(citation)
-        ? computeCitationHash(citation)
-        : isOfficeCitation(citation)
-          ? officeCitationHash(citation)
-          : isFileCitation(citation)
-            ? fileCitationHash(citation)
-            : assistantCitationHash(citation),
+    // SCIENT-FORK:START — file quotes label, copy and link to their file; an assistant quote
+    // takes upstream's route, which opens a side chat quote on its parent thread.
+    ...(isPdfCitation(citation) ||
+    isComputeCitation(citation) ||
+    isOfficeCitation(citation) ||
+    isFileCitation(citation)
+      ? {
+          to: "/$environmentId/$threadId" as const,
+          params: { environmentId: citation.environmentId, threadId: citation.threadId },
+          hash: isPdfCitation(citation)
+            ? pdfCitationHash(citation)
+            : isComputeCitation(citation)
+              ? computeCitationHash(citation)
+              : isOfficeCitation(citation)
+                ? officeCitationHash(citation)
+                : fileCitationHash(citation),
+          resetScroll: false,
+        }
+      : assistantCitationRoute(citation, sourceThread)),
     "data-markdown-copy": serializeComposerCitation(citation),
     // SCIENT-FORK:END
-    resetScroll: false,
     onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
       if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
         return;
@@ -213,7 +224,7 @@ export function AssistantCitationChip({
         void navigate(officeCitationNavigation(citation));
       } else if (isFileCitation(citation)) {
         void navigate(fileCitationNavigation(citation));
-      } else void navigate(assistantCitationNavigation(citation));
+      } else void navigate(assistantCitationNavigation(citation, sourceThread));
       // SCIENT-FORK:END
     },
   };

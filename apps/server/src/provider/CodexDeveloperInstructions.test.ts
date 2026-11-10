@@ -42,7 +42,7 @@ describe("Codex runtime context", () => {
   it("describes Markdown media and file links in the runtime context", () => {
     NodeAssert.match(
       runtimeInstructions({ model: "gpt-5.3-codex", reasoningEffort: "high" }),
-      /<runtime_info>.*embed images, video, and audio.*Markdown image syntax with absolute file paths.*Link any other file.*absolute path.*Scient's files viewer.*<\/runtime_info>/,
+      /<runtime_info>.*embed images, video, and audio.*Markdown image syntax with absolute file paths.*Link every other file you cite or produce by its absolute path.*Scient's files viewer.*<\/runtime_info>/,
     );
   });
 

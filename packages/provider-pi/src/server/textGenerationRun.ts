@@ -24,8 +24,8 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
 import { buildPiRpcLaunch, resolvePiLaunchArgs } from "./mcpInjection.ts";
-import { decodePiModelSlug } from "./model.ts";
 import { applyPiModelSelection } from "./modelSelection.ts";
+import { resolvePiModelSlug } from "./rpc.ts";
 import type { PiRpcClient, PiRpcError, PiRpcSpawnOptions } from "./rpcClient.ts";
 
 export type PiRpcClientFactory = (
@@ -82,15 +82,6 @@ export const makePiRunJson = (run: {
       Effect.gen(function* () {
         if (input.operation === "generateReviewGuide")
           return yield* investigationUnsupported(input.operation, "Pi");
-        const selected =
-          input.modelSelection.model === "default"
-            ? undefined
-            : decodePiModelSlug(input.modelSelection.model);
-        if (input.modelSelection.model !== "default" && !selected)
-          return yield* new TextGenerationError({
-            operation: input.operation,
-            detail: "Pi model selection must use the 'provider/model' format.",
-          });
         const resolved = resolvePiLaunchArgs(settings.launchArgs);
         if (!resolved.ok)
           return yield* new TextGenerationError({
@@ -138,6 +129,21 @@ export const makePiRunJson = (run: {
               }),
           ),
         );
+        // Pi provider names and model ids may contain "/", so a custom slug resolves through the
+        // `{provider, id}` pairs Pi reports before falling back to the canonical encoding.
+        let selected: { readonly provider: string; readonly modelId: string } | undefined;
+        if (input.modelSelection.model !== "default") {
+          const reported = yield* client.getAvailableModels().pipe(
+            Effect.map((inventory) => inventory.models),
+            Effect.orElseSucceed(() => undefined),
+          );
+          selected = resolvePiModelSlug(input.modelSelection.model, reported) ?? undefined;
+          if (!selected)
+            return yield* new TextGenerationError({
+              operation: input.operation,
+              detail: "Pi model selection must use the 'provider/model' format.",
+            });
+        }
         const output = yield* Ref.make("");
         const currentDeltas = yield* Ref.make("");
         const outputExhausted = yield* Ref.make(false);
