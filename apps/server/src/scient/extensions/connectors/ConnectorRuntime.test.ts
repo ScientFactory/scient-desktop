@@ -3010,7 +3010,8 @@ describe("connectors agents make and fix", () => {
       expect(saved.connector.local).toMatchObject({
         owned: true,
         changedBy: "agent",
-        canUndo: true,
+        // Undoing a creation would delete it for good; Remove (with its own Undo) is offered.
+        canUndo: false,
         missing: ["API key"],
       });
       const installed = saved.connector.local!.directory;

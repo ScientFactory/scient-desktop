@@ -302,8 +302,10 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     local: LocalLaunchRecord,
     names: ReadonlyMap<VaultSecretRef, string>,
   ): Effect.fn.Return<Omit<LocalConnectorSummary, "running">> {
+    // Undoing a brand-new connector's creation would delete it for good; Remove keeps a copy.
+    const latest = yield* Effect.promise(() => latestHistory(historyRoot, record.connectorId));
     const canUndo =
-      (yield* Effect.promise(() => latestHistory(historyRoot, record.connectorId))) !== undefined;
+      latest !== undefined && !(latest.kind === "created" && latest.meta === undefined);
     const base = {
       kind: local.kind,
       directory: local.directory,
