@@ -2,6 +2,12 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+export {
+  publishScientProjectFile,
+  scientProjectFilePublicationHooks,
+  type ScientProjectFilePublication,
+} from "./projectFilePublication.ts";
+
 function insideRoot(root: string, path: string): boolean {
   const relative = NodePath.relative(root, path);
   return (
@@ -57,4 +63,40 @@ export async function resolveScientProjectFile(
     relativePath: NodePath.relative(canonicalRoot, absolutePath).split(NodePath.sep).join("/"),
     fileName: NodePath.basename(absolutePath),
   };
+}
+
+function isNodeError(error: unknown, code: string): boolean {
+  return error instanceof Error && "code" in error && error.code === code;
+}
+
+/**
+ * Checks each directory from the canonical project root down to `directory`, optionally
+ * creating missing ones, and never through a symlink. A missing directory throws ENOENT.
+ */
+export async function assertScientProjectDirectory(
+  canonicalRoot: string,
+  directory: string,
+  options: { readonly create?: boolean } = {},
+): Promise<void> {
+  const relative = NodePath.relative(canonicalRoot, directory);
+  if (relative !== "" && !insideRoot(canonicalRoot, directory)) {
+    throw new Error("The directory must remain inside the project.");
+  }
+  let current = canonicalRoot;
+  for (const segment of relative.split(NodePath.sep).filter(Boolean)) {
+    current = NodePath.join(current, segment);
+    let stats;
+    try {
+      stats = await NodeFSP.lstat(current);
+    } catch (error) {
+      if (!options.create || !isNodeError(error, "ENOENT")) throw error;
+      await NodeFSP.mkdir(current).catch((mkdirError: unknown) => {
+        if (!isNodeError(mkdirError, "EEXIST")) throw mkdirError;
+      });
+      stats = await NodeFSP.lstat(current);
+    }
+    if (!stats.isDirectory() || stats.isSymbolicLink()) {
+      throw new Error(`${segment} is not a safe directory.`);
+    }
+  }
 }

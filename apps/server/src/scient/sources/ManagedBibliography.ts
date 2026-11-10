@@ -18,6 +18,10 @@ import {
   SCIENT_SOURCE_RECORDS_DIRECTORY,
   SCIENT_SOURCES_DIRECTORY,
 } from "@scientfactory/scient-sources/store";
+import {
+  assertScientProjectDirectory,
+  publishScientProjectFile,
+} from "@scientfactory/scient-sources/project-files";
 
 const MANAGED_BIBLIOGRAPHY_FILES = ["references.bib", "references.json"] as const;
 export type ManagedBibliographyFileName = (typeof MANAGED_BIBLIOGRAPHY_FILES)[number];
@@ -68,11 +72,29 @@ async function readProjectFile(filePath: string): Promise<FileRead> {
   }
 }
 
-async function writeFileAtomically(filePath: string, contents: string): Promise<void> {
-  await NodeFSP.mkdir(NodePath.dirname(filePath), { recursive: true });
+/** The written copies live in Scient's own folder, reached only through real project folders. */
+async function readWrittenCopy(root: string, name: ManagedBibliographyFileName): Promise<FileRead> {
+  const directory = NodePath.join(root, WRITTEN_COPY_DIRECTORY);
+  try {
+    await assertScientProjectDirectory(root, directory);
+  } catch (error) {
+    return isNodeError(error, "ENOENT") ? { kind: "missing" } : { kind: "unsafe" };
+  }
+  return readProjectFile(NodePath.join(directory, name));
+}
+
+async function writeWrittenCopy(
+  root: string,
+  name: ManagedBibliographyFileName,
+  contents: string,
+): Promise<void> {
+  const directory = NodePath.join(root, WRITTEN_COPY_DIRECTORY);
+  await assertScientProjectDirectory(root, directory, { create: true });
+  const filePath = NodePath.join(directory, name);
   const temporary = `${filePath}.${NodeCrypto.randomUUID()}.tmp`;
   try {
     await NodeFSP.writeFile(temporary, contents, { encoding: "utf8", flag: "wx" });
+    await assertScientProjectDirectory(root, directory);
     await NodeFSP.rename(temporary, filePath);
   } finally {
     await NodeFSP.rm(temporary, { force: true });
@@ -111,6 +133,69 @@ function inLane<A>(root: string, run: () => Promise<A>): Promise<A> {
   return next;
 }
 
+async function syncFile(input: {
+  readonly root: string;
+  readonly name: ManagedBibliographyFileName;
+  readonly next: string;
+  readonly hasSources: boolean;
+  readonly replaceEdited: boolean;
+}): Promise<ManagedBibliographyFileStatus> {
+  const { name, next } = input;
+  const target = NodePath.join(input.root, name);
+  const [current, copy] = await Promise.all([
+    readProjectFile(target),
+    readWrittenCopy(input.root, name),
+  ]);
+  const edited = (contents: string | null): ManagedBibliographyFileStatus =>
+    copy.kind === "file"
+      ? {
+          name,
+          state: "edited",
+          changes:
+            contents === null
+              ? null
+              : compareBibliographyEntries(
+                  entriesOf(name, copy.contents),
+                  entriesOf(name, contents),
+                ),
+        }
+      : { name, state: "unmanaged", changes: null };
+  // Project file first: if the copy write fails, the next sync finds the file
+  // already matching the Library and adopts it instead of reporting an edit.
+  const publish = async (): Promise<ManagedBibliographyFileStatus> => {
+    if (current.kind !== "file" || current.contents !== next) {
+      const published = await publishScientProjectFile({
+        filePath: target,
+        expected: current.kind === "file" ? current.contents : null,
+        contents: next,
+      });
+      if (published.outcome === "changed") {
+        const now = await readProjectFile(target);
+        return now.kind === "unsafe"
+          ? { name, state: "unmanaged", changes: null }
+          : edited(now.kind === "file" ? now.contents : null);
+      }
+    }
+    if (copy.kind !== "file" || copy.contents !== next) {
+      await writeWrittenCopy(input.root, name, next);
+    }
+    return { name, state: "current", changes: null };
+  };
+
+  if (current.kind === "unsafe" || copy.kind === "unsafe") {
+    return { name, state: "unmanaged", changes: null };
+  }
+  if (current.kind === "missing") {
+    return !input.hasSources && copy.kind === "missing"
+      ? { name, state: "absent", changes: null }
+      : publish();
+  }
+  if (current.contents === next) return publish();
+  if (copy.kind === "missing") return { name, state: "unmanaged", changes: null };
+  if (current.contents === copy.contents || input.replaceEdited) return publish();
+  return edited(current.contents);
+}
+
 async function syncInLane(
   root: string,
   replaceEdited: ReadonlySet<ManagedBibliographyFileName>,
@@ -132,46 +217,15 @@ async function syncInLane(
   const rendered = renderManagedBibliography(records);
   const files: ManagedBibliographyFileStatus[] = [];
   for (const name of MANAGED_BIBLIOGRAPHY_FILES) {
-    const next = name === "references.bib" ? rendered.bibtex : rendered.cslJson;
-    const target = NodePath.join(root, name);
-    const copyPath = NodePath.join(root, WRITTEN_COPY_DIRECTORY, name);
-    const [current, copy] = await Promise.all([readProjectFile(target), readProjectFile(copyPath)]);
-    // Project file first: if the copy write fails, the next sync finds the file
-    // already matching the Library and adopts it instead of reporting an edit.
-    const publish = async (): Promise<ManagedBibliographyFileStatus> => {
-      if (current.kind !== "file" || current.contents !== next) {
-        await writeFileAtomically(target, next);
-      }
-      if (copy.kind !== "file" || copy.contents !== next) {
-        await writeFileAtomically(copyPath, next);
-      }
-      return { name, state: "current", changes: null };
-    };
-
-    if (current.kind === "unsafe" || copy.kind === "unsafe") {
-      files.push({ name, state: "unmanaged", changes: null });
-    } else if (current.kind === "missing") {
-      files.push(
-        records.length === 0 && copy.kind === "missing"
-          ? { name, state: "absent", changes: null }
-          : await publish(),
-      );
-    } else if (current.contents === next) {
-      files.push(await publish());
-    } else if (copy.kind === "missing") {
-      files.push({ name, state: "unmanaged", changes: null });
-    } else if (current.contents === copy.contents || replaceEdited.has(name)) {
-      files.push(await publish());
-    } else {
-      files.push({
+    files.push(
+      await syncFile({
+        root,
         name,
-        state: "edited",
-        changes: compareBibliographyEntries(
-          entriesOf(name, copy.contents),
-          entriesOf(name, current.contents),
-        ),
-      });
-    }
+        next: name === "references.bib" ? rendered.bibtex : rendered.cslJson,
+        hasSources: records.length > 0,
+        replaceEdited: replaceEdited.has(name),
+      }),
+    );
   }
   return { files, citedSourceCount: rendered.keys.length };
 }

@@ -11,6 +11,7 @@ import {
   readScientSourceRecord,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
 } from "@scientfactory/scient-sources/store";
+import { scientProjectFilePublicationHooks } from "@scientfactory/scient-sources/project-files";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { syncManagedBibliography } from "./ManagedBibliography.ts";
@@ -166,6 +167,48 @@ describe("managed bibliography", () => {
     const status = await syncManagedBibliography(root, { replaceEdited: ["references.bib"] });
     expect(status.files[0]?.state).toBe("unmanaged");
     expect(await read(root, "references.bib")).toBe("@misc{own,\n}\n");
+  });
+
+  it.each([
+    { name: "a file created", before: null, landed: "@misc{own,\n}\n", state: "unmanaged" },
+    { name: "a hand edit saved", before: "synced", landed: "% mine\n", state: "edited" },
+  ] as const)("keeps $name while it publishes", async ({ before, landed, state }) => {
+    const root = await project();
+    await add(root, "A", "Notes on the analytical engine");
+    if (before) await syncManagedBibliography(root);
+    await add(root, "B", "Sketch of the engine");
+    const bibPath = NodePath.join(root, "references.bib");
+    scientProjectFilePublicationHooks.beforeReplace = async (filePath) => {
+      if (NodePath.basename(filePath) !== "references.bib") return;
+      scientProjectFilePublicationHooks.beforeReplace = null;
+      await NodeFSP.writeFile(bibPath, landed);
+    };
+    try {
+      const status = await syncManagedBibliography(root);
+      expect(status.files[0]?.state).toBe(state);
+    } finally {
+      scientProjectFilePublicationHooks.beforeReplace = null;
+    }
+    expect(await read(root, "references.bib")).toBe(landed);
+    expect((await NodeFSP.readdir(root)).filter((name) => name.includes("references.bib"))).toEqual(
+      ["references.bib"],
+    );
+  });
+
+  it("never writes its copies through a linked folder", async () => {
+    const root = await project();
+    const outside = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-outside-"));
+    fixtures.push(outside);
+    await add(root, "A", "Notes on the analytical engine");
+    await NodeFSP.symlink(
+      outside,
+      NodePath.join(root, ".scient", "sources", "bibliography"),
+      "junction",
+    );
+
+    const status = await syncManagedBibliography(root);
+    expect(status.files.map((file) => file.state)).toEqual(["unmanaged", "unmanaged"]);
+    expect(await NodeFSP.readdir(outside)).toEqual([]);
   });
 
   it("gives sources written before citation keys existed a key, oldest first", async () => {
