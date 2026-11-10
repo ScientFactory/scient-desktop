@@ -43,6 +43,15 @@ export async function publishShare(
   const keyText = encrypted ? (existing?.key ?? encodeShareKey(generateShareKey())) : null;
   const key = keyText === null ? null : decodeShareKey(keyText);
 
+  // An update applies the chosen access first: new content is never readable under the old,
+  // looser rules, and if the change fails nothing new is published.
+  if (existing !== null) {
+    await api.updateShare(existing.share.id, {
+      access: options.access,
+      expiresAt: options.expiresAt,
+      indexable: !encrypted && options.indexable,
+    });
+  }
   const id =
     existing?.share.id ??
     (await api.createShare({
@@ -73,12 +82,5 @@ export async function publishShare(
     await put(`blob-${blob.sha256}`, await input.readBlob(blob.relativeUrl));
   }
   await api.publishShare(id, version);
-  if (existing !== null) {
-    await api.updateShare(id, {
-      access: options.access,
-      expiresAt: options.expiresAt,
-      indexable: !encrypted && options.indexable,
-    });
-  }
   return { id, link: shareLink(id, keyText ?? undefined), key: keyText };
 }
