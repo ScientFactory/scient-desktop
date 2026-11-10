@@ -1,6 +1,7 @@
+// @effect-diagnostics nodeBuiltinImport:off -- The function under test takes a plain path joiner.
 import * as NodePath from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "vite-plus/test";
 
 import { developmentTrustedCertificates } from "./developmentCertificates.ts";
 

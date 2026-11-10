@@ -72,12 +72,15 @@ export const make = Effect.gen(function* () {
     if (platform === "darwin") enableAutomaticSpellingLanguages();
     // SCIENT-FORK:END
     // SCIENT-FORK:START — development builds can trust a local test site's certificate.
-    const trusted = developmentTrustedCertificates({
-      env: process.env,
-      homeDirectory,
-      joinPath: NodePath.join,
-      readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
-    });
+    // An installed app never trusts extra certificates, whatever its environment says.
+    const trusted = Electron.app.isPackaged
+      ? null
+      : developmentTrustedCertificates({
+          env: process.env,
+          homeDirectory,
+          joinPath: NodePath.join,
+          readFileString: (path) => NodeFS.readFileSync(path, "utf8"),
+        });
     if (trusted !== null)
       Electron.app.commandLine.appendSwitch("ignore-certificate-errors-spki-list", trusted);
     // SCIENT-FORK:END
