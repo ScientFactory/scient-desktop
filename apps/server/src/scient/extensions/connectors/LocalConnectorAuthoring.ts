@@ -445,8 +445,9 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
                       : `[${item.type}]`,
                 )
                 .join("\n");
+              // Structured results usually repeat the text; shown only when there is no text.
               const encoded =
-                result.structuredContent === undefined
+                result.structuredContent === undefined || text.trim() !== ""
                   ? undefined
                   : toJsonText(result.structuredContent);
               const structured =
