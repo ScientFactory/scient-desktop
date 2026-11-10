@@ -21,6 +21,9 @@ import { takeOverCloudThread } from "./serverCloud";
 
 type Candidate = { readonly projectId: ProjectId; readonly title: string };
 
+/** Conversations being continued here right now: a repeat click never takes a second lease. */
+const inFlight = new Set<string>();
+
 /**
  * "Continue on this computer": takes the conversation's lease for this computer, then imports the
  * copy into the matching local project as a new thread that continues it.
@@ -62,9 +65,21 @@ export function useContinueHere(api: CloudApi) {
     });
   };
 
-  const run = async (row: ThreadIndexRow, here: string): Promise<string | null> => {
-    const environmentId = EnvironmentId.make(here);
+  /** Runs `task` unless one for `key` is already running; a repeat gives null. */
+  const once = async (key: string, task: () => Promise<string | null>): Promise<string | null> => {
+    if (inFlight.has(key)) return null;
+    inFlight.add(key);
     setRunning(true);
+    try {
+      return await task();
+    } finally {
+      inFlight.delete(key);
+      setRunning(false);
+    }
+  };
+
+  const continueRow = async (row: ThreadIndexRow, here: string): Promise<string | null> => {
+    const environmentId = EnvironmentId.make(here);
     setProblem(null);
     try {
       const { generation } = await api.lease(row.environmentId, row.threadId, environmentId);
@@ -95,16 +110,24 @@ export function useContinueHere(api: CloudApi) {
         error instanceof Error ? error.message : "The conversation couldn't be continued here.",
       );
       return null;
-    } finally {
-      setRunning(false);
     }
   };
+
+  /** Continues `row` here and gives the new thread's id, or null. */
+  const run = (row: ThreadIndexRow, here: string) =>
+    once(`${row.environmentId}/${row.threadId}`, () => continueRow(row, here));
+  /** Like `run`, finding the row first inside the same guard, keyed by `key`. */
+  const runFound = (key: string, find: () => Promise<ThreadIndexRow | null>, here: string) =>
+    once(key, async () => {
+      const row = await find();
+      return row === null ? null : continueRow(row, here);
+    });
 
   const chooser =
     choice === null ? null : (
       <ProjectChooser candidates={choice.candidates} onChoose={choice.resolve} />
     );
-  return { run, running, problem, chooser };
+  return { run, runFound, running, problem, chooser };
 }
 
 function ProjectChooser({

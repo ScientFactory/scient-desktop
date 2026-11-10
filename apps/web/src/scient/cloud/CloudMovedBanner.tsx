@@ -65,16 +65,20 @@ function TakeBackButton({
         disabled={continueHere.running}
         onClick={async () => {
           setProblem(null);
-          const threads = await api.threads().catch(() => null);
-          const continuation = threads?.find(
-            (row) =>
-              row.continuedFrom?.env === environmentId && row.continuedFrom.thread === threadId,
+          const imported = await continueHere.runFound(
+            `${environmentId}/${threadId}`,
+            async () => {
+              const threads = await api.threads().catch(() => null);
+              const continuation = threads?.find(
+                (row) =>
+                  row.continuedFrom?.env === environmentId && row.continuedFrom.thread === threadId,
+              );
+              if (continuation !== undefined) return continuation;
+              setProblem("The other computer hasn't copied it yet. Try again in a minute.");
+              return null;
+            },
+            environmentId,
           );
-          if (continuation === undefined) {
-            setProblem("The other computer hasn't copied it yet. Try again in a minute.");
-            return;
-          }
-          const imported = await continueHere.run(continuation, environmentId);
           if (imported === null) return;
           await navigate({
             to: "/$environmentId/$threadId",
