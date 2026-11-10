@@ -275,13 +275,27 @@ export const layer = Layer.succeed(ScientAnnotations, {
       const canonicalRoot = await annotationProjectRoot(input.root);
       const pdf = await projectPdf(canonicalRoot, input.relativePath);
       const file = await readScientAnnotationFile(canonicalRoot, pdf.material.sha256);
-      return { material: pdf.material, annotations: file?.annotations ?? [] };
+      const records = await listScientSourceRecords(canonicalRoot).catch(() => []);
+      return {
+        material: pdf.material,
+        annotations: file?.annotations ?? [],
+        sources: records
+          .filter((record) =>
+            record.attachments.some((attachment) => attachment.sha256 === pdf.material.sha256),
+          )
+          .map((record) => ({
+            sourceId: record.sourceId,
+            title: record.title,
+            ...(record.citationKey ? { citationKey: record.citationKey } : {}),
+          })),
+      };
     }).pipe(Effect.option);
     if (read._tag === "None") return { status: "unavailable" } as const;
     return {
       status: "available",
       material: read.value.material,
       annotations: liveScientAnnotations(read.value.annotations),
+      sources: read.value.sources,
     } as const;
   }),
 

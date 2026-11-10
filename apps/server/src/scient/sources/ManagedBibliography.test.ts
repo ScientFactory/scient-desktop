@@ -14,6 +14,7 @@ import {
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { syncManagedBibliography } from "./ManagedBibliography.ts";
+import { syncManagedBibliographyWithImports } from "./ScientSourcesCoordinator.ts";
 
 const fixtures: string[] = [];
 
@@ -118,6 +119,43 @@ describe("managed bibliography", () => {
     const replaced = await read(root, "references.bib");
     expect(replaced).not.toContain("mine2020");
     expect(replaced).toContain("lovelace1843sketch");
+  });
+
+  it("imports entries added by hand and keeps a file with changed entries", async () => {
+    const root = await project();
+    await add(root, "A", "Notes on the analytical engine");
+    await syncManagedBibliography(root);
+    const bibPath = NodePath.join(root, "references.bib");
+    const written = await read(root, "references.bib");
+    await NodeFSP.writeFile(
+      bibPath,
+      `${written}\n@book{babbage1864passages,\n  author = {Babbage, Charles},\n  title = {Passages from the Life of a Philosopher},\n  year = {1864},\n}\n`,
+    );
+
+    const imported = await syncManagedBibliographyWithImports({
+      root,
+      importEdited: ["references.bib"],
+      actor: "user",
+    });
+    expect(imported.imported).toBe(1);
+    expect(imported.files[0]?.state).toBe("current");
+    expect(await read(root, "references.bib")).toContain("@book{babbage1864passages,");
+
+    const changed = (await read(root, "references.bib")).replace(
+      "Passages from the Life of a Philosopher",
+      "Passages",
+    );
+    await NodeFSP.writeFile(bibPath, changed);
+    const kept = await syncManagedBibliographyWithImports({
+      root,
+      importEdited: ["references.bib"],
+      actor: "user",
+    });
+    expect(kept.files[0]).toMatchObject({
+      state: "edited",
+      changes: { changed: ["babbage1864passages"] },
+    });
+    expect(await read(root, "references.bib")).toBe(changed);
   });
 
   it("never writes over a file Scient did not write", async () => {

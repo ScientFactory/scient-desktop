@@ -62,6 +62,10 @@ and a little text around it.
   you are still composing can't be quoted yet; ask about it in words, or quote
   it once the message is sent.
 
+In a PDF in your project, the same bar also offers **Highlight** and **Note**,
+even where there is no conversation. See
+[Highlight and annotate PDFs](sources.md#highlight-and-annotate-pdfs).
+
 ## Page changes
 
 The existing Pages sidebar also supports small edits, without an editing mode.

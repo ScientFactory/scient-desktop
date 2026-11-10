@@ -5,10 +5,12 @@ import {
   type ScientSourceDetailResult,
   type ScientPdfAnnotation,
 } from "@t3tools/contracts";
-import { Trash2 } from "lucide-react";
+import { TextQuote, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 
 import { Button } from "~/components/ui/button";
+
+import { ScientTooltip } from "../presentation/ScientTooltip";
 
 import { pdfRevealDocumentKey, requestPdfReveal } from "../pdf/anchors/pdfRevealRequests";
 import { pdfDocumentIdentity } from "../pdf/anchors/pdfTextTarget";
@@ -20,6 +22,7 @@ import {
   type AnnotatedPdf,
 } from "./annotationState";
 import { readSourceAnnotations } from "./client";
+import { quoteInDocument } from "./documentQuoteTargets";
 import { usePdfAnnotations } from "./useDocumentAnnotations";
 
 type SourceAttachment = ScientSourceDetailResult["attachments"][number];
@@ -88,6 +91,7 @@ export function SourceAnnotations(props: {
           sourceId={sourceId}
           attachment={attachment}
           titled={pdfs.length > 1}
+          citationKey={props.record.citationKey ?? null}
           onOpenPdf={props.onOpenPdf}
         />
       ))}
@@ -101,6 +105,7 @@ function AttachmentAnnotations(props: {
   readonly sourceId: string;
   readonly attachment: SourceAttachment;
   readonly titled: boolean;
+  readonly citationKey: string | null;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
     readonly attachmentId: string;
@@ -174,15 +179,35 @@ function AttachmentAnnotations(props: {
                 {annotationMeta(annotation)}
               </span>
             </button>
-            <Button
-              type="button"
-              size="icon-xs"
-              variant="ghost-muted-row"
-              aria-label="Remove"
-              onClick={() => void removeAnnotation(pdf, annotation)}
-            >
-              <Trash2 />
-            </Button>
+            <ScientTooltip content="Quote in my document">
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost-muted-row"
+                aria-label="Quote in my document"
+                onClick={() =>
+                  void quoteInDocument(root, {
+                    quote: scientAnnotationQuote(annotation),
+                    pages: annotation.anchor.selector.pages.map((page) => page.page),
+                    citationKey: props.citationKey,
+                    fileName: attachment.fileName,
+                  })
+                }
+              >
+                <TextQuote />
+              </Button>
+            </ScientTooltip>
+            <ScientTooltip content="Remove">
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost-muted-row"
+                aria-label="Remove"
+                onClick={() => void removeAnnotation(pdf, annotation)}
+              >
+                <Trash2 />
+              </Button>
+            </ScientTooltip>
           </li>
         ))}
       </ul>
