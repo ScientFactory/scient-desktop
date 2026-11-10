@@ -7,13 +7,14 @@ import * as Electron from "electron";
 import * as NodeHttp from "node:http";
 import { SCIENT_SYMBOL_SVG } from "./scientSymbolSvg.ts";
 
-/** @clerk/electron's IPC channel for the OAuth redirect URL (dist/esm/ipc-*.js, 0.0.44). */
+/** @clerk/electron's IPC channel for the OAuth redirect URL and its attempt parameter (0.1.10). */
 export const CLERK_REDIRECT_URL_CHANNEL = "clerk:oauth-transport:get-redirect-url";
+export const CLERK_ATTEMPT_PARAM = "__clerk_oauth_attempt";
 const CLERK_SIGN_IN_RETURN_PATH = "/clerk/callback";
 const RELEASE_PORT = 34339;
 const DEVELOPMENT_PORT = 34340;
-// Matches @clerk/electron's own callback timeout.
-const LISTEN_MS = 180_000;
+// Outlasts @clerk/electron's 180 s callback timeout, which starts later, when the browser opens.
+const LISTEN_MS = 300_000;
 
 const clerkSignInReturnPort = (isDevelopment: boolean) =>
   isDevelopment ? DEVELOPMENT_PORT : RELEASE_PORT;
@@ -80,35 +81,80 @@ export function renderClerkSignInReturnPage(success: boolean) {
 </main></body></html>`;
 }
 
+type RedirectUrlHandler = (event: Electron.IpcMainInvokeEvent, ...args: unknown[]) => unknown;
+
+const writeReturnPage = (response: NodeHttp.ServerResponse, success: boolean) => {
+  response.setHeader("cache-control", "no-store");
+  response.setHeader("referrer-policy", "no-referrer");
+  response.setHeader("x-content-type-options", "nosniff");
+  response.setHeader(
+    "content-security-policy",
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+  );
+  response
+    .writeHead(200, { "content-type": "text/html; charset=utf-8", connection: "close" })
+    .end(renderClerkSignInReturnPage(success));
+};
+
 /**
- * Point @clerk/electron's browser sign-in at a local return page. The bridge still matches and
- * resolves the scient://app/ callback; when the port is taken, sign-in uses the deep link as before.
+ * Create the Clerk bridge with a local return page for browser sign-in. @clerk/electron's own
+ * redirect handler still runs and tags each sign-in with an attempt id; the browser lands on
+ * 127.0.0.1 with that id, and only a callback for the current attempt reaches the bridge as the
+ * scient://app/ deep link it waits for. When the port is taken, sign-in uses the deep link.
  */
-export function installClerkSignInReturn(input: {
-  readonly scheme: string;
-  readonly host: string;
-  readonly isDevelopment: boolean;
-}) {
+export function createClerkBridgeWithSignInReturn<Bridge extends { cleanup(): void }>(
+  createBridge: () => Bridge,
+  input: { readonly scheme: string; readonly host: string; readonly isDevelopment: boolean },
+): Bridge {
   const ipcMain = Electron.ipcMain;
   const app = Electron.app;
-  if (typeof ipcMain?.handle !== "function" || typeof app?.emit !== "function") return () => {};
-  const deepLinkRedirect = `${input.scheme}://${input.host}/`;
+  if (typeof ipcMain?.handle !== "function" || typeof app?.emit !== "function") {
+    return createBridge();
+  }
+
+  let libraryRedirectUrl: RedirectUrlHandler | null = null;
+  const handle = ipcMain.handle;
+  ipcMain.handle = (channel, listener) => {
+    if (channel === CLERK_REDIRECT_URL_CHANNEL) libraryRedirectUrl = listener;
+    else handle.call(ipcMain, channel, listener);
+  };
+  let bridge: Bridge;
+  try {
+    bridge = createBridge();
+  } finally {
+    ipcMain.handle = handle;
+  }
+  const redirectUrl = libraryRedirectUrl as RedirectUrlHandler | null;
+  if (!redirectUrl) return bridge;
+
   let server: NodeHttp.Server | null = null;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let expectedAttempt: string | null = null;
+  // Bumped by every stop, so a listener that finishes binding after a stop closes itself.
+  let generation = 0;
+  let disposed = false;
 
-  const stop = () => {
+  /** Stop accepting callbacks; returns the listener so the caller decides how to close it. */
+  const release = () => {
+    generation += 1;
     if (timer) clearTimeout(timer);
     timer = null;
+    expectedAttempt = null;
     const current = server;
     server = null;
-    if (!current) return;
-    current.closeAllConnections();
-    current.close();
+    current?.close();
+    return current;
   };
+  const stop = () => release()?.closeAllConnections();
 
-  const listen = () =>
+  const listen = (attempt: string | null) =>
     new Promise<boolean>((resolve) => {
       stop();
+      if (disposed) {
+        resolve(false);
+        return;
+      }
+      const listening = generation;
       const next = NodeHttp.createServer((request, response) => {
         const deepLink =
           request.method === "GET" && isTopLevelNavigation(request.headers)
@@ -118,42 +164,48 @@ export function installClerkSignInReturn(input: {
           response.writeHead(404).end();
           return;
         }
-        const failed = new URL(deepLink).searchParams.get("__clerk_status") === "failed";
-        response.setHeader("cache-control", "no-store");
-        response.setHeader("referrer-policy", "no-referrer");
-        response.setHeader("x-content-type-options", "nosniff");
-        response.setHeader(
-          "content-security-policy",
-          "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
-        );
-        // One callback per sign-in: stop accepting, then close once the page is sent.
-        if (timer) clearTimeout(timer);
-        timer = null;
-        server = null;
-        next.close();
+        const params = new URL(deepLink).searchParams;
+        if (expectedAttempt !== null && params.get(CLERK_ATTEMPT_PARAM) !== expectedAttempt) {
+          // An older or forged sign-in: keep waiting for the current one.
+          writeReturnPage(response, false);
+          return;
+        }
+        // The current sign-in's callback: stop listening, then close once the page is sent.
+        release();
         response.on("close", () => next.closeAllConnections());
-        response
-          .writeHead(200, { "content-type": "text/html; charset=utf-8", connection: "close" })
-          .end(renderClerkSignInReturnPage(!failed));
-        // The bridge ignores links when no sign-in is waiting.
+        writeReturnPage(response, params.get("__clerk_status") !== "failed");
         app.emit("open-url", { preventDefault: () => {} }, deepLink);
       });
       next.once("error", () => resolve(false));
       next.listen(clerkSignInReturnPort(input.isDevelopment), "127.0.0.1", () => {
+        if (disposed || listening !== generation) {
+          next.close();
+          resolve(false);
+          return;
+        }
         server = next;
+        expectedAttempt = attempt;
         timer = setTimeout(stop, LISTEN_MS);
         timer.unref();
         resolve(true);
       });
     });
 
-  ipcMain.removeHandler(CLERK_REDIRECT_URL_CHANNEL);
-  ipcMain.handle(CLERK_REDIRECT_URL_CHANNEL, async (event) => {
-    const { sender, senderFrame } = event;
-    if (sender.getType() !== "window" || !senderFrame || senderFrame !== sender.mainFrame)
-      throw new Error("Clerk: OAuth request did not originate from a window's main frame.");
-    return (await listen()) ? clerkSignInReturnUrl(input.isDevelopment) : deepLinkRedirect;
+  ipcMain.handle(CLERK_REDIRECT_URL_CHANNEL, async (event, ...args) => {
+    const deepLinkUrl = String(await redirectUrl(event, ...args));
+    const attempt = new URL(deepLinkUrl).searchParams.get(CLERK_ATTEMPT_PARAM);
+    if (!(await listen(attempt))) return deepLinkUrl;
+    const returnUrl = new URL(clerkSignInReturnUrl(input.isDevelopment));
+    returnUrl.search = new URL(deepLinkUrl).search;
+    return returnUrl.href;
   });
-  return stop;
+  return {
+    ...bridge,
+    cleanup: () => {
+      disposed = true;
+      stop();
+      bridge.cleanup();
+    },
+  };
 }
 // SCIENT-FORK:END clerk-sign-in-return

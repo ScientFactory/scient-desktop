@@ -26,7 +26,7 @@ import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { openClerkTokenStorage } from "./ClerkTokenStore.ts";
 // SCIENT-FORK:START clerk-sign-in-return
-import { installClerkSignInReturn } from "./ClerkSignInReturn.ts";
+import { createClerkBridgeWithSignInReturn } from "./ClerkSignInReturn.ts";
 // SCIENT-FORK:END clerk-sign-in-return
 import * as DesktopWebLinks from "./DesktopWebLinks.ts";
 
@@ -93,7 +93,7 @@ export const desktopClerkFrontendApiHostname = resolveDesktopClerkFrontendApiHos
 );
 
 function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean, userDataPath: string) {
-  const bridge = createClerkBridge({
+  return createClerkBridge({
     storage: openClerkTokenStorage(
       stateDir,
       (directory) => storage({ path: directory }),
@@ -106,21 +106,6 @@ function createDesktopClerkBridge(stateDir: string, isDevelopment: boolean, user
       host: ElectronProtocol.DESKTOP_HOST,
     },
   });
-  // SCIENT-FORK:START clerk-sign-in-return
-  if (!bridge?.isPrimaryInstance) return bridge;
-  const stopSignInReturn = installClerkSignInReturn({
-    scheme: ElectronProtocol.getDesktopScheme(isDevelopment),
-    host: ElectronProtocol.DESKTOP_HOST,
-    isDevelopment,
-  });
-  return {
-    ...bridge,
-    cleanup: () => {
-      stopSignInReturn();
-      bridge.cleanup();
-    },
-  };
-  // SCIENT-FORK:END clerk-sign-in-return
 }
 
 /** @public */
@@ -160,7 +145,17 @@ export const make = Effect.gen(function* () {
   yield* Effect.acquireRelease(
     Effect.try({
       try: () =>
-        createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, userDataPath),
+        // SCIENT-FORK:START clerk-sign-in-return
+        createClerkBridgeWithSignInReturn(
+          () =>
+            createDesktopClerkBridge(environment.stateDir, environment.isDevelopment, userDataPath),
+          {
+            scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+            host: ElectronProtocol.DESKTOP_HOST,
+            isDevelopment: environment.isDevelopment,
+          },
+        ),
+      // SCIENT-FORK:END clerk-sign-in-return
       catch: (cause) =>
         new DesktopClerkBridgeInitializationError({
           stateDir: environment.stateDir,

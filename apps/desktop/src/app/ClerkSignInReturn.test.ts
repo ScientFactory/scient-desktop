@@ -2,37 +2,41 @@
 import * as NodeFS from "node:fs";
 import * as NodeHttp from "node:http";
 import * as NodePath from "node:path";
+import * as Electron from "electron";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 
 const { handlers, emit } = vi.hoisted(() => ({
-  handlers: new Map<string, (event: unknown) => unknown>(),
+  handlers: new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
   emit: vi.fn(),
 }));
 
 vi.mock("electron", () => ({
   ipcMain: {
-    handle: (channel: string, handler: (event: unknown) => unknown) =>
-      handlers.set(channel, handler),
+    handle: (channel: string, handler: (event: unknown) => unknown) => {
+      if (handlers.has(channel)) throw new Error(`second handler for ${channel}`);
+      handlers.set(channel, handler);
+    },
     removeHandler: (channel: string) => handlers.delete(channel),
   },
   app: { emit },
 }));
 
 import {
+  CLERK_ATTEMPT_PARAM,
   CLERK_REDIRECT_URL_CHANNEL,
   clerkDeepLinkForCallback,
   clerkSignInReturnUrl,
-  installClerkSignInReturn,
+  createClerkBridgeWithSignInReturn,
   isTopLevelNavigation,
   renderClerkSignInReturnPage,
 } from "./ClerkSignInReturn.ts";
 import { SCIENT_SYMBOL_SVG } from "./scientSymbolSvg.ts";
 
-const mainFrame = {};
 const navigate = { "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" };
+const windowEvent = {};
 
 /** A request with browser fetch-metadata headers, which Node's fetch does not let callers set. */
-const visit = (url: string, headers: Record<string, string>) =>
+const visit = (url: string, headers: Record<string, string> = navigate) =>
   new Promise<{ status: number; body: string }>((resolve, reject) => {
     NodeHttp.get(url, { headers }, (response) => {
       let body = "";
@@ -41,16 +45,40 @@ const visit = (url: string, headers: Record<string, string>) =>
       response.on("end", () => resolve({ status: response.statusCode ?? 0, body }));
     }).on("error", reject);
   });
-const windowEvent = { sender: { getType: () => "window", mainFrame }, senderFrame: mainFrame };
+
+/** Stands in for @clerk/electron 0.1.10: it tags each sign-in with a fresh attempt id. */
+const createBridge = (scheme: string) => () => {
+  let attempt = 0;
+  const { ipcMain } = Electron;
+  ipcMain.handle(CLERK_REDIRECT_URL_CHANNEL, () => {
+    attempt += 1;
+    return `${scheme}://app/?${CLERK_ATTEMPT_PARAM}=attempt-${attempt}`;
+  });
+  ipcMain.handle("clerk:other", () => "other");
+  return { cleanup: vi.fn(() => ipcMain.removeHandler(CLERK_REDIRECT_URL_CHANNEL)) };
+};
+
+const redirectUrl = async () =>
+  String(await handlers.get(CLERK_REDIRECT_URL_CHANNEL)!(windowEvent));
 
 describe("ClerkSignInReturn", () => {
-  let stop: (() => void) | undefined;
+  let bridge: { cleanup(): void } | undefined;
   afterEach(() => {
-    stop?.();
-    stop = undefined;
+    bridge?.cleanup();
+    bridge = undefined;
     handlers.clear();
     emit.mockReset();
   });
+
+  const install = (isDevelopment = true) => {
+    const scheme = isDevelopment ? "scient-next-dev" : "scient";
+    bridge = createClerkBridgeWithSignInReturn(createBridge(scheme), {
+      scheme,
+      host: "app",
+      isDevelopment,
+    });
+    return bridge;
+  };
 
   it("turns the browser callback into the deep link the bridge expects", () => {
     expect(
@@ -62,9 +90,7 @@ describe("ClerkSignInReturn", () => {
   });
 
   it("accepts browser navigations only", () => {
-    expect(
-      isTopLevelNavigation({ "sec-fetch-dest": "document", "sec-fetch-mode": "navigate" }),
-    ).toBe(true);
+    expect(isTopLevelNavigation(navigate)).toBe(true);
     expect(isTopLevelNavigation({})).toBe(true);
     expect(isTopLevelNavigation({ "sec-fetch-dest": "image", "sec-fetch-mode": "no-cors" })).toBe(
       false,
@@ -82,36 +108,55 @@ describe("ClerkSignInReturn", () => {
     expect(SCIENT_SYMBOL_SVG).toBe(asset);
   });
 
-  it("renders success and failure without the provider's details", () => {
+  it("renders success and failure", () => {
     expect(renderClerkSignInReturnPage(true)).toContain("You're signed in");
     expect(renderClerkSignInReturnPage(false)).toContain("Sign-in didn't finish");
   });
 
-  it("serves the return page once and hands the callback to the bridge", async () => {
-    stop = installClerkSignInReturn({
-      scheme: "scient-next-dev",
-      host: "app",
-      isDevelopment: true,
-    });
-    const redirect = await handlers.get(CLERK_REDIRECT_URL_CHANNEL)!(windowEvent);
-    expect(redirect).toBe(clerkSignInReturnUrl(true));
+  it("keeps the library's other handlers and its attempt id", async () => {
+    install();
+    expect(handlers.has("clerk:other")).toBe(true);
+    const redirect = await redirectUrl();
+    expect(redirect).toBe(`${clerkSignInReturnUrl(true)}?${CLERK_ATTEMPT_PARAM}=attempt-1`);
+  });
 
-    const response = await visit(`${redirect}?rotating_token_nonce=abc`, navigate);
+  it("hands the current attempt's callback to the bridge once", async () => {
+    install();
+    const redirect = await redirectUrl();
+    const response = await visit(`${redirect}&rotating_token_nonce=abc`);
     expect(response.status).toBe(200);
     expect(response.body).toContain("You're signed in");
     expect(emit).toHaveBeenCalledWith(
       "open-url",
       expect.anything(),
-      "scient-next-dev://app/?rotating_token_nonce=abc",
+      `scient-next-dev://app/?${CLERK_ATTEMPT_PARAM}=attempt-1&rotating_token_nonce=abc`,
     );
-    await expect(visit(`${redirect}?rotating_token_nonce=again`, navigate)).rejects.toThrow();
+    await expect(visit(`${redirect}&rotating_token_nonce=again`)).rejects.toThrow();
     expect(emit).toHaveBeenCalledTimes(1);
   });
 
+  it("ignores callbacks for other attempts and keeps waiting", async () => {
+    install();
+    const first = await redirectUrl();
+    const second = await redirectUrl();
+    const stale = await visit(`${first}&rotating_token_nonce=old`);
+    expect(stale.body).toContain("Sign-in didn't finish");
+    const forged = await visit(`${clerkSignInReturnUrl(true)}?rotating_token_nonce=forged`);
+    expect(forged.body).toContain("Sign-in didn't finish");
+    expect(emit).not.toHaveBeenCalled();
+
+    await visit(`${second}&rotating_token_nonce=new`);
+    expect(emit).toHaveBeenCalledWith(
+      "open-url",
+      expect.anything(),
+      `scient-next-dev://app/?${CLERK_ATTEMPT_PARAM}=attempt-2&rotating_token_nonce=new`,
+    );
+  });
+
   it("ignores requests that are not page visits", async () => {
-    stop = installClerkSignInReturn({ scheme: "scient", host: "app", isDevelopment: false });
-    const redirect = String(await handlers.get(CLERK_REDIRECT_URL_CHANNEL)!(windowEvent));
-    const response = await visit(`${redirect}?rotating_token_nonce=abc`, {
+    install(false);
+    const redirect = await redirectUrl();
+    const response = await visit(`${redirect}&rotating_token_nonce=abc`, {
       "sec-fetch-dest": "image",
       "sec-fetch-mode": "no-cors",
     });
@@ -123,25 +168,28 @@ describe("ClerkSignInReturn", () => {
     const blocker = NodeHttp.createServer();
     await new Promise<void>((resolve) => blocker.listen(34340, "127.0.0.1", resolve));
     try {
-      stop = installClerkSignInReturn({
-        scheme: "scient-next-dev",
-        host: "app",
-        isDevelopment: true,
-      });
-      expect(await handlers.get(CLERK_REDIRECT_URL_CHANNEL)!(windowEvent)).toBe(
-        "scient-next-dev://app/",
-      );
+      install();
+      expect(await redirectUrl()).toBe(`scient-next-dev://app/?${CLERK_ATTEMPT_PARAM}=attempt-1`);
     } finally {
       await new Promise<void>((resolve) => blocker.close(() => resolve()));
     }
   });
 
-  it("rejects requests from subframes", async () => {
-    stop = installClerkSignInReturn({ scheme: "scient", host: "app", isDevelopment: false });
+  it("closes a listener that finishes binding after cleanup", async () => {
+    const current = install();
+    const pending = redirectUrl();
+    current.cleanup();
+    bridge = undefined;
+    expect(await pending).toBe(`scient-next-dev://app/?${CLERK_ATTEMPT_PARAM}=attempt-1`);
     await expect(
-      Promise.resolve().then(() =>
-        handlers.get(CLERK_REDIRECT_URL_CHANNEL)!({ ...windowEvent, senderFrame: {} }),
-      ),
-    ).rejects.toThrow("main frame");
+      visit(`${clerkSignInReturnUrl(true)}?rotating_token_nonce=late`),
+    ).rejects.toThrow();
+  });
+
+  it("cleans up through the library", () => {
+    const current = install();
+    current.cleanup();
+    bridge = undefined;
+    expect(handlers.has(CLERK_REDIRECT_URL_CHANNEL)).toBe(false);
   });
 });
