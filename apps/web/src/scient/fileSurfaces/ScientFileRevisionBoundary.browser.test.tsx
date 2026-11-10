@@ -1,9 +1,10 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useEffect } from "react";
+import { use, useEffect } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { AssetUrlState } from "~/assets/assetUrls";
 import { render } from "../../../test/render";
+import { DocumentIdentityContext } from "../documentCache/documentIdentity";
 
 const { assets } = vi.hoisted(() => ({
   assets: { state: null as unknown, mounts: vi.fn() },
@@ -79,5 +80,32 @@ describe("ScientFileRevisionBoundary", () => {
     await using screen = await render(boundary("a"));
     await screen.rerender(boundary("b"));
     expect(assets.mounts).toHaveBeenCalledTimes(2);
+  });
+
+  it("opens the preview once the file's revision is known, and names it", async () => {
+    setup(loading);
+    function Identity() {
+      assets.mounts();
+      return <p data-testid="identity">{use(DocumentIdentityContext) ?? "unknown"}</p>;
+    }
+    const view = (state: unknown, refreshToken: string) => {
+      assets.state = state;
+      return (
+        <ScientFileRevisionBoundary
+          environmentId={EnvironmentId.make("environment")}
+          resource={{ _tag: "media-file", threadId: ThreadId.make("thread"), path: "/p/a.docx" }}
+          refreshToken={refreshToken}
+        >
+          <Identity />
+        </ScientFileRevisionBoundary>
+      );
+    };
+    await using screen = await render(view(loading, "a"));
+    expect(assets.mounts).not.toHaveBeenCalled();
+    await screen.rerender(view(success("r1"), "a"));
+    expect(screen.container.textContent).toContain('"r1"');
+    // Without a revision, nothing names the file's content.
+    await screen.rerender(view(success(), "b"));
+    expect(screen.container.textContent).toBe("unknown");
   });
 });

@@ -31,6 +31,7 @@ import {
   DropdownMenuTrigger,
 } from "~/components/ui/menu";
 import { cn } from "~/lib/utils";
+import { Popover, PopoverPopup } from "~/components/ui/popover";
 import { PanelTabNewWindowItem } from "../multiWindow/PanelTabNewWindowItem";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { formatPdfZoom, parsePdfPageInput, stepPdfZoom } from "../pdf/pdfReaderModel";
@@ -78,6 +79,8 @@ export interface ReaderSearch {
   readonly current: number;
   readonly total: number;
   readonly notFound: boolean;
+  /** Why nothing can be found, shown in a small card when Enter finds nothing. */
+  readonly notFoundNote?: string | undefined;
   /** Raised to move focus into the field, for example by Cmd+F. */
   readonly focusRequest: number;
   readonly onQuery: (query: string) => void;
@@ -102,8 +105,12 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
     input.current?.select();
   }, [focusRequest]);
   const searching = props.query !== "";
+  // The note shows from an Enter that found nothing until the query changes or focus leaves.
+  const [explained, setExplained] = useState(false);
+  const field = useRef<HTMLDivElement>(null);
   return (
     <div
+      ref={field}
       className="scient-reader-search"
       data-searching={searching ? "" : undefined}
       onMouseDown={(event) => {
@@ -122,17 +129,23 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
           aria-label={`Search ${props.label}`}
           spellCheck={false}
           onFocus={props.onFocus}
-          onChange={(event) => props.onQuery(event.target.value)}
+          onBlur={() => setExplained(false)}
+          onChange={(event) => {
+            setExplained(false);
+            props.onQuery(event.target.value);
+          }}
           onKeyDown={(event) => {
             if (event.nativeEvent.isComposing) return;
             if (event.key === "Enter" || event.key === "ArrowDown" || event.key === "ArrowUp") {
               event.preventDefault();
+              if (event.key === "Enter" && props.notFound && props.notFoundNote) setExplained(true);
               props.onNavigate(
                 event.key === "ArrowUp" || (event.key === "Enter" && event.shiftKey),
               );
             } else if (event.key === "Escape") {
               event.preventDefault();
               event.stopPropagation();
+              setExplained(false);
               if (searching) props.onClear();
               else input.current?.blur();
             }
@@ -162,6 +175,26 @@ export function ReaderSearchField(props: ReaderSearch & { readonly label: string
           </>
         ) : null}
       </div>
+      <Popover
+        open={explained && searching}
+        onOpenChange={(open) => {
+          if (!open) setExplained(false);
+        }}
+        modal={false}
+      >
+        <PopoverPopup
+          anchor={field}
+          align="start"
+          tooltipStyle
+          padding="tight"
+          initialFocus={false}
+          finalFocus={false}
+        >
+          <p role="status" className="max-w-60">
+            {props.notFoundNote}
+          </p>
+        </PopoverPopup>
+      </Popover>
     </div>
   );
 }

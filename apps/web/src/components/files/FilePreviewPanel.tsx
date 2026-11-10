@@ -189,6 +189,11 @@ import {
   ScientFileReloadButton,
 } from "~/scient/fileSurfaces/ScientFileFreshnessControls";
 import { ScientFileRevisionBoundary } from "~/scient/fileSurfaces/ScientFileRevisionBoundary"; // SCIENT-FORK
+import {
+  ScientDocumentShelf,
+  ShelfItem,
+  useChangesWhileShown,
+} from "~/scient/documentShelf/ScientDocumentShelf"; // SCIENT-FORK
 import { ScientFileVersionHistory } from "~/scient/fileSurfaces/ScientFileVersionHistory";
 // SCIENT-FORK:START — Overleaf sync state beside "Saved"
 import { OverleafFileChip } from "~/scient/overleaf/OverleafFileChip";
@@ -2117,6 +2122,13 @@ export default function FilePreviewPanel({
               },
         }
       : null;
+  // A document's view stays hidden after it is left (ScientDocumentShelf); a reload asked while
+  // another file showed is not its own.
+  const documentShelfKey = `${environmentId}:${absolutePath ?? ""}`;
+  const documentReloads = useChangesWhileShown(
+    documentShelfKey,
+    `${manualReloadKey}:${fileRefreshRevision}`,
+  );
   // SCIENT-FORK:END
   const handlePendingChange = (path: string, pending: boolean) => {
     setPendingPaths((current) => {
@@ -2576,7 +2588,8 @@ export default function FilePreviewPanel({
         </div>
       ) : null}
       <div className="flex min-h-0 flex-1 overflow-hidden">
-        <div
+        {/* SCIENT-FORK: the shelf keeps the views of documents left recently. */}
+        <ScientDocumentShelf
           className={cn("min-w-0 flex-1 flex-col overflow-hidden", previewPath ? "flex" : "hidden")}
           // While a file this panel saves is being renamed, it takes no edits:
           // a save started now would go to the name that is going away.
@@ -2633,17 +2646,20 @@ export default function FilePreviewPanel({
               refreshKey={viewerRefreshKey}
             />
           ) : relativePath && isPdf && absolutePath && pdfSource ? (
-            <ScientSurfaceSuspense>
-              <ScientPdfReader
-                key={absolutePath}
-                source={pdfSource}
-                readerScope={threadRef.threadId}
-                refreshKey={viewerRefreshKey}
-                // SCIENT-FORK:START — Ask in chat quotes this PDF into the panel's conversation.
-                citeThread={threadRef}
-                // SCIENT-FORK:END
-              />
-            </ScientSurfaceSuspense>
+            // SCIENT-FORK: kept hidden for a while once left.
+            <ShelfItem shelfKey={documentShelfKey}>
+              <ScientSurfaceSuspense>
+                <ScientPdfReader
+                  key={absolutePath}
+                  source={pdfSource}
+                  readerScope={threadRef.threadId}
+                  refreshKey={viewerRefreshKey}
+                  // SCIENT-FORK:START — Ask in chat quotes this PDF into the panel's conversation.
+                  citeThread={threadRef}
+                  // SCIENT-FORK:END
+                />
+              </ScientSurfaceSuspense>
+            </ShelfItem>
           ) : relativePath && renderBrowserFile && !isPdf && absolutePath ? (
             <WorkspaceBrowserPreview
               key={absolutePath}
@@ -2690,7 +2706,9 @@ export default function FilePreviewPanel({
                 environmentId={environmentId}
                 absolutePath={absolutePath}
                 name={relativePath.split(/[\\/]/).at(-1) || relativePath}
-                revision={`${workspaceMutationId}:${viewerRefreshKey}:${fileRefreshRevision}`}
+                threadId={threadRef.threadId}
+                refreshToken={`${workspaceMutationId}:${viewerRefreshKey}`}
+                reloadKey={`${manualReloadKey}:${fileRefreshRevision}`}
               />
             </ScientSurfaceSuspense>
           ) : // SCIENT-FORK:END
@@ -2726,28 +2744,31 @@ export default function FilePreviewPanel({
             absolutePath &&
             documentAsset &&
             (isDocument || file.readError?.failure === "binary_file") ? (
-            // SCIENT-FORK: an Office reader quotes this file into the panel's conversation.
-            <OfficeFileContext value={{ citeThread: threadRef, cwd, path: relativePath }}>
-              {/* SCIENT-FORK: a possible change remounts the preview only when the file changed;
+            // SCIENT-FORK: an Office reader quotes this file into the panel's conversation, and is
+            // kept hidden for a while once left.
+            <ShelfItem shelfKey={documentShelfKey}>
+              <OfficeFileContext value={{ citeThread: threadRef, cwd, path: relativePath }}>
+                {/* SCIENT-FORK: a possible change remounts the preview only when the file changed;
                   a reload the reader asks for always does, so a failed preview can retry. */}
-              <ScientFileRevisionBoundary
-                key={`${environmentId}:${absolutePath}:${manualReloadKey}:${fileRefreshRevision}`}
-                environmentId={environmentId}
-                resource={documentAsset.resource}
-                refreshToken={`${workspaceMutationId}:${viewerRefreshKey}`}
-              >
-                <AttachmentFilePreview
-                  name={relativePath.split(/[\\/]/).at(-1) || relativePath}
-                  mimeType="application/octet-stream"
-                  sizeBytes={0}
-                  asset={documentAsset}
-                  origin="File"
-                  embedded
-                  onSaveCopy={canSaveCopy ? handleSaveCopy : undefined}
-                />
-              </ScientFileRevisionBoundary>
-              {/* SCIENT-FORK: the end of the Office file context. */}
-            </OfficeFileContext>
+                <ScientFileRevisionBoundary
+                  key={`${documentShelfKey}:${documentReloads}`}
+                  environmentId={environmentId}
+                  resource={documentAsset.resource}
+                  refreshToken={`${workspaceMutationId}:${viewerRefreshKey}`}
+                >
+                  <AttachmentFilePreview
+                    name={relativePath.split(/[\\/]/).at(-1) || relativePath}
+                    mimeType="application/octet-stream"
+                    sizeBytes={0}
+                    asset={documentAsset}
+                    origin="File"
+                    embedded
+                    onSaveCopy={canSaveCopy ? handleSaveCopy : undefined}
+                  />
+                </ScientFileRevisionBoundary>
+                {/* SCIENT-FORK: the end of the Office file context. */}
+              </OfficeFileContext>
+            </ShelfItem>
           ) : relativePath && file.error && file.data === null ? (
             readFailure
           ) : relativePath && file.data === null ? (
@@ -2996,7 +3017,7 @@ export default function FilePreviewPanel({
               />
             )
           ) : null}
-        </div>
+        </ScientDocumentShelf>
         {showExplorer ? (
           <FileExplorerPane resizable={Boolean(previewPath)}>
             <FileBrowserPanel
