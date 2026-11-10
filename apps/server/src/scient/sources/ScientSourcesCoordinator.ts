@@ -45,6 +45,7 @@ import {
 } from "@scientfactory/scient-sources";
 import {
   bulkUpdateScientSources,
+  createScientSourceCollection,
   organizeScientSources,
   readScientSourcesOrganization,
 } from "@scientfactory/scient-sources/collections";
@@ -97,6 +98,7 @@ import {
   fileImportVerification,
   getBibliographyFileImportCandidate,
 } from "./BibliographyFileAdapter.ts";
+import { recordZoteroSync } from "./ZoteroSync.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
@@ -883,6 +885,62 @@ export async function discardLocalPdfSources(input: {
   return { discarded: keys.length };
 }
 
+const zoteroCollectionNames = new Map<string, Promise<ReadonlyMap<string, string>>>();
+
+/** Zotero collection keys to Library names, nested ones as "Parent / Child". */
+function zoteroCollectionPaths(
+  collections: ReadonlyArray<{
+    readonly key: string;
+    readonly name: string;
+    readonly parentCollectionKey: string | null;
+  }>,
+): ReadonlyMap<string, string> {
+  const byKey = new Map(collections.map((collection) => [collection.key, collection]));
+  const path = (key: string, seen: ReadonlySet<string> = new Set()): string => {
+    const collection = byKey.get(key);
+    if (!collection) return "";
+    const parent = collection.parentCollectionKey;
+    return parent && byKey.has(parent) && !seen.has(parent)
+      ? `${path(parent, new Set([...seen, key]))} / ${collection.name}`
+      : collection.name;
+  };
+  return new Map(collections.map((collection) => [collection.key, path(collection.key)]));
+}
+
+/**
+ * An imported item joins a Library collection for each Zotero collection it is in. A
+ * collection problem never fails the import; the source is in the Library either way.
+ */
+async function addToZoteroCollections(input: {
+  readonly root: string;
+  readonly operation: ScientSourceImportOperation;
+  readonly transport: ZoteroTransport;
+  readonly sourceId: string;
+  readonly collectionKeys: ReadonlyArray<string>;
+}) {
+  if (input.collectionKeys.length === 0) return;
+  const cacheKey = `${input.root}\0${input.operation.operationId}`;
+  let names = zoteroCollectionNames.get(cacheKey);
+  if (!names) {
+    names = listZoteroCollectionsWith(input.transport).then((result) =>
+      zoteroCollectionPaths(result.collections),
+    );
+    if (zoteroCollectionNames.size >= 8) zoteroCollectionNames.clear();
+    zoteroCollectionNames.set(cacheKey, names);
+  }
+  const resolved = await names.catch(() => new Map<string, string>());
+  for (const key of input.collectionKeys) {
+    const name = resolved.get(key);
+    if (!name) continue;
+    await createScientSourceCollection({
+      root: input.root,
+      name,
+      sourceIds: [input.sourceId],
+      actor: input.operation.actor,
+    }).catch(() => undefined);
+  }
+}
+
 async function importZoteroOperationItem(input: {
   readonly root: string;
   readonly operation: ScientSourceImportOperation;
@@ -894,7 +952,7 @@ async function importZoteroOperationItem(input: {
     input.zotero,
     input.operation.adapter === "zotero-web" ? "web" : "local",
   );
-  const { candidate, files } = await zoteroImportMaterial(transport, input.itemKey);
+  const { candidate, material, files } = await zoteroImportMaterial(transport, input.itemKey);
   try {
     const [primary, ...extra] = files;
     const result = await importScientSourceOperationItem({
@@ -918,6 +976,21 @@ async function importZoteroOperationItem(input: {
         actor: input.operation.actor,
       });
       record = attached.record;
+    }
+    if (result.outcome === "imported" && record) {
+      await recordZoteroSync({
+        root: input.root,
+        record,
+        material,
+        attachmentKeys: files.map((file) => file.attachmentKey),
+      });
+      await addToZoteroCollections({
+        root: input.root,
+        operation: input.operation,
+        transport,
+        sourceId: record.sourceId,
+        collectionKeys: material.collectionKeys,
+      });
     }
     return { ...result, record };
   } finally {

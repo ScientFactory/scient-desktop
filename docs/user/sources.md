@@ -26,22 +26,55 @@ personal library.
 
 ## Import from Zotero
 
-1. Open Zotero on the same computer as the selected Scient environment.
+1. Open Zotero on the same computer as the selected Scient environment, or
+   save a Zotero API key in **Accounts** (see below).
 2. In **Sources**, choose **Import sources → Import from Zotero**.
 3. Select **My Library** or a specific Zotero collection.
 4. Select individual references, import the selected collection, or import the
    complete library.
 
-Scient copies the selected metadata and, when available, one PDF attachment
-into the project. This is a one-time import, not ongoing synchronization.
-Changes made later in Scient do not write back to Zotero, and the original
-Zotero records and attachments remain unchanged.
+Scient copies each reference's metadata, tags, child notes (as the source's
+note) and every PDF attachment into the project. A citation key the item
+already has, from Zotero or Better BibTeX, is kept. Each source also joins a
+Library collection named after each Zotero collection it is in; nested ones
+are named like **Thesis / Chapter 2**. The original Zotero records and
+attachments are never changed by an import.
 
 Zotero must be open in the same environment where the project runs. For a
 remote project, that means Zotero must run on the remote computer, not only on
 the computer displaying Scient. If Zotero blocks local access, enable **Allow
 other applications on this computer to communicate with Zotero** in Zotero's
 advanced settings and try again.
+
+### Your library on zotero.org
+
+When Zotero is not open on that computer, Scient can use your library on
+zotero.org instead. Create a key at zotero.org (**Settings → Security →
+Create new private key**), allow it to read your library and files, and save
+it in **Accounts** as the Zotero key. Allow write access too if you want to use
+**Send to Zotero**. Scient keeps the key in Accounts and sends it only to
+zotero.org. Turning the key **Off** in Accounts stops Sources from using it.
+Zotero on the computer is used first when both are available.
+
+### Keep sources up to date with Zotero
+
+Choose **Import sources → Refresh from Zotero** to bring changes you made in
+Zotero into sources imported from it. Fields you changed in Zotero are updated,
+new notes and PDFs come in, and tags you added or removed in Zotero are added or
+removed here. When you changed the same field both here and in Zotero, your
+version here is kept and the refresh lists it: choose **Use Zotero's** or **Keep
+mine**. An empty field in Zotero never clears one here, and an item you deleted
+in Zotero stays in your Library.
+
+### Send to Zotero
+
+Choose **Send to Zotero** from a source's actions to add it to your zotero.org
+library, or to update the Zotero item it came from with your changes here.
+Only fields that differ are sent, and an empty field here never clears one in
+Zotero. If the item was changed in Zotero after Scient last read it, nothing is
+overwritten: refresh from Zotero first, then send again. This needs the Zotero
+key in Accounts with write access. Changes are not sent automatically; there is
+no two-way sync.
 
 Long imports can continue in the background. Completed items remain saved, and
 an interrupted import can resume when Sources reopens. Exact duplicates are
@@ -139,6 +172,39 @@ source stays available to restore until the trash is emptied.
 If a source's file in the project cannot be read, the Library still lists the
 others and says which file it skipped.
 
+## Search the full text
+
+Scient reads the text of every page of every PDF in the Library and keeps it
+with the project, so you can search inside the papers. Type at least three
+characters in the Library search: under the sources whose title, authors or
+other details match, **In full text** lists passages from the PDFs that match,
+with their page. Choose a passage to open the PDF with it highlighted. Put a
+phrase in quotes to require it; longer words also match words that start with
+them, so `randomis` finds "randomised".
+
+Reading runs in the background after a PDF is added. While it is still going,
+the results say how many PDFs are left. A scanned PDF without a text layer
+cannot be searched.
+
+A quote you take from a Library PDF with **Ask in chat** records which file it
+came from, so it can be found again exactly.
+
+## Save from the Browser
+
+In the Browser, choose **Save to Library** from the tab's menu. Select a
+passage first to keep it in the source's note.
+
+- On an article page, Scient reads the DOI, PMID, arXiv ID or ISBN the page
+  states, checks it at its registry and saves the work with the registry's
+  details, the same check an agent's add gets. A page that names an identifier
+  that does not exist is not saved.
+- Any other page is saved as a web page with its title and address.
+- On a PDF tab, Scient downloads the PDF with the tab's sign-in and imports it
+  like a PDF you dropped on the Library.
+
+Saving a page that is already in the Library adds only a new passage to its
+note.
+
 ## Organize sources
 
 **Collections** group sources for a chapter, a project aim or a reading list.
@@ -221,17 +287,25 @@ back to a free accepted manuscript or preprint; the source's details then say
 how it arrived: a free copy, the publisher, your university sign-in, or your
 library's link.
 
+Agents also search and read the PDFs' text, and check quotes against it before
+they give them to you: `scient_sources_search` finds passages,
+`scient_sources_read_text` reads a paper page by page, and
+`scient_sources_quote_check` says whether a quote is exactly in a paper (or the
+same once spacing, ligatures and line-break hyphens are evened out), on which
+page, and what the paper says instead when it is not there. An agent can also
+save a web page with `scient_sources_save_page`, keeping a passage as you would.
+
 The conversation's [permission mode](permission-modes.md) and provider approval
 flow still apply to writes. Sources tools stay scoped to the current project:
-they do not grant arbitrary host file paths, change Zotero, or turn uncertain
-metadata into verified evidence.
+they do not grant arbitrary host file paths or turn uncertain metadata into
+verified evidence. Agents can browse and import from Zotero, refresh from it
+and send to it with the same rules as you; they change Zotero only when you ask
+them to send.
 
 ## Current limits
 
-Sources currently supports local Zotero intake, direct PDF import and
-reference files (BibTeX, RIS, CSL-JSON, EndNote XML). It is not
-a replacement for Zotero and does not yet provide ongoing synchronization,
-Zotero write-back, in-text citation insertion, multi-source bibliography
-generation, PDF annotation, or evidence grading. When a Zotero item has several
-PDF attachments, the import identifies and copies one rather than silently
-representing all of them.
+Sources supports Zotero (on this computer or on zotero.org), direct PDF import
+and reference files (BibTeX, RIS, CSL-JSON, EndNote XML). It does not yet
+provide in-text citation insertion, multi-source bibliography generation, PDF
+annotation, or evidence grading. Zotero group libraries and automatic two-way
+sync are not supported; Send to Zotero does not upload PDFs.

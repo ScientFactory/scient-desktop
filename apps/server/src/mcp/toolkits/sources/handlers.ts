@@ -43,6 +43,12 @@ import {
   summarizeIdentifierAdd,
 } from "../../../scient/sources/SourceIdentifierAdd.ts";
 import {
+  browseZoteroForInvocation,
+  importZoteroForInvocation,
+  refreshZoteroForInvocation,
+  sendToZoteroForInvocation,
+} from "./zoteroHandlers.ts";
+import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
   type ScientSourceAddInput as ScientSourceAddInputType,
@@ -65,6 +71,7 @@ import {
   readSourceText,
   searchSourceFullText,
 } from "../../../scient/sources/SourceFullText.ts";
+import { saveWebPageSource } from "../../../scient/sources/SourceWebPage.ts";
 
 type ErrorCode = ConstructorParameters<typeof ScientSourcesToolError>[0]["code"];
 
@@ -804,6 +811,38 @@ const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesToolkit.che
   },
 );
 
+const saveScientSourcePageForInvocation = Effect.fn("ScientSourcesToolkit.savePage")(
+  function* (input: {
+    readonly url: string;
+    readonly title?: string;
+    readonly passage?: string;
+    readonly meta?: ReadonlyArray<{ readonly name: string; readonly content: string }>;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    const resolveIdentifier = yield* keyedIdentifierLookup();
+    const observeImport = yield* makeSourceImportAnalytics("agent");
+    const result = yield* attempt(() =>
+      saveWebPageSource(
+        {
+          root,
+          page: {
+            url: input.url,
+            title: input.title ?? null,
+            selection: input.passage ?? null,
+            meta: input.meta ?? [],
+          },
+          actor: "agent",
+          resolveIdentifier,
+        },
+        observeImport,
+      ),
+    );
+    return result.outcome === "not-added"
+      ? { ...result, sourceId: null, revision: null, passageSaved: false }
+      : result;
+  },
+);
+
 export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesToolkit.importFile")(
   function* (input: { readonly relativePath: string; readonly format?: BibliographyFormat }) {
     const { root } = yield* resolveScientSourcesProject();
@@ -919,6 +958,11 @@ const handlers = {
   scient_sources_search: searchScientSourcesForInvocation,
   scient_sources_read_text: readScientSourceTextForInvocation,
   scient_sources_quote_check: checkScientSourceQuotesForInvocation,
+  scient_sources_save_page: saveScientSourcePageForInvocation,
+  scient_sources_zotero_browse: browseZoteroForInvocation,
+  scient_sources_zotero_import: importZoteroForInvocation,
+  scient_sources_zotero_refresh: refreshZoteroForInvocation,
+  scient_sources_zotero_send: sendToZoteroForInvocation,
   scient_sources_collections: readScientSourceCollectionsForInvocation,
   scient_sources_organize: organizeScientSourcesForInvocation,
   scient_sources_bulk_update: bulkUpdateScientSourcesForInvocation,
