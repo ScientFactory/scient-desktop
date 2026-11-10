@@ -15,6 +15,7 @@ import {
 } from "../../auth/http.ts";
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
+import { searchSourceFullText } from "./SourceFullText.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import { zoteroKeyLookup } from "./ZoteroAccountKey.ts";
 import {
@@ -112,8 +113,20 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),
             );
-            return asset;
+            const { sha256, byteLength } = material.attachment;
+            return /^[0-9a-f]{64}$/u.test(sha256) && byteLength >= 1
+              ? { ...asset, material: { sha256, byteLength } }
+              : asset;
           }),
+        )
+        .handle("fullTextSearch", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            searchSourceFullText({
+              root: args.payload.root,
+              query: args.payload.query,
+              limit: args.payload.limit ?? 20,
+            }),
+          ),
         )
         .handle("journalIcon", (args) =>
           Effect.gen(function* () {

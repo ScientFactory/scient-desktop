@@ -615,7 +615,7 @@ const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search"
     readonly limit?: number;
   }) {
     const { root } = yield* resolveScientSourcesProject();
-    return yield* attempt(() =>
+    const { hits, status } = yield* attempt(() =>
       searchSourceFullText({
         root,
         query: input.query,
@@ -623,6 +623,21 @@ const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search"
         ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
       }),
     );
+    return {
+      status,
+      hits: hits.map(
+        ({ sourceId, attachmentId, title, page, start, end, passage, matchedTerms }) => ({
+          sourceId,
+          attachmentId,
+          title,
+          page,
+          start,
+          end,
+          passage,
+          matchedTerms,
+        }),
+      ),
+    };
   },
 );
 

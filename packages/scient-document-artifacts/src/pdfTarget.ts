@@ -6,6 +6,7 @@ import {
   ArtifactRevisionId,
   BindingGeneration,
   LogicalDocumentKey,
+  PdfMaterial,
 } from "./contracts.ts";
 
 /**
@@ -74,13 +75,6 @@ export const PdfDocumentIdentity = Schema.Struct({
   locator: PdfDocumentLocator,
 });
 export type PdfDocumentIdentity = typeof PdfDocumentIdentity.Type;
-
-/** Proven bytes. Present only when a producer recorded them; never inferred. */
-export const PdfMaterial = Schema.Struct({
-  sha256: Sha256,
-  byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
-});
-export type PdfMaterial = typeof PdfMaterial.Type;
 
 export const PdfTextPageSelector = Schema.Struct({
   page: PageNumber,

@@ -30,6 +30,8 @@ import {
   ScientSourceImportOperation,
   ScientSourceAttachmentPreviewRequest,
   ScientSourceAttachmentPreviewResult,
+  ScientSourcesFullTextSearchRequest,
+  ScientSourcesFullTextSearchResult,
   ScientSourceDetailRequest,
   ScientSourceDetailResult,
   ScientSourceJournalIconRequest,
@@ -272,6 +274,14 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourceAttachmentPreviewRequest,
         success: ScientSourceAttachmentPreviewResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("fullTextSearch", "/api/scient/sources/full-text/search", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesFullTextSearchRequest,
+        success: ScientSourcesFullTextSearchResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )
