@@ -6,6 +6,7 @@ import { METADATA_USER_AGENT, type MetadataRequest } from "./metadataHttp.ts";
 import { createSerialRequestLane } from "./NcbiRequestLane.ts";
 import { creatorsFromDisplayNames } from "./registryCreators.ts";
 import type {
+  CatalogueRecord,
   IdentifierLookup,
   RequestPace,
   ResearchKeys,
@@ -49,13 +50,21 @@ const OpenAlexWork = Schema.Struct({
 const decodeOpenAlexWork = Schema.decodeUnknownSync(Schema.fromJsonString(OpenAlexWork));
 
 const SemanticScholarPaper = Schema.Struct({
+  paperId: Text,
   title: Text,
   year: Schema.optional(Schema.NullOr(Schema.Number)),
   venue: Text,
   publicationDate: Text,
   authors: Schema.optional(Schema.Array(Schema.Struct({ name: Text }))),
   externalIds: Schema.optional(
-    Schema.NullOr(Schema.Struct({ DOI: Text, PubMed: Text, ArXiv: Text })),
+    Schema.NullOr(
+      Schema.Struct({
+        DOI: Text,
+        PubMed: Text,
+        ArXiv: Text,
+        CorpusId: Schema.optional(Schema.NullOr(Schema.Number)),
+      }),
+    ),
   ),
   journal: Schema.optional(Schema.NullOr(Schema.Struct({ name: Text, volume: Text, pages: Text }))),
 });
@@ -63,7 +72,7 @@ const decodeSemanticScholarPaper = Schema.decodeUnknownSync(
   Schema.fromJsonString(SemanticScholarPaper),
 );
 
-const S2_FIELDS = "title,year,venue,publicationDate,authors,externalIds,journal";
+const S2_FIELDS = "paperId,title,year,venue,publicationDate,authors,externalIds,journal";
 
 const present = (value: string | null | undefined) => (value?.trim() ? value.trim() : null);
 
@@ -88,29 +97,38 @@ const doiFromUrl = (value: string | null | undefined) =>
 
 /**
  * The work at its registry when the catalogue names one (DOI, then PMID, then arXiv), keeping the
- * catalogue's ID among its identifiers; the catalogue's own record when no registry has it.
+ * catalogue's IDs among its identifiers. A registry without the named identifier refuses it as it
+ * would any; one that cannot be reached leaves the catalogue's record unchecked; a work no registry
+ * names is the catalogue's record, unverified.
  */
 async function preferRegistry(
   named: ReadonlyArray<readonly ["doi" | "pmid" | "arxiv", string | null | undefined]>,
   catalogue: ResolvedSourceMetadata,
-  origin: "openalex" | "semantic-scholar",
-  connectorId: ScientSourceIdentifier,
+  origin: CatalogueRecord["origin"],
   follow: FollowIdentifier,
 ): Promise<IdentifierLookup> {
-  for (const [scheme, value] of named) {
-    if (!value) continue;
+  const registryIds = named.flatMap(([scheme, value]) => (value ? [{ scheme, value }] : []));
+  let missing: ScientSourceIdentifier | undefined;
+  let unreachable = false;
+  for (const { scheme, value } of registryIds) {
     const answer = await follow(scheme, value);
-    if (answer.status !== "found") continue;
-    return {
-      ...answer,
-      origin: answer.origin ?? (scheme === "doi" ? "doi" : "pubmed"),
-      metadata: {
-        ...answer.metadata,
-        identifiers: [...answer.metadata.identifiers, connectorId],
-      },
-    };
+    if (answer.status === "found")
+      return {
+        ...answer,
+        origin: answer.origin ?? (scheme === "doi" ? "doi" : "pubmed"),
+        metadata: {
+          ...answer.metadata,
+          identifiers: [...answer.metadata.identifiers, ...catalogue.identifiers],
+        },
+      };
+    if (answer.status === "not-found") missing ??= { scheme, value };
+    else unreachable = true;
   }
-  return { status: "found", origin, metadata: catalogue };
+  if (missing) return { status: "not-found", named: missing };
+  const kept = { ...catalogue, identifiers: [...registryIds, ...catalogue.identifiers] };
+  return unreachable
+    ? { status: "unavailable", catalogue: { metadata: kept, origin } }
+    : { status: "found", origin, metadata: kept, catalogueOnly: true };
 }
 
 const statusOf = (status: number): IdentifierLookup | null =>
@@ -138,7 +156,6 @@ export async function lookupOpenAlexWork(
   const first = Number(work.biblio?.first_page);
   const last = Number(work.biblio?.last_page);
   const year = work.publication_year ?? null;
-  const connectorId = { scheme: "openalex", value: workId };
   const catalogue: ResolvedSourceMetadata = {
     type: OPENALEX_TYPES[work.type ?? ""] ?? null,
     title: present(work.title) ?? present(work.display_name),
@@ -147,7 +164,7 @@ export async function lookupOpenAlexWork(
     ),
     issuedRaw: year === null ? null : String(year),
     issuedYear: year,
-    identifiers: [connectorId],
+    identifiers: [{ scheme: "openalex", value: workId }],
     abstract: null,
     abstractSections: [],
     containerTitle: present(work.primary_location?.source?.display_name),
@@ -170,7 +187,6 @@ export async function lookupOpenAlexWork(
     ],
     catalogue,
     "openalex",
-    connectorId,
     follow,
   );
 }
@@ -196,7 +212,13 @@ export async function lookupSemanticScholarPaper(
   const failed = statusOf(response.status);
   if (failed) return failed;
   const paper = decodeSemanticScholarPaper(response.body);
-  const connectorId = { scheme: "s2", value: paperId };
+  // A paper has two Semantic Scholar IDs, its paperId and CorpusId; both are kept.
+  const corpusId = paper.externalIds?.CorpusId;
+  const aliases = new Set([
+    paperId,
+    present(paper.paperId)?.toLowerCase() ?? paperId,
+    ...(corpusId ? [`CorpusId:${corpusId}`] : []),
+  ]);
   const year = paper.year ?? null;
   const catalogue: ResolvedSourceMetadata = {
     type: null,
@@ -206,7 +228,7 @@ export async function lookupSemanticScholarPaper(
     ),
     issuedRaw: present(paper.publicationDate) ?? (year === null ? null : String(year)),
     issuedYear: year,
-    identifiers: [connectorId],
+    identifiers: [...aliases].map((value) => ({ scheme: "s2", value })),
     abstract: null,
     abstractSections: [],
     containerTitle: present(paper.journal?.name) ?? present(paper.venue),
@@ -225,7 +247,6 @@ export async function lookupSemanticScholarPaper(
     ],
     catalogue,
     "semantic-scholar",
-    connectorId,
     follow,
   );
 }

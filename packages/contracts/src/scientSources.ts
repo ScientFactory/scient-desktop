@@ -16,6 +16,7 @@ import {
   ScientSourceSummary,
   ScientSourceTrashListing,
   ScientSourcePreflightItem,
+  ScientSourceWebPage,
   ScientSourcesBulkChange,
   ScientSourcesBulkResult,
   ScientSystematicReviewAction,
@@ -26,6 +27,9 @@ import {
   ScientSourcesOrganizeAction,
   ScientSourcesOrganizeResult,
   ScientSourcesOverview as ScientSourcesStoreOverview,
+  ScientSourceZoteroRefreshField,
+  ScientSourceZoteroRefreshResult,
+  ScientSourceZoteroSendResult,
   ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,
@@ -33,6 +37,10 @@ import {
   ZoteroImportScope,
   ZoteroLibraryPage,
 } from "@scientfactory/scient-sources";
+import {
+  BibliographyFormatSchema,
+  BibliographyImportReport,
+} from "@scientfactory/scient-sources/bibliography";
 import * as Schema from "effect/Schema";
 import * as Multipart from "effect/http/Multipart";
 import * as HttpApiSchema from "effect/http-api/HttpApiSchema";
@@ -116,6 +124,28 @@ export const ScientSourcesFullTextSearchResult = Schema.Struct({
   }),
 });
 export type ScientSourcesFullTextSearchResult = typeof ScientSourcesFullTextSearchResult.Type;
+
+export const ScientSourceSavePageRequest = Schema.Struct({
+  root: NonEmptyString,
+  page: ScientSourceWebPage,
+});
+export type ScientSourceSavePageRequest = typeof ScientSourceSavePageRequest.Type;
+
+export const ScientSourceSavePageResult = Schema.Union([
+  Schema.Struct({
+    outcome: Schema.Literals(["added", "existing"]),
+    sourceId: NonEmptyString,
+    revision: Schema.Int.check(Schema.isGreaterThan(0)),
+    passageSaved: Schema.Boolean,
+  }),
+  Schema.Struct({
+    outcome: Schema.Literal("not-added"),
+    reason: Schema.Literals(["identifier-not-found", "identifier-mismatch", "possible-duplicate"]),
+    message: Schema.String,
+    matchingSourceIds: Schema.Array(NonEmptyString),
+  }),
+]);
+export type ScientSourceSavePageResult = typeof ScientSourceSavePageResult.Type;
 
 export const ScientSourceJournalIconRequest = Schema.Struct({
   root: NonEmptyString,
@@ -258,6 +288,29 @@ export const ZoteroStatusRequest = Schema.Struct({
 });
 export type ZoteroStatusRequest = typeof ZoteroStatusRequest.Type;
 
+const BoundedSourceIds = Schema.Array(NonEmptyString).pipe(
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+);
+const RefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
+  Schema.check(Schema.isMaxLength(32)),
+);
+
+/** Without sourceIds, every source imported from Zotero is refreshed. */
+export const ScientSourcesZoteroRefreshRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceIds: Schema.optionalKey(BoundedSourceIds),
+  connection: Schema.optionalKey(ZoteroConnection),
+  useZotero: Schema.optionalKey(RefreshFields),
+  keepLocal: Schema.optionalKey(RefreshFields),
+});
+export type ScientSourcesZoteroRefreshRequest = typeof ScientSourcesZoteroRefreshRequest.Type;
+
+export const ScientSourcesZoteroSendRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceIds: BoundedSourceIds,
+});
+export type ScientSourcesZoteroSendRequest = typeof ScientSourcesZoteroSendRequest.Type;
+
 export const ZoteroLibraryRequest = Schema.Struct({
   scope: ZoteroImportScope,
   query: Schema.String,
@@ -312,6 +365,45 @@ export const ScientSourcesLocalPdfUploadResult = Schema.Struct({
 });
 export type ScientSourcesLocalPdfUploadResult = typeof ScientSourcesLocalPdfUploadResult.Type;
 
+export const ScientSourcesFileImportRequest = Schema.Struct({
+  root: NonEmptyString,
+  operationId: NonEmptyString,
+  file: Multipart.SingleFileSchema,
+}).pipe(
+  HttpApiSchema.asMultipart({
+    maxParts: 3,
+    maxFieldSize: 16 * 1024,
+    maxFileSize: 32 * 1024 * 1024,
+    maxTotalSize: 32 * 1024 * 1024 + 64 * 1024,
+  }),
+);
+export type ScientSourcesFileImportRequest = typeof ScientSourcesFileImportRequest.Type;
+
+export const ScientSourcesFileImportResult = Schema.Struct({
+  operation: Schema.NullOr(ScientSourceImportOperation),
+  report: BibliographyImportReport,
+});
+export type ScientSourcesFileImportResult = typeof ScientSourcesFileImportResult.Type;
+
+export const ScientSourcesExportRequest = Schema.Struct({
+  root: NonEmptyString,
+  format: BibliographyFormatSchema,
+  sourceIds: Schema.optionalKey(
+    Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(20_000))),
+  ),
+  includeNotes: Schema.optionalKey(Schema.Boolean),
+});
+export type ScientSourcesExportRequest = typeof ScientSourcesExportRequest.Type;
+
+export const ScientSourcesExportResult = Schema.Struct({
+  format: BibliographyFormatSchema,
+  fileName: NonEmptyString,
+  content: Schema.String,
+  sourceCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  missingSourceIds: Schema.Array(NonEmptyString),
+});
+export type ScientSourcesExportResult = typeof ScientSourcesExportResult.Type;
+
 export const ScientSourcesDiscardStagedRequest = ScientSourcesPreflightRequest;
 export type ScientSourcesDiscardStagedRequest = typeof ScientSourcesDiscardStagedRequest.Type;
 
@@ -363,6 +455,9 @@ export {
   ScientSourceRestoreResult,
   ScientSourceRevertResult,
   ScientSourceTrashListing,
+  ScientSourceZoteroRefreshField,
+  ScientSourceZoteroRefreshResult,
+  ScientSourceZoteroSendResult,
   ZoteroConnection,
   ZoteroConnectionStatus,
   ZoteroCollection,

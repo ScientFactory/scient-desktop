@@ -11,6 +11,7 @@ import {
 } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
+import { BibliographyImportReport } from "./bibliography/index.ts";
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
 import { resolveScientProjectFile } from "./projectFiles.ts";
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
@@ -34,14 +35,16 @@ import {
   ScientSourceImportReceipt,
   ScientSourceRecord,
   ScientSourceStagedMaterial,
+  ScientSourceZoteroSync,
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   type ScientSourceActor,
   type ScientSourceAttachment,
   type ScientSourceAttachmentRetrieval,
-  type ScientSourceCandidate,
+  ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
   type ScientSourceDuplicateKind,
   type ScientSourceEditableMetadata,
+  type ScientSourceExternalReference,
   type ScientSourceFieldProvenance,
   type ScientSourceMetadataUpdateResult,
   type ScientSourceNoteUpdateResult,
@@ -56,6 +59,7 @@ import {
   type ScientSourceStoreIssue,
   type ScientSourceTrashListing,
   type ScientSourceVerification,
+  type ScientSourceZoteroSync as ScientSourceZoteroSyncType,
   ScientSourceTrashEntry,
 } from "./model.ts";
 
@@ -66,6 +70,7 @@ export const SCIENT_SOURCE_HISTORY_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/hist
 export const SCIENT_SOURCE_OPERATIONS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/operations`;
 export const SCIENT_SOURCE_RECEIPTS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/receipts`;
 const SCIENT_SOURCE_TRASH_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/trash`;
+const SCIENT_SOURCE_ZOTERO_SYNC_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/sync/zotero`;
 /** Kept revisions per source, counting the first one, which is never pruned. */
 export const SCIENT_SOURCE_HISTORY_LIMIT = 50;
 const SCIENT_SOURCE_STAGING_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/staging`;
@@ -1233,9 +1238,9 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
 export async function createSourceImportOperation(input: {
   readonly root: string;
   readonly operationId: string;
-  readonly adapter: "zotero" | "zotero-web" | "local-files";
+  readonly adapter: "zotero" | "zotero-web" | "local-files" | "file";
   readonly actor?: "user" | "agent";
-  readonly intake?: "zotero" | "local-pdf" | "identifier";
+  readonly intake?: "zotero" | "local-pdf" | "identifier" | "file";
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides?: ReadonlyArray<string>;
 }): Promise<ScientSourceImportOperation> {
@@ -1723,6 +1728,68 @@ export async function removeScientSourceStagedMaterial(
   ]);
 }
 
+const MAX_STAGED_FILE_IMPORT_BYTES = 64 * 1024 * 1024;
+
+/** Candidates read from one reference file, held until their import operation settles. */
+const ScientSourceStagedFileImport = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  operationId: Schema.String.check(Schema.isNonEmpty()),
+  fileName: Schema.String,
+  report: BibliographyImportReport,
+  candidates: Schema.Array(ScientSourceCandidate).pipe(
+    Schema.check(Schema.isMaxLength(SCIENT_SOURCE_IMPORT_ITEM_LIMIT)),
+  ),
+});
+export type ScientSourceStagedFileImport = typeof ScientSourceStagedFileImport.Type;
+const decodeStagedFileImport = Schema.decodeSync(ScientSourceStagedFileImport);
+
+function stagedFileImportPath(
+  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  operationId: string,
+): string {
+  assertSafeIdentifier(operationId, "Operation ID");
+  return NodePath.join(paths.staging, "files", `${operationId}.json`);
+}
+
+export async function writeScientSourceStagedFileImport(
+  root: string,
+  staged: ScientSourceStagedFileImport,
+): Promise<void> {
+  const paths = await sourceStorePaths(root);
+  const decoded = decodeStagedFileImport(staged);
+  await atomicWriteJson(
+    stagedFileImportPath(paths, decoded.operationId),
+    decoded,
+    MAX_STAGED_FILE_IMPORT_BYTES,
+  );
+}
+
+export async function readScientSourceStagedFileImport(
+  root: string,
+  operationId: string,
+): Promise<ScientSourceStagedFileImport | null> {
+  const paths = await sourceStorePaths(root);
+  const filePath = stagedFileImportPath(paths, operationId);
+  if ((await snapshot(filePath)) === "missing") return null;
+  const staged = await readBoundedJson(
+    filePath,
+    MAX_STAGED_FILE_IMPORT_BYTES,
+    ScientSourceStagedFileImport,
+  );
+  if (staged.operationId !== operationId) {
+    throw new Error("The staged file import identity is inconsistent.");
+  }
+  return staged;
+}
+
+export async function removeScientSourceStagedFileImport(
+  root: string,
+  operationId: string,
+): Promise<void> {
+  const paths = await sourceStorePaths(root);
+  await NodeFSP.rm(stagedFileImportPath(paths, operationId), { force: true });
+}
+
 async function stagePdf(input: {
   readonly paths: Awaited<ReturnType<typeof sourceStorePaths>>;
   readonly operationId: string;
@@ -2127,6 +2194,62 @@ export function sourceAttachmentAbsolutePath(
     throw new Error("The source attachment path escapes the Scient source store.");
   }
   return resolved;
+}
+
+function zoteroSyncPath(paths: SourceStorePaths, sourceId: string): string {
+  assertSafeIdentifier(sourceId, "Source ID");
+  return NodePath.join(paths.root, SCIENT_SOURCE_ZOTERO_SYNC_DIRECTORY, `${sourceId}.json`);
+}
+
+/** The Zotero values a source was last synced from, or null before its first sync. */
+export async function readScientSourceZoteroSync(
+  root: string,
+  sourceId: string,
+): Promise<ScientSourceZoteroSyncType | null> {
+  const paths = await sourceStorePaths(root);
+  const filePath = zoteroSyncPath(paths, sourceId);
+  if ((await snapshot(filePath)) === "missing") return null;
+  // A damaged sync file only loses the merge base; refresh then treats every difference as new.
+  return readBoundedJson(filePath, MAX_RECORD_BYTES, ScientSourceZoteroSync).catch(() => null);
+}
+
+export async function writeScientSourceZoteroSync(
+  root: string,
+  state: ScientSourceZoteroSyncType,
+): Promise<void> {
+  const paths = await sourceStorePaths(root);
+  await atomicWriteJson(zoteroSyncPath(paths, state.sourceId), state, MAX_RECORD_BYTES);
+}
+
+/** Replaces a source's links to other reference managers, as a new revision. */
+export async function updateScientSourceExternalReferences(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+  readonly externalReferences: ReadonlyArray<ScientSourceExternalReference>;
+  readonly actor?: ScientSourceActor;
+}): Promise<{
+  readonly outcome: "updated" | "unchanged" | "stale";
+  readonly record: ScientSourceRecord;
+}> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const current = await readSourceRecordFromPaths(paths, input.sourceId);
+    if (JSON.stringify(current.externalReferences) === JSON.stringify(input.externalReferences)) {
+      return { outcome: "unchanged", record: current };
+    }
+    if (current.revision !== input.expectedRevision) return { outcome: "stale", record: current };
+    const next: ScientSourceRecord = {
+      ...current,
+      externalReferences: [...input.externalReferences],
+      revision: current.revision + 1,
+      updatedAt: new Date().toISOString(),
+      updatedBy: input.actor ?? "user",
+    };
+    await persistSourceRevision(paths, current, next);
+    return { outcome: "updated", record: next };
+  });
 }
 
 /** For sibling project-store modules (collections, reviews) that share this store's safety rules. */
