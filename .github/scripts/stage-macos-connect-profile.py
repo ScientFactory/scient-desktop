@@ -34,6 +34,8 @@ def validate_profile(profile, team_id, app_id, domains, now):
     if profile.get("ProvisionsAllDevices") is not True:
         raise ValueError("A Developer ID distribution profile is required")
     allowed = entitlements.get("com.apple.developer.associated-domains", [])
+    if isinstance(allowed, str):
+        allowed = [allowed]
     if not domains or any(
         "*" not in allowed and f"webcredentials:{domain}" not in allowed
         for domain in domains

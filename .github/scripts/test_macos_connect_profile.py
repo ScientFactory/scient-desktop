@@ -36,7 +36,7 @@ def profile():
 
 class ProfileTests(unittest.TestCase):
     def test_accepts_explicit_and_wildcard_domain_authority(self):
-        for allowed in ([f"webcredentials:{DOMAIN}"], ["*"]):
+        for allowed in ([f"webcredentials:{DOMAIN}"], ["*"], "*"):
             with self.subTest(allowed=allowed):
                 candidate = profile()
                 candidate["Entitlements"]["com.apple.developer.associated-domains"] = (
@@ -62,6 +62,13 @@ class ProfileTests(unittest.TestCase):
                     "com.apple.developer.associated-domains": [
                         "webcredentials:another.example"
                     ],
+                },
+            ),
+            (
+                "Entitlements",
+                {
+                    "com.apple.application-identifier": f"{TEAM}.{APP}",
+                    "com.apple.developer.associated-domains": "webcredentials:*.another.example",
                 },
             ),
         ]
