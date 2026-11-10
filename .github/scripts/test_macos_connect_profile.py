@@ -5,6 +5,7 @@ import importlib.util
 import os
 import plistlib
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -35,6 +36,45 @@ def profile():
 
 
 class ProfileTests(unittest.TestCase):
+    def test_workflow_preserves_unsigned_rehearsals_and_requires_signed_profiles(self):
+        workflow = Path(__file__).parents[1] / "workflows" / "release.yml"
+        step = (
+            workflow.read_text()
+            .split("- id: macos_signing\n", 1)[1]
+            .split("\n      - ", 1)[0]
+        )
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        cases = [
+            ("stable", "false", "false", "", "", 0, "false"),
+            ("stable", "false", "true", "", "", 1, "true"),
+            ("stable", "true", "false", "", "", 1, "true"),
+            ("beta", "false", "false", "", "", 1, "true"),
+            ("stable", "false", "true", TEAM, "fixture", 0, "true"),
+        ]
+        for channel, publish, signing, team, encoded, status, required in cases:
+            with (
+                self.subTest(channel=channel, publish=publish, signing=signing),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                output = Path(directory) / "github-output"
+                env = {
+                    **os.environ,
+                    "RELEASE_CHANNEL": channel,
+                    "REQUESTED_PUBLICATION": publish,
+                    "MACOS_SIGNING_CONFIGURED": signing,
+                    "SCIENT_APPLE_TEAM_ID": team,
+                    "SCIENT_MACOS_PROVISIONING_PROFILE_BASE64": encoded,
+                    "GITHUB_OUTPUT": str(output),
+                }
+                result = stage.subprocess.run(
+                    ["bash", "-e", "-c", script],
+                    env=env,
+                    capture_output=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, status)
+                self.assertEqual(output.read_text(), f"profile_required={required}\n")
+
     def test_accepts_explicit_and_wildcard_domain_authority(self):
         for allowed in ([f"webcredentials:{DOMAIN}"], ["*"], "*"):
             with self.subTest(allowed=allowed):

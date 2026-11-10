@@ -230,7 +230,7 @@ gh variable set SCIENT_APPLE_TEAM_ID --repo ScientFactory/scient-desktop --body 
 base64 < /path/to/Scient.provisionprofile | gh secret set SCIENT_MACOS_PROVISIONING_PROFILE_BASE64 --repo ScientFactory/scient-desktop
 ```
 
-Both release channels validate the profile's team, application identifier, macOS
+Signed or publishing builds in both channels validate the profile's team, application identifier, macOS
 platform, expiry, Developer ID distribution and Associated Domains authority
 before packaging. The decoded profile stays in a private runner temporary file.
 The passkey domain defaults to the Clerk Frontend API hostname from the configured
@@ -238,6 +238,11 @@ public key; repository variable `T3CODE_CLERK_PASSKEY_RP_DOMAINS` overrides it o
 when required by the Clerk deployment. Clerk's Native API application and its
 Apple App Site Association must authorize the same Team ID, application ID and
 domains; see [Connect setup](./connect-setup.md#desktop-passkeys).
+
+Stable build-only rehearsals without complete macOS signing credentials remain
+unsigned and do not require a provisioning profile. A build that has complete
+signing credentials still signs and therefore requires the profile, even when
+publication is off. Beta always publishes and always requires it.
 
 Retrying a failed job uses the workflow revision of its original run. A correction
 to profile secrets can reuse failed macOS jobs, but a workflow-wiring correction
