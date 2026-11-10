@@ -49,6 +49,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
         "scient_sources_revert",
         "scient_sources_attach_pdf",
         "scient_sources_detach_pdf",
+        "scient_sources_bibliography",
       ]),
       tools("sources:read", ["scient_references_check"]),
       tools("sources:write", ["scient_references_resolve"]),

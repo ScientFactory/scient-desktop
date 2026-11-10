@@ -3,11 +3,11 @@ import type { ScientSourceCreator } from "./model.ts";
 const SCIENT_CITATION_KEY_MAX_LENGTH = 100;
 const GENERATED_PART_MAX_LENGTH = 24;
 export const CITATION_KEY_SYNTAX_MESSAGE =
-  "Use letters, digits and _ : . - + / in the citation key, starting and ending with a letter, digit or _.";
+  "Use letters, digits and _ : . - in the citation key, starting and ending with a letter, digit or _.";
 
-// The intersection of Pandoc's `@key` syntax and what BibTeX and biber accept.
-const CITATION_KEY_PATTERN = /^[\p{L}\p{N}_](?:[\p{L}\p{N}_:.\-+/]*[\p{L}\p{N}_])?$/u;
-const CITATION_KEY_INVALID_CHARACTERS = /[^\p{L}\p{N}_:.\-+/]+/gu;
+// What Scient's Markdown `[@key]` reader, Pandoc, BibTeX and biber all accept.
+const CITATION_KEY_PATTERN = /^[\p{L}\p{N}_](?:[\p{L}\p{N}_:.-]*[\p{L}\p{N}_])?$/u;
+const CITATION_KEY_INVALID_CHARACTERS = /[^\p{L}\p{N}_:.-]+/gu;
 
 const TITLE_STOPWORDS = new Set([
   "a",
@@ -64,9 +64,9 @@ export function normalizeImportedCitationKey(value: string | null | undefined): 
   if (isValidCitationKey(trimmed)) return trimmed;
   const cleaned = trimmed
     .replace(CITATION_KEY_INVALID_CHARACTERS, "")
-    .replace(/^[:.\-+/]+|[:.\-+/]+$/gu, "")
+    .replace(/^[:.-]+|[:.-]+$/gu, "")
     .slice(0, SCIENT_CITATION_KEY_MAX_LENGTH)
-    .replace(/[:.\-+/]+$/gu, "");
+    .replace(/[:.-]+$/gu, "");
   return cleaned && isValidCitationKey(cleaned) ? cleaned : null;
 }
 

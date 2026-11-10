@@ -80,6 +80,11 @@ export function pdfDocumentIdentity(source: PdfSourceDescriptor): PdfDocumentIde
   }
 }
 
+/** The bytes the reader's producer proved, which a quote records; null when none were proved. */
+export function pdfDocumentMaterial(source: PdfSourceDescriptor): PdfMaterial | null {
+  return source._tag === "workspace-pdf" ? (source.material ?? null) : null;
+}
+
 export type PdfTextTargetResult =
   | { readonly _tag: "Target"; readonly target: PdfTarget }
   | { readonly _tag: "Refused"; readonly reason: PdfSelectionRefusal };

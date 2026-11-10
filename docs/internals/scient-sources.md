@@ -388,6 +388,24 @@ a record is created, under the same write lock as duplicate assessment:
 Records written before keys existed decode unchanged and have no key until one
 is assigned.
 
+## Managed bibliography
+
+`apps/server/src/scient/sources/ManagedBibliography.ts` is the only writer of
+the project's `references.bib` and `references.json` (CSL-JSON, `id` = citation
+key), rendered by `@scientfactory/scient-citations/bibliography` and sorted by
+key. The store reports every settled write through
+`onScientSourceRecordsChanged`; the server coalesces those into one sync per
+project, so writes from people, agents and every import path keep both files
+current. A sync first gives keyless legacy records a key (oldest first).
+
+Scient keeps a copy of what it last wrote in `.scient/sources/bibliography/`.
+A project file that differs from that copy was edited by hand and is kept
+(`edited`, with the keys added, changed or removed); a file Scient never wrote
+is `unmanaged` and is never written over. Only an explicit `replaceEdited` from
+the user or an agent restores the Library version. The project file is written
+before the copy, so an interrupted write is adopted on the next sync instead
+of reported as an edit. Nothing is written for a project without a Library.
+
 ## Zotero boundary
 
 The adapter uses Zotero's read-only local API v3 at the fixed loopback endpoint
