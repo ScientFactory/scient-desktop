@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   resolveReferences: vi.fn(),
 }));
 
+vi.mock("../sources/sourcesCommands", () => ({ useCanChangeLibrary: () => true }));
 vi.mock("./client", () => mocks);
 
 const environmentId = "environment-1" as EnvironmentId;

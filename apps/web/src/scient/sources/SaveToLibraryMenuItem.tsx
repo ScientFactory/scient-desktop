@@ -11,6 +11,7 @@ import { useProject, useQuietThreadShell } from "~/state/entities";
 
 import { scientSourcesSurface } from "../rightPanel/surfaces";
 import { saveScientSourcePage } from "./client";
+import { useCanChangeLibrary } from "./sourcesCommands";
 import { requestLibraryFileImport } from "./libraryFileHandoff";
 
 function savedDescription(passageSaved: boolean): string | undefined {
@@ -36,6 +37,7 @@ export function SaveToLibraryMenuItem(props: {
     projectCwd: project?.workspaceRoot,
   });
   const [saving, setSaving] = useState(false);
+  const canChange = useCanChangeLibrary(props.threadRef.environmentId);
   const readLibraryPage = previewBridge?.readLibraryPage;
   if (!readLibraryPage) return null;
 
@@ -93,7 +95,10 @@ export function SaveToLibraryMenuItem(props: {
   };
 
   return (
-    <MenuItem disabled={props.disabled || !root || saving} onClick={() => void save()}>
+    <MenuItem
+      disabled={props.disabled || !canChange || !root || saving}
+      onClick={() => void save()}
+    >
       <BookOpen />
       Save to Library
     </MenuItem>

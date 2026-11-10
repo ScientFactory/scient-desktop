@@ -607,6 +607,8 @@ function MetadataRefreshConfirmation(props: {
 
 export function SourceDetails(props: {
   readonly record: SourceRecord;
+  /** The connection can read this Library but not change it. */
+  readonly readOnly?: boolean;
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
   /** Editable tags and collections; without it the tags are shown read-only. */
   readonly organize?: ReactNode;
@@ -632,7 +634,8 @@ export function SourceDetails(props: {
   const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
   const record = props.record;
-  const sourceNote = useSourceNoteControls({ record, onSave: props.onSaveNote });
+  const readOnly = props.readOnly ?? false;
+  const sourceNote = useSourceNoteControls({ record, readOnly, onSave: props.onSaveNote });
   const publication = publicationLocation(record);
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
@@ -659,7 +662,7 @@ export function SourceDetails(props: {
         </Button>
         <div className="min-w-0 flex-1" />
         {sourceNote.button}
-        <Button size="xs" variant="ghost" onClick={props.onEdit}>
+        <Button size="xs" variant="ghost" disabled={readOnly} onClick={props.onEdit}>
           <Pencil />
           Edit
         </Button>
@@ -711,7 +714,7 @@ export function SourceDetails(props: {
           <Button
             size="xs"
             variant="ghost"
-            disabled={gettingPdf}
+            disabled={gettingPdf || readOnly}
             onClick={() => {
               setGettingPdf(true);
               void Promise.resolve(props.onGetPdf?.()).finally(() => setGettingPdf(false));
@@ -733,6 +736,7 @@ export function SourceDetails(props: {
           </ScientTooltip>
           <MenuPopup align="end" side="bottom" className="min-w-44">
             <MenuItem
+              disabled={readOnly}
               onClick={(event) => {
                 const target = event.currentTarget.getBoundingClientRect();
                 setRefreshAnchorPoint({
@@ -751,7 +755,7 @@ export function SourceDetails(props: {
               </MenuItem>
             ) : null}
             {props.onSendToZotero ? (
-              <MenuItem onClick={props.onSendToZotero}>
+              <MenuItem disabled={readOnly} onClick={props.onSendToZotero}>
                 <Upload />
                 Send to Zotero
               </MenuItem>
@@ -759,6 +763,7 @@ export function SourceDetails(props: {
             <MenuSeparator />
             <MenuItem
               variant="destructive"
+              disabled={readOnly}
               onClick={() => {
                 void props.onRemove().catch((cause: unknown) => {
                   toastManager.add({

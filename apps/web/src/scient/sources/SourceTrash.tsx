@@ -18,6 +18,7 @@ import {
 } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { removedLabel, restoreProblem } from "./sourceLifecycleLabels";
+import { useCanChangeLibrary } from "./sourcesCommands";
 
 type TrashEntry = ScientSourceTrashListing["entries"][number];
 
@@ -78,6 +79,7 @@ export function SourceTrashButton(props: {
   const [pending, setPending] = useState<string | null>(null);
   const [confirmingEmpty, setConfirmingEmpty] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const canChange = useCanChangeLibrary(props.environmentId);
 
   const load = async () => {
     try {
@@ -140,7 +142,7 @@ export function SourceTrashButton(props: {
                 <Button
                   size="xs"
                   variant="destructive"
-                  disabled={pending !== null}
+                  disabled={pending !== null || !canChange}
                   onClick={() =>
                     void run("empty", () =>
                       deleteScientSourcesPermanently(props.environmentId, { root: props.root }),
@@ -152,7 +154,12 @@ export function SourceTrashButton(props: {
                 </Button>
               </div>
             ) : (
-              <Button size="xs" variant="ghost" onClick={() => setConfirmingEmpty(true)}>
+              <Button
+                size="xs"
+                variant="ghost"
+                disabled={!canChange}
+                onClick={() => setConfirmingEmpty(true)}
+              >
                 Empty trash
               </Button>
             )
@@ -181,7 +188,7 @@ export function SourceTrashButton(props: {
                   key={entry.sourceId}
                   entry={entry}
                   pending={pending === entry.sourceId}
-                  disabled={pending !== null}
+                  disabled={pending !== null || !canChange}
                   onRestore={() =>
                     void run(entry.sourceId, () =>
                       restoreSourceFromTrash({

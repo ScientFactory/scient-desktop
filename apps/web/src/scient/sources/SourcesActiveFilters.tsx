@@ -99,9 +99,12 @@ export function SourcesActiveFilters(props: {
         <MenuPopup align="end" side="bottom">
           {collection ? (
             <>
-              <MenuItem onClick={renameCollection}>Rename collection…</MenuItem>
+              <MenuItem disabled={!organize.canChange} onClick={renameCollection}>
+                Rename collection…
+              </MenuItem>
               <MenuItem
                 variant="destructive"
+                disabled={!organize.canChange}
                 onClick={() => void organize.deleteCollection(collection.collectionId)}
               >
                 Delete collection
@@ -109,12 +112,13 @@ export function SourcesActiveFilters(props: {
               <MenuSeparator />
             </>
           ) : null}
-          <MenuItem onClick={saveSearch}>
+          <MenuItem disabled={!organize.canChange} onClick={saveSearch}>
             {savedSearch ? "Update saved search…" : "Save search…"}
           </MenuItem>
           {savedSearch ? (
             <MenuItem
               variant="destructive"
+              disabled={!organize.canChange}
               onClick={() => void organize.deleteSavedSearch(savedSearch.searchId)}
             >
               Delete saved search

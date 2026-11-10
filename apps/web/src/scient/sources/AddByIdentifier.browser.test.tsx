@@ -7,6 +7,7 @@ import { render } from "../../../test/render";
 import { AddByIdentifier } from "./AddByIdentifier";
 
 const state = vi.hoisted(() => ({ add: vi.fn() }));
+vi.mock("./sourcesCommands", () => ({ useCanChangeLibrary: () => true }));
 vi.mock("./client", () => ({ addScientSourcesByIdentifier: state.add }));
 
 const environmentId = EnvironmentId.make("synthetic");

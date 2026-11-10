@@ -89,7 +89,7 @@ function AddTagMenu(props: {
             type="button"
             size="compact"
             variant="ghost-muted"
-            disabled={props.organize.pending}
+            disabled={props.organize.pending || !props.organize.canChange}
           />
         }
       >
@@ -158,7 +158,7 @@ export function SourceOrganizeSection(props: {
             label={tag}
             showLabel={`Show sources tagged ${tag}`}
             removeLabel={`Remove tag ${tag}`}
-            disabled={organize.pending}
+            disabled={organize.pending || !organize.canChange}
             onShow={() => props.onShowTag(tag)}
             onRemove={() =>
               void organize.bulk(
@@ -177,7 +177,7 @@ export function SourceOrganizeSection(props: {
             label={collection.name}
             showLabel={`Show collection ${collection.name}`}
             removeLabel={`Remove from ${collection.name}`}
-            disabled={organize.pending}
+            disabled={organize.pending || !organize.canChange}
             onShow={() => props.onShowCollection(collection.collectionId)}
             onRemove={() => setMembership(collection.collectionId, false)}
           />
@@ -189,7 +189,7 @@ export function SourceOrganizeSection(props: {
                 type="button"
                 size="compact"
                 variant="ghost-muted"
-                disabled={organize.pending}
+                disabled={organize.pending || !organize.canChange}
               />
             }
           >

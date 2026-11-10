@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   bulkUpdateScientSources: vi.fn(),
 }));
 
+vi.mock("./sourcesCommands", () => ({ useCanChangeLibrary: () => true }));
 vi.mock("./client", () => ({
   organizeScientSources: mocks.organizeScientSources,
   bulkUpdateScientSources: mocks.bulkUpdateScientSources,

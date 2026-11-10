@@ -26,6 +26,7 @@ import {
 } from "../../components/ui/select";
 import { readLocalApi } from "../../localApi";
 import { scientSourcesErrorMessage } from "../sources/errorMessage";
+import { useCanChangeLibrary } from "../sources/sourcesCommands";
 import { checkReferences, readReferenceDocuments, resolveReferences } from "./client";
 import { findingGroups, referenceCheckSummary, targetLabel } from "./referenceCheckModel";
 
@@ -52,6 +53,7 @@ export function ReferenceCheckDialog(props: {
   readonly onClose: () => void;
 }) {
   const { environmentId, root, onClose } = props;
+  const canChange = useCanChangeLibrary(environmentId);
   const [target, setTarget] = useState(
     props.initialTarget.kind === "library" ? LIBRARY : props.initialTarget.path,
   );
@@ -186,7 +188,7 @@ export function ReferenceCheckDialog(props: {
                 <Button
                   size="xs"
                   variant="outline"
-                  disabled={state.kind === "busy"}
+                  disabled={state.kind === "busy" || !canChange}
                   onClick={() => void apply([finding])}
                 >
                   Apply
@@ -209,7 +211,7 @@ export function ReferenceCheckDialog(props: {
               <Button
                 size="xs"
                 variant="ghost"
-                disabled={state.kind === "busy"}
+                disabled={state.kind === "busy" || !canChange}
                 onClick={() => void toggleIgnored(finding)}
               >
                 {isIgnored(finding) ? "Restore" : "Ignore"}
@@ -298,7 +300,11 @@ export function ReferenceCheckDialog(props: {
         </DialogPanel>
         <DialogFooter>
           {pendingFixes.length > 1 ? (
-            <Button variant="outline" onClick={() => void apply(pendingFixes)}>
+            <Button
+              variant="outline"
+              disabled={!canChange}
+              onClick={() => void apply(pendingFixes)}
+            >
               Apply {pendingFixes.length} fixes
             </Button>
           ) : null}
