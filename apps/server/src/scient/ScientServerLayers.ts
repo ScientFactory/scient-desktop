@@ -62,6 +62,7 @@ import * as PandocManagedTool from "./pandoc/PandocManagedTool.ts";
 import * as PandocWordConverter from "./pandoc/PandocWordConverter.ts";
 import * as WordFileExport from "./pandoc/WordFileExport.ts";
 import { scientOverleafHttpApiLayer } from "./overleaf/http.ts";
+import { scientCloudHttpApiLayer } from "./cloud/http.ts";
 import * as OverleafEditorSave from "./overleaf/OverleafEditorSave.ts";
 import * as OverleafSync from "./overleaf/OverleafSync.ts";
 
@@ -189,6 +190,7 @@ export function makeScientRouteServices<
       Layer.provide(scientConversationImportHttpApiLayer),
       Layer.provide(scientWordExportHttpApiLayer),
       Layer.provide(scientOverleafHttpApiLayer),
+      Layer.provide(scientCloudHttpApiLayer),
     );
 
   /** Scient services behind the routes, provided in order. */
