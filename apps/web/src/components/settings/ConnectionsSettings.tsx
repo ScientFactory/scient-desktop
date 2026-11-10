@@ -42,6 +42,9 @@ import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+// SCIENT-FORK:START — the cloud copy and shared links.
+import { CloudSettingsSections } from "../../scient/cloud/CloudSettingsSections";
+// SCIENT-FORK:END
 import { LinkedEnvironmentsSettings } from "./LinkedEnvironmentsSettings";
 import { usePeerLinkHosts } from "~/state/peerLinks";
 import { LoadBalancingSettings } from "./LoadBalancingSettings";
@@ -1262,6 +1265,10 @@ function ConnectionsSettingsContent({
               </details>
             ) : null}
           </SettingsSection>
+
+          {/* SCIENT-FORK:START — the cloud copy and shared links. */}
+          <CloudSettingsSections environmentId={accessEnvironmentId} />
+          {/* SCIENT-FORK:END */}
 
           {canReadAccess || canWriteAccess ? (
             <FoldedSettingsSection
