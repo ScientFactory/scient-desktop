@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { latexInlineCommandSource } from "../latex/latexVisualDocument";
+import { scientMarkdownParser } from "../markdownEditor/prosemirror/schema";
 import { latexQuote, markdownQuote } from "./quoteFormat";
 
 const passage = {
@@ -38,5 +39,17 @@ describe("quotes for documents", () => {
       text: "“Deep sleep doubled recall in mice.” (sleep.pdf, p. 4)",
       cite: null,
     });
+  });
+
+  it("keeps math and citation syntax in a passage literal in Markdown", () => {
+    const quote = "$x$ [@wrong] \\input{evil} ] @ # _ % & <b>";
+    const parsed = scientMarkdownParser.parse(
+      markdownQuote({ ...passage, quote, pages: [1], citationKey: "right" }).markdown,
+    );
+    const inline: string[] = [];
+    parsed.descendants((node) => {
+      if (node.isInline) inline.push(node.text ?? `${node.type.name}:${String(node.attrs.source)}`);
+    });
+    expect(inline).toEqual([`${quote} `, "citation:@right, p. 1"]);
   });
 });

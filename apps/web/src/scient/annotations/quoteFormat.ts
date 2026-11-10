@@ -1,3 +1,8 @@
+import {
+  scientMarkdownSchema,
+  scientMarkdownSerializer,
+} from "../markdownEditor/prosemirror/schema";
+
 /** A highlighted passage ready to quote in a document. */
 export interface DocumentQuote {
   readonly quote: string;
@@ -40,7 +45,20 @@ export function markdownQuote(input: DocumentQuote): {
   const reference = citation
     ? `[${citation}]`
     : `(${input.fileName}${locator ? `, ${locator}` : ""})`;
-  return { text, citation, reference, markdown: `> ${text} ${reference}` };
+  const { blockquote, paragraph, citation: citationNode } = scientMarkdownSchema.nodes;
+  const inline = citation
+    ? [scientMarkdownSchema.text(`${text} `), citationNode!.create({ source: citation })]
+    : [scientMarkdownSchema.text(`${text} ${reference}`)];
+  const document = scientMarkdownSchema.topNodeType.create(
+    null,
+    blockquote!.create(null, paragraph!.create(null, inline)),
+  );
+  return {
+    text,
+    citation,
+    reference,
+    markdown: scientMarkdownSerializer.serialize(document).trimEnd(),
+  };
 }
 
 /** LaTeX: the quote in typographic quotation marks, then `\cite` with the page. */
