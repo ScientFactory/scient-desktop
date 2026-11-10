@@ -46,6 +46,11 @@ import {
   cancelSourceImportOperation,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
+  deleteScientSourcesPermanently,
+  listScientSourceRevisions,
+  listScientSourceTrash,
+  restoreScientSource,
+  revertScientSource,
   importScientSource,
   importScientSourceOperationItem,
   attachScientSourcePdf,
@@ -72,6 +77,7 @@ import {
   listZoteroScopeItemKeys,
 } from "./ZoteroLocalAdapter.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
+import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
 
@@ -125,6 +131,7 @@ function normalizeSourceRecordForRead(record: ScientSourceRecord): ScientSourceR
 
 export async function getScientSourcesOverview(root: string) {
   const overview = await inspectScientSources(root);
+  void scheduleSourceFullTextIndexing(root);
   return {
     ...overview,
     records: overview.records.map(scientSourceSummaryFromRecord),
@@ -620,6 +627,33 @@ export async function refreshScientSourceMetadata(input: {
 
 export async function removeSource(input: Parameters<typeof removeScientSource>[0]) {
   return removeScientSource(input);
+}
+
+export async function listSourceTrash(input: { readonly root: string }) {
+  return listScientSourceTrash(input.root);
+}
+
+export async function restoreSource(input: Parameters<typeof restoreScientSource>[0]) {
+  return restoreScientSource(input);
+}
+
+export async function deleteSourcesPermanently(
+  input: Parameters<typeof deleteScientSourcesPermanently>[0],
+) {
+  return deleteScientSourcesPermanently(input);
+}
+
+export async function listSourceRevisions(input: {
+  readonly root: string;
+  readonly sourceId: string;
+}) {
+  const revisions = await listScientSourceRevisions(input.root, input.sourceId);
+  if (!revisions) throw new Error("The source was not found in this project.");
+  return { revisions };
+}
+
+export async function revertSource(input: Parameters<typeof revertScientSource>[0]) {
+  return revertScientSource(input);
 }
 
 export async function assessSourcePreflightDuplicate(input: {
