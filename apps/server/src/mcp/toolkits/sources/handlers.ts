@@ -21,7 +21,12 @@ import * as Effect from "effect/Effect";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
-import { SourceIdentifierLookup } from "../../../scient/sources/SourceIdentifierResolver.ts";
+import { keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
+import {
+  addScientSourcesByIdentifier,
+  SourceIdentifierBatchLookup,
+  summarizeIdentifierAdd,
+} from "../../../scient/sources/SourceIdentifierAdd.ts";
 import {
   ScientSourcesToolError,
   ScientSourcesToolkit,
@@ -36,6 +41,7 @@ import {
   updateScientSource,
   updateSourceNote,
 } from "../../../scient/sources/ScientSourcesCoordinator.ts";
+import { syncManagedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
 import {
   checkSourceQuotes,
   readSourceText,
@@ -223,6 +229,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         ? all
         : all.filter((record) =>
             [
+              record.citationKey ?? null,
               record.title,
               creatorName(record),
               record.issuedYear,
@@ -244,6 +251,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
       records: page.map((record) => ({
         sourceId: record.sourceId,
         revision: record.revision,
+        ...(record.citationKey ? { citationKey: record.citationKey } : {}),
         type: record.type,
         title: record.title,
         creator: creatorName(record),
@@ -445,9 +453,57 @@ export const revertScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
   },
 );
 
+const IDENTIFIER_LIST_OPTIONS = new Set(["identifierList", "enrich", "allowPossibleMetadataMatch"]);
+
+const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolkit.addByIdentifier")(
+  function* (input: ScientSourceAddInputType, identifierList: ReadonlyArray<string>) {
+    const { root } = yield* resolveScientSourcesProject();
+    const extra = Object.keys(input).find((field) => !IDENTIFIER_LIST_OPTIONS.has(field));
+    if (extra) {
+      const message =
+        "Give identifierList alone. Add a source from citation fields or a PDF in a separate call.";
+      return {
+        outcome: "invalid" as const,
+        sourceId: null,
+        revision: null,
+        duplicate: { kind: "new" as const, matchingSourceIds: [], reason: message },
+        validationIssues: [{ field: extra, message }],
+      };
+    }
+    const resolveIdentifiers = yield* SourceIdentifierBatchLookup;
+    const observeImport = yield* makeSourceImportAnalytics("agent");
+    const results = yield* attempt(() =>
+      addScientSourcesByIdentifier(
+        {
+          root,
+          entries: identifierList,
+          actor: "agent",
+          enrich: input.enrich ?? false,
+          allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
+          resolveIdentifiers,
+        },
+        observeImport,
+      ),
+    );
+    const summary = summarizeIdentifierAdd(results);
+    return {
+      outcome: "batch" as const,
+      sourceId: null,
+      revision: null,
+      duplicate: { kind: "new" as const, matchingSourceIds: [], reason: summary },
+      validationIssues: [],
+      results,
+      message: summary,
+    };
+  },
+);
+
 export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add")(function* (
   input: ScientSourceAddInputType,
 ) {
+  if (input.identifierList) {
+    return yield* addScientSourcesByIdentifierForInvocation(input, input.identifierList);
+  }
   const { root } = yield* resolveScientSourcesProject();
   const { candidate: initialCandidate, validationIssues: initialIssues } =
     candidateFromAgentInput(input);
@@ -501,7 +557,7 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
       validationIssues,
     };
   }
-  const resolveIdentifier = yield* SourceIdentifierLookup;
+  const resolveIdentifier = yield* keyedIdentifierLookup();
   const observeImport = yield* makeSourceImportAnalytics("agent");
   const result = yield* attempt(() =>
     addAgentSource(
@@ -596,6 +652,15 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
   },
 );
 
+const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolkit.bibliography")(
+  function* (input: {
+    readonly replaceEdited?: ReadonlyArray<"references.bib" | "references.json">;
+  }) {
+    const { root } = yield* resolveScientSourcesProject();
+    return yield* attempt(() => syncManagedBibliography(root, input));
+  },
+);
+
 const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search")(
   function* (input: {
     readonly query: string;
@@ -603,7 +668,7 @@ const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search"
     readonly limit?: number;
   }) {
     const { root } = yield* resolveScientSourcesProject();
-    return yield* attempt(() =>
+    const { hits, status } = yield* attempt(() =>
       searchSourceFullText({
         root,
         query: input.query,
@@ -611,6 +676,21 @@ const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search"
         ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
       }),
     );
+    return {
+      status,
+      hits: hits.map(
+        ({ sourceId, attachmentId, title, page, start, end, passage, matchedTerms }) => ({
+          sourceId,
+          attachmentId,
+          title,
+          page,
+          start,
+          end,
+          passage,
+          matchedTerms,
+        }),
+      ),
+    };
   },
 );
 
@@ -657,6 +737,7 @@ const handlers = {
   scient_sources_add: addScientSourceForInvocation,
   scient_sources_attach_pdf: attachScientSourcePdfForInvocation,
   scient_sources_detach_pdf: detachScientSourcePdfForInvocation,
+  scient_sources_bibliography: syncScientBibliographyForInvocation,
   scient_sources_search: searchScientSourcesForInvocation,
   scient_sources_read_text: readScientSourceTextForInvocation,
   scient_sources_quote_check: checkScientSourceQuotesForInvocation,

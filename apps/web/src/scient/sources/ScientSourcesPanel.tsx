@@ -18,6 +18,7 @@ import {
   FileUp,
   FileText,
   Folder,
+  Hash,
   Library,
   LoaderCircle,
   Info,
@@ -37,6 +38,9 @@ import {
 } from "react";
 
 import { Button } from "../../components/ui/button";
+import { ManagedBibliographyNotice } from "./ManagedBibliographyNotice";
+import { useManagedBibliography } from "./useManagedBibliography";
+import { useLibrarySourceRequest } from "./librarySourceRequest";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
@@ -58,9 +62,12 @@ import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SourceAnnotations } from "../annotations/SourceAnnotations";
+import { AddByIdentifier } from "./AddByIdentifier";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
+import { SourceFullTextResults } from "./SourceFullTextResults";
 import { SourceJournalIcon } from "./SourceJournalIcon";
+import { requestSourceTextReveal } from "./sourceTextReveal";
 import { agentVerificationLabel, newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
 import {
   filterScientSourceSearchIndex,
@@ -253,6 +260,11 @@ export function ScientSourcesPanel(props: {
   }) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const bibliography = useManagedBibliography({
+    environmentId: props.environmentId,
+    root: props.root,
+    records: sources.overview?.records ?? null,
+  });
   const getPaper = useAccountCommand(accountsState.paperForSource, props.environmentId);
   const requestPapers = useAccountCommand(accountsState.requestPapers, props.environmentId);
   const listPapers = useStableCallback(
@@ -289,8 +301,10 @@ export function ScientSourcesPanel(props: {
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  useLibrarySourceRequest(props.root, sources.overview !== null, setSelectedSourceId);
   const [editingSource, setEditingSource] = useState(false);
   const [importOutcome, setImportOutcome] = useState<ScientSourcesImportOutcome | null>(null);
+  const [addingByIdentifier, setAddingByIdentifier] = useState(false);
   const panelContext = `${props.environmentId}\0${props.root}`;
   const [recentSourcesStore] = useState(() =>
     createRecentSourcesStore(readRecentSourceAdds(panelContext)),
@@ -843,13 +857,15 @@ export function ScientSourcesPanel(props: {
   if (sources.zoteroStatus && sources.zoteroStatus.state !== "ready") {
     const status = sources.zoteroStatus;
     const connectionMessage =
-      status.state === "unreachable"
-        ? "Open Zotero on this computer to continue."
-        : status.state === "access-disabled"
-          ? "Allow local Zotero access to continue."
-          : status.state === "incompatible"
-            ? "This Zotero version is not supported."
-            : "Scient could not verify Zotero.";
+      status.connection === "web"
+        ? status.message
+        : status.state === "unreachable"
+          ? "Open Zotero on this computer to continue."
+          : status.state === "access-disabled"
+            ? "Allow local Zotero access to continue."
+            : status.state === "incompatible"
+              ? "This Zotero version is not supported."
+              : "Scient could not verify Zotero.";
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <PanelHeader
@@ -918,6 +934,10 @@ export function ScientSourcesPanel(props: {
                       </li>
                       <li>Return here and choose Check again.</li>
                     </ol>
+                    <p className="text-muted-foreground">
+                      Without Zotero on this computer, add a Zotero API key in Accounts to use your
+                      library on zotero.org.
+                    </p>
                   </div>
                 </PopoverPopup>
               </Popover>
@@ -1156,6 +1176,10 @@ export function ScientSourcesPanel(props: {
                   <ZoteroMark />
                   Import from Zotero
                 </MenuItem>
+                <MenuItem onClick={() => setAddingByIdentifier(true)}>
+                  <Hash />
+                  Add by identifier
+                </MenuItem>
               </MenuPopup>
             </Menu>
           </div>
@@ -1182,6 +1206,37 @@ export function ScientSourcesPanel(props: {
         <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
       ) : null}
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
+      {bibliography.status ? (
+        <ManagedBibliographyNotice
+          files={bibliography.status.files}
+          replacing={bibliography.replacing}
+          onReplace={(name) => void bibliography.replace(name)}
+        />
+      ) : null}
+      {addingByIdentifier ? (
+        <AddByIdentifier
+          environmentId={props.environmentId}
+          root={props.root}
+          onClose={() => setAddingByIdentifier(false)}
+          onAdded={(results) => {
+            const added = results.flatMap((item) =>
+              item.outcome === "imported" && item.sourceId ? [item.sourceId] : [],
+            );
+            if (added.length > 0) {
+              setRecentlyAddedSourceIds(rememberRecentSourceAdds(panelContext, added));
+              toastManager.add({
+                type: "success",
+                title: added.length === 1 ? "Added 1 source" : `Added ${added.length} sources`,
+              });
+            }
+            void sources.refreshOverview();
+          }}
+          onOpenSource={(sourceId) => {
+            setEditingSource(false);
+            setSelectedSourceId(sourceId);
+          }}
+        />
+      ) : null}
       {sources.operation ? (
         <ImportSummary
           operation={sources.operation}
@@ -1407,11 +1462,16 @@ export function ScientSourcesPanel(props: {
                 </div>
               );
             })}
-            {filteredSourceRecords.length === 0 ? (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                No matching sources were found.
-              </div>
-            ) : null}
+            <SourceFullTextResults
+              environmentId={props.environmentId}
+              root={props.root}
+              query={sourceQuery}
+              metadataMatchCount={filteredSourceRecords.length}
+              onOpenHit={(hit) => {
+                requestSourceTextReveal(props.root, hit);
+                props.onOpenPdf(hit);
+              }}
+            />
           </div>
         </ScrollArea>
       )}

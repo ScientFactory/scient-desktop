@@ -30,7 +30,7 @@ import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 
 import { runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
-import { requestMetadataJson } from "./metadataHttp.ts";
+import { METADATA_USER_AGENT, requestMetadataJson } from "./metadataHttp.ts";
 import {
   cslCreators,
   cslIssuedDate,
@@ -50,7 +50,6 @@ const PdfInfo = Schema.Struct({
   Author: Schema.optionalKey(Schema.Unknown),
   Subject: Schema.optionalKey(Schema.Unknown),
   Keywords: Schema.optionalKey(Schema.Unknown),
-  CreationDate: Schema.optionalKey(Schema.Unknown),
 });
 
 const decodePdfInfo = Schema.decodeUnknownSync(PdfInfo);
@@ -119,6 +118,18 @@ function normalizeEmbeddedPdfDate(value: unknown): string | null {
     if (day < 1 || day > daysInMonth) return raw;
   }
   return [pdfYear, pdfDate[2], pdfDate[3]].filter(Boolean).join("-");
+}
+
+// pdf.js lowercases XMP element names. Creation, modification and Dublin Core dates describe the
+// file, not the publication, so only PRISM's publisher-set dates count.
+const XMP_PUBLICATION_DATE_KEYS = ["prism:coverdate", "prism:publicationdate"] as const;
+
+function embeddedPublicationDate(xmp: { get(name: string): unknown } | null): string | null {
+  for (const key of XMP_PUBLICATION_DATE_KEYS) {
+    const date = normalizeEmbeddedPdfDate(xmp?.get(key));
+    if (date) return /^(\d{4}(?:-\d{2}){0,2})T/u.exec(date)?.[1] ?? date;
+  }
+  return null;
 }
 
 function embeddedCreatorNames(value: unknown): ReadonlyArray<string> {
@@ -324,7 +335,7 @@ async function resolveDoi(doi: string): Promise<CslMetadata | null> {
       const encodedDoi = candidate.split("/").map(encodeURIComponent).join("/");
       const value = await requestMetadataJson(new URL(`https://doi.org/${encodedDoi}`), {
         Accept: "application/vnd.citationstyles.csl+json",
-        "User-Agent": "Scient/0.0 (source metadata resolution)",
+        "User-Agent": METADATA_USER_AGENT,
       });
       const metadata = decodeCslMetadata(value);
       const resolvedDoi = text(metadata.DOI);
@@ -347,7 +358,7 @@ async function resolvePubmed(pmid: string): Promise<PubmedSummary | null> {
     const value = await runWithNcbiRequestLimit(() =>
       requestMetadataJson(
         new URL(`https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esummary.fcgi?${parameters}`),
-        { "User-Agent": "Scient/0.0 (source metadata resolution)" },
+        { "User-Agent": METADATA_USER_AGENT },
       ),
     );
     const decoded = decodePubmedResponse(value);
@@ -451,7 +462,7 @@ function candidateFromEmbeddedPdf(input: {
     fieldProvenance: provenance("local-pdf", [
       ["title", "document-info/title", input.title !== null],
       ["creators", "document-info/author", input.authors.length > 0],
-      ["issuedRaw", "document-info/date", input.issuedRaw !== null],
+      ["issuedRaw", "xmp/prism-date", input.issuedRaw !== null],
       ["tags", "document-info/keywords", input.keywords.length > 0],
       ["identifiers", "first-pages", input.identifiers.length > 0],
     ]),
@@ -503,9 +514,7 @@ async function extractPdfMetadata(input: {
         });
         authors = embeddedCreators(metadata.metadata?.get("dc:creator") ?? info.Author);
         documentDescription = text(metadata.metadata?.get("dc:description")) ?? text(info.Subject);
-        issuedRaw = normalizeEmbeddedPdfDate(
-          metadata.metadata?.get("dc:date") ?? info.CreationDate,
-        );
+        issuedRaw = embeddedPublicationDate(metadata.metadata);
         keywords = (text(info.Keywords) ?? "")
           .split(/[,;]/u)
           .map((value) => value.trim())
@@ -745,6 +754,7 @@ export const localPdfSourceInternals = {
   candidateFromExistingRecord,
   doiCandidates,
   embeddedCreators,
+  embeddedPublicationDate,
   normalizeEmbeddedPdfDate,
   selectEmbeddedPdfTitle,
   uniqueDoi,

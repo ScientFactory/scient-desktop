@@ -12,6 +12,8 @@ import type { ScientSourceCandidate } from "./model.ts";
 import {
   decodePersistedScientSourceRecord,
   importScientSource,
+  removeScientSource,
+  restoreScientSource,
   updateScientSourceMetadata,
 } from "./store.ts";
 
@@ -136,6 +138,17 @@ describe("Scient source citation keys", () => {
       "Another source already uses this citation key.",
     );
     await expect(rename("has space")).rejects.toThrow("citation key");
+  });
+
+  it("keeps keys unique when a source comes back from the trash", async () => {
+    const root = await project();
+    const trashed = await add(root, candidate("A"));
+    await removeScientSource({ root, sourceId: trashed.sourceId, expectedRevision: 1 });
+    const replacement = await add(root, candidate("B", { title: "Deep sea vents" }));
+    expect(replacement.citationKey).toBe("smith2020deep");
+
+    const restored = await restoreScientSource({ root, sourceId: trashed.sourceId });
+    expect(restored.record?.citationKey).toBe("smith2020deepa");
   });
 
   it("still reads records written before citation keys existed", () => {

@@ -32,6 +32,7 @@ import {
   verifiableSourceIdentifier,
   type ResolveSourceIdentifier,
 } from "../../../scient/sources/SourceIdentifierResolver.ts";
+import { SourceIdentifierBatchLookup } from "../../../scient/sources/SourceIdentifierAdd.ts";
 import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
@@ -691,6 +692,74 @@ describe("Scient Sources MCP handlers", () => {
         expect.arrayContaining([{ field: "title", origin: "agent", sourceField: null }]),
       );
       expect(edited.verification).toEqual(detail.verification);
+    }),
+  );
+
+  it.effect("adds a mixed identifier list as separate agent sources and reports each entry", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-batch-"));
+      const projectId = ProjectId.make("project-agent-batch");
+      const threadId = ThreadId.make("thread-agent-batch");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      const added = yield* provideContext(
+        addScientSourceForInvocation({
+          identifierList: ["10.1000/batch.1", "arXiv:1706.03762", "not an identifier"],
+        }),
+        context,
+      ).pipe(
+        Effect.provideService(SourceIdentifierBatchLookup, async (identifiers) =>
+          identifiers.map((identifier) =>
+            identifier.scheme === "doi"
+              ? {
+                  status: "found" as const,
+                  identifier,
+                  retrievedAt: "2026-11-10T12:00:00.000Z",
+                  metadata: {
+                    type: "article" as const,
+                    title: "Batch article",
+                    creators: [],
+                    issuedRaw: "2024",
+                    issuedYear: 2024,
+                    identifiers: [identifier],
+                    abstract: null,
+                    abstractSections: [],
+                    containerTitle: null,
+                    publisher: null,
+                    volume: null,
+                    issue: null,
+                    pages: null,
+                    language: null,
+                    url: null,
+                  },
+                }
+              : { status: "not-found" as const, identifier },
+          ),
+        ),
+      );
+
+      expect(added).toMatchObject({
+        outcome: "batch",
+        message: "Added 1 of 3. 1 not found. 1 not an identifier.",
+        results: [
+          { input: "10.1000/batch.1", outcome: "imported", verification: "verified" },
+          { input: "arXiv:1706.03762", outcome: "identifier-not-found" },
+          { input: "not an identifier", outcome: "unrecognized" },
+        ],
+      });
+      const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
+      expect(listed.records).toMatchObject([{ title: "Batch article", addedBy: "agent" }]);
+
+      const mixed = yield* provideContext(
+        addScientSourceForInvocation({ identifierList: ["10.1000/batch.2"], title: "Other" }),
+        context,
+      );
+      expect(mixed).toMatchObject({ outcome: "invalid", validationIssues: [{ field: "title" }] });
     }),
   );
 

@@ -12,12 +12,14 @@ import {
 import * as Schema from "effect/Schema";
 
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
+import { resolveScientProjectFile } from "./projectFiles.ts";
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
 import {
   assignCitationKey,
   citationKeyComparisonValue,
   citationKeyValidationMessage,
   takenCitationKeys,
+  uniqueCitationKey,
 } from "./citationKeys.ts";
 import {
   applyEditableMetadata,
@@ -245,6 +247,15 @@ async function atomicCreateJson(
   }
 }
 
+const SOURCE_WRITE_LOCK_SUFFIX = ":source-write";
+const recordChangeListeners = new Set<(root: string) => void>();
+
+/** Called after every source write settles, with the canonical project root. */
+export function onScientSourceRecordsChanged(listener: (root: string) => void): () => void {
+  recordChangeListeners.add(listener);
+  return () => recordChangeListeners.delete(listener);
+}
+
 async function withOperationLock<A>(key: string, run: () => Promise<A>): Promise<A> {
   const previous = operationLocks.get(key) ?? Promise.resolve();
   let release: (() => void) | undefined;
@@ -259,6 +270,10 @@ async function withOperationLock<A>(key: string, run: () => Promise<A>): Promise
   } finally {
     release?.();
     if (operationLocks.get(key) === tail) operationLocks.delete(key);
+    if (key.endsWith(SOURCE_WRITE_LOCK_SUFFIX)) {
+      const root = key.slice(0, -SOURCE_WRITE_LOCK_SUFFIX.length);
+      for (const listener of recordChangeListeners) listener(root);
+    }
   }
 }
 
@@ -523,6 +538,42 @@ export async function updateScientSourceMetadata(input: {
   });
 }
 
+/**
+ * Gives every source written before citation keys existed a generated key, oldest
+ * first so earlier sources keep the unsuffixed key. Each assignment is a revision.
+ */
+export async function assignMissingScientSourceCitationKeys(root: string): Promise<number> {
+  const paths = await sourceStorePaths(root);
+  return withOperationLock(`${paths.root}:source-write`, async () => {
+    const records = await listScientSourceRecordsFromPaths(paths);
+    const missing = records
+      .filter((record) => !record.citationKey)
+      .toSorted(
+        (left, right) =>
+          left.importedAt.localeCompare(right.importedAt) ||
+          left.sourceId.localeCompare(right.sourceId),
+      );
+    if (missing.length === 0) return 0;
+    const taken = takenCitationKeys(records);
+    const updatedAt = new Date().toISOString();
+    for (const current of missing) {
+      const citationKey = assignCitationKey({ ...current, taken });
+      taken.add(citationKeyComparisonValue(citationKey));
+      await persistSourceRevision(paths, current, {
+        ...current,
+        citationKey,
+        revision: current.revision + 1,
+        fieldProvenance: [
+          ...current.fieldProvenance,
+          { field: "citationKey", origin: "derived", sourceField: null },
+        ],
+        updatedAt,
+      });
+    }
+    return missing.length;
+  });
+}
+
 function normalizeScientSourceNote(value: string | null): string | null {
   if (value === null) return null;
   const normalized = value.replace(/\r\n?/gu, "\n");
@@ -722,9 +773,10 @@ export async function restoreScientSource(input: {
     if ((await snapshot(recordPath)) !== "missing") {
       return { ...empty, outcome: "exists", matchingSourceIds: [input.sourceId] };
     }
+    const existing = await listScientSourceRecordsFromPaths(paths);
     const duplicate = assessSourceMetadataDuplicate({
       source: editableMetadataFromRecord(entry.record),
-      existing: await listScientSourceRecordsFromPaths(paths),
+      existing,
     });
     if (duplicate.kind === "same-identifier") {
       return { ...empty, outcome: "duplicate", matchingSourceIds: duplicate.matchingSourceIds };
@@ -736,6 +788,10 @@ export async function restoreScientSource(input: {
     );
     const restored: ScientSourceRecord = {
       ...entry.record,
+      // Another source may have taken the key while this one was in the trash.
+      ...(entry.record.citationKey
+        ? { citationKey: uniqueCitationKey(entry.record.citationKey, takenCitationKeys(existing)) }
+        : {}),
       revision: revision + 1,
       updatedAt: new Date().toISOString(),
       updatedBy: input.actor ?? "user",
@@ -1177,7 +1233,7 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
 export async function createSourceImportOperation(input: {
   readonly root: string;
   readonly operationId: string;
-  readonly adapter: "zotero" | "local-files";
+  readonly adapter: "zotero" | "zotero-web" | "local-files";
   readonly actor?: "user" | "agent";
   readonly intake?: "zotero" | "local-pdf" | "identifier";
   readonly itemKeys: ReadonlyArray<string>;
@@ -1446,44 +1502,13 @@ export async function resolveScientSourceInputPdf(
   root: string,
   relativePath: string,
 ): Promise<{ readonly absolutePath: string; readonly fileName: string }> {
-  const requested = relativePath.trim();
-  if (
-    requested.length === 0 ||
-    requested.includes("\0") ||
-    requested.includes("\\") ||
-    NodePath.posix.isAbsolute(requested) ||
-    !requested.toLowerCase().endsWith(".pdf")
-  ) {
-    throw new Error("The PDF path must be a relative project path ending in .pdf.");
-  }
-  const canonicalRoot = await NodeFSP.realpath(root);
-  const lexicalPath = NodePath.resolve(canonicalRoot, ...requested.split("/"));
-  const lexicalRelative = NodePath.relative(canonicalRoot, lexicalPath);
-  if (
-    lexicalRelative === "" ||
-    lexicalRelative === ".." ||
-    lexicalRelative.startsWith(`..${NodePath.sep}`) ||
-    NodePath.isAbsolute(lexicalRelative)
-  ) {
-    throw new Error("The PDF path must remain inside the project.");
-  }
-  const absolutePath = await NodeFSP.realpath(lexicalPath);
-  const realRelative = NodePath.relative(canonicalRoot, absolutePath);
-  if (
-    realRelative === "" ||
-    realRelative === ".." ||
-    realRelative.startsWith(`..${NodePath.sep}`) ||
-    NodePath.isAbsolute(realRelative)
-  ) {
-    throw new Error("The PDF path must remain inside the project.");
-  }
-  const stats = await NodeFSP.lstat(absolutePath);
-  if (!stats.isFile() || stats.isSymbolicLink()) {
-    throw new Error("The selected PDF is not a safe regular file.");
-  }
+  const resolved = await resolveScientProjectFile(root, relativePath, {
+    extensions: [".pdf"],
+    description: "PDF",
+  });
   return {
-    absolutePath,
-    fileName: safeUploadedFileName(NodePath.basename(requested)),
+    absolutePath: resolved.absolutePath,
+    fileName: safeUploadedFileName(NodePath.basename(relativePath.trim())),
   };
 }
 
@@ -2010,6 +2035,7 @@ async function importScientSourceWithRecordLookup(
       language: input.candidate.language,
       url: input.candidate.url,
       tags: input.candidate.tags,
+      ...(input.candidate.note ? { note: normalizeScientSourceNote(input.candidate.note) } : {}),
       externalReferences: input.candidate.externalReferences,
       attachments: attachment ? [attachment] : [],
       fieldProvenance: input.candidate.fieldProvenance,

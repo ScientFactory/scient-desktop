@@ -1,4 +1,6 @@
 import {
+  MAX_SOURCE_IDENTIFIER_BATCH,
+  ScientSourceIdentifierAddItem,
   ScientSourceCreator,
   ScientSourceExternalReference,
   ScientSourceEditableMetadata,
@@ -14,7 +16,11 @@ import {
   ScientSourceType,
   ScientSourceVerification,
 } from "@scientfactory/scient-sources";
-import { isTrimmedUnadvertised } from "@t3tools/contracts";
+import {
+  isTrimmedUnadvertised,
+  ScientManagedBibliographyFileName,
+  ScientManagedBibliographyStatus,
+} from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import { ScientOperation, type OperationDefinition } from "../../ScientOperationTool.ts";
@@ -55,9 +61,14 @@ const sourceOperation = (id: string, write: boolean): OperationDefinition => ({
   requiredCapabilities: write ? ["sources:read", "sources:write"] : ["sources:read"],
 });
 
+const CitationKey = NonEmptyString.annotate({
+  description: "The key documents cite this source by: [@key] in Markdown, \\cite{key} in LaTeX.",
+});
+
 export const ScientSourceAgentSummary = Schema.Struct({
   sourceId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  citationKey: Schema.optionalKey(CitationKey),
   type: ScientSourceType,
   title: NullableText,
   creator: NullableText,
@@ -82,6 +93,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
   sourceId: NonEmptyString,
   projectId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  citationKey: Schema.optionalKey(CitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -320,6 +332,15 @@ export const ScientSourceAddInput = Schema.Struct({
     }),
   ),
   allowPossibleMetadataMatch: Schema.optionalKey(AllowPossibleMetadataMatch),
+  identifierList: Schema.optionalKey(
+    Schema.Array(Schema.String.pipe(Schema.check(Schema.isMaxLength(1_000))))
+      .pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_SOURCE_IDENTIFIER_BATCH)))
+      .annotate({
+        description:
+          "Add several works at once: one DOI, PMID, arXiv ID or ISBN per entry, bare, prefixed or as a link (identifiers from search or connector results go here). " +
+          "Each entry becomes its own source from its registry's metadata; give no citation fields or PDF with it. See results.",
+      }),
+  ),
 });
 export type ScientSourceAddInput = typeof ScientSourceAddInput.Type;
 
@@ -330,6 +351,7 @@ export const ScientSourceAddResult = Schema.Struct({
     "invalid",
     "identifier-not-found",
     "identifier-mismatch",
+    "batch",
   ]),
   sourceId: Schema.NullOr(NonEmptyString),
   revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
@@ -355,17 +377,26 @@ export const ScientSourceAddResult = Schema.Struct({
     }),
   ),
   message: Schema.optionalKey(NonEmptyString),
+  results: Schema.optionalKey(
+    Schema.Array(ScientSourceIdentifierAddItem).annotate({
+      description:
+        "One per identifierList entry, in order: imported (added, verified), duplicate (already in the Library; sourceId names it), " +
+        "identifier-not-found (does not exist; nothing added), unavailable (registry unreachable; nothing added, try again later), or unrecognized (not an identifier).",
+    }),
+  ),
 });
 
 const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
-    "Add one source to this project after the user explicitly asks. List existing Sources first. " +
+    "Add a source, or several by identifier, to this project's Library after the user explicitly asks. List existing Sources first. " +
+    "To add works you know by DOI, PMID, arXiv ID or ISBN, pass identifierList (up to 50, mixed); outcome is batch and results says what happened to each. " +
     "For a PDF in the project, pass its relative path as pdfRelativePath; Scient reads metadata from it, " +
-    "so citation fields are optional. A DOI or PMID is checked against doi.org or PubMed first: " +
+    "so citation fields are optional. A DOI, PMID, arXiv ID or ISBN is checked against its registry first: " +
     "identifier-not-found means the identifier does not exist and identifier-mismatch means it names a different work (see resolved); nothing is added in either case. " +
     "A found identifier's registry metadata replaces the citation fields you gave (verification verified). " +
-    "If the registry cannot be reached the source is added as given (unchecked); without a DOI or PMID it is unverified. " +
-    "The user sees that you added it. Repeating the same request adds nothing.",
+    "If the registry cannot be reached the source is added as given (unchecked); without one of these identifiers it is unverified. " +
+    "The user sees that you added it. Repeating the same request adds nothing. " +
+    "From a PubMed, Semantic Scholar or OpenAlex result, pass only its identifier (scheme pmid, s2 for a paperId or CorpusId:N, or openalex for a W work ID) without citation fields: Scient fetches the record and checks it at the DOI's registry.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
   failure: ScientSourcesToolError,
@@ -427,6 +458,27 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.pdf.detach", true));
+
+const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
+  description:
+    "Write this project's references.bib and references.json from the Library and report their state. " +
+    "Documents cite sources by citationKey from these files (Markdown front matter `bibliography: references.bib`, LaTeX `\\bibliography{references}`). " +
+    "A file edited by hand is kept and reported as edited, with the keys added, changed or removed; " +
+    "unmanaged means a file Scient did not write is in the way, and Scient never writes over it. " +
+    "Pass replaceEdited only when the user wants the Library version back.",
+  parameters: Schema.Struct({
+    replaceEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
+  }),
+  success: ScientManagedBibliographyStatus,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Write the project bibliography")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.bibliography", true));
 
 const PageNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));
 const TextOffset = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
@@ -582,6 +634,7 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourceAddTool,
   ScientSourceAttachPdfTool,
   ScientSourceDetachPdfTool,
+  ScientSourcesBibliographyTool,
   ScientSourcesSearchTool,
   ScientSourceReadTextTool,
   ScientSourceQuoteCheckTool,
