@@ -25,8 +25,9 @@ concurrency:
 jobs:
   deploy_relay:
     name: Deploy production relay
-    # SCIENT-FORK: Scient Connect's production relay deploys from main.
+    # SCIENT-FORK:START — Scient Connect's production relay deploys from main.
     if: ${{ github.repository == 'ScientFactory/scient-desktop' }}
+    # SCIENT-FORK:END
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:

@@ -117,16 +117,18 @@ export class ManagedTunnelLimits extends Context.Service<
     readonly getOverride: (input: {
       readonly userId: string;
     }) => Effect.Effect<number | null, ManagedTunnelLimitPersistenceError>;
-    // SCIENT-FORK: the configured default cap, reported to clients.
+    // SCIENT-FORK:START — the configured default cap, reported to clients.
     readonly defaultMaxTunnels: number;
+    // SCIENT-FORK:END
   }
 >()("t3code-relay/environments/ManagedTunnelLimits") {}
 
 const make = Effect.gen(function* () {
   const db = yield* RelayDb.RelayDb;
   const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
-  // SCIENT-FORK: read once per layer build; worker.ts provides the configured value.
+  // SCIENT-FORK:START — read once per layer build; worker.ts provides the configured value.
   const defaultMaxTunnels = yield* ManagedTunnelDefaultLimit;
+  // SCIENT-FORK:END
 
   // Asked only at the cap, so most links never call T3 Chat. Any failure keeps the lower cap.
   const t3ChatTunnelLimit = (userId: string) =>
@@ -156,7 +158,9 @@ const make = Effect.gen(function* () {
       );
 
   return ManagedTunnelLimits.of({
+    // SCIENT-FORK:START — reported to clients by the API.
     defaultMaxTunnels,
+    // SCIENT-FORK:END
     getOverride: Effect.fn("relay.managed_tunnel_limits.get_override")(function* (input) {
       return yield* loadOverride(input.userId);
     }),
@@ -182,8 +186,9 @@ const make = Effect.gen(function* () {
           );
 
         const override = yield* loadOverride(input.userId);
-        // SCIENT-FORK: configured default in place of the contract constant.
+        // SCIENT-FORK:START — configured default in place of the contract constant.
         const baseMaxTunnels = override ?? defaultMaxTunnels;
+        // SCIENT-FORK:END
 
         const pendingCutoff = DateTime.formatIso(
           DateTime.subtract(yield* DateTime.now, {

@@ -9,7 +9,9 @@ import {
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
+// SCIENT-FORK:START — the phone-app switch.
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 
 import { getOnboardingProviderState } from "./providerReadiness.logic";
 
@@ -150,8 +152,9 @@ export function welcomeOffersPhone(input: {
   readonly policy: ManagedPolicySummary | undefined;
 }) {
   return (
-    // SCIENT-FORK: no phone app to offer until Scient's ships.
+    // SCIENT-FORK:START — no phone app to offer until Scient's ships.
     SCIENT_DESKTOP_IDENTITY.mobileAppEnabled &&
+    // SCIENT-FORK:END
     input.isPrimary &&
     input.cloud &&
     input.canShare &&

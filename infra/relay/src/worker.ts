@@ -124,8 +124,9 @@ export const layer = Api.make(
       // Requests run several Postgres queries in sequence. At the user's edge
       // each one paid the round trip to the database (~300 ms from JNB); next
       // to PlanetScale `us-west` the request pays that distance once.
-      // SCIENT-FORK: next to the us-east database (src/db.ts).
+      // SCIENT-FORK:START — next to the us-east database (src/db.ts).
       placement: { region: "aws:us-east-1" },
+      // SCIENT-FORK:END
       domain: relayPublicDomain,
     })),
     Effect.orDie,
@@ -194,8 +195,9 @@ export const layer = Api.make(
     const legacyTunnelGraceMinutes = Option.getOrUndefined(
       yield* RelayConfiguration.legacyTunnelGraceMinutesConfig,
     );
-    // SCIENT-FORK: RELAY_DEFAULT_TUNNEL_LIMIT, read at deploy time like the cleanup modes.
+    // SCIENT-FORK:START — RELAY_DEFAULT_TUNNEL_LIMIT, read at deploy time like the cleanup modes.
     const defaultManagedTunnelLimit = yield* RelayConfiguration.defaultManagedTunnelLimitConfig;
+    // SCIENT-FORK:END
     // Endpoint keys and their hashes differ by stage, including in shared accounts.
     const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
       namespaceId: 1001,

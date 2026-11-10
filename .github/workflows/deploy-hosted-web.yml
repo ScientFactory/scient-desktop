@@ -1,16 +1,11 @@
 name: Deploy Scient hosted web
 
 # app.scientfactory.com serves the web client of the latest stable release, so the
-# hosted app matches the servers people run. Dispatch redeploys a chosen ref.
+# hosted app matches the servers people run. release.yml dispatches this on the
+# release tag after a stable publish; dispatch it by hand on a v* tag or main to redeploy.
+# The scient-connect environment admits only main and v* refs, and the job builds that ref.
 on:
-  release:
-    types: [released]
   workflow_dispatch:
-    inputs:
-      ref:
-        description: Git ref to build and deploy.
-        type: string
-        default: main
 
 permissions:
   contents: read
@@ -29,8 +24,6 @@ jobs:
       name: scient-connect
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || inputs.ref }}
       - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json

@@ -1109,7 +1109,9 @@ jobs:
     timeout-minutes: 10
     environment: ${{ needs.preflight.outputs.channel == 'beta' && 'beta' || 'production' }}
     permissions:
-      actions: read
+      # SCIENT-FORK:START — write lets the stable publish dispatch the hosted app's deploy.
+      actions: write
+      # SCIENT-FORK:END
       contents: write
     steps:
       - name: Require explicit repository release gate
@@ -1248,3 +1250,12 @@ jobs:
               exit 1
             }
           fi
+      # SCIENT-FORK:START — release events from github.token start no workflows, so dispatch
+      # the hosted app's deploy on the published tag.
+      - name: Deploy the hosted app for this release
+        if: needs.preflight.outputs.channel == 'stable'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+        run: gh workflow run deploy-hosted-web.yml --repo "$GITHUB_REPOSITORY" --ref "$RELEASE_TAG"
+      # SCIENT-FORK:END

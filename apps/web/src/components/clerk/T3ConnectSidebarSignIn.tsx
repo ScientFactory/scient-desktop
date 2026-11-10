@@ -3,8 +3,9 @@ import { LogInIcon } from "lucide-react";
 
 import { hasCloudPublicConfig } from "../../cloud/publicConfig";
 import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from "../ui/sidebar";
-// SCIENT-FORK: the account pages Scient offers (no T3 Chat).
+// SCIENT-FORK:START — the account pages Scient offers (no T3 Chat).
 import { SCIENT_ACCOUNT_PAGES as T3_CONNECT_ACCOUNT_PAGES } from "./T3ConnectAccountPages";
+// SCIENT-FORK:END
 import { useT3ConnectAuthPrompt } from "./useT3ConnectAuthPrompt";
 
 export function T3ConnectSidebarSignIn() {

@@ -7,8 +7,9 @@ const CONNECT_LOOPBACK_CALLBACK_PATH = "/callback";
 
 const CONNECT_AUTHORIZE_PATH = "/connect";
 
-// SCIENT-FORK: Scient Connect's hosted app.
+// SCIENT-FORK:START — Scient Connect's hosted app.
 export const DEFAULT_HOSTED_APP_URL = "https://app.scientfactory.com";
+// SCIENT-FORK:END
 
 export const CONNECT_OAUTH_SCOPES = ["openid", "profile", "email", "offline_access"] as const;
 

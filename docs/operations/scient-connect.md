@@ -30,9 +30,11 @@ Public ids live in `.env.example` (clients) and in the `scient-connect` GitHub e
   to `main`, in the `scient-connect` environment (main and `v*` tags only, no approval step).
   Alchemy changes only what differs, so most runs are no-ops. Run it by hand from **Actions** to
   apply a changed variable.
-- **Hosted app:** `.github/workflows/deploy-hosted-web.yml` builds and deploys
-  `infra/scient-web/build.sh --deploy` when a stable release is published, so the hosted client
-  matches the servers people run. Dispatch it with a ref to redeploy.
+- **Hosted app:** after each stable publish, `release.yml` dispatches
+  `.github/workflows/deploy-hosted-web.yml` on the release tag, which runs
+  `infra/scient-web/build.sh --deploy`, so the hosted client matches the servers people run. To
+  redeploy, run that workflow from **Actions** on a `v*` tag or `main`; the environment admits no
+  other ref.
 - **Desktop and server builds** read the four public values from `.env.example` in
   `release.yml`. Changing Clerk or the relay URL means editing `.env.example` and releasing.
 
