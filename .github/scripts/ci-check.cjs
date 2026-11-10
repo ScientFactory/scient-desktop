@@ -8,7 +8,7 @@ const GATED = {
   remote_server_packaging: ["windows_changed"],
   linux_packaging: ["linux_changed"],
 };
-const REPORTERS = ["test_web_reused", "test_server_reused"];
+const REPORTERS = ["test_web_reused", "test_server_reused", "stable_contexts_reused"];
 const ALWAYS = ["changes", "lint", "build", "test", "test_web", "test_server"];
 const JOBS = [
   "release_notes",
@@ -18,18 +18,19 @@ const JOBS = [
   ...Object.keys(GATED),
   ...REPORTERS,
 ];
-// Evidence only: these run beside the gate and never block a merge. Without shard_weights
-// every shard uses the checked-in weights, and the shards themselves are gated.
-const ADVISORY = ["overleaf_macos", "shard_weights"];
+// Evidence and upkeep only: these run beside the gate and never block a merge. Without
+// shard_weights every shard uses the checked-in weights, and the shards themselves are gated.
+const ADVISORY = ["overleaf_macos", "shard_weights", "main_caches"];
 
 function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }) {
   const expected = receipt ? JOBS : [...JOBS, "qualification"];
+  const probes = eventName === "merge_group" || eventName === "push";
   const reused =
-    eventName === "merge_group" &&
-    needs.queue_ci?.result === "success" &&
-    needs.queue_ci.outputs?.reused === "true";
+    probes && needs.queue_ci?.result === "success" && needs.queue_ci.outputs?.reused === "true";
+  // Main and nightly runs qualify every lane; only PR and queue gates may narrow them.
   const gates =
-    eventName !== "push" && needs.changes?.result === "success"
+    (eventName === "pull_request" || eventName === "merge_group") &&
+    needs.changes?.result === "success"
       ? (needs.changes.outputs ?? {})
       : {};
   const errors = Object.keys(needs)
@@ -48,7 +49,7 @@ function jobFailures(needs, { eventName, qualifyingPr = false, receipt = false }
     const reporting = REPORTERS.includes(job);
     const qualify = eventName === "merge_group" || (eventName === "pull_request" && qualifyingPr);
     let skip = false;
-    if (job === "queue_ci") skip = eventName !== "merge_group";
+    if (job === "queue_ci") skip = !probes;
     else if (job === "qualification") skip = !qualify;
     else if (reporting) skip = !reused;
     else if (job === "overleaf_windows") skip = windowsReused;

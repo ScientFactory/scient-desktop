@@ -111,11 +111,21 @@ NodeTest.test(
       ]),
     );
     for (const [id, body] of jobs) {
-      if (["pull_request", "merge_group", "push", "release_notes"].includes(id)) continue;
+      if (
+        [
+          "pull_request",
+          "merge_group",
+          "push",
+          "schedule",
+          "workflow_dispatch",
+          "release_notes",
+        ].includes(id)
+      )
+        continue;
       NodeAssert.match(body, /needs:.*release_notes/, id);
       NodeAssert.doesNotMatch(body, /if:.*needs.release_notes.outputs.qualified/, id);
     }
-    for (const id of ["test_web_reused", "test_server_reused"])
+    for (const id of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
       NodeAssert.match(jobs.get(id), /if:.*needs.queue_ci.outputs.reused == 'true'/, id);
     const focused = jobs.get("release_notes");
     NodeAssert.match(focused, /qualified: \$\{\{ steps.complete.outputs.qualified \}\}/);

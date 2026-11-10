@@ -315,13 +315,14 @@ function chainFixture(t, entries) {
 }
 
 test("a push of as many entries as the queue merges at once reuses", async (t) => {
-  const f = chainFixture(t, 4);
+  // The ruleset's max_entries_to_merge.
+  const f = chainFixture(t, 6);
   await restore(f.args);
   reused(f);
 });
 
 test("a push longer than the queue's merge limit runs full CI", async (t) => {
-  await refused(chainFixture(t, 5));
+  await refused(chainFixture(t, 7));
 });
 
 const pushMismatches = [
@@ -460,7 +461,7 @@ function receiptFixture(t, event) {
   }
   f.needs = Object.fromEntries(JOBS.map((job) => [job, { result: "success" }]));
   f.needs.release_notes.outputs = {};
-  for (const reporter of ["test_web_reused", "test_server_reused"])
+  for (const reporter of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
     f.needs[reporter].result = "skipped";
   f.needs.queue_ci = { result: event === "merge_group" ? "success" : "skipped", outputs: {} };
   return f;
@@ -515,7 +516,8 @@ test("a queue run that reused PR qualification records its source", async (t) =>
   for (const job of JOBS) f.needs[job].result = "skipped";
   f.needs.release_notes.result = "success";
   f.needs.queue_ci.result = "success";
-  for (const job of ["test_web_reused", "test_server_reused"]) f.needs[job].result = "success";
+  for (const job of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
+    f.needs[job].result = "success";
   f.needs.queue_ci.outputs = {
     reused: "true",
     source_run_id: "10",
@@ -634,8 +636,8 @@ test("workflow preserves complete evidence before reuse and a single always-runn
   for (const job of ADVISORY)
     assert.doesNotMatch(check, new RegExp(`needs:.*(?:\\[|, )${job}(?:,|\\])`));
   const probe = sections.get("queue_ci");
-  assert.ok(!probe.includes("github.event_name == 'push'"), "main always runs fresh suites");
   assert.match(probe, /github.event_name == 'merge_group'/);
+  assert.match(probe, /github.event_name == 'push' && github.ref == 'refs\/heads\/main'/);
   assert.match(probe, /source_run_id: \$\{\{ steps.restore.outputs.source_run_id \}\}/);
   assert.ok(
     probe.indexOf("uses: ./.github/actions/ci-queue-reporting") < probe.indexOf("id: complete"),
@@ -672,7 +674,7 @@ test("workflow preserves complete evidence before reuse and a single always-runn
     assert.ok(!/matrix:/.test(stand), "one reporting job per suite");
     assert.match(
       stand,
-      /needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group'/,
+      /if: \$\{\{ !cancelled\(\) && needs.queue_ci.outputs.reused == 'true' \}\}/,
     );
   }
   assert.match(
@@ -993,4 +995,33 @@ test("a push whose queue run reused PR CI restores the reports its probe republi
       reused(f);
     } else await refused(f);
   }
+});
+
+test("a push waits for its queue run to finish instead of rerunning everything", async (t) => {
+  const f = fixture(t);
+  const finished = f.source;
+  // The queue run still reports in progress for the first two looks.
+  let looks = 0;
+  const list = f.actions.listWorkflowRuns;
+  f.actions.listWorkflowRuns = async (input) => {
+    if (input.status === undefined && looks++ < 2)
+      return {
+        data: { workflow_runs: [{ ...finished, status: "in_progress", conclusion: null }] },
+      };
+    return list(input);
+  };
+  const waits = [];
+  await restore({ ...f.args, sleep: async (ms) => waits.push(ms) });
+  reused(f);
+  assert.equal(waits.length, 2);
+});
+
+test("a queue run that never finishes leaves the push on full CI after a bounded wait", async (t) => {
+  const f = fixture(t);
+  f.source.status = "in_progress";
+  f.source.conclusion = null;
+  const waits = [];
+  f.args.sleep = async (ms) => waits.push(ms);
+  await refused(f);
+  assert.ok(waits.length > 0 && waits.length < 10, String(waits.length));
 });

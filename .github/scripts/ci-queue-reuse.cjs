@@ -8,7 +8,7 @@ const { validateResult } = require("./thread-transfer-report.cjs");
 const WORKFLOW = ".github/workflows/ci.yml";
 const { jobFailures } = require("./ci-check.cjs");
 // The main ruleset lands at most this many queue entries in one push (max_entries_to_merge).
-const MAX_QUEUE_SEGMENTS = 4;
+const MAX_QUEUE_SEGMENTS = 6;
 const SCHEMA = 4;
 const RECEIPT_KEYS = [
   "schemaVersion",
@@ -322,12 +322,35 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
   return { run, receipt, receiptAttempt, download, reportAttempt };
 }
 
+// The queue merges once its required checks pass, so the push can start while that run is
+// still finishing. Wait briefly for it rather than rerunning everything.
+const SETTLE_TRIES = 8;
+const SETTLE_DELAY_MS = 15_000;
+async function settled(probe) {
+  const { github, repo, current, who, sleep } = probe;
+  for (let tries = 1; ; tries++) {
+    const { data } = await github.rest.actions.listWorkflowRuns({
+      ...repo,
+      workflow_id: current.workflow_id,
+      event: "merge_group",
+      head_sha: who.headSha,
+      per_page: 20,
+    });
+    const pending = data.workflow_runs.some(
+      (run) => run.head_sha === who.headSha && run.status !== "completed",
+    );
+    if (!pending || tries >= SETTLE_TRIES) return;
+    await sleep(SETTLE_DELAY_MS);
+  }
+}
+
 /**
  * A main push lands one or more queue entries. Each entry's queue run must have qualified that
  * exact commit from its first parent, back to the commit main held before the push.
  */
 async function pushSegments(probe) {
   const { github, repo, who, before } = probe;
+  await settled(probe);
   const segments = [];
   for (let head = who.headSha; head !== before;) {
     assert(segments.length < MAX_QUEUE_SEGMENTS, "Push is not covered by queue qualification");
@@ -403,7 +426,14 @@ async function queueSegments(probe) {
 }
 
 /** Any missing evidence selects ordinary CI. Downloaded data is never executed. */
-async function restore({ github, context, core, env = process.env, archiveReader = readArchive }) {
+async function restore({
+  github,
+  context,
+  core,
+  env = process.env,
+  archiveReader = readArchive,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+}) {
   core.setOutput("candidate", "false");
   const push = context.eventName === "push" && context.ref === "refs/heads/main";
   if (!push && context.eventName !== "merge_group") return;
@@ -430,7 +460,7 @@ async function restore({ github, context, core, env = process.env, archiveReader
         positive(current.workflow_id),
       "Current workflow identity differs",
     );
-    const probe = { github, repo, current, who, context, before, env, archiveReader };
+    const probe = { github, repo, current, who, context, before, env, archiveReader, sleep };
     const segments = push ? await pushSegments(probe) : await queueSegments(probe);
     // The newest segment tested the final content; its reports describe this run's tree.
     const [source] = segments;

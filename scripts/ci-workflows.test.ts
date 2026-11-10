@@ -58,22 +58,25 @@ function simulate(
   focused = false,
   baseRef = "main",
 ) {
-  const outputs = decide(files, readWorkspace(), eventName === "push").outputs;
+  // Main pushes and the nightly run select every lane; only PR and queue gates narrow them.
+  const full = eventName !== "pull_request" && eventName !== "merge_group";
+  const outputs = decide(eventName === "schedule" ? null : files, readWorkspace(), full).outputs;
   const compute = computeQualificationSuites(files);
   const gates = Object.fromEntries(
     Object.entries({
       ...outputs,
-      compute_changed: eventName === "push" || compute.realKernel || compute.managedPython,
-      real_kernel: eventName === "push" || compute.realKernel,
-      managed_python: eventName === "push" || compute.managedPython,
-      compute_platforms: eventName === "push" ? "all" : compute.platforms,
-      windows_changed: eventName === "push" || needsWindowsPackaging(files),
-      linux_changed: eventName === "push" || needsLinuxPackaging(files),
+      compute_changed: full || compute.realKernel || compute.managedPython,
+      real_kernel: full || compute.realKernel,
+      managed_python: full || compute.managedPython,
+      compute_platforms: full ? "all" : compute.platforms,
+      windows_changed: full || needsWindowsPackaging(files),
+      linux_changed: full || needsLinuxPackaging(files),
     }).map(([key, value]) => [key, String(value)]),
   );
   const needs: Record<string, JobResult> = {};
   const github = {
     event_name: eventName,
+    ref: full ? "refs/heads/main" : "refs/pull/1/merge",
     repository: "ScientFactory/scient-desktop",
     event: {
       pull_request: {
@@ -316,6 +319,7 @@ describe("CI workflow decisions", () => {
       ["docs/operations/development.md"],
       "push",
       [
+        "queue_ci",
         "changes",
         "lint",
         "build",
@@ -330,7 +334,13 @@ describe("CI workflow decisions", () => {
         "remote_server_packaging",
         "linux_packaging",
       ],
-      ["queue_ci", "qualification"],
+      [
+        "qualification",
+        "test_web_reused",
+        "test_server_reused",
+        "stable_contexts_reused",
+        "main_caches",
+      ],
     ],
   ])("%s runs and skips the intended jobs", (_label, files, event, runs, skips) => {
     const f = simulate(files as string[], event as string);
@@ -341,6 +351,92 @@ describe("CI workflow decisions", () => {
     expect(jobFailures(f.gateNeeds, { eventName: event as string, qualifyingPr: true })).toContain(
       "lint: failure",
     );
+  });
+
+  it("a main push reuses the queue's exact qualification and refreshes only main's stores", () => {
+    const reused = simulate(["apps/server/src/git/GitManager.ts"], "push", true);
+    expect(reused.failures).toEqual([]);
+    for (const [id, job] of Object.entries(reused.needs)) {
+      const expected = [
+        "release_notes",
+        "queue_ci",
+        "test_web_reused",
+        "test_server_reused",
+        "stable_contexts_reused",
+        "main_caches",
+        "check",
+      ].includes(id);
+      expect(job.result, id).toBe(expected ? "success" : "skipped");
+    }
+    const nightly = simulate(["apps/server/src/git/GitManager.ts"], "schedule", true);
+    expect(nightly.failures).toEqual([]);
+    for (const id of [
+      "queue_ci",
+      "test_web_reused",
+      "test_server_reused",
+      "stable_contexts_reused",
+      "main_caches",
+    ])
+      expect(nightly.needs[id]!.result, id).toBe("skipped");
+    for (const id of ["compute_native", "windows_packaging", "linux_packaging", "overleaf_macos"])
+      expect(nightly.needs[id]!.result, id).toBe("success");
+    const fallback = simulate(["apps/server/src/git/GitManager.ts"], "push", false);
+    expect(fallback.failures).toEqual([]);
+    expect(fallback.needs.main_caches!.result).toBe("skipped");
+    for (const id of ["compute_native", "windows_packaging", "overleaf_windows", "overleaf_macos"])
+      expect(fallback.needs[id]!.result, id).toBe("success");
+  });
+
+  // GET repos/ScientFactory/scient-desktop/branches/release%2Fstable/protection/required_status_checks
+  const STABLE_REQUIRED = [
+    "Check",
+    "Test",
+    "Test Server 1",
+    "Test Server 2",
+    "Test Server 3",
+    "Rust",
+    "Release Smoke",
+  ];
+  // Check names the run reports: a skipped matrix reports only its unexpanded name.
+  function reportedChecks(needs: Record<string, JobResult>) {
+    return Object.entries(workflow.jobs).flatMap(([id, job]) => {
+      const name = job.name ?? id;
+      const matrix = job.strategy?.matrix;
+      if (!matrix || needs[id]!.result !== "success" || !name.includes("${{"))
+        return [{ name, result: needs[id]!.result }];
+      const rows = matrix.include
+        ? (matrix.include as Record<string, unknown>[])
+        : Object.entries(matrix).flatMap(([key, values]) =>
+            (values as unknown[]).map((value) => ({ [key]: value })),
+          );
+      const format = (template: string, ...args: unknown[]) =>
+        template.replace(/\{(\d+)\}/g, (_, index) => String(args[Number(index)]));
+      return rows.map((row) => ({
+        name: name.replace(/\$\{\{ (.*?) \}\}/g, (_, expression: string) =>
+          String(NodeVM.runInNewContext(expression, { matrix: row, format })),
+        ),
+        result: "success",
+      }));
+    });
+  }
+
+  it.each([
+    ["fresh PR", "pull_request", false],
+    ["fresh queue", "merge_group", false],
+    ["reused queue", "merge_group", true],
+    ["fresh main push", "push", false],
+    ["reused main push", "push", true],
+    ["nightly", "schedule", false],
+  ] as const)("a %s reports every check release/stable requires", (_label, event, reused) => {
+    const f = simulate(["apps/server/src/git/GitManager.ts"], event, reused);
+    const reported = reportedChecks(f.needs);
+    for (const check of STABLE_REQUIRED)
+      expect(
+        reported.some(
+          (entry) => entry.name === check && ["success", "skipped"].includes(entry.result),
+        ),
+        check,
+      ).toBe(true);
   });
 
   it("exact queue reuse requires reporters while release notes still run every test lane", () => {
@@ -356,7 +452,7 @@ describe("CI workflow decisions", () => {
       "overleaf_windows",
     ])
       expect(reused.needs[id]!.result).toBe("skipped");
-    for (const id of ["test_web_reused", "test_server_reused"])
+    for (const id of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
       expect(reused.needs[id]!.result).toBe("success");
     for (const event of ["pull_request", "merge_group"]) {
       const focused = simulate(["apps/web/src/scient/releaseNotes/catalog.ts"], event, false, true);
@@ -371,7 +467,7 @@ describe("CI workflow decisions", () => {
         "qualification",
       ])
         expect(focused.needs[id]!.result).toBe("success");
-      for (const id of ["test_web_reused", "test_server_reused"])
+      for (const id of ["test_web_reused", "test_server_reused", "stable_contexts_reused"])
         expect(focused.needs[id]!.result).toBe("skipped");
     }
   });
@@ -392,9 +488,12 @@ describe("CI workflow decisions", () => {
     ],
     ["Rust PR", "native/resource-monitor/Cargo.toml", "pull_request", false, 39],
     ["fresh merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", false, 30],
-    // Only the probe, release notes, two reporters, the receipt and Check: no Windows rerun.
-    ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 6],
-    ["main push", "docs/operations/development.md", "push", false, 52],
+    // The probe, release notes, two suite reporters, four stable contexts, the receipt and Check.
+    ["reused merge group", "apps/web/src/authBootstrap.test.ts", "merge_group", true, 10],
+    ["main push", "docs/operations/development.md", "push", false, 53],
+    ["nightly", "docs/operations/development.md", "schedule", false, 52],
+    // Probe, release notes, two suite reporters, four stable contexts, two store refreshes, Check.
+    ["reused main push", "docs/operations/development.md", "push", true, 11],
   ] as const)(
     "%s expands to the expected runners with a passing Check",
     (_label, file, event, reused, count) => {
