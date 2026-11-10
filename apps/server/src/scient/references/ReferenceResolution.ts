@@ -132,16 +132,42 @@ async function applySourceFix(
   }
 }
 
-/** Applies registry fixes in order and updates the ignore list; one failure never stops the rest. */
-export async function resolveReferenceFindings(input: {
+// Fixes and ignores read a file, change it and write it back, so two at once could each
+// overwrite the other's change; they run one at a time per project.
+const projectWrites = new Map<string, Promise<unknown>>();
+
+function oneAtATime<A>(root: string, run: () => Promise<A>): Promise<A> {
+  const previous = projectWrites.get(root) ?? Promise.resolve();
+  const next = previous.then(run, run);
+  const settled = next.catch(() => undefined);
+  projectWrites.set(root, settled);
+  void settled.then(() => {
+    if (projectWrites.get(root) === settled) projectWrites.delete(root);
+  });
+  return next;
+}
+
+type ResolveInput = {
   readonly root: string;
   readonly apply?: ReadonlyArray<ScientReferenceFix>;
   readonly ignore?: ReadonlyArray<string>;
   readonly restore?: ReadonlyArray<string>;
   readonly actor: ScientSourceActor;
   readonly now?: () => Date;
-}): Promise<ScientReferenceResolution> {
+};
+
+/** Applies registry fixes in order and updates the ignore list; one failure never stops the rest. */
+export async function resolveReferenceFindings(
+  input: ResolveInput,
+): Promise<ScientReferenceResolution> {
   const root = await canonicalRoot(input.root);
+  return oneAtATime(root, () => resolveInProject(root, input));
+}
+
+async function resolveInProject(
+  root: string,
+  input: ResolveInput,
+): Promise<ScientReferenceResolution> {
   const fixes: Array<ScientReferenceResolution["fixes"][number]> = [];
   for (const [index, fix] of (input.apply ?? []).entries()) {
     try {

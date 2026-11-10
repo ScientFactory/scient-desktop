@@ -290,6 +290,27 @@ describe("checkReferences", () => {
     expect(second.findings.some((finding) => finding.key === "smith2020")).toBe(false);
   });
 
+  it("keeps both of two fixes to one file applied at the same time", async () => {
+    await using fixture = await project();
+    await fixture.write("refs.bib", BIB);
+    const report = await checkReferences(
+      { root: fixture.root, target: { kind: "file", path: "refs.bib" } },
+      { resolveIdentifiers: registry(works), now },
+    );
+    const yearFix = report.findings.find((finding) => finding.key === "smith2020")!.fix!;
+    const pagesFix = { ...yearFix, field: "pages" as const, current: "100–110", value: "1-9" };
+
+    const results = await Promise.all([
+      resolveReferenceFindings({ root: fixture.root, apply: [yearFix], actor: "user" }),
+      resolveReferenceFindings({ root: fixture.root, apply: [pagesFix], actor: "agent" }),
+    ]);
+
+    expect(results.map((result) => result.fixes[0]?.outcome)).toEqual(["applied", "applied"]);
+    const bib = await fixture.read("refs.bib");
+    expect(bib).toContain("year = {2021}");
+    expect(bib).toContain("pages = {1-9}");
+  });
+
   it("adds a missing field the registry supplies", async () => {
     await using fixture = await project();
     await fixture.write(
