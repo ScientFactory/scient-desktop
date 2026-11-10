@@ -3,6 +3,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
+import { toolFailureAttribution } from "./FailureAttribution.ts";
 import { toolOutcome } from "./ProviderDimensions.ts";
 
 const decodeResult = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Json));
@@ -91,16 +92,31 @@ export const noteToolFailure = Effect.fn("ScientMcpAnalytics.noteToolFailure")(f
 export function scientToolOutcome(
   result: McpSchema.CallToolResult | undefined,
   facts: ToolFailureFacts = {},
-): { readonly outcome: string; readonly errorCode?: string; readonly failureClass?: string } {
+): {
+  readonly outcome: string;
+  readonly errorCode?: string;
+  readonly failureClass?: string;
+  readonly failureOwner?: string;
+} {
   const outcome = toolOutcome(result);
-  if (outcome.outcome !== "error" || outcome.errorCode === "exception") return outcome;
+  if (outcome.outcome !== "error") return outcome;
+  if (outcome.errorCode === "exception") return { ...outcome, failureOwner: "scient" };
   const tag = stringOf(result?.structuredContent, "_tag") ?? facts.tag;
   const reported = outcome.errorCode === "unknown" ? tag : outcome.errorCode;
+  const errorCode = reported === undefined ? "unknown" : closedErrorCode(reported);
   return {
     outcome: "error",
-    errorCode: reported === undefined ? "unknown" : closedErrorCode(reported),
+    errorCode,
     ...(facts.failureClass === undefined ? {} : { failureClass: facts.failureClass }),
+    failureOwner: toolFailureOwner(errorCode, facts.failureClass),
   };
+}
+
+function toolFailureOwner(errorCode: string, failureClass: string | undefined): string {
+  const fromCode = toolFailureAttribution(errorCode).failureOwner;
+  return fromCode === "unknown" && failureClass !== undefined
+    ? toolFailureAttribution(failureClass).failureOwner
+    : fromCode;
 }
 
 const MAX_TRACKED_THREADS = 1_000;

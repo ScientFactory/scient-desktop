@@ -30,6 +30,14 @@ mobile activation, or a product-policy change.
    actual range. If implementation evidence invalidates a decision, stop, explain it, and update the
    protocol through review rather than working around it.
 
+## Cadence
+
+Align once a day: one batch up to the official tip at the time it starts, with one owner and one
+open alignment at a time. Each alignment costs about the same review and CI work whatever its size
+up to a few hundred commits, so more frequent alignments mostly add sessions. A fix upstream ships
+for security, data loss or a broken release aligns at once, on its own. Ranges past about 300
+commits took 36–44 hours to land; split them at a reviewed boundary instead.
+
 ## 1. Freeze exact boundaries
 
 Before mutation:
@@ -210,8 +218,9 @@ Every alignment explicitly reviews:
 - provider inventory, model selection, agent awareness, system-installed and Scient-managed runtime
   paths, assisted sign-in/install/repair/update/remove/sign-out capabilities, and passive-probe safety;
 - browser/preview authorization, file and attachment schemas, asset access, and old-client replay;
-- analytics allowlists and consent, provider identity, OTLP, cloud, relay, hosted web, and mobile
-  release holds;
+- analytics allowlists and consent, provider identity, OTLP, and mobile release holds;
+- Scient Connect's relay and hosted app, which are live: follow
+  [Aligning with T3](../operations/scient-connect.md#aligning-with-t3) when a range touches them;
 - service, updater, signing, notarization, tag, npm, stable/nightly, and publication authority; and
 - contributor trust, workflow permissions, secrets, and supply-chain policy.
 
@@ -565,7 +574,8 @@ integration record should not need a follow-up edit just to keep that status cur
 Stop and ask for a product decision when the clean composition would:
 
 - expose a currently unsupported client or persisted-state contract;
-- activate a release, cloud, mobile, telemetry, identity, or credential boundary;
+- activate a release, cloud, mobile, telemetry, identity, or credential boundary (T3's changes to
+  Scient Connect, which is already on, are not a new activation; a new hosted service or account is);
 - remove an intentionally supported system-managed or Scient-managed provider path;
 - require destructive user-data migration or reinterpret an existing migration;
 - weaken a Scient-owned authorization, privacy, sandbox, or supply-chain control beyond what

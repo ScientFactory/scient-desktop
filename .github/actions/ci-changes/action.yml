@@ -43,6 +43,10 @@ runs:
           decide
         }
 
+        if [[ "$EVENT_NAME" != pull_request && "$EVENT_NAME" != merge_group && "$EVENT_NAME" != push ]]; then
+          echo "Full $EVENT_NAME qualification."
+          decide
+        fi
         [[ "$BASE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail_open "Missing comparison base."
         git cat-file -e "$BASE_SHA^{commit}" || fail_open "Comparison base is unavailable."
         # NULs preserve whitespace, newlines and non-UTF-8 paths. No rename scoring:

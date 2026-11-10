@@ -12,6 +12,11 @@ otherwise leave a required context permanently pending. The lightweight
 - existence of changed Markdown files' local link targets; and
 - the local-link checker's own Node test suite.
 
+On a push to `main`, the Documentation and upstream provenance workflows skip their checks when
+every commit the push lands already passed the same workflow in the merge queue
+([`queue-verified.cjs`](../../.github/scripts/queue-verified.cjs)); a push the queue never ran
+is checked in full.
+
 External links and in-document anchors are outside this fast check. When no Markdown file changes,
 the workflow still reports whitespace and checker-test results without inventing documentation
 work. The full product suite also runs for documentation-only changes so every protected context
@@ -96,8 +101,10 @@ The receipt certifies all applicable lanes, including web browser tests and mobi
   whose timestamp differs between the two merges. Otherwise the candidate runs normal CI.
 - **Main push.** A push reuses queue qualification when every queue entry it lands qualified
   that exact commit from its first parent, back to the commit `main` held before the push. The
-  queue lands up to `max_entries_to_merge` (4) entries in one push; a longer chain runs normal
-  CI. A queue run that itself reused PR qualification counts as qualified.
+  queue lands up to `max_entries_to_merge` (6) entries in one push; a longer chain runs normal
+  CI. A queue run that itself reused PR qualification counts as qualified. A push the queue
+  never ran runs normal CI, and the nightly `schedule` run qualifies main's tip fresh on every
+  computer.
 
 Documentation and upstream provenance keep their event-specific checks; required check names and
 branch protections are unchanged. On valid reuse, the expensive jobs are skipped; `Test` reports

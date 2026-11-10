@@ -83,21 +83,32 @@ describe("Scient MCP analytics input", () => {
     expect(scientToolOutcome(tagged.result)).toEqual({
       outcome: "error",
       errorCode: "invalid_selector",
+      failureOwner: "input",
     });
     const messageOnly = new McpSchema.CallToolResult({
       isError: true,
       content: [{ type: "text", text: "Preview automation timed out after 5000ms." }],
     });
-    expect(scientToolOutcome(messageOnly)).toEqual({ outcome: "error", errorCode: "unknown" });
+    expect(scientToolOutcome(messageOnly)).toEqual({
+      outcome: "error",
+      errorCode: "unknown",
+      failureOwner: "unknown",
+    });
     expect(
       scientToolOutcome(messageOnly, {
         tag: "PreviewAutomationTimeoutError",
         failureClass: "timeout",
       }),
-    ).toEqual({ outcome: "error", errorCode: "timeout", failureClass: "timeout" });
+    ).toEqual({
+      outcome: "error",
+      errorCode: "timeout",
+      failureClass: "timeout",
+      failureOwner: "unknown",
+    });
     expect(scientToolOutcome(undefined, { tag: "Ignored" })).toEqual({
       outcome: "error",
       errorCode: "exception",
+      failureOwner: "scient",
     });
     expect(
       scientToolOutcome(

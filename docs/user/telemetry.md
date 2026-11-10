@@ -23,6 +23,11 @@ it.
   counts are sent, never the message.
 - Whether a turn was started by you, an agent or a schedule.
 - Which agent tools run, how long they take and whether they succeed.
+- When something fails, whether the cause was Scient, the code or document being
+  run, a missing package or program, or a network service. Never the error
+  message or the error's name.
+- Which kinds of programs agents run in their own terminal, such as Python, R,
+  LaTeX or Stata, and how many fail. Only the kind, never the command.
 - For your own skills: where each one came from (a file, folder, zip, pasted
   text, a web address or another app), how many were found and added, whether
   you or an agent made the change, and why a step failed. The names of Scient's

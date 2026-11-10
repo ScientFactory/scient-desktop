@@ -1,6 +1,9 @@
 export {
   AnalyticsConsent,
   modelKey,
+  type CommandCategory,
+  type FailureCategory,
+  type FailureOwner,
   type AnalyticsBatch,
   type AnalyticsEvent,
   type EventPrivacyLevel,

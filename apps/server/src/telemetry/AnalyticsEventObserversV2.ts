@@ -15,6 +15,7 @@ import { ProviderInstanceRegistry } from "../provider/ProviderInstanceRegistry.t
 import { AnalyticsService } from "./AnalyticsService.ts";
 import { createProviderAccountAnalyticsMapper } from "./ProviderAccountAnalytics.ts";
 import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
+import { classifyCommand, shellCommandOf } from "./CommandCategories.ts";
 import { BrowserToolCalls, type BrowserToolCallLedger } from "./ScientMcpAnalytics.ts";
 
 type Observation = {
@@ -23,12 +24,46 @@ type Observation = {
 };
 type EventContext = { readonly driver?: ProviderDriverKind; readonly refork?: boolean };
 const CAPACITY = 1_000;
+const MAX_COMMANDS_PER_RUN = 10_000;
+/** Scient's own progress rows, written as commands; they are not an agent's program. */
+const SYNTHETIC_COMMANDS = new Set(["Preparing workspace"]);
+const SYNTHETIC_COMMAND_TITLES = new Set(["Provider signed out"]);
+type CommandTally = { count: number; failed: number; stopped: number };
 function remember<K, V>(map: Map<K, V>, key: K, value: V) {
   if (!map.has(key) && map.size >= CAPACITY) {
     const oldest = map.keys().next().value;
     if (oldest !== undefined) map.delete(oldest);
   }
   map.set(key, value);
+}
+
+const TERMINAL_ITEM_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
+
+/** Tallies an agent's own terminal command once, when it ends; only its category is kept. */
+function countCommand(
+  run: { commands: Map<string, CommandTally>; countedCommands: Set<string> },
+  item: Extract<OrchestrationV2DomainEvent, { type: "turn-item.updated" }>["payload"],
+) {
+  if (!TERMINAL_ITEM_STATUSES.has(item.status) || run.countedCommands.has(item.id)) return;
+  if (run.countedCommands.size >= MAX_COMMANDS_PER_RUN) return;
+  const command = shellCommandOf(item);
+  if (command === undefined) return;
+  if (SYNTHETIC_COMMANDS.has(command) || SYNTHETIC_COMMAND_TITLES.has(item.title ?? "")) return;
+  run.countedCommands.add(item.id);
+  const stopped = item.status === "cancelled" || item.status === "interrupted";
+  const failed =
+    !stopped &&
+    (item.status === "failed" ||
+      (item.type === "command_execution" &&
+        ((item.exitCode !== undefined && item.exitCode !== 0) ||
+          item.outputIndicatesFailure === true)));
+  for (const category of classifyCommand(command)) {
+    const tally = run.commands.get(category) ?? { count: 0, failed: 0, stopped: 0 };
+    tally.count += 1;
+    if (failed) tally.failed += 1;
+    if (stopped) tally.stopped += 1;
+    run.commands.set(category, tally);
+  }
 }
 
 /** Correlates live V2 admissions, steering and outcomes; IDs stay in bounded local maps. */
@@ -52,6 +87,8 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
       usedTools: boolean;
       hasAttachment: boolean;
       failureClass?: string;
+      commands: Map<string, CommandTally>;
+      countedCommands: Set<string>;
     }
   >();
   const terminals = new Map<string, true>();
@@ -142,6 +179,8 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
           startedAt: DateTime.toEpochMillis(run.startedAt),
           usedTools: false,
           hasAttachment: false,
+          commands: new Map(),
+          countedCommands: new Set<string>(),
         });
       }
       if (!["completed", "failed", "cancelled", "interrupted"].includes(run.status))
@@ -163,33 +202,46 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
           ? {}
           : { browserToolCalls: browser.calls, browserToolFailures: browser.failures }),
       };
-      return run.status === "completed"
-        ? [
-            {
-              name: "provider.turn.completed",
-              properties: {
-                ...properties,
-                usedTools: correlation.usedTools,
-                hasAttachment: correlation.hasAttachment,
-              },
-            },
-          ]
-        : run.status === "failed"
+      const commands: Observation[] = [...correlation.commands].map(([category, tally]) => ({
+        name: "provider.commands.observed",
+        properties: {
+          provider: correlation.provider,
+          model: correlation.model,
+          commandCategory: category,
+          commandCount: tally.count,
+          failedCount: tally.failed,
+          ...(tally.stopped > 0 ? { stoppedCount: tally.stopped } : {}),
+        },
+      }));
+      const outcome: Observation[] =
+        run.status === "completed"
           ? [
               {
-                name: "provider.turn.failed",
+                name: "provider.turn.completed",
                 properties: {
                   ...properties,
-                  failureClass: correlation.failureClass ?? "provider_error",
+                  usedTools: correlation.usedTools,
+                  hasAttachment: correlation.hasAttachment,
                 },
               },
             ]
-          : [
-              {
-                name: "provider.turn.stopped",
-                properties: { ...properties, stopClass: run.status },
-              },
-            ];
+          : run.status === "failed"
+            ? [
+                {
+                  name: "provider.turn.failed",
+                  properties: {
+                    ...properties,
+                    failureClass: correlation.failureClass ?? "provider_error",
+                  },
+                },
+              ]
+            : [
+                {
+                  name: "provider.turn.stopped",
+                  properties: { ...properties, stopClass: run.status },
+                },
+              ];
+      return [...outcome, ...commands];
     }
     if (entry.type === "turn-item.updated") {
       const item = entry.payload;
@@ -207,6 +259,7 @@ export function createV2AnalyticsEventMapper(browserCalls?: BrowserToolCallLedge
         )
           run.usedTools = true;
         if (item.type === "error") run.failureClass = item.failure.class;
+        countCommand(run, item);
       }
     }
     if (
