@@ -18,7 +18,7 @@ import {
 import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
 import { resolveScientSourceInputPdf } from "@scientfactory/scient-sources/store";
 import {
-  deleteScientSourcesPermanently,
+  deleteTrashedScientSource,
   listScientSourceRecords,
   listScientSourceRevisions,
   readScientSourceRecord,
@@ -483,28 +483,17 @@ export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
   }) {
     const { root } = yield* resolveScientSourcesProject();
     if (input.permanent) {
-      const trashed = (yield* attempt(() => readScientSourceTrashEntries(root))).find(
-        (entry) => entry.sourceId === input.sourceId,
-      );
-      if (!trashed) {
-        return { outcome: "not-found" as const, sourceId: input.sourceId, revision: null };
-      }
-      if (trashed.record.revision !== input.expectedRevision) {
-        return {
-          outcome: "stale" as const,
-          sourceId: input.sourceId,
-          revision: trashed.record.revision,
-        };
-      }
       const deleted = yield* attempt(() =>
-        deleteScientSourcesPermanently({ root, sourceIds: [input.sourceId] }),
+        deleteTrashedScientSource({
+          root,
+          sourceId: input.sourceId,
+          expectedRevision: input.expectedRevision,
+        }),
       );
       return {
-        outcome: deleted.deletedSourceIds.includes(input.sourceId)
-          ? ("deleted" as const)
-          : ("not-found" as const),
+        outcome: deleted.outcome,
         sourceId: input.sourceId,
-        revision: null,
+        revision: deleted.outcome === "stale" ? deleted.revision : null,
       };
     }
     const result = yield* attempt(() =>
