@@ -132,6 +132,11 @@ because the registry could not be reached, or missing. After an agent changes a
 source, its details say "Edited by agent". You can edit or remove these sources
 like any other.
 
+Results from the PubMed, Semantic Scholar and OpenAlex connectors become
+sources the same way: the agent passes the paper's PMID, Semantic Scholar ID or
+OpenAlex ID, and Scient fetches the record and checks it at the DOI's registry.
+You can paste those IDs or links when you add by identifier, too.
+
 When you ask an agent to get papers for your library, it fetches them with
 `scient_paper_get` or `scient_papers_queue` and files each PDF on the paper's
 source. A paper that is not in Sources yet is added from its DOI's registry

@@ -175,6 +175,14 @@ metadata, or a researcher is never replaced. Retrieved abstracts retain their
 service, exact identifier, source field, and retrieval time in field
 provenance.
 
+Registry lookups read the user's research keys from Accounts through
+`researchKeys.ts`: the API-key row whose sites match the service (OpenAlex,
+Semantic Scholar, NCBI, and the Unpaywall email), skipping a row set to Off.
+Tools take the resolver through `keyedIdentifierLookup`, which passes the keys
+as `Redacted` values; the Effect HTTP client gets them as `Redacted` URL
+parameters so spans show them redacted. Paper downloads send the OpenAlex key
+and ask Unpaywall only when OpenAlex has no free copy.
+
 All NCBI E-utilities requests share one serialized, interval-limited lane.
 The lane remains owned until the active network request settles and releases
 in `finally`, preventing overlapping requests and avoiding a dead lane after a
@@ -282,6 +290,16 @@ stores verification `verified`. An unreachable or unusable registry adds the
 source as given with `unchecked`; a source without a DOI or PMID is
 `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. Only agent adds record verification.
+
+Connector results reach the Library as identifiers, not copied metadata. The
+resolver also takes an OpenAlex work ID (`openalex`, `W…`) and a Semantic
+Scholar paper ID (`s2`, a 40-character paper ID or `CorpusId:N`), tried after
+every registry scheme. `ConnectorIdentifierLookup.ts` reads the catalogue entry
+(OpenAlex at 10 requests a second, Semantic Scholar at one), follows its DOI,
+then PMID, then arXiv ID through the ordinary scheme lookups, and keeps the
+catalogue ID among the record's identifiers. Only when no registry has the work
+does the catalogue's own record stand, with `openalex` or `semantic-scholar`
+provenance. A catalogue that does not know the ID returns not found.
 
 Agent-added sources are not held for approval. Trust comes from that check,
 from attribution (origin actor, field provenance, `updatedBy` and revision

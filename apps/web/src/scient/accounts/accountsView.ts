@@ -15,6 +15,7 @@ import {
   type AccountActivityEntry,
   type AccountControls,
   type AccountDetails,
+  type ApiKeyAuth,
   type GrantScope,
   type ProjectId,
   type AccountStoresStatus,
@@ -281,6 +282,8 @@ const MANAGE_PAGES: Readonly<Record<string, string>> = {
   "zotero.org": "https://www.zotero.org/settings/keys",
   "ncbi.nlm.nih.gov": "https://www.ncbi.nlm.nih.gov/account/settings/",
   "semanticscholar.org": "https://www.semanticscholar.org/product/api",
+  "openalex.org": "https://openalex.org/settings/api",
+  "unpaywall.org": "https://unpaywall.org/products/api",
   "elsevier.com": "https://dev.elsevier.com/apikey/manage",
   "kaggle.com": "https://www.kaggle.com/settings",
   "wandb.ai": "https://wandb.ai/authorize",
@@ -387,6 +390,8 @@ export const accountCatalogue = [
     site: "semanticscholar.org",
     envName: "SEMANTIC_SCHOLAR_API_KEY",
   },
+  { name: "OpenAlex", kind: "api-key", site: "openalex.org", envName: "OPENALEX_API_KEY" },
+  { name: "Unpaywall email", kind: "api-key", site: "unpaywall.org", envName: "UNPAYWALL_EMAIL" },
   {
     name: "Elsevier / Scopus",
     kind: "api-key",
@@ -419,6 +424,8 @@ export const accountCatalogueGroups = [
       "Zotero",
       "NCBI / PubMed",
       "Semantic Scholar",
+      "OpenAlex",
+      "Unpaywall email",
       "Elsevier / Scopus",
       "ORCID",
     ],
@@ -439,6 +446,15 @@ export const accountCatalogueGroups = [
   { name: "Data & ML", entries: ["Hugging Face", "Kaggle", "Weights & Biases"] },
 ] satisfies ReadonlyArray<{ name: string; entries: ReadonlyArray<CatalogueEntry["name"]> }>;
 
+/** How each service takes its key, where it is not a bearer token. */
+const API_KEY_AUTH: Readonly<Record<string, ApiKeyAuth>> = {
+  Anthropic: { type: "header", name: "x-api-key" },
+  "Semantic Scholar": { type: "header", name: "x-api-key" },
+  "NCBI / PubMed": { type: "query", name: "api_key" },
+  OpenAlex: { type: "query", name: "api_key" },
+  "Unpaywall email": { type: "query", name: "email" },
+};
+
 export function catalogueDetails(entry: CatalogueEntry | null, website = ""): AccountDetails {
   if (!entry) return { kind: "website", sites: website ? [website] : [] };
   switch (entry.kind) {
@@ -448,8 +464,7 @@ export function catalogueDetails(entry: CatalogueEntry | null, website = ""): Ac
       return {
         kind: "api-key",
         sites: [entry.site],
-        auth:
-          entry.name === "Anthropic" ? { type: "header", name: "x-api-key" } : { type: "bearer" },
+        auth: API_KEY_AUTH[entry.name] ?? { type: "bearer" },
         envName: entry.envName,
       };
     case "database":
