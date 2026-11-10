@@ -68,9 +68,10 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: |
-            args:
-              - --filter=t3code-relay...
+          # SCIENT-FORK:START — a full install: `vp run` loads every package's config, and
+          # Scient's server config imports workspace packages a relay-only install lacks.
+          run-install: true
+          # SCIENT-FORK:END
 
       - name: Deploy production relay stage
         run: vp run --filter t3code-relay deploy --stage prod --yes --no-input
