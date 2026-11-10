@@ -4,7 +4,8 @@ import { Button } from "~/components/ui/button";
 import { LatexSelect } from "~/scient/latex/LatexSelect";
 import { DocumentSettingsField } from "~/scient/writing/DocumentSettingsField";
 import { FONT_FAMILIES, isFontFamilyName } from "~/scient/writing/fontChoices";
-import { DOCUMENT_FONT_SIZES, type MarkdownDocumentFont } from "../documentFont";
+import { DOCUMENT_FONT_SIZES } from "@scientfactory/scient-markdown";
+import type { MarkdownDocumentFont } from "../documentFont";
 
 const DEFAULT_CHOICE = "default";
 

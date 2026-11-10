@@ -121,6 +121,24 @@ describe("Markdown font size and family", () => {
     }
   });
 
+  it.each([
+    '- a <span style="font-size:1.2em">x `</span>` y</span>',
+    '- a <span style="font-size:1.2em">x `<span>` y</span>',
+    '- <span style="font-size:1.2em">[</span>](https://example.com) y</span>',
+  ])("keeps a block whose span text contains tags in code or links: %s", (block) => {
+    const source = `${block}\n\nsecond paragraph\n`;
+    const session = open(source);
+    // Edit the other paragraph: the block above must come back byte for byte.
+    session.applyTransaction(
+      session.state.tr.setSelection(
+        TextSelection.create(session.state.doc, session.state.doc.content.size - 8),
+      ),
+      "user",
+    );
+    session.applyTransaction(session.state.tr.insertText("X"), "user");
+    expect(session.session.draftSource.startsWith(`${block}\n\n`)).toBe(true);
+  });
+
   it("defines both marks in the schema", () => {
     expect(scientMarkdownSchema.marks.font_size).toBeDefined();
     expect(scientMarkdownSchema.marks.font_family).toBeDefined();

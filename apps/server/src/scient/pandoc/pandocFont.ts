@@ -4,6 +4,7 @@
  * front matter keys set the base font of the reference document.
  */
 import {
+  DOCUMENT_FONT_SIZES,
   MARKDOWN_FONT_FAMILIES,
   MARKDOWN_FONT_SIZES,
   MARKDOWN_FONT_SPAN_CLOSE,
@@ -16,13 +17,45 @@ import * as Predicate from "effect/Predicate";
 import { attr, customStyleSpan, inlineText, isPandocNode, type PandocNode } from "./pandocAst.ts";
 import {
   DEFAULT_WORD_BASE_FONT,
+  FOOTNOTE_POINTS,
+  HEADING_POINTS,
   type WordBaseFont,
   type WordLocalFont,
   wordFontStyleName,
 } from "./scientReferenceDocument.ts";
 
 const SPAN_OPEN = /^<span\b/iu;
-const BASE_SIZE = /^(10|11|12)pt$/u;
+const BASE_SIZE = new RegExp(`^(${DOCUMENT_FONT_SIZES.join("|")})$`, "u");
+
+/**
+ * What a font pass needs to know: the document's base size, and a record of the sizes used
+ * inside headings or footnotes, which the reference document must then define.
+ */
+export interface FontPass {
+  readonly base: WordBaseFont;
+  readonly inContext: Map<string, WordLocalFont>;
+}
+
+/** The Word style name for a font, noting it when it needs a style of its own. */
+function styleNameOf(font: WordLocalFont, pass: FontPass): string {
+  const name = wordFontStyleName(font);
+  if (font.em !== undefined && font.context !== undefined) pass.inContext.set(name, font);
+  return name;
+}
+
+/**
+ * The size in points of the text a node holds, when it is not the base size. A size in a heading
+ * or a footnote is a share of that text's size, as in the editor, not of the base size.
+ */
+function contextOf(node: PandocNode, pass: FontPass): number | undefined {
+  const points =
+    node.t === "Header" && Array.isArray(node.c)
+      ? HEADING_POINTS[Number(node.c[0]) - 1]
+      : node.t === "Note"
+        ? FOOTNOTE_POINTS
+        : undefined;
+  return points === pass.base.sizePoints ? undefined : points;
+}
 
 /** The font of a span laid over the font already in force around it. */
 function layered(outer: WordLocalFont, span: MarkdownFontSpan): WordLocalFont {
@@ -51,7 +84,7 @@ function closingIndex(inlines: Array<unknown>, open: number): number {
   return -1;
 }
 
-function wrapFontSpans(inlines: Array<unknown>, outer: WordLocalFont): void {
+function wrapFontSpans(inlines: Array<unknown>, outer: WordLocalFont, pass: FontPass): void {
   for (let index = 0; index < inlines.length; index += 1) {
     const html = rawHtml(inlines[index]);
     const span = html === null ? null : parseMarkdownFontSpanOpen(html);
@@ -61,8 +94,8 @@ function wrapFontSpans(inlines: Array<unknown>, outer: WordLocalFont): void {
     const font = layered(outer, span);
     const inner = inlines.slice(index + 1, close) as Array<PandocNode>;
     // A Word run carries one character style, so a nested span names the combined font.
-    applyFontSpans(inner, font);
-    inlines.splice(index, close - index + 1, customStyleSpan(wordFontStyleName(font), inner));
+    applyFontSpans(inner, pass, font);
+    inlines.splice(index, close - index + 1, customStyleSpan(styleNameOf(font, pass), inner));
   }
 }
 
@@ -70,15 +103,16 @@ function wrapFontSpans(inlines: Array<unknown>, outer: WordLocalFont): void {
  * Replace each recognised size or family span with a Word character style span. Other HTML is
  * left for the raw-HTML strip.
  */
-export function applyFontSpans(value: unknown, outer: WordLocalFont = {}): void {
+export function applyFontSpans(value: unknown, pass: FontPass, outer: WordLocalFont = {}): void {
   if (Array.isArray(value)) {
-    wrapFontSpans(value, outer);
-    for (const item of value) applyFontSpans(item, outer);
+    wrapFontSpans(value, outer, pass);
+    for (const item of value) applyFontSpans(item, pass, outer);
     return;
   }
-  if (Predicate.isObject(value)) {
-    for (const child of Object.values(value)) applyFontSpans(child, outer);
-  }
+  if (!Predicate.isObject(value)) return;
+  const context = isPandocNode(value) ? contextOf(value, pass) : undefined;
+  const within = context === undefined ? outer : { ...outer, context };
+  for (const child of Object.values(value)) applyFontSpans(child, pass, within);
 }
 
 function isFontFamilyName(value: string): value is MarkdownFontFamilyName {
@@ -107,7 +141,10 @@ const LATEX_SIZE_COMMAND = new RegExp(
 );
 const LATEX_SIZE_CARRIER = "scient-size-";
 const LATEX_SIZE_MACRO = String.raw`\newcommand{\ScientSize}[2]{\textcolor{#1}{#2}}`;
-const LATEX_CLASS_SIZE = /\\documentclass\[[^\]]*?\b(10|11|12)pt\b[^\]]*\]/u;
+const LATEX_CLASS_SIZE = new RegExp(
+  String.raw`\\documentclass\[[^\]]*?\b(${DOCUMENT_FONT_SIZES.join("|")})\b[^\]]*\]`,
+  "u",
+);
 const LATEX_FAMILY_DEFAULT = /\\renewcommand\s*\{\\familydefault\}\s*\{\\(rm|sf|tt)default\}/u;
 const LATEX_FAMILIES: Readonly<Record<string, MarkdownFontFamilyName>> = {
   rm: "serif",
@@ -227,9 +264,13 @@ function latexSpanFont(attributes: unknown): WordLocalFont | null {
 }
 
 /** Turn the spans Pandoc made from LaTeX font commands into Word character style spans. */
-export function applyLatexFontSpans(value: unknown, outer: WordLocalFont = {}): void {
+export function applyLatexFontSpans(
+  value: unknown,
+  pass: FontPass,
+  outer: WordLocalFont = {},
+): void {
   if (Array.isArray(value)) {
-    for (const item of value) applyLatexFontSpans(item, outer);
+    for (const item of value) applyLatexFontSpans(item, pass, outer);
     return;
   }
   if (!Predicate.isObject(value)) return;
@@ -237,10 +278,12 @@ export function applyLatexFontSpans(value: unknown, outer: WordLocalFont = {}): 
     const own = latexSpanFont(value.c[0]);
     if (own !== null) {
       const font = { ...outer, ...own };
-      applyLatexFontSpans(value.c[1], font);
-      value.c[0] = attr([], [["custom-style", wordFontStyleName(font)]]);
+      applyLatexFontSpans(value.c[1], pass, font);
+      value.c[0] = attr([], [["custom-style", styleNameOf(font, pass)]]);
       return;
     }
   }
-  for (const child of Object.values(value)) applyLatexFontSpans(child, outer);
+  const context = isPandocNode(value) ? contextOf(value, pass) : undefined;
+  const within = context === undefined ? outer : { ...outer, context };
+  for (const child of Object.values(value)) applyLatexFontSpans(child, pass, within);
 }
