@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeStreamPromises from "node:stream/promises";
 
@@ -10,6 +11,7 @@ import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "@effect/vitest";
 import {
+  type AccountSummary,
   AccountsError,
   AccountId,
   type ConnectorId,
@@ -59,6 +61,7 @@ import { GitHubSourceControlCredential } from "./GitHubSourceControlCredential.t
 import * as ConnectorProxyRoute from "./ConnectorProxyRoute.ts";
 import { makeConnectorRuntime, MAX_IN_FLIGHT_PER_CONNECTOR } from "./ConnectorRuntime.ts";
 import { CONNECTOR_STATE_FILE } from "./ConnectorStateStore.ts";
+import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
 import { SourceControlCredentialError } from "@t3tools/source-control-core/server/driver";
 
 /**
@@ -559,6 +562,8 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly onStreamClosed?: Effect.Effect<void>;
     /** Stands in for Source Control's GitHub credential. */
     readonly github?: GitHubSourceControlCredential["Service"];
+    /** Stands in for Accounts' sessions for signed-in connectors. */
+    readonly signInSessions?: ConnectorSessionsShape;
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -572,7 +577,10 @@ const makeHarness = Effect.fn("makeHarness")(function* (
   }
   const credentialStore = yield* ConnectorCredentialStore.ConnectorCredentialStore;
   const eligibility = yield* PluginConnectorEligibility.PluginConnectorEligibility;
-  const runtime = yield* makeConnectorRuntime({ stateDir: config.stateDir }).pipe(
+  const runtime = yield* makeConnectorRuntime({
+    stateDir: config.stateDir,
+    ...(options.signInSessions === undefined ? {} : { signInSessions: options.signInSessions }),
+  }).pipe(
     Effect.provideService(
       ConnectorCredentialStore.ConnectorCredentialStore,
       options.wrapCredentials?.(credentialStore) ?? credentialStore,
@@ -3215,4 +3223,86 @@ describe("connectors agents make and fix", () => {
         expect(checked.tools.map((tool) => tool.name).sort()).toEqual(["get_work", "search_works"]);
       }).pipe(Effect.provide(testLayer)),
   );
+
+  it.live(
+    "keeps a signed-in connector's cookies from agents and stops it when the sign-in goes",
+    () =>
+      Effect.gen(function* () {
+        const COOKIE = "portal-session-0123456789abcdef";
+        const SITE = "https://portal.example.edu";
+        const sign = { revoked: false, removed: [] as string[] };
+        const files = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-portal-session-")),
+        );
+        const account = {
+          accountId: "acc_portal0001",
+          name: "Portal",
+          details: { kind: "website", sites: [SITE] },
+        } as unknown as AccountSummary;
+        const signInSessions: ConnectorSessionsShape = {
+          accountsFor: () => Effect.succeed([account]),
+          account: () => Effect.succeed(sign.revoked ? undefined : account),
+          prepare: () =>
+            sign.revoked
+              ? Effect.fail({ reason: "needs-user", message: "Portal is turned off." })
+              : Effect.promise(async () => {
+                  const cookies = NodePath.join(files, "cookies.json");
+                  await NodeFSP.writeFile(cookies, JSON.stringify([{ name: "s", value: COOKIE }]));
+                  return { environment: { SCIENT_SIGN_IN_COOKIES: cookies }, hide: [COOKIE] };
+                }),
+          signInAgain: () => Effect.fail({ reason: "needs-user", message: "Sign in." }),
+          allowed: () => Effect.succeed(!sign.revoked),
+          remove: (connectorId) => Effect.sync(() => void sign.removed.push(connectorId)),
+        };
+        const harness = yield* makeHarness({ signInSessions });
+        const folder = NodePath.join(harness.config.stateDir, "..", "portal-bundle");
+        yield* writeConnectorFolder(folder, {
+          version: "1.0.0",
+          keyRequired: false,
+          meta: { signIn: { site: SITE } },
+        });
+        yield* Effect.promise(() =>
+          NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), ECHO_SESSION_SERVER),
+        );
+        const added = yield* harness.runtime.add({
+          target: { type: "local-bundle", path: folder, settings: {}, keys: {} },
+        });
+        const connectorId = added.connector.connectorId;
+        expect(added.connector.local?.signIn).toMatchObject({ state: "linked" });
+        harness.delivered.add(connectorId);
+        const opened = yield* harness.proxy(connectorId, initialize(1));
+        const session = opened.headers.get("mcp-session-id")!;
+        yield* readEvents(opened);
+        const called = yield* readEvents(
+          yield* harness.proxy(connectorId, toolCall(2), { session }),
+        );
+        // regression: a connector echoing its session cookie must not hand it to the agent.
+        expect(JSON.stringify(called)).not.toContain(COOKIE);
+        expect(JSON.stringify(called)).toContain("[redacted by Scient]");
+
+        // The user turns the sign-in off: running copies stop and the session files go.
+        sign.revoked = true;
+        const after = yield* harness.proxy(connectorId, toolCall(3), { session });
+        expect(after.status).toBe(404);
+        expect(sign.removed).toEqual([connectorId]);
+      }).pipe(Effect.provide(testLayer)),
+  );
 });
+
+/** Echoes the session cookie it was handed, as a careless connector might. */
+const ECHO_SESSION_SERVER = `
+import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
+      capabilities: { tools: {} }, serverInfo: { name: "portal", version: "1" } } });
+  else if (message.method === "tools/call") {
+    const cookies = JSON.parse(readFileSync(process.env.SCIENT_SIGN_IN_COOKIES, "utf8"));
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [
+      { type: "text", text: "session " + cookies[0].value }] } });
+  } else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
+});
+`;

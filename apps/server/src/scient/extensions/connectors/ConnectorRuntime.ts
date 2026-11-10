@@ -38,7 +38,10 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import { AccountsService } from "../../accounts/AccountsService.ts";
-import { makeConnectorSessions } from "../../accounts/connectorSessions.ts";
+import {
+  type ConnectorSessionsShape,
+  makeConnectorSessions,
+} from "../../accounts/connectorSessions.ts";
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
@@ -145,6 +148,8 @@ export interface ConnectorRuntimeOptions {
   readonly stateDir: string;
   /** Owner-only files: a signed-in connector's session. */
   readonly secretsDir?: string;
+  /** Stands in for Accounts' connector sessions (tests). */
+  readonly signInSessions?: ConnectorSessionsShape;
 }
 
 type Credential =
@@ -566,18 +571,20 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   const broker = yield* Effect.serviceOption(PreviewAutomationBroker);
   const environment = yield* Effect.serviceOption(ServerEnvironment);
   const signInSessions =
-    options.secretsDir !== undefined &&
-    Option.isSome(accounts) &&
-    Option.isSome(broker) &&
-    Option.isSome(environment)
-      ? Option.some(
-          yield* makeConnectorSessions({ secretsDir: options.secretsDir }).pipe(
-            Effect.provideService(AccountsService, accounts.value),
-            Effect.provideService(PreviewAutomationBroker, broker.value),
-            Effect.provideService(ServerEnvironment, environment.value),
-          ),
-        )
-      : Option.none();
+    options.signInSessions !== undefined
+      ? Option.some(options.signInSessions)
+      : options.secretsDir !== undefined &&
+          Option.isSome(accounts) &&
+          Option.isSome(broker) &&
+          Option.isSome(environment)
+        ? Option.some(
+            yield* makeConnectorSessions({ secretsDir: options.secretsDir }).pipe(
+              Effect.provideService(AccountsService, accounts.value),
+              Effect.provideService(PreviewAutomationBroker, broker.value),
+              Effect.provideService(ServerEnvironment, environment.value),
+            ),
+          )
+        : Option.none();
   const localHost = yield* makeLocalConnectorHost({
     onEvent: (event) => {
       switch (event.type) {
@@ -713,8 +720,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     ) {
       yield* localHost.stop(
         record.connectorId,
-        `${record.displayName} restarted because one of its keys changed in Accounts.`,
+        `${record.displayName} restarted because its key or sign-in changed in Accounts.`,
       );
+      // A sign-in that was turned off or removed leaves no session behind.
+      if (record.local?.signIn !== undefined && Option.isSome(signInSessions))
+        yield* signInSessions.value.remove(record.connectorId);
     }
     const response = yield* localHost.exchange(
       { connectorId: record.connectorId, displayName: record.displayName },

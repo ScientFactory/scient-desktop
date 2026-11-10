@@ -987,7 +987,8 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       );
       const values = Object.values(built.secrets);
       const known = started.get(record.connectorId) ?? new Set<string>();
-      for (const value of values) known.add(value);
+      // Cookies too, and earlier ones stay: a program may echo a session it held before.
+      for (const value of [...values, ...session.hide]) known.add(value);
       started.set(record.connectorId, known);
       const entry = authorizationKey(record.connectorId, location?.projectId);
       const joined = values.join("\u0000");
@@ -1068,10 +1069,11 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     location: { readonly projectId: ProjectId } | undefined,
   ) {
     const local = record.local;
+    const signInAccount = local === undefined ? undefined : signInAccountOf(local);
+    const checksKeys = local !== undefined && Object.keys(local.keys).length > 0;
     if (
       local === undefined ||
-      Object.keys(local.keys).length === 0 ||
-      Option.isNone(options.accounts)
+      ((!checksKeys || Option.isNone(options.accounts)) && signInAccount === undefined)
     ) {
       return true;
     }
@@ -1085,6 +1087,23 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     }
     const revision = yield* revisionOf;
     if (revision !== undefined && previous.revision === revision) return true;
+    // The linked sign-in is held to Accounts' Off switches, scope and existence, like a key.
+    if (signInAccount !== undefined && Option.isSome(options.sessions)) {
+      const site = yield* signInSiteOf(local);
+      const allowed =
+        site !== undefined &&
+        (yield* options.sessions.value.allowed({
+          connectorId: record.connectorId,
+          accountId: signInAccount,
+          site,
+          projectId: location?.projectId,
+        }));
+      if (!allowed) return false;
+    }
+    if (!checksKeys || Option.isNone(options.accounts)) {
+      authorized.set(key, { revision, values: previous.values, mixed: false });
+      return true;
+    }
     const values: string[] = [];
     for (const [name, ref] of Object.entries(local.keys)) {
       const value = yield* options.accounts.value

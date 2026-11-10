@@ -76,6 +76,8 @@ export interface ConnectorSessionsShape {
   readonly signInAgain: (
     target: ConnectorSessionTarget,
   ) => Effect.Effect<PreparedConnectorSession, ConnectorSessionProblem>;
+  /** Whether the sign-in may still be used: it exists, covers the site, and is on and in scope. */
+  readonly allowed: (target: ConnectorSessionTarget) => Effect.Effect<boolean>;
   readonly remove: (connectorId: string) => Effect.Effect<void>;
 }
 
@@ -113,7 +115,10 @@ export const makeConnectorSessions = Effect.fn("ConnectorSessions.make")(functio
 
   const snapshot = accounts.snapshot.pipe(Effect.orElseSucceed(() => undefined));
 
-  const usable = Effect.fn("ConnectorSessions.usable")(function* (target: ConnectorSessionTarget) {
+  const usable = Effect.fn("ConnectorSessions.usable")(function* (
+    target: ConnectorSessionTarget,
+    options: { readonly duringSignIn?: boolean } = {},
+  ) {
     const current = yield* snapshot;
     const account = current?.accounts.find((row) => row.accountId === target.accountId);
     if (current === undefined || account === undefined)
@@ -134,7 +139,10 @@ export const makeConnectorSessions = Effect.fn("ConnectorSessions.make")(functio
     if (isUniversitySignInService(current.accounts, target.site))
       return yield* problem("unavailable", "A university's sign-in service stays in the browser.");
     // A sign-in under way on the site is the person's until it ends.
-    if ((yield* accounts.attempts).some((attempt) => attempt.accountId === account.accountId))
+    if (
+      options.duringSignIn !== true &&
+      (yield* accounts.attempts).some((attempt) => attempt.accountId === account.accountId)
+    )
       return yield* problem(
         "needs-user",
         `You are signing in to ${hostOf(target.site)}. Try again when that finishes.`,
@@ -273,6 +281,11 @@ export const makeConnectorSessions = Effect.fn("ConnectorSessions.make")(functio
       ),
     prepare,
     signInAgain,
+    allowed: (target) =>
+      usable(target, { duringSignIn: true }).pipe(
+        Effect.as(true),
+        Effect.orElseSucceed(() => false),
+      ),
     remove: (connectorId) =>
       Effect.promise(async () => {
         written.delete(connectorId);
