@@ -164,6 +164,16 @@ export type ThreadPutResponse = typeof ThreadPutResponse.Type;
 
 /** Share and reader extras the snapshot format does not carry. */
 export const SnapshotSidecar = Schema.Struct({
+  /** Bytes of the snapshot's available attachments, by `ConversationAttachment.localId`. */
+  attachments: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        localId: TrimmedNonEmptyString,
+        sha256: BlobSha256,
+        bytes: NonNegativeInt,
+      }),
+    ),
+  ),
   answers: Schema.optionalKey(
     Schema.Array(
       Schema.Struct({
@@ -321,8 +331,10 @@ export const cloudPaths = {
     `/v1/computers/${seg(env)}/moved${since === undefined ? "" : `?since=${seg(since)}`}`,
   limits: () => "/v1/limits",
   threads: () => "/v1/threads",
+  /** GET accepts the person or any of their enrolled computers (take-over import reads it). */
   thread: (env: string, thread: string) => `/v1/threads/${seg(env)}/${seg(thread)}`,
   threadLease: (env: string, thread: string) => `/v1/threads/${seg(env)}/${seg(thread)}/lease`,
+  /** GET accepts the person or any of their enrolled computers, for referenced blobs only. */
   blob: (sha256: string) => `/v1/blobs/${seg(sha256)}`,
   shares: () => "/v1/shares",
   share: (id: string) => `/v1/shares/${seg(id)}`,
