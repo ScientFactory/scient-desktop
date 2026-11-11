@@ -300,61 +300,61 @@
     "cursor": {
       "contractRevision": 1,
       "channel": "stable",
-      "version": "2026.11.10-731fb78",
+      "version": "2026.11.11-043ef28",
       "artifacts": {
         "darwin-arm64": {
           "artifactName": "cursor-agent-darwin-arm64.tar.gz",
-          "url": "https://downloads.cursor.com/lab/2026.11.10-731fb78/darwin/arm64/agent-cli-package.tar.gz",
+          "url": "https://downloads.cursor.com/lab/2026.11.11-043ef28/darwin/arm64/agent-cli-package.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "ad92a8c07ea17778ec7d20fd8736e1334b895fa48cbe9c8b82c29a989c39b14a"
+            "digest": "9e38944ff2adacab102b6d1d8de5ff9fa1022d52dfc3eddcc1ed44ea74dccad8"
           },
-          "size": 175033600
+          "size": 175051575
         },
         "darwin-x64": {
           "artifactName": "cursor-agent-darwin-x64.tar.gz",
-          "url": "https://downloads.cursor.com/lab/2026.11.10-731fb78/darwin/x64/agent-cli-package.tar.gz",
+          "url": "https://downloads.cursor.com/lab/2026.11.11-043ef28/darwin/x64/agent-cli-package.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "7b60379fbb06970b602f16a636b0d8eaf88fcc2e397672b0498f3f1de719183c"
+            "digest": "c40eab5bfc907b78ba047017e8075cac0e729cdb9d459d77ec23d3dfeb11e267"
           },
-          "size": 182725513
+          "size": 182713813
         },
         "linux-arm64-glibc": {
           "artifactName": "cursor-agent-linux-arm64.tar.gz",
-          "url": "https://downloads.cursor.com/lab/2026.11.10-731fb78/linux/arm64/agent-cli-package.tar.gz",
+          "url": "https://downloads.cursor.com/lab/2026.11.11-043ef28/linux/arm64/agent-cli-package.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "5f211675d0e64e6a2f23e7c9bcb518a15855b924837145b5d2b414dc1c6dbf84"
+            "digest": "e8199ea0b184c5985f1c7ecd8b1a43ea85d4e51367b12d0be70ec3d9dd354345"
           },
-          "size": 175318472
+          "size": 175349905
         },
         "linux-x64-glibc": {
           "artifactName": "cursor-agent-linux-x64.tar.gz",
-          "url": "https://downloads.cursor.com/lab/2026.11.10-731fb78/linux/x64/agent-cli-package.tar.gz",
+          "url": "https://downloads.cursor.com/lab/2026.11.11-043ef28/linux/x64/agent-cli-package.tar.gz",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "f39e124227aa179ae16ac0785e293cbe29218b2d1c167ba7adf68bfc8c3812a9"
+            "digest": "5d82bd6e6f090b1804b8284fdc68050f0d588183cafc9d78365379e218ed650c"
           },
-          "size": 176676383
+          "size": 176695152
         },
         "win32-arm64": {
           "artifactName": "cursor-agent-win32-arm64.zip",
-          "url": "https://downloads.cursor.com/lab/2026.11.10-731fb78/windows/arm64/agent-cli-package.zip",
+          "url": "https://downloads.cursor.com/lab/2026.11.11-043ef28/windows/arm64/agent-cli-package.zip",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "d4dcbc8d9ce9a1124fc9654043e382a08638b1ce4e15fb70811925ed7de17feb"
+            "digest": "63317441aa3f37dcef7d4030fea7c2d050c1572f4c0060743d26a276db40c9c9"
           },
-          "size": 77218457
+          "size": 77225935
         },
         "win32-x64": {
           "artifactName": "cursor-agent-win32-x64.zip",
-          "url": "https://downloads.cursor.com/lab/2026.11.10-731fb78/windows/x64/agent-cli-package.zip",
+          "url": "https://downloads.cursor.com/lab/2026.11.11-043ef28/windows/x64/agent-cli-package.zip",
           "checksum": {
             "algorithm": "sha256",
-            "digest": "b53bc0e4e29046ec92618f5b5908311eeace33dd964d9ffb0372fc2f8509d202"
+            "digest": "c66f24468b619c4c1906e14d343098d53b9c7ff9deeb1cf23007f35793fb34d7"
           },
-          "size": 79967721
+          "size": 79966182
         }
       }
     },
