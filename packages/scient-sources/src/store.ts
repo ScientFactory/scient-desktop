@@ -1349,8 +1349,13 @@ export async function createSourceImportOperation(input: {
   readonly intake?: "zotero" | "local-pdf" | "identifier" | "file";
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides?: ReadonlyArray<string>;
+  /** The Zotero group library the item keys belong to; omitted for My Library. */
+  readonly zoteroGroupId?: string;
 }): Promise<ScientSourceImportOperation> {
   assertSafeIdentifier(input.operationId, "Operation ID");
+  if (input.zoteroGroupId !== undefined && !/^[1-9][0-9]{0,11}$/u.test(input.zoteroGroupId)) {
+    throw new Error("The Zotero group ID is invalid.");
+  }
   const uniqueItemKeys = [...new Set(input.itemKeys)];
   if (uniqueItemKeys.length === 0) throw new Error("Choose at least one source to import.");
   if (uniqueItemKeys.length > SCIENT_SOURCE_IMPORT_ITEM_LIMIT) {
@@ -1379,6 +1384,7 @@ export async function createSourceImportOperation(input: {
         existingKeys.join("\0") !== uniqueItemKeys.join("\0") ||
         existingOverrides.join("\0") !== normalizedOverrides.join("\0") ||
         existing.adapter !== input.adapter ||
+        existing.zoteroGroupId !== input.zoteroGroupId ||
         existing.actor !== (input.actor ?? "user") ||
         existing.intake !==
           (input.intake ?? (input.adapter === "local-files" ? "local-pdf" : "zotero"))
@@ -1412,6 +1418,7 @@ export async function createSourceImportOperation(input: {
         sourceId: null,
         message: null,
       })),
+      ...(input.zoteroGroupId ? { zoteroGroupId: input.zoteroGroupId } : {}),
     };
     await atomicWriteJson(
       operationPath(paths.operations, input.operationId),
@@ -1474,6 +1481,7 @@ export async function updateSourceImportOperationItem(input: {
   readonly duplicateKind?: ScientSourceDuplicateKind;
   readonly sourceId?: string;
   readonly message?: string;
+  readonly note?: string;
 }): Promise<ScientSourceImportOperation> {
   const paths = await sourceStorePaths(input.root);
   return withOperationLock(`${paths.root}:${input.operationId}`, async () => {
@@ -1494,6 +1502,7 @@ export async function updateSourceImportOperationItem(input: {
               ...(input.duplicateKind ? { duplicateKind: input.duplicateKind } : {}),
               sourceId: input.sourceId ?? null,
               message: input.message ?? null,
+              ...(input.note ? { note: input.note } : {}),
             }
           : item,
       ),
@@ -1891,6 +1900,8 @@ export async function removeScientSourceStagedMaterial(
 }
 
 const MAX_STAGED_FILE_IMPORT_BYTES = 64 * 1024 * 1024;
+/** Linked PDFs attached to one entry of a reference file. */
+export const SCIENT_SOURCE_LINKED_PDF_LIMIT = 20;
 
 /** Candidates read from one reference file, held until their import operation settles. */
 const ScientSourceStagedFileImport = Schema.Struct({
@@ -1900,6 +1911,15 @@ const ScientSourceStagedFileImport = Schema.Struct({
   report: BibliographyImportReport,
   candidates: Schema.Array(ScientSourceCandidate).pipe(
     Schema.check(Schema.isMaxLength(SCIENT_SOURCE_IMPORT_ITEM_LIMIT)),
+  ),
+  /** PDFs the file names for a staged entry, by source key: real paths checked at staging. */
+  pdfs: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Array(Schema.Struct({ path: Schema.String, fileName: Schema.String })).pipe(
+        Schema.check(Schema.isMaxLength(SCIENT_SOURCE_LINKED_PDF_LIMIT)),
+      ),
+    ),
   ),
 });
 export type ScientSourceStagedFileImport = typeof ScientSourceStagedFileImport.Type;

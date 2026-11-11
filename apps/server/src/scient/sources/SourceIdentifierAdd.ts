@@ -18,15 +18,18 @@ import { importScientSource, listScientSourceRecords } from "@scientfactory/scie
 import * as Context from "effect/Context";
 
 import { observeSourceImport, type SourceImportObserver } from "./SourceImportObservation.ts";
+import { scheduleSourceCategorization, seedSourceCategories } from "./SourceCategories.ts";
 import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
 import {
   applyResolvedSourceMetadata,
   resolveSourceIdentifierBatch,
+  type ResearchKeys,
   type SourceIdentifierResolution,
 } from "./SourceIdentifierResolver.ts";
 
 export type ResolveSourceIdentifierBatch = (
   identifiers: ReadonlyArray<ScientSourceIdentifier>,
+  keys?: ResearchKeys,
 ) => Promise<ReadonlyArray<SourceIdentifierResolution>>;
 
 const ENRICH_PARALLEL = 4;
@@ -272,6 +275,7 @@ export async function addScientSourcesByIdentifier(
       (result) => (result.outcome === "imported" ? "imported" : "skipped"),
     );
     if (imported.outcome === "imported" && imported.record) {
+      seedSourceCategories(input.root, imported.record.sourceId, resolution.metadata.topics);
       results.push({
         input: step.input,
         identifier: step.identifier,
@@ -296,12 +300,18 @@ export async function addScientSourcesByIdentifier(
       ),
     );
   }
+  if (results.some((item) => item.outcome === "imported")) {
+    void scheduleSourceCategorization(input.root);
+  }
   return results;
 }
 
 export const SourceIdentifierBatchLookup = Context.Reference<ResolveSourceIdentifierBatch>(
   "scient/sources/SourceIdentifierBatchLookup",
-  { defaultValue: () => (identifiers) => resolveSourceIdentifierBatch(identifiers) },
+  {
+    defaultValue: () => (identifiers, keys) =>
+      resolveSourceIdentifierBatch(identifiers, keys ? { keys } : {}),
+  },
 );
 
 /** "Added 2 of 4. 1 already in the Library. 1 not found.", for people and agents. */

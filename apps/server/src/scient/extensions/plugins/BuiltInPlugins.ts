@@ -30,7 +30,7 @@ const builtIn = (
 export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
   builtIn({
     pluginId: "scient.sources",
-    displayName: "Sources",
+    displayName: "Library",
     description: "Project reference library that agents can read and, when asked, update.",
     components: [
       tools("sources:read", [
@@ -67,7 +67,7 @@ export const BUILT_IN_SCIENT_PLUGINS: ReadonlyArray<ScientPluginSummary> = [
       tools("sources:read", ["scient_references_check"]),
       tools("sources:write", ["scient_references_resolve"]),
       { type: "skill", name: "references" },
-      { type: "panel", name: "Sources" },
+      { type: "panel", name: "Library" },
       { type: "skill", name: "systematic-review" },
     ],
   }),

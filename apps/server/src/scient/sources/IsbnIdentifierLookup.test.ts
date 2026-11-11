@@ -1,6 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The test controls the native unref'ed lookup deadline.
 import * as NodeTimersPromises from "node:timers/promises";
 import { describe, expect, it } from "@effect/vitest";
+import * as Redacted from "effect/Redacted";
 import { vi } from "vite-plus/test";
 
 import type { MetadataRequest } from "./metadataHttp.ts";
@@ -208,6 +209,24 @@ describe("ISBN identifiers", () => {
         pace,
       }),
     ).resolves.toEqual({ status, identifier: { scheme: "isbn", value: "9780262033848" } });
+  });
+
+  it("asks Google Books again without the key when Google refuses the key", async () => {
+    const sentKeys: Array<string | null> = [];
+    const resolution = await resolveSourceIdentifier([{ scheme: "isbn", value: "9780262033848" }], {
+      request: async (url) => {
+        if (url.host === "openlibrary.org") return { status: 200, body: "{}", url };
+        const key = url.searchParams.get("key");
+        sentKeys.push(key);
+        return key
+          ? { status: 403, body: "{}", url }
+          : { status: 200, body: JSON.stringify(GOOGLE_BOOKS_VOLUME), url };
+      },
+      pace,
+      keys: { googleBooks: Redacted.make("synthetic-books-key") },
+    });
+    expect(sentKeys).toEqual(["synthetic-books-key", null]);
+    expect(resolution).toMatchObject({ status: "found", origin: "google-books" });
   });
 
   it("refuses an ISBN with a wrong check digit without asking a catalog", async () => {

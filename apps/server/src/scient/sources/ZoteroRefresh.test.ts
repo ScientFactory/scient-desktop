@@ -14,7 +14,13 @@ import { editableMetadataFromRecord } from "@scientfactory/scient-sources";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { advanceSourceImport, beginZoteroScopedImport } from "./ScientSourcesCoordinator.ts";
-import { fakeZoteroAccess, fakeZoteroTransport, zoteroItem } from "./Zotero.testkit.ts";
+import {
+  fakeZoteroAccess,
+  fakeZoteroAccessWithGroup,
+  fakeZoteroTransport,
+  zoteroGroupItem,
+  zoteroItem,
+} from "./Zotero.testkit.ts";
 import type { ZoteroRawItem } from "./ZoteroItems.ts";
 import { refreshZoteroSources } from "./ZoteroSync.ts";
 
@@ -215,5 +221,36 @@ describe("Zotero refresh", () => {
     expect(await readScientSourceRecord(root, record.sourceId)).toMatchObject({
       title: "Original title",
     });
+  });
+
+  it("reads a group item again from its group", async () => {
+    const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-zotero-refresh-"));
+    roots.push(root);
+    await initializeScientProject({ root });
+    const groupItem = (title: string, version: number) => ({
+      item: zoteroGroupItem("ABCD2345", { ...original.data, title, version }, "4321"),
+      children: [],
+    });
+    const group = { items: new Map([["ABCD2345", groupItem("Lab title", 3)]]) };
+    const mine = { items: new Map([["ABCD2345", { item: original, children: [] }]]) };
+    const zotero = fakeZoteroAccessWithGroup(
+      fakeZoteroTransport(mine),
+      "4321",
+      fakeZoteroTransport(group),
+    );
+    const operation = { root, operationId: "lab", zotero };
+    await beginZoteroScopedImport({ ...operation, scope: { kind: "library" }, groupId: "4321" });
+    await advanceSourceImport(operation);
+    group.items.set("ABCD2345", groupItem("Lab title, revised", 4));
+
+    const result = await refreshZoteroSources({ root, actor: "user", zotero });
+
+    const [record] = await listScientSourceRecords(root);
+    expect(record?.title).toBe("Lab title, revised");
+    expect(record?.externalReferences[0]).toMatchObject({
+      libraryId: "groups/4321",
+      itemVersion: 4,
+    });
+    expect(result.items.map((item) => item.outcome)).toEqual(["updated"]);
   });
 });

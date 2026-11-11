@@ -283,6 +283,7 @@ const MANAGE_PAGES: Readonly<Record<string, string>> = {
   "ncbi.nlm.nih.gov": "https://www.ncbi.nlm.nih.gov/account/settings/",
   "semanticscholar.org": "https://www.semanticscholar.org/product/api",
   "openalex.org": "https://openalex.org/settings/api",
+  "www.googleapis.com": "https://console.cloud.google.com/apis/credentials",
   "unpaywall.org": "https://unpaywall.org/products/api",
   "elsevier.com": "https://dev.elsevier.com/apikey/manage",
   "kaggle.com": "https://www.kaggle.com/settings",
@@ -308,6 +309,7 @@ const ICON_NAME_ALIASES: Readonly<Record<string, string>> = {
   moodle: "moodle.org",
   postgres: "postgresql.org",
   gcloud: "cloud.google.com",
+  "google books": "google.com",
 };
 
 /** The entry for the first site whose host is a key or a subdomain of one. */
@@ -391,6 +393,12 @@ export const accountCatalogue = [
     envName: "SEMANTIC_SCHOLAR_API_KEY",
   },
   { name: "OpenAlex", kind: "api-key", site: "openalex.org", envName: "OPENALEX_API_KEY" },
+  {
+    name: "Google Books",
+    kind: "api-key",
+    site: "www.googleapis.com",
+    envName: "GOOGLE_BOOKS_API_KEY",
+  },
   { name: "Unpaywall email", kind: "api-key", site: "unpaywall.org", envName: "UNPAYWALL_EMAIL" },
   {
     name: "Elsevier / Scopus",
@@ -425,6 +433,7 @@ export const accountCatalogueGroups = [
       "NCBI / PubMed",
       "Semantic Scholar",
       "OpenAlex",
+      "Google Books",
       "Unpaywall email",
       "Elsevier / Scopus",
       "ORCID",
@@ -452,6 +461,7 @@ const API_KEY_AUTH: Readonly<Record<string, ApiKeyAuth>> = {
   "Semantic Scholar": { type: "header", name: "x-api-key" },
   "NCBI / PubMed": { type: "query", name: "api_key" },
   OpenAlex: { type: "query", name: "api_key" },
+  "Google Books": { type: "query", name: "key" },
   "Unpaywall email": { type: "query", name: "email" },
 };
 

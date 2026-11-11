@@ -79,6 +79,8 @@ export function useScientSources(input: {
   const requestRef = useRef(0);
   const overviewRequestRef = useRef(0);
   const zoteroRequestRef = useRef(0);
+  // Collections of a library the person already left must not replace the current ones.
+  const zoteroLibraryRef = useRef(0);
   const nextRequestToken = useStableCallback(() => {
     requestRef.current += 1;
     return requestRef.current;
@@ -279,12 +281,15 @@ export function useScientSources(input: {
   };
 
   const zoteroConnection = state.zoteroStatus?.connection;
+  const zoteroGroupId = state.zoteroGroupId ?? undefined;
+  const zoteroGroupInput = zoteroGroupId ? { groupId: zoteroGroupId } : {};
 
   const searchZotero = async (
     query: string,
     start = 0,
     scopeInput?: ZoteroImportScope,
     connection: ZoteroConnection | undefined = zoteroConnection,
+    groupId: string | undefined = zoteroGroupId,
   ) => {
     const scope = scopeInput ?? state.zoteroScope;
     // The Zotero browse lane is independent of imports and overview loads.
@@ -299,6 +304,7 @@ export function useScientSources(input: {
         start,
         limit: 50,
         ...(connection ? { connection } : {}),
+        ...(groupId ? { groupId } : {}),
       });
       if (isCurrentContext() && zoteroRequestRef.current === request) {
         dispatch({ type: "zoteroLibraryArrived", request, page });
@@ -316,25 +322,41 @@ export function useScientSources(input: {
       });
   };
 
+  const showZoteroLibrary = async (
+    connection: ZoteroConnection | undefined,
+    groupId: string | null,
+  ) => {
+    const libraryRequest = ++zoteroLibraryRef.current;
+    dispatch({ type: "zoteroGroupChanged", groupId });
+    dispatch({ type: "zoteroScopeChanged", scope: DEFAULT_ZOTERO_SCOPE });
+    dispatch({ type: "zoteroLibrarySeeded", page: emptyZoteroPage(DEFAULT_ZOTERO_SCOPE) });
+    try {
+      const [collections] = await Promise.all([
+        readZoteroCollections(input.environmentId, connection, groupId ?? undefined),
+        searchZotero("", 0, DEFAULT_ZOTERO_SCOPE, connection, groupId ?? undefined),
+      ]);
+      if (isCurrentContext() && zoteroLibraryRef.current === libraryRequest) {
+        dispatch({ type: "zoteroCollectionsArrived", collections: collections.collections });
+      }
+    } catch (cause) {
+      if (isCurrentContext() && zoteroLibraryRef.current === libraryRequest) {
+        dispatch({ type: "errorArrived", error: message(cause) });
+      }
+    }
+  };
+
   const openZoteroLibrary = async (showRetryFeedback = false) => {
     const status = await checkZotero(showRetryFeedback);
     if (status?.state === "ready" && isCurrentContext()) {
-      dispatch({ type: "zoteroScopeChanged", scope: DEFAULT_ZOTERO_SCOPE });
-      dispatch({ type: "zoteroLibrarySeeded", page: emptyZoteroPage(DEFAULT_ZOTERO_SCOPE) });
-      try {
-        const [collections] = await Promise.all([
-          readZoteroCollections(input.environmentId, status.connection),
-          searchZotero("", 0, DEFAULT_ZOTERO_SCOPE, status.connection),
-        ]);
-        if (isCurrentContext()) {
-          dispatch({ type: "zoteroCollectionsArrived", collections: collections.collections });
-        }
-      } catch (cause) {
-        if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
-      }
+      const firstGroup = status.myLibrary === false ? status.groups?.[0]?.groupId : undefined;
+      await showZoteroLibrary(status.connection, firstGroup ?? null);
     }
     return status;
   };
+
+  /** My Library (null) or one of the groups the connection can read. */
+  const selectZoteroLibrary = (groupId: string | null) =>
+    showZoteroLibrary(zoteroConnection, groupId);
 
   const selectZoteroScope = async (scope: ZoteroImportScope) => {
     dispatch({ type: "zoteroScopeChanged", scope });
@@ -357,6 +379,7 @@ export function useScientSources(input: {
         operationId: randomUUID(),
         scope: state.zoteroScope,
         ...(zoteroConnection ? { connection: zoteroConnection } : {}),
+        ...zoteroGroupInput,
       });
       if (isCurrentRequest(request)) {
         dispatch({
@@ -498,6 +521,7 @@ export function useScientSources(input: {
       itemKeys: options.itemKeys,
       possibleMetadataMatchOverrides: options.possibleMetadataMatchOverrides,
       ...(options.adapter === "zotero" && zoteroConnection ? { connection: zoteroConnection } : {}),
+      ...(options.adapter === "zotero" ? zoteroGroupInput : {}),
     });
     options.onStarted?.();
 
@@ -641,6 +665,7 @@ export function useScientSources(input: {
         root: input.root,
         itemKeys,
         ...(zoteroConnection ? { connection: zoteroConnection } : {}),
+        ...zoteroGroupInput,
       });
       return await importPreflight({ adapter: "zotero", result, request });
     })()
@@ -921,6 +946,9 @@ export function useScientSources(input: {
     zoteroStatus: state.zoteroStatus,
     zoteroCollections: state.zoteroCollections,
     zoteroScope: state.zoteroScope,
+    zoteroGroups: state.zoteroStatus?.groups ?? [],
+    zoteroMyLibrary: state.zoteroStatus?.myLibrary !== false,
+    zoteroGroupId: state.zoteroGroupId,
     zoteroCheckFeedback: state.zoteroCheckFeedback,
     library: state.library,
     preflight: state.preflight,
@@ -932,6 +960,7 @@ export function useScientSources(input: {
     importReferenceFile,
     searchZotero,
     selectZoteroScope,
+    selectZoteroLibrary,
     importZoteroScope,
     previewImport,
     runImport,

@@ -1,4 +1,9 @@
-import { scientSourceTagCounts, scientSourceTagKey } from "@scientfactory/scient-sources";
+import {
+  scientSourceTagCounts,
+  scientSourceTagKey,
+  scientSourceTopicKey,
+  type ScientSourceStudyDesign,
+} from "@scientfactory/scient-sources";
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { Plus, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
@@ -14,6 +19,8 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../components/ui/menu";
+import { orderedCollections } from "./collectionTree";
+import { SCIENT_SOURCE_STUDY_DESIGN_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
 
@@ -124,7 +131,23 @@ function AddTagMenu(props: {
   );
 }
 
-/** Tags and collections of one source, editable in place. */
+/** A registry category; showing it lists the sources that share it. */
+function CategoryChip(props: { readonly label: string; readonly onShow: () => void }) {
+  return (
+    <Badge variant="outline">
+      <button
+        type="button"
+        className="max-w-48 cursor-pointer truncate outline-none focus-visible:underline"
+        aria-label={`Show sources in ${props.label}`}
+        onClick={props.onShow}
+      >
+        {props.label}
+      </button>
+    </Badge>
+  );
+}
+
+/** Tags and collections of one source, editable in place, and its registry categories. */
 export function SourceOrganizeSection(props: {
   readonly organize: SourcesOrganize;
   readonly sourceId: string;
@@ -132,15 +155,20 @@ export function SourceOrganizeSection(props: {
   readonly records: ReadonlyArray<SourceSummary>;
   readonly onShowTag: (tag: string) => void;
   readonly onShowCollection: (collectionId: string) => void;
+  readonly onShowCategory?: (category: {
+    readonly studyDesign?: ScientSourceStudyDesign;
+    readonly topic?: string;
+  }) => void;
   readonly onRequestName: (request: SourcesNameRequest) => void;
 }) {
   const { organize, sourceId } = props;
   const tags = [...new Map(props.tags.map((tag) => [scientSourceTagKey(tag), tag])).values()];
   const libraryTags = scientSourceTagCounts(props.records).map((entry) => entry.tag);
-  const collections = organize.organization.collections.toSorted((left, right) =>
-    left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
-  );
-  const memberOf = collections.filter((collection) => collection.sourceIds.includes(sourceId));
+  const collections = orderedCollections(organize.organization.collections);
+  const memberOf = collections.filter(({ collection }) => collection.sourceIds.includes(sourceId));
+  const categories = props.records.find((record) => record.sourceId === sourceId)?.categories;
+  const onShowCategory = props.onShowCategory;
+  const studyDesign = categories?.studyDesign;
   const setMembership = (collectionId: string, member: boolean) =>
     void organize.organize(
       member
@@ -171,12 +199,12 @@ export function SourceOrganizeSection(props: {
         <AddTagMenu organize={organize} sourceId={sourceId} tags={tags} libraryTags={libraryTags} />
       </Section>
       <Section title="Collections">
-        {memberOf.map((collection) => (
+        {memberOf.map(({ collection, label }) => (
           <Chip
             key={collection.collectionId}
-            label={collection.name}
-            showLabel={`Show collection ${collection.name}`}
-            removeLabel={`Remove from ${collection.name}`}
+            label={label}
+            showLabel={`Show collection ${label}`}
+            removeLabel={`Remove from ${label}`}
             disabled={organize.pending || !organize.canChange}
             onShow={() => props.onShowCollection(collection.collectionId)}
             onRemove={() => setMembership(collection.collectionId, false)}
@@ -197,13 +225,13 @@ export function SourceOrganizeSection(props: {
             Collection
           </MenuTrigger>
           <MenuPopup align="start" side="bottom" className="min-w-48">
-            {collections.map((collection) => (
+            {collections.map(({ collection, label }) => (
               <MenuCheckboxItem
                 key={collection.collectionId}
                 checked={collection.sourceIds.includes(sourceId)}
                 onCheckedChange={(checked) => setMembership(collection.collectionId, checked)}
               >
-                <span className="min-w-0 truncate">{collection.name}</span>
+                <span className="min-w-0 truncate">{label}</span>
               </MenuCheckboxItem>
             ))}
             {collections.length > 0 ? <MenuSeparator /> : null}
@@ -224,6 +252,23 @@ export function SourceOrganizeSection(props: {
           </MenuPopup>
         </Menu>
       </Section>
+      {categories && onShowCategory ? (
+        <Section title="Categories">
+          {studyDesign ? (
+            <CategoryChip
+              label={SCIENT_SOURCE_STUDY_DESIGN_LABELS[studyDesign]}
+              onShow={() => onShowCategory({ studyDesign })}
+            />
+          ) : null}
+          {(categories.topics ?? []).map((topic) => (
+            <CategoryChip
+              key={scientSourceTopicKey(topic.name)}
+              label={topic.name}
+              onShow={() => onShowCategory({ topic: topic.name })}
+            />
+          ))}
+        </Section>
+      ) : null}
     </>
   );
 }

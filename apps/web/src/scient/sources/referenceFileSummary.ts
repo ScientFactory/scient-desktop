@@ -37,10 +37,15 @@ export function summarizeReferenceFileReport(
     lines.push(`${plural(report.unreadableCount, "entry", "entries")} could not be read.`);
   }
   if (report.notKept.length > 0) {
-    const shown = report.notKept
+    // A linked-file field can be listed once per reason; the summary counts it once.
+    const counts = new Map<string, number>();
+    for (const field of report.notKept) {
+      counts.set(field.field, (counts.get(field.field) ?? 0) + field.entryCount);
+    }
+    const shown = [...counts]
       .slice(0, NOT_KEPT_SHOWN)
-      .map((field) => `${field.field} (${field.entryCount.toLocaleString()})`);
-    const more = report.notKept.length - shown.length;
+      .map(([field, count]) => `${field} (${count.toLocaleString()})`);
+    const more = counts.size - shown.length;
     lines.push(`Fields not kept: ${shown.join(", ")}${more > 0 ? `, and ${more} more` : ""}.`);
   }
   if (lines.length === 0) return null;

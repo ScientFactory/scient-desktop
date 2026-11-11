@@ -32,7 +32,16 @@ import {
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../../components/ui/menu";
 import {
   Popover,
   PopoverDescription,
@@ -621,7 +630,14 @@ export function SourceDetails(props: {
   readonly onRefreshMetadata: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
   readonly onOpenHistory?: () => void;
-  readonly onSendToZotero?: () => void;
+  /** Without a group ID, the source goes to My Library. */
+  readonly onSendToZotero?: (groupId: string | null) => void;
+  /** Zotero groups the key in Accounts can write to; with any, Send to Zotero asks where. */
+  readonly zoteroWritableGroups?: ReadonlyArray<{
+    readonly groupId: string;
+    readonly name: string;
+  }>;
+  readonly onSourceActionsOpen?: () => void;
   readonly onGetPdf?: () => Promise<void>;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
@@ -656,9 +672,9 @@ export function SourceDetails(props: {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex shrink-0 items-center gap-3 border-b border-border p-3">
-        <Button variant="ghost" size="xs" onClick={props.onBack} aria-label="Back to Sources">
+        <Button variant="ghost" size="xs" onClick={props.onBack} aria-label="Back to Library">
           <ChevronLeft />
-          Sources
+          Library
         </Button>
         <div className="min-w-0 flex-1" />
         {sourceNote.button}
@@ -724,7 +740,11 @@ export function SourceDetails(props: {
             Get PDF
           </Button>
         ) : null}
-        <Menu>
+        <Menu
+          onOpenChange={(open) => {
+            if (open) props.onSourceActionsOpen?.();
+          }}
+        >
           <ScientTooltip content="More source actions">
             <MenuTrigger
               render={
@@ -754,8 +774,27 @@ export function SourceDetails(props: {
                 History
               </MenuItem>
             ) : null}
-            {props.onSendToZotero ? (
-              <MenuItem disabled={readOnly} onClick={props.onSendToZotero}>
+            {props.onSendToZotero && (props.zoteroWritableGroups ?? []).length > 0 ? (
+              <MenuSub>
+                <MenuSubTrigger disabled={readOnly}>
+                  <Upload />
+                  Send to Zotero
+                </MenuSubTrigger>
+                <MenuSubPopup className="max-h-80 overflow-y-auto">
+                  <MenuItem onClick={() => props.onSendToZotero?.(null)}>My Library</MenuItem>
+                  {(props.zoteroWritableGroups ?? []).map((group) => (
+                    <MenuItem
+                      key={group.groupId}
+                      title={group.name}
+                      onClick={() => props.onSendToZotero?.(group.groupId)}
+                    >
+                      <span className="min-w-0 truncate">{group.name}</span>
+                    </MenuItem>
+                  ))}
+                </MenuSubPopup>
+              </MenuSub>
+            ) : props.onSendToZotero ? (
+              <MenuItem disabled={readOnly} onClick={() => props.onSendToZotero?.(null)}>
                 <Upload />
                 Send to Zotero
               </MenuItem>

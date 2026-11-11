@@ -103,6 +103,7 @@ their own subtree:
 ├── trash/<source-id>.json   removed sources, whole, until restored or deleted
 ├── text/sha256/<prefix>/    extracted PDF text, one JSON file per PDF hash
 ├── collections.json         collections and saved searches
+├── categories.json          study design and topics per source, from registries
 ├── reviews/<review-id>.json systematic reviews
 ├── bulk-edits/<batch-id>.json what a bulk edit changed, for Undo
 ├── operations/              resumable import state
@@ -192,10 +193,17 @@ provenance.
 
 Registry lookups read the user's research keys from Accounts through
 `researchKeys.ts`: the API-key row whose sites match the service (OpenAlex,
-Semantic Scholar, NCBI, and the Unpaywall email), skipping a row set to Off.
-Tools take the resolver through `keyedIdentifierLookup`, which passes the keys
-as `Redacted` values; the Effect HTTP client gets them as `Redacted` URL
-parameters so spans show them redacted. Paper downloads send the OpenAlex key
+Semantic Scholar, NCBI, Google Books at `www.googleapis.com`, and the Unpaywall
+email), skipping a row set to Off. Tools take the resolver through
+`keyedIdentifierLookup` and the batch lookups (identifier add, cite, reference
+check) through `keyedBatchLookup`, which pass the keys as `Redacted` values; the
+Effect HTTP client gets them as `Redacted` URL parameters so spans show them
+redacted. Work outside a tool call reads the keys again at each use through
+`researchKeysReader`, captured when the Sources HTTP layer starts: the
+Library's add, refresh and save-page routes, and the background category pass
+(`readSourceCategoryKeysFrom`), whose OpenAlex topics request sends `api_key`.
+Google Books gets the key as `key`; when Google refuses the key (400 or 403)
+the request is repeated once without it. Paper downloads send the OpenAlex key
 and ask Unpaywall only when OpenAlex has no free copy. The Library's registry
 contact email goes to OpenAlex as `mailto` and to Unpaywall when no Unpaywall
 email is saved.
@@ -531,8 +539,14 @@ is assigned.
 the project's `references.bib` and `references.json` (CSL-JSON, `id` = citation
 key), rendered by `@scientfactory/scient-citations/bibliography` and sorted by
 key. Entries come from the same writers as Library export (`formatBibtex`,
-`cslJsonItem` in `@scientfactory/scient-sources/bibliography`; notes stay
-out), so a managed file and an export hold the same entry for a source; Word
+`cslJsonItem` in `@scientfactory/scient-sources/bibliography`; notes and
+abstracts stay out through `includeNotes: false, includeAbstracts: false`), so
+a managed file holds an export's entry minus the abstract. Abstracts are left
+out because they multiply the file size and turn every registry refresh into a
+large diff, and nothing that builds a document reads them; explicit export
+keeps them. The first sync after this change rewrote each file once: the file
+still matched the written copy, so it was replaced quietly (no `edited`, no
+`kept-` copy). Word
 export and reference formatting read sources through the same CSL-JSON writer. The store reports every settled write through
 `onScientSourceRecordsChanged`; the server coalesces those into one sync per
 project, so writes from people, agents and every import path keep both files
@@ -554,7 +568,19 @@ in place (or is kept beside the file as `<name>.kept-<id>`) and the file reports
 as `edited`. If writing fails after the move, the moved-aside text goes back in
 place, or stays as `<name>.kept-<id>` and the error
 (`ScientProjectFilePublicationError.recoveryPath`) names it; it is deleted only
-once another copy is in place. The copies folder is reached only through real folders
+once another copy is in place. Where hard links are missing (EPERM, ENOTSUP,
+and EISDIR from Windows on FAT and exFAT) the file is created exclusively and
+written; a write that fails part way moves the file to a private name and
+removes it only if it is the one it created (checked by file identity), so a
+partial copy never takes the managed name and another writer's file at that
+name goes back in place (or is kept beside it). A sync reports
+every `references.{bib,json}.kept-<id>` and leftover hidden `.replaced` file
+at the project root in the file's `kept` list, whether the write failed in this
+sync or an earlier one, automatic or explicit, until the person deletes it; a
+failed write reports the file `edited` without changes. The Library's notice
+and the `scient_sources_bibliography` result show the list. Windows coverage:
+`ManagedBibliography.test.ts` and `projectFilePublication.test.ts` run in CI's
+Overleaf Windows job. The copies folder is reached only through real folders
 (`assertScientProjectDirectory`); a link anywhere on that path makes both files
 `unmanaged`.
 
@@ -682,7 +708,7 @@ same two functions.
 
 `packages/scient-sources/src/collections.ts` owns
 `.scient/sources/collections.json`; `organize.ts` holds its schemas and the
-one filter model (text, tags, collection, type, PDF) that the panel list,
+one filter model (text, tags, collection, type, PDF, study design, topic) that the panel list,
 saved searches and `scient_sources_list` all compile through
 `compileScientSourceFilter`, so a search means the same thing to a person and
 an agent.
@@ -691,9 +717,14 @@ an agent.
   are source IDs; a removed source keeps its membership and is only hidden, so
   restoring it from the trash restores its collections too. Reads project
   members onto the sources that exist.
-- Names are unique per project without regard to case. Creating a name that
-  exists returns that collection and adds the given sources, so a repeated
-  agent request is harmless. Deleting a collection or saved search marks it
+- A collection may have a `parentCollectionId`, one level only: a parent has
+  no parent, and a collection with subcollections cannot become one
+  (`too-deep`). Names are unique among siblings without regard to case.
+  Creating a name that exists under the same parent returns that collection
+  and adds the given sources, so a repeated agent request is harmless.
+  Filtering by a collection includes its subcollections' members. A
+  subcollection of a deleted parent is shown at the top level, and rejoins it
+  when the parent is restored; nothing is rewritten. Deleting a collection or saved search marks it
   deleted (the latest 50 are kept) so it can be restored.
 - Every change goes through `organizeScientSources` (one action union shared by
   the `organize` HTTP endpoint and `scient_sources_organize`) under one write
@@ -731,6 +762,49 @@ an agent.
   undone again and only what is left is tried. If a receipt write fails during
   Undo, the rest is reported as failed. The receipt itself is marked undone
   when no entry is left.
+- `{ themes: [{ name, parent?, sourceIds }] }` is the same bulk edit for
+  sorting sources into collections: each named collection (and its parent, at
+  the top level) is found by name or created, then filled. A collection it
+  creates is written ahead as a `created` receipt entry; Undo, working newest
+  first, empties it and then deletes it, or keeps it and reports a conflict
+  when sources or subcollections were added since.
+
+## Study design and topics
+
+`apps/server/src/scient/sources/SourceCategories.ts` looks them up and
+`packages/scient-sources/src/categoriesStore.ts` keeps them in
+`.scient/sources/categories.json`, keyed by source ID and apart from records,
+so a lookup never makes a revision, a bulk-edit conflict or a history entry.
+Each entry records the identifiers it was looked up by (`basis`); once a
+source's DOI, PMID, arXiv ID or OpenAlex ID changes, the entry no longer
+applies and the source is looked up again. A damaged file is treated as empty
+and replaced, since it is derived data.
+
+- Study design: PubMed efetch XML for the source's PMID, or for the PMID that
+  esearch (`"<doi>"[aid]`, 20 DOIs per request) finds for its DOI, matched back
+  by the article's own `ArticleIdList` DOI (never a reference's). Publication
+  types decide first (meta-analysis, systematic review, randomized trial, case
+  report, review), then the design MeSH headings (case-control, then cohort,
+  prospective, retrospective or longitudinal studies), else `other`. The raw
+  publication types and design headings are kept. Requests share the NCBI
+  lane.
+- Topics: arXiv's primary and cross-list categories, read from the same feed
+  the resolver already fetched when a source is added by arXiv ID (seeded in
+  memory, so no extra call), else one id_list request per 50; and the top
+  three OpenAlex topics with scores from one `works?filter=doi:…|…` request
+  per 50 sources (PMID or OpenAlex ID when there is no DOI), with the contact
+  email as `mailto` through `metadataHttp`.
+- A background pass (`scheduleSourceCategorization`, one per project at a
+  time) runs when the overview is read, after an add, and after a metadata
+  refresh, which forgets the source's entry first. It saves each chunk of 50,
+  so a pass that stops resumes where it left off. A registry that cannot be
+  reached sets `retryAfter` (6 hours) on what it left unanswered; what was
+  answered is kept. Passes run only on a server built with the registry
+  contact layer, so tests make no requests. They use no Accounts keys.
+- Clients get a `categories` summary (study design, topic names) on each
+  overview record; agents get the same on `scient_sources_list`, the full
+  entry on `scient_sources_get`, and counts (with how many are still being
+  looked up) on `scient_sources_collections`.
 
 ## Systematic reviews
 
@@ -814,6 +888,22 @@ files inside `.scient/sources` are refused. Adapter error messages are written
 for people, while filesystem errors (which can carry host paths) are replaced
 before they reach a model.
 
+Linked files (BibTeX `file` in JabRef, Zotero and Mendeley syntax, RIS
+`L1`/`L4`, EndNote `pdf-urls` including `internal-pdf://` under the library's
+`.Data/PDF` folder, and `file:` URLs) are resolved when the batch is staged.
+A PDF is attached only when its real path is inside the project (outside
+`.scient`) or inside the reference file's folder; relative paths start from
+that folder, else the project. Agents pass the project file's folder; the
+upload route uses `sourcePath` only when the client is on the server's computer
+and the named file holds exactly the uploaded bytes, so a client cannot name an
+arbitrary folder. A filesystem root is never used as the folder. Up to
+`SCIENT_SOURCE_LINKED_PDF_LIMIT` real paths per entry are staged; advancing
+uses a path only if it still resolves to itself, passes the first through the
+ordinary PDF intake (hash, validation, PDF duplicate check) and attaches the
+rest with `attachScientSourcePdf`. Every other link is reported in `notKept`
+under its field with a `reason`; the report's `linkedPdfCount` and the agent
+result's `pdfsAttached` count what was attached.
+
 Export (`exportBibliography`) writes the Library or a selection under each
 record's citation key; a record without one gets a free key from the same
 rules for that file only. Project notes are excluded unless requested.
@@ -833,8 +923,8 @@ One reader (`ZoteroLibraryReader.ts`) works over two transports. The local
 transport (`ZoteroLocalAdapter.ts`) uses Zotero's read-only local API v3 at the
 fixed loopback endpoint `127.0.0.1:23119`, plus Better BibTeX's local JSON-RPC
 `item.citationkey` for keys an item does not carry itself. The web transport
-(`ZoteroWebAdapter.ts`) reads and writes the key owner's personal library at
-`api.zotero.org`. Neither scans Zotero's database or accepts arbitrary hosts.
+(`ZoteroWebAdapter.ts`) reads and writes the key owner's personal library, or a
+group library, at `api.zotero.org`. Neither scans Zotero's database or accepts arbitrary hosts.
 Responses are time- and size-bounded and decoded through explicit schemas;
 mapping lives in `ZoteroItems.ts`.
 
@@ -854,7 +944,28 @@ travels with browse, preflight and import requests, and a zotero.org import is
 recorded with the `zotero-web` operation adapter so resumed steps read the same
 library. Local item keys and zotero.org keys name the same items in the user's
 personal library (local library ID `0` and the zotero.org user ID are the same
-library). Group libraries are not supported.
+library).
+
+### Group libraries
+
+Groups are listed from `/api/users/0/groups` locally (Zotero answers
+`{ data: [...] }` with the groups it syncs) and from `/users/<id>/groups` on
+zotero.org, keeping those the key's `access.groups` (`all` or the group ID)
+lets it read. A group reads from `/api/groups/<groupId>` or `/groups/<groupId>`;
+the local API takes the zotero.org group ID and resolves Zotero's internal
+library ID itself. The status endpoint carries `groups` when ready, and browse,
+collections, preflight and both import requests take an optional `groupId`; the
+import operation stores it (`zoteroGroupId`) so resumed steps read the same
+group. A group item is linked with `libraryId` `groups/<groupId>` (My Library
+keeps the bare user ID) and gets source key `zotero-group-<groupId>-<itemKey>`,
+so a group item and a My Library item with the same key are two records and
+same-origin duplicate checks compare library and key. Refresh opens one
+transport per library found in the sources' links. Better BibTeX names group
+items `<libraryID>:<itemKey>` with Zotero's internal library ID, which the local
+API never shows; it is taken from `user.groups` when exactly one library there
+has the group's name, otherwise group citation keys come only from the item.
+Group files on zotero.org follow the key's group read access (keys have no
+separate group file switch).
 
 Connection states distinguish ready, access disabled (or a refused key),
 incompatible API, malformed response, and unreachable. The local API alone
@@ -875,8 +986,10 @@ read; S2's key rules keep it.
 
 Zotero collections are intake scopes when browsing. After an item is imported
 it joins a Library collection (`collections.json`) named after each Zotero
-collection it belongs to, nested ones as `Parent / Child`; a collection problem
-never fails the import. Scope discovery is capped at 500 importable references
+collection it belongs to. One level of Zotero's nesting is kept as a
+subcollection; a deeper collection's items join its ancestor at that level,
+and the item's `note` in the operation (and the agent import result) names
+each one flattened. A collection problem never fails the import. Scope discovery is capped at 500 importable references
 per operation and fails with a request to choose a smaller scope above that
 bound. Collection and whole-library actions skip the separate preflight
 screen; each item is still validated, duplicate-assessed and committed by the
@@ -909,9 +1022,16 @@ own field set and `If-Unmodified-Since-Version`; if the item changed in Zotero
 since Scient last read it, nothing is sent and the user is asked to refresh.
 Empty values here are never sent. Extra keeps its unmanaged lines and carries
 the citation key and identifiers without a Zotero field. PDFs are not uploaded.
+Without a `groupId` sends go to My Library. With one, the key is checked again
+and the group must be writable: the key's group `write` and the group's
+`libraryEditing` (`members`, or `admins` with the user as owner or admin);
+otherwise the send is refused before any write. A source linked to a different
+library than the target is created anew there and relinked; Zotero's own items
+are never moved.
 
 Agent tools `scient_sources_zotero_browse`, `_import`, `_refresh` and `_send`
-give agents the same power; their messages pass through only Zotero's own
+give agents the same power (browse returns `groups`; browse, import and send
+take `library`, a group ID, defaulting to My Library); their messages pass through only Zotero's own
 explanations, never local paths.
 
 ## Operations and recovery
@@ -984,6 +1104,16 @@ shape and pure search (`/full-text`) and its filesystem store
   attachment's size and `sha256` before pdf.js sees them. Any other PDF
   (annotations of a project file) goes through `readScientSourcePdfBytes`
   with its expected hash.
+
+Reading one source's text (`scient_sources_read_text`) returns whole pages from
+`fromPage` up to `maxCharacters` (default 12,000, at most 30,000) and the
+`nextPage` to continue from. A page is never cut: one longer than the budget
+comes back whole and alone. The sizes keep one result small enough for the
+providers to pass inline instead of saving it to a file; none of the providers'
+inline limits is stated in this repository or `.repos/`, so these are the
+planned defaults rather than measured values. The tool is strict: an unknown
+parameter (`page`, `pages`, `offset`) is refused with the accepted names, because
+Effect's MCP server otherwise drops unknown keys and the agent reads page 1.
 
 Search is a pure-JS scan of cached, folded page text rather than SQLite FTS5:
 the text is project data in project files, while the server's SQLite holds app

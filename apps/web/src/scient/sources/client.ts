@@ -41,6 +41,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
+import { readPrimaryEnvironmentId } from "../../state/environments";
 import { readPreparedConnection } from "../../state/session";
 import { runSourcesCommand, sourcesCommands } from "./sourcesCommands";
 
@@ -233,6 +234,7 @@ export function readZoteroLibrary(
     readonly start: number;
     readonly limit: number;
     readonly connection?: ZoteroConnection;
+    readonly groupId?: string;
   },
 ) {
   return runtime.runPromise(
@@ -240,8 +242,14 @@ export function readZoteroLibrary(
   );
 }
 
-export function readZoteroCollections(environmentId: EnvironmentId, connection?: ZoteroConnection) {
-  return runtime.runPromise(listEnvironmentZoteroCollections(prepared(environmentId), connection));
+export function readZoteroCollections(
+  environmentId: EnvironmentId,
+  connection?: ZoteroConnection,
+  groupId?: string,
+) {
+  return runtime.runPromise(
+    listEnvironmentZoteroCollections(prepared(environmentId), connection, groupId),
+  );
 }
 
 export function preflightZoteroItems(
@@ -250,6 +258,7 @@ export function preflightZoteroItems(
     readonly root: string;
     readonly itemKeys: ReadonlyArray<string>;
     readonly connection?: ZoteroConnection;
+    readonly groupId?: string;
   },
 ) {
   return runtime.runPromise(
@@ -265,6 +274,7 @@ export function beginZoteroItemsImport(
     readonly itemKeys: ReadonlyArray<string>;
     readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
     readonly connection?: ZoteroConnection;
+    readonly groupId?: string;
   },
 ) {
   return runSourcesCommand(sourcesCommands.beginImport, environmentId, input);
@@ -277,6 +287,7 @@ export function beginZoteroScopeImport(
     readonly operationId: string;
     readonly scope: ZoteroImportScope;
     readonly connection?: ZoteroConnection;
+    readonly groupId?: string;
   },
 ) {
   return runSourcesCommand(sourcesCommands.beginScopedImport, environmentId, input);
@@ -355,11 +366,17 @@ export function importScientSourcesFile(
   environmentId: EnvironmentId,
   input: { readonly root: string; readonly operationId: string; readonly file: File },
 ) {
+  // A path on this computer means nothing to another computer's server.
+  const sourcePath =
+    environmentId === readPrimaryEnvironmentId()
+      ? window.desktopBridge?.getPathForFile(input.file)
+      : null;
   return runSourcesCommand(sourcesCommands.fileImport, environmentId, {
     root: input.root,
     operationId: input.operationId,
     file: input.file,
     fileName: input.file.name,
+    ...(sourcePath ? { sourcePath } : {}),
   });
 }
 

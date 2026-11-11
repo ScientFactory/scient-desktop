@@ -52,6 +52,14 @@ export interface BibliographyEntry {
   readonly sourceFields: Readonly<Record<string, string>>;
   /** Fields of this entry that have no place in a Scient source. */
   readonly notKept: ReadonlyArray<string>;
+  /** Attached files the reference manager named (paths or file URLs), resolved at import. */
+  readonly linkedFiles: ReadonlyArray<BibliographyLinkedFile>;
+}
+
+export interface BibliographyLinkedFile {
+  /** The file's own field name, for the report. */
+  readonly field: string;
+  readonly path: string;
 }
 
 export interface BibliographyExportItem {
@@ -62,6 +70,8 @@ export interface BibliographyExportItem {
 export interface BibliographyExportOptions {
   /** Project notes are private by default; include them only when asked. */
   readonly includeNotes: boolean;
+  /** Abstracts are written unless left out; the managed project files leave them out. */
+  readonly includeAbstracts?: boolean;
 }
 
 export interface BibliographyUnreadableEntry {
@@ -119,6 +129,7 @@ export class BibliographyEntryBuilder {
   private readonly notes: string[] = [];
   private readonly origins: Record<string, string> = {};
   private readonly dropped = new Set<string>();
+  private readonly linked: BibliographyLinkedFile[] = [];
 
   readonly index: number;
   readonly line: number | null;
@@ -192,6 +203,13 @@ export class BibliographyEntryBuilder {
     this.dropped.add(sourceField);
   }
 
+  addLinkedFile(path: string, sourceField: string): void {
+    const clean = path.trim();
+    if (clean && !this.linked.some((file) => file.path === clean)) {
+      this.linked.push({ field: sourceField, path: clean });
+    }
+  }
+
   get creators(): ReadonlyArray<ScientSourceCreator> {
     return this.creatorList;
   }
@@ -221,6 +239,7 @@ export class BibliographyEntryBuilder {
       note: this.notes.length > 0 ? this.notes.join("\n\n") : null,
       sourceFields: this.origins,
       notKept: [...this.dropped],
+      linkedFiles: this.linked,
     };
   }
 }

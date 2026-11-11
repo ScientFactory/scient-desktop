@@ -4,6 +4,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
+import { writeScientSourceCategories } from "@scientfactory/scient-sources/categories-store";
 import {
   readScientSourceRecord,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
@@ -40,6 +41,7 @@ async function project(
     readonly sourceId: string;
     readonly title: string;
     readonly tags?: ReadonlyArray<string>;
+    readonly doi?: string;
   }>,
 ) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-sources-organize-"));
@@ -59,7 +61,7 @@ async function project(
       creators: [],
       issuedRaw: null,
       issuedYear: 2024,
-      identifiers: [],
+      identifiers: source.doi ? [{ scheme: "doi", value: source.doi }] : [],
       abstract: null,
       containerTitle: null,
       publisher: null,
@@ -191,7 +193,93 @@ describe("Sources organize tools", () => {
           { tag: "Screened", count: 2 },
           { tag: "RCT", count: 1 },
         ],
+        studyDesigns: [],
+        topics: [],
       });
+    }),
+  );
+
+  it.effect("filters by study design and topic, and sorts into nested themes with one Undo", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() =>
+        project([
+          { sourceId: "source_trial", title: "Sepsis trial", doi: "10.1000/trial" },
+          { sourceId: "source_cohort", title: "Sepsis cohort", doi: "10.1000/cohort" },
+          { sourceId: "source_edited", title: "DOI changed since", doi: "10.1000/new" },
+        ]),
+      );
+      const topic = { scheme: "openalex" as const, id: "T1", name: "Sepsis care", score: 0.9 };
+      yield* Effect.promise(() =>
+        writeScientSourceCategories(root, {
+          source_trial: {
+            basis: "doi:10.1000/trial",
+            checkedAt: "2026-11-11T00:00:00.000Z",
+            studyDesign: "randomized-trial",
+            topics: [topic],
+          },
+          source_cohort: {
+            basis: "doi:10.1000/cohort",
+            checkedAt: "2026-11-11T00:00:00.000Z",
+            studyDesign: "cohort",
+            topics: [topic],
+          },
+          // Looked up by an identifier the source no longer has, so it no longer applies.
+          source_edited: {
+            basis: "doi:10.1000/old",
+            checkedAt: "2026-11-11T00:00:00.000Z",
+            studyDesign: "randomized-trial",
+          },
+        }),
+      );
+      const trials = yield* provide(
+        listScientSourcesForInvocation({ studyDesign: "randomized-trial" }),
+        root,
+      );
+      expect(trials.records.map((record) => [record.sourceId, record.topics])).toEqual([
+        ["source_trial", ["Sepsis care"]],
+      ]);
+      const byTopic = yield* provide(
+        listScientSourcesForInvocation({ topic: "sepsis CARE" }),
+        root,
+      );
+      expect(byTopic.total).toBe(2);
+
+      const sorted = yield* provide(
+        bulkUpdateScientSourcesForInvocation({
+          change: {
+            themes: [
+              { name: "Trials", parent: "Sepsis", sourceIds: ["source_trial"] },
+              { name: "Cohorts", parent: "Sepsis", sourceIds: ["source_cohort"] },
+            ],
+          },
+        }),
+        root,
+      );
+      const overview = yield* provide(readScientSourceCollectionsForInvocation(), root);
+      const parent = overview.collections.find((collection) => collection.name === "Sepsis");
+      expect(
+        overview.collections.map((collection) => [
+          collection.name,
+          collection.parentCollectionId === parent?.collectionId,
+          collection.sourceCount,
+        ]),
+      ).toEqual([
+        ["Sepsis", false, 0],
+        ["Trials", true, 1],
+        ["Cohorts", true, 1],
+      ]);
+      const inParent = yield* provide(
+        listScientSourcesForInvocation({ collectionId: parent!.collectionId }),
+        root,
+      );
+      expect(inParent.total).toBe(2);
+
+      yield* provide(
+        bulkUpdateScientSourcesForInvocation({ change: { undoBatchId: sorted.undo!.batchId } }),
+        root,
+      );
+      const undone = yield* provide(readScientSourceCollectionsForInvocation(), root);
+      expect(undone.collections).toEqual([]);
     }),
   );
 

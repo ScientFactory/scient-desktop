@@ -236,6 +236,15 @@ describe("source full text", () => {
     expect(first).toMatchObject({ outcome: "read", pageCount: 3, nextPage: 2 });
     if (first.outcome !== "read") return;
     expect(first.pages.map((page) => page.page)).toEqual([1]);
+    const [methods] = first.pages;
+    await expect(
+      readSourceText({
+        root: fixture.root,
+        sourceId: trial.sourceId,
+        fromPage: 1,
+        maxCharacters: 10,
+      }),
+    ).resolves.toMatchObject({ nextPage: 2, pages: [{ page: 1, text: methods!.text }] });
     await expect(
       readSourceText({
         root: fixture.root,

@@ -235,7 +235,10 @@ function entryFromRaw(raw: RawRisRecord, index: number): BibliographyEntry {
     if (doi) builder.addIdentifier("doi", decodeURIComponent(doi), "UR");
     builder.set("url", url, "UR");
   }
-  use("L2", "LK");
+  use("L2", "LK", "L1", "L4");
+  for (const tag of ["L1", "L4"]) {
+    for (const value of values(tag)) builder.addLinkedFile(value, tag);
+  }
   const key = first("ID");
   if (key && !/^\d+$/u.test(key)) builder.citationKey = normalizeImportedCitationKey(key);
   if (
@@ -333,7 +336,7 @@ export function formatRis(
       }
       add("UR", record.url);
       add("LA", record.language);
-      add("AB", record.abstract);
+      if (options.includeAbstracts !== false) add("AB", record.abstract);
       for (const tag of record.tags) add("KW", tag);
       if (options.includeNotes) add("N1", record.note ?? null, true);
       if (record.type === "preprint") add("M3", "Preprint");

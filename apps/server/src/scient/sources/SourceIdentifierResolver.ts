@@ -23,6 +23,7 @@ import {
   type ScientSourceEditorialNotice,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
+  type ScientSourceTopic,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
 import * as Context from "effect/Context";
@@ -252,6 +253,8 @@ export interface ResolvedSourceMetadata {
   readonly editorialNotices?: ReadonlyArray<ScientSourceEditorialNotice>;
   readonly updates?: ReadonlyArray<RegistryUpdateNotice>;
   readonly relations?: ReadonlyArray<RegistryRelation>;
+  /** arXiv's categories, read from the same response. */
+  readonly topics?: ReadonlyArray<ScientSourceTopic>;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>
@@ -533,8 +536,8 @@ const IDENTIFIER_SCHEMES: Readonly<Record<SourceAddIdentifierScheme, IdentifierS
   isbn: {
     wellFormed: isValidIsbn,
     perRequest: ISBNS_PER_REQUEST,
-    lookup: (values, request, pace, _keys, progress) =>
-      lookupIsbns(values, request, pace, progress),
+    lookup: (values, request, pace, keys, progress) =>
+      lookupIsbns(values, request, pace, progress, keys),
   },
   openalex: {
     wellFormed: isWellFormedOpenAlexWorkId,
@@ -619,6 +622,7 @@ export interface ResearchKeys {
   readonly openAlex?: Redacted.Redacted<string>;
   readonly semanticScholar?: Redacted.Redacted<string>;
   readonly ncbi?: Redacted.Redacted<string>;
+  readonly googleBooks?: Redacted.Redacted<string>;
   /** Unpaywall takes an email address instead of a key. */
   readonly unpaywallEmail?: Redacted.Redacted<string>;
 }

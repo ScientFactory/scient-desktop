@@ -34,6 +34,8 @@ import {
   ZoteroConnectionStatus,
   ZoteroCollection,
   ZoteroCollectionsResult,
+  ZoteroGroup,
+  ZoteroGroupId,
   ZoteroImportScope,
   ZoteroLibraryPage,
 } from "@scientfactory/scient-sources";
@@ -310,9 +312,11 @@ export const ScientSourcesZoteroRefreshRequest = Schema.Struct({
 });
 export type ScientSourcesZoteroRefreshRequest = typeof ScientSourcesZoteroRefreshRequest.Type;
 
+/** Without a groupId, sources go to My Library. */
 export const ScientSourcesZoteroSendRequest = Schema.Struct({
   root: NonEmptyString,
   sourceIds: BoundedSourceIds,
+  groupId: Schema.optionalKey(ZoteroGroupId),
 });
 export type ScientSourcesZoteroSendRequest = typeof ScientSourcesZoteroSendRequest.Type;
 
@@ -322,11 +326,13 @@ export const ZoteroLibraryRequest = Schema.Struct({
   start: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   limit: BoundedPageSize,
   connection: Schema.optionalKey(ZoteroConnection),
+  groupId: Schema.optionalKey(ZoteroGroupId),
 });
 export type ZoteroLibraryRequest = typeof ZoteroLibraryRequest.Type;
 
 export const ZoteroCollectionsRequest = Schema.Struct({
   connection: Schema.optionalKey(ZoteroConnection),
+  groupId: Schema.optionalKey(ZoteroGroupId),
 });
 export type ZoteroCollectionsRequest = typeof ZoteroCollectionsRequest.Type;
 
@@ -335,6 +341,7 @@ export const ZoteroScopedImportRequest = Schema.Struct({
   operationId: NonEmptyString,
   scope: ZoteroImportScope,
   connection: Schema.optionalKey(ZoteroConnection),
+  groupId: Schema.optionalKey(ZoteroGroupId),
 });
 export type ZoteroScopedImportRequest = typeof ZoteroScopedImportRequest.Type;
 
@@ -344,6 +351,7 @@ export const ScientSourcesPreflightRequest = Schema.Struct({
     Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
   ),
   connection: Schema.optionalKey(ZoteroConnection),
+  groupId: Schema.optionalKey(ZoteroGroupId),
 });
 export type ScientSourcesPreflightRequest = typeof ScientSourcesPreflightRequest.Type;
 
@@ -374,9 +382,11 @@ export const ScientSourcesFileImportRequest = Schema.Struct({
   root: NonEmptyString,
   operationId: NonEmptyString,
   file: Multipart.SingleFileSchema,
+  /** The file's path on the server's computer, when the client is that computer; PDFs it links in its folder are attached. */
+  sourcePath: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_096))),
 }).pipe(
   HttpApiSchema.asMultipart({
-    maxParts: 3,
+    maxParts: 4,
     maxFieldSize: 16 * 1024,
     maxFileSize: 32 * 1024 * 1024,
     maxTotalSize: 32 * 1024 * 1024 + 64 * 1024,
@@ -429,6 +439,7 @@ export const ScientSourcesBeginImportRequest = Schema.Struct({
     Schema.check(Schema.isMaxLength(500)),
   ),
   connection: Schema.optionalKey(ZoteroConnection),
+  groupId: Schema.optionalKey(ZoteroGroupId),
 });
 export type ScientSourcesBeginImportRequest = typeof ScientSourcesBeginImportRequest.Type;
 
@@ -469,6 +480,8 @@ export {
   ZoteroConnectionStatus,
   ZoteroCollection,
   ZoteroCollectionsResult,
+  ZoteroGroup,
+  ZoteroGroupId,
   ZoteroImportScope,
   ZoteroLibraryPage,
 };

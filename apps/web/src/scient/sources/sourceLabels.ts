@@ -1,4 +1,4 @@
-import type { ScientSourceType } from "@scientfactory/scient-sources";
+import type { ScientSourceStudyDesign, ScientSourceType } from "@scientfactory/scient-sources";
 
 function isSameCalendarDay(left: Date, right: Date): boolean {
   return (
@@ -62,6 +62,17 @@ export function sourceAddedLabel(
   if (isSameCalendarDay(date, new Date())) return "Added today";
   return `Added ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date)}`;
 }
+
+export const SCIENT_SOURCE_STUDY_DESIGN_LABELS = {
+  "randomized-trial": "Randomized trial",
+  "meta-analysis": "Meta-analysis",
+  "systematic-review": "Systematic review",
+  cohort: "Cohort study",
+  "case-control": "Case-control study",
+  "case-report": "Case report",
+  review: "Review",
+  other: "Other design",
+} as const satisfies Readonly<Record<ScientSourceStudyDesign, string>>;
 
 export const SCIENT_SOURCE_TYPE_LABELS = {
   article: "Article",

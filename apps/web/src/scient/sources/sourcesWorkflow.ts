@@ -36,6 +36,8 @@ export interface SourcesWorkflowState {
   readonly library: ZoteroLibraryPage | null;
   readonly zoteroCollections: ReadonlyArray<ZoteroCollection>;
   readonly zoteroScope: ZoteroImportScope;
+  /** The Zotero group being browsed; null for My Library. */
+  readonly zoteroGroupId: string | null;
   readonly preflight: ScientSourcesPreflightResult | null;
   readonly preflightAdapter: "zotero" | "local-files" | null;
   readonly operation: ScientSourceImportOperation | null;
@@ -57,6 +59,7 @@ export const initialSourcesWorkflowState: SourcesWorkflowState = {
   library: null,
   zoteroCollections: [],
   zoteroScope: { kind: "library" },
+  zoteroGroupId: null,
   preflight: null,
   preflightAdapter: null,
   operation: null,
@@ -102,6 +105,7 @@ export type SourcesWorkflowAction =
     }
   | { readonly type: "zoteroLibrarySeeded"; readonly page: ZoteroLibraryPage }
   | { readonly type: "zoteroScopeChanged"; readonly scope: ZoteroImportScope }
+  | { readonly type: "zoteroGroupChanged"; readonly groupId: string | null }
   | {
       readonly type: "zoteroCollectionsArrived";
       readonly collections: ReadonlyArray<ZoteroCollection>;
@@ -278,6 +282,8 @@ export function sourcesWorkflowReducer(
       return { ...state, library: action.page };
     case "zoteroScopeChanged":
       return { ...state, zoteroScope: action.scope };
+    case "zoteroGroupChanged":
+      return { ...state, zoteroGroupId: action.groupId, zoteroCollections: [] };
     case "zoteroCollectionsArrived":
       return { ...state, zoteroCollections: action.collections };
     case "zoteroLibraryClosed":

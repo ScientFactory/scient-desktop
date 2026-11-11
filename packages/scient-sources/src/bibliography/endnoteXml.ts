@@ -196,7 +196,12 @@ function entryFromRecord(record: XmlElement, index: number): BibliographyEntry {
       if (!value || !/^https?:\/\//iu.test(value)) continue;
       builder.set("url", value, "urls/related-urls");
     }
-    if (childElements(urls, "pdf-urls").length > 0) builder.notKeep("urls/pdf-urls");
+    for (const pdfUrls of childElements(urls, "pdf-urls")) {
+      for (const url of findElements(pdfUrls, "url")) {
+        const value = text(url);
+        if (value) builder.addLinkedFile(value, "urls/pdf-urls");
+      }
+    }
   }
   builder.citationKey = normalizeImportedCitationKey(text(child("label")));
 
@@ -325,7 +330,7 @@ export function formatEndnoteXml(
       element("isbn", standardNumbers),
       element("accession-num", pmid ?? (arxiv ? `arXiv:${arxiv}` : null)),
       element("electronic-resource-num", identifier("doi")),
-      element("abstract", record.abstract),
+      options.includeAbstracts !== false ? element("abstract", record.abstract) : "",
       options.includeNotes ? element("notes", record.note ?? null) : "",
       element("label", citationKey),
       record.url ? `<urls><related-urls>${element("url", record.url)}</related-urls></urls>` : "",
