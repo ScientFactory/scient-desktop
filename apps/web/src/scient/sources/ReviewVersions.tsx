@@ -161,14 +161,14 @@ export function ReviewVersionsLine(props: {
   };
   const choose = async (conflictId: string, pick: Pick) => {
     setChoosing(true);
-    const current = versions?.current;
+    const currentRevision = versions?.currentRevision;
     const changed = await props.reviews.changeConflict(
       props.reviewId,
       {
         action: "resolve",
         conflictId,
         pick,
-        ...(current ? { currentUpdatedAt: current.updatedAt } : {}),
+        ...(currentRevision ? { currentRevision } : {}),
       },
       "The version was not chosen",
     );

@@ -228,4 +228,38 @@ describe("the Library's move line", () => {
       "Moving back could not be confirmed",
     ]);
   });
+
+  it("calls a move back unconfirmed when no answer came and the status has not changed yet", async () => {
+    setup([
+      { state: "done", lines: [summary] },
+      { state: "done", lines: [summary] },
+      { state: "done", lines: [summary] },
+      { state: "restoring", progress: { phase: "restoring", done: 1, total: 4 } },
+    ]);
+    mocks.organizeScientSources.mockRejectedValueOnce({
+      _tag: "RemoteEnvironmentAuthTimeoutError",
+    });
+    await using screen = await render(<Harness libraryBackend />, { router: false });
+    await expect.element(screen.getByText(summary, { exact: false })).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Move back into this project" }));
+    await userEvent.click(page.getByRole("button", { name: "Move back" }));
+    await vi.waitFor(() =>
+      expect(mocks.toast.mock.calls.map(([toast]) => toast.title)).toEqual([
+        "Moving back could not be confirmed",
+      ]),
+    );
+
+    // The server may still start it: no second Move back, and the line follows the status.
+    await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
+    await expect
+      .element(page.getByRole("menuitem", { name: "Move back into this project" }))
+      .not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    libraryWriteSettled(environmentId);
+    await expect
+      .element(screen.getByText("Moving the Library back into this project: 1 of 4."))
+      .toBeVisible();
+  });
 });

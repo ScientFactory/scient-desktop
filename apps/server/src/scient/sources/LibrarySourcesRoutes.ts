@@ -744,11 +744,11 @@ export async function libraryReview(
  */
 export async function libraryReviewConflicts(store: Store, input: { readonly reviewId: string }) {
   const at = { projectRoot: store.root, reviewId: input.reviewId };
-  const [versions, combineReport] = await Promise.all([
+  const [{ currentRevision, ...versions }, combineReport] = await Promise.all([
     readScientReviewVersions(at),
     readScientReviewCombineReport(at),
   ]);
-  return { ...versions, combineReport };
+  return { ...versions, ...(currentRevision ? { currentRevision } : {}), combineReport };
 }
 
 /** The pick between two versions of a review, or dismissing Combine's report. */
@@ -768,7 +768,7 @@ export async function changeLibraryReviewConflict(
     conflictId: change.conflictId,
     pick: change.pick,
     actor,
-    ...(change.currentUpdatedAt ? { expectedUpdatedAt: change.currentUpdatedAt } : {}),
+    ...(change.currentRevision ? { expectedRevision: change.currentRevision } : {}),
   });
   if (resolved.outcome === "not-found") return { outcome: "not-found" as const };
   if (resolved.outcome === "version-changed") return { outcome: "version-changed" as const };

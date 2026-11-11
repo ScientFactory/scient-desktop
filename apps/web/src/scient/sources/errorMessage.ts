@@ -17,6 +17,17 @@ export function isLibraryMovingError(error: unknown): boolean {
   );
 }
 
+/** No answer came back (a timeout or a failed connection), so the request's outcome is unknown. */
+export function isLostAnswerError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    (error._tag === "RemoteEnvironmentAuthTimeoutError" ||
+      error._tag === "RemoteEnvironmentAuthFetchError")
+  );
+}
+
 export function scientSourcesErrorMessage(error: unknown, development: boolean): string {
   if (isLibraryMovingError(error)) return LIBRARY_MOVING_MESSAGE;
   if (

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Review conflicts are files in the project folder.
 // @effect-diagnostics globalDate:off -- Project files use interoperable ISO timestamps.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -258,6 +259,10 @@ async function publishChecked(filePath: string, text: string, maximumBytes: numb
     throw new Error("The review could not be saved. Try again.");
 }
 
+// Two versions can share an `updatedAt`, so the version in force is named by its file's content.
+const revisionOf = (text: string) =>
+  NodeCrypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
+
 /**
  * The pick for a review a join kept two versions of: keep this version, use the other, or
  * combine. The version not kept goes to this checkout's backup first, so the pick can be undone
@@ -270,8 +275,8 @@ export async function resolveScientReviewConflict(input: {
   readonly conflictId: string;
   readonly pick: "keep" | "use-other" | "combine";
   readonly actor: ScientSourceActor;
-  /** The `updatedAt` of the version in force that the pick was made against. */
-  readonly expectedUpdatedAt?: string;
+  /** `currentRevision` of the version in force that the pick was made against. */
+  readonly expectedRevision?: string;
 }): Promise<
   | { readonly outcome: "resolved"; readonly report: ScientReviewCombineReport | null }
   | { readonly outcome: "not-found" }
@@ -292,11 +297,14 @@ export async function resolveScientReviewConflict(input: {
     const incomingText = await readText(conflictReviewPath);
     const existingText = await readText(reviewFile(root, input.reviewId));
     if (!incomingText || !existingText) return { outcome: "not-found" };
-    const incoming = decodeReview(JSON.parse(incomingText));
-    const existing = decodeReview(JSON.parse(existingText));
-    if (input.expectedUpdatedAt !== undefined && existing.updatedAt !== input.expectedUpdatedAt) {
+    if (
+      input.expectedRevision !== undefined &&
+      revisionOf(existingText) !== input.expectedRevision
+    ) {
       return { outcome: "version-changed" };
     }
+    const incoming = decodeReview(JSON.parse(incomingText));
+    const existing = decodeReview(JSON.parse(existingText));
     const incomingSnapshotText = await readText(conflictSnapshotPath);
     const existingSnapshotText = await readText(snapshotFile(root, input.reviewId));
     const snapshotOf = (text: string | null) =>
@@ -426,11 +434,13 @@ export async function readScientReviewVersions(input: {
   readonly reviewId: string;
 }): Promise<{
   readonly current: ScientReviewVersionSummary | null;
+  /** Names the version in force for `resolveScientReviewConflict`'s `expectedRevision`. */
+  readonly currentRevision: string | null;
   readonly versions: ReadonlyArray<ScientReviewVersionSummary>;
 }> {
   const root = await projectRootFor(input.projectRoot);
   const conflicts = await listScientReviewConflicts(input);
-  if (conflicts.length === 0) return { current: null, versions: [] };
+  if (conflicts.length === 0) return { current: null, currentRevision: null, versions: [] };
   const text = await readText(reviewFile(root, input.reviewId));
   let current: ScientSystematicReview | null = null;
   try {
@@ -440,6 +450,7 @@ export async function readScientReviewVersions(input: {
   }
   return {
     current: current ? versionSummary(null, current) : null,
+    currentRevision: text ? revisionOf(text) : null,
     versions: conflicts.map((conflict) => versionSummary(conflict.conflictId, conflict.review)),
   };
 }

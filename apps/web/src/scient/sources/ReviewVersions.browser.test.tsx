@@ -70,6 +70,7 @@ const versions: ScientSystematicReviewConflictsResult = {
     decisions: 12,
     lastDecidedAt: "2026-11-01T00:00:00.000Z",
   },
+  currentRevision: "0123456789abcdef",
   versions: [
     {
       conflictId: "conflict_a",
@@ -140,7 +141,7 @@ describe("versions of a review from a copy of the project", () => {
           action: "resolve",
           conflictId: "conflict_a",
           pick: "use-other",
-          currentUpdatedAt: "2026-11-01T00:00:00.000Z",
+          currentRevision: "0123456789abcdef",
         },
       }),
     );

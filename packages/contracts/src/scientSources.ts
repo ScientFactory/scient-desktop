@@ -449,6 +449,8 @@ export type ScientSystematicReviewChangeRequest = typeof ScientSystematicReviewC
 /** The picker for a review with other versions: the one in force, then each other version. */
 export const ScientSystematicReviewConflictsResult = Schema.Struct({
   current: Schema.NullOr(ScientReviewVersionSummary),
+  /** Names the version in force by its content; a pick sends it back. */
+  currentRevision: Schema.optionalKey(NonEmptyString),
   versions: Schema.Array(ScientReviewVersionSummary),
   combineReport: Schema.NullOr(ScientSystematicReviewCombineReport),
 });
@@ -461,8 +463,8 @@ export const ScientSystematicReviewConflictChange = Schema.Union([
     action: Schema.Literal("resolve"),
     conflictId: NonEmptyString,
     pick: Schema.Literals(["keep", "use-other", "combine"]),
-    /** `updatedAt` of the version in force the picker showed; another one answers `version-changed`. */
-    currentUpdatedAt: Schema.optionalKey(NonEmptyString),
+    /** The picker's `currentRevision`; another version in force answers `version-changed`. */
+    currentRevision: Schema.optionalKey(NonEmptyString),
   }),
   Schema.Struct({ action: Schema.Literal("dismiss-report") }),
 ]);
