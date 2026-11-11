@@ -250,6 +250,15 @@ describe("Scient source collections", () => {
       (entry) => entry.collectionId === methods,
     );
     expect(restored?.parentCollectionId).toBe(thesis);
+
+    // A deleted child whose parent moved under another collection comes back at the top level.
+    await deleteScientSourceCollection({ root, collectionId: methods, actor: "user" });
+    expect((await move(thesis, review)).outcome).toBe("updated");
+    await restoreScientSourceCollection({ root, collectionId: methods, actor: "user" });
+    const unnested = (await readScientSourcesOrganization(root)).collections.find(
+      (entry) => entry.collectionId === methods,
+    );
+    expect(unnested?.parentCollectionId).toBeUndefined();
   });
 
   it("adds and removes members and reports an unknown collection", async () => {

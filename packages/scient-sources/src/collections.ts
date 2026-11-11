@@ -435,10 +435,21 @@ export function restoreScientSourceCollection(input: {
         result: { outcome: "unchanged", collection: current, ...unchangedMembers },
       };
     }
-    const clash = liveCollectionByName(document, current.name, current.parentCollectionId);
+    // Its parent may have moved under another collection since; nesting stays one level deep.
+    const parent = current.parentCollectionId
+      ? findCollection(document, current.parentCollectionId)
+      : undefined;
+    const keepsParent = parent !== undefined && parent.parentCollectionId === undefined;
+    const parentCollectionId = keepsParent ? current.parentCollectionId : undefined;
+    const clash = liveCollectionByName(document, current.name, parentCollectionId);
     if (clash) return { document: null, result: { outcome: "name-taken", collection: clash } };
-    const { deletedAt: _deletedAt, ...live } = current;
-    const collection = { ...live, updatedAt: now, updatedBy: input.actor };
+    const { deletedAt: _deletedAt, parentCollectionId: _parent, ...live } = current;
+    const collection: ScientSourceCollection = {
+      ...live,
+      ...(parentCollectionId ? { parentCollectionId } : {}),
+      updatedAt: now,
+      updatedBy: input.actor,
+    };
     return {
       document: replaceCollection(document, collection),
       result: { outcome: "restored", collection, ...unchangedMembers },
