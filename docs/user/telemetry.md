@@ -38,8 +38,11 @@ it.
   Undo, export) worked and how long it took, whether it was a new connector, a
   fix or your own copy of someone else's, how many tools it has and how many
   settings it still needs, and whether a website sign-in it uses was renewed by
-  Scient, needed you, or failed. Never the connector's name, folder, site or
-  what its tools return.
+  Scient, needed you, or failed. When an agent lists, adds, turns on or off,
+  restarts or signs in a connector: whether it worked, how long it took, what
+  kind of thing it was added from (a Discover entry, an address or a file), its
+  status, and how many connectors and tools there were. Never the connector's
+  name, folder, site, address, search words or what its tools return.
 - How many threads and projects you have. Only the numbers, never their names.
 - Your app version, operating system, device type and how you connected.
 - A random identifier for this installation.

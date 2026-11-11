@@ -1,6 +1,6 @@
 ---
 name: connector-authoring
-description: Build, test, fix or improve a connector (a local MCP server) in Scient. Use when the user asks to make, fix, repair or improve a connector or MCP server, when a connector stopped or returns errors, or when the user needs to reach a service, website, database, file collection or command-line tool that no installed connector or Scient tool covers, including sites with no public API that the user signs in to.
+description: Find, add, build, test, fix or improve a connector (an MCP server) in Scient. Use when the user asks for a connector or to connect a service, asks to make, fix, repair or improve a connector or MCP server, when a connector stopped, needs sign-in or returns errors, or when the user needs to reach a service, website, database, file collection or command-line tool that no installed connector or Scient tool covers, including sites with no public API that the user signs in to.
 ---
 
 # Connector Authoring
@@ -14,10 +14,15 @@ This skill grants no tools or permissions.
 
 ## Make a connector
 
-1. **Check what exists.** Look at the tools you already have (`mcp__<connector>__…` and
-   Scient's own: papers, sources, accounts, compute) and at Extensions → Discover. If one
-   covers the need, use it or tell the user how to add it. If the work is one-off, a script
-   fits better; if it is know-how rather than access, a skill does (`scient-skill-authoring`).
+1. **Add one that exists before building.** `scient_connector_list {query}` (for example
+   `{"query":"gmail"}`) shows the user's connectors and ones Scient can add from Discover and
+   the MCP Registry. If one fits, `scient_connector_add {from}` with its `name` adds it, on for
+   every project; then follow its message (`scient_connector_setup` for `needs-setup`,
+   `scient_connector_control {action: "sign-in"}` for `needs-sign-in`). `scient_connector_add`
+   also takes an https MCP address or a `.mcpb` file. Build one only when none fits; an
+   entry's `reason` says why it can't be added, a good place to start. Also check Scient's own
+   tools (papers, sources, accounts, compute). If the work is one-off, a script fits better; if
+   it is know-how rather than access, a skill does (`scient-skill-authoring`).
 2. **Ask briefly**, in one message and only what you don't know: which service (a link), the
    two or three things they want to do with it (with an example), and how they sign in (an API
    key, a university or site login, nothing).
@@ -49,15 +54,31 @@ This skill grants no tools or permissions.
 
 ## Fix or improve a connector
 
-1. `scient_connector_copy {connector}` copies it into this chat's folder and returns its
-   status, last error and log.
-2. Read the error, the log and the code. Read `fixing.md`.
-3. Reproduce with `scient_connector_check {folder, connector, calls}`, using the call that
-   failed.
-4. Make the smallest fix. Keep tool names, inputs and result fields.
-5. Check again: the failing call and the calls that worked before.
-6. `scient_connector_save {folder, connector}`. Scient keeps the old version (Undo on the
-   connector's page). A vendor's connector becomes the user's own copy; say so.
+1. **Find what is wrong.** `scient_connector_list` gives each connector's status (`ready`,
+   `needs-setup`, `needs-sign-in`, `error`, `off`) and last error. `scient_connector_check
+   {connector}` (no folder) tests an installed one, hosted or local, and lists its tools.
+2. **A hosted connector** (it runs online) has no code to fix. `needs-sign-in`:
+   `scient_connector_control {connector, action: "sign-in"}` opens its sign-in in this chat's
+   browser for the user to finish; then check again. `off`: `action: "on"`. Other errors are
+   the service's: tell the user what it said.
+3. **A local connector**: `needs-setup` is `scient_connector_setup`. A one-off failure may need
+   only `scient_connector_control {connector, action: "restart"}`. Otherwise copy and fix it:
+   1. `scient_connector_copy {connector}` copies it into this chat's folder and returns its
+      status, last error and log. For an npm or PyPI package connector, the package's code
+      comes too, in `package/`, with its dependencies; `source` says where to edit. A command
+      that runs a script outside its folder is named in `source`: copy the script in to change
+      it.
+   2. Read the error, the log and the code. Read `fixing.md`.
+   3. Reproduce with `scient_connector_check {folder, connector, calls}`, using the call that
+      failed.
+   4. Make the smallest fix. Keep tool names, inputs and result fields.
+   5. Check again: the failing call and the calls that worked before.
+   6. `scient_connector_save {folder, connector}`. Scient keeps the old version (Undo on the
+      connector's page). A vendor's connector or a package becomes the user's own copy; say
+      so.
+
+Turning connectors on, off or restarting them needs no question first. Removing one is the
+user's: tell them where (its page in Settings → Extensions).
 
 Go from the diagnosis to the saved fix in one go; don't stop to ask whether to go ahead.
 Ask only when the fix needs something from the user (a key, a sign-in, a choice of behaviour).

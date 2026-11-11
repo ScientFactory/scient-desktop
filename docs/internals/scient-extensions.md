@@ -530,7 +530,8 @@ verbatim instead of treating them as remote connectors.
 ### Agent-made connectors
 
 Agents build, fix and improve local connectors with three tools in the Accounts toolkit
-(`LocalConnectorAuthoring`), next to `scient_connector_setup`:
+(`LocalConnectorAuthoring`), next to `scient_connector_setup` and the tools for any connector
+(below):
 
 - `scient_connector_copy` writes an installed connector's folder, or the template from the
   built-in `connector-authoring` skill, into `connectors/<slug>/` of the calling thread's folder.
@@ -547,6 +548,39 @@ Agents build, fix and improve local connectors with three tools in the Accounts 
   (owned, on, all projects) or swaps it into an existing one. A vendor's bundle (`owned: false`)
   becomes the user's own copy (`forkedFrom`). Settings, keys and the sign-in link are kept, and
   the connector restarts.
+
+**Package code.** Copying an npm or PyPI package connector (a generated `npx -y pkg@v` or
+`uvx pkg==v` manifest) also brings its code in (`PackageSource`), with the tool that runs it:
+`npm install` puts the package in `package/` and its dependencies in `node_modules/`;
+`uv pip install --no-deps --target` puts a PyPI package (with its `.dist-info`) in `package/`,
+its `Requires-Dist` go to `pyproject.toml` (`package = false`), and `server.py` calls its console
+script. The manifest is rewritten to run from the folder with the same arguments and setup:
+`node` on Scient's own Node, or `uv run --project`. `.venv` and `__pycache__` are left out of
+copies, saves and exports, since uv makes them again and a moved `.venv` no longer runs. The
+copy's `source` says where to edit, or why the code isn't there (no npm or uv). Measured:
+`@mcp-z/mcp-gmail` 2.3.3 is 4,465 files and 49 MB with its dependencies, inside the
+20,000-file and 200 MB folder limits; `mcp-server-fetch` is 25 files. A copied command that runs
+a script outside its folder names that script in `source`.
+
+**Any connector.** Three more tools (`ConnectorAgentControl`) work on hosted and local
+connectors alike through the calls the Extensions page makes:
+
+- `scient_connector_list {query?}`: each connector's server name, kind (hosted or local), on or
+  off, status (`ready`, `needs-setup`, `needs-sign-in`, `error`, `off`), last error (one line)
+  and what is missing. With `query`, up to 10 Discover entries (Scient's picks, then the
+  Registry) with whether an agent can add each, or why not.
+- `scient_connector_add {from}`: a Discover or Registry name, an https MCP address, or a
+  `.mcpb`/`.zip` path, through `connectors.add` (on, all projects), then the connector test for
+  its tools. Entries that need the user's input on the page (an API key, their own OAuth app, an
+  address, GitHub's Source Control account) are refused with that reason.
+- `scient_connector_control {connector, action}`: `on`/`off` and `restart` through
+  `connectors.update`; `sign-in` for a hosted OAuth connector starts `startSignIn` with Scient's
+  own loopback origin and opens the authorization page in the chat's browser for the user to
+  finish (or returns the link when the chat has no browser). A local connector's sign-in points
+  at `scient_account_sign_in` with its linked account. Removing stays the user's.
+
+`scient_connector_check {connector}` without a folder runs `connectors.test` on the installed
+connector, hosted ones too.
 
 **History.** `FolderHistory`, shared with personal skills, swaps a folder in one step, with
 rollback, and keeps 10 entries per connector in
@@ -972,10 +1006,16 @@ unresolved templates whose scheme is not a literal non-https one; a remote
 `requiresInput` when it has a required header or an unresolved URL variable;
 `installable` = at least one such remote without required input, or else a
 `localPackage`: the first npm or PyPI stdio package whose arguments all have fixed
-values or defaults (runtime arguments are not supported), with its declared
-environment variables. Otherwise `unsupportedReason` explains why: other local
-packages (for example OCI images or remote `.mcpb` files), required configuration,
-non-https endpoints, or another transport (for example legacy SSE).
+values or defaults, with its declared environment variables, or a `localBundle`: an
+`mcpb` package with an https address and `fileSha256`. Runtime arguments are allowed
+only when Scient applies them already (`-y`/`--yes` for npx, passed once). A bundle is
+added through the `registry-bundle` target: downloaded (200 MB at most), kept only if
+its SHA-256 matches, then unpacked like a picked `.mcpb`. Otherwise `unsupportedReason`
+says why, from the first package when there is one: Docker (OCI), a registry Scient
+doesn't run (NuGet, Cargo), another transport, runner options it doesn't pass, or a
+required argument without a value; else required configuration, non-https endpoints,
+or another remote transport (for example legacy SSE). The entry's page offers "Make
+with an agent" for entries that can't be added.
 
 ## Secrets integration
 

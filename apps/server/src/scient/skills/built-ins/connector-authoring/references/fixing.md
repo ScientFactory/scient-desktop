@@ -10,6 +10,14 @@ failed.
 returns its status, the last error and the recent log (keys removed). Work only on that copy.
 Read `manifest.json`, the README (its request map and test questions, if any) and the code.
 
+A package connector (`npx` or `uvx` in its manifest) arrives with the package's code in
+`package/`: an npm package with its dependencies in `node_modules/`, a PyPI package with
+`server.py` starting it and its dependencies listed in `pyproject.toml` (uv installs them into
+`.venv/` when it starts). The copy's `source` says where to edit. Change the package's own
+files; to change a dependency's version, edit `pyproject.toml` or reinstall it in the folder
+with npm. If `source` says npm or uv is missing, fix only what the manifest runs, or ask the
+user to install it.
+
 ## 2. Reproduce it
 
 Run `scient_connector_check {folder, connector, calls}` with `connector` set, so the check uses

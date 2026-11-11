@@ -75,7 +75,7 @@ export const SCIENT_PAPERS_AWARENESS = buildScientPapersAwareness(
 
 const buildScientConnectorsAwareness = (tools: ScientToolProjection): string =>
   `## Scient connectors
-When no connector reaches a service the user needs, offer to build one with the \`connector-authoring\` skill. When a connector fails, offer to fix it with \`${tools.name("scient_connector_copy")}\`.`;
+When the user needs a service, find one with \`${tools.name("scient_connector_list")}\` and add it with \`${tools.name("scient_connector_add")}\`; if none fits, offer to build one with the \`connector-authoring\` skill. When a connector fails, offer to fix it (\`${tools.name("scient_connector_copy")}\`) or sign it in again (\`${tools.name("scient_connector_control")}\`).`;
 
 /**
  * Compose only the blocks whose tools this session's list can show. The
