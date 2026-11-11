@@ -696,20 +696,29 @@ an agent.
   removal per source, with one Undo for the batch in the panel.
 - A bulk edit keeps a receipt in
   `.scient/sources/bulk-edits/<batch-id>.json` (latest 50 kept): each updated
-  source's type, custom type and tags before and after, and each collection's
-  exact added and removed members. The receipt is published before anything
-  changes, so an unsafe or unwritable folder stops the edit first, and is
-  rewritten after each change. If a rewrite fails, the rest is not changed and
-  reported as failed, and the result still carries Undo for what was recorded.
-  A receipt with nothing in it is removed.
+  source's type, custom type and tags before and after with the revision it
+  replaced, and each collection's exact added and removed members with the
+  `updatedAt` it wrote. The receipt is published before anything changes, so
+  an unsafe or unwritable folder stops the edit first. Each change is then
+  written ahead as a `pending` entry (a collection's inside its write lock) and
+  refused if that fails; once made, the entry is finished. If finishing fails,
+  the entry stays pending, the rest is not changed and reported as failed, and
+  the result still carries Undo. A receipt with nothing in it is removed.
 - The result's `undo.batchId` passed back as `{ undoBatchId }` (HTTP and
   `scient_sources_bulk_update`) reverses it, credited to the actor: a type is
   restored only while it still has the bulk value, tags and memberships are
   reversed as the recorded additions and removals (restoring the original
   order when the tags are untouched), and anything left as it is comes back in
-  `conflicts`. Each receipt entry gets `undoneAt` when done; failed entries
-  stay open, so the same batch can be undone again and only what is left is
-  tried. The receipt itself is marked undone when no entry is left.
+  `conflicts`. A pending entry is checked first: still at the recorded
+  revision (or an older `updatedAt`) means it never landed and is skipped;
+  changed to something else is a conflict. Each restore is written ahead as
+  `restoring` with the revision it replaces (the `updatedAt` it writes); on a
+  retry, a source past that revision with the restored values (a collection at
+  that `updatedAt`) is done, anything newer is a conflict and kept. Each entry
+  gets `undoneAt` when done; failed entries stay open, so the same batch can be
+  undone again and only what is left is tried. If a receipt write fails during
+  Undo, the rest is reported as failed. The receipt itself is marked undone
+  when no entry is left.
 
 ## Systematic reviews
 

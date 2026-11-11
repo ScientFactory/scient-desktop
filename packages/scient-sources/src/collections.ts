@@ -133,6 +133,7 @@ async function mutate<A>(
     document: ScientSourceCollectionsDocument,
     context: { readonly now: string; readonly presentSourceIds: ReadonlySet<string> },
   ) => { readonly document: ScientSourceCollectionsDocument | null; readonly result: A },
+  beforeWrite?: (result: A) => Promise<void>,
 ): Promise<A> {
   const paths = await sourceStorePaths(root);
   return withOperationLock(`${paths.root}:collections-write`, async () => {
@@ -151,6 +152,7 @@ async function mutate<A>(
         savedSearches: trimDeleted(next.savedSearches),
       };
       validateCollectionsDocument(bounded);
+      await beforeWrite?.(result);
       await atomicWriteJson(
         NodePath.join(paths.root, SCIENT_SOURCE_COLLECTIONS_FILE),
         bounded,
@@ -365,44 +367,50 @@ export function changeScientSourceCollectionMembers(input: {
   readonly add?: ReadonlyArray<string>;
   readonly remove?: ReadonlyArray<string>;
   readonly actor: ScientSourceActor;
+  /** Runs inside the write lock before an update is saved; a failure leaves it unsaved. */
+  readonly beforeWrite?: (change: ScientSourceCollectionChange) => Promise<void>;
 }): Promise<ScientSourceCollectionChange> {
-  return mutate<ScientSourceCollectionChange>(input.root, (document, { now, presentSourceIds }) => {
-    const current = findCollection(document, input.collectionId);
-    if (!current || current.deletedAt !== undefined) {
-      return { document: null, result: { outcome: "not-found", collection: null } };
-    }
-    const removeIds = new Set(input.remove ?? []);
-    const removed = current.sourceIds.filter((sourceId) => removeIds.has(sourceId));
-    const kept = { ...current, sourceIds: current.sourceIds.filter((id) => !removeIds.has(id)) };
-    const members = addMembers(kept, input.add ?? [], presentSourceIds);
-    if (removed.length === 0 && members.added.length === 0) {
+  return mutate<ScientSourceCollectionChange>(
+    input.root,
+    (document, { now, presentSourceIds }) => {
+      const current = findCollection(document, input.collectionId);
+      if (!current || current.deletedAt !== undefined) {
+        return { document: null, result: { outcome: "not-found", collection: null } };
+      }
+      const removeIds = new Set(input.remove ?? []);
+      const removed = current.sourceIds.filter((sourceId) => removeIds.has(sourceId));
+      const kept = { ...current, sourceIds: current.sourceIds.filter((id) => !removeIds.has(id)) };
+      const members = addMembers(kept, input.add ?? [], presentSourceIds);
+      if (removed.length === 0 && members.added.length === 0) {
+        return {
+          document: null,
+          result: {
+            outcome: "unchanged",
+            collection: current,
+            ...unchangedMembers,
+            unknownSourceIds: members.unknown,
+          },
+        };
+      }
+      const collection = {
+        ...current,
+        sourceIds: members.sourceIds,
+        updatedAt: now,
+        updatedBy: input.actor,
+      };
       return {
-        document: null,
+        document: replaceCollection(document, collection),
         result: {
-          outcome: "unchanged",
-          collection: current,
-          ...unchangedMembers,
+          outcome: "updated",
+          collection,
+          addedSourceIds: members.added,
+          removedSourceIds: removed,
           unknownSourceIds: members.unknown,
         },
       };
-    }
-    const collection = {
-      ...current,
-      sourceIds: members.sourceIds,
-      updatedAt: now,
-      updatedBy: input.actor,
-    };
-    return {
-      document: replaceCollection(document, collection),
-      result: {
-        outcome: "updated",
-        collection,
-        addedSourceIds: members.added,
-        removedSourceIds: removed,
-        unknownSourceIds: members.unknown,
-      },
-    };
-  });
+    },
+    input.beforeWrite,
+  );
 }
 
 export type ScientSourceSavedSearchChange =
@@ -616,7 +624,19 @@ function sameTags(left: ReadonlyArray<string>, right: ReadonlyArray<string>): bo
   );
 }
 
-/** Rewrites one source's tags and type from its current values, retrying once if it changes. */
+function sameFields(left: BulkFields, right: BulkFields): boolean {
+  return (
+    left.type === right.type &&
+    left.customType === right.customType &&
+    sameTags(left.tags, right.tags)
+  );
+}
+
+/**
+ * Rewrites one source's tags and type from its current values, retrying once if it changes.
+ * `beforeWrite` runs before each write with the revision it replaces; if it fails, nothing is
+ * written. `uncertain` means the write failed part way, so it may have landed.
+ */
 async function updateBulkFields(input: {
   readonly root: string;
   readonly sourceId: string;
@@ -625,10 +645,16 @@ async function updateBulkFields(input: {
     readonly next: BulkFields;
     readonly conflicts?: ReadonlyArray<string>;
   };
+  readonly beforeWrite?: (change: {
+    readonly before: BulkFields;
+    readonly after: BulkFields;
+    readonly revision: number;
+  }) => Promise<void>;
 }): Promise<{
   readonly entry: BulkSourceResult;
   readonly change?: { readonly before: BulkFields; readonly after: BulkFields };
   readonly conflicts: ReadonlyArray<string>;
+  readonly uncertain?: true;
 }> {
   // One retry covers an edit that lands between the read and the write.
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -645,6 +671,23 @@ async function updateBulkFields(input: {
     if (editableMetadataEquals(current, next)) {
       return {
         entry: { sourceId: record.sourceId, outcome: "unchanged", revision: record.revision },
+        conflicts,
+      };
+    }
+    try {
+      await input.beforeWrite?.({
+        before: bulkFields(current),
+        after: bulkFields(next),
+        revision: record.revision,
+      });
+    } catch (error) {
+      return {
+        entry: {
+          sourceId: record.sourceId,
+          outcome: "failed",
+          revision: record.revision,
+          message: failureMessage(error, "Undo could not be saved."),
+        },
         conflicts,
       };
     }
@@ -698,6 +741,7 @@ async function updateBulkFields(input: {
           message: error instanceof Error ? error.message : "The source could not be updated.",
         },
         conflicts,
+        uncertain: true,
       };
     }
   }
@@ -774,6 +818,13 @@ type BulkReceiptSource = ScientSourcesBulkReceipt["sources"][number];
 type BulkReceiptCollection = ScientSourcesBulkReceipt["collections"][number];
 type BulkCollectionResult = ScientSourcesBulkResult["collections"][number];
 
+function replaceEntry<A>(entries: A[], entry: A, next?: A): void {
+  const index = entries.indexOf(entry);
+  if (index === -1) return;
+  if (next === undefined) entries.splice(index, 1);
+  else entries[index] = next;
+}
+
 /**
  * Applies one change to many sources, reporting each source rather than stopping at the first.
  * What it changed is kept under `undo.batchId` so `{ undoBatchId }` can reverse it.
@@ -812,20 +863,33 @@ export async function bulkUpdateScientSources(input: {
       },
       options,
     );
-  // Published before anything changes and after each change, so an unusable receipt folder
-  // stops the edit first and a later failure still leaves Undo for what was done.
+  // Each change is recorded as pending before it is made, so a receipt that cannot be written
+  // refuses it, and finished after. One that cannot be finished stays pending for Undo, which
+  // checks whether it landed.
   await publish({ prune: true });
   let unsaved = null as string | null;
-  const record = async (add: () => void, remove: () => void): Promise<string | null> => {
+  const stop = (error: unknown, prefix: string): string => {
+    unsaved = `Not changed because Undo could not be saved. ${failureMessage(error, "")}`.trim();
+    return `${prefix} ${failureMessage(error, "")}`.trim();
+  };
+  const writeAhead = async (add: () => void, remove: () => void): Promise<void> => {
     add();
     try {
       await publish();
-      return null;
     } catch (error) {
       remove();
-      unsaved =
-        `Undo could not be saved, so the rest was not changed. ${failureMessage(error, "")}`.trim();
-      return unsaved;
+      throw new Error(stop(error, "Not changed because Undo could not be saved."), {
+        cause: error,
+      });
+    }
+  };
+  const finish = async (settle: () => void): Promise<string | undefined> => {
+    settle();
+    try {
+      await publish();
+      return undefined;
+    } catch (error) {
+      return stop(error, "Changed, but the rest was not because Undo could not be saved.");
     }
   };
   try {
@@ -843,6 +907,7 @@ export async function bulkUpdateScientSources(input: {
         );
         continue;
       }
+      const intent = { entry: null as BulkReceiptSource | null };
       const updated = await updateBulkFields({
         root: paths.root,
         sourceId,
@@ -862,15 +927,39 @@ export async function bulkUpdateScientSources(input: {
               : current.customType,
           },
         }),
+        beforeWrite: (planned) => {
+          const previous = intent.entry;
+          const entry: BulkReceiptSource = { sourceId, ...planned, pending: true };
+          return writeAhead(
+            () => {
+              if (previous) replaceEntry(receiptSources, previous);
+              receiptSources.push(entry);
+              intent.entry = entry;
+            },
+            () => {
+              replaceEntry(receiptSources, entry);
+              intent.entry = null;
+            },
+          );
+        },
       });
+      const written = intent.entry;
       const entryChange = updated.change;
-      const problem = entryChange
-        ? await record(
-            () => receiptSources.push({ sourceId, ...entryChange }),
-            () => receiptSources.pop(),
-          )
-        : null;
-      sources.push(problem ? { ...updated.entry, message: problem } : updated.entry);
+      let message: string | undefined;
+      if (written && entryChange) {
+        message = await finish(() =>
+          replaceEntry(receiptSources, written, {
+            sourceId,
+            ...entryChange,
+            ...(written.revision === undefined ? {} : { revision: written.revision }),
+          }),
+        );
+      } else if (written && !updated.uncertain) {
+        // Known not to have landed, so Undo has nothing to check.
+        replaceEntry(receiptSources, written);
+        await publish().catch(() => undefined);
+      }
+      sources.push(message ? { ...updated.entry, message } : updated.entry);
     }
     const present = sources
       .filter((entry) => entry.outcome !== "not-found")
@@ -888,11 +977,32 @@ export async function bulkUpdateScientSources(input: {
         collections.push({ collectionId, outcome: "failed", message: unsaved });
         continue;
       }
+      const intent = { entry: null as BulkReceiptCollection | null };
       try {
         const result = await changeScientSourceCollectionMembers({
           root: paths.root,
           ...memberChange,
           actor: input.actor,
+          beforeWrite: async (planned) => {
+            if (planned.outcome !== "updated") return;
+            const entry: BulkReceiptCollection = {
+              collectionId,
+              addedSourceIds: planned.addedSourceIds,
+              removedSourceIds: planned.removedSourceIds,
+              updatedAt: planned.collection.updatedAt,
+              pending: true,
+            };
+            await writeAhead(
+              () => {
+                receiptCollections.push(entry);
+                intent.entry = entry;
+              },
+              () => {
+                replaceEntry(receiptCollections, entry);
+                intent.entry = null;
+              },
+            );
+          },
         });
         if (result.outcome !== "updated") {
           collections.push({
@@ -901,20 +1011,18 @@ export async function bulkUpdateScientSources(input: {
           });
           continue;
         }
-        const problem = await record(
-          () =>
-            receiptCollections.push({
-              collectionId,
-              addedSourceIds: result.addedSourceIds,
-              removedSourceIds: result.removedSourceIds,
-            }),
-          () => receiptCollections.pop(),
-        );
-        collections.push({
-          collectionId,
-          outcome: "updated",
-          ...(problem ? { message: problem } : {}),
-        });
+        const written = intent.entry;
+        const message = written
+          ? await finish(() =>
+              replaceEntry(receiptCollections, written, {
+                collectionId,
+                addedSourceIds: written.addedSourceIds,
+                removedSourceIds: written.removedSourceIds,
+                ...(written.updatedAt === undefined ? {} : { updatedAt: written.updatedAt }),
+              }),
+            )
+          : undefined;
+        collections.push({ collectionId, outcome: "updated", ...(message ? { message } : {}) });
       } catch (error) {
         collections.push({
           collectionId,
@@ -940,11 +1048,44 @@ export async function bulkUpdateScientSources(input: {
   return { sources, collections, undo: { batchId, sourceCount: changedSourceIds.size } };
 }
 
+const CHANGED_AFTER_UNDO = "It was changed after Undo started, so the newer values were kept.";
+const CHANGED_DURING_EDIT =
+  "It was changed while the bulk edit was saved, so it was left as it is.";
+
+/**
+ * Whether a write the receipt recorded as about to happen landed. `null` means Undo should
+ * restore the entry; otherwise it is settled, with a conflict when a later edit was kept.
+ */
+function settledSource(
+  entry: BulkReceiptSource,
+  revision: number,
+  current: BulkFields,
+): { readonly conflict?: string } | null {
+  if (entry.restoring && revision !== entry.restoring.revision) {
+    return sameFields(current, entry.restoring.fields) ? {} : { conflict: CHANGED_AFTER_UNDO };
+  }
+  if (!entry.pending) return null;
+  if (revision === entry.revision) return {};
+  return sameFields(current, entry.after) ? null : { conflict: CHANGED_DURING_EDIT };
+}
+
+function settledCollection(
+  entry: BulkReceiptCollection,
+  updatedAt: string,
+): { readonly conflict?: string } | null {
+  if (entry.restoring && updatedAt >= entry.restoring.updatedAt) {
+    return updatedAt === entry.restoring.updatedAt ? {} : { conflict: CHANGED_AFTER_UNDO };
+  }
+  if (!entry.pending || entry.updatedAt === undefined) return null;
+  if (updatedAt < entry.updatedAt) return {};
+  return updatedAt === entry.updatedAt ? null : { conflict: CHANGED_DURING_EDIT };
+}
+
 /**
  * Puts back what one bulk edit changed. A value someone changed since is left as it is and
  * reported; tags and memberships are reversed as the exact additions and removals, so later
- * unrelated tags and memberships stay. Each entry is marked when done, so after a failure the
- * same batch can be undone again and only what is left is tried.
+ * unrelated tags and memberships stay. Each restore is recorded before it is written and each
+ * entry marked when done, so a retry checks what landed and only tries what is left.
  */
 async function undoBulkUpdate(input: {
   readonly root: string;
@@ -969,93 +1110,182 @@ async function undoBulkUpdate(input: {
     }
     const receiptSources = [...receipt.sources];
     const receiptCollections = [...receipt.collections];
-    const markDone = async (mark: (undoneAt: string) => void): Promise<void> => {
+    const save = (undoneAt?: string) =>
+      writeBulkReceipt(paths.root, {
+        ...receipt,
+        sources: receiptSources,
+        collections: receiptCollections,
+        ...(undoneAt ? { undoneAt, undoneBy: input.actor } : {}),
+      });
+    let unsaved = null as string | null;
+    const stop = (error: unknown): string => {
+      unsaved = `Not undone because Undo could not be saved. ${failureMessage(error, "")}`.trim();
+      return unsaved;
+    };
+    const intend = async (mark: () => void): Promise<void> => {
+      mark();
+      try {
+        await save();
+      } catch (error) {
+        throw new Error(stop(error), { cause: error });
+      }
+    };
+    const markDone = async (mark: (undoneAt: string) => void): Promise<string | undefined> => {
       const undoneAt = new Date().toISOString();
       mark(undoneAt);
       const finished = [...receiptSources, ...receiptCollections].every(
         (entry) => entry.undoneAt !== undefined,
       );
-      await writeBulkReceipt(paths.root, {
-        ...receipt,
-        sources: receiptSources,
-        collections: receiptCollections,
-        ...(finished ? { undoneAt, undoneBy: input.actor } : {}),
-      });
+      try {
+        await save(finished ? undoneAt : undefined);
+        return undefined;
+      } catch (error) {
+        stop(error);
+        return `Undone, but that could not be saved. Try again to finish. ${failureMessage(error, "")}`.trim();
+      }
     };
     const sources: BulkSourceResult[] = [];
     const conflicts: BulkConflict[] = [];
     for (const [index, entry] of receiptSources.entries()) {
       if (entry.undoneAt !== undefined) continue;
       const { sourceId, before, after } = entry;
+      if (unsaved !== null) {
+        sources.push({ sourceId, outcome: "failed", revision: null, message: unsaved });
+        continue;
+      }
+      const record = await readScientSourceRecord(paths.root, sourceId);
+      const settled = record
+        ? settledSource(
+            entry,
+            record.revision,
+            bulkFields(normalizeScientSourceEditableMetadata(editableMetadataFromRecord(record))),
+          )
+        : null;
       const typeChanged = before.type !== after.type || before.customType !== after.customType;
       const beforeKeys = new Set(before.tags.map(scientSourceTagKey));
       const afterKeys = new Set(after.tags.map(scientSourceTagKey));
       const added = after.tags.filter((tag) => !beforeKeys.has(scientSourceTagKey(tag)));
       const removed = before.tags.filter((tag) => !afterKeys.has(scientSourceTagKey(tag)));
-      const result = await updateBulkFields({
-        root: paths.root,
-        sourceId,
-        actor: input.actor,
-        compute: (current) => {
-          const typeKept =
-            typeChanged && (current.type !== after.type || current.customType !== after.customType);
-          return {
-            next: {
-              type: typeChanged && !typeKept ? before.type : current.type,
-              customType: typeChanged && !typeKept ? before.customType : current.customType,
-              // Untouched since: restore the original order too.
-              tags: sameTags(current.tags, after.tags)
-                ? before.tags
-                : applyScientSourceTagChanges({ tags: current.tags, add: removed, remove: added }),
-            },
-            conflicts: typeKept
-              ? ["Its type was changed after the bulk edit, so the newer type was kept."]
-              : [],
-          };
-        },
-      });
-      sources.push(result.entry);
-      if (result.entry.outcome === "failed") continue;
+      const result =
+        settled && record
+          ? {
+              entry: { sourceId, outcome: "unchanged" as const, revision: record.revision },
+              conflicts: settled.conflict ? [settled.conflict] : [],
+            }
+          : await updateBulkFields({
+              root: paths.root,
+              sourceId,
+              actor: input.actor,
+              compute: (current) => {
+                const isType = (fields: BulkFields) =>
+                  current.type === fields.type && current.customType === fields.customType;
+                const typeKept = typeChanged && !isType(after) && !isType(before);
+                return {
+                  next: {
+                    type: typeChanged && isType(after) ? before.type : current.type,
+                    customType:
+                      typeChanged && isType(after) ? before.customType : current.customType,
+                    // Untouched since: restore the original order too.
+                    tags: sameTags(current.tags, after.tags)
+                      ? before.tags
+                      : applyScientSourceTagChanges({
+                          tags: current.tags,
+                          add: removed,
+                          remove: added,
+                        }),
+                  },
+                  conflicts: typeKept
+                    ? ["Its type was changed after the bulk edit, so the newer type was kept."]
+                    : [],
+                };
+              },
+              beforeWrite: (planned) =>
+                intend(() => {
+                  receiptSources[index] = {
+                    ...entry,
+                    restoring: { revision: planned.revision, fields: planned.after },
+                  };
+                }),
+            });
+      if (result.entry.outcome === "failed") {
+        sources.push(result.entry);
+        continue;
+      }
       if (result.entry.outcome === "not-found") {
         conflicts.push({ sourceId, message: "The source is no longer in the Library." });
       }
       for (const message of result.conflicts) conflicts.push({ sourceId, message });
-      await markDone((undoneAt) => {
-        receiptSources[index] = { ...entry, undoneAt };
+      const unrecorded = await markDone((undoneAt) => {
+        receiptSources[index] = { ...(receiptSources[index] ?? entry), undoneAt };
       });
+      sources.push(
+        unrecorded ? { ...result.entry, outcome: "failed", message: unrecorded } : result.entry,
+      );
     }
     const collections: BulkCollectionResult[] = [];
     for (const [index, delta] of [...receiptCollections.entries()].toReversed()) {
       if (delta.undoneAt !== undefined) continue;
-      const result = await changeScientSourceCollectionMembers({
-        root: paths.root,
-        collectionId: delta.collectionId,
-        add: delta.removedSourceIds,
-        remove: delta.addedSourceIds,
-        actor: input.actor,
-      }).catch((error: unknown) => failureMessage(error, "The collection could not be changed."));
-      if (typeof result === "string") {
-        collections.push({ collectionId: delta.collectionId, outcome: "failed", message: result });
+      const { collectionId } = delta;
+      if (unsaved !== null) {
+        collections.push({ collectionId, outcome: "failed", message: unsaved });
         continue;
       }
+      const existing = await readDocument(paths.root).then(
+        (document) => findCollection(document, collectionId),
+        () => undefined,
+      );
+      const settled =
+        existing && existing.deletedAt === undefined
+          ? settledCollection(delta, existing.updatedAt)
+          : null;
+      const result = settled
+        ? ({ outcome: "unchanged" } as const)
+        : await changeScientSourceCollectionMembers({
+            root: paths.root,
+            collectionId,
+            add: delta.removedSourceIds,
+            remove: delta.addedSourceIds,
+            actor: input.actor,
+            beforeWrite: async (planned) => {
+              if (planned.outcome !== "updated") return;
+              await intend(() => {
+                receiptCollections[index] = {
+                  ...delta,
+                  restoring: { updatedAt: planned.collection.updatedAt },
+                };
+              });
+            },
+          }).catch((error: unknown) =>
+            failureMessage(error, "The collection could not be changed."),
+          );
+      if (typeof result === "string") {
+        collections.push({ collectionId, outcome: "failed", message: result });
+        continue;
+      }
+      if (settled?.conflict) conflicts.push({ collectionId, message: settled.conflict });
+      let outcome: "updated" | "unchanged" | "not-found" = "not-found";
       if (result.outcome !== "updated" && result.outcome !== "unchanged") {
-        collections.push({ collectionId: delta.collectionId, outcome: "not-found" });
         conflicts.push({
-          collectionId: delta.collectionId,
+          collectionId,
           message: "The collection was deleted, so its members were not changed.",
         });
       } else {
-        collections.push({ collectionId: delta.collectionId, outcome: result.outcome });
+        outcome = result.outcome;
         if ("unknownSourceIds" in result && result.unknownSourceIds.length > 0) {
           conflicts.push({
-            collectionId: delta.collectionId,
+            collectionId,
             message: `${result.unknownSourceIds.length} sources are no longer in the Library and were not put back.`,
           });
         }
       }
-      await markDone((undoneAt) => {
-        receiptCollections[index] = { ...delta, undoneAt };
+      const unrecorded = await markDone((undoneAt) => {
+        receiptCollections[index] = { ...(receiptCollections[index] ?? delta), undoneAt };
       });
+      collections.push(
+        unrecorded
+          ? { collectionId, outcome: "failed", message: unrecorded }
+          : { collectionId, outcome },
+      );
     }
     return { sources, collections, ...(conflicts.length > 0 ? { conflicts } : {}) };
   });

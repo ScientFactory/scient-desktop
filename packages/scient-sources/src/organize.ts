@@ -181,12 +181,18 @@ export const ScientSourcesBulkReceipt = Schema.Struct({
   batchId: NonEmptyString,
   createdAt: NonEmptyString,
   actor: ScientSourceActor,
-  // An entry's `undoneAt` is set once Undo has dealt with it, so a retry skips it.
+  // Each entry is written as `pending` before its change and cleared once the change is saved;
+  // `restoring` is written before Undo puts it back. Undo compares them with the source's
+  // revision (a collection's `updatedAt`) to tell whether each write landed. `undoneAt` is set
+  // once Undo has dealt with the entry, so a retry skips it.
   sources: Schema.Array(
     Schema.Struct({
       sourceId: NonEmptyString,
       before: BulkFields,
       after: BulkFields,
+      revision: Schema.optionalKey(Schema.Int),
+      pending: Schema.optionalKey(Schema.Literal(true)),
+      restoring: Schema.optionalKey(Schema.Struct({ revision: Schema.Int, fields: BulkFields })),
       undoneAt: Schema.optionalKey(NonEmptyString),
     }),
   ),
@@ -195,6 +201,9 @@ export const ScientSourcesBulkReceipt = Schema.Struct({
       collectionId: NonEmptyString,
       addedSourceIds: Schema.Array(NonEmptyString),
       removedSourceIds: Schema.Array(NonEmptyString),
+      updatedAt: Schema.optionalKey(NonEmptyString),
+      pending: Schema.optionalKey(Schema.Literal(true)),
+      restoring: Schema.optionalKey(Schema.Struct({ updatedAt: NonEmptyString })),
       undoneAt: Schema.optionalKey(NonEmptyString),
     }),
   ),
