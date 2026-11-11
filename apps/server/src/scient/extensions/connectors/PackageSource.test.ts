@@ -87,6 +87,9 @@ const fakeTools =
           'Requires-Dist: rich; extra == "cli"',
           'Requires-Dist: click>=8; python_version >= "3.9" and extra == "CLI"',
           'Requires-Dist: pytest; extra == "test"',
+          'Requires-Dist: anyio; extra == "cli" and python_version >= "3.9"',
+          'Requires-Dist: uvloop; (extra == "test" or extra == "cli") and sys_platform != "win32"',
+          'Requires-Dist: colorama; extra != "cli"',
         ].join("\n"),
         "acme_mcp-1.4.0.dist-info/entry_points.txt":
           "[console_scripts]\nacme-mcp = acme_mcp.cli:app.main\n",
@@ -167,11 +170,12 @@ describe("package connector code", () => {
         env: { TOKEN: "${user_config.TOKEN}" },
       });
       const project = yield* read("pyproject.toml");
-      // regression: the name came as given, and extras' dependencies were dropped.
+      // regression: the name came as given, and extras' dependencies were dropped (also when the
+      // extra came first in the marker).
       expect(project).toContain('name = "acme-mcp-connector"');
       expect(project).toContain('requires-python = ">=3.11"');
       expect(project).toContain(
-        'dependencies = ["httpx>=0.27", "tomli; python_version < \\"3.11\\"", "rich", "click>=8; python_version >= \\"3.9\\""]',
+        'dependencies = ["httpx>=0.27", "tomli; python_version < \\"3.11\\"", "rich", "click>=8; python_version >= \\"3.9\\"", "anyio; python_version >= \\"3.9\\"", "uvloop; sys_platform != \\"win32\\""]',
       );
       // regression: `mod:obj.main` became `from mod import obj.main`.
       const server = yield* read("server.py");

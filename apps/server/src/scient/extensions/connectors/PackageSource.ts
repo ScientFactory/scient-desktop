@@ -268,16 +268,113 @@ const metadataLines = (text: string, field: string) =>
 /** PEP 503 / 685 name: lower case, runs of `-_.` as one `-`. */
 const normalizedName = (name: string) => name.toLowerCase().replace(/[-_.]+/gu, "-");
 
+/** A PEP 508 marker with the extras settled: true, false, or what is left to evaluate. */
+type Marker =
+  | { readonly kind: "const"; readonly value: boolean }
+  | { readonly kind: "text"; readonly text: string }
+  | { readonly kind: "and" | "or"; readonly items: ReadonlyArray<Marker> };
+
+const MARKER_TOKEN = /\s*(\(|\)|'[^']*'|"[^"]*"|===|==|!=|<=|>=|~=|<|>|[A-Za-z_][A-Za-z0-9_.]*)/uy;
+
+const joined = (kind: "and" | "or", items: ReadonlyArray<Marker>): Marker => {
+  const absorbing = kind === "or";
+  if (items.some((item) => item.kind === "const" && item.value === absorbing))
+    return { kind: "const", value: absorbing };
+  const left = items.filter((item) => item.kind !== "const");
+  return left.length === 0
+    ? { kind: "const", value: !absorbing }
+    : left.length === 1
+      ? left[0]!
+      : { kind, items: left };
+};
+
 /**
- * A `Requires-Dist` line as a dependency of the project: kept when it needs no extra, or one of
- * `extras` (that clause dropped, since the folder's project has no extras); else undefined.
+ * Parses a marker, deciding each `extra == "x"` by whether `x` was asked for and keeping every
+ * other comparison as written. Undefined when the marker can't be read.
+ */
+const settleExtras = (marker: string, extras: ReadonlySet<string>): Marker | undefined => {
+  const tokens: string[] = [];
+  let read = 0;
+  MARKER_TOKEN.lastIndex = 0;
+  for (let match = MARKER_TOKEN.exec(marker); match !== null; match = MARKER_TOKEN.exec(marker)) {
+    tokens.push(match[1]!);
+    read = MARKER_TOKEN.lastIndex;
+  }
+  if (marker.slice(read).trim() !== "") return undefined;
+  let at = 0;
+  const quoted = (token: string | undefined) => token !== undefined && /^['"]/u.test(token);
+  const comparison = (): Marker | undefined => {
+    if (tokens[at] === "(") {
+      at += 1;
+      const inner = anyOf();
+      if (inner === undefined || tokens[at] !== ")") return undefined;
+      at += 1;
+      return inner;
+    }
+    const left = tokens[at];
+    let op = tokens[at + 1];
+    let width = 3;
+    if (op === "not" && tokens[at + 2] === "in") {
+      op = "not in";
+      width = 4;
+    }
+    const right = tokens[at + width - 1];
+    if (left === undefined || op === undefined || right === undefined) return undefined;
+    at += width;
+    const extra = left === "extra" ? right : right === "extra" ? left : undefined;
+    if (extra !== undefined && quoted(extra) && (op === "==" || op === "!=")) {
+      const asked = extras.has(normalizedName(extra.slice(1, -1)));
+      return { kind: "const", value: op === "==" ? asked : !asked };
+    }
+    return { kind: "text", text: `${left} ${op} ${right}` };
+  };
+  const allOf = (): Marker | undefined => {
+    const items: Marker[] = [];
+    for (;;) {
+      const item = comparison();
+      if (item === undefined) return undefined;
+      items.push(item);
+      if (tokens[at] !== "and") return joined("and", items);
+      at += 1;
+    }
+  };
+  const anyOf = (): Marker | undefined => {
+    const items: Marker[] = [];
+    for (;;) {
+      const item = allOf();
+      if (item === undefined) return undefined;
+      items.push(item);
+      if (tokens[at] !== "or") return joined("or", items);
+      at += 1;
+    }
+  };
+  const settled = anyOf();
+  return settled === undefined || at !== tokens.length ? undefined : settled;
+};
+
+const markerText = (marker: Marker): string =>
+  marker.kind === "const"
+    ? String(marker.value)
+    : marker.kind === "text"
+      ? marker.text
+      : marker.items
+          .map((item) =>
+            marker.kind === "and" && item.kind === "or"
+              ? `(${markerText(item)})`
+              : markerText(item),
+          )
+          .join(` ${marker.kind} `);
+
+/**
+ * A `Requires-Dist` line as a dependency of the folder's project, which has no extras of its own:
+ * its marker with each extra decided by `extras`, dropped when that makes it false.
  */
 const dependencyFor = (requirement: string, extras: ReadonlySet<string>) => {
   const [spec, marker] = requirement.split(/;(.*)/su);
-  if (marker === undefined || !/\bextra\s*==/u.test(marker)) return requirement;
-  const clause = /^\s*(?:(.*?)\s+and\s+)?extra\s*==\s*(['"])([^'"]+)\2\s*$/u.exec(marker);
-  if (clause === null || !extras.has(normalizedName(clause[3]!))) return undefined;
-  return clause[1] === undefined ? spec!.trim() : `${spec!.trim()}; ${clause[1].trim()}`;
+  if (marker === undefined || !/\bextra\b/u.test(marker)) return requirement;
+  const settled = settleExtras(marker, extras);
+  if (settled === undefined || (settled.kind === "const" && !settled.value)) return undefined;
+  return settled.kind === "const" ? spec!.trim() : `${spec!.trim()}; ${markerText(settled)}`;
 };
 
 /** uv installs the package's files; its dependencies go in `pyproject.toml` for `uv run`. */
