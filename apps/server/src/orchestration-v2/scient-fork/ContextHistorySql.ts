@@ -24,5 +24,5 @@ export const handoffMetadataSql = (
 export const turnItemMetadataSql = (sql: SqlClient.SqlClient, payload: Statement.Fragment) => sql`
   CASE WHEN NOT json_valid(${payload}) THEN 'null'
     WHEN json_extract(${payload}, '$.type') = 'handoff'
-    THEN json_remove(${payload}, '$.summary') ELSE ${payload} END
+    THEN json_remove(${payload}, '$.summary', '$.scientSummaryBody') ELSE ${payload} END
 `;

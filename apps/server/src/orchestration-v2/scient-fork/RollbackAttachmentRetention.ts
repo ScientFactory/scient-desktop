@@ -28,6 +28,9 @@ export const readRollbackAttachmentOwners = <E>(
         const rows = yield* sql<{ readonly thread_id: string }>`
             SELECT thread_id FROM orchestration_v2_projection_messages WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
             UNION SELECT thread_id FROM orchestration_v2_projection_turn_items WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
+            UNION SELECT item.thread_id FROM orchestration_v2_projection_turn_items AS item
+              JOIN scient_history_bodies AS body ON body.hash = unhex(json_extract(item.payload_json, '$.scientSummaryBody'))
+              WHERE item.type = 'handoff' AND instr(lower(body.body), ${id.toLowerCase()}) > 0
             UNION SELECT thread_id FROM orchestration_v2_projection_threads WHERE instr(lower(payload_json), ${id.toLowerCase()}) > 0
           `;
         rows.forEach((row) => threadIds.add(ThreadId.make(row.thread_id)));

@@ -8,6 +8,7 @@ import { ContextHandoffId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type * as SqlClient from "effect/sql/SqlClient";
+import { readJsonStringFieldPage } from "./JsonStringFieldPage.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -259,3 +260,115 @@ export const readSharedSource = (sql: SqlClient.SqlClient, sourceId: ContextHand
   }>`
     SELECT shape_json, summary_hash, summary_bytes FROM scient_handoff_shared_sources
     WHERE source_id = ${sourceId}`.pipe(Effect.map((rows) => rows[0]));
+
+/** `ContextHandoffService`'s delta summary reads at most this much of an item's summary
+ * (`compactText` slices `maxLength * 4` code units), so the inline prefix keeps it identical. */
+const HANDOFF_ITEM_SUMMARY_PREFIX_CHARS = 960;
+const HANDOFF_ITEM_SUMMARY_MIN_BYTES = 64 * 1024;
+/** Private persisted reference to an item summary's shared body; never on the wire. */
+export const HANDOFF_ITEM_SUMMARY_BODY_FIELD = "scientSummaryBody";
+
+const readItemChunk = (sql: SqlClient.SqlClient, itemId: string, start: number, length: number) =>
+  sql<{ readonly chunk: Uint8Array | null }>`
+    SELECT substr(CAST(payload_json AS BLOB), ${start + 1}, ${length}) AS chunk
+    FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${itemId}`.pipe(
+    Effect.map((rows) => rows[0]?.chunk ?? new Uint8Array(0)),
+  );
+
+const hasLoneSurrogate = (text: string) => {
+  for (let at = 0; at < text.length; at++) {
+    const unit = text.charCodeAt(at);
+    if (unit >= 0xd800 && unit <= 0xdbff) {
+      const next = text.charCodeAt(at + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return true;
+      at++;
+    } else if (unit >= 0xdc00 && unit <= 0xdfff) return true;
+  }
+  return false;
+};
+
+/**
+ * Replaces a large handoff timeline-item summary with a short inline prefix plus a reference
+ * to the identical shared body of the item's own handoff source. Only an item whose summary
+ * bytes hash to that source's summary is changed, and only if it was not rewritten meanwhile.
+ */
+export const shareHandoffItemSummary = Effect.fn("SharedHistory.shareItemSummary")(function* (
+  sql: SqlClient.SqlClient,
+  itemId: string,
+) {
+  const rows = yield* sql<{
+    readonly updated_at: string;
+    readonly bytes: number;
+    readonly summary_hash: Uint8Array | null;
+  }>`
+    SELECT item.updated_at, octet_length(item.payload_json) AS bytes, shared.summary_hash
+    FROM orchestration_v2_projection_turn_items AS item
+    LEFT JOIN orchestration_v2_projection_context_handoffs AS context
+      ON context.context_handoff_id = json_extract(item.payload_json, '$.contextHandoffId')
+    LEFT JOIN scient_handoff_shared_sources AS shared
+      ON shared.source_id = json_extract(context.payload_json, '$.historySource.id')
+    WHERE item.turn_item_id = ${itemId} AND item.type = 'handoff'
+      AND json_type(item.payload_json, ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}) IS NULL`;
+  const row = rows[0];
+  if (row === undefined || row.summary_hash === null) return "skipped" as const;
+  const read = (byteOffset: number, length: number) =>
+    readItemChunk(sql, itemId, byteOffset, length);
+  const located = yield* locateTopLevelStringField(read, "summary");
+  if (located === undefined) return "skipped" as const;
+  const hash = NodeCrypto.createHash("sha256").update(SUMMARY_PREFIX);
+  for (let at = 0; at < located.length; at += CHUNK_BYTES) {
+    hash.update(
+      yield* readItemChunk(
+        sql,
+        itemId,
+        located.start + at,
+        Math.min(CHUNK_BYTES, located.length - at),
+      ),
+    );
+    yield* Effect.yieldNow;
+  }
+  const digest = new Uint8Array(hash.update(SUMMARY_SUFFIX).digest());
+  if (Buffer.compare(Buffer.from(digest), Buffer.from(row.summary_hash)) !== 0)
+    return "skipped" as const;
+  const expression = sql`(SELECT ${SUMMARY_PREFIX} || CAST(substr(CAST(payload_json AS BLOB),
+    ${located.start + 1}, ${located.length}) AS TEXT) || ${SUMMARY_SUFFIX}
+    FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${itemId})`;
+  if (!(yield* putBody(sql, digest, expression))) return "skipped" as const;
+  const head = yield* readJsonStringFieldPage({
+    field: "summary",
+    offset: 0,
+    maxChars: HANDOFF_ITEM_SUMMARY_PREFIX_CHARS + 1,
+    read,
+  }).pipe(
+    Effect.map((page) => page.text),
+    Effect.option,
+  );
+  if (head._tag === "None") return "skipped" as const;
+  const last = head.value.charCodeAt(HANDOFF_ITEM_SUMMARY_PREFIX_CHARS - 1);
+  // Keep a surrogate pair whole; the summarizer's own slice then cuts it identically.
+  const prefix = head.value.slice(
+    0,
+    last >= 0xd800 && last <= 0xdbff
+      ? HANDOFF_ITEM_SUMMARY_PREFIX_CHARS + 1
+      : HANDOFF_ITEM_SUMMARY_PREFIX_CHARS,
+  );
+  // SQLite cannot store a lone surrogate as written; such items stay inline.
+  if (hasLoneSurrogate(prefix)) return "skipped" as const;
+  const changed = yield* sql<{ readonly turn_item_id: string }>`
+    UPDATE orchestration_v2_projection_turn_items
+    SET payload_json = json_set(payload_json, '$.summary', ${prefix},
+      ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}, ${Buffer.from(digest).toString("hex")})
+    WHERE turn_item_id = ${itemId} AND updated_at = ${row.updated_at}
+      AND octet_length(payload_json) = ${row.bytes}
+    RETURNING turn_item_id`;
+  return changed.length === 1 ? ("converted" as const) : ("skipped" as const);
+});
+
+/** Candidates are handoff items with a large inline summary. */
+export const listLargeHandoffItemSummaries = (sql: SqlClient.SqlClient, afterItemId: string) =>
+  sql<{ readonly turn_item_id: string }>`
+    SELECT turn_item_id FROM orchestration_v2_projection_turn_items
+    WHERE type = 'handoff' AND turn_item_id > ${afterItemId}
+      AND json_type(payload_json, ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}) IS NULL
+      AND octet_length(json_extract(payload_json, '$.summary')) > ${HANDOFF_ITEM_SUMMARY_MIN_BYTES}
+    ORDER BY turn_item_id LIMIT 16`;

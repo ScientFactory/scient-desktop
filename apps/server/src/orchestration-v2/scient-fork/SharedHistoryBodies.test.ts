@@ -157,7 +157,13 @@ it.layer(TestLayer)("shared archived history bodies", (it) => {
           ...(at === 1 ? { runStatus: "completed" } : {}),
         }));
         // Crosses the 64 KiB read chunk, with multibyte text and escapes at the edges.
-        const summary = 'Summary 🧪\n\\"\ud800 ' + "retained é ".repeat(20_000) + "end";
+        // The lone surrogate sits past the inline prefix a timeline item may keep.
+        const summary =
+          'Summary 🧪\n\\"' +
+          "retained é ".repeat(100) +
+          "\ud800 " +
+          "retained é ".repeat(20_000) +
+          "end";
         const legacy = {
           ...base,
           summaryText: summary,
@@ -218,7 +224,7 @@ it.layer(TestLayer)("shared archived history bodies", (it) => {
         assert.isTrue(before.resolved.some((result) => result.messages.length === messages.length));
 
         const first = yield* shareLegacyContextHistories(sql, Effect.void);
-        assert.deepEqual(first, { converted: 2, skipped: 0, failed: 0 });
+        assert.deepEqual(first, { converted: 2, skipped: 0, failed: 0, items: 0 });
         assert.deepEqual(yield* snapshot, before);
 
         const inline = yield* sql<{ readonly count: number }>`
@@ -237,7 +243,78 @@ it.layer(TestLayer)("shared archived history bodies", (it) => {
           converted: 0,
           skipped: 0,
           failed: 0,
+          items: 0,
         });
+
+        // A handoff timeline item carries the same summary as its own archived source;
+        // a fork that inherits the item reads that summary through its frozen identity.
+        const handoffItemId = TurnItemId.make("shared:handoff-item");
+        yield* store.apply({
+          id: EventId.make("shared-write:handoff-item"),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: handoffItemId,
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 10,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "handoff",
+            contextHandoffId: prepared.id,
+            fromProviderThreadIds: [],
+            toProviderThreadId: ProviderThreadId.make("target"),
+            fromProviderInstanceIds: [instance],
+            toProviderInstanceId: instance,
+            strategy: "full_thread_summary",
+            summary,
+          },
+        });
+        const forkThread = ThreadId.make("shared-fork");
+        yield* sql`INSERT INTO scient_fork_history
+        (thread_id, position, source_thread_id, source_item_id, item_type, message_id, turn_start, user_turn)
+        VALUES (${forkThread}, 0, ${threadId}, ${handoffItemId}, 'handoff', NULL, 0, 0)`;
+        const inheritedPages = Effect.gen(function* () {
+          const pages = [];
+          for (const [offset, size] of [
+            [0, 20],
+            [959, 4],
+            [65_530, 40],
+            [summary.length - 10, 50],
+            [0, summary.length + 5],
+          ] as const)
+            pages.push(
+              yield* store.getContextHandoffSummaryPage(forkThread, prepared.id, offset, size),
+            );
+          return pages;
+        });
+        const inheritedBefore = yield* inheritedPages;
+        assert.equal(inheritedBefore[4]?.text, summary);
+        assert.equal((yield* shareLegacyContextHistories(sql, Effect.void)).items, 1);
+        assert.deepEqual(yield* inheritedPages, inheritedBefore);
+        const stored = yield* sql<{ readonly summary: string; readonly body: string | null }>`
+        SELECT json_extract(payload_json, '$.summary') AS summary,
+          json_extract(payload_json, '$.scientSummaryBody') AS body
+        FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${handoffItemId}`;
+        // The delta summarizer never reads past this prefix.
+        assert.equal(stored[0]!.summary, summary.slice(0, 960));
+        assert.isNotNull(stored[0]!.body);
+        // The item reuses the source's summary body; nothing new is stored.
+        const sharedBodies = yield* sql<{ readonly count: number }>`
+        SELECT COUNT(*) AS count FROM scient_history_bodies`;
+        assert.equal(sharedBodies[0]!.count, messages.length + 1);
+        // The private reference never reaches clients.
+        const records = yield* store.getThreadRecords(threadId, ["turnItems"]);
+        assert.notInclude(JSON.stringify(records), "scientSummaryBody");
 
         // A lost body is reported, never hidden behind source metadata.
         yield* sql`DELETE FROM scient_history_bodies WHERE rowid = (

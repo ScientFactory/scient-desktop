@@ -25,9 +25,12 @@ import { decodeTurnItemRow } from "./projectionRowJson.ts";
 import { handoffMetadataSql } from "./ContextHistorySql.ts";
 import { readJsonStringFieldPage } from "./JsonStringFieldPage.ts";
 import {
+  HANDOFF_ITEM_SUMMARY_BODY_FIELD,
   SHARED_SUMMARY_FIELD,
   convertLegacySourceToShared,
+  listLargeHandoffItemSummaries,
   readSharedSource,
+  shareHandoffItemSummary,
 } from "./SharedHistoryBodies.ts";
 
 const decodeHandoff = Schema.decodeUnknownEffect(
@@ -199,7 +202,7 @@ export const shareLegacyContextHistories = Effect.fn("ContextHistory.shareLegacy
   sql: SqlClient.SqlClient,
   between: Effect.Effect<void>,
 ) {
-  const counts = { converted: 0, skipped: 0, failed: 0 };
+  const counts = { converted: 0, skipped: 0, failed: 0, items: 0 };
   let after = "";
   while (true) {
     const rows = yield* sql<{ readonly source_id: string }>`
@@ -207,7 +210,7 @@ export const shareLegacyContextHistories = Effect.fn("ContextHistory.shareLegacy
       WHERE source.source_id > ${after} AND NOT EXISTS (
         SELECT 1 FROM scient_handoff_shared_sources AS shared WHERE shared.source_id = source.source_id)
       ORDER BY source.source_id LIMIT 16`;
-    if (rows.length === 0) return counts;
+    if (rows.length === 0) break;
     for (const row of rows) {
       const result = yield* shareLegacyContextHistory(
         sql,
@@ -226,6 +229,26 @@ export const shareLegacyContextHistories = Effect.fn("ContextHistory.shareLegacy
       yield* between;
     }
     after = rows.at(-1)!.source_id;
+  }
+  // Timeline items whose large summary equals their own converted source's summary.
+  let afterItem = "";
+  while (true) {
+    const rows = yield* listLargeHandoffItemSummaries(sql, afterItem);
+    if (rows.length === 0) return counts;
+    for (const row of rows) {
+      const result = yield* shareHandoffItemSummary(sql, row.turn_item_id).pipe(
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not share a handoff item summary", {
+            itemId: row.turn_item_id,
+            cause,
+          }).pipe(Effect.as("failed" as const)),
+        ),
+      );
+      if (result === "converted") counts.items++;
+      else if (result === "failed") counts.failed++;
+      yield* between;
+    }
+    afterItem = rows.at(-1)!.turn_item_id;
   }
 });
 
@@ -660,8 +683,17 @@ AND json_extract(COALESCE(frozen.item_json, item.payload_json), '$.contextHandof
       detail: "Streaming pages must have positive length.",
     });
   if (handoff.threadId !== threadId) {
-    const inherited = yield* sql<{ readonly position: number; readonly bytes: number }>`
-    SELECT history.position, octet_length(json_extract(COALESCE(frozen.item_json, item.payload_json), '$.summary')) AS bytes
+    const inherited = yield* sql<{
+      readonly position: number;
+      readonly bytes: number;
+      readonly body_hash: string | null;
+    }>`
+    SELECT history.position,
+      json_extract(COALESCE(frozen.item_json, item.payload_json), ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}) AS body_hash,
+      COALESCE((SELECT octet_length(json_extract(body.body, ${`$.${SHARED_SUMMARY_FIELD}`}))
+        FROM scient_history_bodies AS body WHERE body.hash = unhex(json_extract(
+          COALESCE(frozen.item_json, item.payload_json), ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}))),
+        octet_length(json_extract(COALESCE(frozen.item_json, item.payload_json), '$.summary'))) AS bytes
     FROM scient_fork_history AS history
     LEFT JOIN scient_fork_frozen_items AS frozen ON frozen.thread_id = history.thread_id AND frozen.position = history.position
     LEFT JOIN orchestration_v2_projection_turn_items AS item ON item.turn_item_id = history.source_item_id
@@ -672,6 +704,31 @@ AND json_extract(COALESCE(frozen.item_json, item.payload_json), '$.contextHandof
   `;
     if (inherited[0] !== undefined) {
       const saved = inherited[0];
+      // A shared summary is read whole from its body; the inline field keeps only a prefix.
+      if (saved.body_hash !== null)
+        return {
+          handoff,
+          textBytes: saved.bytes,
+          ...(yield* readJsonStringFieldPage<E | ContextHistoryReadError | SqlError>({
+            field: SHARED_SUMMARY_FIELD,
+            offset,
+            maxChars,
+            ...(consume === undefined ? {} : { onPage: consume }),
+            read: Effect.fn("ContextHistorySource.readSharedItemSummary")(
+              function* (byteOffset, length) {
+                const rows = yield* sql<{ readonly chunk: Uint8Array }>`
+                  SELECT substr(CAST(body AS BLOB), ${byteOffset + 1}, ${length}) AS chunk
+                  FROM scient_history_bodies WHERE hash = unhex(${saved.body_hash})`;
+                if (rows[0] === undefined)
+                  return yield* new ContextHistoryReadError({
+                    sourceId: handoffId,
+                    detail: "The shared handoff summary body is missing.",
+                  });
+                return rows[0].chunk;
+              },
+            ),
+          })),
+        };
       return {
         handoff,
         textBytes: saved.bytes,

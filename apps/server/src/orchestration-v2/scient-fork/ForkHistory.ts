@@ -644,7 +644,11 @@ export const readLiveForkSharedAttachmentIds = (
       WHERE history.source_thread_id = ${sourceThreadId}
         AND history.thread_id <> ${sourceThreadId}
         AND fork.deleted_at IS NULL
-        AND instr(lower(COALESCE(frozen.item_json, item.payload_json)), ${id.toLowerCase()}) > 0
+        AND (instr(lower(COALESCE(frozen.item_json, item.payload_json)), ${id.toLowerCase()}) > 0
+          -- A shared handoff summary keeps its full text in its body.
+          OR instr(lower((SELECT body.body FROM scient_history_bodies AS body WHERE body.hash = unhex(
+            json_extract(COALESCE(frozen.item_json, item.payload_json), '$.scientSummaryBody')))),
+            ${id.toLowerCase()}) > 0)
       LIMIT 1
     `.pipe(Effect.map((rows) => rows.length > 0)),
   );
