@@ -1,0 +1,395 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Pin tests exercise real project and library folders.
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import { initializeScientProject } from "@scientfactory/project-init";
+import { afterEach, describe, expect, it } from "@effect/vitest";
+
+import { editableMetadataFromRecord } from "./editable.ts";
+import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
+import { mergeScientLibrarySources } from "./libraryMerge.ts";
+import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
+import type { ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
+import {
+  listScientProjectPinnedWorks,
+  pinScientLibrarySource,
+  readScientProjectPins,
+  refreshScientProjectPinSnapshots,
+  resolveScientProjectPins,
+  setScientProjectPinNote,
+  unpinScientLibrarySource,
+} from "./projectPins.ts";
+import {
+  importScientSource,
+  listScientSourceRecords,
+  readScientSourceRecord,
+  updateScientSourceMetadata,
+} from "./store.ts";
+
+const fixtures: string[] = [];
+
+afterEach(async () => {
+  await Promise.all(
+    fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
+  );
+});
+
+async function fixture(): Promise<string> {
+  const root = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-pins-")),
+  );
+  fixtures.push(root);
+  return root;
+}
+
+async function newLibrary(base: string, name: string) {
+  const root = scientLibraryRootFor(NodePath.join(base, name));
+  await ensureScientLibrary(root);
+  return { root, library: scientLibraryLocation(root) };
+}
+
+async function newProject(base: string): Promise<string> {
+  const root = NodePath.join(base, "project");
+  await NodeFSP.mkdir(root);
+  await initializeScientProject({ root });
+  return root;
+}
+
+const ada = { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null };
+
+function candidate(
+  sourceKey: string,
+  overrides: Partial<ScientSourceCandidate> = {},
+): ScientSourceCandidate {
+  return {
+    sourceKey,
+    type: "article",
+    customType: null,
+    title: `Study ${sourceKey}`,
+    creators: [ada],
+    issuedRaw: "2020",
+    issuedYear: 2020,
+    identifiers: [],
+    abstract: "Not copied into pins.",
+    containerTitle: "Journal",
+    publisher: null,
+    volume: null,
+    issue: null,
+    pages: null,
+    language: null,
+    url: null,
+    tags: [],
+    externalReferences: [],
+    fieldProvenance: [],
+    pdfAvailable: false,
+    pdfFileName: null,
+    pdfAttachmentCount: 0,
+    ...overrides,
+  };
+}
+
+async function addRecord(
+  library: ReturnType<typeof scientLibraryLocation>,
+  sourceKey: string,
+  overrides: Partial<ScientSourceCandidate> = {},
+): Promise<ScientSourceRecord> {
+  const imported = await importScientSource({
+    root: library,
+    operationId: NodeCrypto.randomUUID(),
+    candidate: candidate(sourceKey, overrides),
+    allowPossibleMetadataMatch: true,
+  });
+  if (!imported.record) throw new Error(`Expected ${sourceKey} to import.`);
+  return imported.record;
+}
+
+async function renameKey(
+  library: ReturnType<typeof scientLibraryLocation>,
+  record: ScientSourceRecord,
+  citationKey: string,
+) {
+  const current = await readScientSourceRecord(library, record.sourceId);
+  if (!current) throw new Error("Expected the record.");
+  const result = await updateScientSourceMetadata({
+    root: library,
+    sourceId: current.sourceId,
+    expectedRevision: current.revision,
+    metadata: { ...editableMetadataFromRecord(current), citationKey },
+  });
+  expect(result.outcome).toBe("updated");
+}
+
+async function tree(root: string): Promise<ReadonlyArray<string>> {
+  return (await NodeFSP.readdir(root, { recursive: true })).toSorted();
+}
+
+describe("project pins", () => {
+  it("copies the preferred key once, with a suffix on a clash in the project", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const first = await addRecord(library, "A", { citationKey: "smith2020deep" });
+    const second = await addRecord(library, "B", { citationKey: "other2021" });
+
+    const pinned = await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: first.sourceId,
+      actor: "agent",
+      note: "Why I cite this here.",
+    });
+    expect(pinned).toMatchObject({
+      outcome: "pinned",
+      pin: { citationKey: "smith2020deep", note: "Why I cite this here." },
+    });
+    expect(pinned.outcome === "pinned" && pinned.pin.work).toEqual({
+      type: "article",
+      title: "Study A",
+      creators: [ada],
+      issuedYear: 2020,
+      identifiers: [],
+      containerTitle: "Journal",
+    });
+
+    await renameKey(library, first, "lovelace2020");
+    await renameKey(library, second, "Smith2020Deep");
+    const clashing = await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: second.sourceId,
+      actor: "user",
+    });
+    expect(clashing).toMatchObject({ outcome: "pinned", pin: { citationKey: "Smith2020Deepa" } });
+    expect(
+      await pinScientLibrarySource({
+        projectRoot,
+        library,
+        sourceId: first.sourceId,
+        actor: "user",
+      }),
+    ).toMatchObject({ outcome: "existing", pin: { citationKey: "smith2020deep" } });
+
+    const refreshed = await refreshScientProjectPinSnapshots({ projectRoot, library });
+    expect(refreshed.changed).toBe(false);
+    expect(refreshed.pins.map((pin) => pin.citationKey)).toEqual([
+      "smith2020deep",
+      "Smith2020Deepa",
+    ]);
+    expect((await readScientSourceRecord(library, first.sourceId))?.note ?? null).toBeNull();
+
+    expect(
+      await setScientProjectPinNote({ projectRoot, citationKey: "SMITH2020DEEP", note: null }),
+    ).toMatchObject({ outcome: "updated", pin: { citationKey: "smith2020deep" } });
+    expect((await readScientProjectPins(projectRoot))[0]).not.toHaveProperty("note");
+    expect(
+      await unpinScientLibrarySource({ projectRoot, citationKey: "smith2020deepa" }),
+    ).toMatchObject({ outcome: "unpinned" });
+    expect((await readScientProjectPins(projectRoot)).map((pin) => pin.citationKey)).toEqual([
+      "smith2020deep",
+    ]);
+  });
+
+  it("rewrites pins.json byte for byte and keeps fields from a newer Scient", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const record = await addRecord(library, "A", {
+      identifiers: [{ scheme: "doi", value: "10.1000/a" }],
+    });
+    await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: record.sourceId,
+      actor: "user",
+    });
+    const pinsPath = NodePath.join(projectRoot, ".scient", "library", "pins.json");
+    const file = JSON.parse(await NodeFSP.readFile(pinsPath, "utf8"));
+    file.pins[0].work.edition = "2nd";
+    file.pins[0].shelf = "methods";
+    file.teamLibraryId = "team_1";
+    const withNewerFields = `${JSON.stringify(file, null, 2)}\n`;
+    await NodeFSP.writeFile(pinsPath, withNewerFields);
+
+    expect((await refreshScientProjectPinSnapshots({ projectRoot, library })).changed).toBe(false);
+    await setScientProjectPinNote({ projectRoot, citationKey: "lovelace2020study", note: "Kept." });
+    expect(JSON.parse(await NodeFSP.readFile(pinsPath, "utf8"))).toMatchObject({
+      teamLibraryId: "team_1",
+      pins: [{ note: "Kept.", shelf: "methods", work: { edition: "2nd" } }],
+    });
+    await setScientProjectPinNote({ projectRoot, citationKey: "lovelace2020study", note: null });
+    expect(await NodeFSP.readFile(pinsPath, "utf8")).toBe(withNewerFields);
+
+    await renameKey(library, record, "lovelace2020renamed");
+    const current = await readScientSourceRecord(library, record.sourceId);
+    if (!current) throw new Error("Expected the record.");
+    await updateScientSourceMetadata({
+      root: library,
+      sourceId: current.sourceId,
+      expectedRevision: current.revision,
+      metadata: { ...editableMetadataFromRecord(current), title: "Study A, revised" },
+    });
+    const refreshed = await refreshScientProjectPinSnapshots({ projectRoot, library });
+    expect(refreshed.changed).toBe(true);
+    expect(refreshed.pins[0]).toMatchObject({
+      citationKey: "lovelace2020study",
+      work: { title: "Study A, revised" },
+    });
+  });
+
+  it("resolves project source IDs in the design's order", async () => {
+    const base = await fixture();
+    const { library, root } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const byDoi = await addRecord(library, "DOI", {
+      identifiers: [{ scheme: "doi", value: "10.1000/doi" }],
+    });
+    const byMetadata = await addRecord(library, "META", { title: "Metadata only" });
+    const twinOne = await addRecord(library, "TWIN1", { title: "Twin study" });
+    const twinTwo = await addRecord(library, "TWIN2", { title: "Twin study" });
+    const loser = await addRecord(library, "LOSER", { title: "Merged away" });
+    const survivor = await addRecord(library, "SURVIVOR", { title: "Merged into" });
+    expect(
+      await mergeScientLibrarySources({
+        library,
+        sourceIds: [loser.sourceId, survivor.sourceId],
+        survivorId: survivor.sourceId,
+      }),
+    ).toMatchObject({ outcome: "merged" });
+    const work = (title: string, identifiers: ScientSourceRecord["identifiers"] = []) => ({
+      type: "article",
+      title,
+      creators: [ada],
+      issuedYear: 2020,
+      identifiers,
+      containerTitle: null,
+    });
+
+    const sources = [
+      { projectSourceId: loser.sourceId, work: null },
+      {
+        projectSourceId: "source_elsewhere_doi",
+        work: work("Another title", [{ scheme: "doi", value: "https://doi.org/10.1000/DOI" }]),
+      },
+      { projectSourceId: "source_elsewhere_meta", work: work("Metadata only") },
+      { projectSourceId: "source_elsewhere_twin", work: work("Twin study") },
+    ];
+    expect(
+      await resolveScientProjectSources({ library, projectRoot, mode: "write", sources }),
+    ).toEqual([
+      {
+        kind: "resolved",
+        projectSourceId: loser.sourceId,
+        sourceId: survivor.sourceId,
+        by: "same-id",
+      },
+      {
+        kind: "resolved",
+        projectSourceId: "source_elsewhere_doi",
+        sourceId: byDoi.sourceId,
+        by: "identifier",
+      },
+      {
+        kind: "resolved",
+        projectSourceId: "source_elsewhere_meta",
+        sourceId: byMetadata.sourceId,
+        by: "metadata",
+      },
+      {
+        kind: "unresolved",
+        projectSourceId: "source_elsewhere_twin",
+        reason: "ambiguous",
+        candidateIds: expect.arrayContaining([twinOne.sourceId, twinTwo.sourceId]),
+      },
+    ]);
+    expect(await NodeFSP.readdir(NodePath.join(root, "projects"))).toHaveLength(1);
+
+    const fromMap = await resolveScientProjectSources({
+      library,
+      projectRoot,
+      mode: "read",
+      sources: sources.slice(1, 3).map(({ projectSourceId }) => ({ projectSourceId, work: null })),
+    });
+    expect(fromMap.map((resolution) => resolution.kind === "resolved" && resolution.by)).toEqual([
+      "instance-map",
+      "instance-map",
+    ]);
+  });
+
+  it("hydrates unmatched pins only in write mode, once", async () => {
+    const base = await fixture();
+    const author = await newLibrary(base, "author");
+    const projectRoot = await newProject(base);
+    const record = await addRecord(author.library, "A", {
+      identifiers: [{ scheme: "doi", value: "10.1000/a" }],
+    });
+    await pinScientLibrarySource({
+      projectRoot,
+      library: author.library,
+      sourceId: record.sourceId,
+      actor: "user",
+    });
+    const collaborator = await newLibrary(base, "collaborator");
+    const before = await tree(collaborator.root);
+
+    const read = await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "read",
+      actor: "agent",
+    });
+    expect(read.map(({ resolution }) => resolution)).toEqual([
+      {
+        kind: "unresolved",
+        projectSourceId: record.sourceId,
+        reason: "no-match",
+        candidateIds: [],
+      },
+    ]);
+    const offline = await listScientProjectPinnedWorks({ projectRoot, library: null });
+    expect(offline).toMatchObject([
+      { citationKey: "lovelace2020study", from: "snapshot", record: { title: "Study A" } },
+    ]);
+    expect(
+      await listScientProjectPinnedWorks({ projectRoot, library: collaborator.library }),
+    ).toEqual(offline);
+    expect(await tree(collaborator.root)).toEqual(before);
+
+    const written = await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "write",
+      actor: "agent",
+    });
+    expect(written[0]?.resolution).toMatchObject({ kind: "resolved", by: "hydrated" });
+    const hydrated = await listScientSourceRecords(collaborator.library);
+    expect(hydrated).toHaveLength(1);
+    expect(hydrated[0]).toMatchObject({
+      citationKey: "lovelace2020study",
+      title: "Study A",
+      abstract: null,
+      attachments: [],
+      identifiers: [{ scheme: "doi", value: "10.1000/a" }],
+      origin: { actor: "agent", intake: "file" },
+      readingStatus: "unread",
+    });
+
+    const again = await resolveScientProjectPins({
+      projectRoot,
+      library: collaborator.library,
+      mode: "write",
+      actor: "agent",
+    });
+    expect(again[0]?.resolution).toEqual({
+      kind: "resolved",
+      projectSourceId: record.sourceId,
+      sourceId: hydrated[0]?.sourceId,
+      by: "instance-map",
+    });
+    expect(await listScientSourceRecords(collaborator.library)).toHaveLength(1);
+    expect(
+      await listScientProjectPinnedWorks({ projectRoot, library: collaborator.library }),
+    ).toMatchObject([{ from: "library", record: { sourceId: hydrated[0]?.sourceId } }]);
+  });
+});

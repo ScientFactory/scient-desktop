@@ -147,8 +147,8 @@ than scattering version checks through adapters and UI code.
 The personal library is the same store over a library root instead of a
 project root. It is code only until the switch (build step 5e): no request,
 agent tool or UI routes to it, and the project store above stays the only
-active backend. Pins, the instance map, review snapshots and the move of
-existing projects come in later steps.
+active backend. Review snapshots, the move of existing projects and the
+routes and agent tools over pins come in later steps.
 
 The library lives under the server's resolved state directory for the launch
 mode, `scientLibraryRootFor(stateDir)` = `<stateDir>/scient/library/`, so dev
@@ -167,6 +167,7 @@ apps never touch the installed app's library.
 ├── saved-searches.json
 ├── categories.json
 ├── instances.json           this computer's project checkouts
+├── projects/<instance-id>.json  per checkout: project source ID → library ID
 ├── aliases.json             merged source ID → survivor, with Undo tombstones
 ├── distinct-pairs.json      pairs never merged automatically
 ├── merges/<merge-id>.json   one per merge: report and what Undo reverts
@@ -323,6 +324,102 @@ load):
 
 The in-memory index is enough for 5a. If a library grows far past this, the
 same index can move into a SQLite file in the library, rebuilt from records.
+
+### Reading status
+
+Library records (format version 2) carry `readingStatus` (`unread` or `read`)
+and `starred`. New library records start unread and not starred, and a version
+2 record written before these fields decodes the same way. Project records
+(format version 1) never carry them: the version 1 decoder drops them. The
+shared `ScientSourceRecord` schema does not list them either, so API results
+leave them out until a reader needs them; the trash keeps them because a trash
+entry's record goes through the central record decoder. Nothing sets them yet.
+
+### Pins and project keys
+
+`@scientfactory/scient-sources/project-pins` keeps a project's list of library
+sources in `<project>/.scient/library/pins.json`:
+
+```json
+{
+  "formatVersion": 1,
+  "pins": [
+    {
+      "citationKey": "smith2020deep",
+      "sourceId": "source_3f…",
+      "pinnedAt": "2026-11-12T09:00:00.000Z",
+      "pinnedBy": "agent",
+      "note": "Why I cite this here.",
+      "work": {
+        "type": "article",
+        "title": "…",
+        "creators": [],
+        "issuedYear": 2020,
+        "identifiers": [{ "scheme": "doi", "value": "10.…" }],
+        "containerTitle": "…"
+      }
+    }
+  ]
+}
+```
+
+- The file is sorted by key (case-insensitively, then exactly), pretty-printed
+  with fields in a fixed order, and written only when its bytes would change,
+  so the same pins are the same bytes on every computer. Fields a newer
+  Scient wrote at the file, pin or `work` level are kept on every rewrite,
+  after the known fields in sorted order. Unknown fields inside creators and
+  identifiers are not kept. Writes go through the store's atomic write under a
+  process-local `<project>:pins-write` lock, the same kind of lock as the
+  project store's.
+- `pinScientLibrarySource` copies the record's preferred `citationKey` (or a
+  generated one) as the project key, with the usual suffix when the project
+  already has it, compared case-insensitively. The key is frozen: changing the
+  record's preferred key later never changes the pin. A source already pinned
+  under any ID that resolves to it returns the existing pin.
+- `note` is the project note, set and cleared with `setScientProjectPinNote`
+  on the pin only; an empty note removes the field. The library record's
+  personal note is never touched.
+- `work` is a small snapshot (type, title, creators, issued year, identifiers,
+  container title; no abstract, note or PDF). `refreshScientProjectPinSnapshots`
+  updates it from the resolved library records and reports `changed`; it
+  writes nothing when no snapshot changed. A `type` this version does not know
+  is read as `other`.
+- `listScientProjectPinnedWorks` returns the pins under the project's keys for
+  the managed bibliography: the library record when this library resolves the
+  pin, otherwise a record built from `work`. It accepts no library at all (a
+  collaborator's checkout or CI). Personal notes are left out of the record;
+  the project note comes beside it. `ManagedBibliography.ts` does not use it
+  yet.
+
+### Instance map and resolving project source IDs
+
+`@scientfactory/scient-sources/library-instance-map` resolves every project
+source ID through one function, `resolveScientProjectSources`, which takes each
+ID with its snapshot (a pin's `work`, later a review's record snapshot):
+
+1. `projects/<instance-id>.json`, the checkout's map (`registerScientLibraryInstance`
+   gives the instance). The mapped ID is followed through `aliases.json`, so a
+   merge's Undo puts the old target back.
+2. The same ID in this library, through `resolveScientLibraryAlias`.
+3. The snapshot: a shared work-level identifier, then title, lead author and
+   year (`assessSourceMetadataDuplicate`). Records whose work-level identifiers
+   conflict with the snapshot's are skipped. More than one match is
+   `ambiguous` and stays unresolved.
+4. Otherwise unresolved: `no-match`, or `removed` when the map named a record
+   that is gone and nothing else matched.
+
+`read` mode writes nothing at all: no instance registration, no map, no lock
+file. `write` mode holds the library lock, registers the instance and records
+each new resolution in the map, written only when it changed. Map entries keep
+the ID resolved to then, never the alias survivor.
+
+`resolveScientProjectPins` resolves a project's pins. In `write` mode each
+`no-match` pin is hydrated: a library record built from its `work` (intake
+`file`, field provenance `project-file:<field>`, no abstract, no PDF, the
+pin's key as preferred key), recorded as `hydrated` in the map. Its source ID
+is derived from the library ID and the project source ID, so a repeat after a
+lost map finds the same record. `ambiguous` and `removed` pins are never
+hydrated, so hydration never adds a duplicate or brings back a removed record.
 
 ## Source truth and provenance
 

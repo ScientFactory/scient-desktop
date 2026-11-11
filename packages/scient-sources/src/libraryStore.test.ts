@@ -5,6 +5,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
+import { initializeScientProject } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it, vi } from "@effect/vitest";
 
 import { organizeScientSources, readScientSourcesOrganization } from "./collections.ts";
@@ -155,6 +156,48 @@ describe("personal library store", () => {
       "staging",
       "trash",
     ]);
+  });
+
+  it("keeps reading status on library records only", async () => {
+    const { root, library } = await newLibrary();
+    const imported = await importScientSource({
+      root: library,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: candidate("READ1", "A library source"),
+    });
+    const filePath = NodePath.join(root, "records", `${imported.record?.sourceId}.json`);
+    const { readingStatus, starred, ...older } = JSON.parse(
+      await NodeFSP.readFile(filePath, "utf8"),
+    );
+    expect([readingStatus, starred]).toEqual(["unread", false]);
+    expect(decodePersistedScientSourceRecord(older)).toMatchObject({
+      readingStatus: "unread",
+      starred: false,
+    });
+
+    const projectRoot = await fixture();
+    await initializeScientProject({ root: projectRoot });
+    const project = await importScientSource({
+      root: projectRoot,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: candidate("READ2", "A project source"),
+    });
+    const projectFile = JSON.parse(
+      await NodeFSP.readFile(
+        NodePath.join(
+          projectRoot,
+          ".scient",
+          "sources",
+          "records",
+          `${project.record?.sourceId}.json`,
+        ),
+        "utf8",
+      ),
+    );
+    expect(projectFile).not.toHaveProperty("readingStatus");
+    expect(
+      decodePersistedScientSourceRecord({ ...projectFile, readingStatus: "read", starred: true }),
+    ).not.toHaveProperty("readingStatus");
   });
 
   it("refuses a library record that names a project", () => {

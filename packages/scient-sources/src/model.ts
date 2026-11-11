@@ -1,3 +1,4 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import { ScientSourceCategorySummary } from "./categories.ts";
@@ -221,7 +222,13 @@ const { projectId: _projectId, ...libraryRecordFields } = ScientSourceRecord.fie
 export const ScientLibraryRecordV2 = Schema.Struct({
   ...libraryRecordFields,
   formatVersion: Schema.Literal(2),
+  /** Personal reading state, kept only in the library; records written before it are unread. */
+  readingStatus: Schema.Literals(["unread", "read"]).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("unread" as const)),
+  ),
+  starred: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
 });
+export type ScientLibraryRecord = typeof ScientLibraryRecordV2.Type;
 
 /**
  * Bounded list projection. Large abstracts, provenance, and external sync

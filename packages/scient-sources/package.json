@@ -40,6 +40,10 @@
       "types": "./src/libraryAliases.ts",
       "import": "./src/libraryAliases.ts"
     },
+    "./library-instance-map": {
+      "types": "./src/libraryInstanceMap.ts",
+      "import": "./src/libraryInstanceMap.ts"
+    },
     "./library-merge": {
       "types": "./src/libraryMerge.ts",
       "import": "./src/libraryMerge.ts"
@@ -51,6 +55,10 @@
     "./material-selection": {
       "types": "./src/materialSelection.ts",
       "import": "./src/materialSelection.ts"
+    },
+    "./project-pins": {
+      "types": "./src/projectPins.ts",
+      "import": "./src/projectPins.ts"
     },
     "./project-files": {
       "types": "./src/projectFiles.ts",

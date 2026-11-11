@@ -44,6 +44,7 @@ import {
   validateScientSourceEditableMetadata,
 } from "./editable.ts";
 import {
+  type ScientLibraryRecord,
   ScientLibraryRecordV2,
   ScientSourceImportOperation,
   ScientSourceImportReceipt,
@@ -281,6 +282,13 @@ function storeFormatVersion(paths: SourceStorePaths): 1 | 2 {
 
 function projectField(paths: SourceStorePaths): { readonly projectId?: string } {
   return paths.owner.kind === "project" ? { projectId: paths.owner.projectId } : {};
+}
+
+/** Reading state lives on library records only; project records never carry it. */
+function readingStateField(
+  paths: SourceStorePaths,
+): Pick<ScientLibraryRecord, "readingStatus" | "starred"> | Record<never, never> {
+  return paths.owner.kind === "library" ? { readingStatus: "unread", starred: false } : {};
 }
 
 function storeOwnerField(
@@ -791,13 +799,21 @@ async function preserveSourceRevision(
   }
 }
 
+/** The entry schema would strip library-only record fields; the record decoder keeps them. */
+function decodePersistedTrashEntry(value: unknown): ScientSourceTrashEntry {
+  const entry = decodeScientSourceTrashEntry(value);
+  const record =
+    typeof value === "object" && value !== null && "record" in value ? value.record : null;
+  return { ...entry, record: decodePersistedScientSourceRecord(record) };
+}
+
 async function readTrashEntry(
   paths: SourceStorePaths,
   sourceId: string,
 ): Promise<ScientSourceTrashEntry | null> {
   const filePath = trashEntryPath(paths, sourceId);
   if ((await snapshot(filePath)) === "missing") return null;
-  const entry = decodeScientSourceTrashEntry(
+  const entry = decodePersistedTrashEntry(
     await readBoundedJson(filePath, MAX_TRASH_ENTRY_BYTES, Schema.Unknown),
   );
   if (
@@ -2477,6 +2493,7 @@ async function importScientSourceWithRecordLookup(
       ...(input.verification ? { verification: input.verification } : {}),
       ...(input.editorialStatus ? { editorialStatus: input.editorialStatus } : {}),
       importedAt,
+      ...readingStateField(paths),
     };
     const recordPath = sourceRecordPath(paths, sourceId);
     if (!(await atomicCreateJson(recordPath, record, MAX_RECORD_BYTES))) {
