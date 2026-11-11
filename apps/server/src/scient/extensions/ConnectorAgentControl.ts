@@ -205,7 +205,7 @@ const nextStep = (summary: ConnectorSummary, status: AgentConnectorStatus) => {
     case "off":
       return `${name} is off: scient_connector_control {"connector":"${server}","action":"on"} turns it on.`;
     case "ready":
-      return `Its tools reach new chats from the user's next message, as mcp__${server}__<tool>.`;
+      return `New chats get its tools (they appear under ${server}). In this chat, call them through scient_connector_check {"connector":"${server}","calls":[{"tool":"…","arguments":{…}}]}.`;
   }
 };
 
@@ -529,16 +529,24 @@ export const controlConnector = Effect.fn("ConnectorAgentControl.control")(funct
   );
 });
 
-/** The installed connector's own test: it starts (or is reached), and lists its tools. */
+/**
+ * The installed connector's own test, hosted or local: it starts (or is reached), lists its tools
+ * and makes the agent's calls, so a connector added in this chat can be used in it.
+ */
 export const testConnector = Effect.fn("ConnectorAgentControl.test")(function* (
   name: string,
   location: ConnectorLocation | undefined,
+  calls?: ReadonlyArray<{ readonly tool: string; readonly arguments?: unknown }>,
 ) {
   const { runtime, observed } = yield* services;
   return yield* observed("connectors.agent.check", { variant: "installed" })(
     Effect.gen(function* () {
       const summary = yield* requireSummary(name);
-      const tested = yield* runtime.test({ connectorId: summary.connectorId, location });
+      const tested = yield* runtime.test({
+        connectorId: summary.connectorId,
+        location,
+        ...(calls === undefined ? {} : { calls }),
+      });
       const missing = rowOf(summary).missing ?? [];
       const why =
         tested.outcome === "needs-auth"
@@ -552,7 +560,7 @@ export const testConnector = Effect.fn("ConnectorAgentControl.test")(function* (
           name: tool.name,
           ...(tool.description === undefined ? {} : { description: tool.description }),
         })),
-        calls: [],
+        calls: tested.calls ?? [],
         missing,
         ...(tested.outcome === "ok"
           ? {}

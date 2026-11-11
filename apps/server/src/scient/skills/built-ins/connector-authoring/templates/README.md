@@ -21,10 +21,10 @@ Linux. It also runs on Node 20 or newer, and in Claude Desktop when exported as 
 
 `scient_connector_copy` fills these in `manifest.json` and this README:
 
-| Placeholder        | Filled with                                                                                                            |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------- |
-| `{{NAME}}`         | The program name: lowercase letters, digits and dashes, e.g. `moodle-huji`. Agents see tools as `mcp__<name>__<tool>`. |
-| `{{DISPLAY_NAME}}` | The name people see, e.g. "HUJI Moodle".                                                                               |
+| Placeholder        | Filled with                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------- |
+| `{{NAME}}`         | The program name: lowercase letters, digits and dashes, e.g. `moodle-huji`. Agents see its tools under this name. |
+| `{{DISPLAY_NAME}}` | The name people see, e.g. "HUJI Moodle".                                                                          |
 
 ## Make it yours (for the agent)
 

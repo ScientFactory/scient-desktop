@@ -21,7 +21,7 @@ tools make that easy and cheap.
 - `verb_noun` in lowercase with underscores: `search_works`, `get_work`,
   `upcoming_deadlines`. Up to 64 characters, letters, digits and `_` only (the protocol allows
   `-` and `.` too, but some clients don't).
-- Scient shows tools as `mcp__<connector>__<tool>`, so the service name need not be in the
+- Agents see each tool under the connector's name, so the service name need not be in the
   tool name.
 - Keep names stable once saved. Skills and habits come to depend on them.
 

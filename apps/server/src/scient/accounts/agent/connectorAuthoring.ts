@@ -211,12 +211,12 @@ export const checkConnector = Effect.fn("AccountsAgent.connectorCheck")(function
         reason: "invalid-input",
         message: "Give folder (a copy to check) or connector (an installed one to test).",
       });
-    if (input.calls !== undefined || input.signIn !== undefined)
+    if (input.signIn !== undefined)
       return yield* new AccountsError({
         reason: "invalid-input",
-        message: "calls and signIn need a folder: scient_connector_copy makes one.",
+        message: "signIn needs a folder: scient_connector_copy makes one.",
       });
-    return yield* testConnector(input.connector, yield* callerLocation).pipe(
+    return yield* testConnector(input.connector, yield* callerLocation, input.calls).pipe(
       Effect.mapError(toAccountsError),
     );
   }

@@ -156,10 +156,19 @@ export interface ConnectorRuntimeShape {
   /** `availability` project ids must exist; they are deduplicated before saving. */
   readonly update: (input: ConnectorUpdateInput) => Effect.Effect<void, ExtensionsError>;
   readonly remove: (input: ConnectorRemoveInput) => Effect.Effect<void, ExtensionsError>;
-  /** `location`: an agent's test uses only the sign-ins and keys its project may use. */
+  /**
+   * `location`: an agent's test uses only the sign-ins and keys its project may use.
+   * `calls`: an agent's tool calls, made once the tools are listed.
+   */
   readonly test: (
-    input: ConnectorTestInput & { readonly location?: ConnectorLocation | undefined },
-  ) => Effect.Effect<ConnectorTestResult, ExtensionsError>;
+    input: ConnectorTestInput & {
+      readonly location?: ConnectorLocation | undefined;
+      readonly calls?: CheckInput["calls"];
+    },
+  ) => Effect.Effect<
+    ConnectorTestResult & { readonly calls?: CheckResult["calls"] },
+    ExtensionsError
+  >;
   /** Reads a bundle file or folder on this computer for the add form. */
   readonly inspectLocal: (
     input: LocalBundleInspectInput,

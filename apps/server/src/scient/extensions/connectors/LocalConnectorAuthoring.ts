@@ -32,7 +32,12 @@ import {
 } from "../../storage/FolderHistory.ts";
 import { agentStatusOf } from "./agentStatus.ts";
 import type { ConnectorLogs } from "./ConnectorLogs.ts";
-import { credentialSet, redactJsonValue, redactText } from "./ConnectorRedaction.ts";
+import {
+  type CredentialSet,
+  credentialSet,
+  redactJsonValue,
+  redactText,
+} from "./ConnectorRedaction.ts";
 import { ConnectorRecord } from "./ConnectorStateStore.ts";
 import { connectorTemplate } from "./connectorTemplate.ts";
 import {
@@ -156,13 +161,70 @@ const zipFolder = (folder: string) =>
     );
   });
 
+/** Text an agent sees: credentials hidden first, then cut at `limit`, saying how much more. */
+const shownText = (text: string, credentials: CredentialSet, limit: number) => {
+  const safe = redactText(text, credentials, limit);
+  return text.length > limit ? `${safe}… (${text.length - limit} more characters)` : safe;
+};
+
+type CheckCall = { readonly tool: string; readonly arguments?: unknown };
+type CheckedCall = { readonly tool: string; readonly isError: boolean; readonly text: string };
+
+/** Makes an agent's calls on a connected client, one at a time; each answer kept from credentials. */
+export const callTools = async (
+  client: Client,
+  calls: ReadonlyArray<CheckCall>,
+  credentials: () => CredentialSet,
+) => {
+  const shown = (text: string) => shownText(text, credentials(), MAX_RESULT_CHARS);
+  const made: Array<CheckedCall> = [];
+  for (const call of calls.slice(0, MAX_CALLS)) {
+    try {
+      const result = await client.callTool(
+        { name: call.tool, arguments: (call.arguments ?? {}) as Record<string, unknown> },
+        undefined,
+        { timeout: CALL_TIMEOUT_MS },
+      );
+      const content = Array.isArray(result.content) ? result.content : [];
+      const text = content
+        .map((item) =>
+          item.type === "text"
+            ? item.text
+            : item.type === "image"
+              ? `[image ${item.mimeType}]`
+              : `[${item.type}]`,
+        )
+        .join("\n");
+      // Structured results usually repeat the text; shown only when there is no text.
+      const encoded =
+        result.structuredContent === undefined || text.trim() !== ""
+          ? undefined
+          : toJsonText(result.structuredContent);
+      const structured =
+        encoded === undefined || encoded._tag === "Failure" ? "" : `\n${encoded.value}`;
+      made.push({
+        tool: call.tool,
+        isError: result.isError === true,
+        text: shown(text + structured),
+      });
+    } catch (error) {
+      made.push({
+        tool: call.tool,
+        isError: true,
+        text: shown(error instanceof Error ? error.message : String(error)),
+      });
+    }
+  }
+  return made;
+};
+
 export interface CheckInput {
   readonly folder: string;
   /** Use this connector's settings, keys and sign-in. */
   readonly connector?: string | undefined;
   /** An Accounts sign-in (name or id) for the manifest's site, for a folder never saved. */
   readonly signIn?: string | undefined;
-  readonly calls?: ReadonlyArray<{ readonly tool: string; readonly arguments?: unknown }>;
+  readonly calls?: ReadonlyArray<CheckCall>;
 }
 
 export interface CheckResult {
@@ -172,11 +234,7 @@ export interface CheckResult {
     readonly description?: string;
     readonly parameters?: unknown;
   }>;
-  readonly calls: ReadonlyArray<{
-    readonly tool: string;
-    readonly isError: boolean;
-    readonly text: string;
-  }>;
+  readonly calls: ReadonlyArray<CheckedCall>;
   /** Required settings, keys or sign-in it ran without. */
   readonly missing: ReadonlyArray<string>;
   readonly error?: string;
@@ -522,10 +580,7 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
       );
     };
     const credentials = () => started?.credentials ?? NO_CREDENTIALS;
-    const shown = (text: string, limit: number) => {
-      const safe = redactText(text, credentials(), limit);
-      return text.length > limit ? `${safe}… (${text.length - limit} more characters)` : safe;
-    };
+    const shown = (text: string, limit: number) => shownText(text, credentials(), limit);
     const outcome = yield* Effect.tryPromise({
       try: async () => {
         const transport = new StreamableHTTPClientTransport(new URL("http://scient.local/check"), {
@@ -535,50 +590,7 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
         try {
           await client.connect(transport as unknown as Transport, { timeout: START_TIMEOUT_MS });
           const listed = await client.listTools(undefined, { timeout: START_TIMEOUT_MS });
-          const calls: Array<CheckResult["calls"][number]> = [];
-          for (const call of listOnly ? [] : (input.calls ?? []).slice(0, MAX_CALLS)) {
-            try {
-              const result = await client.callTool(
-                {
-                  name: call.tool,
-                  arguments: (call.arguments ?? {}) as Record<string, unknown>,
-                },
-                undefined,
-                { timeout: CALL_TIMEOUT_MS },
-              );
-              const content = Array.isArray(result.content) ? result.content : [];
-              const text = content
-                .map((item) =>
-                  item.type === "text"
-                    ? item.text
-                    : item.type === "image"
-                      ? `[image ${item.mimeType}]`
-                      : `[${item.type}]`,
-                )
-                .join("\n");
-              // Structured results usually repeat the text; shown only when there is no text.
-              const encoded =
-                result.structuredContent === undefined || text.trim() !== ""
-                  ? undefined
-                  : toJsonText(result.structuredContent);
-              const structured =
-                encoded === undefined || encoded._tag === "Failure" ? "" : `\n${encoded.value}`;
-              calls.push({
-                tool: call.tool,
-                isError: result.isError === true,
-                text: shown(text + structured, MAX_RESULT_CHARS),
-              });
-            } catch (error) {
-              calls.push({
-                tool: call.tool,
-                isError: true,
-                text: shown(
-                  error instanceof Error ? error.message : String(error),
-                  MAX_RESULT_CHARS,
-                ),
-              });
-            }
-          }
+          const calls = await callTools(client, listOnly ? [] : (input.calls ?? []), credentials);
           return { tools: listed.tools, calls };
         } finally {
           await transport.terminateSession().catch(() => undefined);

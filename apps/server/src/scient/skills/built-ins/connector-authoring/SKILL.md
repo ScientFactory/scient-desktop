@@ -19,8 +19,9 @@ This skill grants no tools or permissions.
    the MCP Registry. If one fits, `scient_connector_add {from}` with its `name` adds it, on for
    every project; a key or the user's own sign-in app it needs is asked in a private card.
    Then follow its message (`scient_connector_setup` for `needs-setup`,
-   `scient_connector_control {action: "sign-in"}` for `needs-sign-in`). `scient_connector_add`
-   also takes an https MCP address or a `.mcpb` file. Build one only when none fits; an
+   `scient_connector_control {action: "sign-in"}` for `needs-sign-in`). New chats get its
+   tools; in this chat, call them through `scient_connector_check {connector, calls}`.
+   `scient_connector_add` also takes an https MCP address or a `.mcpb` file. Build one only when none fits; an
    entry's `reason` says why it can't be added, a good place to start. Also check Scient's own
    tools (papers, sources, accounts, compute). If the work is one-off, a script fits better; if
    it is know-how rather than access, a skill does (`scient-skill-authoring`).
@@ -50,7 +51,8 @@ This skill grants no tools or permissions.
 7. **Save and set up.** `scient_connector_save {folder}`. When it says `needs-setup`, call
    `scient_connector_setup {connector}`: keys open a private card, a sign-in links the user's
    Accounts sign-in. Then check once more with `connector` set, so it uses them. (`signIn` is
-   only for a folder that isn't saved yet.)
+   only for a folder that isn't saved yet.) New chats get its tools; in this chat, call them
+   through `scient_connector_check {connector, calls}`.
 8. **Report** in a few lines: what it does, its tools, what you tested with one real result,
    what you didn't test, and how to take it back: a new connector has nothing earlier to go
    back to, so the user removes it on its page (Remove can be undone); after a fix, its page
@@ -60,7 +62,8 @@ This skill grants no tools or permissions.
 
 1. **Find what is wrong.** `scient_connector_list` gives each connector's status (`ready`,
    `needs-setup`, `needs-sign-in`, `error`, `off`) and last error. `scient_connector_check
-   {connector}` (no folder) tests an installed one, hosted or local, and lists its tools.
+   {connector}` (no folder) tests an installed one, hosted or local, and lists its tools;
+   with `calls` it makes them too.
 2. **A hosted connector** (it runs online) has no code to fix. `needs-sign-in`:
    `scient_connector_control {connector, action: "sign-in"}` opens its sign-in in this chat's
    browser for the user to finish; then check again. `off`: `action: "on"`. Other errors are

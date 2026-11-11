@@ -450,7 +450,7 @@ const connectorCheck = metadata(
     failure: AccountsError,
     dependencies: connectorDependencies,
     description:
-      "Start a connector folder as Scient would, list its tools, make each call, stop it; installs nothing. connector: use its settings, keys and sign-in. signIn: an Accounts sign-in for the manifest's site. Missing keys are listed in missing; a failure returns the error and error output. connector without folder: tests the installed one, hosted too.",
+      "Start a connector folder as Scient would, list its tools, make each call, stop it; installs nothing. connector: use its settings, keys and sign-in. signIn: an Accounts sign-in for the manifest's site. Missing keys are listed in missing; a failure returns the error and error output. connector without folder: tests the installed one, hosted too, and makes calls; that is how to use one added in this chat.",
     parameters: Schema.Struct({
       folder: Schema.optional(FolderPath),
       connector: Schema.optional(ConnectorName),

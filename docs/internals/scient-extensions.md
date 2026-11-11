@@ -583,9 +583,11 @@ connectors alike through the calls the Extensions page makes:
   chat has no browser. A local connector's sign-in points
   at `scient_account_sign_in` with its linked account. Removing stays the user's.
 
-`scient_connector_check {connector}` without a folder runs `connectors.test` on the installed
-connector, hosted ones too, with the chat's project, so a sign-in or key scoped to another
-project counts as missing. Both checks pass every returned field (tool names, descriptions,
+`scient_connector_check {connector, calls?}` without a folder runs `connectors.test` on the
+installed connector, hosted ones too, with the chat's project, so a sign-in or key scoped to another
+project counts as missing, and makes the `calls` through the same client. A connector reaches a
+provider session only when the session starts, so this is how an agent uses one it added or saved
+in the same chat; the add, save and `on` messages say so. Both checks pass every returned field (tool names, descriptions,
 parameter schemas, call results, errors, logs) through `ConnectorRedaction.redactText` with the
 program's keys (however short) and session cookies, in any encoding; a cut never shows part of
 a credential, because the word it splits is left out.

@@ -116,7 +116,7 @@ import type { McpInvocationScope } from "../../../mcp/McpInvocationContext.ts";
 import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
 import { makeConnectorLogs } from "./ConnectorLogs.ts";
 import { observeFeature } from "./observedFeature.ts";
-import { makeLocalConnectorAuthoring } from "./LocalConnectorAuthoring.ts";
+import { callTools, makeLocalConnectorAuthoring } from "./LocalConnectorAuthoring.ts";
 import { type LocalSignInHandler, makeLocalConnectorHost } from "./LocalConnectorProcesses.ts";
 import { makeLocalConnectors } from "./LocalConnectors.ts";
 import { makeRunTool, type RunTool } from "./PackageSource.ts";
@@ -2048,6 +2048,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
       throw new ConnectorUnavailableError({ kind: outcome.type, message: outcome.message });
     };
+    // Server-provided text reaches the settings UI and agents; a reflected credential must not.
+    const credentialsNow = () =>
+      record.local === undefined
+        ? credentialSet(applied)
+        : localConnectors.credentialsFor(record.connectorId);
     const listed = yield* Effect.tryPromise({
       try: async () => {
         const transport = new StreamableHTTPClientTransport(new URL(record.url), {
@@ -2062,6 +2067,10 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             serverName: client.getServerVersion()?.name,
             serverVersion: client.getServerVersion()?.version,
             tools: tools.tools,
+            calls:
+              input.calls === undefined
+                ? undefined
+                : await callTools(client, input.calls, credentialsNow),
           };
         } finally {
           await transport.terminateSession().catch(() => undefined);
@@ -2100,11 +2109,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         updatedAt,
       })).pipe(Effect.ignore);
     }
-    // Server-provided text reaches the settings UI and agents; a reflected credential must not.
-    const credentials =
-      record.local === undefined
-        ? credentialSet(applied)
-        : localConnectors.credentialsFor(record.connectorId);
+    const credentials = credentialsNow();
     const clean = (text: string | undefined) => {
       const trimmed = text === undefined ? "" : redactText(text, credentials).trim();
       return trimmed.length > 0 ? trimmed : undefined;
@@ -2115,6 +2120,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       ...result("ok"),
       ...(serverName === undefined ? {} : { serverName }),
       ...(serverVersion === undefined ? {} : { serverVersion }),
+      ...(listed.value.calls === undefined ? {} : { calls: listed.value.calls }),
       tools: listed.value.tools.flatMap((tool) => {
         const name = clean(tool.name);
         if (name === undefined) return [];

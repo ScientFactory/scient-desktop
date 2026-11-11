@@ -3334,6 +3334,22 @@ describe("connectors agents run", () => {
         expect(added).toMatchObject({ status: "ready", tools: ["search"] });
         expect(sites).toEqual([new URL(vendor.base).origin]);
         expect(JSON.stringify(added)).not.toContain(key);
+        // regression: a hosted connector added in a chat could not be used in it, and the message
+        // promised tools by a name only some agents use.
+        expect(added.message).toContain(`scient_connector_check {"connector":"${added.connector}"`);
+        expect(added.message).not.toContain("mcp__");
+        const used = yield* agent(
+          testConnector(added.connector, undefined, [
+            { tool: "search", arguments: { query: "tp53" } },
+            { tool: "echo-auth" },
+          ]),
+        );
+        expect(used.calls).toMatchObject([
+          { tool: "search", isError: false, text: "found" },
+          { tool: "echo-auth", isError: false },
+        ]);
+        expect(JSON.stringify(used)).not.toContain(key);
+        expect(JSON.stringify(used)).not.toContain(Buffer.from(key).toString("base64"));
         const own = yield* agent(addConnector({ from: ownApp.name, asks }));
         expect(own.status).toBe("needs-sign-in");
         expect(
@@ -3920,7 +3936,10 @@ describe("connectors agents make and fix", () => {
       const cookie = "portal-session-0123456789abcdef";
       const leak = Buffer.from(cookie).toString("base64");
       const portal = yield* signedInPortal([cookie], [cookie], LEAKY_SESSION_SERVER);
-      const installed = yield* portal.harness.runtime.test({ connectorId: portal.connectorId });
+      const installed = yield* portal.harness.runtime.test({
+        connectorId: portal.connectorId,
+        calls: [{ tool: "find" }],
+      });
       const folder = yield* portal.harness.runtime.checkFolder(
         { folder: portal.folder, connector: portal.connectorId, calls: [{ tool: "find" }] },
         undefined,
@@ -3937,6 +3956,7 @@ describe("connectors agents make and fix", () => {
         parameters: { properties: { q: { description: "[redacted by Scient]" } } },
       });
       expect(folder.calls[0]).toMatchObject({ isError: true });
+      expect(installed.calls?.[0]).toMatchObject({ isError: true });
       expect(folder.log).toContain("using [redacted by Scient]");
     }).pipe(Effect.provide(testLayer)),
   );
