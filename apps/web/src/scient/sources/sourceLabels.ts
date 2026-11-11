@@ -1,3 +1,5 @@
+import type { ScientSourceType } from "@scientfactory/scient-sources";
+
 function isSameCalendarDay(left: Date, right: Date): boolean {
   return (
     left.getFullYear() === right.getFullYear() &&
@@ -30,6 +32,25 @@ export function newlyObservedSourceIds(
     .map((record) => record.sourceId);
 }
 
+const VERIFICATION_LABELS = {
+  verified: "Identifier verified",
+  unchecked: "Not yet checked",
+  unverified: "No identifier",
+} as const;
+
+export function agentVerificationLabel(record: {
+  readonly origin?: { readonly actor?: string } | null | undefined;
+  readonly verification?:
+    | { readonly state: keyof typeof VERIFICATION_LABELS; readonly problem?: string }
+    | undefined;
+}): string {
+  // A checked identifier's problem is named by sourceTrustLabel instead.
+  if (record.origin?.actor !== "agent" || !record.verification || record.verification.problem) {
+    return "";
+  }
+  return ` · ${VERIFICATION_LABELS[record.verification.state]}`;
+}
+
 export function sourceAddedLabel(
   importedAt: string,
   recentlyAdded: boolean,
@@ -41,3 +62,16 @@ export function sourceAddedLabel(
   if (isSameCalendarDay(date, new Date())) return "Added today";
   return `Added ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date)}`;
 }
+
+export const SCIENT_SOURCE_TYPE_LABELS = {
+  article: "Article",
+  preprint: "Preprint",
+  book: "Book",
+  "book-chapter": "Book chapter",
+  "conference-paper": "Conference paper",
+  thesis: "Thesis",
+  report: "Report",
+  dataset: "Dataset",
+  web: "Web source",
+  other: "Other source",
+} as const satisfies Readonly<Record<ScientSourceType, string>>;

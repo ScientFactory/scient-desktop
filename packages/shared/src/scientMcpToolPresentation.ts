@@ -68,13 +68,81 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     "scient-sources",
   ),
   t3_sources_remove: tool(["Remove", "Removing", "Removed", "a source"], "scient-sources"),
-  t3_sources_review: tool(["Review", "Reviewing", "Reviewed", "a source"], "scient-sources"),
+  t3_sources_restore: tool(["Restore", "Restoring", "Restored", "a source"], "scient-sources"),
+  t3_sources_revert: tool(
+    ["Revert", "Reverting", "Reverted", "a source to an earlier version"],
+    "scient-sources",
+  ),
+  t3_sources_check: tool(
+    ["Check", "Checking", "Checked", "a source's identifier"],
+    "scient-sources",
+  ),
   t3_sources_attach_pdf: tool(
     ["Attach", "Attaching", "Attached", "a PDF to a source"],
     "scient-sources",
   ),
   t3_sources_detach_pdf: tool(
     ["Detach", "Detaching", "Detached", "a PDF from a source"],
+    "scient-sources",
+  ),
+  t3_sources_bibliography: tool(
+    ["Update", "Updating", "Updated", "the bibliography files"],
+    "scient-sources",
+  ),
+  t3_sources_cite: tool(["Prepare", "Preparing", "Prepared", "a citation"], "scient-sources"),
+  t3_sources_search: tool(["Search", "Searching", "Searched", "source text"], "scient-sources"),
+  t3_sources_read_text: tool(["Read", "Reading", "Read", "a source's text"], "scient-sources"),
+  t3_sources_quote_check: tool(["Check", "Checking", "Checked", "quotes"], "scient-sources"),
+  t3_sources_save_page: tool(
+    ["Save", "Saving", "Saved", "a page to the Library"],
+    "scient-sources",
+  ),
+  t3_sources_import_file: tool(
+    ["Import", "Importing", "Imported", "a reference file"],
+    "scient-sources",
+  ),
+  t3_sources_export: tool(["Export", "Exporting", "Exported", "sources"], "scient-sources"),
+  t3_sources_zotero_browse: tool(["Browse", "Browsing", "Browsed", "Zotero"], "scient-sources"),
+  t3_sources_zotero_import: tool(
+    ["Import", "Importing", "Imported", "from Zotero"],
+    "scient-sources",
+  ),
+  t3_sources_zotero_refresh: tool(
+    ["Refresh", "Refreshing", "Refreshed", "sources from Zotero"],
+    "scient-sources",
+  ),
+  t3_sources_zotero_send: tool(["Send", "Sending", "Sent", "sources to Zotero"], "scient-sources"),
+  t3_sources_collections: tool(["Read", "Reading", "Read", "collections"], "scient-sources"),
+  t3_sources_organize: tool(["Organize", "Organizing", "Organized", "sources"], "scient-sources"),
+  t3_sources_bulk_update: tool(
+    ["Update", "Updating", "Updated", "several sources"],
+    "scient-sources",
+  ),
+  t3_sources_systematic_reviews: tool(
+    ["Read", "Reading", "Read", "systematic reviews"],
+    "scient-sources",
+  ),
+  t3_sources_systematic_review_update: tool(
+    ["Update", "Updating", "Updated", "a systematic review"],
+    "scient-sources",
+  ),
+  t3_references_check: tool(["Check", "Checking", "Checked", "references"], "scient-sources"),
+  t3_references_resolve: tool(
+    ["Resolve", "Resolving", "Resolved", "reference findings"],
+    "scient-sources",
+  ),
+  t3_annotations_read: tool(["Read", "Reading", "Read", "PDF annotations"], "scient-sources"),
+  t3_annotations_add: tool(["Add", "Adding", "Added", "a PDF annotation"], "scient-sources"),
+  t3_annotations_update: tool(
+    ["Update", "Updating", "Updated", "a PDF annotation"],
+    "scient-sources",
+  ),
+  t3_annotations_remove: tool(
+    ["Remove", "Removing", "Removed", "a PDF annotation"],
+    "scient-sources",
+  ),
+  t3_annotations_restore: tool(
+    ["Restore", "Restoring", "Restored", "a PDF annotation"],
     "scient-sources",
   ),
   t3_pdf_build: tool(["Build", "Building", "Built", "a PDF"], "scient-documents"),

@@ -14,10 +14,13 @@ import {
   Download,
   ExternalLink,
   FileText,
+  History,
   LoaderCircle,
   MoreHorizontal,
   Pencil,
   RefreshCw,
+  Trash2,
+  Upload,
 } from "lucide-react";
 import {
   useEffect,
@@ -44,12 +47,13 @@ import { readLocalApi } from "../../localApi";
 import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { agentVerificationLabel } from "./sourceLabels";
+import { pdfVersionLabel } from "./sourcePdfVersion";
+import { SourceEditorialStatus } from "./SourceEditorialStatus";
+import { verificationProblemLabel } from "./sourceLifecycleLabels";
 import { SourceReference } from "./SourceReference";
 import { useSourceNoteControls } from "./SourceNote";
-import {
-  SourceRemovalConfirmation,
-  type SourceRemovalAnchorPoint,
-} from "./SourceRemovalConfirmation";
+import type { SourceAnchorPoint } from "./sourceAnchor";
 
 type SourceRecord = ScientSourceDetailResult;
 type SourceDiagnostic =
@@ -142,8 +146,8 @@ function importedLabel(record: SourceRecord): string {
       : fromZotero
         ? "Imported from Zotero"
         : "Added to Scient";
-  const reviewLabel = record.origin?.review === "pending" ? " · Pending review" : "";
-  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${reviewLabel}`;
+  const editedLabel = record.updatedBy === "agent" ? " · Edited by agent" : "";
+  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${agentVerificationLabel(record)}${verificationProblemLabel(record.verification)}${editedLabel}${pdfVersionLabel(record.attachments)}`;
 }
 
 function openExternal(url: string): void {
@@ -513,7 +517,7 @@ function SourceTags(props: { readonly tags: ReadonlyArray<string> }) {
 }
 
 function MetadataRefreshConfirmation(props: {
-  readonly anchorPoint: SourceRemovalAnchorPoint;
+  readonly anchorPoint: SourceAnchorPoint;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRefresh: () => Promise<void>;
 }) {
@@ -603,7 +607,11 @@ function MetadataRefreshConfirmation(props: {
 
 export function SourceDetails(props: {
   readonly record: SourceRecord;
+  /** The connection can read this Library but not change it. */
+  readonly readOnly?: boolean;
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
+  /** Editable tags and collections; without it the tags are shown read-only. */
+  readonly organize?: ReactNode;
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onSaveNote: (
@@ -611,23 +619,23 @@ export function SourceDetails(props: {
     expectedRevision: number,
   ) => Promise<ScientSourceNoteUpdateResult>;
   readonly onRefreshMetadata: () => Promise<void>;
-  readonly onApproveReview?: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
+  readonly onOpenHistory?: () => void;
+  readonly onSendToZotero?: () => void;
   readonly onGetPdf?: () => Promise<void>;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  /** The Source's highlights and notes, shown after its reference. */
+  readonly annotations?: ReactNode;
 }) {
-  const [removeAnchorPoint, setRemoveAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(null);
-  const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(
-    null,
-  );
-  const [approvingReview, setApprovingReview] = useState(false);
+  const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
   const record = props.record;
-  const sourceNote = useSourceNoteControls({ record, onSave: props.onSaveNote });
+  const readOnly = props.readOnly ?? false;
+  const sourceNote = useSourceNoteControls({ record, readOnly, onSave: props.onSaveNote });
   const publication = publicationLocation(record);
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
@@ -654,45 +662,7 @@ export function SourceDetails(props: {
         </Button>
         <div className="min-w-0 flex-1" />
         {sourceNote.button}
-        {record.origin?.review === "pending" && props.onApproveReview ? (
-          <>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={approvingReview}
-              onClick={() => {
-                setApprovingReview(true);
-                void props
-                  .onApproveReview?.()
-                  .catch((cause: unknown) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Review could not be approved",
-                      description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
-                    });
-                  })
-                  .finally(() => setApprovingReview(false));
-              }}
-            >
-              {approvingReview ? <LoaderCircle className="animate-spin" /> : null}
-              {approvingReview ? "Approving…" : "Approve review"}
-            </Button>
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={(event) => {
-                const target = event.currentTarget.getBoundingClientRect();
-                setRemoveAnchorPoint({
-                  x: event.clientX || target.right,
-                  y: event.clientY || target.top + target.height / 2,
-                });
-              }}
-            >
-              Reject
-            </Button>
-          </>
-        ) : null}
-        <Button size="xs" variant="ghost" onClick={props.onEdit}>
+        <Button size="xs" variant="ghost" disabled={readOnly} onClick={props.onEdit}>
           <Pencil />
           Edit
         </Button>
@@ -744,7 +714,7 @@ export function SourceDetails(props: {
           <Button
             size="xs"
             variant="ghost"
-            disabled={gettingPdf}
+            disabled={gettingPdf || readOnly}
             onClick={() => {
               setGettingPdf(true);
               void Promise.resolve(props.onGetPdf?.()).finally(() => setGettingPdf(false));
@@ -766,6 +736,7 @@ export function SourceDetails(props: {
           </ScientTooltip>
           <MenuPopup align="end" side="bottom" className="min-w-44">
             <MenuItem
+              disabled={readOnly}
               onClick={(event) => {
                 const target = event.currentTarget.getBoundingClientRect();
                 setRefreshAnchorPoint({
@@ -777,18 +748,34 @@ export function SourceDetails(props: {
               <RefreshCw />
               Refresh metadata
             </MenuItem>
+            {props.onOpenHistory ? (
+              <MenuItem onClick={props.onOpenHistory}>
+                <History />
+                History
+              </MenuItem>
+            ) : null}
+            {props.onSendToZotero ? (
+              <MenuItem disabled={readOnly} onClick={props.onSendToZotero}>
+                <Upload />
+                Send to Zotero
+              </MenuItem>
+            ) : null}
             <MenuSeparator />
             <MenuItem
               variant="destructive"
-              onClick={(event) => {
-                const target = event.currentTarget.getBoundingClientRect();
-                setRemoveAnchorPoint({
-                  x: event.clientX || target.right,
-                  y: event.clientY || target.top + target.height / 2,
+              disabled={readOnly}
+              onClick={() => {
+                void props.onRemove().catch((cause: unknown) => {
+                  toastManager.add({
+                    type: "error",
+                    title: "Source could not be moved to Trash",
+                    description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+                  });
                 });
               }}
             >
-              {record.origin?.review === "pending" ? "Reject agent source" : "Remove from Sources"}
+              <Trash2 />
+              Move to Trash
             </MenuItem>
           </MenuPopup>
         </Menu>
@@ -802,6 +789,7 @@ export function SourceDetails(props: {
               {record.title ?? "Untitled source"}
             </h2>
             <p className="text-sm text-muted-foreground">{creatorsLabel(record)}</p>
+            <SourceEditorialStatus status={record.editorialStatus} />
           </header>
 
           {props.diagnostics.length > 0 ? (
@@ -881,13 +869,16 @@ export function SourceDetails(props: {
             </DetailsSection>
           ) : null}
 
-          {tags.length > 0 ? (
-            <DetailsSection title="Tags">
-              <SourceTags tags={tags} />
-            </DetailsSection>
-          ) : null}
+          {props.organize ??
+            (tags.length > 0 ? (
+              <DetailsSection title="Tags">
+                <SourceTags tags={tags} />
+              </DetailsSection>
+            ) : null)}
 
           <SourceReference record={record} />
+
+          {props.annotations}
 
           {sourceNote.section}
 
@@ -904,19 +895,6 @@ export function SourceDetails(props: {
             if (!open) setRefreshAnchorPoint(null);
           }}
           onRefresh={props.onRefreshMetadata}
-        />
-      ) : null}
-
-      {removeAnchorPoint ? (
-        <SourceRemovalConfirmation
-          key={record.sourceId}
-          open
-          record={record}
-          anchorPoint={removeAnchorPoint}
-          onOpenChange={(open) => {
-            if (!open) setRemoveAnchorPoint(null);
-          }}
-          onRemove={props.onRemove}
         />
       ) : null}
     </div>

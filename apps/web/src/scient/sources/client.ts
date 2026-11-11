@@ -1,12 +1,8 @@
 import {
-  advanceEnvironmentScientSourcesImport,
-  beginEnvironmentLocalSourceImport,
-  beginEnvironmentZoteroImport,
-  beginEnvironmentZoteroScopedImport,
-  cancelEnvironmentScientSourcesImport,
-  retryEnvironmentScientSourcesImport,
-  discardEnvironmentLocalSourcePdfs,
+  getEnvironmentScientSystematicReview,
+  listEnvironmentScientSystematicReviews,
   getEnvironmentScientSourceAttachmentPreview,
+  searchEnvironmentScientSourcesFullText,
   getEnvironmentScientSourceDetail,
   getEnvironmentScientSourceJournalIcon,
   getEnvironmentScientSourcesOverview,
@@ -14,25 +10,39 @@ import {
   listEnvironmentZoteroLibrary,
   listEnvironmentZoteroCollections,
   preflightEnvironmentZoteroImport,
-  refreshEnvironmentScientSourceMetadata,
-  removeEnvironmentScientSource,
-  updateEnvironmentScientSourceMetadata,
-  updateEnvironmentScientSourceNote,
-  updateEnvironmentScientSourceReview,
-  uploadEnvironmentLocalSourcePdf,
+  listEnvironmentScientSourceRevisions,
+  listEnvironmentScientSourceTrash,
+  exportEnvironmentScientSources,
 } from "@t3tools/client-runtime/state/scient-sources";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type {
   EnvironmentId,
+  ScientManagedBibliographyFileName,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
   ScientSourceRemovalRequest,
+  ScientSourceSavePageRequest,
+  ScientSourcesBulkUpdateRequest,
+  ScientSourcesOrganizeRequest,
+  ScientSystematicReviewChangeRequest,
+  ScientSystematicReviewRequest,
+  ScientSystematicReviewsRequest,
+  ScientSourcesExportRequest,
+  ScientSourceRestoreRequest,
+  ScientSourceRevertRequest,
+  ScientSourceRevisionsRequest,
+  ScientSourcesPermanentDeletionRequest,
+  ScientSourcesTrashRequest,
+  ScientSourcesZoteroRefreshRequest,
+  ScientSourcesZoteroSendRequest,
+  ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
 import { readPreparedConnection } from "../../state/session";
+import { runSourcesCommand, sourcesCommands } from "./sourcesCommands";
 
 function prepared(environmentId: EnvironmentId) {
   const connection = readPreparedConnection(environmentId);
@@ -59,36 +69,123 @@ export function updateScientSourceMetadata(
   environmentId: EnvironmentId,
   input: ScientSourceMetadataUpdateRequest,
 ) {
-  return runtime.runPromise(
-    updateEnvironmentScientSourceMetadata({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.updateMetadata, environmentId, input);
 }
 
 export function refreshScientSourceMetadata(
   environmentId: EnvironmentId,
   input: ScientSourceMetadataRefreshRequest,
 ) {
-  return runtime.runPromise(
-    refreshEnvironmentScientSourceMetadata({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.refreshMetadata, environmentId, input);
 }
 
 export function updateScientSourceNote(
   environmentId: EnvironmentId,
   input: ScientSourceNoteUpdateRequest,
 ) {
-  return runtime.runPromise(
-    updateEnvironmentScientSourceNote({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.updateNote, environmentId, input);
 }
 
 export function removeScientSource(
   environmentId: EnvironmentId,
   input: ScientSourceRemovalRequest,
 ) {
+  return runSourcesCommand(sourcesCommands.remove, environmentId, input);
+}
+
+export function organizeScientSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesOrganizeRequest,
+) {
+  return runSourcesCommand(sourcesCommands.organize, environmentId, input);
+}
+
+export function readSystematicReviews(
+  environmentId: EnvironmentId,
+  input: ScientSystematicReviewsRequest,
+) {
   return runtime.runPromise(
-    removeEnvironmentScientSource({ prepared: prepared(environmentId), ...input }),
+    listEnvironmentScientSystematicReviews({ prepared: prepared(environmentId), ...input }),
   );
+}
+
+export function readSystematicReview(
+  environmentId: EnvironmentId,
+  input: ScientSystematicReviewRequest,
+) {
+  return runtime.runPromise(
+    getEnvironmentScientSystematicReview({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function changeSystematicReview(
+  environmentId: EnvironmentId,
+  input: ScientSystematicReviewChangeRequest,
+) {
+  return runSourcesCommand(sourcesCommands.systematicReviewChange, environmentId, input);
+}
+
+export function bulkUpdateScientSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesBulkUpdateRequest,
+) {
+  return runSourcesCommand(sourcesCommands.bulkUpdate, environmentId, input);
+}
+
+export async function searchScientSourcesFullText(
+  environmentId: EnvironmentId,
+  input: {
+    readonly root: string;
+    readonly query: string;
+    readonly sourceIds?: ReadonlyArray<string>;
+  },
+) {
+  return runtime.runPromise(
+    searchEnvironmentScientSourcesFullText({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export async function saveScientSourcePage(
+  environmentId: EnvironmentId,
+  input: ScientSourceSavePageRequest,
+) {
+  return runSourcesCommand(sourcesCommands.savePage, environmentId, input);
+}
+
+export function readScientSourceTrash(
+  environmentId: EnvironmentId,
+  input: ScientSourcesTrashRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientSourceTrash({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function restoreScientSource(
+  environmentId: EnvironmentId,
+  input: ScientSourceRestoreRequest,
+) {
+  return runSourcesCommand(sourcesCommands.restore, environmentId, input);
+}
+
+export function deleteScientSourcesPermanently(
+  environmentId: EnvironmentId,
+  input: ScientSourcesPermanentDeletionRequest,
+) {
+  return runSourcesCommand(sourcesCommands.deletePermanently, environmentId, input);
+}
+
+export function readScientSourceRevisions(
+  environmentId: EnvironmentId,
+  input: ScientSourceRevisionsRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientSourceRevisions({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function revertScientSource(environmentId: EnvironmentId, input: ScientSourceRevertRequest) {
+  return runSourcesCommand(sourcesCommands.revert, environmentId, input);
 }
 
 export async function readScientSourceAttachmentPreview(
@@ -117,8 +214,15 @@ export async function readScientSourceJournalIcon(
   return url ? { ...result.icon, url } : null;
 }
 
-export function readZoteroStatus(environmentId: EnvironmentId) {
-  return runtime.runPromise(getEnvironmentZoteroStatus(prepared(environmentId)));
+export function addScientSourcesByIdentifier(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly entries: ReadonlyArray<string> },
+) {
+  return runSourcesCommand(sourcesCommands.addByIdentifier, environmentId, input);
+}
+
+export function readZoteroStatus(environmentId: EnvironmentId, connection?: ZoteroConnection) {
+  return runtime.runPromise(getEnvironmentZoteroStatus(prepared(environmentId), connection));
 }
 
 export function readZoteroLibrary(
@@ -128,6 +232,7 @@ export function readZoteroLibrary(
     readonly query: string;
     readonly start: number;
     readonly limit: number;
+    readonly connection?: ZoteroConnection;
   },
 ) {
   return runtime.runPromise(
@@ -135,13 +240,17 @@ export function readZoteroLibrary(
   );
 }
 
-export function readZoteroCollections(environmentId: EnvironmentId) {
-  return runtime.runPromise(listEnvironmentZoteroCollections(prepared(environmentId)));
+export function readZoteroCollections(environmentId: EnvironmentId, connection?: ZoteroConnection) {
+  return runtime.runPromise(listEnvironmentZoteroCollections(prepared(environmentId), connection));
 }
 
 export function preflightZoteroItems(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly itemKeys: ReadonlyArray<string> },
+  input: {
+    readonly root: string;
+    readonly itemKeys: ReadonlyArray<string>;
+    readonly connection?: ZoteroConnection;
+  },
 ) {
   return runtime.runPromise(
     preflightEnvironmentZoteroImport({ prepared: prepared(environmentId), ...input }),
@@ -155,11 +264,10 @@ export function beginZoteroItemsImport(
     readonly operationId: string;
     readonly itemKeys: ReadonlyArray<string>;
     readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+    readonly connection?: ZoteroConnection;
   },
 ) {
-  return runtime.runPromise(
-    beginEnvironmentZoteroImport({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.beginImport, environmentId, input);
 }
 
 export function beginZoteroScopeImport(
@@ -168,25 +276,35 @@ export function beginZoteroScopeImport(
     readonly root: string;
     readonly operationId: string;
     readonly scope: ZoteroImportScope;
+    readonly connection?: ZoteroConnection;
   },
 ) {
-  return runtime.runPromise(
-    beginEnvironmentZoteroScopedImport({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.beginScopedImport, environmentId, input);
+}
+
+export function refreshZoteroSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesZoteroRefreshRequest,
+) {
+  return runSourcesCommand(sourcesCommands.zoteroRefresh, environmentId, input);
+}
+
+export function sendSourcesToZotero(
+  environmentId: EnvironmentId,
+  input: ScientSourcesZoteroSendRequest,
+) {
+  return runSourcesCommand(sourcesCommands.zoteroSend, environmentId, input);
 }
 
 export function uploadLocalSourcePdf(
   environmentId: EnvironmentId,
   input: { readonly root: string; readonly file: File },
 ) {
-  return runtime.runPromise(
-    uploadEnvironmentLocalSourcePdf({
-      prepared: prepared(environmentId),
-      root: input.root,
-      file: input.file,
-      fileName: input.file.name,
-    }),
-  );
+  return runSourcesCommand(sourcesCommands.localPdfUpload, environmentId, {
+    root: input.root,
+    file: input.file,
+    fileName: input.file.name,
+  });
 }
 
 export function beginLocalSourcesImport(
@@ -198,36 +316,28 @@ export function beginLocalSourcesImport(
     readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
   },
 ) {
-  return runtime.runPromise(
-    beginEnvironmentLocalSourceImport({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.localBeginImport, environmentId, input);
 }
 
 export function discardLocalSourcePdfs(
   environmentId: EnvironmentId,
   input: { readonly root: string; readonly itemKeys: ReadonlyArray<string> },
 ) {
-  return runtime.runPromise(
-    discardEnvironmentLocalSourcePdfs({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.localDiscard, environmentId, input);
 }
 
 export function advanceSourcesImport(
   environmentId: EnvironmentId,
   input: { readonly root: string; readonly operationId: string },
 ) {
-  return runtime.runPromise(
-    advanceEnvironmentScientSourcesImport({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.advanceImport, environmentId, input);
 }
 
 export function cancelSourcesImport(
   environmentId: EnvironmentId,
   input: { readonly root: string; readonly operationId: string },
 ) {
-  return runtime.runPromise(
-    cancelEnvironmentScientSourcesImport({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.cancelImport, environmentId, input);
 }
 
 export function retrySourcesImport(
@@ -238,16 +348,37 @@ export function retrySourcesImport(
     readonly itemKeys: ReadonlyArray<string>;
   },
 ) {
+  return runSourcesCommand(sourcesCommands.retryImport, environmentId, input);
+}
+
+export function importScientSourcesFile(
+  environmentId: EnvironmentId,
+  input: { readonly root: string; readonly operationId: string; readonly file: File },
+) {
+  return runSourcesCommand(sourcesCommands.fileImport, environmentId, {
+    root: input.root,
+    operationId: input.operationId,
+    file: input.file,
+    fileName: input.file.name,
+  });
+}
+
+export function exportScientSources(
+  environmentId: EnvironmentId,
+  input: ScientSourcesExportRequest,
+) {
   return runtime.runPromise(
-    retryEnvironmentScientSourcesImport({ prepared: prepared(environmentId), ...input }),
+    exportEnvironmentScientSources({ prepared: prepared(environmentId), ...input }),
   );
 }
 
-export function approveScientSource(
+export function syncScientBibliography(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly sourceId: string; readonly expectedRevision: number },
+  input: {
+    readonly root: string;
+    readonly replaceEdited?: ReadonlyArray<ScientManagedBibliographyFileName>;
+    readonly importEdited?: ReadonlyArray<ScientManagedBibliographyFileName>;
+  },
 ) {
-  return runtime.runPromise(
-    updateEnvironmentScientSourceReview({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.syncBibliography, environmentId, input);
 }

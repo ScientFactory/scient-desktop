@@ -1,3 +1,4 @@
+import { ScientSourceWebPage } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
 
 export interface DesktopPreviewPdfExportSourceSignals {
@@ -71,3 +72,18 @@ export const DesktopControlledHtmlPdfRenderArtifactSchema: Schema.Codec<DesktopC
     sourceSignals: DesktopPreviewPdfExportSourceSignalsSchema,
     blockedRequestCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   });
+
+/** A browser tab as read for "Save to Library": a page's details, or a PDF's bytes fetched with the tab's sign-in. */
+export const DesktopPreviewLibraryPageSchema = Schema.Union([
+  Schema.TaggedStruct("page", { page: ScientSourceWebPage }),
+  Schema.TaggedStruct("pdf", {
+    url: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4_096)),
+    fileName: Schema.String.check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(255),
+      Schema.isPattern(/^[^/\\\x00]+\.pdf$/iu),
+    ),
+    data: Schema.Uint8Array.check(Schema.isMinLength(5), Schema.isMaxLength(100 * 1024 * 1024)),
+  }),
+]);
+export type DesktopPreviewLibraryPage = typeof DesktopPreviewLibraryPageSchema.Type;

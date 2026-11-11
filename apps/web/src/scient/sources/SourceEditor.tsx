@@ -10,6 +10,7 @@ import { Button } from "../../components/ui/button";
 import { Field, FieldDescription, FieldError, FieldLabel } from "../../components/ui/field";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { ScrollArea } from "../../components/ui/scroll-area";
+import { toastManager } from "../../components/ui/toast";
 import {
   Select,
   SelectItem,
@@ -19,6 +20,7 @@ import {
 } from "../../components/ui/select";
 import { cn } from "../../lib/utils";
 import { useSourceEditor } from "./useSourceEditor";
+import { CITATION_KEY_SYNTAX_MESSAGE, isValidCitationKey } from "@scientfactory/scient-sources";
 
 type SourceRecord = ScientSourceDetailResult;
 type Metadata = ScientSourceMetadataUpdateRequest["metadata"];
@@ -68,6 +70,7 @@ function InlineTextarea({ className, ...props }: ComponentProps<"textarea">) {
 
 function metadataFromRecord(record: SourceRecord): Metadata {
   return {
+    ...(record.citationKey ? { citationKey: record.citationKey } : {}),
     type: record.type,
     customType: record.customType ?? null,
     title: record.title,
@@ -180,8 +183,15 @@ export function SourceEditor(props: {
       return true;
     }
   })();
+  const invalidCitationKey =
+    metadata.citationKey !== undefined && !isValidCitationKey(metadata.citationKey.trim());
   const invalid =
-    invalidYear || invalidCreatorRoles || invalidIdentifiers || invalidCustomType || invalidUrl;
+    invalidYear ||
+    invalidCreatorRoles ||
+    invalidIdentifiers ||
+    invalidCustomType ||
+    invalidUrl ||
+    invalidCitationKey;
   const stale = editor.result?.outcome === "stale";
 
   const save = async (allowPossibleMetadataMatch = false) => {
@@ -192,6 +202,18 @@ export function SourceEditor(props: {
       allowPossibleMetadataMatch,
     );
     if (result?.outcome === "updated" || result?.outcome === "unchanged") {
+      const skipped = result.citationKeyRenameSkipped ?? [];
+      if (skipped.length > 0) {
+        toastManager.add({
+          type: "warning",
+          title: "Some documents still use the old key",
+          description: skipped
+            .slice(0, 3)
+            .map((entry) => `${entry.path}: ${entry.reason}`)
+            .concat(skipped.length > 3 ? [`and ${skipped.length - 3} more`] : [])
+            .join("\n"),
+        });
+      }
       props.onSaved(result.record);
     } else if (result?.outcome === "stale") {
       props.onRefreshed(result.record);
@@ -525,6 +547,26 @@ export function SourceEditor(props: {
           </FormSection>
 
           <FormSection title="Identifiers and links">
+            {metadata.citationKey !== undefined ? (
+              <Field invalid={invalidCitationKey}>
+                <FieldLabel>Citation key</FieldLabel>
+                <InlineInput
+                  value={metadata.citationKey}
+                  spellCheck={false}
+                  aria-invalid={invalidCitationKey || undefined}
+                  onChange={(event) =>
+                    setMetadata((current) => ({ ...current, citationKey: event.target.value }))
+                  }
+                />
+                {invalidCitationKey ? (
+                  <FieldError match={true}>{CITATION_KEY_SYNTAX_MESSAGE}</FieldError>
+                ) : metadata.citationKey !== originalMetadata.citationKey ? (
+                  <FieldDescription>
+                    Citations in this project's documents will use the new key.
+                  </FieldDescription>
+                ) : null}
+              </Field>
+            ) : null}
             {metadata.identifiers.map((identifier, index) => (
               <div key={identifierKeys[index]} className="space-y-1">
                 <div className="flex items-end gap-2">

@@ -20,16 +20,40 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
     expect(sourceTools.map(({ tool }) => tool.name).sort()).toEqual([
       "scient_sources_add",
       "scient_sources_attach_pdf",
+      "scient_sources_bibliography",
+      "scient_sources_bulk_update",
+      "scient_sources_check",
+      "scient_sources_cite",
+      "scient_sources_collections",
       "scient_sources_detach_pdf",
+      "scient_sources_export",
       "scient_sources_get",
+      "scient_sources_import_file",
       "scient_sources_list",
       "scient_sources_note_update",
+      "scient_sources_organize",
+      "scient_sources_quote_check",
+      "scient_sources_read_text",
       "scient_sources_remove",
-      "scient_sources_review",
+      "scient_sources_restore",
+      "scient_sources_revert",
+      "scient_sources_save_page",
+      "scient_sources_search",
       "scient_sources_update",
+      "scient_sources_zotero_browse",
+      "scient_sources_zotero_import",
+      "scient_sources_zotero_refresh",
+      "scient_sources_zotero_send",
     ]);
     for (const { tool } of sourceTools.filter(({ tool }) =>
-      ["scient_sources_get", "scient_sources_list"].includes(tool.name),
+      [
+        "scient_sources_collections",
+        "scient_sources_get",
+        "scient_sources_list",
+        "scient_sources_search",
+        "scient_sources_read_text",
+        "scient_sources_quote_check",
+      ].includes(tool.name),
     )) {
       expect(tool.annotations?.readOnlyHint).toBe(true);
       expect(tool.annotations?.destructiveHint).toBe(false);
@@ -40,23 +64,40 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       [
         "scient_sources_add",
         "scient_sources_attach_pdf",
+        "scient_sources_bibliography",
+        "scient_sources_bulk_update",
+        "scient_sources_check",
+        "scient_sources_cite",
         "scient_sources_detach_pdf",
+        "scient_sources_export",
+        "scient_sources_import_file",
         "scient_sources_note_update",
+        "scient_sources_organize",
         "scient_sources_remove",
-        "scient_sources_review",
+        "scient_sources_restore",
+        "scient_sources_revert",
+        "scient_sources_save_page",
         "scient_sources_update",
       ].includes(tool.name),
     );
     for (const { tool } of writeTools) {
       expect(tool.annotations).toMatchObject({
         readOnlyHint: false,
-        destructiveHint: [
-          "scient_sources_detach_pdf",
-          "scient_sources_remove",
-          "scient_sources_review",
-        ].includes(tool.name),
+        destructiveHint: ["scient_sources_detach_pdf", "scient_sources_remove"].includes(tool.name),
         idempotentHint: true,
-        openWorldHint: tool.name === "scient_sources_add",
+        openWorldHint: [
+          "scient_sources_add",
+          "scient_sources_check",
+          "scient_sources_cite",
+          "scient_sources_save_page",
+        ].includes(tool.name),
+      });
+    }
+    for (const { tool } of sourceTools.filter(({ tool }) => tool.name.includes("_zotero_"))) {
+      expect(tool.annotations).toMatchObject({
+        readOnlyHint: tool.name === "scient_sources_zotero_browse",
+        destructiveHint: tool.name === "scient_sources_zotero_send",
+        openWorldHint: true,
       });
     }
   }).pipe(Effect.provide(TestLayer)),

@@ -1,8 +1,16 @@
 // @effect-diagnostics nodeBuiltinImport:off -- This owned Promise-based Sources coordinator assigns its store operation ID synchronously.
+// @effect-diagnostics globalDate:off -- Check records keep the interoperable ISO timestamp the store uses.
 import * as NodeCrypto from "node:crypto";
 
 import { observeSourceImport, type SourceImportObserver } from "./SourceImportObservation.ts";
 import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
+import {
+  applyResolvedSourceMetadata,
+  creatorDisplayName,
+  resolveSourceIdentifier,
+  titlesAgree,
+  type ResolveSourceIdentifier,
+} from "./SourceIdentifierResolver.ts";
 import {
   discardLocalPdfImportMaterial,
   getLocalPdfImportMaterial,
@@ -11,27 +19,54 @@ import {
   refreshExistingSourceCandidate,
 } from "./LocalPdfSourceAdapter.ts";
 import {
+  sourceIdentifierLabel as identifierLabel,
+  sourceIdentifierRegistryName as registryName,
   abstractDocumentFromSections,
   changedEditableMetadataFields,
   editableMetadataFromRecord,
+  editorialStatusFromNotices,
   normalizeScientSourceAbstractDocument,
   normalizeScientSourceEditableMetadata,
   sourceMetadataDiagnostics,
   assessSourceDuplicate,
   scientSourceSummaryFromRecord,
+  type ScientSourceActor,
+  type ScientSourceAttachmentRetrieval,
   type ScientSourceCandidate,
   type ScientSourceDuplicateAssessment,
   type ScientSourceEditableField,
   type ScientSourceEditableMetadata,
+  type ScientSourceEditorialStatus,
   type ScientSourceFieldProvenance,
+  type ScientSourceIdentifier,
+  type ScientSourceImportOperation,
+  type ScientSourceOrigin,
   type ScientSourceRecord,
+  type ScientSourceVerification,
+  type ZoteroConnection,
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
+import {
+  bulkUpdateScientSources,
+  createScientSourceCollection,
+  organizeScientSources,
+  readScientSourcesOrganization,
+} from "@scientfactory/scient-sources/collections";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
+import {
+  changeScientSystematicReview,
+  listScientSystematicReviews,
+  readScientSystematicReview,
+} from "@scientfactory/scient-sources/systematic-review";
 import {
   cancelSourceImportOperation,
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
+  deleteScientSourcesPermanently,
+  listScientSourceRevisions,
+  listScientSourceTrash,
+  restoreScientSource,
+  revertScientSource,
   importScientSource,
   importScientSourceOperationItem,
   attachScientSourcePdf,
@@ -41,24 +76,46 @@ import {
   listScientSourceRecords,
   readScientSourceRecord,
   readSourceImportOperation,
+  recordScientSourceCheck,
   retryFailedSourceImportOperationItems,
   removeScientSource,
   updateSourceImportOperationItem,
   updateScientSourceMetadata,
   updateScientSourceNote,
-  updateScientSourceReview,
   sourceAttachmentAbsolutePath,
 } from "@scientfactory/scient-sources/store";
 
 import {
-  getZoteroItem,
-  getZoteroImportMaterial,
-  inspectZoteroConnection,
-  listZoteroCollections,
-  listZoteroLibrary,
-  listZoteroScopeItemKeys,
-} from "./ZoteroLocalAdapter.ts";
+  inspectZotero,
+  localOnlyZoteroAccess,
+  zoteroTransport,
+  type ZoteroAccess,
+} from "./ZoteroConnections.ts";
+import {
+  getZoteroItemWith,
+  listZoteroCollectionsWith,
+  listZoteroLibraryWith,
+  listZoteroScopeItemKeysWith,
+  readZoteroAttachmentFiles,
+  readZoteroItemMaterial,
+  type ZoteroTransport,
+} from "./ZoteroLibraryReader.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
+import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
+import {
+  syncManagedBibliography,
+  type ManagedBibliographyFileName,
+} from "./ManagedBibliography.ts";
+import {
+  beginBibliographyFileImport,
+  discardBibliographyFileImport,
+  fileImportVerification,
+  getBibliographyFileImportCandidate,
+  readBibliographyFile,
+  resolveProjectBibliographyFile,
+} from "./BibliographyFileAdapter.ts";
+import { recordZoteroSync } from "./ZoteroSync.ts";
+import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
 
@@ -79,7 +136,58 @@ async function withOperationLane<A>(key: string, run: () => Promise<A>): Promise
   }
 }
 
-export { inspectZoteroConnection, listZoteroCollections, listZoteroLibrary };
+export async function inspectZoteroConnection(input: {
+  readonly connection?: ZoteroConnection;
+  readonly zotero?: ZoteroAccess;
+}) {
+  return inspectZotero(input.zotero ?? localOnlyZoteroAccess, input.connection);
+}
+
+export async function listZoteroCollections(input: {
+  readonly connection?: ZoteroConnection;
+  readonly zotero?: ZoteroAccess;
+}) {
+  return listZoteroCollectionsWith(
+    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection),
+  );
+}
+
+export async function listZoteroLibrary(input: {
+  readonly scope: ZoteroImportScope;
+  readonly query: string;
+  readonly start: number;
+  readonly limit: number;
+  readonly connection?: ZoteroConnection;
+  readonly zotero?: ZoteroAccess;
+}) {
+  return listZoteroLibraryWith(
+    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection),
+    input,
+  );
+}
+
+const zoteroAdapter = (connection: ZoteroConnection | undefined) =>
+  connection === "web" ? ("zotero-web" as const) : ("zotero" as const);
+
+/**
+ * An item with its notes, citation key and PDFs copied out of Zotero. The caller
+ * imports the first PDF with the record, attaches the rest, then releases them all.
+ */
+async function zoteroImportMaterial(transport: ZoteroTransport, itemKey: string) {
+  const material = await readZoteroItemMaterial(transport, itemKey);
+  const files = await readZoteroAttachmentFiles(transport, material.pdfs);
+  try {
+    const candidate = await enrichScientSourceCandidate({
+      ...material.candidate,
+      ...(material.note ? { note: material.note } : {}),
+      ...(files[0]?.fileName ? { pdfFileName: files[0].fileName } : {}),
+    });
+    return { candidate, material, files };
+  } catch (error) {
+    await Promise.all(files.map((file) => file.release().catch(() => undefined)));
+    throw error;
+  }
+}
 
 function hasMisclassifiedLegacyPdfSubject(record: ScientSourceRecord): boolean {
   return record.fieldProvenance.some(
@@ -112,6 +220,14 @@ function normalizeSourceRecordForRead(record: ScientSourceRecord): ScientSourceR
 
 export async function getScientSourcesOverview(root: string) {
   const overview = await inspectScientSources(root);
+  const organization =
+    overview.projectState === "initialized"
+      ? await readScientSourcesOrganization(
+          root,
+          new Set(overview.records.map((record) => record.sourceId)),
+        )
+      : null;
+  void scheduleSourceFullTextIndexing(root);
   return {
     ...overview,
     records: overview.records.map(scientSourceSummaryFromRecord),
@@ -119,7 +235,33 @@ export async function getScientSourcesOverview(root: string) {
       sourceId: record.sourceId,
       diagnostics: sourceMetadataDiagnostics(record),
     })),
+    ...(organization ? { organization } : {}),
   };
+}
+
+export async function organizeSources(input: Parameters<typeof organizeScientSources>[0]) {
+  return organizeScientSources(input);
+}
+
+export async function listSystematicReviews(root: string) {
+  return listScientSystematicReviews(root);
+}
+
+export async function getSystematicReview(input: {
+  readonly root: string;
+  readonly reviewId: string;
+}) {
+  return { detail: await readScientSystematicReview(input.root, input.reviewId) };
+}
+
+export async function changeSystematicReview(
+  input: Parameters<typeof changeScientSystematicReview>[0],
+) {
+  return changeScientSystematicReview(input);
+}
+
+export async function bulkUpdateSources(input: Parameters<typeof bulkUpdateScientSources>[0]) {
+  return bulkUpdateScientSources(input);
 }
 
 export async function getScientSourceDetail(input: {
@@ -158,18 +300,63 @@ export async function getScientSourceJournalIconMaterial(input: {
   return record ? resolveJournalIcon({ record, cacheRoot: input.cacheRoot }) : null;
 }
 
+/** A deliberate citation key rename also renames the key where project documents cite it. */
 export async function updateScientSource(input: Parameters<typeof updateScientSourceMetadata>[0]) {
-  return updateScientSourceMetadata(input);
+  const previousKey = input.metadata.citationKey
+    ? (await readScientSourceRecord(input.root, input.sourceId))?.citationKey
+    : undefined;
+  // Find the documents before the key changes, so a scan failure leaves the old key in place.
+  const scan =
+    previousKey && previousKey !== input.metadata.citationKey
+      ? await scanCitationKeyRenameDocuments(input.root)
+      : undefined;
+  const result = await updateScientSourceMetadata(input);
+  const nextKey = result.record.citationKey;
+  if (result.outcome !== "updated" || !previousKey || !nextKey || previousKey === nextKey) {
+    return result;
+  }
+  const { renamedIn, skipped } = await renameCitationKeyInProject(
+    input.root,
+    previousKey,
+    nextKey,
+    scan,
+  );
+  return {
+    ...result,
+    citationKeyRenamedIn: renamedIn,
+    ...(skipped.length > 0 ? { citationKeyRenameSkipped: skipped } : {}),
+  };
 }
 
 export async function updateSourceNote(input: Parameters<typeof updateScientSourceNote>[0]) {
   return updateScientSourceNote(input);
 }
 
-export async function updateSourceReview(input: Parameters<typeof updateScientSourceReview>[0]) {
-  return updateScientSourceReview(input);
+export interface ResolvedSourceSummary {
+  readonly title: string | null;
+  readonly creators: ReadonlyArray<string>;
+  readonly issuedYear: number | null;
+  readonly containerTitle: string | null;
 }
 
+export type AgentSourceAddResult =
+  | Awaited<ReturnType<typeof importScientSource>>
+  | {
+      readonly outcome: "identifier-not-found";
+      readonly identifier: ScientSourceIdentifier;
+      readonly message: string;
+    }
+  | {
+      readonly outcome: "identifier-mismatch";
+      readonly identifier: ScientSourceIdentifier;
+      readonly resolved: ResolvedSourceSummary;
+      readonly message: string;
+    };
+
+/**
+ * Adds a source after checking its identifier against its registry, for an agent or (with actor
+ * "user") a person adding by identifier: both get the same refusals and verification states.
+ */
 export async function addAgentSource(
   input: {
     readonly root: string;
@@ -179,15 +366,90 @@ export async function addAgentSource(
     readonly pdfPath?: string;
     readonly pdfFileName?: string;
     readonly expectedPdf?: { readonly sha256: string; readonly byteLength: number };
+    readonly resolveIdentifier?: ResolveSourceIdentifier;
+    /** The title the agent asserted; PDF-derived and filename titles are not claims. */
+    readonly claimedTitle?: string | null;
+    /** A downloaded paper is added for whoever asked for it. */
+    readonly actor?: ScientSourceActor;
+    readonly intake?: ScientSourceOrigin["intake"];
+    readonly pdfRetrieval?: ScientSourceAttachmentRetrieval;
   },
   observer?: SourceImportObserver,
-) {
-  return observeSourceImport(
+): Promise<AgentSourceAddResult> {
+  return observeSourceImport<AgentSourceAddResult>(
     observer,
     async () => {
-      const candidate = input.enrich
-        ? await enrichScientSourceCandidate(input.candidate)
+      const preliminary = assessSourceDuplicate({
+        candidate: input.candidate,
+        existing: await listScientSourceRecords(input.root),
+        ...(input.expectedPdf ? { pdfSha256: input.expectedPdf.sha256 } : {}),
+      });
+      // An exact duplicate is reported as before, without asking a registry.
+      const exactDuplicate =
+        preliminary.kind !== "new" && preliminary.kind !== "possible-metadata-match";
+      const resolution = exactDuplicate
+        ? null
+        : await (input.resolveIdentifier ?? resolveSourceIdentifier)(input.candidate.identifiers);
+      if (resolution?.status === "not-found") {
+        const missing = resolution.named ?? resolution.identifier;
+        return {
+          outcome: "identifier-not-found",
+          identifier: missing,
+          message: `The ${identifierLabel(missing)} does not exist at ${registryName(missing)}. Check the identifier; do not guess.`,
+        };
+      }
+      // A catalogue's record fills in the work while its registry cannot be reached.
+      const record =
+        resolution?.status === "found"
+          ? resolution
+          : resolution?.status === "unavailable" && resolution.catalogue
+            ? {
+                status: "found" as const,
+                identifier: resolution.identifier,
+                ...resolution.catalogue,
+              }
+            : null;
+      if (
+        record &&
+        input.claimedTitle &&
+        record.metadata.title &&
+        !titlesAgree(input.claimedTitle, record.metadata.title)
+      ) {
+        return {
+          outcome: "identifier-mismatch",
+          identifier: record.identifier,
+          resolved: {
+            title: record.metadata.title,
+            creators: record.metadata.creators
+              .slice(0, 3)
+              .flatMap((creator) => creatorDisplayName(creator) ?? []),
+            issuedYear: record.metadata.issuedYear,
+            containerTitle: record.metadata.containerTitle,
+          },
+          message: `The ${identifierLabel(record.identifier)} belongs to a work with a different title. Check whether the identifier or the title is wrong; do not guess. If the resolved work is the one meant, add it again without a title.`,
+        };
+      }
+      const verification: ScientSourceVerification | null = exactDuplicate
+        ? null
+        : resolution === null || (resolution.status === "found" && resolution.catalogueOnly)
+          ? { state: "unverified" }
+          : resolution.status === "found"
+            ? {
+                state: "verified",
+                identifier: resolution.identifier,
+                checkedAt: resolution.retrievedAt,
+              }
+            : { state: "unchecked", identifier: resolution.identifier };
+      const editorialStatus =
+        resolution?.status === "found" &&
+        !resolution.catalogueOnly &&
+        resolution.metadata.editorialNotices
+          ? editorialStatusFromNotices(resolution.metadata.editorialNotices, resolution.retrievedAt)
+          : null;
+      const resolved = record
+        ? applyResolvedSourceMetadata(input.candidate, record)
         : input.candidate;
+      const candidate = input.enrich ? await enrichScientSourceCandidate(resolved) : resolved;
       const candidateWithPdfName =
         input.pdfPath && input.pdfFileName
           ? { ...candidate, pdfFileName: input.pdfFileName }
@@ -196,9 +458,11 @@ export async function addAgentSource(
         root: input.root,
         operationId: `agent_${NodeCrypto.randomUUID()}`,
         candidate: candidateWithPdfName,
-        actor: "agent",
-        intake: input.pdfPath ? "local-pdf" : "identifier",
-        review: "pending",
+        actor: input.actor ?? "agent",
+        intake: input.intake ?? (input.pdfPath ? "local-pdf" : "identifier"),
+        ...(verification ? { verification } : {}),
+        ...(editorialStatus ? { editorialStatus } : {}),
+        ...(input.pdfRetrieval ? { pdfRetrieval: input.pdfRetrieval } : {}),
         allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
         ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
         ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
@@ -206,6 +470,96 @@ export async function addAgentSource(
     },
     (result) => (result.outcome === "imported" ? "imported" : "skipped"),
   );
+}
+
+export type SourceCheckRegistryOutcome =
+  | "found"
+  | "not-found"
+  | "mismatch"
+  | "unavailable"
+  | "none";
+
+/**
+ * Checks a source's identifier against its registry again and records what it says: verification
+ * and retraction or correction notices. Metadata is never changed here. An unreachable registry
+ * keeps an earlier verdict for the same identifier.
+ */
+export async function checkSourceIdentifier(input: {
+  readonly root: string;
+  readonly sourceId: string;
+  readonly actor: ScientSourceActor;
+  readonly resolveIdentifier?: ResolveSourceIdentifier;
+  readonly now?: () => Date;
+}): Promise<{
+  readonly outcome: "updated" | "unchanged" | "stale";
+  readonly registry: SourceCheckRegistryOutcome;
+  readonly record: ScientSourceRecord;
+}> {
+  const record = await readScientSourceRecord(input.root, input.sourceId);
+  if (!record) throw new Error("The source was not found in this project.");
+  const resolved = await (input.resolveIdentifier ?? resolveSourceIdentifier)(record.identifiers);
+  // A catalogue's word alone is not a registry check: treat it like an unreachable registry.
+  const resolution =
+    resolved?.status === "found" && resolved.catalogueOnly
+      ? { status: "unavailable" as const, identifier: resolved.identifier }
+      : resolved;
+  const checkedAt = (input.now ?? (() => new Date()))().toISOString();
+  const previous = record.verification;
+  const sameIdentifier =
+    resolution !== null &&
+    previous?.identifier?.scheme === resolution.identifier.scheme &&
+    previous.identifier.value === resolution.identifier.value;
+  const mismatch =
+    resolution?.status === "found" &&
+    Boolean(record.title && resolution.metadata.title) &&
+    !titlesAgree(record.title!, resolution.metadata.title!);
+  const registry: SourceCheckRegistryOutcome =
+    resolution === null ? "none" : mismatch ? "mismatch" : resolution.status;
+  const check: {
+    readonly verification: ScientSourceVerification;
+    readonly editorialStatus: ScientSourceEditorialStatus | null;
+  } =
+    resolution === null
+      ? { verification: { state: "unverified" }, editorialStatus: null }
+      : resolution.status === "found" && !mismatch
+        ? {
+            verification: {
+              state: "verified",
+              identifier: resolution.identifier,
+              checkedAt: resolution.retrievedAt,
+            },
+            editorialStatus: resolution.metadata.editorialNotices
+              ? editorialStatusFromNotices(
+                  resolution.metadata.editorialNotices,
+                  resolution.retrievedAt,
+                )
+              : null,
+          }
+        : resolution.status === "unavailable"
+          ? {
+              verification:
+                sameIdentifier && previous
+                  ? previous
+                  : { state: "unchecked", identifier: resolution.identifier },
+              editorialStatus: sameIdentifier ? (record.editorialStatus ?? null) : null,
+            }
+          : {
+              verification: {
+                state: "unverified",
+                identifier: resolution.identifier,
+                checkedAt,
+                problem: mismatch ? "mismatch" : "not-found",
+              },
+              editorialStatus: null,
+            };
+  const result = await recordScientSourceCheck({
+    root: input.root,
+    sourceId: input.sourceId,
+    expectedRevision: record.revision,
+    ...check,
+    actor: input.actor,
+  });
+  return { ...result, registry };
 }
 
 export async function prepareAgentProjectPdf(input: {
@@ -481,6 +835,7 @@ export async function refreshScientSourceMetadata(input: {
   readonly root: string;
   readonly sourceId: string;
   readonly expectedRevision: number;
+  readonly resolveIdentifier?: ResolveSourceIdentifier;
 }) {
   const root = await canonicalizeScientSourceRoot(input.root);
   const record = await readScientSourceRecord(root, input.sourceId);
@@ -526,11 +881,56 @@ export async function refreshScientSourceMetadata(input: {
       message: "This source changed while its metadata was being checked.",
     };
   }
-  return applyRefreshedSourceMetadata({ root, record: latest, candidate });
+  const refreshed = await applyRefreshedSourceMetadata({ root, record: latest, candidate });
+  if (refreshed.outcome !== "refreshed" && refreshed.outcome !== "unchanged") return refreshed;
+  // A refresh also re-checks the identifier, so retractions and verification stay current.
+  const checked = await checkSourceIdentifier({
+    root,
+    sourceId: input.sourceId,
+    actor: "user",
+    ...(input.resolveIdentifier ? { resolveIdentifier: input.resolveIdentifier } : {}),
+  }).catch(() => null);
+  if (checked?.outcome !== "updated") return refreshed;
+  return {
+    ...refreshed,
+    outcome: "refreshed" as const,
+    record: checked.record,
+    message:
+      refreshed.outcome === "refreshed"
+        ? refreshed.message
+        : "The identifier was checked again with its registry.",
+  };
 }
 
 export async function removeSource(input: Parameters<typeof removeScientSource>[0]) {
   return removeScientSource(input);
+}
+
+export async function listSourceTrash(input: { readonly root: string }) {
+  return listScientSourceTrash(input.root);
+}
+
+export async function restoreSource(input: Parameters<typeof restoreScientSource>[0]) {
+  return restoreScientSource(input);
+}
+
+export async function deleteSourcesPermanently(
+  input: Parameters<typeof deleteScientSourcesPermanently>[0],
+) {
+  return deleteScientSourcesPermanently(input);
+}
+
+export async function listSourceRevisions(input: {
+  readonly root: string;
+  readonly sourceId: string;
+}) {
+  const revisions = await listScientSourceRevisions(input.root, input.sourceId);
+  if (!revisions) throw new Error("The source was not found in this project.");
+  return { revisions };
+}
+
+export async function revertSource(input: Parameters<typeof revertScientSource>[0]) {
+  return revertScientSource(input);
 }
 
 export async function assessSourcePreflightDuplicate(input: {
@@ -559,21 +959,26 @@ export async function assessSourcePreflightDuplicate(input: {
 export async function preflightZoteroImport(input: {
   readonly root: string;
   readonly itemKeys: ReadonlyArray<string>;
+  readonly connection?: ZoteroConnection;
+  readonly zotero?: ZoteroAccess;
 }) {
   const records = await listScientSourceRecords(input.root);
-  const hasImportedPdf = records.some((record) =>
-    record.attachments.some((attachment) => attachment.kind === "pdf"),
-  );
+  const transport = await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  // Only local PDFs are cheap enough to hash for a duplicate check before import.
+  const hasImportedPdf =
+    transport.connection === "local" &&
+    records.some((record) => record.attachments.some((attachment) => attachment.kind === "pdf"));
   const items = [];
   for (const itemKey of new Set(input.itemKeys)) {
-    const { candidate, pdfPath } = hasImportedPdf
-      ? await getZoteroImportMaterial(itemKey)
-      : { candidate: await getZoteroItem(itemKey), pdfPath: null };
+    const material = hasImportedPdf ? await zoteroImportMaterial(transport, itemKey) : null;
+    const candidate = material?.candidate ?? (await getZoteroItemWith(transport, itemKey));
     const duplicate = await assessSourcePreflightDuplicate({
       candidate,
       existing: records,
-      pdfPath,
-    });
+      pdfPath: material?.files[0]?.path ?? null,
+    }).finally(() =>
+      Promise.all(material?.files.map((file) => file.release().catch(() => undefined)) ?? []),
+    );
     items.push({
       candidate,
       duplicate,
@@ -588,28 +993,43 @@ export async function beginZoteroImport(input: {
   readonly operationId: string;
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+  readonly connection?: ZoteroConnection;
+  readonly actor?: "user" | "agent";
 }) {
-  return createSourceImportOperation({ ...input, adapter: "zotero" });
+  return createSourceImportOperation({
+    root: input.root,
+    operationId: input.operationId,
+    itemKeys: input.itemKeys,
+    possibleMetadataMatchOverrides: input.possibleMetadataMatchOverrides,
+    adapter: zoteroAdapter(input.connection),
+    ...(input.actor ? { actor: input.actor } : {}),
+  });
 }
 
 export async function beginZoteroScopedImport(input: {
   readonly root: string;
   readonly operationId: string;
   readonly scope: ZoteroImportScope;
+  readonly connection?: ZoteroConnection;
+  readonly actor?: "user" | "agent";
+  readonly zotero?: ZoteroAccess;
 }) {
+  const adapter = zoteroAdapter(input.connection);
   const existing = await readSourceImportOperation(input.root, input.operationId);
   if (existing) {
-    if (existing.adapter !== "zotero") {
+    if (existing.adapter !== adapter) {
       throw new Error("This operation ID already belongs to another import adapter.");
     }
     return existing;
   }
-  const itemKeys = await listZoteroScopeItemKeys(input.scope);
+  const transport = await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  const itemKeys = await listZoteroScopeItemKeysWith(transport, input.scope);
   return createSourceImportOperation({
     root: input.root,
     operationId: input.operationId,
-    adapter: "zotero",
+    adapter,
     itemKeys,
+    ...(input.actor ? { actor: input.actor } : {}),
   });
 }
 
@@ -642,10 +1062,124 @@ export async function discardLocalPdfSources(input: {
   return { discarded: keys.length };
 }
 
+const zoteroCollectionNames = new Map<string, Promise<ReadonlyMap<string, string>>>();
+
+/** Zotero collection keys to Library names, nested ones as "Parent / Child". */
+function zoteroCollectionPaths(
+  collections: ReadonlyArray<{
+    readonly key: string;
+    readonly name: string;
+    readonly parentCollectionKey: string | null;
+  }>,
+): ReadonlyMap<string, string> {
+  const byKey = new Map(collections.map((collection) => [collection.key, collection]));
+  const path = (key: string, seen: ReadonlySet<string> = new Set()): string => {
+    const collection = byKey.get(key);
+    if (!collection) return "";
+    const parent = collection.parentCollectionKey;
+    return parent && byKey.has(parent) && !seen.has(parent)
+      ? `${path(parent, new Set([...seen, key]))} / ${collection.name}`
+      : collection.name;
+  };
+  return new Map(collections.map((collection) => [collection.key, path(collection.key)]));
+}
+
+/**
+ * An imported item joins a Library collection for each Zotero collection it is in. A
+ * collection problem never fails the import; the source is in the Library either way.
+ */
+async function addToZoteroCollections(input: {
+  readonly root: string;
+  readonly operation: ScientSourceImportOperation;
+  readonly transport: ZoteroTransport;
+  readonly sourceId: string;
+  readonly collectionKeys: ReadonlyArray<string>;
+}) {
+  if (input.collectionKeys.length === 0) return;
+  const cacheKey = `${input.root}\0${input.operation.operationId}`;
+  let names = zoteroCollectionNames.get(cacheKey);
+  if (!names) {
+    names = listZoteroCollectionsWith(input.transport).then((result) =>
+      zoteroCollectionPaths(result.collections),
+    );
+    if (zoteroCollectionNames.size >= 8) zoteroCollectionNames.clear();
+    zoteroCollectionNames.set(cacheKey, names);
+  }
+  const resolved = await names.catch(() => new Map<string, string>());
+  for (const key of input.collectionKeys) {
+    const name = resolved.get(key);
+    if (!name) continue;
+    await createScientSourceCollection({
+      root: input.root,
+      name,
+      sourceIds: [input.sourceId],
+      actor: input.operation.actor,
+    }).catch(() => undefined);
+  }
+}
+
+async function importZoteroOperationItem(input: {
+  readonly root: string;
+  readonly operation: ScientSourceImportOperation;
+  readonly itemKey: string;
+  readonly allowPossibleMetadataMatch: boolean;
+  readonly zotero: ZoteroAccess;
+}) {
+  const transport = await zoteroTransport(
+    input.zotero,
+    input.operation.adapter === "zotero-web" ? "web" : "local",
+  );
+  const { candidate, material, files } = await zoteroImportMaterial(transport, input.itemKey);
+  try {
+    const [primary, ...extra] = files;
+    const result = await importScientSourceOperationItem({
+      root: input.root,
+      operationId: input.operation.operationId,
+      candidate,
+      actor: input.operation.actor,
+      intake: input.operation.intake,
+      ...(primary ? { pdfPath: primary.path } : {}),
+      allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
+    });
+    let record = result.record;
+    for (const file of extra) {
+      if (!record) break;
+      const attached = await attachScientSourcePdf({
+        root: input.root,
+        sourceId: record.sourceId,
+        expectedRevision: record.revision,
+        pdfPath: file.path,
+        ...(file.fileName ? { fileName: file.fileName } : {}),
+        actor: input.operation.actor,
+      });
+      record = attached.record;
+    }
+    if (result.outcome === "imported" && record) {
+      await recordZoteroSync({
+        root: input.root,
+        record,
+        material,
+        attachmentKeys: files.map((file) => file.attachmentKey),
+      });
+      await addToZoteroCollections({
+        root: input.root,
+        operation: input.operation,
+        transport,
+        sourceId: record.sourceId,
+        collectionKeys: material.collectionKeys,
+      });
+    }
+    return { ...result, record };
+  } finally {
+    await Promise.all(files.map((file) => file.release().catch(() => undefined)));
+  }
+}
+
 export async function advanceSourceImport(
   input: {
     readonly root: string;
     readonly operationId: string;
+    readonly zotero?: ZoteroAccess;
   },
   observer?: SourceImportObserver,
 ) {
@@ -660,9 +1194,26 @@ export async function advanceSourceImport(
       const result = await observeSourceImport(
         observer,
         async () => {
+          if (operation.adapter === "zotero" || operation.adapter === "zotero-web") {
+            return importZoteroOperationItem({
+              root,
+              operation,
+              itemKey: pending.itemKey,
+              allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
+              zotero: input.zotero ?? localOnlyZoteroAccess,
+            });
+          }
           const { candidate, pdfPath, expectedPdf } =
-            operation.adapter === "zotero"
-              ? { ...(await getZoteroImportMaterial(pending.itemKey)), expectedPdf: undefined }
+            operation.adapter === "file"
+              ? {
+                  candidate: await getBibliographyFileImportCandidate(
+                    root,
+                    input.operationId,
+                    pending.itemKey,
+                  ),
+                  pdfPath: null,
+                  expectedPdf: undefined,
+                }
               : await getLocalPdfImportMaterial(root, pending.itemKey);
           return importScientSourceOperationItem({
             root,
@@ -670,7 +1221,9 @@ export async function advanceSourceImport(
             candidate,
             actor: operation.actor,
             intake: operation.intake,
-            review: operation.actor === "agent" ? "pending" : "none",
+            ...(operation.adapter === "file"
+              ? { verification: fileImportVerification(candidate) }
+              : {}),
             ...(pdfPath ? { pdfPath } : {}),
             ...(expectedPdf ? { expectedPdf } : {}),
             allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
@@ -689,6 +1242,14 @@ export async function advanceSourceImport(
       });
       if (operation.adapter === "local-files") {
         await discardLocalPdfImportMaterial(root, pending.itemKey);
+      }
+      // Failed entries keep the staged file so they can be retried.
+      if (
+        operation.adapter === "file" &&
+        updated.state !== "running" &&
+        !updated.items.some((item) => item.state === "failed")
+      ) {
+        await discardBibliographyFileImport(root, input.operationId);
       }
       return updated;
     } catch (error) {
@@ -714,6 +1275,7 @@ export async function cancelSourceImport(input: {
     const operation = await readSourceImportOperation(root, input.operationId);
     if (!operation) throw new Error("The source import operation was not found.");
     const cancelled = await cancelSourceImportOperation(root, input.operationId);
+    if (operation.adapter === "file") await discardBibliographyFileImport(root, input.operationId);
     if (operation.adapter === "local-files") {
       await Promise.all(
         operation.items
@@ -732,4 +1294,83 @@ export async function retrySourceImport(input: {
 }) {
   const root = await canonicalizeScientSourceRoot(input.root);
   return retryFailedSourceImportOperationItems(root, input.operationId, input.itemKeys);
+}
+
+/**
+ * Offers hand edits to the managed bibliography back to the Library: new entries
+ * are imported like any reference file. A file whose only edits were new
+ * entries, all now in the Library under their keys, is then written again;
+ * one with changed or removed entries stays as the person left it.
+ */
+export async function syncManagedBibliographyWithImports(
+  input: {
+    readonly root: string;
+    readonly replaceEdited?: ReadonlyArray<ManagedBibliographyFileName>;
+    readonly importEdited?: ReadonlyArray<ManagedBibliographyFileName>;
+    readonly actor: ScientSourceActor;
+  },
+  observer?: SourceImportObserver,
+) {
+  const importEdited = input.importEdited ?? [];
+  if (importEdited.length === 0) {
+    return syncManagedBibliography(
+      input.root,
+      input.replaceEdited ? { replaceEdited: input.replaceEdited } : {},
+    );
+  }
+  const before = await syncManagedBibliography(input.root);
+  let imported = 0;
+  for (const name of importEdited) {
+    if (before.files.find((file) => file.name === name)?.state !== "edited") continue;
+    const file = await resolveProjectBibliographyFile(input.root, name);
+    const result = await importBibliographyFile(
+      {
+        root: input.root,
+        operationId: `bibliography_${NodeCrypto.randomUUID()}`,
+        fileName: file.fileName,
+        text: await readBibliographyFile(file.absolutePath),
+        actor: input.actor,
+      },
+      observer,
+    );
+    imported += result.operation?.items.filter((item) => item.state === "imported").length ?? 0;
+  }
+  const keys = new Set(
+    (await listScientSourceRecords(input.root)).flatMap((record) =>
+      record.citationKey ? [record.citationKey] : [],
+    ),
+  );
+  const fullyImported = before.files.flatMap((file) =>
+    importEdited.includes(file.name) &&
+    file.state === "edited" &&
+    file.changes !== null &&
+    file.changes.changed.length === 0 &&
+    file.changes.removed.length === 0 &&
+    file.changes.added.every((key) => keys.has(key))
+      ? [file.name]
+      : [],
+  );
+  const status = await syncManagedBibliography(input.root, {
+    replaceEdited: [...(input.replaceEdited ?? []), ...fullyImported],
+  });
+  return { ...status, imported };
+}
+
+/** Begins a reference-file import and runs it to the end, for callers without a progress view. */
+export async function importBibliographyFile(
+  input: Parameters<typeof beginBibliographyFileImport>[0],
+  observer?: SourceImportObserver,
+) {
+  const begun = await beginBibliographyFileImport(input);
+  let operation = begun.operation;
+  while (
+    operation?.state === "running" &&
+    operation.items.some((item) => item.state === "pending")
+  ) {
+    operation = await advanceSourceImport(
+      { root: input.root, operationId: operation.operationId },
+      observer,
+    );
+  }
+  return { operation, report: begun.report };
 }

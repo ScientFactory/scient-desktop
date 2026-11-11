@@ -84,6 +84,24 @@ describe("local PDF source adapter", () => {
     expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:not-a-date")).toBe("D:not-a-date");
   });
 
+  it("takes the publication date only from PRISM metadata, never file dates", () => {
+    const xmp = (entries: Record<string, string>) => ({ get: (name: string) => entries[name] });
+    expect(
+      localPdfSourceInternals.embeddedPublicationDate(
+        xmp({ "dc:date": "2026-01-05", "xmp:createdate": "2026-01-05T10:00:00Z" }),
+      ),
+    ).toBeNull();
+    expect(
+      localPdfSourceInternals.embeddedPublicationDate(
+        xmp({ "dc:date": "2026-01-05", "prism:coverdate": "2019-06-01T00:00:00Z" }),
+      ),
+    ).toBe("2019-06-01");
+    expect(
+      localPdfSourceInternals.embeddedPublicationDate(xmp({ "prism:publicationdate": "2018" })),
+    ).toBe("2018");
+    expect(localPdfSourceInternals.embeddedPublicationDate(null)).toBeNull();
+  });
+
   it("accepts PDF creator arrays without losing later metadata extraction", () => {
     expect(
       localPdfSourceInternals.embeddedCreators([

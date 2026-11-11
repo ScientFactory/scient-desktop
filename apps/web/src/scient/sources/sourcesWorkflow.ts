@@ -23,7 +23,8 @@ import {
 
 export type ImportPreparation =
   | { readonly kind: "local-files"; readonly names: ReadonlyArray<string> }
-  | { readonly kind: "zotero"; readonly count: number };
+  | { readonly kind: "zotero"; readonly count: number }
+  | { readonly kind: "file"; readonly name: string };
 
 export interface SourcesWorkflowState {
   readonly request: number;

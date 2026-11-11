@@ -88,10 +88,17 @@ export * from "./assets.ts";
 export * from "./review.ts";
 export * from "./scientProject.ts";
 export * from "./scientSources.ts";
+export * from "./scientReferences.ts";
+// SCIENT-FORK: managed bibliography contracts (new file, no upstream edits).
+export * from "./scientBibliography.ts";
+// SCIENT-FORK:START — Scient PDF annotation contracts (new file, no upstream edits).
+export * from "./scientAnnotations.ts";
+// SCIENT-FORK:END
 export * from "./scientAnalytics.ts";
 export * from "./scientAnalysis.ts";
 export * from "./scientCompute.ts";
 export * from "./scient/computeLanguages.ts";
+export * from "./scient/sourcesSettings.ts";
 export * from "./scient/computeLanguageStatus.ts";
 export * from "./scient/computeRunTable.ts";
 export * from "./scientData.ts";

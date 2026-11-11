@@ -5231,6 +5231,26 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
+    // SCIENT-FORK:START — Library mutations recheck the operate grant at the server.
+    it.effect("rejects adding sources by identifier from a read-only session", () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: "orchestration:read",
+        });
+        assert.equal(reader.response.status, 200);
+        const response = yield* HttpClient.post("/api/scient/sources/identifiers/add", {
+          headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+          body: yield* HttpBody.json({ root: "/synthetic/project", entries: ["10.1000/abc.123"] }),
+        });
+        assert.deepInclude(yield* response.json, {
+          code: "insufficient_scope",
+          requiredScope: "orchestration:operate",
+        });
+      }).pipe(Effect.provide(NodeHttpServerTest)),
+    );
+    // SCIENT-FORK:END
+
     it.effect("revokes an individual paired client session", () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest({

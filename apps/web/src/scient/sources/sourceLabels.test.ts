@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
+import { agentVerificationLabel, newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
 
 describe("sourceAddedLabel", () => {
   it("prioritizes the transient just-added state", () => {
@@ -24,6 +24,20 @@ describe("sourceAddedLabel", () => {
 
   it("falls back to a formatted date for older sources", () => {
     expect(sourceAddedLabel("2020-01-02T12:00:00.000Z", false)).toMatch(/^Added /u);
+  });
+});
+
+describe("agentVerificationLabel", () => {
+  it.each([
+    { origin: { actor: "user" }, verification: { state: "verified" as const }, label: "" },
+    { origin: { actor: "agent" }, verification: undefined, label: "" },
+    {
+      origin: { actor: "agent" },
+      verification: { state: "unchecked" as const },
+      label: " · Not yet checked",
+    },
+  ])("labels $origin.actor sources with $verification", ({ label, ...record }) => {
+    expect(agentVerificationLabel(record)).toBe(label);
   });
 });
 

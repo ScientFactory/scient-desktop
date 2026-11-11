@@ -410,8 +410,12 @@ The built-in shipping policy is:
 - `improve-workspace-readiness`: active, with explicit `$name` selection;
 - `scient-skill-authoring`: active, with automatic selection;
 - `pdf-authoring`: active, with automatic selection;
-- `html-pdf-authoring`: active, with automatic selection; and
-- `latex-authoring`: active, with automatic selection.
+- `html-pdf-authoring`: active, with automatic selection;
+- `latex-authoring`: active, with automatic selection;
+- `overleaf-sync`: active, with automatic selection; and
+- `references`: active, with automatic selection. It drives reference reviews
+  through `scient_references_check`, `scient_references_resolve` and the Library
+  tools, and is listed under the `scient.sources` built-in plugin.
 
 Changing these catalog defaults affects only skills without an explicit user
 preference. Enabling or disabling a skill always creates a durable preference,
