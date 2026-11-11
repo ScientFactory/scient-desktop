@@ -27,6 +27,15 @@ export function cloudApiOrigin(): string {
   return configured || SCIENT_CLOUD_ORIGIN;
 }
 
+/**
+ * Where share links point. A local Worker serves its share pages on its own origin, so links made
+ * against it open there; otherwise the default `scientfactory.com/s/…`.
+ */
+export function shareLinkOrigin(): string | undefined {
+  const configured = (import.meta.env.VITE_SCIENT_CLOUD_URL as string | undefined)?.trim();
+  return configured ? new URL(configured).origin : undefined;
+}
+
 export class CloudApiError extends Schema.TaggedError<CloudApiError>()("CloudApiError", {
   status: Schema.Number,
   code: Schema.Union([CloudErrorBody.fields.error, Schema.Literals(["network", "unknown"])]),

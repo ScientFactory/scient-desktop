@@ -7,7 +7,7 @@ import {
 } from "@scientfactory/scient-cloud/share-crypto";
 import type { ScientCloudShareBuild, ScopedThreadRef } from "@t3tools/contracts";
 
-import type { CloudApi } from "./cloudApi";
+import { shareLinkOrigin, type CloudApi } from "./cloudApi";
 import { gzipBytes } from "./cloudConversationCodec";
 
 export interface ShareOptions {
@@ -82,5 +82,5 @@ export async function publishShare(
     await put(`blob-${blob.sha256}`, await input.readBlob(blob.relativeUrl));
   }
   await api.publishShare(id, version);
-  return { id, link: shareLink(id, keyText ?? undefined), key: keyText };
+  return { id, link: shareLink(id, keyText ?? undefined, shareLinkOrigin()), key: keyText };
 }

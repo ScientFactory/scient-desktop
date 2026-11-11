@@ -15,7 +15,7 @@ import { Switch } from "~/components/ui/switch";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useThreadShells } from "~/state/entities";
 
-import type { CloudApi } from "./cloudApi";
+import { shareLinkOrigin, type CloudApi } from "./cloudApi";
 import { deleteCloudCopies, turnOffCloudCopy, turnOnCloudCopy } from "./serverCloud";
 import { openShareLinkDialog } from "./shareDialogState";
 import { readShareKey } from "./shareKeys";
@@ -212,7 +212,10 @@ function SharedLinkRow({
   onChanged: () => void;
 }) {
   const key = share.encrypted ? readShareKey(share.id) : undefined;
-  const link = share.encrypted && key === null ? null : shareLink(share.id, key ?? undefined);
+  const link =
+    share.encrypted && key === null
+      ? null
+      : shareLink(share.id, key ?? undefined, shareLinkOrigin());
   const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   const update = async (run: () => Promise<unknown>) => {
