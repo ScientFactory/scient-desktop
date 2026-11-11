@@ -17,7 +17,10 @@ import { WS_METHODS } from "./rpc.ts";
 // SCIENT-FORK:START — Extensions mutations share the destination settings grant.
 import { SCIENT_EXTENSION_GUARDED_RPC_SCOPES } from "./scient/extensionsPermissions.ts";
 import { SCIENT_SKILL_GUARDED_RPC_SCOPES } from "./scient/skillsPermissions.ts";
-import { SCIENT_SOURCES_GUARDED_HTTP_SCOPES } from "./scient/sourcesPermissions.ts";
+import {
+  SCIENT_SOURCES_GUARDED_HTTP_SCOPES,
+  scientPaperRequestScopes,
+} from "./scient/sourcesPermissions.ts";
 export * from "./scient/sourcesPermissions.ts";
 // SCIENT-FORK:END
 
@@ -182,7 +185,9 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
-  // SCIENT-FORK:START — guarded HTTP commands share this check.
+  // SCIENT-FORK:START — guarded HTTP commands and Library paper requests share this check.
+  const paperScopes = scientPaperRequestScopes(method, input);
+  if (paperScopes !== undefined) return paperScopes;
   if (Object.hasOwn(CLIENT_GUARDED_HTTP_SCOPES, method))
     return [CLIENT_GUARDED_HTTP_SCOPES[method as ClientGuardedHttpTag]];
   // SCIENT-FORK:END
