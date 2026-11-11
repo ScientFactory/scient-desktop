@@ -1,0 +1,92 @@
+[
+  {
+    "title": "Nature",
+    "name": "nature",
+    "dependent": 0,
+    "categories": {
+      "format": "numeric",
+      "fields": ["science", "generic-base"]
+    },
+    "updated": "2026-09-08 08:32:30",
+    "href": "https://www.zotero.org/styles/nature"
+  },
+  {
+    "title": "Nature (brackets, no superscript)",
+    "name": "nature-brackets",
+    "dependent": 0,
+    "categories": {
+      "format": "numeric",
+      "fields": ["science", "generic-base"]
+    },
+    "updated": "2025-09-11 05:27:53",
+    "href": "https://www.zotero.org/styles/nature-brackets"
+  },
+  {
+    "title": "Nature Communications",
+    "name": "nature-communications",
+    "dependent": 1,
+    "categories": {
+      "format": "numeric",
+      "fields": ["science"]
+    },
+    "updated": "2014-06-17 02:29:16",
+    "href": "https://www.zotero.org/styles/nature-communications"
+  },
+  {
+    "title": "Scientific Reports",
+    "name": "scientific-reports",
+    "dependent": 1,
+    "categories": {
+      "format": "numeric",
+      "fields": ["science"]
+    },
+    "updated": "2025-09-02 16:24:10",
+    "href": "https://www.zotero.org/styles/scientific-reports"
+  },
+  {
+    "title": "Cite Them Right 12th edition (author-date/Harvard)",
+    "name": "harvard-cite-them-right",
+    "dependent": 0,
+    "categories": {
+      "format": "author-date",
+      "fields": ["generic-base"]
+    },
+    "updated": "2026-02-12 10:42:48",
+    "href": "https://www.zotero.org/styles/harvard-cite-them-right"
+  },
+  {
+    "title": "Anglia Ruskin University (author-date/Harvard)",
+    "titleShort": "ARU",
+    "name": "harvard-anglia-ruskin-university",
+    "dependent": 0,
+    "categories": {
+      "format": "author-date",
+      "fields": []
+    },
+    "updated": "2026-01-05 14:58:08",
+    "href": "https://www.zotero.org/styles/harvard-anglia-ruskin-university"
+  },
+  {
+    "title": "Public Library of Science",
+    "titleShort": "PLOS",
+    "name": "plos",
+    "dependent": 0,
+    "categories": {
+      "format": "numeric",
+      "fields": ["science"]
+    },
+    "updated": "2026-01-25 22:16:24",
+    "href": "https://www.zotero.org/styles/plos"
+  },
+  {
+    "title": "PLOS ONE",
+    "name": "plos-one",
+    "dependent": 1,
+    "categories": {
+      "format": "numeric",
+      "fields": ["science"]
+    },
+    "updated": "2014-06-05 22:31:00",
+    "href": "https://www.zotero.org/styles/plos-one"
+  }
+]

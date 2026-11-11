@@ -114,6 +114,7 @@ export function createScientSourcesCommands<R, ER>(
     cancelImport: command(tags.cancelImport, http.cancelEnvironmentScientSourcesImport),
     retryImport: command(tags.retryImport, http.retryEnvironmentScientSourcesImport),
     syncBibliography: command(tags.syncBibliography, http.syncEnvironmentScientBibliography),
+    citationStyleSet: command(tags.citationStyleSet, http.setEnvironmentScientCitationStyle),
     annotationsMutate: command(tags.annotationsMutate, mutateEnvironmentAnnotation),
     referencesResolve: command(tags.referencesResolve, resolveEnvironmentReferences),
   };

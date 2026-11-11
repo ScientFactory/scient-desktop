@@ -32,6 +32,7 @@ export const SCIENT_SOURCES_HTTP_COMMANDS = {
   cancelImport: "scientSources.cancelImport",
   retryImport: "scientSources.retryImport",
   syncBibliography: "scientSources.syncBibliography",
+  citationStyleSet: "scientSources.citationStyleSet",
   annotationsMutate: "scientPdf.annotationsMutate",
   referencesResolve: "scientReferences.resolve",
 } as const;

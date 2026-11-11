@@ -97,6 +97,7 @@ export const LIBRARY_COMMAND_PARITY: Record<ScientSourcesHttpCommandTag, Library
     reason: "Retries failed items of a running import; the tool is called again with itemKeys.",
   },
   "scientSources.syncBibliography": tool("scient_sources_bibliography"),
+  "scientSources.citationStyleSet": tool("scient_sources_bibliography", "citationStyle"),
   "scientPdf.annotationsMutate": {
     kind: "tool",
     tools: [
@@ -136,6 +137,7 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
     reason: "Shows duplicates before an import; the tool reports them as skipped items.",
   },
   "scientSources.export": tool("scient_sources_export"),
+  "scientSources.citationStyles": tool("scient_sources_list", "citationStyles"),
   "scientPdf.annotationsForDocument": tool("scient_annotations_read"),
   "scientPdf.annotationsForSource": tool("scient_annotations_read"),
   "scientReferences.documents": {
