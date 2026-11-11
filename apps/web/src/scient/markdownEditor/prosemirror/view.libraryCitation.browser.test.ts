@@ -81,6 +81,8 @@ describe("Library citations in the Markdown editor", () => {
       '[data-scient-markdown-reference="citation"]',
     );
     if (!citation) throw new Error("Expected a rendered citation.");
+    // The click is placed by coordinates; earlier tests in a shard can leave it below the viewport.
+    citation.scrollIntoView({ block: "center" });
     const rect = citation.getBoundingClientRect();
     const at = {
       bubbles: true,
