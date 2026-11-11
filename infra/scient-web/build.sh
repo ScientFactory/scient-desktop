@@ -11,6 +11,8 @@ for name in CLERK_PUBLISHABLE_KEY CLERK_JWT_TEMPLATE CLERK_CLI_OAUTH_CLIENT_ID R
   export "T3CODE_${name}=${value}"
 done
 export VITE_HOSTED_APP_URL="https://app.scientfactory.com"
+# The stable hosted app is plain "Scient", as T3's hosted build names its own (apps/web/vercel.ts).
+export VITE_HOSTED_APP_CHANNEL=latest
 # Nothing reads hosted source maps, and they double the upload.
 export T3CODE_WEB_SOURCEMAP=false
 

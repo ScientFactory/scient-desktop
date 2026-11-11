@@ -139,6 +139,24 @@ describe("resolveSourceIdentifier", () => {
     await expect(pending).resolves.toMatchObject({ status: "unavailable" });
   });
 
+  it("reads a Crossref title with inline markup as plain text", async () => {
+    // Recorded from doi.org (Crossref CSL) for 10.1128/mmbr.00226-24 on 2026-11-11, shortened.
+    const resolution = await resolveSourceIdentifier(
+      [{ scheme: "doi", value: "10.1128/mmbr.00226-24" }],
+      {
+        request: respond(200, {
+          type: "journal-article",
+          title: "Cell wall hydrolases of\n                    <i>Escherichia coli</i>",
+          DOI: "10.1128/mmbr.00226-24",
+          "container-title": "Microbiology and Molecular Biology Reviews",
+        }),
+      },
+    );
+    expect(resolution?.status === "found" && resolution.metadata.title).toBe(
+      "Cell wall hydrolases of Escherichia coli",
+    );
+  });
+
   it("prefers the DOI when a source also has a PMID", async () => {
     const request = vi.fn<MetadataRequest>(respond(404, ""));
     await resolveSourceIdentifier([...pmid, ...doi], { request });

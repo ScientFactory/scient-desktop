@@ -122,13 +122,32 @@ describe("arXiv identifiers", () => {
     ]);
   });
 
-  it("asks arXiv for old-style IDs with their subject class in capitals", async () => {
-    const request = vi.fn<MetadataRequest>(respond(200, FEED));
-    await resolveSourceIdentifier([{ scheme: "arxiv", value: "math.gt/0309136" }], {
-      request,
-      pace,
-    });
-    expect(new URL(request.mock.calls[0]![0]).searchParams.get("id_list")).toBe("math.GT/0309136");
+  it("finds an old-style ID written with its subject class", async () => {
+    // Recorded from export.arxiv.org on 2026-11-11 for id_list=math/0211159; abstract shortened.
+    // The same request with math.DG/0211159 returns an empty feed.
+    const feed = `<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <entry>
+    <id>http://arxiv.org/abs/math/0211159v1</id>
+    <title>The entropy formula for the Ricci flow and its geometric applications</title>
+    <summary>  We present a monotonic expression for the Ricci flow, valid in all dimensions.</summary>
+    <category term="math.DG" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2002-11-11T16:11:49Z</published>
+    <author>
+      <name>Grisha Perelman</name>
+    </author>
+  </entry>
+</feed>`;
+    const request = vi.fn<MetadataRequest>(respond(200, feed));
+    const resolution = await resolveSourceIdentifier(
+      [{ scheme: "arxiv", value: "arXiv:math.DG/0211159" }],
+      { request, pace },
+    );
+    expect(new URL(request.mock.calls[0]![0]).searchParams.get("id_list")).toBe("math/0211159");
+    expect(resolution?.status === "found" && resolution.metadata.title).toBe(
+      "The entropy formula for the Ricci flow and its geometric applications",
+    );
   });
 
   it.each([
