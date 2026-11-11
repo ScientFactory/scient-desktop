@@ -26,10 +26,12 @@ import type {
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
+  ScientSourcePersonalNoteUpdateRequest,
   ScientSourceRemovalRequest,
   ScientSourceSavePageRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
+  ScientSourcesReadingStateRequest,
   ScientSourcesScope,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewConflictRequest,
@@ -101,6 +103,20 @@ export function updateScientSourceNote(
   input: ScientSourceNoteUpdateRequest,
 ) {
   return runSourcesCommand(sourcesCommands.updateNote, environmentId, input);
+}
+
+export function updateScientSourcePersonalNote(
+  environmentId: EnvironmentId,
+  input: ScientSourcePersonalNoteUpdateRequest,
+) {
+  return runSourcesCommand(sourcesCommands.updatePersonalNote, environmentId, input);
+}
+
+export function setScientSourcesReadingState(
+  environmentId: EnvironmentId,
+  input: ScientSourcesReadingStateRequest,
+) {
+  return runSourcesCommand(sourcesCommands.setReadingState, environmentId, input);
 }
 
 export function removeScientSource(

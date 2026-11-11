@@ -1,5 +1,7 @@
 import type { ScientSourceStudyDesign, ScientSourceType } from "@scientfactory/scient-sources";
 
+import { LIBRARY_LABELS } from "./libraryLabels";
+
 function isSameCalendarDay(left: Date, right: Date): boolean {
   return (
     left.getFullYear() === right.getFullYear() &&
@@ -59,8 +61,8 @@ export function sourcePinLabel(
   record: { readonly pinned?: boolean; readonly fromSnapshot?: true },
   listed: "project" | "library" | undefined,
 ): string {
-  if (record.fromSnapshot) return " · Not in this Library";
-  return listed === "library" && record.pinned ? " · In this project" : "";
+  if (record.fromSnapshot) return ` · ${LIBRARY_LABELS.notInThisLibrary}`;
+  return listed === "library" && record.pinned ? ` · ${LIBRARY_LABELS.inThisProject}` : "";
 }
 
 export function sourceAddedLabel(

@@ -408,6 +408,83 @@ describe("sources workflow data consistency", () => {
   });
 });
 
+describe("sources workflow on a personal Library", () => {
+  const library = (records: Parameters<typeof overviewWith>[0]) => {
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
+    return sourcesWorkflowReducer(started, {
+      type: "overviewArrived",
+      request: 1,
+      overview: overviewWith(records),
+    });
+  };
+
+  it("takes reading state from the route's answer and keeps the revision", () => {
+    const base = sourcesWorkflowReducer(
+      library([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+        { sourceId: "snapshot", revision: 1, pinned: true, fromSnapshot: true },
+      ]),
+      {
+        type: "sourceDetailArrived",
+        sourceId: "a",
+        detail: {
+          ...detail({ sourceId: "a", revision: 4 }),
+          readingStatus: "unread",
+          starred: false,
+        },
+      },
+    );
+    const next = sourcesWorkflowReducer(base, {
+      type: "readingStateArrived",
+      result: {
+        sources: [
+          { sourceId: "a", outcome: "updated", readingStatus: "read", starred: false },
+          { sourceId: "snapshot", outcome: "not-found" },
+        ],
+      },
+    });
+    expect(next.overview?.records).toMatchObject([
+      { sourceId: "a", revision: 4, readingStatus: "read", pinned: true },
+      { sourceId: "snapshot", revision: 1 },
+    ]);
+    expect(next.overview?.records[1]).not.toHaveProperty("readingStatus");
+    expect(next.sourceDetails["a"]).toMatchObject({ revision: 4, readingStatus: "read" });
+  });
+
+  it("keeps My note and the row's Library fields when a project note save answers without them", () => {
+    const base = sourcesWorkflowReducer(
+      library([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: true, pinned: true },
+      ]),
+      {
+        type: "sourceDetailArrived",
+        sourceId: "a",
+        detail: {
+          ...detail({ sourceId: "a", revision: 4 }),
+          pinned: true,
+          readingStatus: "unread",
+          starred: true,
+          personalNote: "Mine",
+        },
+      },
+    );
+    const next = sourcesWorkflowReducer(base, {
+      type: "sourceRecordAccepted",
+      record: { ...detail({ sourceId: "a", revision: 4 }), note: "For this project", pinned: true },
+    });
+    expect(next.sourceDetails["a"]).toMatchObject({
+      note: "For this project",
+      personalNote: "Mine",
+      readingStatus: "unread",
+      starred: true,
+    });
+    expect(next.overview?.records[0]).toMatchObject({ readingStatus: "unread", starred: true });
+  });
+});
+
 describe("sources workflow import transitions", () => {
   it("routes a possible-match preflight into review and clears preparation", () => {
     const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {

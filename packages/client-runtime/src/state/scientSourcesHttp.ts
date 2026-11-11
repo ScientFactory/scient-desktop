@@ -7,11 +7,13 @@ import type {
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
   ScientSourceNoteUpdateRequest,
+  ScientSourcePersonalNoteUpdateRequest,
   ScientSourceRemovalRequest,
   ScientSourceSavePageRequest,
   ScientSourcesAddByIdentifierRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
+  ScientSourcesReadingStateRequest,
   ScientSourcesScope,
   ScientSourcesMoveStatusRequest,
   ScientSystematicReviewChangeRequest,
@@ -305,6 +307,46 @@ export const updateEnvironmentScientSourceNote = Effect.fn(
           note: input.note,
         },
       }),
+  });
+});
+
+/** Library servers only: the person's own note, which follows the paper into every project. */
+export const updateEnvironmentScientSourcePersonalNote = Effect.fn(
+  "clientRuntime.state.updateEnvironmentScientSourcePersonalNote",
+)(function* (
+  input: { readonly prepared: PreparedConnection } & ScientSourcePersonalNoteUpdateRequest,
+) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.updatePersonalNote(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.updatePersonalNote({ headers, payload }),
+  });
+});
+
+/** Library servers only: marks sources read or unread, starred or not, in one request. */
+export const setEnvironmentScientSourcesReadingState = Effect.fn(
+  "clientRuntime.state.setEnvironmentScientSourcesReadingState",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourcesReadingStateRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.setReadingState(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.setReadingState({ headers, payload }),
   });
 });
 

@@ -3,8 +3,21 @@ import {
   scientSourceTagKey,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
-import type { EnvironmentId, ScientSourcesOverviewResult } from "@t3tools/contracts";
-import { FolderIcon, ShapesIcon, TagIcon, Trash2, X } from "lucide-react";
+import type {
+  EnvironmentId,
+  ScientSourcesOverviewResult,
+  ScientSourcesScope,
+} from "@t3tools/contracts";
+import {
+  BookmarkCheckIcon,
+  FolderIcon,
+  FolderMinus,
+  FolderPlus,
+  ShapesIcon,
+  TagIcon,
+  Trash2,
+  X,
+} from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -18,8 +31,14 @@ import {
   MenuTrigger,
 } from "../../components/ui/menu";
 import { toastManager } from "../../components/ui/toast";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { restoreScientSource } from "./client";
 import { orderedCollections } from "./collectionTree";
+import {
+  LIBRARY_LABELS,
+  someAlsoInOtherProjectsLabel,
+  type ReadingStateChange,
+} from "./libraryLabels";
 import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
@@ -37,6 +56,8 @@ export function announceSourcesMovedToTrash(input: {
   readonly root: string;
   readonly sourceIds: ReadonlyArray<string>;
   readonly notRemoved: number;
+  /** On a personal Library: how many of the moved sources other projects also have. */
+  readonly alsoElsewhere?: number;
   readonly onRestored: () => Promise<unknown>;
 }) {
   if (input.notRemoved > 0) {
@@ -56,6 +77,9 @@ export function announceSourcesMovedToTrash(input: {
       input.sourceIds.length === 1
         ? "Moved 1 source to Trash"
         : `Moved ${input.sourceIds.length} sources to Trash`,
+    ...(input.alsoElsewhere
+      ? { description: someAlsoInOtherProjectsLabel(input.alsoElsewhere) }
+      : {}),
     actionProps: {
       children: "Undo",
       onClick: () => {
@@ -88,6 +112,28 @@ async function restoreAll(input: {
   }
 }
 
+const READING_ACTIONS: ReadonlyArray<{
+  readonly label: string;
+  readonly change: ReadingStateChange;
+}> = [
+  { label: LIBRARY_LABELS.markRead, change: { readingStatus: "read" } },
+  { label: LIBRARY_LABELS.markUnread, change: { readingStatus: "unread" } },
+  { label: LIBRARY_LABELS.star, change: { starred: true } },
+  { label: LIBRARY_LABELS.removeStar, change: { starred: false } },
+];
+
+/** What a personal Library adds to the bar; a project server never passes it. */
+export interface SourcesBulkLibrary {
+  readonly listed: ScientSourcesScope;
+  /** Absent when this connection may not change reading state. */
+  readonly onSetReadingState?: (
+    sourceIds: ReadonlyArray<string>,
+    change: ReadingStateChange,
+  ) => Promise<void>;
+  readonly onAddToProject: (records: ReadonlyArray<SourceSummary>) => Promise<void>;
+  readonly onRemoveFromProject: (records: ReadonlyArray<SourceSummary>) => Promise<void>;
+}
+
 /** Replaces the search row while sources are selected. */
 export function SourcesBulkBar(props: {
   readonly organize: SourcesOrganize;
@@ -95,8 +141,9 @@ export function SourcesBulkBar(props: {
   readonly visibleSourceIds: ReadonlyArray<string>;
   readonly onRequestName: (request: SourcesNameRequest) => void;
   readonly onRemove: (records: ReadonlyArray<SourceSummary>) => Promise<void>;
+  readonly library?: SourcesBulkLibrary;
 }) {
-  const { organize } = props;
+  const { organize, library } = props;
   const [removing, setRemoving] = useState(false);
   const selected = props.records.filter((record) => organize.selection.has(record.sourceId));
   const sourceIds = selected.map((record) => record.sourceId);
@@ -109,6 +156,17 @@ export function SourcesBulkBar(props: {
     scientSourceTagCounts(selected).map((entry) => [scientSourceTagKey(entry.tag), entry.count]),
   );
   const busy = organize.pending || removing || !organize.canChange;
+  const runOnSelection = (
+    work: (records: ReadonlyArray<SourceSummary>) => Promise<void>,
+    keepSelection = false,
+  ) => {
+    setRemoving(true);
+    void work(selected).finally(() => {
+      setRemoving(false);
+      if (!keepSelection) organize.clearSelection();
+    });
+  };
+  const notInProject = selected.filter((record) => record.pinned === false);
 
   const addTag = () =>
     props.onRequestName({
@@ -224,22 +282,70 @@ export function SourcesBulkBar(props: {
           ))}
         </MenuPopup>
       </Menu>
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost-destructive"
-        aria-label={`Move ${count} selected sources to Trash`}
-        disabled={busy || count === 0}
-        onClick={() => {
-          setRemoving(true);
-          void props.onRemove(selected).finally(() => {
-            setRemoving(false);
-            organize.clearSelection();
-          });
-        }}
-      >
-        <Trash2 />
-      </Button>
+      {library?.onSetReadingState ? (
+        <Menu>
+          <MenuTrigger
+            render={
+              <Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />
+            }
+          >
+            <BookmarkCheckIcon />
+            {LIBRARY_LABELS.readingMenu}
+          </MenuTrigger>
+          <MenuPopup align="end" side="bottom">
+            {READING_ACTIONS.map((action) => (
+              <MenuItem
+                key={action.label}
+                onClick={() => {
+                  const onSet = library.onSetReadingState;
+                  if (onSet) runOnSelection(() => onSet(sourceIds, action.change), true);
+                }}
+              >
+                {action.label}
+              </MenuItem>
+            ))}
+          </MenuPopup>
+        </Menu>
+      ) : null}
+      {library?.listed === "library" ? (
+        <ScientTooltip content={LIBRARY_LABELS.addToProject}>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`${LIBRARY_LABELS.addToProject}: ${count} selected`}
+            disabled={busy || notInProject.length === 0}
+            onClick={() => runOnSelection(() => library.onAddToProject(notInProject))}
+          >
+            <FolderPlus />
+          </Button>
+        </ScientTooltip>
+      ) : null}
+      {library?.listed === "project" ? (
+        <ScientTooltip content={LIBRARY_LABELS.removeFromProject}>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label={`${LIBRARY_LABELS.removeFromProject}: ${count} selected`}
+            disabled={busy || count === 0}
+            onClick={() => runOnSelection(library.onRemoveFromProject)}
+          >
+            <FolderMinus />
+          </Button>
+        </ScientTooltip>
+      ) : (
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost-destructive"
+          aria-label={`Move ${count} selected sources to Trash`}
+          disabled={busy || count === 0}
+          onClick={() => runOnSelection(props.onRemove)}
+        >
+          <Trash2 />
+        </Button>
+      )}
       <Button
         type="button"
         size="icon-xs"

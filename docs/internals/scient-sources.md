@@ -655,8 +655,8 @@ its state.
 
 The web (`useScientSources.ts`) sends `scope` only after the person picks the
 Library view, which `SourcesFilterMenu` offers only when the overview has
-`scopes`: "This project" and "Library" replace "All sources" at the top of the
-Collection submenu. In the Library view rows pinned here say "In this project",
+`scopes`: "This project" and "All" replace "All sources" at the top of the
+Collection submenu. In the "All" view rows pinned here say "In this project",
 and a pin this library lacks says "Not in this Library" in either view. The
 review screen uses the review's `records` when present.
 
@@ -995,6 +995,59 @@ report stays on the review, counts first and the lists behind "Details", until
 dismissed. After a choice the review and the list are read again; nothing is
 patched locally. A read-only session sees the line and both versions, with the
 choices disabled and no Dismiss.
+
+#### The Library in daily use (5e-4, switched off)
+
+Everything here depends on the overview's `scopes`, not on `libraryBackend`: a
+project the library server still serves from its own folder renders as on the
+project backend, plus the move line. With `scopes` absent the details view,
+rows, filter menu and bulk bar are unchanged.
+
+**Words.** The interface never says "pin": a source is "In this project", and
+the actions are "Add to project" and "Remove from this project". Library-mode
+strings live in `LIBRARY_LABELS` (`libraryLabels.ts`), whose test keeps the
+word out. Server error text does not reach the panel (routes answer with a
+reason code), so the server's own "pin" messages are seen only by agents.
+
+**Two notes.** Details show "Note for this project" (the existing editor, which
+edits the pin's note) and "My note" side by side, or one under the other when
+the panel is narrow (a container query on the notes). "My note" appears only
+when the detail has the `personalNote` key, which a session without operate
+never gets. It saves through `updatePersonalNote` with the library record's
+`revision`; `stale` is handled like the project note. A source not in this
+project has no project note: details show "My note" and "Add to project". Edit
+results other than the personal note's own lack `personalNote`; the reducer
+keeps the one on screen (`keepPersonalFields`), and when the revision moved the
+panel reads the detail again in the background so a later save is not made on
+an older note.
+
+**Reading status and star.** Rows show an unread dot and a star; details show
+"Mark read" / "Mark unread" and the star; the row menu has the reading change;
+the bulk bar has "Mark" with "Mark read", "Mark unread", "Star" and "Remove
+star", sent as one `setReadingState` request for every selected ID. A
+`not-found` entry is counted in the toast ("1 source is no longer in the
+Library."), not shown as a failure. Rows and details take the values from the
+route's answer (`readingStateArrived`); nothing waits for a revision, since
+reading state changes none. Opening details does not mark a source read. A
+session without the command's grant sees the markers and no controls; a pin's
+snapshot (`fromSnapshot`) has no reading state, so it shows neither. The filter
+menu adds "Unread" and "Starred", applied in the panel over the overview's
+records like the other filters and shown in `SourcesActiveFilters`; they live
+beside `ScientSourceFilter`, not in it, so saved searches and agent filters do
+not carry them.
+
+**This project and All.** In "This project", the row action, the details menu
+and the bulk bar offer "Remove from this project" (organize `unpin` by the
+project key); the Library keeps the source. In "All", rows not in this project
+offer "Add to project" (organize `pin`), as do details and the bulk bar, and
+Move to Trash stays there. Details offer Move to Trash in either view, except
+for a pin's snapshot, which this library lacks. A move to Trash says in its
+toast how many other projects have the source (`alsoPinnedIn` from the removal
+result); Undo restores it as before. Add and remove send one organize request
+per source and then read the overview again. An import begun from "All"
+(no `pinInstanceId` on the operation) ends with "They are in your Library, not
+in this project." and an "Add to project" button for what it brought in; add
+by identifier from "All" says the same in its toast.
 
 ## Source truth and provenance
 

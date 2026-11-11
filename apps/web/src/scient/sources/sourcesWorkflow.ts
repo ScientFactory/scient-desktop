@@ -3,6 +3,7 @@ import type {
   ScientSourceImportOperation,
   ScientSourcesOverviewResult,
   ScientSourcesPreflightResult,
+  ScientSourcesReadingStateResult,
   ZoteroCollection,
   ZoteroConnectionStatus,
   ZoteroImportScope,
@@ -93,6 +94,7 @@ export type SourcesWorkflowAction =
     }
   | { readonly type: "sourceRecordAccepted"; readonly record: ScientSourceDetailResult }
   | { readonly type: "sourceRemoved"; readonly sourceId: string }
+  | { readonly type: "readingStateArrived"; readonly result: ScientSourcesReadingStateResult }
   | {
       readonly type: "zoteroStatusArrived";
       readonly status: ZoteroConnectionStatus;
@@ -170,8 +172,69 @@ function acceptRecordIntoOverview(
     })),
     importedAt: record.importedAt,
     ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
+    ...libraryFields(record, overview.records[recordIndex]),
   };
   return { ...overview, records };
+}
+
+type LibraryFields = Pick<
+  ScientSourceDetailResult,
+  "pinned" | "projectNote" | "fromSnapshot" | "readingStatus" | "starred"
+>;
+const LIBRARY_FIELDS = [
+  "pinned",
+  "projectNote",
+  "fromSnapshot",
+  "readingStatus",
+  "starred",
+] as const;
+
+/** A library server's row fields, from the record where it carries them, else from the row. */
+function libraryFields(record: LibraryFields, row: LibraryFields | undefined): LibraryFields {
+  return Object.fromEntries(
+    LIBRARY_FIELDS.flatMap((key) =>
+      key in record ? [[key, record[key]]] : row && key in row ? [[key, row[key]]] : [],
+    ),
+  );
+}
+
+/**
+ * Edit results other than the personal note's own leave the personal note out; the one on screen
+ * stays. Reading state changes no revision, so it is kept from the details shown.
+ */
+function keepPersonalFields(
+  record: ScientSourceDetailResult,
+  shown: ScientSourceDetailResult | undefined,
+): ScientSourceDetailResult {
+  if (!shown) return record;
+  return {
+    ...(shown.readingStatus !== undefined && !("readingStatus" in record)
+      ? { readingStatus: shown.readingStatus }
+      : {}),
+    ...(shown.starred !== undefined && !("starred" in record) ? { starred: shown.starred } : {}),
+    ...record,
+    ...("personalNote" in shown && !("personalNote" in record)
+      ? { personalNote: shown.personalNote ?? null }
+      : {}),
+  };
+}
+
+function withReadingState<
+  T extends {
+    readonly sourceId: string;
+    readonly readingStatus?: unknown;
+    readonly starred?: unknown;
+  },
+>(record: T, changes: ReadonlyMap<string, ScientSourcesReadingStateResult["sources"][number]>): T {
+  const change = changes.get(record.sourceId);
+  if (!change || change.outcome === "not-found" || record.readingStatus === undefined) {
+    return record;
+  }
+  return {
+    ...record,
+    ...(change.readingStatus !== undefined ? { readingStatus: change.readingStatus } : {}),
+    ...(change.starred !== undefined ? { starred: change.starred } : {}),
+  };
 }
 
 function pruneSourceDetails(
@@ -179,12 +242,31 @@ function pruneSourceDetails(
   overview: ScientSourcesOverviewResult,
 ): SourcesWorkflowState["sourceDetails"] {
   return Object.fromEntries(
-    Object.entries(details).filter(([sourceId, detail]) =>
-      overview.records.some(
-        (summary) => summary.sourceId === sourceId && summary.revision === detail.revision,
-      ),
-    ),
+    Object.entries(details).flatMap(([sourceId, detail]) => {
+      const summary = overview.records.find(
+        (entry) => entry.sourceId === sourceId && entry.revision === detail.revision,
+      );
+      return summary ? [[sourceId, withSummaryReadingState(detail, summary)]] : [];
+    }),
   );
+}
+
+/** Reading state changes no revision, so a kept detail takes it from the newer overview. */
+function withSummaryReadingState(
+  detail: ScientSourceDetailResult,
+  summary: ScientSourcesOverviewResult["records"][number],
+): ScientSourceDetailResult {
+  if (
+    summary.readingStatus === undefined ||
+    (summary.readingStatus === detail.readingStatus && summary.starred === detail.starred)
+  ) {
+    return detail;
+  }
+  return {
+    ...detail,
+    readingStatus: summary.readingStatus,
+    ...(summary.starred !== undefined ? { starred: summary.starred } : {}),
+  };
 }
 
 export function sourcesWorkflowReducer(
@@ -232,7 +314,10 @@ export function sourcesWorkflowReducer(
         ...state,
         sourceDetails: {
           ...state.sourceDetails,
-          [action.record.sourceId]: action.record,
+          [action.record.sourceId]: keepPersonalFields(
+            action.record,
+            state.sourceDetails[action.record.sourceId],
+          ),
         },
         ...(state.overview
           ? { overview: acceptRecordIntoOverview(state.overview, action.record) }
@@ -254,6 +339,24 @@ export function sourcesWorkflowReducer(
               recordDiagnostics: state.overview.recordDiagnostics.filter(
                 (entry) => entry.sourceId !== action.sourceId,
               ),
+            }
+          : state.overview,
+      };
+    }
+    case "readingStateArrived": {
+      const changes = new Map(action.result.sources.map((entry) => [entry.sourceId, entry]));
+      return {
+        ...state,
+        sourceDetails: Object.fromEntries(
+          Object.entries(state.sourceDetails).map(([sourceId, detail]) => [
+            sourceId,
+            withReadingState(detail, changes),
+          ]),
+        ),
+        overview: state.overview
+          ? {
+              ...state.overview,
+              records: state.overview.records.map((record) => withReadingState(record, changes)),
             }
           : state.overview,
       };

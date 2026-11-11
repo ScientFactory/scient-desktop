@@ -1,5 +1,5 @@
 import { useStableCallback } from "~/hooks/useStableCallback";
-import type { ScientSourceDetailResult, ScientSourceNoteUpdateResult } from "@t3tools/contracts";
+import type { ScientSourceDetailResult } from "@t3tools/contracts";
 import {
   $convertFromMarkdownString,
   $convertToMarkdownString,
@@ -58,19 +58,26 @@ const EMPTY_SOURCE_NOTE_FORMATS: SourceNoteFormats = {
   italic: false,
 };
 
-function noteText(record: ScientSourceDetailResult): string {
-  return record.note ?? "";
+/** `note` is the source's note (this project's, on a personal Library); `personalNote` is "My note". */
+type SourceNoteField = "note" | "personalNote";
+
+function noteText(record: ScientSourceDetailResult, field: SourceNoteField): string {
+  return record[field] ?? "";
 }
+
+type SourceNoteSave = (
+  note: string | null,
+  expectedRevision: number,
+) => Promise<{ readonly outcome: string; readonly record: ScientSourceDetailResult }>;
 
 function useSourceNoteState(input: {
   readonly record: ScientSourceDetailResult;
-  readonly onSave: (
-    note: string | null,
-    expectedRevision: number,
-  ) => Promise<ScientSourceNoteUpdateResult>;
+  readonly field: SourceNoteField;
+  readonly onSave: SourceNoteSave;
 }) {
-  const [draft, setDraft] = useState(() => noteText(input.record));
-  const [confirmed, setConfirmed] = useState(() => noteText(input.record));
+  const field = input.field;
+  const [draft, setDraft] = useState(() => noteText(input.record, field));
+  const [confirmed, setConfirmed] = useState(() => noteText(input.record, field));
   const [status, setStatus] = useState<NoteStatus>("saved");
   const [error, setError] = useState<string | null>(null);
   const recordRef = useRef(input.record);
@@ -89,7 +96,7 @@ function useSourceNoteState(input: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reconciles the remote note record into draft state when it changes
   useEffect(() => {
     recordRef.current = input.record;
-    const remote = noteText(input.record);
+    const remote = noteText(input.record, field);
     if (remote === draftRef.current) {
       confirmedRef.current = remote;
       setConfirmed(remote);
@@ -105,7 +112,7 @@ function useSourceNoteState(input: {
       setStatus("saved");
       setError(null);
     }
-  }, [input.record]);
+  }, [input.record, field]);
 
   const persist = useStableCallback(async function persistNote() {
     if (savingRef.current) {
@@ -125,7 +132,7 @@ function useSourceNoteState(input: {
     return await (async () => {
       const result = await onSaveRef.current(submitted.trim() ? submitted : null, base.revision);
       recordRef.current = result.record;
-      const remote = noteText(result.record);
+      const remote = noteText(result.record, field);
       if (result.outcome === "stale" && remote !== confirmedRef.current && remote !== submitted) {
         conflictRef.current = true;
         if (mountedRef.current) {
@@ -313,6 +320,7 @@ function SourceNoteEditorBridge(props: {
 }
 
 function SourceNoteEditor(props: {
+  readonly label?: string;
   readonly autoFocus?: boolean;
   readonly className?: string;
   readonly fillAvailableSpace?: boolean;
@@ -350,7 +358,7 @@ function SourceNoteEditor(props: {
           contentEditable={
             <ContentEditable
               className="h-full w-full overflow-y-auto whitespace-pre-wrap break-words outline-none"
-              aria-label="Source note"
+              aria-label={props.label ?? "Source note"}
               aria-placeholder="Add a note…"
               placeholder={<span />}
               onBlur={props.onBlur}
@@ -376,7 +384,11 @@ function SourceNoteEditor(props: {
   );
 }
 
-function NotePreview(props: { readonly value: string; readonly onEdit?: () => void }) {
+function NotePreview(props: {
+  readonly value: string;
+  readonly onEdit?: () => void;
+  readonly editLabel?: string;
+}) {
   const text = (
     <div className="text-foreground [&_em]:italic [&_p]:m-0 [&_p]:whitespace-pre-wrap [&_p+_p]:mt-2 [&_strong]:font-semibold">
       <ReactMarkdown allowedElements={["p", "strong", "em"]} skipHtml>
@@ -395,7 +407,7 @@ function NotePreview(props: { readonly value: string; readonly onEdit?: () => vo
     <button
       type="button"
       className="w-full cursor-text rounded-md px-2 py-1.5 text-start text-sm transition-colors hover:bg-accent focus-visible:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-      aria-label="Edit source note"
+      aria-label={props.editLabel ?? "Edit source note"}
       dir="auto"
       onClick={props.onEdit}
     >
@@ -404,7 +416,10 @@ function NotePreview(props: { readonly value: string; readonly onEdit?: () => vo
   );
 }
 
-function InlineNoteEditor(props: { readonly note: ReturnType<typeof useSourceNoteState> }) {
+function InlineNoteEditor(props: {
+  readonly note: ReturnType<typeof useSourceNoteState>;
+  readonly label?: string;
+}) {
   const [editing, setEditing] = useState(() => props.note.draft.length === 0);
   const editorRef = useRef<SourceNoteEditorHandle>(null);
 
@@ -414,10 +429,17 @@ function InlineNoteEditor(props: { readonly note: ReturnType<typeof useSourceNot
   }, [editing]);
 
   if (!editing && props.note.draft.trim()) {
-    return <NotePreview value={props.note.draft} onEdit={() => setEditing(true)} />;
+    return (
+      <NotePreview
+        value={props.note.draft}
+        onEdit={() => setEditing(true)}
+        {...(props.label ? { editLabel: `Edit ${props.label.toLocaleLowerCase()}` } : {})}
+      />
+    );
   }
   return (
     <SourceNoteEditor
+      {...(props.label ? { label: props.label } : {})}
       editorRef={editorRef}
       value={props.note.draft}
       onChange={props.note.change}
@@ -572,12 +594,17 @@ function QuickNoteResizeHandle() {
 export function useSourceNoteControls(props: {
   readonly record: ScientSourceDetailResult;
   readonly readOnly?: boolean;
-  readonly onSave: (
-    note: string | null,
-    expectedRevision: number,
-  ) => Promise<ScientSourceNoteUpdateResult>;
+  readonly field?: SourceNoteField;
+  /** A personal Library names each of a source's two notes; elsewhere the heading is "Notes". */
+  readonly heading?: string;
+  readonly help?: string;
+  readonly onSave: SourceNoteSave;
 }) {
-  const note = useSourceNoteState(props);
+  const note = useSourceNoteState({ ...props, field: props.field ?? "note" });
+  const headingId =
+    props.field === "personalNote" ? "source-my-note-heading" : "source-note-heading";
+  const heading = props.heading ?? "Notes";
+  const help = props.help ? <p className="text-xs text-muted-foreground">{props.help}</p> : null;
   const quickNoteEditorRef = useRef<SourceNoteEditorHandle>(null);
   const [quickNoteOpen, setQuickNoteOpen] = useState(false);
   const [activeFormats, setActiveFormats] = useState<SourceNoteFormats>(EMPTY_SOURCE_NOTE_FORMATS);
@@ -668,19 +695,21 @@ export function useSourceNoteControls(props: {
     ),
     section: props.readOnly ? (
       note.draft.trim() ? (
-        <section className="space-y-1.5" aria-labelledby="source-note-heading">
-          <h3 id="source-note-heading" className="text-sm font-medium text-foreground">
-            Notes
+        <section className="space-y-1.5" aria-labelledby={headingId}>
+          <h3 id={headingId} className="text-sm font-medium text-foreground">
+            {heading}
           </h3>
+          {help}
           <NotePreview value={note.draft} />
         </section>
       ) : null
     ) : (
-      <section className="space-y-1.5" aria-labelledby="source-note-heading">
-        <h3 id="source-note-heading" className="text-sm font-medium text-foreground">
-          Notes
+      <section className="space-y-1.5" aria-labelledby={headingId}>
+        <h3 id={headingId} className="text-sm font-medium text-foreground">
+          {heading}
         </h3>
-        <InlineNoteEditor note={note} />
+        {help}
+        <InlineNoteEditor note={note} {...(props.heading ? { label: props.heading } : {})} />
         <NoteStatusLine status={note.status} error={note.error} />
       </section>
     ),

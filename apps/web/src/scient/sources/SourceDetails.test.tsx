@@ -247,6 +247,69 @@ describe("SourceDetails", () => {
   });
 });
 
+describe("SourceDetails on a personal Library", () => {
+  const renderLibrary = (
+    detail: Parameters<typeof SourceDetails>[0]["record"],
+    library: Partial<NonNullable<Parameters<typeof SourceDetails>[0]["library"]>> = {},
+  ) =>
+    renderToStaticMarkup(
+      <SourceDetails
+        record={detail}
+        diagnostics={[]}
+        library={{
+          canSavePersonalNote: true,
+          onSavePersonalNote: saveNote,
+          onSetReadingState: async () => undefined,
+          ...library,
+        }}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onSaveNote={saveNote}
+        onRefreshMetadata={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
+    );
+  const inLibrary = { ...record, pinned: true, readingStatus: "unread" as const, starred: true };
+
+  it("shows My note only when the details carry the personal note", () => {
+    expect(renderLibrary(inLibrary)).not.toContain("My note");
+    expect(renderLibrary({ ...inLibrary, personalNote: null })).toContain("My note");
+    expect(renderLibrary({ ...inLibrary, personalNote: "Mine" })).toContain(
+      "Note for this project",
+    );
+  });
+
+  it("shows reading state without controls to a session that may not change it", () => {
+    expect(renderLibrary(inLibrary)).toContain("Mark read");
+    const markersOnly = renderToStaticMarkup(
+      <SourceDetails
+        record={inLibrary}
+        diagnostics={[]}
+        readOnly
+        library={{ canSavePersonalNote: false, onSavePersonalNote: saveNote }}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onSaveNote={saveNote}
+        onRefreshMetadata={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
+    );
+    expect(markersOnly).toContain("Unread");
+    expect(markersOnly).toContain("Starred");
+    expect(markersOnly).not.toContain("Mark read");
+    expect(markersOnly).not.toContain('aria-label="Remove star"');
+  });
+
+  it("offers no reading state on a review snapshot's record", () => {
+    const snapshot = renderLibrary({ ...record, pinned: true, fromSnapshot: true });
+    expect(snapshot).not.toContain("Mark read");
+    expect(snapshot).not.toContain("Mark unread");
+    expect(snapshot).not.toContain("Unread");
+  });
+});
+
 describe("safeSourceExternalUrl", () => {
   it("allows web links and rejects active or malformed schemes", () => {
     expect(safeSourceExternalUrl("https://example.com/article")).toBe(

@@ -3,6 +3,7 @@ import { MoreHorizontal, X } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
+import { LIBRARY_LABELS } from "./libraryLabels";
 import { SCIENT_SOURCE_STUDY_DESIGN_LABELS, SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
@@ -32,7 +33,7 @@ export function SourcesActiveFilters(props: {
 }) {
   const { organize } = props;
   const { filter, collection, savedSearch } = organize;
-  if (!organize.filterActive && !savedSearch) return null;
+  if (!organize.filterActive && !organize.readingFilterActive && !savedSearch) return null;
   const without = (key: keyof typeof filter) => organize.setFilter({ ...filter, [key]: undefined });
   const renameCollection = () => {
     if (!collection) return;
@@ -99,6 +100,18 @@ export function SourcesActiveFilters(props: {
         <FilterChip
           label={filter.hasPdf ? "With PDF" : "Without PDF"}
           onRemove={() => without("hasPdf")}
+        />
+      ) : null}
+      {organize.reading.unread ? (
+        <FilterChip
+          label={LIBRARY_LABELS.unread}
+          onRemove={() => organize.setReading({ ...organize.reading, unread: undefined })}
+        />
+      ) : null}
+      {organize.reading.starred ? (
+        <FilterChip
+          label={LIBRARY_LABELS.starred}
+          onRemove={() => organize.setReading({ ...organize.reading, starred: undefined })}
         />
       ) : null}
       <span className="ms-auto tabular-nums" aria-live="polite">

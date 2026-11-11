@@ -16,6 +16,7 @@ import {
   restoreScientSource,
 } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { alsoInOtherProjectsLabel } from "./libraryLabels";
 import { removedLabel, restoreProblem } from "./sourceLifecycleLabels";
 import { useCanChangeLibrary } from "./sourcesCommands";
 import { settleAfter } from "./settleAfter";
@@ -44,12 +45,17 @@ export function announceSourceMovedToTrash(input: {
   readonly root: string;
   readonly sourceId: string;
   readonly title: string | null;
+  /** On a personal Library: how many other projects have the source. */
+  readonly alsoPinnedIn?: number;
   readonly onRestored: () => Promise<unknown>;
 }) {
+  const elsewhere = alsoInOtherProjectsLabel(input.alsoPinnedIn);
   const id = toastManager.add({
     type: "success",
     title: "Moved to Trash",
-    description: input.title ?? undefined,
+    description: elsewhere
+      ? [input.title, elsewhere].filter(Boolean).join(" ")
+      : (input.title ?? undefined),
     actionProps: {
       children: "Undo",
       onClick: () => {

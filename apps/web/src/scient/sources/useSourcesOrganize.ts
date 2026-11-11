@@ -13,6 +13,7 @@ import { useState } from "react";
 import { toastManager } from "../../components/ui/toast";
 import { bulkUpdateScientSources, organizeScientSources } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import type { ReadingStateFilter } from "./libraryLabels";
 import { useCanChangeLibrary } from "./sourcesCommands";
 
 /** The panel's narrowing besides the typed query, which the panel keeps itself. */
@@ -68,6 +69,8 @@ export function useSourcesOrganize(input: {
   const [state, setState] = useState({
     context,
     filter: {} as SourcesListFilter,
+    // A personal Library's reading state; saved searches and agents' filters do not carry it.
+    reading: {} as ReadingStateFilter,
     savedSearchId: null as string | null,
     selection: new Set<string>() as ReadonlySet<string>,
   });
@@ -75,7 +78,7 @@ export function useSourcesOrganize(input: {
   const current =
     state.context === context
       ? state
-      : { context, filter: {}, savedSearchId: null, selection: new Set<string>() };
+      : { context, filter: {}, reading: {}, savedSearchId: null, selection: new Set<string>() };
   if (current !== state) setState(current);
 
   // A filter can outlive what it points at when someone else deletes it.
@@ -187,6 +190,9 @@ export function useSourcesOrganize(input: {
     filter: listFilter,
     fullFilter,
     filterActive: !scientSourceFilterIsEmpty(listFilter),
+    reading: current.reading,
+    readingFilterActive: Boolean(current.reading.unread || current.reading.starred),
+    setReading: (reading: ReadingStateFilter) => update({ reading }),
     collection,
     savedSearch,
     selection: current.selection,
@@ -210,7 +216,7 @@ export function useSourcesOrganize(input: {
       input.setQuery("");
     },
     clearFilter: () => {
-      update({ filter: {}, savedSearchId: null });
+      update({ filter: {}, reading: {}, savedSearchId: null });
       input.setQuery("");
     },
     applySavedSearch: (searchId: string) => {

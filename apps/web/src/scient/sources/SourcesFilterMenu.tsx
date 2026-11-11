@@ -15,6 +15,7 @@ import {
   ListFilterIcon,
   SearchIcon,
   ShapesIcon,
+  StarIcon,
   TagIcon,
 } from "lucide-react";
 import { useState } from "react";
@@ -36,6 +37,7 @@ import {
 } from "../../components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { orderedCollections } from "./collectionTree";
+import { LIBRARY_LABELS } from "./libraryLabels";
 import { SCIENT_SOURCE_STUDY_DESIGN_LABELS, SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
@@ -44,10 +46,7 @@ type SourceSummary = ScientSourcesOverviewResult["records"][number];
 
 const ALL = "all";
 const SCOPE_CHOICE = "scope:";
-const SCOPE_LABELS: Readonly<Record<ScientSourcesScope, string>> = {
-  project: "This project",
-  library: "Library",
-};
+const SCOPE_LABELS = LIBRARY_LABELS.scopes;
 
 function Count(props: { readonly value: number }) {
   return (
@@ -394,6 +393,39 @@ export function SourcesFilterMenu(props: {
             </MenuRadioGroup>
           </MenuSubPopup>
         </MenuSub>
+        {scopes ? (
+          <>
+            <MenuSeparator />
+            <MenuCheckboxItem
+              checked={organize.reading.unread === true}
+              onCheckedChange={(checked) =>
+                organize.setReading({
+                  ...organize.reading,
+                  unread: checked ? true : undefined,
+                })
+              }
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <span aria-hidden className="size-1.5 rounded-full bg-sky-500" />
+                {LIBRARY_LABELS.unread}
+              </span>
+            </MenuCheckboxItem>
+            <MenuCheckboxItem
+              checked={organize.reading.starred === true}
+              onCheckedChange={(checked) =>
+                organize.setReading({
+                  ...organize.reading,
+                  starred: checked ? true : undefined,
+                })
+              }
+            >
+              <span className="flex min-w-0 items-center gap-2">
+                <StarIcon aria-hidden className="size-3.5" />
+                {LIBRARY_LABELS.starred}
+              </span>
+            </MenuCheckboxItem>
+          </>
+        ) : null}
         <MenuSeparator />
         <MenuSub>
           <MenuSubTrigger>

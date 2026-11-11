@@ -87,6 +87,11 @@ export function createScientSourcesCommands<R, ER>(
     savePage: command(tags.savePage, http.saveEnvironmentScientSourcePage),
     updateMetadata: command(tags.updateMetadata, http.updateEnvironmentScientSourceMetadata),
     updateNote: command(tags.updateNote, http.updateEnvironmentScientSourceNote),
+    updatePersonalNote: command(
+      tags.updatePersonalNote,
+      http.updateEnvironmentScientSourcePersonalNote,
+    ),
+    setReadingState: command(tags.setReadingState, http.setEnvironmentScientSourcesReadingState),
     refreshMetadata: command(tags.refreshMetadata, http.refreshEnvironmentScientSourceMetadata),
     remove: command(tags.remove, http.removeEnvironmentScientSource),
     organize: command(tags.organize, http.organizeEnvironmentScientSources),

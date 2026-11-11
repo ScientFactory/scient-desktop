@@ -8,7 +8,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
 import { SourcesActiveFilters } from "./SourcesActiveFilters";
-import { SourcesBulkBar } from "./SourcesBulkBar";
+import { SourcesBulkBar, type SourcesBulkLibrary } from "./SourcesBulkBar";
 import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
 import { useSourcesOrganize } from "./useSourcesOrganize";
 
@@ -66,7 +66,12 @@ const organization: ScientSourcesOrganization = {
   ],
 };
 
-function Harness(props: { readonly selected?: ReadonlyArray<string>; readonly saved?: boolean }) {
+function Harness(props: {
+  readonly selected?: ReadonlyArray<string>;
+  readonly saved?: boolean;
+  readonly library?: SourcesBulkLibrary;
+  readonly onRemove?: () => Promise<void>;
+}) {
   const [query, setQuery] = useState("");
   const [request, setRequest] = useState<SourcesNameRequest | null>(null);
   const organize = useSourcesOrganize({
@@ -92,7 +97,8 @@ function Harness(props: { readonly selected?: ReadonlyArray<string>; readonly sa
           records={records}
           visibleSourceIds={records.map((record) => record.sourceId)}
           onRequestName={setRequest}
-          onRemove={async () => undefined}
+          onRemove={props.onRemove ?? (async () => undefined)}
+          {...(props.library ? { library: props.library } : {})}
         />
       ) : (
         <SourcesActiveFilters organize={organize} matchCount={2} onRequestName={setRequest} />
@@ -173,5 +179,69 @@ describe("Sources bulk edit and saved searches", () => {
         },
       }),
     );
+  });
+
+  it("marks the whole selection read in one request on a personal Library", async () => {
+    setup();
+    const onSetReadingState = vi.fn(async () => undefined);
+    await using _screen = await render(
+      <Harness
+        selected={["a", "b", "c"]}
+        library={{
+          listed: "library",
+          onSetReadingState,
+          onAddToProject: async () => undefined,
+          onRemoveFromProject: async () => undefined,
+        }}
+      />,
+      { router: false },
+    );
+
+    await userEvent.click(page.getByRole("button", { name: "Mark" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Mark read" }));
+    await vi.waitFor(() => expect(onSetReadingState).toHaveBeenCalledTimes(1));
+    expect(onSetReadingState).toHaveBeenCalledWith(["a", "b", "c"], { readingStatus: "read" });
+  });
+
+  it("offers no reading change to a session that may not make one", async () => {
+    setup();
+    await using screen = await render(
+      <Harness
+        selected={["a"]}
+        library={{
+          listed: "library",
+          onAddToProject: async () => undefined,
+          onRemoveFromProject: async () => undefined,
+        }}
+      />,
+      { router: false },
+    );
+
+    await expect.element(screen.getByText("1 selected")).toBeVisible();
+    await expect.element(screen.getByRole("button", { name: "Mark" })).not.toBeInTheDocument();
+  });
+
+  it("takes sources out of this project in This project, without moving them to Trash", async () => {
+    setup();
+    const onRemoveFromProject = vi.fn(async () => undefined);
+    const onRemove = vi.fn(async () => undefined);
+    await using screen = await render(
+      <Harness
+        selected={["a", "b"]}
+        onRemove={onRemove}
+        library={{ listed: "project", onAddToProject: async () => undefined, onRemoveFromProject }}
+      />,
+      { router: false },
+    );
+
+    await expect
+      .element(screen.getByRole("button", { name: /Move .* to Trash/u }))
+      .not.toBeInTheDocument();
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove from this project: 2 selected" }),
+    );
+    await vi.waitFor(() => expect(onRemoveFromProject).toHaveBeenCalledTimes(1));
+    expect(onRemoveFromProject).toHaveBeenCalledWith([records[0], records[1]]);
+    expect(onRemove).not.toHaveBeenCalled();
   });
 });

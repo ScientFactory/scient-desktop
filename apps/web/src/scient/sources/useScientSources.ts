@@ -4,6 +4,7 @@ import type {
   ScientSourceDetailResult,
   ScientSourcesFileImportResult,
   ScientSourcesPreflightResult,
+  ScientSourcesReadingStateResult,
   ScientSourcesScope,
   ZoteroConnection,
   ZoteroImportScope,
@@ -159,6 +160,22 @@ export function useScientSources(input: {
 
   const acceptSourceRecord = (record: ScientSourceDetailResult) => {
     dispatch({ type: "sourceRecordAccepted", record });
+    // The personal note on screen may be older than this revision; read it again.
+    const shown = state.sourceDetails[record.sourceId];
+    if (
+      shown &&
+      "personalNote" in shown &&
+      !("personalNote" in record) &&
+      shown.revision !== record.revision
+    ) {
+      void readScientSource(input.environmentId, { root: input.root, sourceId: record.sourceId })
+        .then((detail) => {
+          if (isCurrentContext()) {
+            dispatch({ type: "sourceDetailArrived", sourceId: record.sourceId, detail });
+          }
+        })
+        .catch(() => undefined);
+    }
   };
 
   /** With a review ID, the review's own record: from its snapshot when the Library lacks it. */
@@ -1002,6 +1019,10 @@ export function useScientSources(input: {
     loadSource,
     refreshSourceMetadata,
     saveSourceNote,
+    /** Rows and details take a reading change from the route's answer: it changes no revision. */
+    applyReadingState: (result: ScientSourcesReadingStateResult) => {
+      if (isCurrentContext()) dispatch({ type: "readingStateArrived", result });
+    },
     removeSource,
     clearError: () => dispatch({ type: "errorCleared" }),
     clearOperationSummary: () => dispatch({ type: "operationCleared" }),

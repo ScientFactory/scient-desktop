@@ -25,6 +25,7 @@ import {
   MoreVertical,
   RefreshCw,
   Search,
+  Star,
   Users,
   X,
 } from "lucide-react";
@@ -107,7 +108,22 @@ import { SystematicReviewsView } from "./SystematicReviews";
 import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
-import { useCanChangeLibrary } from "./sourcesCommands";
+import { sourcesCommands, useCanChangeLibrary, useCanRunSourcesCommand } from "./sourcesCommands";
+import { setScientSourcesReadingState, updateScientSourcePersonalNote } from "./client";
+import {
+  changeProjectSources,
+  type ProjectSourcesChange,
+  type ProjectSourcesOutcome,
+} from "./libraryActions";
+import {
+  addedToProjectLabel,
+  inLibraryNotProjectLabel,
+  LIBRARY_LABELS,
+  matchesReadingFilter,
+  readingResultLabel,
+  removedFromProjectLabel,
+  type ReadingStateChange,
+} from "./libraryLabels";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest, UniversityRow } from "../accounts/University";
 import { PaperQueueBand } from "../accounts/PaperRequests";
@@ -115,7 +131,16 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useAccountCommand, useAccounts } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
-type SourceContextAction = "view" | "edit" | "open-pdf" | "select" | "remove";
+type SourceContextAction =
+  | "view"
+  | "edit"
+  | "open-pdf"
+  | "select"
+  | "remove"
+  | "add-to-project"
+  | "remove-from-project"
+  | "mark-read"
+  | "mark-unread";
 type SourceDiagnostic =
   ScientSourcesOverviewResult["recordDiagnostics"][number]["diagnostics"][number];
 const RECENT_SOURCE_ADD_TTL_MS = 10 * 60 * 1000;
@@ -191,6 +216,51 @@ function MetadataReviewIndicator(props: {
         </div>
       </TooltipPopup>
     </Tooltip>
+  );
+}
+
+/** A personal Library's star on a row: shown when set, offered on hover to a session that may change it. */
+function RowStar(props: {
+  readonly title: string | null;
+  readonly starred: boolean;
+  readonly onToggle?: () => Promise<void>;
+}) {
+  const [pending, setPending] = useState(false);
+  const onToggle = props.onToggle;
+  if (!onToggle) {
+    return (
+      <span className="flex size-7 shrink-0 items-center justify-center text-muted-foreground">
+        {props.starred ? (
+          <Star role="img" aria-label={LIBRARY_LABELS.starred} className="size-3.5 fill-current" />
+        ) : null}
+      </span>
+    );
+  }
+  const label = props.starred ? LIBRARY_LABELS.removeStar : LIBRARY_LABELS.star;
+  return (
+    <span
+      className={
+        props.starred
+          ? "flex size-7 shrink-0 items-center justify-center"
+          : "flex size-7 shrink-0 items-center justify-center opacity-0 focus-within:opacity-100 group-hover:opacity-100"
+      }
+    >
+      <ScientTooltip content={label}>
+        <Button
+          variant="ghost"
+          size="icon-sm"
+          aria-label={`${label}: ${props.title ?? "Untitled source"}`}
+          aria-pressed={props.starred}
+          disabled={pending}
+          onClick={() => {
+            setPending(true);
+            void onToggle().finally(() => setPending(false));
+          }}
+        >
+          <Star className={props.starred ? "fill-current" : undefined} />
+        </Button>
+      </ScientTooltip>
+    </span>
   );
 }
 
@@ -284,6 +354,15 @@ export function ScientSourcesPanel(props: {
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
   const canChange = useCanChangeLibrary(props.environmentId);
+  const canSetReading = useCanRunSourcesCommand(
+    sourcesCommands.setReadingState,
+    props.environmentId,
+  );
+  const canChangeProject = useCanRunSourcesCommand(sourcesCommands.organize, props.environmentId);
+  const canSavePersonalNote = useCanRunSourcesCommand(
+    sourcesCommands.updatePersonalNote,
+    props.environmentId,
+  );
   const zoteroSync = useZoteroSync({
     environmentId: props.environmentId,
     root: props.root,
@@ -521,6 +600,9 @@ export function ScientSourcesPanel(props: {
   const diagnosticsBySourceId = new Map(
     sources.overview?.recordDiagnostics.map((entry) => [entry.sourceId, entry.diagnostics]) ?? [],
   );
+  // This project's sources are in the personal Library only when the overview has scopes.
+  const scopes = sources.overview?.scopes;
+  const readingFilter = scopes ? organize.reading : {};
   const sourceSearchIndex = indexScientSourceSummaries(sources.overview?.records ?? []);
   const filteredSourceRecords = sortScientSourceRecords(
     filterScientSourceSearchIndex(
@@ -528,9 +610,10 @@ export function ScientSourcesPanel(props: {
       sourceQuery,
       organize.filter,
       organize.organization,
-    ),
+    ).filter((record) => matchesReadingFilter(record, readingFilter)),
     sourceSort,
   );
+  const listFilterActive = organize.filterActive || (scopes ? organize.readingFilterActive : false);
   const selectedSummary = selectedSourceId
     ? (sources.overview?.records.find((record) => record.sourceId === selectedSourceId) ?? null)
     : null;
@@ -557,6 +640,84 @@ export function ScientSourcesPanel(props: {
     sources.zoteroGroups.find((group) => group.groupId === sources.zoteroGroupId)?.name ??
     "My Library";
 
+  const announceProjectChange = (kind: "add" | "remove", outcome: ProjectSourcesOutcome) => {
+    if (outcome.changed > 0) {
+      toastManager.add({
+        type: "success",
+        title:
+          kind === "add"
+            ? addedToProjectLabel(outcome.changed)
+            : removedFromProjectLabel(outcome.changed),
+        ...(kind === "remove"
+          ? {
+              description:
+                outcome.changed === 1
+                  ? LIBRARY_LABELS.staysInLibrary
+                  : LIBRARY_LABELS.stayInLibrary,
+            }
+          : {}),
+      });
+    }
+    if (outcome.failed > 0) {
+      toastManager.add({
+        type: "error",
+        title: kind === "add" ? LIBRARY_LABELS.addFailed : LIBRARY_LABELS.removeFailed,
+        description:
+          outcome.error ??
+          (outcome.failed === 1
+            ? "1 source is no longer in the Library."
+            : `${outcome.failed} sources are no longer in the Library.`),
+      });
+    }
+  };
+  const changeProject = async (
+    kind: "add" | "remove",
+    changes: ReadonlyArray<ProjectSourcesChange>,
+  ) => {
+    const outcome = await changeProjectSources({
+      environmentId: props.environmentId,
+      root: props.root,
+      changes,
+    });
+    await sources.refreshOverview().catch(() => undefined);
+    announceProjectChange(kind, outcome);
+  };
+  const addToProject = (records: ReadonlyArray<{ readonly sourceId: string }>) =>
+    changeProject(
+      "add",
+      records.map((record) => ({ action: "pin", sourceId: record.sourceId })),
+    );
+  const removeFromProject = (
+    records: ReadonlyArray<{ readonly citationKey?: string | undefined }>,
+  ) =>
+    changeProject(
+      "remove",
+      records.flatMap((record) =>
+        record.citationKey ? [{ action: "unpin" as const, citationKey: record.citationKey }] : [],
+      ),
+    );
+  const setReadingState = async (
+    sourceIds: ReadonlyArray<string>,
+    change: ReadingStateChange,
+    announce: boolean,
+  ) => {
+    const result = await setScientSourcesReadingState(props.environmentId, {
+      root: props.root,
+      sourceIds: [...sourceIds],
+      ...change,
+    }).catch((cause: unknown) => {
+      toastManager.add({
+        type: "error",
+        title: LIBRARY_LABELS.readingFailed,
+        description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+      });
+      return null;
+    });
+    if (!result) return;
+    sources.applyReadingState(result);
+    if (announce) toastManager.add({ type: "success", ...readingResultLabel(change, result) });
+  };
+
   const moveToTrash = async (record: {
     readonly sourceId: string;
     readonly revision: number;
@@ -578,6 +739,7 @@ export function ScientSourcesPanel(props: {
         root: props.root,
         sourceId: record.sourceId,
         title: record.title,
+        ...(result.alsoPinnedIn ? { alsoPinnedIn: result.alsoPinnedIn } : {}),
         onRestored: sources.refreshOverview,
       });
     }
@@ -591,7 +753,42 @@ export function ScientSourcesPanel(props: {
     if (!api) return;
     const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
     const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
-    const items: ContextMenuItem<SourceContextAction>[] = [
+    const listed = scopes?.listed;
+    type Item = ContextMenuItem<SourceContextAction>;
+    const readingItems: Item[] =
+      listed && canSetReading && record.readingStatus !== undefined
+        ? [
+            record.readingStatus === "unread"
+              ? { id: "mark-read", label: LIBRARY_LABELS.markRead }
+              : { id: "mark-unread", label: LIBRARY_LABELS.markUnread },
+          ]
+        : [];
+    const addItems: Item[] =
+      listed === "library" && record.pinned === false
+        ? [
+            {
+              id: "add-to-project",
+              label: LIBRARY_LABELS.addToProject,
+              disabled: sources.busy || !canChangeProject,
+            },
+          ]
+        : [];
+    // In "This project" the source leaves the project and stays in the Library.
+    const removeItem: Item =
+      listed === "project"
+        ? {
+            id: "remove-from-project",
+            label: LIBRARY_LABELS.removeFromProject,
+            disabled: sources.busy || !canChangeProject,
+          }
+        : {
+            id: "remove",
+            label: "Move to Trash",
+            destructive: true,
+            disabled: sources.busy || !canChange,
+            icon: "trash",
+          };
+    const items: Item[] = [
       { id: "view", label: "View source details" },
       { id: "edit", label: "Edit source details", icon: "pencil", disabled: !canChange },
       ...(pdf ? ([{ id: "open-pdf", label: "Open PDF" }] as const) : []),
@@ -599,13 +796,9 @@ export function ScientSourcesPanel(props: {
         id: "select",
         label: organize.selection.has(record.sourceId) ? "Deselect" : "Select",
       },
-      {
-        id: "remove",
-        label: "Move to Trash",
-        destructive: true,
-        disabled: sources.busy || !canChange,
-        icon: "trash",
-      },
+      ...readingItems,
+      ...addItems,
+      removeItem,
     ];
     const action = await api.contextMenu.show(items, {
       x: anchorPoint.x,
@@ -632,6 +825,20 @@ export function ScientSourcesPanel(props: {
         break;
       case "select":
         organize.toggleSelected(record.sourceId);
+        break;
+      case "mark-read":
+      case "mark-unread":
+        void setReadingState(
+          [record.sourceId],
+          { readingStatus: action === "mark-read" ? "read" : "unread" },
+          false,
+        );
+        break;
+      case "add-to-project":
+        void addToProject([record]);
+        break;
+      case "remove-from-project":
+        void removeFromProject([record]);
         break;
       case "remove":
         void moveToTrash(record).catch((cause: unknown) => {
@@ -1103,6 +1310,37 @@ export function ScientSourcesPanel(props: {
           key={selectedRecord.sourceId}
           record={selectedRecord}
           readOnly={!canChange}
+          {...(scopes
+            ? {
+                library: {
+                  canSavePersonalNote,
+                  onSavePersonalNote: async (note: string | null, expectedRevision: number) => {
+                    const result = await updateScientSourcePersonalNote(props.environmentId, {
+                      root: props.root,
+                      sourceId: selectedRecord.sourceId,
+                      expectedRevision,
+                      note,
+                    });
+                    if (panelMounted.current && panelContextRef.current === panelContext) {
+                      sources.acceptSourceRecord(result.record);
+                    }
+                    return result;
+                  },
+                  ...(canSetReading
+                    ? {
+                        onSetReadingState: (change: ReadingStateChange) =>
+                          setReadingState([selectedRecord.sourceId], change, false),
+                      }
+                    : {}),
+                  ...(canChangeProject
+                    ? {
+                        onAddToProject: () => addToProject([selectedRecord]),
+                        onRemoveFromProject: () => removeFromProject([selectedRecord]),
+                      }
+                    : {}),
+                },
+              }
+            : {})}
           citationProject={{ environmentId: props.environmentId, root: props.root }}
           diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
           organize={
@@ -1362,7 +1600,7 @@ export function ScientSourcesPanel(props: {
               exportScope={
                 organize.selection.size > 0
                   ? { kind: "selected", sourceIds: [...organize.selection] }
-                  : sourceQuery.trim() || organize.filterActive
+                  : sourceQuery.trim() || listFilterActive
                     ? {
                         kind: "shown",
                         sourceIds: filteredSourceRecords.map((record) => record.sourceId),
@@ -1435,6 +1673,9 @@ export function ScientSourcesPanel(props: {
               toastManager.add({
                 type: "success",
                 title: added.length === 1 ? "Added 1 source" : `Added ${added.length} sources`,
+                ...(sources.overview?.scopes?.listed === "library"
+                  ? { description: inLibraryNotProjectLabel(added.length) }
+                  : {}),
               });
             }
             void sources.refreshOverview();
@@ -1459,6 +1700,19 @@ export function ScientSourcesPanel(props: {
           }}
           onCancel={() => void sources.cancelImport()}
           cancelling={sources.cancelling}
+          {...(scopes && !sources.operation.pinInstanceId
+            ? {
+                libraryOnly: canChangeProject
+                  ? {
+                      onAddToProject: (sourceIds: ReadonlyArray<string>) =>
+                        void addToProject(sourceIds.map((sourceId) => ({ sourceId }))).then(() => {
+                          setImportOutcome(null);
+                          sources.clearOperationSummary();
+                        }),
+                    }
+                  : {},
+              }
+            : {})}
           {...(canChange &&
           sources.operation.state !== "cancelled" &&
           sources.operation.items.some((item) => item.state === "failed")
@@ -1501,20 +1755,40 @@ export function ScientSourcesPanel(props: {
           onRequestName={setNameRequest}
           onRemove={async (records) => {
             const removed: string[] = [];
+            let alsoElsewhere = 0;
             for (const record of records) {
               const result = await sources
                 .removeSource(record.sourceId, record.revision)
                 .catch(() => null);
               if (result?.outcome === "removed") removed.push(record.sourceId);
+              if (result?.outcome === "removed" && result.alsoPinnedIn) alsoElsewhere += 1;
             }
             announceSourcesMovedToTrash({
               environmentId: props.environmentId,
               root: props.root,
               sourceIds: removed,
               notRemoved: records.length - removed.length,
+              ...(alsoElsewhere > 0 ? { alsoElsewhere } : {}),
               onRestored: sources.refreshOverview,
             });
           }}
+          {...(scopes
+            ? {
+                library: {
+                  listed: scopes.listed,
+                  ...(canSetReading
+                    ? {
+                        onSetReadingState: (
+                          sourceIds: ReadonlyArray<string>,
+                          change: ReadingStateChange,
+                        ) => setReadingState(sourceIds, change, true),
+                      }
+                    : {}),
+                  onAddToProject: addToProject,
+                  onRemoveFromProject: removeFromProject,
+                },
+              }
+            : {})}
         />
       ) : sources.overview.records.length > 0 ? (
         <div className="mt-2 mb-1 ml-3 mr-4 flex min-h-8 shrink-0 items-center gap-1 rounded-md text-sm text-muted-foreground">
@@ -1653,6 +1927,13 @@ export function ScientSourcesPanel(props: {
                           />
                           <span className="min-w-0 flex-1">
                             <span className="block text-sm font-medium">
+                              {record.readingStatus === "unread" ? (
+                                <span
+                                  role="img"
+                                  aria-label={LIBRARY_LABELS.unread}
+                                  className="me-1.5 inline-block size-1.5 rounded-full bg-sky-500 align-middle"
+                                />
+                              ) : null}
                               {record.title ?? "Untitled source"}
                             </span>
                             <span className="mt-0.5 block text-xs text-muted-foreground">
@@ -1684,6 +1965,22 @@ export function ScientSourcesPanel(props: {
                     <TooltipPopup side="top">View source details</TooltipPopup>
                   </Tooltip>
                   <div className="mt-0.5 mr-1 flex shrink-0 items-center gap-1">
+                    {record.readingStatus !== undefined ? (
+                      <RowStar
+                        title={record.title}
+                        starred={record.starred === true}
+                        {...(canSetReading
+                          ? {
+                              onToggle: () =>
+                                setReadingState(
+                                  [record.sourceId],
+                                  { starred: record.starred !== true },
+                                  false,
+                                ),
+                            }
+                          : {})}
+                      />
+                    ) : null}
                     <span className="flex size-7 shrink-0 items-center justify-center">
                       {metadataDiagnostics && metadataDiagnostics.length > 0 ? (
                         <MetadataReviewIndicator
@@ -1750,13 +2047,15 @@ export function ScientSourcesPanel(props: {
               query={sourceQuery}
               metadataMatchCount={filteredSourceRecords.length}
               sourceIds={
-                organize.filterActive
+                listFilterActive
                   ? filterScientSourceSearchIndex(
                       sourceSearchIndex,
                       "",
                       organize.filter,
                       organize.organization,
-                    ).map((record) => record.sourceId)
+                    )
+                      .filter((record) => matchesReadingFilter(record, readingFilter))
+                      .map((record) => record.sourceId)
                   : undefined
               }
               onOpenHit={(hit) => {
@@ -1990,6 +2289,8 @@ function ImportSummary(props: {
   readonly onCancel: () => void;
   readonly cancelling: boolean;
   readonly onRetryFailed?: () => void;
+  /** On a personal Library, an import that added its sources to the Library only. */
+  readonly libraryOnly?: { readonly onAddToProject?: (sourceIds: ReadonlyArray<string>) => void };
 }) {
   const counts = props.outcome?.counts ?? completedImportCounts(props.operation);
   const imported = counts.imported;
@@ -2000,7 +2301,12 @@ function ImportSummary(props: {
   const running = props.operation.state === "running";
   const stopped = props.operation.state === "cancelled";
   const notes = [...new Set(props.operation.items.flatMap((item) => item.note ?? []))];
+  const importedIds = props.operation.items.flatMap((item) =>
+    item.state === "imported" && item.sourceId ? [item.sourceId] : [],
+  );
+  const libraryOnly = props.libraryOnly && !running && importedIds.length > 0;
   if (
+    !libraryOnly &&
     !running &&
     !stopped &&
     failed === 0 &&
@@ -2044,6 +2350,21 @@ function ImportSummary(props: {
             {note}
           </div>
         ))}
+        {libraryOnly ? (
+          <div className="mt-1 text-xs text-muted-foreground">
+            {inLibraryNotProjectLabel(importedIds.length)}
+          </div>
+        ) : null}
+        {libraryOnly && props.libraryOnly?.onAddToProject ? (
+          <Button
+            className="mt-2"
+            size="xs"
+            variant="outline"
+            onClick={() => props.libraryOnly?.onAddToProject?.(importedIds)}
+          >
+            {LIBRARY_LABELS.addToProject}
+          </Button>
+        ) : null}
         {failed > 0 ? (
           <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
             {props.operation.items

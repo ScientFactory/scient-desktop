@@ -14,11 +14,14 @@ import {
   Download,
   ExternalLink,
   FileText,
+  FolderMinus,
+  FolderPlus,
   History,
   LoaderCircle,
   MoreHorizontal,
   Pencil,
   RefreshCw,
+  Star,
   Trash2,
   Upload,
 } from "lucide-react";
@@ -56,6 +59,7 @@ import { readLocalApi } from "../../localApi";
 import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { LIBRARY_LABELS, type ReadingStateChange } from "./libraryLabels";
 import { agentVerificationLabel } from "./sourceLabels";
 import { pdfVersionLabel } from "./sourcePdfVersion";
 import { SourceEditorialStatus } from "./SourceEditorialStatus";
@@ -615,8 +619,74 @@ function MetadataRefreshConfirmation(props: {
   );
 }
 
+/** What a personal Library adds to the details; a project server never passes it. */
+export interface SourceDetailsLibrary {
+  readonly onSavePersonalNote: (
+    note: string | null,
+    expectedRevision: number,
+  ) => Promise<{ readonly outcome: string; readonly record: SourceRecord }>;
+  readonly canSavePersonalNote: boolean;
+  /** Absent when this connection may not change reading state: the markers stay, the controls go. */
+  readonly onSetReadingState?: (change: ReadingStateChange) => Promise<void>;
+  readonly onAddToProject?: () => Promise<void>;
+  readonly onRemoveFromProject?: () => Promise<void>;
+}
+
+function ReadingControls(props: {
+  readonly record: SourceRecord;
+  readonly onSetReadingState: SourceDetailsLibrary["onSetReadingState"];
+}) {
+  const [pending, setPending] = useState(false);
+  const { readingStatus, starred } = props.record;
+  if (readingStatus === undefined) return null;
+  const onSet = props.onSetReadingState;
+  if (!onSet) {
+    return readingStatus === "unread" || starred ? (
+      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        {readingStatus === "unread" ? <span>{LIBRARY_LABELS.unread}</span> : null}
+        {starred ? (
+          <span className="inline-flex items-center gap-1">
+            <Star className="size-3 fill-current" aria-hidden />
+            {LIBRARY_LABELS.starred}
+          </span>
+        ) : null}
+      </p>
+    ) : null;
+  }
+  const set = (change: ReadingStateChange) => {
+    setPending(true);
+    void onSet(change).finally(() => setPending(false));
+  };
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={pending}
+        onClick={() => set({ readingStatus: readingStatus === "unread" ? "read" : "unread" })}
+      >
+        {readingStatus === "unread" ? LIBRARY_LABELS.markRead : LIBRARY_LABELS.markUnread}
+      </Button>
+      <ScientTooltip content={starred ? LIBRARY_LABELS.removeStar : LIBRARY_LABELS.star}>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          disabled={pending}
+          aria-label={starred ? LIBRARY_LABELS.removeStar : LIBRARY_LABELS.star}
+          aria-pressed={starred === true}
+          onClick={() => set({ starred: !starred })}
+        >
+          <Star className={starred ? "fill-current" : undefined} />
+        </Button>
+      </ScientTooltip>
+    </div>
+  );
+}
+
 export function SourceDetails(props: {
   readonly record: SourceRecord;
+  /** Present only on a personal Library: two notes, reading state and this project's sources. */
+  readonly library?: SourceDetailsLibrary;
   /** The connection can read this Library but not change it. */
   readonly readOnly?: boolean;
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
@@ -654,12 +724,25 @@ export function SourceDetails(props: {
   const [gettingPdf, setGettingPdf] = useState(false);
   const record = props.record;
   const readOnly = props.readOnly ?? false;
+  const library = props.library;
   // A library server's note is this project's note on the pin, so a source not pinned here has none.
+  const inProject = record.pinned !== false;
   const sourceNote = useSourceNoteControls({
     record,
-    readOnly: readOnly || record.pinned === false,
+    readOnly: readOnly || !inProject,
     onSave: props.onSaveNote,
+    ...(library ? { heading: LIBRARY_LABELS.projectNote } : {}),
   });
+  const personalNote = useSourceNoteControls({
+    record,
+    field: "personalNote",
+    readOnly: readOnly || !library?.canSavePersonalNote,
+    heading: LIBRARY_LABELS.myNote,
+    help: LIBRARY_LABELS.myNoteHelp,
+    onSave: library?.onSavePersonalNote ?? props.onSaveNote,
+  });
+  // A session without the Library write grant never gets the key, so it never sees "My note".
+  const showsPersonalNote = library !== undefined && "personalNote" in record;
   const publication = publicationLocation(record);
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
@@ -685,7 +768,16 @@ export function SourceDetails(props: {
           Library
         </Button>
         <div className="min-w-0 flex-1" />
-        {sourceNote.button}
+        {library && !inProject ? (
+          library.onAddToProject ? (
+            <Button size="xs" variant="ghost" onClick={() => void library.onAddToProject?.()}>
+              <FolderPlus />
+              {LIBRARY_LABELS.addToProject}
+            </Button>
+          ) : null
+        ) : (
+          sourceNote.button
+        )}
         <Button size="xs" variant="ghost" disabled={readOnly} onClick={props.onEdit}>
           <Pencil />
           Edit
@@ -808,22 +900,31 @@ export function SourceDetails(props: {
               </MenuItem>
             ) : null}
             <MenuSeparator />
-            <MenuItem
-              variant="destructive"
-              disabled={readOnly}
-              onClick={() => {
-                void props.onRemove().catch((cause: unknown) => {
-                  toastManager.add({
-                    type: "error",
-                    title: "Source could not be moved to Trash",
-                    description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+            {library?.onRemoveFromProject && inProject ? (
+              <MenuItem onClick={() => void library.onRemoveFromProject?.()}>
+                <FolderMinus />
+                {LIBRARY_LABELS.removeFromProject}
+              </MenuItem>
+            ) : null}
+            {/* A pin's snapshot is not in this Library, so there is nothing to move to Trash. */}
+            {library && record.fromSnapshot ? null : (
+              <MenuItem
+                variant="destructive"
+                disabled={readOnly}
+                onClick={() => {
+                  void props.onRemove().catch((cause: unknown) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Source could not be moved to Trash",
+                      description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+                    });
                   });
-                });
-              }}
-            >
-              <Trash2 />
-              Move to Trash
-            </MenuItem>
+                }}
+              >
+                <Trash2 />
+                Move to Trash
+              </MenuItem>
+            )}
           </MenuPopup>
         </Menu>
       </div>
@@ -837,6 +938,9 @@ export function SourceDetails(props: {
             </h2>
             <p className="text-sm text-muted-foreground">{creatorsLabel(record)}</p>
             <SourceEditorialStatus status={record.editorialStatus} />
+            {library ? (
+              <ReadingControls record={record} onSetReadingState={library.onSetReadingState} />
+            ) : null}
           </header>
 
           {props.diagnostics.length > 0 ? (
@@ -930,7 +1034,16 @@ export function SourceDetails(props: {
 
           {props.annotations}
 
-          {sourceNote.section}
+          {showsPersonalNote ? (
+            <div className="@container/source-notes">
+              <div className="grid gap-6 @[32rem]/source-notes:grid-cols-2">
+                {inProject ? sourceNote.section : null}
+                {personalNote.section}
+              </div>
+            </div>
+          ) : library && !inProject ? null : (
+            sourceNote.section
+          )}
 
           <p className="border-t border-border pt-3 text-xs text-muted-foreground">
             {importedLabel(record)}
