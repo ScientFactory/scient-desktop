@@ -844,9 +844,9 @@ jobs:
           python3 -m unittest discover -s .github/scripts -p 'test_macos_connect_profile.py'
           node scripts/release-smoke.ts
 
-  # SCIENT-FORK:START — Windows Overleaf, Accounts and Sources file evidence is mandatory. Exact reuse
-  # carries the source's verified pass instead of rerunning it. Accounts and Sources ride this job to
-  # reuse its install: a job of their own would wait for a runner and install again.
+  # SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory, and so are the Sources
+  # file tests. Exact reuse carries the source's verified pass instead of rerunning it. Accounts and
+  # Sources ride this job to reuse its install: a job of their own would wait for a runner and install again.
   overleaf_windows:
     name: Overleaf Windows
     needs: [queue_ci, release_notes]
