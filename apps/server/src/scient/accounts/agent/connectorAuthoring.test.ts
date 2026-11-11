@@ -4,11 +4,13 @@ import { describe, expect, it } from "@effect/vitest";
 import { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../../../config.ts";
 import * as PreviewManager from "../../../preview/Manager.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { openForUser } from "./connectorAuthoring.ts";
+import { ScientAccountsToolkit } from "./tools.ts";
 
 const previews = PreviewManager.layer.pipe(
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "scient-connector-sign-in-" })),
@@ -25,6 +27,16 @@ const invocation = {
   capabilities: new Set(["preview"] as const),
   issuedAt: 0,
 };
+
+describe("connector tools' inputs", () => {
+  it("takes a blank list query, which lists as no query does", () => {
+    const decode = Schema.decodeUnknownExit(
+      ScientAccountsToolkit.tools.scient_connector_list.parametersSchema,
+    );
+    // regression: agents sent {"query": ""} and were refused ("Expected a non-blank string").
+    expect(decode({ query: "" })._tag).toBe("Success");
+  });
+});
 
 describe("a connector's sign-in for the user", () => {
   it.effect("opens as the user's own tab in the chat's browser, ready to finish", () =>

@@ -153,14 +153,15 @@ export const listConnectors = Effect.fn("ConnectorAgentControl.list")(function* 
   readonly query?: string | undefined;
 }) {
   const { runtime, discover, observed } = yield* services;
-  return yield* observed("connectors.agent.list", { searched: input.query !== undefined })(
+  // A blank query is no query.
+  const query = input.query?.trim() || undefined;
+  return yield* observed("connectors.agent.list", { searched: query !== undefined })(
     Effect.gen(function* () {
       const { connectors } = yield* runtime.list();
       const rows = connectors.map(rowOf);
-      if (input.query === undefined) return { connectors: rows };
+      if (query === undefined) return { connectors: rows };
       if (Option.isNone(discover))
         return { connectors: rows, found: [], message: "Discover is unavailable here." };
-      const query = input.query;
       const [curated, registry] = yield* Effect.all(
         [
           discover.value.search({ scope: "curated", query }),

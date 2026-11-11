@@ -3255,6 +3255,9 @@ describe("connectors agents run", () => {
         ],
       });
 
+      // A blank query lists as no query does.
+      expect(yield* agent(listConnectors({ query: " " }))).toEqual({ connectors: [row] });
+
       yield* agent(controlConnector({ connector: added.connector, action: "off" }, noBrowser));
       expect((yield* agent(listConnectors({}))).connectors).toEqual([
         { ...row, on: false, status: "off" },

@@ -330,7 +330,7 @@ const connectorList = metadata(
     description:
       "The user's connectors, hosted and local: on or off, status, last error, what is missing. query: also connectors Scient can add (its picks and the MCP Registry). Add one that fits with scient_connector_add before making a new one.",
     parameters: Schema.Struct({
-      query: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(200))).annotate({
+      query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
         description: "e.g. gmail.",
       }),
     }),
