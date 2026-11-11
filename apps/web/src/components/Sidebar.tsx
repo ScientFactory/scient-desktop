@@ -283,6 +283,7 @@ import {
   useSidebarNewThreadRowActions,
 } from "../scient/sidebar/SidebarNewThreadRow";
 import { handleConversationExportMenuAction } from "../scient/conversationExport/menu";
+import { handleShareLinkMenuAction } from "../scient/cloud/menu";
 import {
   handleOpenInNewWindowMenuAction,
   openInNewWindowMenuItem,
@@ -2892,6 +2893,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
         if (await handleKeepAwakeMenuAction(clicked.value, thread, keepAwakeChosen)) return;
         if (await handleSectionMenuAction(clicked.value, [threadRef], position)) return;
         if (handleConversationExportMenuAction(clicked.value, threadRef)) return;
+        if (handleShareLinkMenuAction(clicked.value, threadRef)) return;
         if (handleOpenInNewWindowMenuAction(clicked.value, threadRef)) return;
         if (await handleBrowserProfileMenuAction(clicked.value, threadRef)) return;
         // SCIENT-FORK:END
