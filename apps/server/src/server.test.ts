@@ -7,6 +7,8 @@ import {
   ScientSourcesBackend,
   type ScientSourcesBackendKind,
 } from "./scient/sources/SourcesBackend.ts";
+import { initializeScientProject } from "@scientfactory/project-init";
+import { importScientSource } from "@scientfactory/scient-sources/store";
 // SCIENT-FORK:END
 // @effect-diagnostics nodeBuiltinImport:off - HTTP router integration uses native transport boundaries.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
@@ -5283,6 +5285,86 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         });
         // A project server answers nothing-to-move; the library reads the server's state folder.
         assert.deepEqual(yield* response.json, { state: "waiting" });
+      }).pipe(Effect.provide(NodeHttpServerTest)),
+    );
+
+    it.effect("serves the personal note only to a session that may change the Library", () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({ scientSourcesBackend: "library" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-personal-note-" });
+        const sourceId = yield* Effect.promise(async () => {
+          await initializeScientProject({ root });
+          const imported = await importScientSource({
+            root,
+            operationId: NodeCrypto.randomUUID(),
+            candidate: {
+              sourceKey: "personal-note",
+              type: "article",
+              customType: null,
+              title: "A moved study",
+              creators: [],
+              issuedRaw: null,
+              issuedYear: 2026,
+              identifiers: [],
+              abstract: null,
+              containerTitle: null,
+              publisher: null,
+              volume: null,
+              issue: null,
+              pages: null,
+              language: null,
+              url: null,
+              tags: [],
+              externalReferences: [],
+              fieldProvenance: [],
+              pdfAvailable: false,
+              pdfFileName: null,
+              pdfAttachmentCount: 0,
+            },
+          });
+          return imported.record!.sourceId;
+        });
+        const owner = { cookie: yield* getAuthenticatedSessionCookieHeader() };
+        const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: "orchestration:read",
+        });
+        const readOnly = { authorization: `Bearer ${reader.body.access_token ?? ""}` };
+        const post = (path: string, headers: Record<string, string>, body: object) =>
+          Effect.gen(function* () {
+            const response = yield* HttpClient.post(path, {
+              headers,
+              body: yield* HttpBody.json(body),
+            });
+            return (yield* response.json) as Record<string, unknown>;
+          });
+
+        // The first change moves the project; the source arrives unread and unstarred.
+        const set = yield* post("/api/scient/sources/personal-note/update", owner, {
+          root,
+          sourceId,
+          expectedRevision: 1,
+          note: "MY-OWN-NOTE",
+        });
+        assert.equal(set.outcome, "updated");
+        const asOwner = yield* post("/api/scient/sources/detail", owner, { root, sourceId });
+        assert.deepInclude(asOwner, {
+          personalNote: "MY-OWN-NOTE",
+          readingStatus: "unread",
+          starred: false,
+        });
+        const asReader = yield* post("/api/scient/sources/detail", readOnly, { root, sourceId });
+        assert.equal(asReader.title, "A moved study");
+        assert.notInclude(JSON.stringify(asReader), "MY-OWN-NOTE");
+        assert.deepInclude(
+          yield* post("/api/scient/sources/personal-note/update", readOnly, {
+            root,
+            sourceId,
+            expectedRevision: 2,
+            note: null,
+          }),
+          { code: "insufficient_scope", requiredScope: "orchestration:operate" },
+        );
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
     // SCIENT-FORK:END

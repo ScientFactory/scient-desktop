@@ -1224,6 +1224,55 @@ describe("the library lock during a move", () => {
     }
   });
 
+  it("the move back brings highlights made while moved into the project, the library keeps them", async () => {
+    const { library, project, sha256 } = await seededMove();
+    await move(library, project);
+    const libraryFile = NodePath.join(library.root, "annotations/v1", `${sha256}.json`);
+    const write = async (annotations: ReadonlyArray<object>) =>
+      NodeFSP.writeFile(
+        libraryFile,
+        JSON.stringify({
+          formatVersion: 1,
+          material: { sha256, byteLength: 10 },
+          paths: [],
+          annotations,
+          history: [],
+        }),
+      );
+    await write([{ annotationId: "ann_1", revision: 2, highlighted: true, note: "Edited" }]);
+    const pause = pauseAtFirstFileCopy();
+    const movingBack = moveScientProjectBackIntoProject({
+      library,
+      projectRoot: project,
+      actor: "user",
+      faults: { beforeFileCopy: pause.beforeFileCopy },
+    });
+    await pause.reached;
+    // Made while the PDFs come back, with the library lock free: read again in the last hold.
+    await write([
+      { annotationId: "ann_1", revision: 2, highlighted: true, note: "Edited" },
+      { annotationId: "ann_2", revision: 1, highlighted: true, note: "Added while moved" },
+    ]);
+    pause.release();
+    expect((await movingBack).outcome).toBe("moved-back");
+    const restored = JSON.parse(
+      await NodeFSP.readFile(
+        NodePath.join(project, ".scient/annotations/v1", `${sha256}.json`),
+        "utf8",
+      ),
+    );
+    expect(
+      restored.annotations.map((entry: { annotationId: string; revision: number }) => [
+        entry.annotationId,
+        entry.revision,
+      ]),
+    ).toEqual([
+      ["ann_1", 2],
+      ["ann_2", 1],
+    ]);
+    expect(await exists(libraryFile)).toBe(true);
+  });
+
   it("the move back keeps and counts a record removed from the library while its PDFs were copied", async () => {
     const { library, project, a, sha256 } = await seededMove();
     await move(library, project);

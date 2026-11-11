@@ -6,6 +6,7 @@ import {
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Layer from "effect/Layer";
+import * as Schema from "effect/Schema";
 import {
   annotateEnvironmentRequest,
   failEnvironmentInternal,
@@ -14,16 +15,26 @@ import {
 import {
   layer as ScientAnnotationsLive,
   ScientAnnotations,
+  type ScientAnnotationsError,
 } from "../annotations/ScientAnnotations.ts";
+import { ScientLibraryMoveBusyError } from "../sources/LibraryMove.ts";
 import { savePdfFileEdit } from "./PdfFileEdits.ts";
+
+const isLibraryMoveBusy = Schema.is(ScientLibraryMoveBusyError);
 
 export const scientPdfHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
   "scientPdf",
   Effect.fnUntraced(function* (handlers) {
     const annotations = yield* ScientAnnotations;
-    const annotationsFailed = Effect.catch((cause: unknown) =>
-      failEnvironmentInternal("scient_annotations_operation_failed", cause),
+    const annotationsFailed = Effect.catch((cause: ScientAnnotationsError) =>
+      failEnvironmentInternal(
+        // Retryable: the move goes on, and `moveStatus` reports its progress.
+        isLibraryMoveBusy(cause.cause)
+          ? "scient_sources_library_moving"
+          : "scient_annotations_operation_failed",
+        cause,
+      ),
     );
     return handlers
       .handle("save", (args) =>

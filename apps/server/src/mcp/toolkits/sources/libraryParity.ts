@@ -52,6 +52,10 @@ export const LIBRARY_COMMAND_PARITY: Record<ScientSourcesHttpCommandTag, Library
   "scientSources.savePage": tool("scient_sources_save_page"),
   "scientSources.updateMetadata": tool("scient_sources_update"),
   "scientSources.updateNote": tool("scient_sources_note_update"),
+  // The library note tool sets the personal note; the project note is organize pin's note.
+  "scientSources.updatePersonalNote": tool("scient_sources_note_update"),
+  // Library mode only: the update tool's readingStatus and starred.
+  "scientSources.setReadingState": tool("scient_sources_update"),
   "scientSources.refreshMetadata": tool("scient_sources_check", "refresh"),
   "scientSources.remove": tool("scient_sources_remove"),
   "scientSources.organize": tool("scient_sources_organize"),

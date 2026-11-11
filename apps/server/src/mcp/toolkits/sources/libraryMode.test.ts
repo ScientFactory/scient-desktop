@@ -69,6 +69,7 @@ import {
   syncScientBibliographyForInvocation,
   updateScientSourceForInvocation,
   updateScientSourceNoteForInvocation,
+  updateLibrarySourceForInvocation,
 } from "./handlers.ts";
 
 const fixtures: string[] = [];
@@ -926,6 +927,54 @@ describe("Sources tools on the library backend", () => {
       expect(
         (yield* Effect.promise(() => libraryReviewConflicts(store, { reviewId }))).versions,
       ).toEqual([]);
+    }),
+  );
+
+  it.effect("an agent marks sources read and starred, and lists by either", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const first = yield* addSource(fixture, "Read this first", "10.1000/first");
+      const second = yield* addSource(fixture, "Read this later", "10.1000/second");
+      const sourceId = first.sourceId!;
+
+      const marked = yield* run(
+        updateLibrarySourceForInvocation({ sourceId, expectedRevision: 9, readingStatus: "read" }),
+        fixture,
+      );
+      expect(marked).toEqual({
+        outcome: "updated",
+        sourceId,
+        revision: 1,
+        readingStatus: "read",
+        starred: false,
+      });
+      yield* run(
+        updateLibrarySourceForInvocation({
+          sourceId: second.sourceId!,
+          expectedRevision: 1,
+          starred: true,
+        }),
+        fixture,
+      );
+
+      const ids = (input: Parameters<typeof listScientSourcesForInvocation>[0]) =>
+        run(listScientSourcesForInvocation(input), fixture).pipe(
+          Effect.map((listed) => listed.records.map((record) => record.sourceId)),
+        );
+      expect(yield* ids({ readingStatus: "read" })).toEqual([sourceId]);
+      expect(yield* ids({ readingStatus: "unread", starred: true })).toEqual([second.sourceId]);
+      expect(
+        (yield* run(listScientSourcesForInvocation({ query: "first" }), fixture)).records,
+      ).toMatchObject([{ sourceId, readingStatus: "read", starred: false }]);
+      expect(yield* run(getScientSourceForInvocation({ sourceId }), fixture)).toMatchObject({
+        revision: 1,
+        readingStatus: "read",
+        starred: false,
+      });
+      const empty = yield* Effect.flip(
+        run(updateLibrarySourceForInvocation({ sourceId, expectedRevision: 1 }), fixture),
+      );
+      expect(empty.message).toBe("Give metadata, readingStatus or starred.");
     }),
   );
 });

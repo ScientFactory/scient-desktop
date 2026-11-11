@@ -22,7 +22,11 @@ import {
   importScientSource,
   listScientSourceRecords,
   listScientSourceTrash,
+  listScientSourceRevisions,
+  readScientSourceRecord,
   removeScientSource,
+  revertScientSource,
+  setScientLibraryReadingState,
   sourceAttachmentAbsolutePath,
   updateScientSourceNote,
 } from "./store.ts";
@@ -198,6 +202,67 @@ describe("personal library store", () => {
     expect(
       decodePersistedScientSourceRecord({ ...projectFile, readingStatus: "read", starred: true }),
     ).not.toHaveProperty("readingStatus");
+  });
+
+  it("sets reading state on one or many sources without a revision, and a revert keeps it", async () => {
+    const { library } = await newLibrary();
+    const [first, second] = await Promise.all(
+      ["READ3", "READ4"].map((key) =>
+        importScientSource({
+          root: library,
+          operationId: NodeCrypto.randomUUID(),
+          candidate: candidate(key, `Source ${key}`),
+        }).then((imported) => imported.record!),
+      ),
+    );
+    const noted = await updateScientSourceNote({
+      root: library,
+      sourceId: first!.sourceId,
+      expectedRevision: 1,
+      note: "Second revision.",
+    });
+    expect(noted.outcome).toBe("updated");
+
+    const changes = await setScientLibraryReadingState({
+      library,
+      sourceIds: [first!.sourceId, second!.sourceId, "source_missing"],
+      readingStatus: "read",
+    });
+    expect(changes).toEqual([
+      { sourceId: first!.sourceId, outcome: "updated", readingStatus: "read", starred: false },
+      { sourceId: second!.sourceId, outcome: "updated", readingStatus: "read", starred: false },
+      { sourceId: "source_missing", outcome: "not-found" },
+    ]);
+    const starred = await setScientLibraryReadingState({
+      library,
+      sourceIds: [first!.sourceId],
+      starred: true,
+    });
+    expect(starred).toEqual([
+      { sourceId: first!.sourceId, outcome: "updated", readingStatus: "read", starred: true },
+    ]);
+    expect(
+      await setScientLibraryReadingState({ library, sourceIds: [first!.sourceId], starred: true }),
+    ).toMatchObject([{ outcome: "unchanged" }]);
+    expect(await readScientSourceRecord(library, first!.sourceId)).toMatchObject({
+      revision: 2,
+      readingStatus: "read",
+      starred: true,
+    });
+    expect(
+      (await listScientSourceRevisions(library, first!.sourceId))?.map((entry) => entry.changes),
+    ).toEqual([["note"], []]);
+
+    const reverted = await revertScientSource({
+      root: library,
+      sourceId: first!.sourceId,
+      expectedRevision: 2,
+      toRevision: 1,
+    });
+    expect(reverted.outcome).toBe("reverted");
+    const after = await readScientSourceRecord(library, first!.sourceId);
+    expect(after).toMatchObject({ revision: 3, readingStatus: "read", starred: true });
+    expect(after?.note ?? null).toBeNull();
   });
 
   it("refuses a library record that names a project", () => {

@@ -1,6 +1,7 @@
 import {
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  EnvironmentAuthenticatedPrincipal,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
 import {
@@ -97,10 +98,12 @@ import {
   removeLibrarySource,
   restoreLibrarySource,
   revertLibrarySource,
+  updateLibraryPersonalNote,
   updateLibraryProjectNote,
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
 import { readLibraryMoveStatus } from "./LibraryMove.ts";
+import { setLibraryReadingState } from "./LibraryProjectSources.ts";
 import {
   resolveScientLibraryStoreAt,
   ScientSourcesBackend,
@@ -215,6 +218,12 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 ? libraryOverview(library, {
                     scope: args.payload.scope ?? "project",
                     background: session.scopes.has(AuthOrchestrationOperateScope),
+                    ...(args.payload.readingStatus
+                      ? { readingStatus: args.payload.readingStatus }
+                      : {}),
+                    ...(args.payload.starred !== undefined
+                      ? { starred: args.payload.starred }
+                      : {}),
                   })
                 : getScientSourcesOverview(args.payload.root),
             ).pipe(
@@ -225,11 +234,24 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           }),
         )
         .handle("detail", (args) =>
-          route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
-            library
-              ? librarySourceDetail(library, args.payload)
-              : getScientSourceDetail({ root: args.payload.root, sourceId: args.payload.sourceId }),
-          ),
+          Effect.gen(function* () {
+            // Only a session that may change the library is served the person's own note.
+            const personal = (yield* EnvironmentAuthenticatedPrincipal).scopes.has(
+              AuthOrchestrationOperateScope,
+            );
+            return yield* route(
+              args.endpoint.name,
+              AuthOrchestrationReadScope,
+              args.payload.root,
+              (library) =>
+                library
+                  ? librarySourceDetail(library, { ...args.payload, personal })
+                  : getScientSourceDetail({
+                      root: args.payload.root,
+                      sourceId: args.payload.sourceId,
+                    }),
+            );
+          }),
         )
         .handle("attachmentPreview", (args) =>
           Effect.gen(function* () {
@@ -369,6 +391,18 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               ? updateLibraryProjectNote(library, args.payload)
               : updateSourceNote(args.payload),
           ),
+        )
+        .handle("updatePersonalNote", (args) =>
+          route(args.endpoint.name, AuthOrchestrationOperateScope, args.payload.root, (library) => {
+            if (!library) throw new Error("The personal note needs the personal Library.");
+            return updateLibraryPersonalNote(library, args.payload);
+          }),
+        )
+        .handle("setReadingState", (args) =>
+          route(args.endpoint.name, AuthOrchestrationOperateScope, args.payload.root, (library) => {
+            if (!library) throw new Error("Reading state needs the personal Library.");
+            return setLibraryReadingState(library, args.payload);
+          }),
         )
         .handle("refreshMetadata", (args) =>
           route(args.endpoint.name, AuthOrchestrationOperateScope, args.payload.root, (library) =>

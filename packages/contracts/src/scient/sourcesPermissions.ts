@@ -11,6 +11,8 @@ export const SCIENT_SOURCES_HTTP_COMMANDS = {
   savePage: "scientSources.savePage",
   updateMetadata: "scientSources.updateMetadata",
   updateNote: "scientSources.updateNote",
+  updatePersonalNote: "scientSources.updatePersonalNote",
+  setReadingState: "scientSources.setReadingState",
   refreshMetadata: "scientSources.refreshMetadata",
   remove: "scientSources.remove",
   organize: "scientSources.organize",

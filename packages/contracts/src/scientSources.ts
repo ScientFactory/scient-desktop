@@ -67,9 +67,16 @@ const PinRequest = Schema.optionalKey(Schema.Boolean);
 /** How many other projects on this computer pin the changed source. */
 const AlsoPinnedIn = Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0)));
 
+/** A library record's reading state; a project server never sends or takes it. */
+export const ScientSourceReadingStatus = Schema.Literals(["unread", "read"]);
+export type ScientSourceReadingStatus = typeof ScientSourceReadingStatus.Type;
+
 export const ScientSourcesOverviewRequest = Schema.Struct({
   root: NonEmptyString,
   scope: Schema.optionalKey(ScientSourcesScope),
+  /** Library servers list only records with this reading state; `scopes` still counts them all. */
+  readingStatus: Schema.optionalKey(ScientSourceReadingStatus),
+  starred: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientSourcesOverviewRequest = typeof ScientSourcesOverviewRequest.Type;
 
@@ -96,13 +103,21 @@ const ScientSourcePinFields = {
   pinned: Schema.optionalKey(Schema.Boolean),
   /** A pin this library lacks: the source is the pin's snapshot under the project source ID. */
   fromSnapshot: Schema.optionalKey(Schema.Literal(true)),
-  /** The pin's note ("why I cite this here"); personal notes never leave the library. */
+  /** The pin's note ("why I cite this here"); the person's own note is `personalNote`. */
   projectNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** The person's reading state; absent for a pin's snapshot, which this library lacks. */
+  readingStatus: Schema.optionalKey(ScientSourceReadingStatus),
+  starred: Schema.optionalKey(Schema.Boolean),
 };
 
 export const ScientSourceDetailResult = Schema.Struct({
   ...ScientSourceRecord.fields,
   ...ScientSourcePinFields,
+  /**
+   * The person's own note on the library record, which follows the paper. Only in the detail,
+   * and only for a session holding the Library write grant; `note` stays this project's note.
+   */
+  personalNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
   label: Schema.optionalKey(ScientSystematicReviewRecordLabel),
 });
 export type ScientSourceDetailResult = typeof ScientSourceDetailResult.Type;
@@ -229,6 +244,41 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
 });
 export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
 export { ScientSourceNoteUpdateResult };
+
+/** Library servers only: the person's own note on the library record. */
+export const ScientSourcePersonalNoteUpdateRequest = ScientSourceNoteUpdateRequest;
+export type ScientSourcePersonalNoteUpdateRequest =
+  typeof ScientSourcePersonalNoteUpdateRequest.Type;
+
+export const ScientSourcePersonalNoteUpdateResult = Schema.Struct({
+  outcome: Schema.Literals(["updated", "unchanged", "stale"]),
+  record: ScientSourceDetailResult,
+  alsoPinnedIn: AlsoPinnedIn,
+});
+export type ScientSourcePersonalNoteUpdateResult = typeof ScientSourcePersonalNoteUpdateResult.Type;
+
+/** Library servers only: marks sources read or unread, starred or not. It changes no revision. */
+export const ScientSourcesReadingStateRequest = Schema.Struct({
+  root: NonEmptyString,
+  sourceIds: Schema.Array(NonEmptyString).pipe(
+    Schema.check(Schema.isMinLength(1), Schema.isMaxLength(20_000)),
+  ),
+  readingStatus: Schema.optionalKey(ScientSourceReadingStatus),
+  starred: Schema.optionalKey(Schema.Boolean),
+});
+export type ScientSourcesReadingStateRequest = typeof ScientSourcesReadingStateRequest.Type;
+
+export const ScientSourcesReadingStateResult = Schema.Struct({
+  sources: Schema.Array(
+    Schema.Struct({
+      sourceId: NonEmptyString,
+      outcome: Schema.Literals(["updated", "unchanged", "not-found"]),
+      readingStatus: Schema.optionalKey(ScientSourceReadingStatus),
+      starred: Schema.optionalKey(Schema.Boolean),
+    }),
+  ),
+});
+export type ScientSourcesReadingStateResult = typeof ScientSourcesReadingStateResult.Type;
 
 export const ScientSourceMetadataUpdateResult = Schema.Struct({
   ...ScientSourceMetadataUpdateResultFields.fields,

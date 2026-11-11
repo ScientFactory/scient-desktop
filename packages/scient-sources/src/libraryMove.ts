@@ -2143,6 +2143,32 @@ async function restoreAnnotationBackups(ctx: MoveContext, journal: ScientLibrary
   }
 }
 
+/**
+ * Highlights made on library PDFs while the project was moved: for each PDF the restored store
+ * holds, the library's annotation file is joined into the project's. The library keeps its own.
+ */
+async function restoreLibraryAnnotations(ctx: MoveContext) {
+  for (const file of await listFiles(absolute(v1Base(ctx), "files/sha256"))) {
+    const sha256 = PDF_FILE.exec(`files/sha256/${file}`)?.[2];
+    if (!sha256) continue;
+    const library = annotationFile(
+      await readJsonFile(NodePath.join(libraryFiles(ctx).annotations, `${sha256}.json`)),
+      sha256,
+    );
+    if (!library) continue;
+    const destination = absolute(ctx.root, `${PROJECT_ANNOTATIONS_DIRECTORY}/${sha256}.json`);
+    const current = await readJsonFile(destination);
+    if (current === undefined) {
+      if (await createJson(ctx, destination, library)) continue;
+    }
+    const project = annotationFile(current ?? (await readJsonFile(destination)), sha256);
+    // A project file that does not decode is left for the person; nothing overwrites it.
+    if (project && !annotationsCovered(project, library)) {
+      await atomicWriteJson(destination, mergeAnnotationFiles(project, library), MAX_JSON_BYTES);
+    }
+  }
+}
+
 async function readProjectRecord(
   ctx: MoveContext,
   base: string,
@@ -2445,6 +2471,7 @@ async function finishRestore(
 ): Promise<{ readonly result: MovedBack; readonly journal: ScientLibraryMoveJournal }> {
   await NodeFSP.rm(staging, { recursive: true, force: true });
   await restoreAnnotationBackups(ctx, journal);
+  await restoreLibraryAnnotations(ctx);
   const pins = await readRegularFile(absolute(ctx.root, PINS_PATH));
   if (pins) {
     await backUpFile(ctx, journal.run, "moved-back/pins.json", pins);

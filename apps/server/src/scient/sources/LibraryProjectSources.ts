@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Library-mode Sources read other checkouts' pin files through the Promise-based store.
 import * as NodeFSP from "node:fs/promises";
 
-import type { ScientSourceActor } from "@scientfactory/scient-sources";
+import type { ScientSourceActor, ScientSourceReadingStatus } from "@scientfactory/scient-sources";
 import {
   readScientLibraryAliases,
   resolveScientLibraryAlias,
@@ -21,7 +21,10 @@ import {
   type ScientProjectPin,
   type ScientProjectPinnedWork,
 } from "@scientfactory/scient-sources/project-pins";
-import { readScientSourceRecord } from "@scientfactory/scient-sources/store";
+import {
+  readScientSourceRecord,
+  setScientLibraryReadingState,
+} from "@scientfactory/scient-sources/store";
 
 import { syncPinnedBibliography } from "./ManagedBibliography.ts";
 import type { ScientSourcesLibraryStore } from "./SourcesBackend.ts";
@@ -101,6 +104,41 @@ export async function resolveLibrarySourceId(
     sources: [{ projectSourceId: sourceId, work: pin?.work ?? null }],
   });
   return resolution?.kind === "resolved" ? resolution.sourceId : null;
+}
+
+/** Many IDs as `resolveLibrarySourceId` resolves one, reading aliases and pins once; unresolved IDs stay. */
+async function resolveLibrarySourceIds(
+  store: ScientSourcesLibraryStore,
+  sourceIds: ReadonlyArray<string>,
+): Promise<ReadonlyArray<readonly [requested: string, libraryId: string]>> {
+  if (!store.exists) return sourceIds.map((sourceId) => [sourceId, sourceId] as const);
+  const aliases = await readScientLibraryAliases(store.library);
+  const found = new Map<string, string>();
+  const unresolved: string[] = [];
+  for (const sourceId of new Set(sourceIds)) {
+    const target = resolveScientLibraryAlias(aliases, sourceId);
+    if (await readScientSourceRecord(store.library, target)) found.set(sourceId, target);
+    else unresolved.push(sourceId);
+  }
+  if (unresolved.length > 0) {
+    const pins = new Map(
+      (await readScientProjectPins(store.root)).map((pin) => [pin.sourceId, pin] as const),
+    );
+    const resolutions = await resolveScientProjectSources({
+      library: store.library,
+      projectRoot: store.root,
+      mode: store.access,
+      sources: unresolved.map((projectSourceId) => ({
+        projectSourceId,
+        work: pins.get(projectSourceId)?.work ?? null,
+      })),
+    });
+    for (const [index, sourceId] of unresolved.entries()) {
+      const resolution = resolutions[index];
+      if (resolution?.kind === "resolved") found.set(sourceId, resolution.sourceId);
+    }
+  }
+  return sourceIds.map((sourceId) => [sourceId, found.get(sourceId) ?? sourceId] as const);
 }
 
 async function folderExists(path: string): Promise<boolean> {
@@ -186,4 +224,34 @@ export async function refreshProjectAfterLibraryChange(
     }
   }
   await syncProjectBibliography(store, actor);
+}
+
+/** Read or unread, starred or not, for one source or many; each answers under its own ID. */
+export async function setLibraryReadingState(
+  store: ScientSourcesLibraryStore,
+  input: {
+    readonly sourceIds: ReadonlyArray<string>;
+    readonly readingStatus?: ScientSourceReadingStatus;
+    readonly starred?: boolean;
+  },
+) {
+  if (input.readingStatus === undefined && input.starred === undefined) {
+    throw new Error("Give readingStatus or starred.");
+  }
+  const resolved = await resolveLibrarySourceIds(store, input.sourceIds);
+  const changes = store.exists
+    ? await setScientLibraryReadingState({
+        library: store.library,
+        sourceIds: resolved.map(([, libraryId]) => libraryId),
+        ...(input.readingStatus ? { readingStatus: input.readingStatus } : {}),
+        ...(input.starred !== undefined ? { starred: input.starred } : {}),
+      })
+    : [];
+  const byId = new Map(changes.map((change) => [change.sourceId, change]));
+  return {
+    sources: resolved.map(([sourceId, libraryId]) => ({
+      ...(byId.get(libraryId) ?? { outcome: "not-found" as const }),
+      sourceId,
+    })),
+  };
 }

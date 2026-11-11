@@ -4,13 +4,16 @@ import {
   type ScientPdfAnnotation,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 import {
   ScientAnnotations,
   type AnnotationByIdResult,
   type AnnotationPdfReference,
+  type ScientAnnotationsError,
 } from "../../../scient/annotations/ScientAnnotations.ts";
+import { ScientLibraryMoveBusyError } from "../../../scient/sources/LibraryMove.ts";
 import {
   ScientAnnotationsToolError,
   ScientAnnotationsToolkit,
@@ -22,9 +25,17 @@ const QUOTE_LIMIT = 2_000;
 const toolError = (code: ScientAnnotationsToolError["code"], message: string) =>
   new ScientAnnotationsToolError({ code, message });
 
-// Store errors can carry absolute paths; model-visible output stays path-free.
-const operationFailed = Effect.mapError(() =>
-  toolError("operation-failed", "The annotation operation could not be completed."),
+const isLibraryMoveBusy = Schema.is(ScientLibraryMoveBusyError);
+
+// Store errors can carry absolute paths; model-visible output stays path-free. A move into the
+// Library that outlasts the wait says how far it got, so the agent can say so and retry.
+const operationFailed = Effect.mapError((error: ScientAnnotationsError) =>
+  toolError(
+    "operation-failed",
+    isLibraryMoveBusy(error.cause)
+      ? error.cause.message
+      : "The annotation operation could not be completed.",
+  ),
 );
 
 const projectRoot = Effect.fn("ScientAnnotationsToolkit.projectRoot")(function* () {

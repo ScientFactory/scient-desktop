@@ -47,6 +47,9 @@ import {
 import {
   type ScientLibraryRecord,
   ScientLibraryRecordV2,
+  scientSourceReadingState,
+  type ScientSourceReadingState,
+  type ScientSourceReadingStatus,
   ScientSourceImportOperation,
   ScientSourceImportReceipt,
   ScientSourceRecordV1,
@@ -682,6 +685,53 @@ export async function updateScientSourceNote(input: {
   });
 }
 
+export type ScientSourceReadingStateChange =
+  | ({
+      readonly sourceId: string;
+      readonly outcome: "updated" | "unchanged";
+    } & ScientSourceReadingState)
+  | { readonly sourceId: string; readonly outcome: "not-found" };
+
+/**
+ * Marks library sources read or unread, starred or not. Reading state is about the person, so it
+ * changes no revision and keeps no history: an editor open on the record is never made stale.
+ */
+export async function setScientLibraryReadingState(input: {
+  readonly library: ScientLibraryLocation;
+  readonly sourceIds: ReadonlyArray<string>;
+  readonly readingStatus?: ScientSourceReadingStatus;
+  readonly starred?: boolean;
+}): Promise<ReadonlyArray<ScientSourceReadingStateChange>> {
+  const paths = await sourceStorePaths(input.library);
+  if (paths.owner.kind !== "library") throw new Error("Reading state lives in the Library.");
+  for (const sourceId of input.sourceIds) assertSafeIdentifier(sourceId, "Source ID");
+  return withStoreLock(paths, "source-write", async () => {
+    const changes: ScientSourceReadingStateChange[] = [];
+    for (const sourceId of new Set(input.sourceIds)) {
+      const current = await readScientSourceRecordIfPresent(paths, sourceId);
+      const state = current ? scientSourceReadingState(current) : null;
+      if (!current || !state) {
+        changes.push({ sourceId, outcome: "not-found" });
+        continue;
+      }
+      const next: ScientSourceReadingState = {
+        readingStatus: input.readingStatus ?? state.readingStatus,
+        starred: input.starred ?? state.starred,
+      };
+      const changed = next.readingStatus !== state.readingStatus || next.starred !== state.starred;
+      if (changed) {
+        await atomicWriteJson(
+          sourceRecordPath(paths, sourceId),
+          { ...current, ...next },
+          MAX_RECORD_BYTES,
+        );
+      }
+      changes.push({ sourceId, outcome: changed ? "updated" : "unchanged", ...next });
+    }
+    return changes;
+  });
+}
+
 export async function removeScientSource(input: {
   readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
@@ -1025,7 +1075,14 @@ async function collectUnreferencedSourceFiles(paths: SourceStorePaths): Promise<
   return removed;
 }
 
-const REVERT_IGNORED_FIELDS = new Set(["revision", "updatedAt", "updatedBy"]);
+// Reading state is about the person, not a revision of the source: never listed or reverted.
+const REVERT_IGNORED_FIELDS = new Set([
+  "revision",
+  "updatedAt",
+  "updatedBy",
+  "readingStatus",
+  "starred",
+]);
 const UNLISTED_CHANGE_FIELDS = new Set(["fieldProvenance"]);
 
 /**
@@ -1037,8 +1094,10 @@ function revertPreservedFields(
 ): Pick<
   ScientSourceRecord,
   "formatVersion" | "sourceId" | "projectId" | "importedAt" | "origin" | "citationKey"
-> {
+> &
+  Partial<ScientSourceReadingState> {
   return {
+    ...scientSourceReadingState(current),
     formatVersion: current.formatVersion,
     sourceId: current.sourceId,
     ...(current.projectId ? { projectId: current.projectId } : {}),

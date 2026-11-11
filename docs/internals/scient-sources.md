@@ -331,9 +331,19 @@ Library records (format version 2) carry `readingStatus` (`unread` or `read`)
 and `starred`. New library records start unread and not starred, and a version
 2 record written before these fields decodes the same way. Project records
 (format version 1) never carry them: the version 1 decoder drops them. The
-shared `ScientSourceRecord` schema does not list them either, so API results
-leave them out until a reader needs them; the trash keeps them because a trash
-entry's record goes through the central record decoder. Nothing sets them yet.
+shared `ScientSourceRecord` schema does not list them either; library-mode
+results add them where a reader needs them (see "Highlights, the two notes and
+reading status" below). The trash keeps them because a trash entry's record
+goes through the central record decoder.
+
+`setScientLibraryReadingState` (package `store.ts`) sets either or both on one
+source or many under the library lock. It writes the record file in place with
+no new revision and no history entry: reading state is about the person, so an
+editor open on the record is never made stale. For the same reason revisions
+never list it as a change, and a revert keeps the current values. A merge keeps
+the survivor read if either record was read and starred if either was, as
+ordinary merge changes, so Undo puts each record's own values back. A source
+that arrives through the move starts unread and not starred.
 
 ### Pins and project keys
 
@@ -877,6 +887,50 @@ project list is unchanged.
 
 **The v1 record-change listener** (`startManagedBibliographySync`) skips a
 root that is the personal library (`library.json` and no project file).
+
+#### Highlights, the two notes and reading status (5e-2)
+
+**Highlights on library PDFs.** On a moved project in library mode, the
+annotation service (`ScientAnnotations.ts`) keeps a PDF's annotations in the
+library's `annotations/v1/` when the library holds that PDF's bytes
+(`files/sha256/<xx>/<sha256>.pdf`), and in the project's `.scient/annotations/v1`
+otherwise. The hash and the library's files decide, never a path. Every caller
+goes through this: the reader's routes, the `scient_annotations_*` tools, quote
+anchoring (which reads the library's stored text for a library PDF) and the
+listing. Reads resolve with `read` and never create the library or start the
+move; writes resolve with `write`, so the first one moves an unmoved project
+like any other library writer, and a library write holds the library lock. A
+write that waits past the move bound fails with `scient_sources_library_moving`
+on the route and the move's progress sentence for agents. The listing joins the
+project folder's files with the library's files for the PDFs this project's
+pins hold. The reader still names a Source PDF by its v1 store path
+(`.scient/sources/files/sha256/...`); on a moved project that path reads the
+library's copy when the library has those bytes. The move back joins the
+library's annotation file for each PDF it restored into the project's file, in
+the hold that publishes the restored store; the library keeps its copy. A
+project that is not moved behaves as before.
+
+**Two notes.** In library mode a source has the project note (on the pin) and
+the person's own note (on the library record). `note` keeps meaning the project
+note on every route. The detail adds `projectNote` and, only for a session
+holding `orchestration:operate` on this environment, `personalNote`; list and
+overview payloads never carry it. `updatePersonalNote`
+(`POST /api/scient/sources/personal-note/update`, operate) sets it with the
+record's revision. The authorization model has no finer notion of the
+environment's owner than this grant: every connection holding it can already
+change the library. In library mode `scient_sources_note_update` sets the
+personal note and `scient_sources_organize` pin sets the project note.
+
+**Reading status on the wire.** Library-mode overview and detail records carry
+`readingStatus` and `starred` (a pin's snapshot has neither). The overview takes
+`readingStatus` and `starred` filters; `scopes` still counts every source.
+`setReadingState` (`POST /api/scient/sources/reading-state`, operate) takes
+`{ root, sourceIds, readingStatus?, starred? }` and answers each ID with
+`updated`, `unchanged` or `not-found`. Agents filter `scient_sources_list` by
+both and set them with `scient_sources_update` (library mode: `metadata`
+becomes optional; reading state alone is not checked against the revision).
+The library tool list is 112,563 bytes; the project list is unchanged. Project
+servers refuse both new routes.
 
 ## Source truth and provenance
 
@@ -1464,7 +1518,9 @@ and the last ten revisions of each annotation are kept so `revert` can bring
 an earlier note back as a new revision. Each record credits `createdBy` and
 `updatedBy` (`user` or `agent`). A file that does not decode is never written
 over and is reported, not hidden, in listings. Writes are serialized per PDF
-inside the server process, like the Sources store.
+inside the server process, like the Sources store. On the library backend,
+highlights on library PDFs live in the library (see "Highlights, the two notes
+and reading status").
 
 The reader paints annotations per rendered page with the CSS Custom Highlight
 API. The quote is searched on its page with its stored context, then alone, and

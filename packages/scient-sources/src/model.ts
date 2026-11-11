@@ -229,6 +229,24 @@ export const ScientLibraryRecordV2 = Schema.Struct({
   starred: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
 });
 export type ScientLibraryRecord = typeof ScientLibraryRecordV2.Type;
+export type ScientSourceReadingStatus = ScientLibraryRecord["readingStatus"];
+
+export interface ScientSourceReadingState {
+  readonly readingStatus: ScientSourceReadingStatus;
+  readonly starred: boolean;
+}
+
+/** A library record's reading state; null for a project record or a pin's snapshot. */
+export function scientSourceReadingState(
+  record: ScientSourceRecord,
+): ScientSourceReadingState | null {
+  if (record.formatVersion !== 2 || !("readingStatus" in record)) return null;
+  const library = record as ScientSourceRecord & Partial<ScientSourceReadingState>;
+  return {
+    readingStatus: library.readingStatus === "read" ? "read" : "unread",
+    starred: library.starred === true,
+  };
+}
 
 /**
  * Bounded list projection. Large abstracts, provenance, and external sync

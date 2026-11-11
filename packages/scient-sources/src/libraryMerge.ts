@@ -27,6 +27,7 @@ import {
   ScientSourceFieldProvenance,
   ScientSourceIdentifier,
   ScientSourceZoteroSync,
+  scientSourceReadingState,
   type ScientSourceRecord,
 } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
@@ -220,6 +221,16 @@ function planMerge(
       "note",
       keptNote ? `${noteSection(survivor, labels)}\n\n${noteSection(loser, labels)}` : offeredNote,
     );
+  }
+
+  // Read if either was read, starred if either was; Undo puts the survivor's own values back.
+  const keptState = scientSourceReadingState(survivor);
+  const offeredState = scientSourceReadingState(loser);
+  if (keptState && offeredState) {
+    if (offeredState.readingStatus === "read" && keptState.readingStatus !== "read") {
+      set("readingStatus", "read");
+    }
+    if (offeredState.starred && !keptState.starred) set("starred", true);
   }
 
   const tagKeys = new Set(survivor.tags.map(scientSourceTagKey));

@@ -1,10 +1,12 @@
 import {
   citationKeyValidationMessage,
+  scientSourceReadingState,
   scientSourceSummaryFromRecord,
   sourceMetadataDiagnostics,
   takenCitationKeys,
   type ScientSourceActor,
   type ScientSourceEditableMetadata,
+  type ScientSourceReadingStatus,
   type ScientSourceRecord,
   type ScientSourcesBulkRequestChange,
   type ScientSourcesOrganizeAction,
@@ -53,6 +55,7 @@ import {
   revertScientSource,
   sourceAttachmentAbsolutePath,
   updateScientSourceMetadata,
+  updateScientSourceNote,
 } from "@scientfactory/scient-sources/store";
 import type {
   ScientSourcesLibraryOrganizeAction,
@@ -92,8 +95,9 @@ const ACTOR: ScientSourceActor = "user";
 const SNAPSHOT_LABEL = "From this review's snapshot" as const;
 
 /**
- * Library routes serve any connected client, so personal notes never leave the library. A
- * route record's `note` is this project's note on its pin instead, which the panel edits.
+ * Library routes serve any connected client, so a route record carries no personal note. Its
+ * `note` is this project's note on its pin instead, which the panel edits; only the detail adds
+ * the personal note, as `personalNote`, for a session that may change the library.
  */
 function routeRecord(
   record: ScientSourceRecord,
@@ -131,14 +135,19 @@ const reach = (store: Store, sourceId: string) => alsoPinnedIn(store, sourceId).
 /** This project's pins, or the whole library, with the totals the scope filter shows. */
 export async function libraryOverview(
   store: Store,
-  input: { readonly scope: ScientSourcesScope; readonly background: boolean },
+  input: {
+    readonly scope: ScientSourcesScope;
+    readonly background: boolean;
+    readonly readingStatus?: ScientSourceReadingStatus;
+    readonly starred?: boolean;
+  },
 ) {
   const inspected = store.exists
     ? await inspectScientLibrarySources(store.library)
     : { records: [], activeOperation: null };
   const works = await listProjectPinnedWorks(store, ACTOR);
   const pins = await projectPinsByLibraryId(store);
-  const listed =
+  const scoped =
     input.scope === "project"
       ? works.map((work) => ({
           record: work.record,
@@ -155,6 +164,16 @@ export async function libraryOverview(
             fromSnapshot: false,
           };
         });
+  // A filter on reading state lists only library records; a snapshot has none.
+  const listed = scoped.filter(({ record }) => {
+    if (input.readingStatus === undefined && input.starred === undefined) return true;
+    const state = scientSourceReadingState(record);
+    return (
+      state !== null &&
+      (input.readingStatus === undefined || state.readingStatus === input.readingStatus) &&
+      (input.starred === undefined || state.starred === input.starred)
+    );
+  });
   const categories = store.exists
     ? await readScientSourceCategories(store.library).catch(() => ({}))
     : {};
@@ -185,6 +204,7 @@ export async function libraryOverview(
       return {
         ...summary,
         ...(category ? { categories: category } : {}),
+        ...scientSourceReadingState(record),
         pinned,
         ...(projectNote !== undefined ? { projectNote } : {}),
         ...(fromSnapshot ? { fromSnapshot: true as const } : {}),
@@ -206,7 +226,12 @@ export async function libraryOverview(
 /** A library record, a project source ID this project pins, or a review's own record. */
 export async function librarySourceDetail(
   store: Store,
-  input: { readonly sourceId: string; readonly reviewId?: string },
+  input: {
+    readonly sourceId: string;
+    readonly reviewId?: string;
+    /** True only for a session holding the Library write grant on this environment. */
+    readonly personal?: boolean;
+  },
 ) {
   if (input.reviewId) {
     const entry = await readScientLibraryReviewRecord({
@@ -228,6 +253,9 @@ export async function librarySourceDetail(
     return {
       ...normalizeSourceRecordForRead(routeRecord(record, pin)),
       pinned: pin !== undefined,
+      ...(pin ? { projectNote: pin.note ?? null } : {}),
+      ...(input.personal ? { personalNote: record.note ?? null } : {}),
+      ...scientSourceReadingState(record),
     };
   }
   const snapshot = (
@@ -244,6 +272,7 @@ export async function librarySourceDetail(
     }),
     pinned: true,
     fromSnapshot: true as const,
+    projectNote: snapshot.projectNote,
   };
 }
 
@@ -364,6 +393,31 @@ export async function updateLibraryProjectNote(
   return {
     outcome: updated.outcome,
     record: await librarySourceDetail(store, { sourceId: input.sourceId }),
+  };
+}
+
+/** The person's own note on the library record; the caller holds the Library write grant. */
+export async function updateLibraryPersonalNote(
+  store: Store,
+  input: {
+    readonly sourceId: string;
+    readonly expectedRevision: number;
+    readonly note: string | null;
+  },
+) {
+  const sourceId = await libraryIdOf(store, input.sourceId);
+  await requireRecord(store, sourceId);
+  const updated = await updateScientSourceNote({
+    root: store.library,
+    sourceId,
+    expectedRevision: input.expectedRevision,
+    note: input.note,
+    actor: ACTOR,
+  });
+  return {
+    outcome: updated.outcome,
+    record: await librarySourceDetail(store, { sourceId, personal: true }),
+    ...(await reach(store, sourceId)),
   };
 }
 

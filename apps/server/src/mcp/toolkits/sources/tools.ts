@@ -82,6 +82,8 @@ const CitationKey = NonEmptyString.annotate({
   description: "The key documents cite this source by: [@key] in Markdown, \\cite{key} in LaTeX.",
 });
 
+const ReadingStatus = Schema.Literals(["unread", "read"]);
+
 export const ScientSourceAgentSummary = Schema.Struct({
   sourceId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -105,6 +107,9 @@ export const ScientSourceAgentSummary = Schema.Struct({
   /** Library mode: whether this project pins it, and a pin this library lacks (snapshot). */
   pinned: Schema.optionalKey(Schema.Boolean),
   fromSnapshot: Schema.optionalKey(Schema.Boolean),
+  /** Library mode: the person's reading state; a snapshot has none. */
+  readingStatus: Schema.optionalKey(ReadingStatus),
+  starred: Schema.optionalKey(Schema.Boolean),
 });
 
 /** Library mode: how many other projects on this computer pin the edited record. */
@@ -188,12 +193,14 @@ export const ScientSourceAgentDetail = Schema.Struct({
   ),
   pinned: Schema.optionalKey(Schema.Boolean),
   projectNote: Schema.optionalKey(NullableText),
+  readingStatus: Schema.optionalKey(ReadingStatus),
+  starred: Schema.optionalKey(Schema.Boolean),
 });
 
 type SourcesBackendMode = "project" | "library";
 
-const LIST_FILTERS =
-  " query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources. citationStyles finds CSL styles by journal or style name instead, with the project's style.";
+const listFilters = (mode: SourcesBackendMode) =>
+  ` query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, ${mode === "project" ? "" : "readingStatus, starred, "}savedSearchId (see scient_sources_collections). inTrash lists removed sources. citationStyles finds CSL styles by journal or style name instead, with the project's style.`;
 
 const listParameters = {
   query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
@@ -214,13 +221,15 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
   Tool.make("scient_sources_list", {
     description:
       mode === "project"
-        ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${LIST_FILTERS}`
-        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${LIST_FILTERS}`,
+        ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${listFilters(mode)}`
+        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${listFilters(mode)}`,
     parameters:
       mode === "project"
         ? Schema.Struct(listParameters)
         : Schema.Struct({
             ...listParameters,
+            readingStatus: Schema.optionalKey(ReadingStatus),
+            starred: Schema.optionalKey(Schema.Boolean),
             scope: Schema.optionalKey(Schema.Literals(["project", "library"])),
           }),
     success: ScientSourcesListResult,
@@ -280,37 +289,73 @@ const sourceNoteUpdateTool = (mode: SourcesBackendMode) =>
 
 const ScientSourceNoteUpdateTool = sourceNoteUpdateTool("project");
 
+const ScientSourceMetadataUpdateToolResult = Schema.Struct({
+  outcome: Schema.Literals(["updated", "unchanged", "stale", "duplicate"]),
+  sourceId: NonEmptyString,
+  revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  duplicate: Schema.Struct({
+    kind: Schema.Literals([
+      "same-origin",
+      "same-identifier",
+      "same-pdf",
+      "possible-metadata-match",
+      "new",
+    ]),
+    matchingSourceIds: Schema.Array(NonEmptyString),
+    reason: NonEmptyString,
+  }),
+  validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
+  citationKeyRenamedIn: Schema.optionalKey(Schema.Array(NonEmptyString)),
+  citationKeyRenameSkipped: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ path: NonEmptyString, reason: NonEmptyString })),
+  ),
+  alsoPinnedIn: AlsoPinnedIn,
+});
+
+/** Library mode: a reading-state change alone has no metadata check to report. */
+const ScientSourceLibraryUpdateToolResult = Schema.Struct({
+  ...ScientSourceMetadataUpdateToolResult.fields,
+  duplicate: Schema.optionalKey(ScientSourceMetadataUpdateToolResult.fields.duplicate),
+  validationIssues: Schema.optionalKey(
+    ScientSourceMetadataUpdateToolResult.fields.validationIssues,
+  ),
+  readingStatus: Schema.optionalKey(ReadingStatus),
+  starred: Schema.optionalKey(Schema.Boolean),
+});
+
+const UPDATE_DESCRIPTION =
+  "Replace one Source's metadata and tags after the user explicitly asks. metadata is the full record, not a patch: keep the fields you are not changing. Pass its current revision; if stale, re-read and redo. Never replace from a read with abstractTruncated; tell the user. Credited to the agent; attachments are kept; changed identifiers clear the identifier check. A new citationKey is renamed in project documents (citationKeyRenamedIn); tell the user about citationKeyRenameSkipped files.";
+
+const updateParameters = {
+  sourceId: NonEmptyString,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+  metadata: ScientSourceEditableMetadata,
+  allowPossibleMetadataMatch: Schema.optionalKey(AllowPossibleMetadataMatch),
+};
+
 const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
-  description:
-    "Replace one Source's metadata and tags after the user explicitly asks. metadata is the full record, not a patch: keep the fields you are not changing. Pass its current revision; if stale, re-read and redo. Never replace from a read with abstractTruncated; tell the user. Credited to the agent; attachments are kept; changed identifiers clear the identifier check. A new citationKey is renamed in project documents (citationKeyRenamedIn); tell the user about citationKeyRenameSkipped files.",
+  description: UPDATE_DESCRIPTION,
+  parameters: Schema.Struct(updateParameters),
+  success: ScientSourceMetadataUpdateToolResult,
+  failure: ScientSourcesToolError,
+  dependencies,
+})
+  .annotate(Tool.Title, "Update source metadata")
+  .annotate(Tool.Readonly, false)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(Tool.OpenWorld, false)
+  .annotate(ScientOperation, sourceOperation("sources.update", true));
+
+const ScientSourceLibraryMetadataUpdateTool = Tool.make("scient_sources_update", {
+  description: `${UPDATE_DESCRIPTION} readingStatus and starred mark the person's reading; without metadata they change only that, at no new revision.`,
   parameters: Schema.Struct({
-    sourceId: NonEmptyString,
-    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
-    metadata: ScientSourceEditableMetadata,
-    allowPossibleMetadataMatch: Schema.optionalKey(AllowPossibleMetadataMatch),
+    ...updateParameters,
+    metadata: Schema.optionalKey(ScientSourceEditableMetadata),
+    readingStatus: Schema.optionalKey(ReadingStatus),
+    starred: Schema.optionalKey(Schema.Boolean),
   }),
-  success: Schema.Struct({
-    outcome: Schema.Literals(["updated", "unchanged", "stale", "duplicate"]),
-    sourceId: NonEmptyString,
-    revision: Schema.Int.check(Schema.isGreaterThan(0)),
-    duplicate: Schema.Struct({
-      kind: Schema.Literals([
-        "same-origin",
-        "same-identifier",
-        "same-pdf",
-        "possible-metadata-match",
-        "new",
-      ]),
-      matchingSourceIds: Schema.Array(NonEmptyString),
-      reason: NonEmptyString,
-    }),
-    validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
-    citationKeyRenamedIn: Schema.optionalKey(Schema.Array(NonEmptyString)),
-    citationKeyRenameSkipped: Schema.optionalKey(
-      Schema.Array(Schema.Struct({ path: NonEmptyString, reason: NonEmptyString })),
-    ),
-    alsoPinnedIn: AlsoPinnedIn,
-  }),
+  success: ScientSourceLibraryUpdateToolResult,
   failure: ScientSourcesToolError,
   dependencies,
 })
@@ -1284,7 +1329,7 @@ export const ScientSourcesLibraryToolkit = Toolkit.make(
   sourcesListTool("library"),
   ScientSourceGetTool,
   sourceNoteUpdateTool("library"),
-  ScientSourceMetadataUpdateTool,
+  ScientSourceLibraryMetadataUpdateTool,
   ScientSourceRemoveTool,
   ScientSourceRestoreTool,
   ScientSourceRevertTool,

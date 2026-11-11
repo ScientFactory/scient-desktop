@@ -360,6 +360,39 @@ describe("library merge engine", () => {
     });
   });
 
+  it("keeps a merged source read and starred if either was, and Undo restores each one's own", async () => {
+    const { root, library } = await newLibrary();
+    const doi = { scheme: "doi", value: "10.1000/reading" };
+    const withState = (sourceId: string, readingStatus: string, starred: boolean) =>
+      ({
+        ...record(sourceId, { identifiers: [doi] }),
+        readingStatus,
+        starred,
+      }) as ScientSourceRecord;
+    await seed(root, [
+      withState("source_keep", "unread", true),
+      withState("source_gone", "read", false),
+    ]);
+
+    const merged = await mergeScientLibrarySources({
+      library,
+      sourceIds: ["source_keep", "source_gone"],
+      survivorId: "source_keep",
+    });
+
+    expect(merged.outcome).toBe("merged");
+    expect(await readScientSourceRecord(library, "source_keep")).toMatchObject({
+      readingStatus: "read",
+      starred: true,
+    });
+    const mergeId = merged.outcome === "merged" ? merged.merge.mergeId : "";
+    expect(await undoScientLibraryMerge({ library, mergeId })).toMatchObject({
+      outcome: "undone",
+      survivor: { readingStatus: "unread", starred: true },
+      loser: { readingStatus: "read", starred: false },
+    });
+  });
+
   it("lists a shared ISBN or ISSN for one title or two whole books, never across different DOIs", async () => {
     const { root, library } = await newLibrary();
     const issn = { scheme: "issn", value: "1234-5679" };

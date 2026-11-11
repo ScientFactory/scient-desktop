@@ -17,6 +17,8 @@ import {
   type ScientSourceFilter,
   type ScientSourcesBulkRequestChange,
   type ScientSourcesOrganizeAction,
+  scientSourceReadingState,
+  type ScientSourceReadingStatus,
   type ScientSourceStudyDesign,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
@@ -73,6 +75,7 @@ import {
   projectPinsByLibraryId,
   refreshProjectAfterLibraryChange,
   resolveLibrarySourceId,
+  setLibraryReadingState,
   syncProjectBibliography,
 } from "../../../scient/sources/LibraryProjectSources.ts";
 
@@ -431,6 +434,8 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly offset?: number;
     readonly limit?: number;
     readonly scope?: "project" | "library";
+    readonly readingStatus?: ScientSourceReadingStatus;
+    readonly starred?: boolean;
   }) {
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
@@ -512,7 +517,18 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
       },
     ];
     const predicates = filters.map((filter) => compileScientSourceFilter(filter, organization));
-    const matching = all.filter((record) => predicates.every((matches) => matches(record)));
+    const readingMatches = (record: (typeof all)[number]) => {
+      if (input.readingStatus === undefined && input.starred === undefined) return true;
+      const state = scientSourceReadingState(record);
+      return (
+        state !== null &&
+        (input.readingStatus === undefined || state.readingStatus === input.readingStatus) &&
+        (input.starred === undefined || state.starred === input.starred)
+      );
+    };
+    const matching = all.filter(
+      (record) => predicates.every((matches) => matches(record)) && readingMatches(record),
+    );
     // The public schema rejects invalid values. Clamp here as a second
     // boundary so internal callers cannot accidentally create an unbounded
     // model payload by bypassing MCP decoding.
@@ -557,6 +573,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
           ? { pinned: pinnedWorks !== null || pinOf(record.sourceId) !== undefined }
           : {}),
         ...(fromSnapshot.has(record.sourceId) ? { fromSnapshot: true } : {}),
+        ...(library ? scientSourceReadingState(record) : null),
       })),
       total: matching.length,
       ...(move ? { move } : {}),
@@ -887,6 +904,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
         ? {
             pinned: pin !== undefined,
             ...(pin ? { citationKey: pin.citationKey, projectNote: pin.note ?? null } : {}),
+            ...scientSourceReadingState(record),
           }
         : {}),
     };
@@ -963,6 +981,69 @@ export const updateScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.u
       ...(result.citationKeyRenameSkipped
         ? { citationKeyRenameSkipped: result.citationKeyRenameSkipped }
         : {}),
+    };
+  },
+);
+
+/**
+ * Library mode: metadata as in project mode, and the person's reading state. Reading state
+ * alone changes no revision, so it is not checked against `expectedRevision`.
+ */
+export const updateLibrarySourceForInvocation = Effect.fn("ScientSourcesToolkit.updateInLibrary")(
+  function* (input: {
+    readonly sourceId: string;
+    readonly expectedRevision: number;
+    readonly metadata?: ScientSourceEditableMetadata;
+    readonly allowPossibleMetadataMatch?: boolean;
+    readonly readingStatus?: ScientSourceReadingStatus;
+    readonly starred?: boolean;
+  }) {
+    const { metadata, readingStatus, starred } = input;
+    if (metadata === undefined && readingStatus === undefined && starred === undefined) {
+      return yield* toolError("operation-failed", "Give metadata, readingStatus or starred.");
+    }
+    const store = yield* resolveScientSourcesStore();
+    if (store.kind !== "library") {
+      if (metadata === undefined) {
+        return yield* toolError("operation-failed", "Reading state needs the personal Library.");
+      }
+      return yield* updateScientSourceForInvocation({ ...input, metadata });
+    }
+    const edited = metadata ? yield* updateLibrarySource(store, { ...input, metadata }) : null;
+    const reading =
+      readingStatus !== undefined || starred !== undefined
+        ? (yield* attempt(() =>
+            setLibraryReadingState(store, {
+              sourceIds: [input.sourceId],
+              ...(readingStatus ? { readingStatus } : {}),
+              ...(starred !== undefined ? { starred } : {}),
+            }),
+          )).sources[0]!
+        : null;
+    if (reading?.outcome === "not-found" && !edited) {
+      return yield* toolError("not-found", "The source was not found in this project.");
+    }
+    const state =
+      reading && reading.outcome !== "not-found"
+        ? { readingStatus: reading.readingStatus, starred: reading.starred }
+        : {};
+    if (edited) {
+      return {
+        ...edited,
+        ...(edited.outcome === "unchanged" && reading?.outcome === "updated"
+          ? { outcome: "updated" as const }
+          : {}),
+        ...state,
+      };
+    }
+    const sourceId = yield* sourceIdIn(store, input.sourceId);
+    const record = yield* attempt(() => readScientSourceRecord(store.library, sourceId));
+    if (!record) return yield* toolError("not-found", "The source was not found in this project.");
+    return {
+      outcome: reading?.outcome === "updated" ? ("updated" as const) : ("unchanged" as const),
+      sourceId,
+      revision: record.revision,
+      ...state,
     };
   },
 );
@@ -1825,5 +1906,6 @@ export const ScientSourcesToolkitHandlersLive = ScientSourcesToolkit.toLayer(han
 
 export const ScientSourcesLibraryToolkitHandlersLive = ScientSourcesLibraryToolkit.toLayer({
   ...handlers,
+  scient_sources_update: updateLibrarySourceForInvocation,
   scient_sources_organize: organizeLibrarySourcesForInvocation,
 });

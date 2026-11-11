@@ -36,9 +36,11 @@ import {
   libraryOverview,
   libraryReview,
   librarySourceDetail,
+  updateLibraryPersonalNote,
   updateLibraryProjectNote,
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
+import { setLibraryReadingState } from "./LibraryProjectSources.ts";
 import { advanceSourceImport, beginZoteroImport } from "./ScientSourcesCoordinator.ts";
 import {
   ScientSourcesBackend,
@@ -502,12 +504,92 @@ describe("Library routes on the library backend", () => {
               tags: [],
             },
           }),
+          await libraryOverview(read, {
+            scope: "library",
+            background: false,
+            readingStatus: "unread",
+          }),
+          await setLibraryReadingState(write, { sourceIds: [a.sourceId], starred: true }),
         ];
 
         for (const payload of payloads) {
           expect(JSON.stringify(payload)).not.toContain("PERSONAL-NOTE-SECRET");
         }
         expect(JSON.stringify(payloads[5])).toContain("Why this project cites it.");
+        // Only a session holding the Library write grant asks for it, and only in the detail.
+        expect(
+          await librarySourceDetail(read, { sourceId: a.sourceId, personal: true }),
+        ).toMatchObject({ personalNote: "PERSONAL-NOTE-SECRET", note: "Project reason." });
+      });
+    }),
+  );
+
+  it.effect("sets reading state on one source or many and filters the list by it", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const { a, b } = yield* Effect.promise(() => threeSources(fixture));
+      const write = yield* storeFor(fixture, "write");
+      yield* Effect.promise(async () => {
+        const fresh = await libraryOverview(write, { scope: "library", background: false });
+        expect(fresh.records.map(({ readingStatus, starred }) => [readingStatus, starred])).toEqual(
+          [
+            ["unread", false],
+            ["unread", false],
+          ],
+        );
+
+        expect(
+          await setLibraryReadingState(write, { sourceIds: [a.sourceId], readingStatus: "read" }),
+        ).toEqual({
+          sources: [
+            { sourceId: a.sourceId, outcome: "updated", readingStatus: "read", starred: false },
+          ],
+        });
+        const many = await setLibraryReadingState(write, {
+          sourceIds: [a.sourceId, b.sourceId, "source_unknown"],
+          starred: true,
+        });
+        expect(many.sources.map(({ outcome }) => outcome)).toEqual([
+          "updated",
+          "updated",
+          "not-found",
+        ]);
+
+        const read = await libraryOverview(write, {
+          scope: "library",
+          background: false,
+          readingStatus: "read",
+        });
+        expect(read.records.map((record) => record.sourceId)).toEqual([a.sourceId]);
+        expect(read.scopes.library).toBe(2);
+        const starred = await libraryOverview(write, {
+          scope: "project",
+          background: false,
+          starred: true,
+        });
+        // The removed source's pin is a snapshot: it has no reading state to match.
+        expect(starred.records.map((record) => record.sourceId)).toEqual([a.sourceId]);
+        expect(await librarySourceDetail(write, { sourceId: a.sourceId })).toMatchObject({
+          revision: a.revision,
+          readingStatus: "read",
+          starred: true,
+          projectNote: "Why this project cites it.",
+        });
+
+        const noted = await updateLibraryPersonalNote(write, {
+          sourceId: a.sourceId,
+          expectedRevision: a.revision,
+          note: "My own reading.",
+        });
+        expect(noted).toMatchObject({
+          outcome: "updated",
+          record: {
+            note: "Why this project cites it.",
+            projectNote: "Why this project cites it.",
+            personalNote: "My own reading.",
+            readingStatus: "read",
+          },
+        });
       });
     }),
   );

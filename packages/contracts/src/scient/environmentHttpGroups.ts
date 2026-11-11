@@ -52,6 +52,10 @@ import {
   ScientSourceMetadataUpdateResult,
   ScientSourceNoteUpdateRequest,
   ScientSourceNoteUpdateResult,
+  ScientSourcePersonalNoteUpdateRequest,
+  ScientSourcePersonalNoteUpdateResult,
+  ScientSourcesReadingStateRequest,
+  ScientSourcesReadingStateResult,
   ScientSourceRemovalRequest,
   ScientSourceRemovalResult,
   ScientSourcesAddByIdentifierRequest,
@@ -374,6 +378,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSourceNoteUpdateRequest,
         success: ScientSourceNoteUpdateResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("updatePersonalNote", "/api/scient/sources/personal-note/update", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcePersonalNoteUpdateRequest,
+        success: ScientSourcePersonalNoteUpdateResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("setReadingState", "/api/scient/sources/reading-state", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesReadingStateRequest,
+        success: ScientSourcesReadingStateResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

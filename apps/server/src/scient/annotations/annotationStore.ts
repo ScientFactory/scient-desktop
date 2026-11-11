@@ -1,10 +1,15 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The annotation store is Scient's project filesystem boundary for .scient/annotations, beside the Sources store.
+// @effect-diagnostics nodeBuiltinImport:off -- The annotation store is Scient's filesystem boundary for .scient/annotations and the library's annotations, beside the Sources store.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type { PdfMaterial } from "@scientfactory/document-artifacts";
 import { readScientProjectIdentity } from "@scientfactory/project-init";
+import { withScientLibraryLock } from "@scientfactory/scient-sources/library-lock";
+import {
+  isScientLibraryLocation,
+  type ScientSourceStoreLocation,
+} from "@scientfactory/scient-sources/library-root";
 import { assertScientProjectDirectory } from "@scientfactory/scient-sources/project-files";
 import {
   SCIENT_ANNOTATIONS_DIRECTORY,
@@ -23,6 +28,15 @@ const MAX_HISTORY_PER_ANNOTATION = 10;
 const MAX_SEEN_PATHS = 16;
 const MAX_LISTED_FILES = 10_000;
 const FILE_NAME = /^([0-9a-f]{64})\.json$/u;
+const LIBRARY_ANNOTATIONS_DIRECTORY = "annotations/v1";
+
+/**
+ * Where a PDF's annotations live: a canonical project root (`.scient/annotations/v1`), or the
+ * personal library with its canonical root (`annotations/v1`), for highlights on library PDFs.
+ */
+export type ScientAnnotationHome = ScientSourceStoreLocation;
+
+const homeRoot = (home: ScientAnnotationHome) => (isScientLibraryLocation(home) ? home.root : home);
 
 /** Slash-separated, inside the project: no root, drive, UNC, backslash or `..` segment. */
 const ProjectPathHint = Schema.String.check(
@@ -240,25 +254,28 @@ export async function annotationProjectRoot(root: string): Promise<string> {
   return canonical;
 }
 
-function annotationsDirectory(root: string): string {
-  return NodePath.join(root, ...SCIENT_ANNOTATIONS_DIRECTORY.split("/"));
+function annotationsDirectory(home: ScientAnnotationHome): string {
+  const relative = isScientLibraryLocation(home)
+    ? LIBRARY_ANNOTATIONS_DIRECTORY
+    : SCIENT_ANNOTATIONS_DIRECTORY;
+  return NodePath.join(homeRoot(home), ...relative.split("/"));
 }
 
-function annotationFilePath(root: string, sha256: string): string {
+function annotationFilePath(root: ScientAnnotationHome, sha256: string): string {
   if (!/^[0-9a-f]{64}$/u.test(sha256)) throw new Error("The PDF hash is not a sha256 digest.");
   return NodePath.join(annotationsDirectory(root), `${sha256}.json`);
 }
 
 /** Reads the file named for `sha256`; a file whose recorded identity differs is refused, never used. */
 async function readFileAt(
-  canonicalRoot: string,
+  home: ScientAnnotationHome,
   sha256: string,
   byteLength?: number,
 ): Promise<ScientAnnotationFile | null> {
-  const filePath = annotationFilePath(canonicalRoot, sha256);
+  const filePath = annotationFilePath(home, sha256);
   let stats;
   try {
-    await assertScientProjectDirectory(canonicalRoot, NodePath.dirname(filePath));
+    await assertScientProjectDirectory(homeRoot(home), NodePath.dirname(filePath));
     stats = await NodeFSP.lstat(filePath);
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return null;
@@ -281,13 +298,13 @@ async function readFileAt(
   return file;
 }
 
-async function writeFileAt(canonicalRoot: string, file: ScientAnnotationFile): Promise<void> {
-  const filePath = annotationFilePath(canonicalRoot, file.material.sha256);
+async function writeFileAt(home: ScientAnnotationHome, file: ScientAnnotationFile): Promise<void> {
+  const filePath = annotationFilePath(home, file.material.sha256);
   const serialized = `${JSON.stringify(file, null, 2)}\n`;
   if (Buffer.byteLength(serialized, "utf8") > MAX_FILE_BYTES) {
     throw new Error("The PDF has too many annotations to save.");
   }
-  await assertScientProjectDirectory(canonicalRoot, NodePath.dirname(filePath), { create: true });
+  await assertScientProjectDirectory(homeRoot(home), NodePath.dirname(filePath), { create: true });
   const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
   let handle: NodeFSP.FileHandle | null = null;
   try {
@@ -324,14 +341,16 @@ async function withLock<A>(key: string, run: () => Promise<A>): Promise<A> {
 
 /** Reads one PDF's annotations; a missing file is none. A damaged file throws, never reads as empty. */
 export async function readScientAnnotationFile(
-  canonicalRoot: string,
+  home: ScientAnnotationHome,
   sha256: string,
 ): Promise<ScientAnnotationFile | null> {
-  return readFileAt(canonicalRoot, sha256);
+  return readFileAt(home, sha256);
 }
 
+/** In the library, a write holds the library lock like every other library writer. */
 export async function mutateScientAnnotations(input: {
-  readonly canonicalRoot: string;
+  /** The canonical project root, or the library for a library PDF. */
+  readonly canonicalRoot: ScientAnnotationHome;
   readonly material: PdfMaterial;
   readonly relativePath: string | null;
   readonly command: ScientAnnotationCommand;
@@ -339,26 +358,31 @@ export async function mutateScientAnnotations(input: {
   readonly now: string;
 }): Promise<ScientAnnotationMutationResult> {
   const filePath = annotationFilePath(input.canonicalRoot, input.material.sha256);
-  return withLock(filePath, async () => {
-    const existing = await readFileAt(
-      input.canonicalRoot,
-      input.material.sha256,
-      input.material.byteLength,
-    );
-    const outcome = applyAnnotationCommand(
-      existing ?? emptyFile(input.material),
-      input.command,
-      input.actor,
-      input.now,
-    );
-    if (outcome.changed) {
-      await writeFileAt(
+  const home = input.canonicalRoot;
+  const locked = (run: () => Promise<ScientAnnotationMutationResult>) =>
+    isScientLibraryLocation(home) ? withScientLibraryLock(home.root, run) : run();
+  return locked(() =>
+    withLock(filePath, async () => {
+      const existing = await readFileAt(
         input.canonicalRoot,
-        rememberAnnotationPath(outcome.file, input.relativePath),
+        input.material.sha256,
+        input.material.byteLength,
       );
-    }
-    return outcome.result;
-  });
+      const outcome = applyAnnotationCommand(
+        existing ?? emptyFile(input.material),
+        input.command,
+        input.actor,
+        input.now,
+      );
+      if (outcome.changed) {
+        await writeFileAt(
+          input.canonicalRoot,
+          rememberAnnotationPath(outcome.file, input.relativePath),
+        );
+      }
+      return outcome.result;
+    }),
+  );
 }
 
 export interface ScientAnnotationFileListing {
@@ -367,13 +391,15 @@ export interface ScientAnnotationFileListing {
   readonly unreadable: ReadonlyArray<string>;
 }
 
+/** Every annotation file at `home`, or only those for `only` (PDF hashes). */
 export async function listScientAnnotationFiles(
-  canonicalRoot: string,
+  home: ScientAnnotationHome,
+  only?: ReadonlySet<string>,
 ): Promise<ScientAnnotationFileListing> {
-  const directory = annotationsDirectory(canonicalRoot);
+  const directory = annotationsDirectory(home);
   let names: string[];
   try {
-    await assertScientProjectDirectory(canonicalRoot, directory);
+    await assertScientProjectDirectory(homeRoot(home), directory);
     names = await NodeFSP.readdir(directory);
   } catch (error) {
     if (isNodeError(error, "ENOENT")) return { files: [], unreadable: [] };
@@ -381,11 +407,12 @@ export async function listScientAnnotationFiles(
   }
   const files: ScientAnnotationFile[] = [];
   const unreadable: string[] = [];
-  for (const name of names.toSorted().slice(0, MAX_LISTED_FILES)) {
+  const wanted = only ? names.filter((name) => only.has(FILE_NAME.exec(name)?.[1] ?? "")) : names;
+  for (const name of wanted.toSorted().slice(0, MAX_LISTED_FILES)) {
     const match = FILE_NAME.exec(name);
     if (!match) continue;
     try {
-      const file = await readFileAt(canonicalRoot, match[1]!);
+      const file = await readFileAt(home, match[1]!);
       if (file) files.push(file);
       else unreadable.push(name);
     } catch {
