@@ -170,6 +170,57 @@ describe("managed bibliography", () => {
     expect(await strays()).toEqual(["references.bib", "references.json"]);
   });
 
+  it("leaves another writer's file in place when a copy that fails part way is removed", async () => {
+    const root = await project();
+    const bibPath = NodePath.join(await NodeFSP.realpath(root), "references.bib");
+    const theirs = "@misc{theirs2020,\n  title = {Theirs},\n}\n";
+    await add(root, "A", "Notes on the analytical engine");
+    let failingWrites = 1;
+    let otherWriterArmed = false;
+    using _noHardLinks = overrideFileSystem((original) => ({
+      link: async (source, destination) => {
+        if (NodePath.dirname(String(destination)) === NodePath.dirname(bibPath)) {
+          throw nodeError("EPERM");
+        }
+        return original.link(source, destination);
+      },
+      open: async (path, flags, mode) => {
+        const handle = await original.open(path, flags, mode);
+        if (path !== bibPath || flags !== "wx" || failingWrites-- <= 0) return handle;
+        return new Proxy(handle, {
+          get: (target, key) => {
+            if (key === "writeFile") {
+              return async (data: Uint8Array) => {
+                await target.write(data.subarray(0, 8));
+                otherWriterArmed = true;
+                throw nodeError("ENOSPC");
+              };
+            }
+            const value: unknown = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+      // Another writer replaces the managed name right after cleanup checks which file it holds.
+      lstat: (async (...args: Parameters<typeof NodeFSP.lstat>) => {
+        const stats = await original.lstat(...args);
+        if (otherWriterArmed) {
+          otherWriterArmed = false;
+          const other = `${bibPath}.other`;
+          await NodeFSP.writeFile(other, theirs);
+          await NodeFSP.rename(other, bibPath);
+        }
+        return stats;
+      }) as typeof NodeFSP.lstat,
+    }));
+
+    await expect(syncManagedBibliography(root)).rejects.toThrow("synthetic ENOSPC");
+    expect(await read(root, "references.bib")).toBe(theirs);
+    expect((await NodeFSP.readdir(root)).filter((name) => name.includes("references."))).toEqual([
+      "references.bib",
+    ]);
+  });
+
   it("imports entries added by hand and keeps a file with changed entries", async () => {
     const root = await project();
     await add(root, "A", "Notes on the analytical engine");

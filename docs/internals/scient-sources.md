@@ -550,8 +550,10 @@ place, or stays as `<name>.kept-<id>` and the error
 (`ScientProjectFilePublicationError.recoveryPath`) names it; it is deleted only
 once another copy is in place. Where hard links are missing (EPERM, ENOTSUP,
 and EISDIR from Windows on FAT and exFAT) the file is created exclusively and
-written; a write that fails part way removes the file it created (checked by
-file identity), so a partial copy never takes the managed name. A sync reports
+written; a write that fails part way moves the file to a private name and
+removes it only if it is the one it created (checked by file identity), so a
+partial copy never takes the managed name and another writer's file at that
+name goes back in place (or is kept beside it). A sync reports
 every `references.{bib,json}.kept-<id>` and leftover hidden `.replaced` file
 at the project root in the file's `kept` list, whether the write failed in this
 sync or an earlier one, automatic or explicit, until the person deletes it; a

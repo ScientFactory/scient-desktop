@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Project files are published with native no-clobber links.
 import * as NodeCrypto from "node:crypto";
+import type * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -50,12 +51,31 @@ async function copyNoClobber(source: string, target: string): Promise<boolean> {
     return true;
   } catch (error) {
     await handle.close().catch(() => undefined);
-    const current = await NodeFSP.lstat(target, { bigint: true }).catch(() => null);
-    if (created && current && current.ino === created.ino && current.dev === created.dev) {
-      await NodeFSP.rm(target, { force: true }).catch(() => undefined);
-    }
+    if (created) await removeCreatedFile(target, created).catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * Checking identity at the shared name and then removing it races another writer, so the file
+ * is first moved to a private name. One that is not this writer's goes back, or is kept beside it.
+ */
+async function removeCreatedFile(target: string, created: NodeFS.BigIntStats): Promise<void> {
+  const directory = NodePath.dirname(target);
+  const name = NodePath.basename(target);
+  const id = NodeCrypto.randomUUID();
+  const moved = NodePath.join(directory, `.${name}.${id}.partial`);
+  await NodeFSP.rename(target, moved);
+  const current = await NodeFSP.lstat(moved, { bigint: true });
+  if (current.ino === created.ino && current.dev === created.dev) {
+    await NodeFSP.rm(moved, { force: true });
+    return;
+  }
+  if (await copyNoClobber(moved, target).catch(() => false)) {
+    await NodeFSP.rm(moved, { force: true });
+    return;
+  }
+  await NodeFSP.rename(moved, NodePath.join(directory, `${name}.kept-${id.slice(0, 8)}`));
 }
 
 /** Creates `target` from `source` and never replaces a file already there. */

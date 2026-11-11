@@ -50,6 +50,7 @@ export const readProjectFile = (root: string, name: string) =>
 type FileSystemOverrides = {
   link?: typeof NodeFSP.link;
   open?: typeof NodeFSP.open;
+  lstat?: typeof NodeFSP.lstat;
 };
 
 /** Replaces `node:fs/promises` functions for code that imports the namespace, until disposed. */
@@ -60,7 +61,7 @@ export function overrideFileSystem(
   const fsPromises: Required<FileSystemOverrides> = NodeModule.createRequire(import.meta.url)(
     "node:fs/promises",
   );
-  const original = { link: fsPromises.link, open: fsPromises.open };
+  const original = { link: fsPromises.link, open: fsPromises.open, lstat: fsPromises.lstat };
   Object.assign(fsPromises, overrides(original));
   NodeModule.syncBuiltinESMExports();
   return {
