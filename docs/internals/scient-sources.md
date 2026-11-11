@@ -693,8 +693,10 @@ deletes v1 files; a `pins.json` on its own never does.
    pin), their history, trash entries, Zotero merge bases, PDFs and full text
    by hash, and annotation files for library PDFs, joined by annotation ID
    (the higher revision wins). Full text is named by its PDF's hash, so other
-   text already at that name stays in force. A destination that is the start
-   of the source's bytes (a copy cut short) is removed and copied again. Every
+   text already at that name stays in force. A copy cut short is replaced in
+   one rename, so the path is never empty: for a PDF, the start of the right
+   bytes under the wrong hash; for full text, the start of the source that is
+   not whole JSON. Every other
    write is an exclusive create; a record ID
    the library already has goes through the identity check below. Each
    project source ID is written to the instance map (`resolvedBy: "moved"`).
@@ -773,17 +775,24 @@ duplicates. K kept different values: Review." for 5e to show.
 
 **Move back into this project** (`moveScientProjectBackIntoProject`; the
 organize route and `scient_sources_organize` take `move-back`): finishes a
-pending cleanup, restores every run's backup into `.scient/sources`, writes each
-pinned record's later library state as a new v1 revision under the pin's key
-and project note, copies its PDFs back, copies the current reviews and
-bibliography copies over the backup's, backs up and removes `pins.json`, and
-sets the journal to `moved-back`. Library records stay. It refuses while
-`.scient/sources` holds files again. The journal is set to `restoring` before
-the first v1 file is written, and every step is safe to repeat: an
-interrupted move back resumes on the next move back, write or background pass,
-before any check for v1 files (a restored record already at its library state
-keeps its revision; `pins.json` is read from the backup once removed). Until
-it finishes, the project counts as moved.
+pending cleanup, then builds the v1 store in a staging folder,
+`.scient/library/.restoring/sources`: every run's backup, each pinned record's
+later library state as a new v1 revision under the pin's key and project note,
+its PDFs, and the current reviews and bibliography copies over the backup's.
+One rename publishes the folder as `.scient/sources`. After that it restores
+highlight files that are not there, backs up and removes `pins.json`, and sets
+the journal to `moved-back`. Library records stay. It refuses while
+`.scient/sources` holds files again.
+
+The staging folder is created first and the journal set to `restoring` second,
+so an interrupted move back resumes on the next move back, write or background
+pass. With the staging folder present, the build reruns from the start (only
+the move back writes there); if `.scient/sources` holds files by then, an older
+Scient wrote them, so the staging folder is dropped, the journal returns to
+`done` and the ordinary move joins those files. With the staging folder gone,
+the store is published, and nothing under `.scient/sources` is written again:
+changes made there since are kept. Until the move back finishes, the project
+counts as moved.
 
 ## Source truth and provenance
 

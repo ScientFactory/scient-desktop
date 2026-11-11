@@ -73,6 +73,8 @@ const JOURNAL_FILE = "journal.json";
 const PROJECT_LIBRARY_DIRECTORY = ".scient/library";
 const PROJECT_STAGING_DIRECTORY = ".scient/library/.staging";
 const PROJECT_ANNOTATIONS_DIRECTORY = ".scient/annotations/v1";
+/** The move back builds the v1 store here; one rename publishes it as `.scient/sources`. */
+const PROJECT_RESTORE_DIRECTORY = ".scient/library/.restoring";
 const LIBRARY_ANNOTATIONS_DIRECTORY = "annotations/v1";
 const BIBLIOGRAPHY_FILES = ["references.bib", "references.json"] as const;
 const MAX_JOURNAL_BYTES = 32 * 1024 * 1024;
@@ -479,6 +481,8 @@ interface V1Store {
 }
 
 const v1Base = (ctx: Pick<MoveContext, "root">) => absolute(ctx.root, SCIENT_SOURCES_DIRECTORY);
+const restoreBase = (ctx: Pick<MoveContext, "root">) =>
+  absolute(ctx.root, `${PROJECT_RESTORE_DIRECTORY}/sources`);
 const v1Relative = (path: string) => `${SCIENT_SOURCES_DIRECTORY}/${path}`;
 
 async function readV1Json(ctx: MoveContext, relative: string): Promise<unknown> {
@@ -819,9 +823,23 @@ async function isCutShortCopyOf(shorter: string, longer: string): Promise<boolea
   }
 }
 
+/** A PDF path that holds other bytes than its name says, and not the start of the right ones. */
+// @effect-diagnostics-next-line extendsNativeError:off - The source stores are Promise-based; callers catch native errors.
+class DamagedPdfCopy extends Error {}
+
+function parsesAsJson(bytes: Buffer): boolean {
+  try {
+    JSON.parse(bytes.toString("utf8"));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
- * Copies one file unless that path already holds the source's bytes. A destination that is the
- * start of the source (a copy cut short) is copied again. Other content stays: damage for a PDF,
+ * Copies one file unless that path already holds the source's bytes. A copy cut short is replaced
+ * in one rename: for a PDF, the start of the right bytes under the wrong hash; for full text, the
+ * start of the source that is not itself whole JSON. Other content stays: damage for a PDF,
  * `different` otherwise, and the caller keeps the source's bytes before anything deletes them.
  */
 async function copyByHash(
@@ -833,16 +851,16 @@ async function copyByHash(
   const existing = await hashFile(destination);
   if (existing !== null) {
     if (existing === (expectedSha256 ?? (await hashFile(source)))) return "present";
-    if (await isCutShortCopyOf(destination, source)) {
-      await NodeFSP.rm(destination, { force: true });
-    } else if (expectedSha256) {
-      throw new Error("The library holds a damaged copy of a PDF.");
+    const cutShort = await isCutShortCopyOf(destination, source);
+    if (expectedSha256) {
+      if (!cutShort) throw new DamagedPdfCopy("The library holds a damaged copy of a PDF.");
     } else {
-      return "different";
+      // Whole JSON that happens to start the source is another extraction, and stays in force.
+      const kept = cutShort ? await readRegularFile(destination) : null;
+      if (!kept || parsesAsJson(kept)) return "different";
     }
   }
-  await ensureDirectory(NodePath.dirname(destination));
-  // Beside the destination, so the final link never crosses volumes.
+  await ensureDirectory(NodePath.dirname(destination)); // Beside the destination, so the final link never crosses volumes.
   const temporary = `${destination}.tmp-${NodeCrypto.randomUUID()}`;
   try {
     await NodeFSP.copyFile(source, temporary, NodeFSP.constants.COPYFILE_EXCL);
@@ -854,6 +872,11 @@ async function copyByHash(
     }
     const copied = await hashFile(temporary);
     if (expectedSha256 && copied !== expectedSha256) return "damaged";
+    if (existing !== null) {
+      // The path is never without a file: other projects may be reading it.
+      await NodeFSP.rename(temporary, destination);
+      return "copied";
+    }
     try {
       if (ctx.faults.refuseLinks) {
         throw Object.assign(new Error("Links are refused."), { code: "EPERM" });
@@ -1654,7 +1677,12 @@ async function counterpartVerifies(
   }
   // Full text verifies by its own bytes in the library, or else by its backup copy below.
   const text = TEXT_FILE.exec(file);
-  if (text && (await hashFile(libraryTextPath(ctx, text))) === sha256) return true;
+  if (text) {
+    if ((await hashFile(libraryTextPath(ctx, text))) === sha256) return true;
+    // The library's text may have changed since step 3 compared it; keep these bytes first.
+    const bytes = await readRegularFile(filePath);
+    if (bytes) await backUpFile(ctx, journal.run, `sources/${file}`, bytes);
+  }
   const record = /^records\/([^/]+)\.json$/u.exec(file);
   if (record) {
     const moved = journal.sources.find((source) => source.projectSourceId === record[1]);
@@ -1761,10 +1789,12 @@ async function runFrom(
 
 /** The recovery table: what this open does, given the journal and the files on disk. */
 async function recover(ctx: MoveContext): Promise<ScientLibraryMoveResult> {
-  const journal = await readJournalAt(migrationDirectory(ctx));
-  // An interrupted move back finishes first: its v1 files are the restore, not older writes.
+  let journal = await readJournalAt(migrationDirectory(ctx));
+  // An interrupted move back finishes first, unless an older Scient wrote the store meanwhile.
   if (journal?.state === "restoring") {
-    return { outcome: "moved-back", journal: (await restoreIntoProject(ctx, journal)).journal };
+    const restored = await restoreIntoProject(ctx, journal);
+    if (restored.result) return { outcome: "moved-back", journal: restored.journal };
+    journal = restored.journal;
   }
   const v1 = await v1StorePresent(ctx.root);
   if (journal?.state === "moved-back") return { outcome: "moved-back", journal };
@@ -1922,7 +1952,11 @@ function toProjectRecord(
   };
 }
 
-async function restoreBackups(ctx: MoveContext, journal: ScientLibraryMoveJournal) {
+/** Every run's backup files, a later run's file winning, without the versions kept beside them. */
+async function backupFiles(
+  ctx: MoveContext,
+  journal: ScientLibraryMoveJournal,
+): Promise<Map<string, string>> {
   const files = new Map<string, string>();
   for (let run = 1; run <= journal.run; run += 1) {
     const directory = backupDirectory(ctx, run);
@@ -1931,31 +1965,51 @@ async function restoreBackups(ctx: MoveContext, journal: ScientLibraryMoveJourna
       files.set(file, NodePath.join(directory, ...file.split("/")));
     }
   }
-  for (const [file, source] of files) {
-    const target = file.startsWith("sources/")
-      ? `${SCIENT_SOURCES_DIRECTORY}/${file.slice("sources/".length)}`
-      : file.startsWith("annotations/")
-        ? `${PROJECT_ANNOTATIONS_DIRECTORY}/${file.slice("annotations/".length)}`
-        : null;
-    const bytes = target ? await readRegularFile(source) : null;
-    if (!target || !bytes) continue;
-    const destination = absolute(ctx.root, target);
+  return files;
+}
+
+async function restoreSourceBackups(
+  ctx: MoveContext,
+  journal: ScientLibraryMoveJournal,
+  base: string,
+) {
+  for (const [file, source] of await backupFiles(ctx, journal)) {
+    if (!file.startsWith("sources/")) continue;
+    const bytes = await readRegularFile(source);
+    if (!bytes) continue;
+    const destination = absolute(base, file.slice("sources/".length));
     if (await createExclusive(ctx, destination, bytes)) continue;
-    // Already restored by an interrupted move back, and perhaps updated since; only a copy cut
-    // short is written again.
+    // Only this move back writes the staging folder, so a shorter file is its own cut copy.
     const current = await readRegularFile(destination);
     if (current && interruptedCopyOf(current, bytes)) await replaceAtomically(destination, bytes);
   }
 }
 
+/** Highlights sit outside the restored store, so a whole file already there is kept as it is. */
+async function restoreAnnotationBackups(ctx: MoveContext, journal: ScientLibraryMoveJournal) {
+  for (const [file, source] of await backupFiles(ctx, journal)) {
+    if (!file.startsWith("annotations/")) continue;
+    const bytes = await readRegularFile(source);
+    if (!bytes) continue;
+    const destination = absolute(
+      ctx.root,
+      `${PROJECT_ANNOTATIONS_DIRECTORY}/${file.slice("annotations/".length)}`,
+    );
+    if (await createExclusive(ctx, destination, bytes)) continue;
+    const current = await readRegularFile(destination);
+    if (current && interruptedCopyOf(current, bytes) && !parsesAsJson(current)) {
+      await replaceAtomically(destination, bytes);
+    }
+  }
+}
+
 async function readProjectRecord(
   ctx: MoveContext,
+  base: string,
   sourceId: string,
 ): Promise<ScientSourceRecord | null> {
   assertSafeIdentifier(sourceId, "Source ID");
-  const bytes = await readRegularFile(
-    absolute(ctx.root, `${SCIENT_SOURCES_DIRECTORY}/records/${sourceId}.json`),
-  );
+  const bytes = await readRegularFile(absolute(base, `records/${sourceId}.json`));
   return bytes ? ownRecord(ctx, JSON.parse(bytes.toString("utf8")), sourceId) : null;
 }
 
@@ -1980,31 +2034,33 @@ export async function moveScientProjectBackIntoProject(input: {
         if (journal.state !== "done") journal = (await recover(ctx)).journal;
         if (!journal || journal.state !== "done") return { outcome: "not-moved" };
         if (await v1StorePresent(ctx.root)) return { outcome: "project-store-present" };
+        // The staging folder exists before the journal says `restoring`: a `restoring` journal
+        // without it means the rename that publishes the store already ran.
+        await NodeFSP.rm(absolute(ctx.root, PROJECT_RESTORE_DIRECTORY), {
+          recursive: true,
+          force: true,
+        });
+        await ensureDirectory(restoreBase(ctx));
         journal = await writeJournal(ctx, { ...journal, state: "restoring" });
       }
-      return (await restoreIntoProject(ctx, journal)).result;
+      return (
+        (await restoreIntoProject(ctx, journal)).result ?? { outcome: "project-store-present" }
+      );
     }),
   );
 }
 
-/**
- * The move back from a `restoring` journal. Every step is safe to repeat, so an interrupted run
- * resumes from the start: backups never overwrite a file restored earlier, a record already at
- * its library state is left alone, PDFs copy by hash, and `pins.json` is read from the backup
- * once it is gone.
- */
-async function restoreIntoProject(
+type MovedBack = Extract<ScientLibraryMoveBackResult, { readonly outcome: "moved-back" }>;
+
+/** The v1 store in the staging folder: backups, then later library changes to pinned records. */
+async function buildRestoredStore(
   ctx: MoveContext,
   journal: ScientLibraryMoveJournal,
-): Promise<{
-  readonly result: Extract<ScientLibraryMoveBackResult, { readonly outcome: "moved-back" }>;
-  readonly journal: ScientLibraryMoveJournal;
-}> {
-  await restoreBackups(ctx, journal);
+  base: string,
+): Promise<MovedBack> {
+  await restoreSourceBackups(ctx, journal, base);
   crash(ctx, "after-restore-backups");
-  const movedBackPins = absolute(backupDirectory(ctx, journal.run), "moved-back/pins.json");
-  const projectPins = await readRegularFile(absolute(ctx.root, PINS_PATH));
-  const pinsText = projectPins ?? (await readRegularFile(movedBackPins));
+  const pinsText = await readRegularFile(absolute(ctx.root, PINS_PATH));
   const pins = pinsText ? decodeScientProjectPinsText(pinsText.toString("utf8")) : [];
   const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
   const resolutions = await resolveScientProjectSources({
@@ -2013,14 +2069,14 @@ async function restoreIntoProject(
     mode: "read",
     sources: pins.map((pin) => ({ projectSourceId: pin.sourceId, work: pin.work })),
   });
-  const recordsDirectory = absolute(ctx.root, `${SCIENT_SOURCES_DIRECTORY}/records`);
-  const historyDirectory = absolute(ctx.root, `${SCIENT_SOURCES_DIRECTORY}/history`);
+  const recordsDirectory = absolute(base, "records");
+  const historyDirectory = absolute(base, "history");
   let restoredSources = 0;
   let restoredPdfs = 0;
   let skippedPins = 0;
   for (const [index, pin] of pins.entries()) {
     const resolution = resolutions[index]!;
-    const backup = await readProjectRecord(ctx, pin.sourceId);
+    const backup = await readProjectRecord(ctx, base, pin.sourceId);
     const library =
       resolution.kind === "resolved"
         ? await readLibraryRecord(ctx, resolveScientLibraryAlias(aliases, resolution.sourceId))
@@ -2085,13 +2141,17 @@ async function restoreIntoProject(
       const outcome = await copyByHash(
         ctx,
         absolute(ctx.libraryRoot, name),
-        absolute(ctx.root, `${SCIENT_SOURCES_DIRECTORY}/${name}`),
+        absolute(base, name),
         attachment.sha256,
       ).catch((error: unknown) => {
-        if (isNodeError(error, "ENOENT")) return "damaged" as const;
+        // A missing library PDF, or a restored v1 file with other bytes, leaves the store as it was.
+        if (isNodeError(error, "ENOENT") || error instanceof DamagedPdfCopy) {
+          return "damaged" as const;
+        }
         throw error;
       });
-      if (outcome === "copied") restoredPdfs += 1;
+      // A rerun finds the PDF it copied before; both count, so the number survives a resume.
+      if (outcome === "copied" || outcome === "present") restoredPdfs += 1;
     }
   }
   // Reviews and managed-file copies changed after the move win over the backup.
@@ -2099,36 +2159,91 @@ async function restoreIntoProject(
   for (const file of await listFiles(reviews)) {
     if (file.includes("/") || !file.endsWith(".json") || file.endsWith(".works.json")) continue;
     const bytes = await readRegularFile(NodePath.join(reviews, file));
-    if (bytes) {
-      await replaceAtomically(
-        absolute(ctx.root, `${SCIENT_SOURCES_DIRECTORY}/reviews/${file}`),
-        bytes,
-      );
-    }
+    if (bytes) await replaceAtomically(absolute(base, `reviews/${file}`), bytes);
   }
   for (const name of BIBLIOGRAPHY_FILES) {
     const bytes = await readRegularFile(
       absolute(ctx.root, `${PROJECT_LIBRARY_DIRECTORY}/bibliography/${name}`),
     );
-    if (bytes) {
-      await replaceAtomically(
-        absolute(ctx.root, `${SCIENT_SOURCES_DIRECTORY}/bibliography/${name}`),
-        bytes,
-      );
-    }
+    if (bytes) await replaceAtomically(absolute(base, `bibliography/${name}`), bytes);
   }
-  if (projectPins) {
-    await backUpFile(ctx, journal.run, "moved-back/pins.json", projectPins);
-    await NodeFSP.rm(absolute(ctx.root, PINS_PATH), { force: true });
+  return { outcome: "moved-back", restoredSources, restoredPdfs, skippedPins };
+}
+
+/** One rename from the staging folder. False when `.scient/sources` holds something again. */
+async function publishRestoredStore(ctx: MoveContext, base: string): Promise<boolean> {
+  const target = v1Base(ctx);
+  // A rename cannot replace a folder on Windows, even an empty one.
+  await removeEmptyDirectories(target);
+  if (await exists(target)) return false;
+  await ensureDirectory(NodePath.dirname(target));
+  try {
+    await NodeFSP.rename(base, target);
+    return true;
+  } catch (error) {
+    if (isNodeError(error, "ENOTEMPTY") || isNodeError(error, "EEXIST")) return false;
+    throw error;
   }
-  crash(ctx, "before-moved-back");
-  const done = await writeJournal(ctx, { ...journal, state: "moved-back" });
+}
+
+async function readMovedBackResult(filePath: string): Promise<MovedBack> {
+  const bytes = await readRegularFile(filePath);
+  const saved: unknown = bytes && parsesAsJson(bytes) ? JSON.parse(bytes.toString("utf8")) : null;
+  const count = (key: string) => {
+    const value = saved && typeof saved === "object" ? (saved as JsonObject)[key] : null;
+    return typeof value === "number" && Number.isInteger(value) && value >= 0 ? value : 0;
+  };
   return {
-    result: { outcome: "moved-back", restoredSources, restoredPdfs, skippedPins },
-    journal: done,
+    outcome: "moved-back",
+    restoredSources: count("restoredSources"),
+    restoredPdfs: count("restoredPdfs"),
+    skippedPins: count("skippedPins"),
   };
 }
 
+/**
+ * The move back from a `restoring` journal. The staging folder is this run's alone and reruns
+ * freely; after the one rename nothing in `.scient/sources` is written, so later changes there
+ * are kept. Null: an older Scient wrote the store first; the journal returns to `done`.
+ */
+async function restoreIntoProject(
+  ctx: MoveContext,
+  journal: ScientLibraryMoveJournal,
+): Promise<{
+  readonly result: MovedBack | null;
+  readonly journal: ScientLibraryMoveJournal;
+}> {
+  const staging = absolute(ctx.root, PROJECT_RESTORE_DIRECTORY);
+  const base = restoreBase(ctx);
+  const saved = absolute(backupDirectory(ctx, journal.run), "moved-back/result.json");
+  let result: MovedBack;
+  // No staging folder and no store: nothing was published, whatever removed the folder.
+  if (!(await exists(base)) && !(await v1StorePresent(ctx.root))) await ensureDirectory(base);
+  if (await exists(base)) {
+    const built = (await v1StorePresent(ctx.root))
+      ? null
+      : await buildRestoredStore(ctx, journal, base);
+    if (built) await replaceAtomically(saved, Buffer.from(formatJson(built), "utf8"));
+    if (!built || !(await publishRestoredStore(ctx, base))) {
+      // The journal first: a `restoring` journal without the staging folder reads as published.
+      const done = await writeJournal(ctx, { ...journal, state: "done" });
+      await NodeFSP.rm(staging, { recursive: true, force: true });
+      return { result: null, journal: done };
+    }
+    result = built;
+  } else {
+    result = await readMovedBackResult(saved);
+  }
+  await NodeFSP.rm(staging, { recursive: true, force: true });
+  await restoreAnnotationBackups(ctx, journal);
+  const pins = await readRegularFile(absolute(ctx.root, PINS_PATH));
+  if (pins) {
+    await backUpFile(ctx, journal.run, "moved-back/pins.json", pins);
+    await NodeFSP.rm(absolute(ctx.root, PINS_PATH), { force: true });
+  }
+  crash(ctx, "before-moved-back");
+  return { result, journal: await writeJournal(ctx, { ...journal, state: "moved-back" }) };
+}
 /** The Library's status lines after a move, for 5e to show. Empty when there is nothing to say. */
 export function scientLibraryMoveStatusLines(journal: ScientLibraryMoveJournal | null): string[] {
   if (!journal || journal.state === "moved-back" || journal.state === "restoring") return [];

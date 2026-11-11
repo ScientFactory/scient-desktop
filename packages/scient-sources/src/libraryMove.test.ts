@@ -884,8 +884,57 @@ describe("full text named by a PDF hash", () => {
     const kept = await NodeFSP.readFile(NodePath.join(backup, "1/sources", relative));
     expect(kept.equals(projectText)).toBe(true);
   });
-});
 
+  // regression: review M3-5d-2, a whole extraction that starts the project's text is not a cut copy
+  it("library text that is whole JSON and starts the project text stays in force", async () => {
+    const { library, project, a, b, reviewId, sha256 } = await seededMove();
+    const { relative, projectText, libraryPath } = await seedFullText(
+      library,
+      project,
+      sha256,
+      (text) => text.subarray(0, text.length - 1),
+    );
+    const kept = await NodeFSP.readFile(libraryPath);
+    expect((await move(library, project)).outcome).toBe("moved");
+    const journal = await expectDone(library, project, {
+      sourceIds: [a.sourceId, b.sourceId],
+      reviewIds: [reviewId],
+    });
+    expect((await NodeFSP.readFile(libraryPath)).equals(kept)).toBe(true);
+    const backup = scientLibraryMoveInternals.backupRoot(
+      await NodeFSP.realpath(library.root),
+      journal.instanceId,
+    );
+    expect(
+      (await NodeFSP.readFile(NodePath.join(backup, "1/sources", relative))).equals(projectText),
+    ).toBe(true);
+  });
+
+  it("library text replaced after the backup step is backed up at cleanup, not left behind", async () => {
+    const { library, project, a, b, reviewId, sha256 } = await seededMove();
+    const { relative, projectText, libraryPath } = await seedFullText(library, project, sha256);
+    await expect(move(library, project, { crashAt: "after-prepared" })).rejects.toBeInstanceOf(
+      ScientLibraryMoveCrash,
+    );
+    const other = Buffer.from(
+      `${JSON.stringify({ formatVersion: 1, pages: ["Re-extracted."] })}\n`,
+    );
+    await NodeFSP.writeFile(libraryPath, other);
+    expect((await move(library, project)).outcome).toBe("moved");
+    const journal = await expectDone(library, project, {
+      sourceIds: [a.sourceId, b.sourceId],
+      reviewIds: [reviewId],
+    });
+    expect((await NodeFSP.readFile(libraryPath)).equals(other)).toBe(true);
+    const backup = scientLibraryMoveInternals.backupRoot(
+      await NodeFSP.realpath(library.root),
+      journal.instanceId,
+    );
+    expect(
+      (await NodeFSP.readFile(NodePath.join(backup, "1/sources", relative))).equals(projectText),
+    ).toBe(true);
+  });
+});
 /** The bar after an interrupted move back finishes: v1 rebuilt with the later edit, no pins. */
 async function expectMovedBack(
   library: ScientLibraryLocation,
@@ -967,7 +1016,11 @@ describe("move back into this project", () => {
       ScientLibraryMoveCrash,
     );
     expect((await journalOf(library, project)).state).toBe("restoring");
-    expect(await exists(NodePath.join(project, ".scient/sources/records"))).toBe(true);
+    // The store is still in the staging folder: nothing is published before it is whole.
+    expect(await exists(NodePath.join(project, ".scient/sources"))).toBe(false);
+    expect(await exists(NodePath.join(project, ".scient/library/.restoring/sources/records"))).toBe(
+      true,
+    );
     expect(await exists(NodePath.join(project, ".scient/library/pins.json"))).toBe(true);
     expect((await readScientLibraryMoveState({ library, projectRoot: project })).moved).toBe(true);
     expect(await back()).toMatchObject({ outcome: "moved-back", restoredSources: 2 });
@@ -996,5 +1049,64 @@ describe("move back into this project", () => {
     expect(
       await moveScientProjectBackIntoProject({ library, projectRoot: project, actor: "user" }),
     ).toEqual({ outcome: "not-moved" });
+  });
+
+  // regression: review M3-5d-2, a resumed move back replaced files changed since the restore
+  it("changes made to the restored store before the move back resumes are kept", async () => {
+    const seeded = await seededMove();
+    const { library, project, a, b, reviewId } = seeded;
+    await move(library, project);
+    const { run } = await journalOf(library, project);
+    await editTitle(library, b.sourceId, "Edited in the library");
+    await expect(
+      moveScientProjectBackIntoProject({
+        library,
+        projectRoot: project,
+        actor: "user",
+        faults: { crashAt: "before-moved-back" },
+      }),
+    ).rejects.toBeInstanceOf(ScientLibraryMoveCrash);
+    // An older Scient opens the restored store and writes to it.
+    const review = NodePath.join(project, ".scient/sources/reviews", `${reviewId}.json`);
+    const decided = Buffer.concat([await NodeFSP.readFile(review), Buffer.from("\n")]);
+    await NodeFSP.writeFile(review, decided);
+    await updateScientSourceNote({
+      root: project,
+      sourceId: a.sourceId,
+      expectedRevision: (await readScientSourceRecord(project, a.sourceId))!.revision,
+      note: "Written by an older Scient.",
+    });
+    expect((await move(library, project)).outcome).toBe("moved-back");
+    expect((await journalOf(library, project)).run).toBe(run);
+    expect((await NodeFSP.readFile(review)).equals(decided)).toBe(true);
+    expect((await readScientSourceRecord(project, a.sourceId))?.note).toBe(
+      "Written by an older Scient.",
+    );
+    expect((await readScientSourceRecord(project, b.sourceId))?.title).toBe(
+      "Edited in the library",
+    );
+  });
+
+  it("a store an older Scient writes while the move back is interrupted stops the move back", async () => {
+    const { library, project } = await seededMove();
+    await move(library, project);
+    const back = (faults?: ScientLibraryMoveFaults) =>
+      moveScientProjectBackIntoProject({
+        library,
+        projectRoot: project,
+        actor: "user",
+        ...(faults ? { faults } : {}),
+      });
+    await expect(back({ crashAt: "after-restore-backups" })).rejects.toBeInstanceOf(
+      ScientLibraryMoveCrash,
+    );
+    const added = await add(project, "C");
+    expect(await back()).toEqual({ outcome: "project-store-present" });
+    expect((await journalOf(library, project)).state).toBe("done");
+    expect(await exists(NodePath.join(project, ".scient/library/.restoring"))).toBe(false);
+    expect((await readScientSourceRecord(project, added.sourceId))?.title).toBe("Study C");
+    // The ordinary move then joins what the older Scient wrote.
+    expect((await move(library, project)).outcome).toBe("moved");
+    expect((await readScientProjectPins(project)).length).toBe(3);
   });
 });
