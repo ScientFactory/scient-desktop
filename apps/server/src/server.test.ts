@@ -815,6 +815,8 @@ const buildAppUnderTest = (options?: {
       ...options?.layers?.serverSettings,
     });
     const gitVcsDriverLayer = Layer.mock(GitVcsDriver.GitVcsDriver)({
+      // Worktree launches read the local branch names first; none block by default.
+      listLocalBranchNames: () => Effect.succeed([]),
       ...options?.layers?.gitVcsDriver,
     });
     const gitManagerLayer = Layer.mock(GitManager.GitManager)({

@@ -87,6 +87,13 @@
     "reason": "Service launcher error, reachable only from an installed background service, which Scient builds cannot create while safetyEnvelopeEnabled is true."
   },
   {
+    "path": "apps/server/src/serviceLauncher.ts",
+    "line": "throw new Error(`Selected t3@${state.activeVersion} runtime is missing or incomplete.`);",
+    "rules": ["t3-command"],
+    "kind": "dormant-service",
+    "reason": "Service launcher error for adopted legacy service state, reachable only from an installed background service, which Scient builds cannot create while safetyEnvelopeEnabled is true."
+  },
+  {
     "path": "apps/web/src/components/chat/MessagesTimeline.logic.ts",
     "line": "const THREAD_READ_OBJECTS = [\" a Scient thread\", \" a T3 thread\"] as const;",
     "rules": ["inherited-brand", "bare-t3"],
