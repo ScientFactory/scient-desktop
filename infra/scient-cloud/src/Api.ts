@@ -2,6 +2,7 @@ import {
   CreateShareRequest,
   EnrollComputerRequest,
   LEASE_GENERATION_HEADER,
+  LEASE_HOLDER_HEADER,
   LeaseRequest,
   PatchShareRequest,
   ShareObjectName,
@@ -313,7 +314,17 @@ const getThread = Effect.fn("Api.getThread")(function* (
 ) {
   const userId = yield* requireReader(request);
   const found = yield* (yield* Users).get(userId).getThread(env, thread);
-  return yield* decryptedResponse(userId, found.objectKey, snapshotHeaders, passthrough);
+  // A computer continuing this thread checks it still holds the lease it took.
+  return yield* decryptedResponse(
+    userId,
+    found.objectKey,
+    {
+      ...snapshotHeaders,
+      [LEASE_GENERATION_HEADER]: String(found.generation),
+      [LEASE_HOLDER_HEADER]: found.holder,
+    },
+    passthrough,
+  );
 });
 
 const lease = Effect.fn("Api.lease")(function* (request: Request, env: string, thread: string) {
@@ -710,7 +721,7 @@ const corsHeaders = (request: Request, config: CloudConfig["Service"]): Record<s
   return allowed
     ? {
         "access-control-allow-origin": origin,
-        "access-control-expose-headers": `${LEASE_GENERATION_HEADER}, content-length`,
+        "access-control-expose-headers": `${LEASE_GENERATION_HEADER}, ${LEASE_HOLDER_HEADER}, content-length`,
         vary: "Origin",
       }
     : { vary: "Origin" };

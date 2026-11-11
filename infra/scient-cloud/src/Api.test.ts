@@ -2,6 +2,7 @@ import * as NodeZlib from "node:zlib";
 
 import {
   LEASE_GENERATION_HEADER,
+  LEASE_HOLDER_HEADER,
   THREAD_META_HEADER,
   cloudPaths,
   encodeThreadMetaHeader,
@@ -226,6 +227,9 @@ describe("sync", () => {
         computer: computerB,
       });
       expect(yield* readBytes(imported)).toEqual(body);
+      // It also says who holds the thread now, so a late import elsewhere can tell it lost.
+      expect(imported.headers.get(LEASE_HOLDER_HEADER)).toBe("env-b");
+      expect(imported.headers.get(LEASE_GENERATION_HEADER)).toBe("1");
 
       const lost = yield* putThread(
         computerA,

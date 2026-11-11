@@ -34,11 +34,18 @@ const continuedHere = {
   },
 };
 
-const dependencies = (state: typeof emptyCloudSyncState) =>
+const refuseDownload: CloudApi["Service"]["getThread"] = () =>
+  Effect.die("A repeated take-over must not download again");
+
+const dependencies = (
+  state: typeof emptyCloudSyncState,
+  getThread: CloudApi["Service"]["getThread"] = refuseDownload,
+) =>
   Layer.mergeAll(
     Layer.succeed(CloudApi, {
       ...unused<CloudApi["Service"]>(),
-      getThread: () => Effect.die("A repeated take-over must not download again"),
+      environmentId: Effect.succeed(EnvironmentId.make("env-b")),
+      getThread,
     }),
     Layer.succeed(ProjectionStoreV2, {
       ...unused<ProjectionStoreV2["Service"]>(),
@@ -51,7 +58,12 @@ const dependencies = (state: typeof emptyCloudSyncState) =>
     }),
     Layer.succeed(ProjectStoreV2, {
       ...unused<ProjectStoreV2["Service"]>(),
-      list: () => Effect.succeed([]),
+      list: () =>
+        Effect.succeed(
+          getThread === refuseDownload
+            ? []
+            : ([{ projectId: PROJECT, title: "Lab", deletedAt: null, archivedAt: null }] as never),
+        ),
     }),
     Layer.succeed(RepositoryIdentityResolver, unused()),
     Layer.succeed(ConversationImportStaging, unused()),
@@ -94,6 +106,55 @@ it.effect("does not return a continuation that has itself moved to another compu
               },
             },
           }),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("refuses to import when another computer took the lease after this one", () =>
+  Effect.gen(function* () {
+    const takeOvers = yield* TakeOverImport;
+    const error = yield* takeOvers
+      .takeOver({ ...request, projectId: PROJECT }, unused<EnvironmentSessionPrincipalShape>())
+      .pipe(Effect.flip);
+    expect(error.message).toBe("Another computer continued this conversation after you did.");
+  }).pipe(
+    Effect.provide(
+      layer.pipe(
+        Layer.provide(
+          dependencies({ ...emptyCloudSyncState, userId: "user_1" }, () =>
+            Effect.succeed({
+              json: new TextEncoder().encode("{}"),
+              lease: { holder: "env-c", generation: 3 },
+            }),
+          ),
+        ),
+      ),
+    ),
+  ),
+);
+
+it.effect("refuses an invented lease generation", () =>
+  Effect.gen(function* () {
+    const takeOvers = yield* TakeOverImport;
+    const error = yield* takeOvers
+      .takeOver(
+        { ...request, projectId: PROJECT, generation: 999 },
+        unused<EnvironmentSessionPrincipalShape>(),
+      )
+      .pipe(Effect.flip);
+    expect(error.message).toBe("Another computer continued this conversation after you did.");
+  }).pipe(
+    Effect.provide(
+      layer.pipe(
+        Layer.provide(
+          dependencies({ ...emptyCloudSyncState, userId: "user_1" }, () =>
+            Effect.succeed({
+              json: new TextEncoder().encode("{}"),
+              lease: { holder: "env-b", generation: 2 },
+            }),
+          ),
         ),
       ),
     ),

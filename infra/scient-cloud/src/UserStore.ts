@@ -543,7 +543,11 @@ export const makeUserApi = (userId: string, run: RunSql) => {
           const row = yield* getThreadRow(env, thread);
           if (!row?.object_key)
             return yield* failWith("not_found", "No cloud copy of this thread.");
-          return { objectKey: row.object_key, generation: row.generation };
+          return {
+            objectKey: row.object_key,
+            generation: row.generation,
+            holder: row.moved_to ?? row.env,
+          };
         }),
       ),
 

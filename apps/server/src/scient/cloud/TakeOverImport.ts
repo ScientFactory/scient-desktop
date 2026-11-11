@@ -7,6 +7,7 @@
 import type { ResolvedAttachmentContent } from "@scientfactory/conversation";
 import { CloudConversation } from "@scientfactory/scient-cloud/api";
 import {
+  type EnvironmentId,
   type EnvironmentSessionPrincipalShape,
   type ProjectId,
   type ScientCloudTakeOverRequest,
@@ -35,7 +36,7 @@ import {
   CONVERSATION_IMPORT_UPLOAD_ROUTE_PREFIX,
   ConversationImportStaging,
 } from "../conversationImport/ConversationImportStaging.ts";
-import { CloudApi } from "./CloudApi.ts";
+import { CloudApi, type CloudThreadCopy } from "./CloudApi.ts";
 import { CloudSyncState } from "./CloudSyncState.ts";
 import { makeProjectPlacement } from "./CloudSyncSourceLive.ts";
 
@@ -98,15 +99,30 @@ const make = Effect.gen(function* () {
     return { _tag: "choose" as const, candidates };
   });
 
+  /** Who holds the source thread now; null when this computer still holds the lease it took. */
+  const supersededBy = Effect.fn("TakeOverImport.supersededBy")(function* (
+    request: ScientCloudTakeOverRequest,
+    lease: CloudThreadCopy["lease"],
+  ) {
+    const self = yield* api.environmentId;
+    if (lease === null) return "unknown";
+    return lease.holder === self && lease.generation === request.generation ? null : lease.holder;
+  });
+
   const download = Effect.fn("TakeOverImport.download")(function* (
     userId: string,
     request: ScientCloudTakeOverRequest,
   ) {
-    const json = yield* api.getThread(
+    const { json, lease } = yield* api.getThread(
       userId,
       request.source.environmentId,
       request.source.threadId,
     );
+    // Another computer may have continued it since this one took the lease (say, while the
+    // person chose a project here); then this computer must not start a second copy.
+    if ((yield* supersededBy(request, lease)) !== null) {
+      return yield* refused("Another computer continued this conversation after you did.");
+    }
     const document = yield* decodeConversation(new TextDecoder().decode(json)).pipe(
       Effect.mapError(() => refused("The cloud copy of this conversation could not be read.")),
     );
@@ -210,8 +226,22 @@ const make = Effect.gen(function* () {
     }
     const downloaded = yield* download(userId, request);
     const result = yield* importPackage(request, destination.projectId, downloaded, principal);
+    // Checked again: a lease taken elsewhere during the import leaves this copy read-only.
+    const after = yield* api
+      .getThread(userId, request.source.environmentId, request.source.threadId)
+      .pipe(Effect.map((copy) => copy.lease));
+    const holder = yield* supersededBy(request, after);
+    const movedAt = DateTime.formatIso(yield* DateTime.now);
     yield* store.update((state) => ({
       ...state,
+      ...(holder === null || holder === "unknown"
+        ? {}
+        : {
+            moved: {
+              ...state.moved,
+              [result.threadId]: { movedTo: holder as EnvironmentId, movedAt },
+            },
+          }),
       continuedFrom: {
         ...state.continuedFrom,
         [result.threadId]: {

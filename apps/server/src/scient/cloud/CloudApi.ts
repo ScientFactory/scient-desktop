@@ -5,6 +5,8 @@ import {
   CloudErrorBody,
   CloudErrorCode,
   CloudLimits,
+  LEASE_GENERATION_HEADER,
+  LEASE_HOLDER_HEADER,
   type Ed25519PublicJwk,
   MovedThreadsResponse,
   THREAD_META_HEADER,
@@ -101,13 +103,22 @@ export interface CloudApiShape {
     userId: string,
     since: string | undefined,
   ) => Effect.Effect<MovedThreadsResponse, CloudApiError>;
-  /** The thread's `CloudConversation` JSON bytes (already decompressed). */
+  /**
+   * The thread's `CloudConversation` JSON bytes (already decompressed), with the computer that
+   * holds it now and its lease generation.
+   */
   readonly getThread: (
     userId: string,
     environmentId: EnvironmentId,
     threadId: ThreadId,
-  ) => Effect.Effect<Uint8Array, CloudApiError>;
+  ) => Effect.Effect<CloudThreadCopy, CloudApiError>;
   readonly getBlob: (userId: string, sha256: string) => Effect.Effect<Uint8Array, CloudApiError>;
+}
+
+export interface CloudThreadCopy {
+  readonly json: Uint8Array;
+  /** Null when the cloud did not say (an older Worker). */
+  readonly lease: { readonly holder: string; readonly generation: number } | null;
 }
 
 export class CloudApi extends Context.Service<CloudApi, CloudApiShape>()(
@@ -197,7 +208,8 @@ const make = Effect.gen(function* () {
               Effect.mapError(() => failure("network", "The cloud response was interrupted.")),
             ),
           );
-    if (response.status >= 200 && response.status < 300) return { status: response.status, bytes };
+    if (response.status >= 200 && response.status < 300)
+      return { status: response.status, bytes, headers: response.headers };
     const retryAfter = retryAfterMs(
       response.headers["retry-after"],
       yield* Clock.currentTimeMillis,
@@ -319,12 +331,20 @@ const make = Effect.gen(function* () {
       return yield* json(MovedThreadsResponse, bytes);
     }),
     getThread: Effect.fn("CloudApi.getThread")(function* (userId, env, threadId) {
-      const { bytes } = yield* send({
+      const { bytes, headers } = yield* send({
         userId,
         method: "GET",
         path: cloudPaths.thread(env, threadId),
       });
-      return yield* gunzipIfNeeded(bytes);
+      const holder = headers[LEASE_HOLDER_HEADER];
+      const generation = Number(headers[LEASE_GENERATION_HEADER]);
+      return {
+        json: yield* gunzipIfNeeded(bytes),
+        lease:
+          holder !== undefined && holder !== "" && Number.isSafeInteger(generation)
+            ? { holder, generation }
+            : null,
+      };
     }),
     getBlob: Effect.fn("CloudApi.getBlob")(function* (userId, sha256) {
       const { bytes } = yield* send({ userId, method: "GET", path: cloudPaths.blob(sha256) });

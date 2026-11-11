@@ -21,6 +21,8 @@ export const SCIENT_SHARE_CONTENT_ORIGIN = "https://share.scientusercontent.com"
 export const THREAD_META_HEADER = "x-scient-thread-meta";
 /** The lease response body is the thread's gzip snapshot, so its generation travels here. */
 export const LEASE_GENERATION_HEADER = "x-scient-lease-generation";
+/** The computer that holds a thread now: the one it moved to, or its own. */
+export const LEASE_HOLDER_HEADER = "x-scient-lease-holder";
 /** Header values over a few KiB risk proxy limits; meta beyond this is refused. */
 export const THREAD_META_HEADER_MAX_BYTES = 8 * 1024;
 
