@@ -28,9 +28,9 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: |
-            args:
-              - --filter=@t3tools/web...
+          # A full install: `vp run` loads every package's config, and the server's config
+          # imports workspace packages a web-only install lacks (v0.6.28's deploy failed on this).
+          run-install: true
       - name: Build and deploy
         run: infra/scient-web/build.sh --deploy
         env:

@@ -682,7 +682,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Guest links",
     to: "/settings/labs",
     scope: "environment",
-    // SCIENT-FORK:START — guest links need T3 Connect, which Scient keeps off.
+    // SCIENT-FORK:START — guests arrive through Scient Connect; builds without it offer no guest links.
     cloudOnly: true,
     // SCIENT-FORK:END
     searchTerms: ["beta share guest invite link teammate watch scient connect tunnel"],

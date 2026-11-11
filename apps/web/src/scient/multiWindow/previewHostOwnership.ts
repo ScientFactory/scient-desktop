@@ -28,6 +28,9 @@ export function consumePreviewTakeover(tabId: string): boolean {
   return takeOverOnShow.delete(tabId);
 }
 
+/** How long a window the person is not using leaves a new tab to the window they are using. */
+export const BACKGROUND_FIRST_CLAIM_DELAY_MS = 500;
+
 const hostLockName = (tabId: string) => `scient-preview-tab-host:${tabId}`;
 const shownLockName = (tabId: string) => `scient-preview-tab-shown:${tabId}`;
 
@@ -36,7 +39,17 @@ const shownLockName = (tabId: string) => `scient-preview-tab-shown:${tabId}`;
  * Web Lock. Windows that show the tab also hold a shared lock, so `LockManager.query()` client
  * ids tell a holder that shows the tab from one that does not.
  */
-export function createPreviewHostClaim(tabId: string, locks: LockManager): PreviewHostClaim {
+export function createPreviewHostClaim(
+  tabId: string,
+  locks: LockManager,
+  options: {
+    /**
+     * Whether this window is in the background, so it waits before its first claim. Every window
+     * learns of a new tab, often this one first, and the window that opened it would take it back.
+     */
+    readonly inBackground?: () => boolean;
+  } = {},
+): PreviewHostClaim {
   const hostLock = hostLockName(tabId);
   const shownLock = shownLockName(tabId);
   const listeners = new Set<() => void>();
@@ -48,6 +61,7 @@ export function createPreviewHostClaim(tabId: string, locks: LockManager): Previ
     pendingRequest: null as AbortController | null,
     releaseHost: null as (() => Promise<void>) | null,
     shown: null as LockHold | null,
+    firstClaim: null as ReturnType<typeof setTimeout> | null,
   };
 
   const setRole = (next: PreviewHostRole) => {
@@ -145,6 +159,15 @@ export function createPreviewHostClaim(tabId: string, locks: LockManager): Previ
     if (isCurrent(id) && state.role === "host" && !state.displayed) await state.releaseHost?.();
   };
 
+  const cancelFirstClaim = () => {
+    if (state.firstClaim !== null) clearTimeout(state.firstClaim);
+    state.firstClaim = null;
+  };
+  const claimNow = () => {
+    cancelFirstClaim();
+    if (state.active) void request(false);
+  };
+
   return {
     role: () => state.role,
     subscribe: (listener) => {
@@ -155,9 +178,12 @@ export function createPreviewHostClaim(tabId: string, locks: LockManager): Previ
     },
     start: () => {
       state.active = true;
-      void request(false);
+      if (!state.displayed && options.inBackground?.()) {
+        state.firstClaim = setTimeout(claimNow, BACKGROUND_FIRST_CLAIM_DELAY_MS);
+      } else claimNow();
       if (state.displayed) void show().catch(() => undefined);
       return () => {
+        cancelFirstClaim();
         state.active = false;
         state.attempt += 1;
         state.pendingRequest?.abort();
@@ -173,13 +199,16 @@ export function createPreviewHostClaim(tabId: string, locks: LockManager): Previ
       if (state.displayed === displayed) return;
       state.displayed = displayed;
       if (!state.active) return;
+      if (displayed && state.firstClaim !== null) claimNow();
       if (displayed) return show();
       void state.shown?.release();
       state.shown = null;
       if (state.role === "host") await handOff();
     },
     showHere: () => {
-      if (state.active && state.role !== "host") void request(true);
+      if (!state.active || state.role === "host") return;
+      cancelFirstClaim();
+      void request(true);
     },
   };
 }
