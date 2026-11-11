@@ -514,8 +514,10 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
       );
     };
     const credentials = () => started?.credentials ?? NO_CREDENTIALS;
-    const shown = (text: string, limit: number) =>
-      clip(redactText(text, credentials(), limit), limit);
+    const shown = (text: string, limit: number) => {
+      const safe = redactText(text, credentials(), limit);
+      return text.length > limit ? `${safe}… (${text.length - limit} more characters)` : safe;
+    };
     const outcome = yield* Effect.tryPromise({
       try: async () => {
         const transport = new StreamableHTTPClientTransport(new URL("http://scient.local/check"), {

@@ -369,7 +369,10 @@ describe("free text a program writes", () => {
     expect(redactText("used k4y9 here", programCredentials(["k4y9"]))).toBe(
       `used ${REDACTED} here`,
     );
-    // Cut after redaction: the word the cut splits is still checked whole.
-    expect(redactText(`see short-key-1`, credentials, 6)).toBe(`see ${REDACTED}`);
+    // A cut never shows a piece of a credential: the word it splits is left out.
+    expect(redactText(`see short-key-1`, credentials, 6)).toBe("see ");
+    const long = "Q".repeat(5_000) + "k".repeat(5_000);
+    // regression: the text was cut 4 KB past the limit first, so a longer key's start showed.
+    expect(redactText(`${long} tail`, programCredentials([long]), 4_000)).toBe("");
   });
 });

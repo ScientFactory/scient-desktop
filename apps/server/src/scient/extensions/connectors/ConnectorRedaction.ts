@@ -210,22 +210,27 @@ export const programCredentials = (
   return { ...base, tokens, tokenBytes: tokens.map(bytes) };
 };
 
-/** Room past a cut so a credential the cut would split is still seen whole. */
-const CUT_MARGIN = 4_096;
-
-/**
- * Free text for people and agents (tool output, error output, messages): each word carrying a
- * credential in any encoding becomes the marker, and a credential across words hides it all.
- * With `limit`, only what is shown is checked: the text is cut after redaction, never before.
- */
-export const redactText = (text: string, credentials: CredentialSet, limit?: number): string => {
-  const shown = limit === undefined ? text : text.slice(0, limit + CUT_MARGIN);
-  if (credentials.secrets.length === 0 && credentials.tokens.length === 0) return shown;
-  const parts = shown.split(/(\s+)/u);
+/** Each word carrying a credential in any encoding becomes the marker; one across words hides all. */
+const redactWords = (text: string, credentials: CredentialSet): string => {
+  if (credentials.secrets.length === 0 && credentials.tokens.length === 0) return text;
+  const parts = text.split(/(\s+)/u);
   for (let index = 0; index < parts.length; index += 2)
     if (parts[index] !== "" && isTainted(parts[index]!, credentials)) parts[index] = REDACTED;
   const joined = parts.join("");
   return isTainted(joined, credentials) ? REDACTED : joined;
+};
+
+/**
+ * Free text for people and agents (tool output, error output, messages), credentials hidden.
+ * With `limit`, at most that much is shown, and never a piece of a credential the cut splits:
+ * the word the cut splits is left out (a credential with spaces: all of it is checked first).
+ */
+export const redactText = (text: string, credentials: CredentialSet, limit?: number): string => {
+  if (limit === undefined || text.length <= limit) return redactWords(text, credentials);
+  if ([...credentials.secrets, ...credentials.tokens].some((value) => /\s/u.test(value)))
+    return redactWords(text, credentials).slice(0, limit);
+  const cut = text.slice(0, limit);
+  return redactWords(/\s/u.test(text[limit]!) ? cut : cut.replace(/\S+$/u, ""), credentials);
 };
 
 /** A JSON value (a tool's parameter schema) with tainted strings replaced; undefined if unsafe. */
