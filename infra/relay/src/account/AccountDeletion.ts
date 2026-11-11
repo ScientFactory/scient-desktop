@@ -9,6 +9,7 @@ import * as RelayDb from "../db.ts";
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as ManagedEndpointProvider from "../environments/ManagedEndpointProvider.ts";
+import * as HeldHooks from "../hooks/HeldHooks.ts";
 import * as HookInbox from "../hooks/HookInbox.ts";
 import { unlinkEnvironmentRecord } from "../http/Api.ts";
 import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
@@ -23,6 +24,7 @@ export class AccountDeletionFailed extends Schema.TaggedError<AccountDeletionFai
   {
     stage: Schema.Literals([
       "list-environments",
+      "clear-held-webhooks",
       "unlink-environment",
       "delete-records",
       "unlink-t3chat",
@@ -63,8 +65,25 @@ export const make = Effect.gen(function* () {
     | HookInbox.HookInbox
     | RelayDb.RelayTransactions
   >();
+  const managedEndpoints = yield* ManagedEndpointProvider.ManagedEndpointProvider;
+  const inbox = yield* HookInbox.HookInbox;
   const fail = (stage: AccountDeletionFailed["stage"]) => (cause: unknown) =>
     new AccountDeletionFailed({ stage, cause });
+
+  // The shared unlink only logs a failed inbox clear and then drops the allocation that names the
+  // inbox, so deletion clears it first, while a retry can still find it.
+  const clearHeldWebhooks = Effect.fn("relay.account_deletion.clear_held_webhooks")(function* (
+    userId: string,
+    environmentId: string,
+  ) {
+    const target = yield* managedEndpoints.prepareDeprovision({ userId, environmentId });
+    if (target === null || !config.managedEndpointNamespace) return;
+    const endpointKey = HeldHooks.endpointKeyForTunnelName(
+      config.managedEndpointNamespace,
+      target.tunnelName,
+    );
+    if (endpointKey !== null) yield* inbox.clear({ endpointKey });
+  });
 
   return AccountDeletion.of({
     deleteAccount: Effect.fn("relay.account_deletion.delete_account")(function* (input) {
@@ -78,13 +97,18 @@ export const make = Effect.gen(function* () {
       yield* Effect.forEach(
         environmentIds,
         (environmentId) =>
-          unlinkEnvironmentRecord({
-            userId: input.userId,
-            environmentId,
-            managedEndpointNamespace: config.managedEndpointNamespace,
-          }).pipe(
-            Effect.provideContext(unlinkServices),
-            Effect.mapError(fail("unlink-environment")),
+          clearHeldWebhooks(input.userId, environmentId).pipe(
+            Effect.mapError(fail("clear-held-webhooks")),
+            Effect.andThen(
+              unlinkEnvironmentRecord({
+                userId: input.userId,
+                environmentId,
+                managedEndpointNamespace: config.managedEndpointNamespace,
+              }).pipe(
+                Effect.provideContext(unlinkServices),
+                Effect.mapError(fail("unlink-environment")),
+              ),
+            ),
           ),
         { concurrency: ENVIRONMENT_UNLINK_CONCURRENCY, discard: true },
       );

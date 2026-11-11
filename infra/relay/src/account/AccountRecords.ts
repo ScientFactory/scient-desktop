@@ -65,8 +65,11 @@ export const accountRecordDeletions = (userId: string): ReadonlyArray<SQL> => {
     sql`delete from ${relayEnvironmentCredentials} where ${ownedEnvironmentKey(relayEnvironmentCredentials)}`,
     sql`delete from ${relayDeliveryAttempts}
       where ${relayDeliveryAttempts.userId} = ${userId}
-        or ${relayDeliveryAttempts.deviceId} in (
-          select device_id from ${relayMobileDevices} where user_id = ${userId}
+        or (
+          ${relayDeliveryAttempts.userId} is null
+          and ${relayDeliveryAttempts.deviceId} in (
+            select device_id from ${relayMobileDevices} where user_id = ${userId}
+          )
         )`,
     sql`delete from ${relayLiveActivities} where ${relayLiveActivities.userId} = ${userId}`,
     sql`delete from ${relayMobileDevices} where ${relayMobileDevices.userId} = ${userId}`,

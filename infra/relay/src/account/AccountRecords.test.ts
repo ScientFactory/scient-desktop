@@ -133,6 +133,14 @@ describe("account record deletion", () => {
           [NOW],
         ),
       );
+      // regression: account switching on one phone reuses its device id; the other account keeps its history.
+      yield* Effect.promise(() =>
+        pg.query(
+          `insert into relay_delivery_attempts (id, created_at, user_id, device_id, kind)
+            values ('user-2-on-user-1-phone', $1, 'user-2', 'user-1-device', 'alert')`,
+          [NOW],
+        ),
+      );
       const before = yield* countRows(pg);
 
       const dialect = new PgDialect();
@@ -150,7 +158,7 @@ describe("account record deletion", () => {
       expect(after).toEqual({
         ...before,
         relay_agent_activity_rows: 1,
-        relay_delivery_attempts: 2,
+        relay_delivery_attempts: 3,
         relay_environment_credentials: 1,
         relay_environment_links: 1,
         relay_live_activities: 1,

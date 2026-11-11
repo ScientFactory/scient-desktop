@@ -22,14 +22,25 @@ export function DeleteAccountSection(props: { readonly accountId: string | null 
   const deleteAccount = useAtomCommand(deleteManagedRelayAccountCommand, { reportFailure: false });
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // The Clerk user is gone; signing out only clears this device's session.
+  const signOutDeletedAccount = async () => {
+    try {
+      await clerk.signOut();
+    } catch (cause) {
+      console.warn("[scient-connect] Sign-out after account deletion failed", { cause });
+      Dialog.alert(
+        "Account deleted",
+        "Your account was deleted, but this phone is still signed in.",
+        [{ text: "Sign out", onPress: () => void signOutDeletedAccount() }],
+      );
+    }
+  };
+
   const handleDelete = async (accountId: string) => {
     setIsDeleting(true);
     const result = await deleteAccount({ accountId });
     if (result._tag === "Success") {
-      // The Clerk user is gone; signing out only clears this device's session.
-      await clerk.signOut().catch((cause: unknown) => {
-        console.warn("[scient-connect] Sign-out after account deletion failed", { cause });
-      });
+      await signOutDeletedAccount();
       return;
     }
     setIsDeleting(false);
