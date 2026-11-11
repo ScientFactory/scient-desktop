@@ -675,7 +675,8 @@ library backend:
 
 **Journal.** `<library>/migrations/<instanceId>/journal.json`, written with an
 atomic replace. States: `copying`, `prepared`, `committed`, `cleanup`, `done`,
-and `moved-back` after "Move back into this project". It records the run
+`restoring` while "Move back into this project" runs, and `moved-back` after
+it. It records the run
 number, each v1 source's library ID and identity outcome (`copied`, `same`,
 `older`, `newer`, `diverged`, `removed`), the PDFs and annotation files moved,
 every project artifact (destination, plan `create` / `keep` / `replace` /
@@ -691,13 +692,16 @@ deletes v1 files; a `pins.json` on its own never does.
 2. Copy: records rewritten to format 2 (no `projectId`; the note goes to the
    pin), their history, trash entries, Zotero merge bases, PDFs and full text
    by hash, and annotation files for library PDFs, joined by annotation ID
-   (the higher revision wins). Every write is an exclusive create; a record ID
+   (the higher revision wins). Full text is named by its PDF's hash, so other
+   text already at that name stays in force. A destination that is the start
+   of the source's bytes (a copy cut short) is removed and copied again. Every
+   write is an exclusive create; a record ID
    the library already has goes through the identity check below. Each
    project source ID is written to the instance map (`resolvedBy: "moved"`).
 3. Verify and back up: every copied PDF is hashed and every mapped record read
-   back. Every v1 file except PDFs and full text is copied to
-   `migrations/<instanceId>/v1/<run>/` (a PDF whose bytes do not match its
-   name goes there too). A backup file is never overwritten; another version
+   back. Every v1 file except PDFs, and full text the library holds byte for
+   byte, is copied to `migrations/<instanceId>/v1/<run>/` (a PDF whose bytes
+   do not match its name goes there too). A backup file is never overwritten; another version
    sits beside it as `<name>.~<sha12>`.
 4. `mergeScientLibraryDuplicates`, then collections and saved searches move in.
    A collection already in the library under the same ID gains the members; a
@@ -714,8 +718,9 @@ deletes v1 files; a `pins.json` on its own never does.
    start of the staged bytes is a copy cut short; it is set aside as
    `<name>.broken-<time>` and published again.
 7. Cleanup: each v1 file is deleted once its counterpart verifies (library
-   record, PDF or text by hash, annotation file by IDs, review or bibliography
-   copy by journal hash, everything else by its backup copy). A file that
+   record, PDF by hash, text by its own bytes in the library, annotation file
+   by IDs, review or bibliography copy by journal hash, everything else, and
+   text the library holds differently, by its backup copy). A file that
    cannot be deleted (a PDF open on Windows) stays in `retry` and the journal
    stays in `cleanup` until a later open deletes it.
 
@@ -773,7 +778,12 @@ pinned record's later library state as a new v1 revision under the pin's key
 and project note, copies its PDFs back, copies the current reviews and
 bibliography copies over the backup's, backs up and removes `pins.json`, and
 sets the journal to `moved-back`. Library records stay. It refuses while
-`.scient/sources` holds files again.
+`.scient/sources` holds files again. The journal is set to `restoring` before
+the first v1 file is written, and every step is safe to repeat: an
+interrupted move back resumes on the next move back, write or background pass,
+before any check for v1 files (a restored record already at its library state
+keeps its revision; `pins.json` is read from the backup once removed). Until
+it finishes, the project counts as moved.
 
 ## Source truth and provenance
 
