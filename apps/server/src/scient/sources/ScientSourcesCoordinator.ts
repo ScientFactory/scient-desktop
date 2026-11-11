@@ -231,7 +231,7 @@ function hasMisclassifiedLegacyPdfSubject(record: ScientSourceRecord): boolean {
   );
 }
 
-function normalizeSourceRecordForRead(record: ScientSourceRecord): ScientSourceRecord {
+export function normalizeSourceRecordForRead(record: ScientSourceRecord): ScientSourceRecord {
   // Older records may contain provider markup or a PDF Subject that an early
   // local adapter misclassified. Correct the detail response without rewriting
   // project evidence merely because it was read.
@@ -810,7 +810,7 @@ function proposeRefreshedSourceUpdate(input: {
 }
 
 export async function applyRefreshedSourceMetadata(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly record: ScientSourceRecord;
   readonly candidate: ScientSourceCandidate;
 }) {
@@ -881,12 +881,14 @@ export async function applyRefreshedSourceMetadata(input: {
 }
 
 export async function refreshScientSourceMetadata(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly resolveIdentifier?: ResolveSourceIdentifier;
 }) {
-  const root = await canonicalizeScientSourceRoot(input.root);
+  const root = isScientLibraryLocation(input.root)
+    ? await canonicalScientSourceLocation(input.root)
+    : await canonicalizeScientSourceRoot(input.root);
   const record = await readScientSourceRecord(root, input.sourceId);
   if (!record) throw new Error("The source was not found in this project.");
   if (record.revision !== input.expectedRevision) {
@@ -1014,8 +1016,10 @@ export async function preflightZoteroImport(input: {
   readonly connection?: ZoteroConnection;
   readonly groupId?: string;
   readonly zotero?: ZoteroAccess;
+  /** The records to compare with, when the store cannot be read yet (a library not created). */
+  readonly existing?: ReadonlyArray<ScientSourceRecord>;
 }) {
-  const records = await listScientSourceRecords(input.root);
+  const records = input.existing ?? (await listScientSourceRecords(input.root));
   const transport = await zoteroTransport(
     input.zotero ?? localOnlyZoteroAccess,
     input.connection,

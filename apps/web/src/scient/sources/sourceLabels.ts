@@ -51,6 +51,18 @@ export function agentVerificationLabel(record: {
   return ` · ${VERIFICATION_LABELS[record.verification.state]}`;
 }
 
+/**
+ * Where a listed source stands with this project, on a library server only: the Library view
+ * marks what is pinned here, and a pin this computer's library lacks says so.
+ */
+export function sourcePinLabel(
+  record: { readonly pinned?: boolean; readonly fromSnapshot?: true },
+  listed: "project" | "library" | undefined,
+): string {
+  if (record.fromSnapshot) return " · Not in this Library";
+  return listed === "library" && record.pinned ? " · In this project" : "";
+}
+
 export function sourceAddedLabel(
   importedAt: string,
   recentlyAdded: boolean,

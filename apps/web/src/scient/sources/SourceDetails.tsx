@@ -651,7 +651,12 @@ export function SourceDetails(props: {
   const [gettingPdf, setGettingPdf] = useState(false);
   const record = props.record;
   const readOnly = props.readOnly ?? false;
-  const sourceNote = useSourceNoteControls({ record, readOnly, onSave: props.onSaveNote });
+  // A library server's note is this project's note on the pin, so a source not pinned here has none.
+  const sourceNote = useSourceNoteControls({
+    record,
+    readOnly: readOnly || record.pinned === false,
+    onSave: props.onSaveNote,
+  });
   const publication = publicationLocation(record);
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,

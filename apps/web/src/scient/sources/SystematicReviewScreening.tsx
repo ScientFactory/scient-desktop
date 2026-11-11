@@ -8,7 +8,7 @@ import {
 } from "@scientfactory/scient-sources";
 import type {
   ScientSourceDetailResult,
-  ScientSourcesOverviewResult,
+  ScientSystematicReviewRecord,
   ScientSystematicReviewResult,
 } from "@t3tools/contracts";
 import { ChevronDown } from "lucide-react";
@@ -18,7 +18,11 @@ import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 
-type SourceSummary = ScientSourcesOverviewResult["records"][number];
+/** What a review screen shows of a record: a Library source, or a review's own record. */
+export type ReviewRecordView = Pick<
+  ScientSystematicReviewRecord,
+  "sourceId" | "revision" | "title" | "creators" | "issuedYear" | "containerTitle" | "label"
+>;
 type ReviewDetail = NonNullable<ScientSystematicReviewResult["detail"]>;
 
 const DECISION_LABELS: Readonly<Record<ScientReviewDecision, string>> = {
@@ -27,7 +31,7 @@ const DECISION_LABELS: Readonly<Record<ScientReviewDecision, string>> = {
   maybe: "Maybe",
 };
 
-function creatorLine(record: SourceSummary | undefined): string {
+function creatorLine(record: ReviewRecordView | undefined): string {
   if (!record) return "";
   const lead = record.creators[0];
   const name = lead?.familyName ?? lead?.literalName ?? lead?.givenName ?? "Unknown creator";
@@ -44,7 +48,7 @@ function creatorLine(record: SourceSummary | undefined): string {
 export function SystematicReviewScreening(props: {
   readonly detail: ReviewDetail;
   readonly stage: ScientReviewStage;
-  readonly records: ReadonlyMap<string, SourceSummary>;
+  readonly records: ReadonlyMap<string, ReviewRecordView>;
   readonly sourceDetails: Readonly<Record<string, ScientSourceDetailResult | undefined>>;
   readonly loadSource: (sourceId: string) => Promise<unknown>;
   readonly pending: boolean;
@@ -171,7 +175,9 @@ export function SystematicReviewScreening(props: {
             >
               {record?.title ?? "Untitled source"}
             </button>
-            <p className="mt-0.5 text-xs text-muted-foreground">{creatorLine(record)}</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {[creatorLine(record), record?.label].filter(Boolean).join(" · ")}
+            </p>
           </div>
           <p className="min-h-16 whitespace-pre-line text-sm leading-relaxed text-foreground/90">
             {abstractReady ? (sourceDetail.abstract ?? "No abstract.") : null}

@@ -10,6 +10,7 @@ import type {
   ScientSourcesAddByIdentifierRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
+  ScientSourcesScope,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewRequest,
   ScientSystematicReviewsRequest,
@@ -37,7 +38,11 @@ const IMPORT_STEP_TIMEOUT_MS = 120_000;
 
 export const getEnvironmentScientSourcesOverview = Effect.fn(
   "clientRuntime.state.getEnvironmentScientSourcesOverview",
-)(function* (input: { readonly prepared: PreparedConnection; readonly root: string }) {
+)(function* (input: {
+  readonly prepared: PreparedConnection;
+  readonly root: string;
+  readonly scope?: ScientSourcesScope;
+}) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -51,7 +56,7 @@ export const getEnvironmentScientSourcesOverview = Effect.fn(
     request: ({ client, headers }) =>
       client.overview({
         headers,
-        payload: { root: input.root },
+        payload: { root: input.root, ...(input.scope ? { scope: input.scope } : {}) },
       }),
   });
 });
@@ -62,6 +67,7 @@ export const getEnvironmentScientSourceDetail = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly root: string;
   readonly sourceId: string;
+  readonly reviewId?: string;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -76,7 +82,11 @@ export const getEnvironmentScientSourceDetail = Effect.fn(
     request: ({ client, headers }) =>
       client.detail({
         headers,
-        payload: { root: input.root, sourceId: input.sourceId },
+        payload: {
+          root: input.root,
+          sourceId: input.sourceId,
+          ...(input.reviewId ? { reviewId: input.reviewId } : {}),
+        },
       }),
   });
 });
@@ -117,6 +127,7 @@ export const saveEnvironmentScientSourcePage = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly root: string;
   readonly page: ScientSourceSavePageRequest["page"];
+  readonly pin?: boolean;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -129,7 +140,14 @@ export const saveEnvironmentScientSourcePage = Effect.fn(
     timeoutMs: METADATA_REFRESH_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) =>
-      client.savePage({ headers, payload: { root: input.root, page: input.page } }),
+      client.savePage({
+        headers,
+        payload: {
+          root: input.root,
+          page: input.page,
+          ...(input.pin !== undefined ? { pin: input.pin } : {}),
+        },
+      }),
   });
 });
 
@@ -322,6 +340,7 @@ export const addEnvironmentScientSourcesByIdentifier = Effect.fn(
   readonly prepared: PreparedConnection;
   readonly root: ScientSourcesAddByIdentifierRequest["root"];
   readonly entries: ScientSourcesAddByIdentifierRequest["entries"];
+  readonly pin?: boolean;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -337,7 +356,11 @@ export const addEnvironmentScientSourcesByIdentifier = Effect.fn(
     request: ({ client, headers }) =>
       client.addByIdentifier({
         headers,
-        payload: { root: input.root, entries: input.entries },
+        payload: {
+          root: input.root,
+          entries: input.entries,
+          ...(input.pin !== undefined ? { pin: input.pin } : {}),
+        },
       }),
   });
 });
@@ -652,6 +675,7 @@ export const beginEnvironmentZoteroImport = Effect.fn(
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
   readonly connection?: ZoteroConnection;
   readonly groupId?: string;
+  readonly pin?: boolean;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -673,6 +697,7 @@ export const beginEnvironmentZoteroImport = Effect.fn(
           possibleMetadataMatchOverrides: input.possibleMetadataMatchOverrides,
           ...(input.connection ? { connection: input.connection } : {}),
           ...(input.groupId ? { groupId: input.groupId } : {}),
+          ...(input.pin !== undefined ? { pin: input.pin } : {}),
         },
       }),
   });
@@ -687,6 +712,7 @@ export const beginEnvironmentZoteroScopedImport = Effect.fn(
   readonly scope: ZoteroImportScope;
   readonly connection?: ZoteroConnection;
   readonly groupId?: string;
+  readonly pin?: boolean;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -707,6 +733,7 @@ export const beginEnvironmentZoteroScopedImport = Effect.fn(
           scope: input.scope,
           ...(input.connection ? { connection: input.connection } : {}),
           ...(input.groupId ? { groupId: input.groupId } : {}),
+          ...(input.pin !== undefined ? { pin: input.pin } : {}),
         },
       }),
   });
@@ -786,12 +813,14 @@ export const importEnvironmentScientSourcesFile = Effect.fn(
   readonly file: Blob;
   readonly fileName: string;
   readonly sourcePath?: string;
+  readonly pin?: boolean;
 }) {
   const payload = new FormData();
   payload.append("root", input.root);
   payload.append("operationId", input.operationId);
   payload.append("file", input.file, input.fileName);
   if (input.sourcePath) payload.append("sourcePath", input.sourcePath);
+  if (input.pin !== undefined) payload.append("pin", String(input.pin));
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   return yield* executeAuthenticatedEnvironmentHttpRequest({
@@ -832,6 +861,7 @@ export const beginEnvironmentLocalSourceImport = Effect.fn(
   readonly operationId: string;
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+  readonly pin?: boolean;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -851,6 +881,7 @@ export const beginEnvironmentLocalSourceImport = Effect.fn(
           operationId: input.operationId,
           itemKeys: input.itemKeys,
           possibleMetadataMatchOverrides: input.possibleMetadataMatchOverrides,
+          ...(input.pin !== undefined ? { pin: input.pin } : {}),
         },
       }),
   });

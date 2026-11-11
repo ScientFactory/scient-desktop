@@ -4,6 +4,7 @@ import type {
   ScientSourceDetailResult,
   ScientSourcesFileImportResult,
   ScientSourcesPreflightResult,
+  ScientSourcesScope,
   ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
@@ -93,6 +94,14 @@ export function useScientSources(input: {
     zoteroRequestRef.current += 1;
     return zoteroRequestRef.current;
   });
+  // Only a server that offers scopes shows the choice, so under a project server this stays unset.
+  const scopeRef = useRef<{ readonly context: string; readonly scope: ScientSourcesScope } | null>(
+    null,
+  );
+  const inLibraryView = () =>
+    scopeRef.current?.context === contextKeyRef.current && scopeRef.current.scope === "library";
+  // Started from the Library view, an import brings sources in without pinning them here.
+  const pinInput = () => (inLibraryView() ? { pin: false } : {});
   const isCurrentContext = () => mounted.current && contextKeyRef.current === contextKey;
   const isCurrentRequest = (request: number) =>
     isCurrentContext() && requestRef.current === request;
@@ -122,7 +131,11 @@ export function useScientSources(input: {
     // call while a durable import runs, and neither may starve the other.
     const request = nextOverviewRequestToken();
     dispatch({ type: "overviewRequestStarted", request });
-    const next = await readScientSources(input.environmentId, input.root);
+    const next = await readScientSources(
+      input.environmentId,
+      input.root,
+      inLibraryView() ? "library" : undefined,
+    );
     if (isCurrentContext() && overviewRequestRef.current === request) {
       dispatch({ type: "overviewArrived", request, overview: next });
     }
@@ -148,12 +161,20 @@ export function useScientSources(input: {
     dispatch({ type: "sourceRecordAccepted", record });
   };
 
-  const loadSource = async (sourceId: string): Promise<ScientSourceDetailResult> => {
+  /** With a review ID, the review's own record: from its snapshot when the Library lacks it. */
+  const loadSource = async (
+    sourceId: string,
+    reviewId?: string,
+  ): Promise<ScientSourceDetailResult> => {
     const cached = state.sourceDetails[sourceId];
     const summary = state.overview?.records.find((record) => record.sourceId === sourceId);
     if (cached && summary?.revision === cached.revision) return cached;
     try {
-      const detail = await readScientSource(input.environmentId, { root: input.root, sourceId });
+      const detail = await readScientSource(input.environmentId, {
+        root: input.root,
+        sourceId,
+        ...(reviewId ? { reviewId } : {}),
+      });
       if (isCurrentContext()) {
         dispatch({ type: "sourceDetailArrived", sourceId, detail });
       }
@@ -380,6 +401,7 @@ export function useScientSources(input: {
         scope: state.zoteroScope,
         ...(zoteroConnection ? { connection: zoteroConnection } : {}),
         ...zoteroGroupInput,
+        ...pinInput(),
       });
       if (isCurrentRequest(request)) {
         dispatch({
@@ -439,6 +461,7 @@ export function useScientSources(input: {
         root: input.root,
         operationId: randomUUID(),
         file,
+        ...pinInput(),
       });
       const priorCounts = {
         imported: 0,
@@ -522,6 +545,7 @@ export function useScientSources(input: {
       possibleMetadataMatchOverrides: options.possibleMetadataMatchOverrides,
       ...(options.adapter === "zotero" && zoteroConnection ? { connection: zoteroConnection } : {}),
       ...(options.adapter === "zotero" ? zoteroGroupInput : {}),
+      ...pinInput(),
     });
     options.onStarted?.();
 
@@ -969,6 +993,11 @@ export function useScientSources(input: {
     resumeImport,
     refreshOverview,
     reloadOverview,
+    /** "This project" (its pins) or the whole Library; only a library server offers the choice. */
+    selectScope: async (scope: ScientSourcesScope) => {
+      scopeRef.current = { context: contextKey, scope };
+      return reloadOverview();
+    },
     acceptSourceRecord,
     loadSource,
     refreshSourceMetadata,

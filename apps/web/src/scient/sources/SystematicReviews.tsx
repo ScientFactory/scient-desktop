@@ -33,7 +33,7 @@ import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { PrismaDiagram } from "./PrismaDiagram";
 import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
-import { SystematicReviewScreening } from "./SystematicReviewScreening";
+import { SystematicReviewScreening, type ReviewRecordView } from "./SystematicReviewScreening";
 import {
   readLastReviewPlace,
   rememberReviewPlace,
@@ -278,7 +278,7 @@ function EditReviewDialog(props: {
 
 function RecordsTab(props: {
   readonly reviews: SystematicReviews;
-  readonly records: ReadonlyMap<string, SourceSummary>;
+  readonly records: ReadonlyMap<string, ReviewRecordView>;
   readonly organization: ScientSourcesOrganization;
   readonly selectedSourceIds: ReadonlyArray<string>;
   readonly onOpenSource: (sourceId: string) => void;
@@ -564,7 +564,7 @@ export function SystematicReviewsView(props: {
   readonly organization: ScientSourcesOrganization;
   readonly selectedSourceIds: ReadonlyArray<string>;
   readonly sourceDetails: Readonly<Record<string, ScientSourceDetailResult | undefined>>;
-  readonly loadSource: (sourceId: string) => Promise<unknown>;
+  readonly loadSource: (sourceId: string, reviewId?: string) => Promise<unknown>;
   readonly onOpenSource: (sourceId: string) => void;
   readonly onBack: () => void;
 }) {
@@ -587,7 +587,12 @@ export function SystematicReviewsView(props: {
   };
   const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
   const [editing, setEditing] = useState(false);
-  const records = new Map(props.records.map((record) => [record.sourceId, record]));
+  // A library server names a review's records by the IDs the review stores.
+  const records = new Map<string, ReviewRecordView>(
+    (reviews.records ?? props.records).map((record) => [record.sourceId, record]),
+  );
+  const reviewRecordsId = reviews.records ? reviews.detail?.review.reviewId : undefined;
+  const loadSource = (sourceId: string) => props.loadSource(sourceId, reviewRecordsId);
   const detail = reviews.detail;
   const openId = reviews.reviewId;
   const openSummary = reviews.list?.reviews.find((review) => review.reviewId === openId) ?? null;
@@ -755,7 +760,7 @@ export function SystematicReviewsView(props: {
                     stage={stage}
                     records={records}
                     sourceDetails={props.sourceDetails}
-                    loadSource={props.loadSource}
+                    loadSource={loadSource}
                     pending={reviews.disabled}
                     onOpenSource={props.onOpenSource}
                     onRequestName={setNameRequest}

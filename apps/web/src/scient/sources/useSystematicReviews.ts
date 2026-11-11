@@ -49,7 +49,8 @@ export function useSystematicReviews(input: {
   const [reviewId, setReviewId] = useState<string | null>(
     () => readLastReviewPlace(context).reviewId,
   );
-  const [detail, setDetail] = useState<ScientSystematicReviewResult["detail"] | null>(null);
+  const [result, setResult] = useState<ScientSystematicReviewResult | null>(null);
+  const detail = result?.detail ?? null;
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const canChange = useCanChangeLibrary(input.environmentId);
@@ -63,7 +64,7 @@ export function useSystematicReviews(input: {
       .catch((cause: unknown) => setError(message(cause)));
   const reloadDetail = (id: string) =>
     readSystematicReview(input.environmentId, { root: input.root, reviewId: id })
-      .then((next) => setDetail(next.detail))
+      .then((next) => setResult(next))
       .catch((cause: unknown) => setError(message(cause)));
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the project's reviews, and the one left open, from the environment server when the view opens
@@ -80,7 +81,7 @@ export function useSystematicReviews(input: {
     if (openId) {
       void readSystematicReview(input.environmentId, { root: input.root, reviewId: openId })
         .then((next) => {
-          if (current) setDetail(next.detail);
+          if (current) setResult(next);
         })
         .catch(() => undefined);
     }
@@ -122,10 +123,12 @@ export function useSystematicReviews(input: {
     disabled: pending || !canChange,
     reviewId,
     detail: detail && detail.review.reviewId === reviewId ? detail : null,
+    /** A library server's review records under the review's own IDs, with their labels. */
+    records: detail && detail.review.reviewId === reviewId ? (result?.records ?? null) : null,
     open: (id: string | null) => {
       rememberReviewPlace(context, { reviewId: id });
       setReviewId(id);
-      setDetail(null);
+      setResult(null);
       if (id) void reloadDetail(id);
     },
     change,

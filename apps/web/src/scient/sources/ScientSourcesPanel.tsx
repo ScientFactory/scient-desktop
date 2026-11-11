@@ -71,7 +71,12 @@ import { SourceFullTextResults } from "./SourceFullTextResults";
 import { SourceJournalIcon } from "./SourceJournalIcon";
 import { requestSourceTextReveal } from "./sourceTextReveal";
 import { useLibraryFileImport } from "./libraryFileHandoff";
-import { agentVerificationLabel, newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
+import {
+  agentVerificationLabel,
+  newlyObservedSourceIds,
+  sourceAddedLabel,
+  sourcePinLabel,
+} from "./sourceLabels";
 import {
   filterScientSourceSearchIndex,
   indexScientSourceSummaries,
@@ -1408,6 +1413,7 @@ export function ScientSourcesPanel(props: {
         <AddByIdentifier
           environmentId={props.environmentId}
           root={props.root}
+          {...(sources.overview?.scopes?.listed === "library" ? { pin: false as const } : {})}
           onClose={() => setAddingByIdentifier(false)}
           onAdded={(results) => {
             const added = results.flatMap((item) =>
@@ -1532,6 +1538,12 @@ export function ScientSourcesPanel(props: {
             records={sources.overview.records}
             query={sourceQuery}
             onRequestName={setNameRequest}
+            {...(sources.overview.scopes
+              ? {
+                  scopes: sources.overview.scopes,
+                  onSelectScope: (scope) => void sources.selectScope(scope),
+                }
+              : {})}
           />
           <Select
             value={sourceSort}
@@ -1652,6 +1664,7 @@ export function ScientSourcesPanel(props: {
                               </span>
                               {agentVerificationLabel(record)}
                               {sourceTrustLabel(record)}
+                              {sourcePinLabel(record, sources.overview?.scopes?.listed)}
                             </span>
                           </span>
                         </button>

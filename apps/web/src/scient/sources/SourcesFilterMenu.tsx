@@ -5,7 +5,7 @@ import {
   scientSourceTagKey,
   scientSourceTopicKey,
 } from "@scientfactory/scient-sources";
-import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
+import type { ScientSourcesOverviewResult, ScientSourcesScope } from "@t3tools/contracts";
 import {
   FileTextIcon,
   FlaskConicalIcon,
@@ -43,6 +43,11 @@ import type { SourcesOrganize } from "./useSourcesOrganize";
 type SourceSummary = ScientSourcesOverviewResult["records"][number];
 
 const ALL = "all";
+const SCOPE_CHOICE = "scope:";
+const SCOPE_LABELS: Readonly<Record<ScientSourcesScope, string>> = {
+  project: "This project",
+  library: "Library",
+};
 
 function Count(props: { readonly value: number }) {
   return (
@@ -155,8 +160,11 @@ export function SourcesFilterMenu(props: {
   readonly records: ReadonlyArray<SourceSummary>;
   readonly query: string;
   readonly onRequestName: (request: SourcesNameRequest) => void;
+  /** A library server's scopes: this project's pins act as one more collection. */
+  readonly scopes?: ScientSourcesOverviewResult["scopes"];
+  readonly onSelectScope?: (scope: ScientSourcesScope) => void;
 }) {
-  const { organize } = props;
+  const { organize, scopes } = props;
   const { filter, organization } = organize;
   const tags = scientSourceTagCounts(props.records);
   const types = [...new Set(props.records.map((record) => record.type))];
@@ -211,22 +219,47 @@ export function SourcesFilterMenu(props: {
           <MenuSubTrigger>
             <FolderIcon aria-hidden className="size-3.5" />
             <span className="flex-1">Collection</span>
-            <SubmenuValue>{organize.collection?.name ?? "All"}</SubmenuValue>
+            <SubmenuValue>
+              {organize.collection?.name ?? (scopes ? SCOPE_LABELS[scopes.listed] : "All")}
+            </SubmenuValue>
           </MenuSubTrigger>
           <MenuSubPopup>
             <MenuRadioGroup
-              value={organize.collection?.collectionId ?? ALL}
-              onValueChange={(value) =>
-                organize.showCollection(value === ALL ? undefined : String(value))
+              value={
+                organize.collection?.collectionId ??
+                (scopes ? `${SCOPE_CHOICE}${scopes.listed}` : ALL)
               }
+              onValueChange={(value) => {
+                const scope = (["project", "library"] as const).find(
+                  (entry) => value === `${SCOPE_CHOICE}${entry}`,
+                );
+                if (scope) {
+                  organize.showCollection(undefined);
+                  if (scope !== scopes?.listed) props.onSelectScope?.(scope);
+                  return;
+                }
+                organize.showCollection(value === ALL ? undefined : String(value));
+              }}
             >
-              <MenuRadioItem value={ALL}>
-                <span className="flex min-w-0 items-center gap-2">
-                  <LayersIcon aria-hidden className="size-3.5" />
-                  All sources
-                  <Count value={props.records.length} />
-                </span>
-              </MenuRadioItem>
+              {scopes ? (
+                (["project", "library"] as const).map((scope) => (
+                  <MenuRadioItem key={scope} value={`${SCOPE_CHOICE}${scope}`}>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <LayersIcon aria-hidden className="size-3.5" />
+                      {SCOPE_LABELS[scope]}
+                      <Count value={scopes[scope]} />
+                    </span>
+                  </MenuRadioItem>
+                ))
+              ) : (
+                <MenuRadioItem value={ALL}>
+                  <span className="flex min-w-0 items-center gap-2">
+                    <LayersIcon aria-hidden className="size-3.5" />
+                    All sources
+                    <Count value={props.records.length} />
+                  </span>
+                </MenuRadioItem>
+              )}
               {orderedCollections(organization.collections).map(({ collection, child }) => (
                 <MenuRadioItem key={collection.collectionId} value={collection.collectionId}>
                   <span

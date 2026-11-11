@@ -4,14 +4,14 @@ import {
   ScientSourceEditableMetadata,
   ScientSourceImportOperation,
   ScientSourceMetadataDiagnostic,
-  ScientSourceMetadataUpdateResult,
+  ScientSourceMetadataUpdateResult as ScientSourceMetadataUpdateResultFields,
   ScientSourceNote,
   ScientSourceNoteUpdateResult,
   ScientSourceRecord,
   ScientSourcePermanentDeletionResult,
-  ScientSourceRemovalResult,
+  ScientSourceRemovalResult as ScientSourceRemovalResultFields,
   ScientSourceRestoreResult,
-  ScientSourceRevertResult,
+  ScientSourceRevertResult as ScientSourceRevertResultFields,
   ScientSourceRevisionSummary,
   ScientSourceSummary,
   ScientSourceTrashListing,
@@ -25,7 +25,7 @@ import {
   ScientSystematicReviewList,
   ScientSourcesOrganization,
   ScientSourcesOrganizeAction,
-  ScientSourcesOrganizeResult,
+  ScientSourcesOrganizeResult as ScientSourcesOrganizeResultFields,
   ScientSourcesOverview as ScientSourcesStoreOverview,
   ScientSourceZoteroRefreshField,
   ScientSourceZoteroRefreshResult,
@@ -54,16 +54,54 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const BoundedPageSize = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }));
 
-export const ScientSourcesOverviewRequest = Schema.Struct({ root: NonEmptyString });
+/** This project's pinned sources, or the whole personal library; only a library server reads it. */
+export const ScientSourcesScope = Schema.Literals(["project", "library"]);
+export type ScientSourcesScope = typeof ScientSourcesScope.Type;
+
+/** False brings sources into the personal library without pinning them in this project. */
+const PinRequest = Schema.optionalKey(Schema.Boolean);
+
+/** How many other projects on this computer pin the changed source. */
+const AlsoPinnedIn = Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0)));
+
+export const ScientSourcesOverviewRequest = Schema.Struct({
+  root: NonEmptyString,
+  scope: Schema.optionalKey(ScientSourcesScope),
+});
 export type ScientSourcesOverviewRequest = typeof ScientSourcesOverviewRequest.Type;
 
-export const ScientSourceDetailRequest = Schema.Struct({
+const ScientSourceRequest = Schema.Struct({
   root: NonEmptyString,
   sourceId: NonEmptyString,
 });
+
+export const ScientSourceDetailRequest = Schema.Struct({
+  ...ScientSourceRequest.fields,
+  /** A review screen's request: the review's own record, from its snapshot when the library lacks it. */
+  reviewId: Schema.optionalKey(NonEmptyString),
+});
 export type ScientSourceDetailRequest = typeof ScientSourceDetailRequest.Type;
 
-export const ScientSourceDetailResult = ScientSourceRecord;
+export const ScientSystematicReviewRecordLabel = Schema.Literals([
+  "From this review's snapshot",
+  "Details missing",
+]);
+export type ScientSystematicReviewRecordLabel = typeof ScientSystematicReviewRecordLabel.Type;
+
+/** Fields a library server adds to a source; a project server sends none of them. */
+const ScientSourcePinFields = {
+  pinned: Schema.optionalKey(Schema.Boolean),
+  /** A pin this library lacks: the source is the pin's snapshot under the project source ID. */
+  fromSnapshot: Schema.optionalKey(Schema.Literal(true)),
+  /** The pin's note ("why I cite this here"); personal notes never leave the library. */
+  projectNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
+};
+
+export const ScientSourceDetailResult = Schema.Struct({
+  ...ScientSourceRecord.fields,
+  ...ScientSourcePinFields,
+  label: Schema.optionalKey(ScientSystematicReviewRecordLabel),
+});
 export type ScientSourceDetailResult = typeof ScientSourceDetailResult.Type;
 
 export const ScientSourceAttachmentPreviewRequest = Schema.Struct({
@@ -135,6 +173,7 @@ export type ScientSourcesFullTextSearchResult = typeof ScientSourcesFullTextSear
 export const ScientSourceSavePageRequest = Schema.Struct({
   root: NonEmptyString,
   page: ScientSourceWebPage,
+  pin: PinRequest,
 });
 export type ScientSourceSavePageRequest = typeof ScientSourceSavePageRequest.Type;
 
@@ -188,6 +227,24 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
 export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
 export { ScientSourceNoteUpdateResult };
 
+export const ScientSourceMetadataUpdateResult = Schema.Struct({
+  ...ScientSourceMetadataUpdateResultFields.fields,
+  alsoPinnedIn: AlsoPinnedIn,
+});
+export type ScientSourceMetadataUpdateResult = typeof ScientSourceMetadataUpdateResult.Type;
+
+export const ScientSourceRemovalResult = Schema.Struct({
+  ...ScientSourceRemovalResultFields.fields,
+  alsoPinnedIn: AlsoPinnedIn,
+});
+export type ScientSourceRemovalResult = typeof ScientSourceRemovalResult.Type;
+
+export const ScientSourceRevertResult = Schema.Struct({
+  ...ScientSourceRevertResultFields.fields,
+  alsoPinnedIn: AlsoPinnedIn,
+});
+export type ScientSourceRevertResult = typeof ScientSourceRevertResult.Type;
+
 export const ScientSourceMetadataRefreshRequest = Schema.Struct({
   root: NonEmptyString,
   sourceId: NonEmptyString,
@@ -200,6 +257,7 @@ export const ScientSourceMetadataRefreshResult = Schema.Struct({
   record: ScientSourceRecord,
   changedFields: Schema.Array(NonEmptyString),
   message: Schema.NullOr(Schema.String),
+  alsoPinnedIn: AlsoPinnedIn,
 });
 export type ScientSourceMetadataRefreshResult = typeof ScientSourceMetadataRefreshResult.Type;
 
@@ -210,11 +268,72 @@ export const ScientSourceRemovalRequest = Schema.Struct({
 });
 export type ScientSourceRemovalRequest = typeof ScientSourceRemovalRequest.Type;
 
+/** Pins and merges act on the personal library; a project server refuses them. */
+export const ScientSourcesLibraryOrganizeAction = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literal("pin"),
+    sourceId: NonEmptyString,
+    note: Schema.optionalKey(Schema.NullOr(Schema.String.check(Schema.isMaxLength(20_000)))),
+  }),
+  Schema.Struct({ action: Schema.Literal("unpin"), citationKey: NonEmptyString }),
+  Schema.Struct({
+    action: Schema.Literal("merge"),
+    sourceIds: Schema.Array(NonEmptyString).pipe(
+      Schema.check(Schema.isMinLength(2), Schema.isMaxLength(50)),
+    ),
+    survivorId: Schema.optionalKey(NonEmptyString),
+  }),
+  Schema.Struct({ action: Schema.Literal("undo-merge"), mergeId: NonEmptyString }),
+]);
+export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
+
 export const ScientSourcesOrganizeRequest = Schema.Struct({
   root: NonEmptyString,
-  change: ScientSourcesOrganizeAction,
+  change: Schema.Union([
+    ...ScientSourcesOrganizeAction.members,
+    ...ScientSourcesLibraryOrganizeAction.members,
+  ]),
 });
 export type ScientSourcesOrganizeRequest = typeof ScientSourcesOrganizeRequest.Type;
+
+export const ScientSourcesOrganizeResult = Schema.Struct({
+  ...ScientSourcesOrganizeResultFields.fields,
+  outcome: Schema.Literals([
+    ...ScientSourcesOrganizeResultFields.fields.outcome.literals,
+    "pinned",
+    "unpinned",
+    "not-pinned",
+    "merged",
+    "already-merged",
+    "undone",
+    "already-undone",
+    "survivor-missing",
+    "loser-missing",
+  ]),
+  pin: Schema.optionalKey(
+    Schema.Struct({
+      citationKey: NonEmptyString,
+      sourceId: NonEmptyString,
+      note: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  /** Each merge that landed; Undo takes its mergeId. */
+  merges: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        mergeId: NonEmptyString,
+        survivorId: NonEmptyString,
+        mergedSourceId: NonEmptyString,
+        keptDifferent: Schema.Array(Schema.String),
+      }),
+    ),
+  ),
+  survivorId: Schema.optionalKey(NonEmptyString),
+  notMerged: Schema.optionalKey(Schema.Array(NonEmptyString)),
+  unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
+  alsoPinnedIn: AlsoPinnedIn,
+});
+export type ScientSourcesOrganizeResult = typeof ScientSourcesOrganizeResult.Type;
 
 export const ScientSystematicReviewsRequest = Schema.Struct({ root: NonEmptyString });
 export type ScientSystematicReviewsRequest = typeof ScientSystematicReviewsRequest.Type;
@@ -225,8 +344,23 @@ export const ScientSystematicReviewRequest = Schema.Struct({
 });
 export type ScientSystematicReviewRequest = typeof ScientSystematicReviewRequest.Type;
 
+/** A record a review names, under the ID the review stores. */
+export const ScientSystematicReviewRecord = Schema.Struct({
+  sourceId: NonEmptyString,
+  /** The library record's revision, or the snapshot's captured one; 0 when details are missing. */
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  title: Schema.NullOr(Schema.String),
+  creators: ScientSourceRecord.fields.creators,
+  issuedYear: Schema.NullOr(Schema.Int),
+  containerTitle: Schema.NullOr(Schema.String),
+  label: Schema.optionalKey(ScientSystematicReviewRecordLabel),
+});
+export type ScientSystematicReviewRecord = typeof ScientSystematicReviewRecord.Type;
+
 export const ScientSystematicReviewResult = Schema.Struct({
   detail: Schema.NullOr(ScientSystematicReviewDetail),
+  /** A library server's review records; a project server leaves them to the overview. */
+  records: Schema.optionalKey(Schema.Array(ScientSystematicReviewRecord)),
 });
 export type ScientSystematicReviewResult = typeof ScientSystematicReviewResult.Type;
 
@@ -246,6 +380,7 @@ export const ScientSourcesAddByIdentifierRequest = Schema.Struct({
   entries: Schema.Array(Schema.String.check(Schema.isMaxLength(1_000))).pipe(
     Schema.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_SOURCE_IDENTIFIER_BATCH)),
   ),
+  pin: PinRequest,
 });
 export type ScientSourcesAddByIdentifierRequest = typeof ScientSourcesAddByIdentifierRequest.Type;
 
@@ -273,7 +408,7 @@ export const ScientSourcesPermanentDeletionRequest = Schema.Struct({
 export type ScientSourcesPermanentDeletionRequest =
   typeof ScientSourcesPermanentDeletionRequest.Type;
 
-export const ScientSourceRevisionsRequest = ScientSourceDetailRequest;
+export const ScientSourceRevisionsRequest = ScientSourceRequest;
 export type ScientSourceRevisionsRequest = typeof ScientSourceRevisionsRequest.Type;
 
 export const ScientSourceRevisionsResult = Schema.Struct({
@@ -342,6 +477,7 @@ export const ZoteroScopedImportRequest = Schema.Struct({
   scope: ZoteroImportScope,
   connection: Schema.optionalKey(ZoteroConnection),
   groupId: Schema.optionalKey(ZoteroGroupId),
+  pin: PinRequest,
 });
 export type ZoteroScopedImportRequest = typeof ZoteroScopedImportRequest.Type;
 
@@ -384,6 +520,8 @@ export const ScientSourcesFileImportRequest = Schema.Struct({
   file: Multipart.SingleFileSchema,
   /** The file's path on the server's computer, when the client is that computer; PDFs it links in its folder are attached. */
   sourcePath: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_096))),
+  /** "false" from the Library view; a multipart field is text. */
+  pin: Schema.optionalKey(Schema.Literals(["true", "false"])),
 }).pipe(
   HttpApiSchema.asMultipart({
     maxParts: 4,
@@ -440,6 +578,7 @@ export const ScientSourcesBeginImportRequest = Schema.Struct({
   ),
   connection: Schema.optionalKey(ZoteroConnection),
   groupId: Schema.optionalKey(ZoteroGroupId),
+  pin: PinRequest,
 });
 export type ScientSourcesBeginImportRequest = typeof ScientSourcesBeginImportRequest.Type;
 
@@ -464,14 +603,10 @@ export type ScientSourcesRetryImportRequest = typeof ScientSourcesRetryImportReq
 export {
   ScientSourceImportOperation,
   ScientSourcesBulkResult,
-  ScientSourcesOrganizeResult,
   ScientSystematicReviewChangeResult,
   ScientSystematicReviewList,
-  ScientSourceMetadataUpdateResult,
   ScientSourcePermanentDeletionResult,
-  ScientSourceRemovalResult,
   ScientSourceRestoreResult,
-  ScientSourceRevertResult,
   ScientSourceTrashListing,
   ScientSourceZoteroRefreshField,
   ScientSourceZoteroRefreshResult,
@@ -491,11 +626,28 @@ export const ScientSourceRecordDiagnostics = Schema.Struct({
 });
 export type ScientSourceRecordDiagnostics = typeof ScientSourceRecordDiagnostics.Type;
 
+export const ScientSourcesOverviewRecord = Schema.Struct({
+  ...ScientSourceSummary.fields,
+  ...ScientSourcePinFields,
+});
+export type ScientSourcesOverviewRecord = typeof ScientSourcesOverviewRecord.Type;
+
 export const ScientSourcesOverviewResult = Schema.Struct({
   ...ScientSourcesStoreOverview.fields,
-  records: Schema.Array(ScientSourceSummary),
+  records: Schema.Array(ScientSourcesOverviewRecord),
   recordDiagnostics: Schema.Array(ScientSourceRecordDiagnostics),
   // Optional so a client can read an older server's overview.
   organization: Schema.optionalKey(ScientSourcesOrganization),
+  /**
+   * Present only when the server keeps a personal library: which scope `records` lists, and how
+   * many sources each scope holds. A pinned record's `citationKey` is this project's key.
+   */
+  scopes: Schema.optionalKey(
+    Schema.Struct({
+      listed: ScientSourcesScope,
+      project: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      library: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+    }),
+  ),
 });
 export type ScientSourcesOverviewResult = typeof ScientSourcesOverviewResult.Type;

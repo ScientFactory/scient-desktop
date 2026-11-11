@@ -45,6 +45,8 @@ export function AddByIdentifier(props: {
   readonly onClose: () => void;
   readonly onAdded: (results: ReadonlyArray<ScientSourceIdentifierAddItem>) => void;
   readonly onOpenSource: (sourceId: string) => void;
+  /** False from the Library view: the sources come in without being pinned here. */
+  readonly pin?: false;
 }) {
   const [text, setText] = useState("");
   const [adding, setAdding] = useState(false);
@@ -75,6 +77,7 @@ export function AddByIdentifier(props: {
         try {
           const response = await addScientSourcesByIdentifier(props.environmentId, {
             root: props.root,
+            ...(props.pin === false ? { pin: false } : {}),
             entries: entries.map((entry) => entry.input),
           });
           props.onAdded(response.results);

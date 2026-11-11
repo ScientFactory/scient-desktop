@@ -25,6 +25,7 @@ import type {
   ScientSourceSavePageRequest,
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
+  ScientSourcesScope,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewRequest,
   ScientSystematicReviewsRequest,
@@ -51,15 +52,24 @@ function prepared(environmentId: EnvironmentId) {
   return connection;
 }
 
-export function readScientSources(environmentId: EnvironmentId, root: string) {
+/** `scope` is sent only to a server that offers scopes, and only for the Library view. */
+export function readScientSources(
+  environmentId: EnvironmentId,
+  root: string,
+  scope?: ScientSourcesScope,
+) {
   return runtime.runPromise(
-    getEnvironmentScientSourcesOverview({ prepared: prepared(environmentId), root }),
+    getEnvironmentScientSourcesOverview({
+      prepared: prepared(environmentId),
+      root,
+      ...(scope ? { scope } : {}),
+    }),
   );
 }
 
 export function readScientSource(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly sourceId: string },
+  input: { readonly root: string; readonly sourceId: string; readonly reviewId?: string },
 ) {
   return runtime.runPromise(
     getEnvironmentScientSourceDetail({ prepared: prepared(environmentId), ...input }),
@@ -217,7 +227,11 @@ export async function readScientSourceJournalIcon(
 
 export function addScientSourcesByIdentifier(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly entries: ReadonlyArray<string> },
+  input: {
+    readonly root: string;
+    readonly entries: ReadonlyArray<string>;
+    readonly pin?: boolean;
+  },
 ) {
   return runSourcesCommand(sourcesCommands.addByIdentifier, environmentId, input);
 }
@@ -275,6 +289,7 @@ export function beginZoteroItemsImport(
     readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
     readonly connection?: ZoteroConnection;
     readonly groupId?: string;
+    readonly pin?: boolean;
   },
 ) {
   return runSourcesCommand(sourcesCommands.beginImport, environmentId, input);
@@ -288,6 +303,7 @@ export function beginZoteroScopeImport(
     readonly scope: ZoteroImportScope;
     readonly connection?: ZoteroConnection;
     readonly groupId?: string;
+    readonly pin?: boolean;
   },
 ) {
   return runSourcesCommand(sourcesCommands.beginScopedImport, environmentId, input);
@@ -325,6 +341,7 @@ export function beginLocalSourcesImport(
     readonly operationId: string;
     readonly itemKeys: ReadonlyArray<string>;
     readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+    readonly pin?: boolean;
   },
 ) {
   return runSourcesCommand(sourcesCommands.localBeginImport, environmentId, input);
@@ -364,7 +381,12 @@ export function retrySourcesImport(
 
 export function importScientSourcesFile(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly operationId: string; readonly file: File },
+  input: {
+    readonly root: string;
+    readonly operationId: string;
+    readonly file: File;
+    readonly pin?: boolean;
+  },
 ) {
   // A path on this computer means nothing to another computer's server.
   const sourcePath =
@@ -377,6 +399,7 @@ export function importScientSourcesFile(
     file: input.file,
     fileName: input.file.name,
     ...(sourcePath ? { sourcePath } : {}),
+    ...(input.pin !== undefined ? { pin: input.pin } : {}),
   });
 }
 

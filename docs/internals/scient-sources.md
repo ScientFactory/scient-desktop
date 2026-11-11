@@ -589,6 +589,67 @@ share operations and handlers.
   snapshot and nothing is created. A `write` call needs a library and creates
   it.
 
+### Library routes and the scope filter (built, switched off)
+
+The HTTP routes in `apps/server/src/scient/sources/http.ts` resolve their store
+the way agent tools do, through `resolveScientLibraryStoreAt(root, access)`:
+`read` for read endpoints, `write` only for change endpoints (those that need
+`orchestration:operate`). Under `"project"` that returns null without reading
+anything, and each route makes its earlier call with the same arguments. Under
+`"library"` the route calls the library version in `LibrarySourcesRoutes.ts`.
+A folder that is not a Scient project still gets the v1 overview, which reports
+its state.
+
+- **Overview.** `scope` (`project` by default, or `library`) picks this
+  project's pinned works or the whole library. The payload adds `scopes`
+  (`listed`, plus a count for `project` and for `library`); its presence is how
+  the web learns the server keeps a library. Each record adds `pinned`,
+  `projectNote` when pinned, and `fromSnapshot` for a pin this library lacks
+  (its `sourceId` is then the project source ID). A pinned record's
+  `citationKey` is this project's key. `activeOperation` is the library's,
+  whichever project started it. Indexing and categorizing are started only for
+  a caller that also holds operate, because they write library caches.
+- **Source IDs.** Every route that names a source accepts a library ID or a
+  project source ID of this project. Detail for a pin this library lacks
+  returns the pin's snapshot with `fromSnapshot`.
+- **Notes.** Routes serve any connected client, so a library record's personal
+  note never appears in a route payload. A route record's `note` is this
+  project's note on its pin instead, and `updateNote` sets that note
+  (`setScientProjectPinNote`); a source not pinned here has no project note,
+  and the panel hides the note editor for it. Exports carry the project note
+  the same way.
+- **Edits.** `updateMetadata`, `refreshMetadata`, `remove` and `revert` act on
+  the library record and add `alsoPinnedIn`; a new key on a pinned source
+  renames this project's pin, as the agent tool does. Edits refresh this
+  project's pin and review snapshots and its managed files.
+- **Organize.** The request also takes `pin`, `unpin`, `merge` and
+  `undo-merge`; a merge result lists each `mergeId` for Undo. A project server
+  refuses them.
+- **Imports pin by view.** Begin calls (`beginImport`, `beginScopedImport`,
+  `localBeginImport`, `fileImport`, and the `addByIdentifier` and `savePage`
+  intakes) take `pin`. From "This project" the web sends nothing and the route
+  passes `pinInto: <project root>`; from the Library view it sends
+  `pin: false` (the string `"false"` in the multipart file import) and nothing
+  is pinned. The file import also passes `projectRoot` for linked PDFs. Advance,
+  cancel, retry, upload, discard and preflight take only the library location.
+  One import runs per library: a second is refused with "Another source import
+  is already running in the Library."
+- **Reviews.** `systematicReview` adds `records`: each record the review names,
+  under the ID it stores, with `label` ("From this review's snapshot" or
+  "Details missing"); records removed from this library are left out. Detail
+  with `reviewId` returns the review's own record, from its snapshot when this
+  library lacks it. On a computer with no library both read with
+  `library: null` and create nothing.
+- **Get PDF** goes through the papers queue, which resolves the library record
+  from a library ID or a project source ID (see above).
+
+The web (`useScientSources.ts`) sends `scope` only after the person picks the
+Library view, which `SourcesFilterMenu` offers only when the overview has
+`scopes`: "This project" and "Library" replace "All sources" at the top of the
+Collection submenu. In the Library view rows pinned here say "In this project",
+and a pin this library lacks says "Not in this Library" in either view. The
+review screen uses the review's `records` when present.
+
 ## Source truth and provenance
 
 The persisted record has a first-class Scient source type and normalized

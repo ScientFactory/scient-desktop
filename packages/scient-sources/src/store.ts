@@ -15,6 +15,7 @@ import {
   isScientLibraryLocation,
   readScientLibraryManifest,
   scientLibraryLocation,
+  type ScientLibraryLocation,
   type ScientSourceStoreLocation,
 } from "./libraryRoot.ts";
 import { resolveScientProjectFile } from "./projectFiles.ts";
@@ -1524,6 +1525,27 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
   };
 }
 
+/** The library's records, its running import and its trash count; reading writes nothing. */
+export async function inspectScientLibrarySources(library: ScientLibraryLocation): Promise<{
+  readonly records: ReadonlyArray<ScientSourceRecord>;
+  readonly activeOperation: ScientSourceImportOperation | null;
+  readonly unreadableRecords?: ReadonlyArray<ScientSourceStoreIssue>;
+  readonly trashedCount?: number;
+}> {
+  const paths = await sourceStorePaths(library);
+  const [scan, activeOperation, trash] = await Promise.all([
+    scanScientSourceRecords(paths),
+    findActiveOperation(paths),
+    scanTrash(paths),
+  ]);
+  return {
+    records: scan.records,
+    activeOperation,
+    ...(scan.issues.length > 0 ? { unreadableRecords: scan.issues } : {}),
+    ...(trash.entries.length > 0 ? { trashedCount: trash.entries.length } : {}),
+  };
+}
+
 export async function createSourceImportOperation(input: {
   readonly root: ScientSourceStoreLocation;
   readonly operationId: string;
@@ -1588,7 +1610,11 @@ export async function createSourceImportOperation(input: {
     }
     const active = await findActiveOperation(paths);
     if (active) {
-      throw new Error("Another source import is already running for this project.");
+      throw new Error(
+        paths.owner.kind === "library"
+          ? "Another source import is already running in the Library."
+          : "Another source import is already running for this project.",
+      );
     }
     const now = new Date().toISOString();
     const operation: ScientSourceImportOperation = {
