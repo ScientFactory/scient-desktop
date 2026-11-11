@@ -36,7 +36,7 @@ export interface PublishShareInput {
  */
 export async function publishShare(
   input: PublishShareInput,
-): Promise<{ id: string; link: string; key: string | null }> {
+): Promise<{ id: string; link: string; key: string | null; version: number }> {
   const { api, build, options, existing } = input;
   // A link keeps its encryption: its readers already hold the key, or a card.
   const encrypted = existing?.share.encrypted ?? options.encrypted;
@@ -82,5 +82,10 @@ export async function publishShare(
     await put(`blob-${blob.sha256}`, await input.readBlob(blob.relativeUrl));
   }
   await api.publishShare(id, version);
-  return { id, link: shareLink(id, keyText ?? undefined, shareLinkOrigin()), key: keyText };
+  return {
+    id,
+    link: shareLink(id, keyText ?? undefined, shareLinkOrigin()),
+    key: keyText,
+    version,
+  };
 }

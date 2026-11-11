@@ -2,10 +2,10 @@ import { useAtomValue } from "@effect/atom-react";
 import {
   CloudConversation,
   shareLink,
+  ShareRecord,
   type ShareAccess,
-  type ShareRecord,
 } from "@scientfactory/scient-cloud/api";
-import type { MessageId, ScientCloudShareBuild, ScopedThreadRef } from "@t3tools/contracts";
+import { MessageId, type ScientCloudShareBuild, type ScopedThreadRef } from "@t3tools/contracts";
 import { Link } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CopyIcon } from "lucide-react";
@@ -36,8 +36,14 @@ import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { buildShare, fetchShareBlob } from "./serverCloud";
 import { forgetShareKey, readShareKey, rememberShareKey } from "./shareKeys";
 import { cloudShareDialogThreadAtom } from "./shareDialogState";
-import { EXPIRY_CHOICES, expiresAtFor, expiryChoice, type ExpiryChoice } from "./shareOptions";
+import { EXPIRY_CHOICES, expiresAtFor, type ExpiryChoice } from "./shareOptions";
 import { publishShare } from "./sharePublish";
+import {
+  forgetShareSelection,
+  readShareSelection,
+  rememberShareSelection,
+  type ShareSelection,
+} from "./shareSelections";
 import { SnapshotConversationView } from "./SnapshotConversationView";
 import { shareLinkOrigin, type CloudApi } from "./cloudApi";
 import { InfoTip } from "./InfoTip";
@@ -142,13 +148,18 @@ function accessSummary(access: ShareAccess): string {
   }
 }
 
-/** Whether the conversation has messages newer than the link's last published version. */
-function hasChangesSince(share: ShareRecord, document: CloudConversation): boolean {
-  const published = share.versions.at(-1)?.publishedAt;
-  if (published === undefined) return true;
-  const publishedAt = Date.parse(published);
-  return document.snapshot.messages.some((message) => Date.parse(message.updatedAt) > publishedAt);
+const decodeShareRecord = Schema.decodeUnknownSync(ShareRecord);
+
+type ExpiryValue = ExpiryChoice | "current";
+
+function expiryLabel(expiresAt: string | null): string {
+  return expiresAt === null
+    ? "Never expires"
+    : `Expires ${new Date(expiresAt).toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
 }
+
+const sameIds = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
+  JSON.stringify(left.toSorted()) === JSON.stringify(right.toSorted());
 
 /**
  * Making a link shows its settings; once it exists, the dialog is the link itself:
@@ -164,14 +175,18 @@ function ShareLinkDialog({
   onClose: () => void;
 }) {
   const [existing, setExisting] = useState<ShareRecord | null | undefined>(undefined);
+  const [lookupFailed, setLookupFailed] = useState(false);
+  const [saved, setSaved] = useState<ShareSelection | null>(null);
   const [editing, setEditing] = useState(false);
+  const [updatingContent, setUpdatingContent] = useState(false);
+  const [contentTouched, setContentTouched] = useState(false);
   const [confirmingStop, setConfirmingStop] = useState(false);
   const [reasoning, setReasoning] = useState(false);
   const [excluded, setExcluded] = useState<ReadonlyArray<MessageId>>([]);
   const [keep, setKeep] = useState<ReadonlyArray<string>>([]);
   const [access, setAccess] = useState<ShareAccess>({ mode: "link" });
   const [emails, setEmails] = useState("");
-  const [expiry, setExpiry] = useState<ExpiryChoice>("never");
+  const [expiry, setExpiry] = useState<ExpiryValue>("never");
   const [encrypted, setEncrypted] = useState(true);
   const [indexable, setIndexable] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -183,14 +198,24 @@ function ShareLinkDialog({
   const [publish, setPublish] = useState<PublishState>({ status: "idle" });
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "share link" });
 
-  const adoptShare = (share: ShareRecord | null) => {
+  const adoptShare = (
+    share: ShareRecord | null,
+    selection: ShareSelection | null = share === null ? null : readShareSelection(share.id),
+  ) => {
     setExisting(share);
+    setLookupFailed(false);
     if (share === null) return;
     setEncrypted(share.encrypted);
     setIndexable(share.indexable);
     setAccess(share.access);
     setEmails(share.access.mode === "people" ? share.access.emails.join(", ") : "");
-    setExpiry(expiryChoice(share.expiresAt));
+    // An existing deadline stays exactly as it is until the person picks another.
+    setExpiry(share.expiresAt === null ? "never" : "current");
+    // An update starts from what was published, so a message left out stays out.
+    setSaved(selection);
+    setReasoning(selection?.reasoning ?? false);
+    setExcluded(selection?.excluded.map((id) => MessageId.make(id)) ?? []);
+    setKeep(selection?.keep ?? []);
   };
 
   const adoptFoundShare = useEffectEvent(adoptShare);
@@ -202,13 +227,22 @@ function ShareLinkDialog({
         if (!cancelled) adoptFoundShare(findShare(shares, threadRef));
       },
       () => {
-        if (!cancelled) setExisting(null);
+        // Not knowing whether a link exists must not make a second one.
+        if (!cancelled) setLookupFailed(true);
       },
     );
     return () => {
       cancelled = true;
     };
   }, [api, threadRef]);
+
+  const retryLookup = () => {
+    setLookupFailed(false);
+    api.shares().then(
+      (shares) => adoptShare(findShare(shares, threadRef)),
+      () => setLookupFailed(true),
+    );
+  };
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks this computer for the redacted copy the preview shows
   useEffect(() => {
@@ -264,32 +298,92 @@ function ShareLinkDialog({
   const ready = build.status === "ready" && existing !== undefined;
   const busy = publish.status === "publishing";
 
+  const expiresAt = expiry === "current" ? (existing?.expiresAt ?? null) : expiresAtFor(expiry);
+  const contentChanged =
+    saved === null ||
+    reasoning !== saved.reasoning ||
+    !sameIds(excluded, saved.excluded) ||
+    !sameIds(keep, saved.keep);
+  // Compared with what this device published; unknown for a link made elsewhere.
+  const outdated: "yes" | "no" | "unknown" =
+    existing == null || build.status !== "ready"
+      ? "no"
+      : saved === null
+        ? "unknown"
+        : build.build.contentDigest === saved.contentDigest
+          ? "no"
+          : "yes";
+
+  /** Settings alone change on the existing link; the content stays the published one. */
+  const saveSettings = async () => {
+    if (!existing) return;
+    setPublish({ status: "publishing" });
+    try {
+      const patch = {
+        access: chosenAccess,
+        expiresAt,
+        indexable: !existing.encrypted && indexable,
+      };
+      await api.updateShare(existing.id, patch);
+      adoptShare({ ...existing, ...patch });
+      setEditing(false);
+      setPublish({ status: "idle" });
+    } catch (error) {
+      setPublish({ status: "failed", message: messageOf(error, "The link couldn't be changed.") });
+    }
+  };
+
   const doPublish = async () => {
     if (build.status !== "ready" || existing === undefined) return;
     setPublish({ status: "publishing" });
     try {
+      const options = { encrypted, access: chosenAccess, expiresAt, indexable };
       const result = await publishShare({
         api,
         threadRef,
         build: build.build,
         title: build.document.snapshot.thread.title,
-        options: {
-          encrypted,
-          access: chosenAccess,
-          expiresAt: expiresAtFor(expiry),
-          indexable,
-        },
+        options,
         existing: existing === null ? null : { share: existing, key: readShareKey(existing.id) },
         readBlob: (relativeUrl) => fetchShareBlob(threadRef.environmentId, relativeUrl),
       });
       if (result.key !== null) rememberShareKey(result.id, result.key);
+      const selection = { reasoning, excluded, keep, contentDigest: build.build.contentDigest };
+      rememberShareSelection(result.id, selection);
       if (existing === null) copyToClipboard(result.link);
-      // The fresh record carries the new version, so "Update link" knows it's current.
+      // The record is what later saves update. If the list can't be read just now, the one
+      // this publish made stands in, so a second click never makes a second link.
       const refreshed = await api.shares().then(
         (shares) => shares.find((share) => share.id === result.id) ?? null,
         () => null,
       );
-      if (refreshed !== null) adoptShare(refreshed);
+      const now = new Date().toISOString();
+      const published = { version: result.version, publishedAt: now };
+      const made: ShareRecord =
+        refreshed ??
+        (existing === null
+          ? decodeShareRecord({
+              id: result.id,
+              source: { env: threadRef.environmentId, thread: threadRef.threadId },
+              encrypted,
+              access: chosenAccess,
+              expiresAt,
+              indexable: !encrypted && indexable,
+              createdAt: now,
+              currentVersion: result.version,
+              versions: [published],
+            })
+          : {
+              ...existing,
+              access: chosenAccess,
+              expiresAt,
+              indexable: !existing.encrypted && indexable,
+              currentVersion: result.version,
+              versions: [...existing.versions, published],
+            });
+      adoptShare(made, selection);
+      setUpdatingContent(false);
+      setContentTouched(false);
       setEditing(false);
       setPublish({ status: "published", link: result.link });
     } catch (error) {
@@ -306,6 +400,7 @@ function ShareLinkDialog({
     try {
       await api.deleteShare(existing.id);
       forgetShareKey(existing.id);
+      forgetShareSelection(existing.id);
       onClose();
     } catch (error) {
       setConfirmingStop(false);
@@ -342,8 +437,19 @@ function ShareLinkDialog({
         ? shareLink(existing.id, existingKey ?? undefined, shareLinkOrigin())
         : null;
   const showLink = existing != null && !editing;
-  const outdated =
-    existing != null && build.status === "ready" && hasChangesSince(existing, build.document);
+  // Saving republishes only when what the link shows changes; settings alone are patched.
+  const republish = updatingContent || (saved !== null ? contentChanged : contentTouched);
+  const changeContent = (run: () => void) => {
+    setContentTouched(true);
+    run();
+  };
+  const startUpdate = () => {
+    if (saved !== null && !existingKeyMissing) return void doPublish();
+    // Made elsewhere: what it left out isn't known here, so show the settings and preview first.
+    setUpdatingContent(true);
+    setEditing(true);
+    setPreviewOpen(true);
+  };
 
   const settings = (
     <div className="flex flex-col gap-2 text-sm">
@@ -393,10 +499,19 @@ function ShareLinkDialog({
         <Select value={expiry} onValueChange={(next) => next !== null && setExpiry(next)}>
           <SelectTrigger size="sm" className="w-auto" aria-label="Expires">
             <SelectValue>
-              {(choice: ExpiryChoice) => EXPIRY_CHOICES.find((entry) => entry.id === choice)?.label}
+              {(choice: ExpiryValue) =>
+                choice === "current"
+                  ? expiryLabel(existing?.expiresAt ?? null)
+                  : EXPIRY_CHOICES.find((entry) => entry.id === choice)?.label
+              }
             </SelectValue>
           </SelectTrigger>
           <SelectPopup alignItemWithTrigger={false}>
+            {existing?.expiresAt != null ? (
+              <SelectItem hideIndicator value="current">
+                {expiryLabel(existing.expiresAt)}
+              </SelectItem>
+            ) : null}
             {EXPIRY_CHOICES.map((entry) => (
               <SelectItem hideIndicator key={entry.id} value={entry.id}>
                 {entry.label}
@@ -407,7 +522,10 @@ function ShareLinkDialog({
       </label>
       <label className="flex items-center justify-between gap-3">
         <span>Include reasoning</span>
-        <Switch checked={reasoning} onCheckedChange={(checked) => setReasoning(Boolean(checked))} />
+        <Switch
+          checked={reasoning}
+          onCheckedChange={(checked) => changeContent(() => setReasoning(Boolean(checked)))}
+        />
       </label>
       <div className="flex items-center justify-between gap-3">
         <span className="flex items-center gap-1.5">
@@ -439,9 +557,11 @@ function ShareLinkDialog({
         <RedactionList
           build={build.build}
           excludedCount={excluded.length}
-          onShow={(id) => setKeep((current) => [...current, id])}
-          onBlank={(id) => setKeep((current) => current.filter((entry) => entry !== id))}
-          onPutBack={() => setExcluded([])}
+          onShow={(id) => changeContent(() => setKeep((current) => [...current, id]))}
+          onBlank={(id) =>
+            changeContent(() => setKeep((current) => current.filter((entry) => entry !== id)))
+          }
+          onPutBack={() => changeContent(() => setExcluded([]))}
         />
       ) : null}
     </div>
@@ -470,8 +590,7 @@ function ShareLinkDialog({
           </p>
         )}
         <p className="flex items-center gap-1 text-xs text-muted-foreground">
-          {accessSummary(existing.access)} ·{" "}
-          {EXPIRY_CHOICES.find((entry) => entry.id === expiryChoice(existing.expiresAt))?.label}
+          {accessSummary(existing.access)} · {expiryLabel(existing.expiresAt)}
           <Button size="xs" variant="ghost-muted" onClick={() => setEditing(true)}>
             Change
           </Button>
@@ -481,7 +600,7 @@ function ShareLinkDialog({
 
   const title = showLink ? "Share link" : existing ? "Link settings" : "Share link";
   const description = showLink
-    ? outdated
+    ? outdated === "yes"
       ? "The conversation has changed since you shared it."
       : null
     : existing
@@ -502,7 +621,14 @@ function ShareLinkDialog({
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-col gap-3">
-            {existing === undefined ? (
+            {existing === undefined && lookupFailed ? (
+              <p role="alert" className="flex items-center gap-2 text-sm text-muted-foreground">
+                Scient Cloud couldn't be reached.
+                <Button size="xs" variant="outline" onClick={retryLookup}>
+                  Try again
+                </Button>
+              </p>
+            ) : existing === undefined ? (
               <p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
             ) : showLink ? (
               linkView
@@ -538,7 +664,9 @@ function ShareLinkDialog({
                                 messageAction: {
                                   label: "Leave out",
                                   onSelect: (messageId) =>
-                                    setExcluded((current) => [...current, messageId]),
+                                    changeContent(() =>
+                                      setExcluded((current) => [...current, messageId]),
+                                    ),
                                 },
                               }
                         }
@@ -607,13 +735,8 @@ function ShareLinkDialog({
               >
                 All links
               </Button>
-              {outdated || existingKeyMissing ? (
-                <Button
-                  size="sm"
-                  variant="outline"
-                  disabled={!ready || busy}
-                  onClick={() => void doPublish()}
-                >
+              {outdated !== "no" || existingKeyMissing ? (
+                <Button size="sm" variant="outline" disabled={!ready || busy} onClick={startUpdate}>
                   {busy ? "Updating…" : "Update link"}
                 </Button>
               ) : null}
@@ -627,19 +750,35 @@ function ShareLinkDialog({
                 size="sm"
                 variant="outline"
                 disabled={busy}
-                onClick={existing ? () => setEditing(false) : onClose}
+                onClick={
+                  existing
+                    ? () => {
+                        // Back drops unsaved changes: the view shows the link as it is.
+                        adoptShare(existing);
+                        setUpdatingContent(false);
+                        setContentTouched(false);
+                        setEditing(false);
+                      }
+                    : onClose
+                }
               >
                 {existing ? "Back" : "Cancel"}
               </Button>
-              <Button size="sm" disabled={!ready || busy} onClick={() => void doPublish()}>
-                {busy
-                  ? existing
-                    ? "Saving…"
-                    : "Creating link…"
-                  : existing
-                    ? "Save"
-                    : "Create link"}
-              </Button>
+              {existing && !republish ? (
+                <Button size="sm" disabled={busy} onClick={() => void saveSettings()}>
+                  {busy ? "Saving…" : "Save"}
+                </Button>
+              ) : (
+                <Button size="sm" disabled={!ready || busy} onClick={() => void doPublish()}>
+                  {busy
+                    ? existing
+                      ? "Updating link…"
+                      : "Creating link…"
+                    : existing
+                      ? "Update link"
+                      : "Create link"}
+                </Button>
+              )}
             </>
           )}
         </DialogFooter>

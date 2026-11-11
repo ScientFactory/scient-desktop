@@ -20,7 +20,8 @@ import { shareLinkOrigin, type CloudApi } from "./cloudApi";
 import { InfoTip } from "./InfoTip";
 import { deleteCloudCopies, turnOffCloudCopy, turnOnCloudCopy } from "./serverCloud";
 import { openShareLinkDialog } from "./shareDialogState";
-import { readShareKey } from "./shareKeys";
+import { forgetShareKey, readShareKey } from "./shareKeys";
+import { forgetShareSelection } from "./shareSelections";
 import { expiryChoice, EXPIRY_CHOICES, expiresAtFor, type ExpiryChoice } from "./shareOptions";
 import { hasCloudAccount, useCloudAccount } from "./useCloudAccount";
 import { useCloudStatus } from "./useCloudStatus";
@@ -342,7 +343,14 @@ function SharedLinkRow({
             size="sm"
             variant="ghost-destructive"
             disabled={busy}
-            onClick={() => void update(() => api.deleteShare(share.id))}
+            onClick={() =>
+              void update(() =>
+                api.deleteShare(share.id).then(() => {
+                  forgetShareKey(share.id);
+                  forgetShareSelection(share.id);
+                }),
+              )
+            }
           >
             Stop sharing
           </Button>
