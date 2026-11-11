@@ -43,10 +43,17 @@ export function useContinueHere(api: CloudApi) {
     readonly candidates: ReadonlyArray<Candidate>;
     readonly resolve: (projectId: ProjectId | null) => void;
   } | null>(null);
-  // A pending project choice; leaving the page cancels it, so its claim is released.
+  // Leaving the page cancels a pending or late project choice, so its claim is released.
   const pendingChoice = useRef<((projectId: ProjectId | null) => void) | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases this page's entry in the module-level in-flight registry when it unmounts mid-choice
-  useEffect(() => () => pendingChoice.current?.(null), []);
+  const unmounted = useRef(false);
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases this page's entry in the module-level in-flight registry when it unmounts mid-continuation
+  useEffect(() => {
+    unmounted.current = false;
+    return () => {
+      unmounted.current = true;
+      pendingChoice.current?.(null);
+    };
+  }, []);
 
   const modelFor = (
     environmentId: EnvironmentId,
@@ -92,6 +99,7 @@ export function useContinueHere(api: CloudApi) {
         setProblem("Turn on Cloud copy on this computer first, in Settings > Sharing & access.");
         return null;
       }
+      if (unmounted.current) return null;
       const { generation } = await api.lease(row.environmentId, row.threadId, environmentId);
       let projectId: ProjectId | null = null;
       for (;;) {
@@ -108,6 +116,7 @@ export function useContinueHere(api: CloudApi) {
           ...(projectId === null ? {} : { projectId }),
           modelSelection,
         });
+        if (unmounted.current) return null;
         if (result._tag === "imported") return result.threadId;
         projectId = await new Promise<ProjectId | null>((resolve) => {
           pendingChoice.current = resolve;
