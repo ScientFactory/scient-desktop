@@ -198,6 +198,25 @@ describe("personal library store", () => {
     );
   });
 
+  it("sees a record file edited in place once the folder is no longer trusted alone", async () => {
+    const { root, library } = await newLibrary();
+    const imported = await importScientSource({
+      root: library,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: candidate("EDIT", "Before"),
+    });
+    if (!imported.record) throw new Error("Expected an imported record.");
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(Date.now() + 60 * 60 * 1000);
+    expect((await listScientSourceRecords(library))[0]?.title).toBe("Before");
+
+    const filePath = NodePath.join(root, "records", `${imported.record.sourceId}.json`);
+    const file = JSON.parse(await NodeFSP.readFile(filePath, "utf8")) as Record<string, unknown>;
+    await NodeFSP.writeFile(filePath, JSON.stringify({ ...file, title: "After" }));
+    vi.setSystemTime(Date.now() + 60 * 1000);
+    expect((await listScientSourceRecords(library))[0]?.title).toBe("After");
+  });
+
   it("gives each checkout of a project its own instance", async () => {
     const { library } = await newLibrary();
     const checkout = await fixture();

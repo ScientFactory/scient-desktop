@@ -1228,6 +1228,9 @@ async function scanScientSourceRecords(paths: SourceStorePaths): Promise<RecordS
  */
 const RACY_TIMESTAMP_NS = 2_000_000_000n;
 
+/** Editing a file in place leaves its folder's timestamps alone, so the folder alone is trusted briefly. */
+const FOLDER_TRUST_MS = 30_000;
+
 interface IndexedRecordFile {
   readonly stamp: string;
   readonly settled: boolean;
@@ -1237,6 +1240,7 @@ interface IndexedRecordFile {
 interface LibraryRecordIndex extends RecordScan {
   readonly fingerprint: string;
   readonly settled: boolean;
+  readonly validatedAtMs: number;
   readonly files: ReadonlyMap<string, IndexedRecordFile>;
 }
 
@@ -1250,11 +1254,12 @@ const isSettled = (stats: NodeFS.BigIntStats, scanStartedNs: bigint) =>
 /**
  * The library's record list from its in-memory index. Every library write replaces, links or
  * unlinks a file in `records/`, which changes the folder's timestamps; while those are unchanged
- * the index answers without touching any record. Otherwise each file is checked by its own
- * timestamps and only new or changed files are read again.
+ * and recently checked, the index answers without touching any record. Otherwise each file is
+ * checked by its own timestamps and only new or changed files are read again.
  */
 async function scanLibraryRecords(paths: SourceStorePaths): Promise<RecordScan> {
-  const scanStartedNs = BigInt(Date.now()) * 1_000_000n;
+  const scanStartedMs = Date.now();
+  const scanStartedNs = BigInt(scanStartedMs) * 1_000_000n;
   const folder = await NodeFSP.lstat(paths.records, { bigint: true }).catch((error: unknown) => {
     if (isNodeError(error, "ENOENT")) return null;
     throw error;
@@ -1268,7 +1273,13 @@ async function scanLibraryRecords(paths: SourceStorePaths): Promise<RecordScan> 
   }
   const fingerprint = [folder.dev, folder.ino, folder.mtimeNs, folder.ctimeNs].join(":");
   const cached = libraryRecordIndexes.get(paths.root);
-  if (cached?.settled && cached.fingerprint === fingerprint) return cached;
+  if (
+    cached?.settled &&
+    cached.fingerprint === fingerprint &&
+    scanStartedMs - cached.validatedAtMs < FOLDER_TRUST_MS
+  ) {
+    return cached;
+  }
 
   const entries = await NodeFSP.readdir(paths.records, { withFileTypes: true });
   const files = new Map<string, IndexedRecordFile>();
@@ -1307,6 +1318,7 @@ async function scanLibraryRecords(paths: SourceStorePaths): Promise<RecordScan> 
     ...settleScan([...files.values()].map((file) => file.result)),
     fingerprint,
     settled: isSettled(folder, scanStartedNs),
+    validatedAtMs: scanStartedMs,
     files,
   };
   libraryRecordIndexes.set(paths.root, index);
