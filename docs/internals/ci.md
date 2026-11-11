@@ -12,11 +12,6 @@ otherwise leave a required context permanently pending. The lightweight
 - existence of changed Markdown files' local link targets; and
 - the local-link checker's own Node test suite.
 
-On a push to `main`, the Documentation and upstream provenance workflows skip their checks when
-every commit the push lands already passed the same workflow in the merge queue
-([`queue-verified.cjs`](../../.github/scripts/queue-verified.cjs)); a push the queue never ran
-is checked in full.
-
 External links and in-document anchors are outside this fast check. When no Markdown file changes,
 the workflow still reports whitespace and checker-test results without inventing documentation
 work. The full product suite also runs for documentation-only changes so every protected context
@@ -117,6 +112,12 @@ Vitest JSON reports under the normal artifact names, using its own run attempt. 
 `Test` summaries link to the source run. This preserves the successful main-push baseline
 consumed by the transfer reporter. Native packaging artifacts remain on the linked source run;
 releases still build their own artifacts.
+
+A source qualifies through its gates, not its overall result: the newest run of that head must
+be in progress or completed with success or failure, and its latest attempt must hold exactly one
+successful `Check` and one successful `Qualification receipt`. Advisory jobs (Overleaf macOS,
+shard weights, main caches) may still be running or may have failed. A cancelled, timed-out or
+unstarted run never qualifies, and an older run is never used behind a newer one of the same head.
 
 Missing, expired, malformed or mismatched proof/reports, API failures, and restoration failures
 run normal CI. A partially restored report is overwritten by the fresh test result on fallback.
