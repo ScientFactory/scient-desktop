@@ -74,7 +74,7 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
     const current =
       account === undefined ? undefined : session.accounts.find((item) => item.name === account);
     const asked = yield* askForAccountKey(scope, {
-      name: same(field.title, connector.displayName)
+      name: field.title.toLowerCase().includes(connector.displayName.trim().toLowerCase())
         ? field.title
         : `${connector.displayName} ${field.title}`,
       reason: field.description ?? `${connector.displayName} needs it to run.`,
