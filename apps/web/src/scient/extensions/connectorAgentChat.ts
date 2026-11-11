@@ -63,5 +63,10 @@ export const makeFromEntryPrompt = (entry: {
   readonly registryName: string;
   readonly repositoryUrl?: string | undefined;
   readonly reason?: string | undefined;
-}) =>
-  `${AUTHORING} Make a connector for “${entry.title}” (MCP Registry: ${entry.registryName}${entry.repositoryUrl ? `, code: ${entry.repositoryUrl}` : ""}). Scient can't add it as it is${entry.reason ? `: ${entry.reason}` : ""}.`;
+}) => {
+  const where = [
+    entry.title === entry.registryName ? undefined : `MCP Registry: ${entry.registryName}`,
+    entry.repositoryUrl === undefined ? undefined : `code: ${entry.repositoryUrl}`,
+  ].filter((part) => part !== undefined);
+  return `${AUTHORING} Make a connector for “${entry.title}”${where.length > 0 ? ` (${where.join(", ")})` : ""}. Scient can't add it as it is${entry.reason ? `: ${entry.reason}` : ""}.`;
+};
