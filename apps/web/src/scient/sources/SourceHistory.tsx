@@ -20,6 +20,7 @@ import { readScientSourceRevisions, revertScientSource } from "./client";
 import { useCanChangeLibrary } from "./sourcesCommands";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { changedFieldsLabel, revisionLabel } from "./sourceLifecycleLabels";
+import { settleAfter } from "./settleAfter";
 
 type Revision = ScientSourceRevisionsResult["revisions"][number];
 
@@ -58,45 +59,49 @@ export function SourceHistoryDialog(props: {
   const restore = async (toRevision: number) => {
     setPending(toRevision);
     setProblem(null);
-    try {
-      const result = await revertScientSource(props.environmentId, {
-        root: props.root,
-        sourceId: props.sourceId,
-        expectedRevision: props.revision,
-        toRevision,
-      });
-      if (result.outcome === "stale") {
-        // The caller remounts this dialog for the newer revision, which reloads the history.
-        props.onReverted(result.record);
-        return;
-      }
-      if (result.outcome === "duplicate") {
-        setProblem("That version's identifier now belongs to another source.");
-        return;
-      }
-      if (result.outcome === "not-found") {
-        setProblem("That version is no longer kept.");
-        return;
-      }
-      props.onReverted(result.record);
-      props.onClose();
-      toastManager.add({
-        type: "success",
-        title: result.outcome === "unchanged" ? "Already this version" : "Earlier version restored",
-        ...(result.missingAttachmentCount > 0
-          ? {
-              description:
-                result.missingAttachmentCount === 1
-                  ? "Its PDF was deleted when the trash was emptied."
-                  : `${result.missingAttachmentCount} of its PDFs were deleted when the trash was emptied.`,
-            }
-          : {}),
-      });
-    } catch (cause) {
-      setProblem(errorMessage(cause));
-    } finally {
-      setPending(null);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          const result = await revertScientSource(props.environmentId, {
+            root: props.root,
+            sourceId: props.sourceId,
+            expectedRevision: props.revision,
+            toRevision,
+          });
+          if (result.outcome === "stale") {
+            // The caller remounts this dialog for the newer revision, which reloads the history.
+            props.onReverted(result.record);
+            return;
+          }
+          if (result.outcome === "duplicate") {
+            setProblem("That version's identifier now belongs to another source.");
+            return;
+          }
+          if (result.outcome === "not-found") {
+            setProblem("That version is no longer kept.");
+            return;
+          }
+          props.onReverted(result.record);
+          props.onClose();
+          toastManager.add({
+            type: "success",
+            title:
+              result.outcome === "unchanged" ? "Already this version" : "Earlier version restored",
+            ...(result.missingAttachmentCount > 0
+              ? {
+                  description:
+                    result.missingAttachmentCount === 1
+                      ? "Its PDF was deleted when the trash was emptied."
+                      : `${result.missingAttachmentCount} of its PDFs were deleted when the trash was emptied.`,
+                }
+              : {}),
+          });
+        } catch (cause) {
+          setProblem(errorMessage(cause));
+        }
+      },
+      () => setPending(null),
+    );
   };
 
   return (

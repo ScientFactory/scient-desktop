@@ -11,6 +11,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { syncScientBibliography } from "./client";
 import { publishLibraryVersion } from "./librarySourceRequest";
 import { useCanChangeLibrary } from "./sourcesCommands";
+import { settleAfter } from "./settleAfter";
 
 /**
  * The server rewrites the managed files after every Library write; this reads
@@ -59,16 +60,17 @@ export function useManagedBibliography(input: {
   const resolve = useStableCallback(
     async (name: ScientManagedBibliographyFileName, action: "replace" | "import") => {
       setReplacing(true);
-      try {
-        const value = await syncScientBibliography(input.environmentId, {
-          root: input.root,
-          ...(action === "replace" ? { replaceEdited: [name] } : { importEdited: [name] }),
-        });
-        setStatus({ context, value });
-        if (action === "import") input.onImported?.();
-      } finally {
-        setReplacing(false);
-      }
+      await settleAfter(
+        async () => {
+          const value = await syncScientBibliography(input.environmentId, {
+            root: input.root,
+            ...(action === "replace" ? { replaceEdited: [name] } : { importEdited: [name] }),
+          });
+          setStatus({ context, value });
+          if (action === "import") input.onImported?.();
+        },
+        () => setReplacing(false),
+      );
     },
   );
 

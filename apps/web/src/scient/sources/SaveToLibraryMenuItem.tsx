@@ -13,6 +13,7 @@ import { scientSourcesSurface } from "../rightPanel/surfaces";
 import { saveScientSourcePage } from "./client";
 import { useCanChangeLibrary } from "./sourcesCommands";
 import { requestLibraryFileImport } from "./libraryFileHandoff";
+import { settleAfter } from "./settleAfter";
 
 function savedDescription(passageSaved: boolean): string | undefined {
   return passageSaved ? "The selected passage is in its note." : undefined;
@@ -45,53 +46,57 @@ export function SaveToLibraryMenuItem(props: {
     useRightPanelStore.getState().openScient(props.threadRef, scientSourcesSurface());
 
   const save = async () => {
-    if (!root || !props.runtimeTabId || saving) return;
+    const tabId = props.runtimeTabId;
+    if (!root || !tabId || saving) return;
     setSaving(true);
-    try {
-      const read = await readLibraryPage(props.runtimeTabId);
-      if (!read) {
-        toastManager.add({
-          type: "error",
-          title: "Couldn't save this page",
-          description: "Scient could not read this tab. Reload it, then try again.",
-        });
-        return;
-      }
-      if (read._tag === "pdf") {
-        requestLibraryFileImport(root, [
-          new File([read.data.slice()], read.fileName, { type: "application/pdf" }),
-        ]);
-        openLibrary();
-        return;
-      }
-      const result = await saveScientSourcePage(props.threadRef.environmentId, {
-        root,
-        page: read.page,
-      });
-      if (result.outcome === "not-added") {
-        toastManager.add({
-          type: "error",
-          title: "Not saved to Library",
-          description: result.message,
-        });
-        return;
-      }
-      const description = savedDescription(result.passageSaved);
-      toastManager.add({
-        type: "success",
-        title: result.outcome === "added" ? "Saved to Library" : "Already in Library",
-        ...(description ? { description } : { data: { compact: true } }),
-        actionProps: { children: "Open Library", onClick: openLibrary },
-      });
-    } catch (error) {
-      toastManager.add({
-        type: "error",
-        title: "Couldn't save this page",
-        description: error instanceof Error ? error.message : "An error occurred.",
-      });
-    } finally {
-      setSaving(false);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          const read = await readLibraryPage(tabId);
+          if (!read) {
+            toastManager.add({
+              type: "error",
+              title: "Couldn't save this page",
+              description: "Scient could not read this tab. Reload it, then try again.",
+            });
+            return;
+          }
+          if (read._tag === "pdf") {
+            requestLibraryFileImport(root, [
+              new File([read.data.slice()], read.fileName, { type: "application/pdf" }),
+            ]);
+            openLibrary();
+            return;
+          }
+          const result = await saveScientSourcePage(props.threadRef.environmentId, {
+            root,
+            page: read.page,
+          });
+          if (result.outcome === "not-added") {
+            toastManager.add({
+              type: "error",
+              title: "Not saved to Library",
+              description: result.message,
+            });
+            return;
+          }
+          const description = savedDescription(result.passageSaved);
+          toastManager.add({
+            type: "success",
+            title: result.outcome === "added" ? "Saved to Library" : "Already in Library",
+            ...(description ? { description } : { data: { compact: true } }),
+            actionProps: { children: "Open Library", onClick: openLibrary },
+          });
+        } catch (error) {
+          toastManager.add({
+            type: "error",
+            title: "Couldn't save this page",
+            description: error instanceof Error ? error.message : "An error occurred.",
+          });
+        }
+      },
+      () => setSaving(false),
+    );
   };
 
   return (

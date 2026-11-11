@@ -1464,7 +1464,7 @@ export function ScientSourcesPanel(props: {
               unstyled
               type="search"
               aria-label="Search project sources"
-              placeholder="Search title, author, DOI, year, or keyword"
+              placeholder="Search sources"
               value={sourceQuery}
               onChange={(event) => setSourceQuery(event.currentTarget.value)}
               size="inline"

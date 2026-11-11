@@ -20,6 +20,7 @@ import {
 import { toastManager } from "../../components/ui/toast";
 import { readZoteroStatus, refreshZoteroSources, sendSourcesToZotero } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { settleAfter } from "./settleAfter";
 
 const FIELD_LABELS: Readonly<Record<ScientSourceZoteroRefreshField, string>> = {
   type: "Type",
@@ -94,37 +95,40 @@ export function useZoteroSync(input: {
   ) => {
     if (refresh?.phase !== "done") return;
     setResolving(`${sourceId}\0${field}`);
-    try {
-      const result = await refreshZoteroSources(input.environmentId, {
-        root: input.root,
-        sourceIds: [sourceId],
-        connection: refresh.connection,
-        ...(side === "zotero" ? { useZotero: [field] } : { keepLocal: [field] }),
-      });
-      const next = result.items[0];
-      setRefresh((current) =>
-        current?.phase === "done" && next
-          ? {
-              ...current,
-              result: {
-                ...current.result,
-                items: current.result.items.map((item) =>
-                  item.sourceId === sourceId ? next : item,
-                ),
-              },
-            }
-          : current,
-      );
-      if (side === "zotero") await input.onChanged();
-    } catch (cause) {
-      toastManager.add({
-        type: "error",
-        title: "Zotero could not be read",
-        description: errorText(cause),
-      });
-    } finally {
-      setResolving(null);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          const result = await refreshZoteroSources(input.environmentId, {
+            root: input.root,
+            sourceIds: [sourceId],
+            connection: refresh.connection,
+            ...(side === "zotero" ? { useZotero: [field] } : { keepLocal: [field] }),
+          });
+          const next = result.items[0];
+          setRefresh((current) =>
+            current?.phase === "done" && next
+              ? {
+                  ...current,
+                  result: {
+                    ...current.result,
+                    items: current.result.items.map((item) =>
+                      item.sourceId === sourceId ? next : item,
+                    ),
+                  },
+                }
+              : current,
+          );
+          if (side === "zotero") await input.onChanged();
+        } catch (cause) {
+          toastManager.add({
+            type: "error",
+            title: "Zotero could not be read",
+            description: errorText(cause),
+          });
+        }
+      },
+      () => setResolving(null),
+    );
   };
 
   const sendToZotero = async (sourceId: string) => {

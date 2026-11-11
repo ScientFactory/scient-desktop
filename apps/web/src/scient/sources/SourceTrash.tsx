@@ -18,6 +18,7 @@ import {
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { removedLabel, restoreProblem } from "./sourceLifecycleLabels";
 import { useCanChangeLibrary } from "./sourcesCommands";
+import { settleAfter } from "./settleAfter";
 
 type TrashEntry = ScientSourceTrashListing["entries"][number];
 
@@ -92,15 +93,18 @@ export function SourceTrashPopover(props: {
   const run = async (key: string, work: () => Promise<unknown>) => {
     setPending(key);
     setProblem(null);
-    try {
-      await work();
-      await props.onChanged();
-      await load();
-    } catch (cause) {
-      setProblem(errorMessage(cause));
-    } finally {
-      setPending(null);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          await work();
+          await props.onChanged();
+          await load();
+        } catch (cause) {
+          setProblem(errorMessage(cause));
+        }
+      },
+      () => setPending(null),
+    );
   };
 
   const entries = listing?.entries ?? [];

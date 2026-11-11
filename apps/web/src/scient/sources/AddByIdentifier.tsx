@@ -13,6 +13,7 @@ import { Textarea } from "../../components/ui/textarea";
 import { addScientSourcesByIdentifier } from "./client";
 import { useCanChangeLibrary } from "./sourcesCommands";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { settleAfter } from "./settleAfter";
 
 function reason(item: ScientSourceIdentifierAddItem): string {
   const registry = item.identifier ? sourceIdentifierRegistryName(item.identifier) : null;
@@ -69,30 +70,33 @@ export function AddByIdentifier(props: {
     if (!canAdd) return;
     setAdding(true);
     setError(null);
-    try {
-      const response = await addScientSourcesByIdentifier(props.environmentId, {
-        root: props.root,
-        entries: entries.map((entry) => entry.input),
-      });
-      props.onAdded(response.results);
-      const notAdded = response.results.filter((item) => item.outcome !== "imported");
-      if (notAdded.length === 0) {
-        props.onClose();
-        return;
-      }
-      setResults(response.results);
-      // Leave what can be retried in the box, so Add tries them again.
-      setText(
-        notAdded
-          .filter((item) => item.outcome === "unavailable")
-          .map((item) => item.input)
-          .join("\n"),
-      );
-    } catch (cause) {
-      setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
-    } finally {
-      setAdding(false);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          const response = await addScientSourcesByIdentifier(props.environmentId, {
+            root: props.root,
+            entries: entries.map((entry) => entry.input),
+          });
+          props.onAdded(response.results);
+          const notAdded = response.results.filter((item) => item.outcome !== "imported");
+          if (notAdded.length === 0) {
+            props.onClose();
+            return;
+          }
+          setResults(response.results);
+          // Leave what can be retried in the box, so Add tries them again.
+          setText(
+            notAdded
+              .filter((item) => item.outcome === "unavailable")
+              .map((item) => item.input)
+              .join("\n"),
+          );
+        } catch (cause) {
+          setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+        }
+      },
+      () => setAdding(false),
+    );
   };
 
   const added = results?.filter((item) => item.outcome === "imported").length ?? 0;
