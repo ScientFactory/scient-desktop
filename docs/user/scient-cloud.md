@@ -74,9 +74,10 @@ conversation (Import conversation in the sidebar). A
 
 A conversation runs on one computer at a time. To pick it up on another of your computers:
 
-1. Turn on Cloud copy on both computers.
+1. Turn on Cloud copy on the computer you are moving from.
 2. On the computer you are moving to, open the conversation in **Cloud conversations** and choose
-   **Continue on this computer**.
+   **Continue on this computer**. If Cloud copy is off there, the button becomes **Turn on Cloud copy
+   and continue**: continuing needs it on both computers so the conversation can move back later.
 
 Scient finds the same project on this computer by its Git remote (and the folder inside the
 repository). If it can't tell which project, it asks. The conversation continues as a new

@@ -21,7 +21,7 @@ import { CloudApiError, type CloudApi } from "./cloudApi";
 
 const isCloudApiError = Schema.is(CloudApiError);
 import { SnapshotConversationView } from "./SnapshotConversationView";
-import { useContinueHere } from "./useContinueHere";
+import { CLOUD_COPY_NEEDED, useContinueHere } from "./useContinueHere";
 import { hasCloudAccount, useCloudAccount } from "./useCloudAccount";
 
 function ReaderFrame({
@@ -307,22 +307,29 @@ export function CloudConversationPage({
 }) {
   return (
     <SignedIn title="Cloud conversation" back>
-      {({ api }) => (
-        <CloudConversationReader api={api} environmentId={environmentId} threadId={threadId} />
+      {(account) => (
+        <CloudConversationReader
+          account={account}
+          environmentId={environmentId}
+          threadId={threadId}
+        />
       )}
     </SignedIn>
   );
 }
 
 function CloudConversationReader({
-  api,
+  account,
   environmentId,
   threadId,
 }: {
-  api: CloudApi;
+  account: { api: CloudApi; userId: string };
   environmentId: string;
   threadId: string;
 }) {
+  const { api } = account;
+  const thisComputer = usePrimaryEnvironmentId();
+  const continueHere = useContinueHere(account);
   const [loaded, retry] = useLoaded(async () => {
     const [conversation, threads, computers] = await Promise.all([
       api.thread(environmentId, threadId),
@@ -355,16 +362,43 @@ function CloudConversationReader({
   }
   const { conversation, row, computers } = loaded.value;
   const source = computerLabel(computers, environmentId);
+  // The hosted app has no "this computer"; the desktop app and a computer's own web page do.
+  const continuable =
+    row !== null &&
+    !isHostedStaticApp() &&
+    thisComputer !== null &&
+    thisComputer !== row.ownerEnvironmentId
+      ? { row, thisComputer }
+      : null;
   return (
     <ReaderFrame
       title={conversation.snapshot.thread.title}
       back
       actions={
-        // The hosted app has no "this computer"; the desktop app and a computer's own web page do.
-        row !== null && !isHostedStaticApp() ? <ContinueHereButton api={api} row={row} /> : null
+        continuable === null ? null : (
+          <ContinueHereButton
+            continueHere={continueHere}
+            row={continuable.row}
+            thisComputer={continuable.thisComputer}
+          />
+        )
       }
     >
       <CopyFacts conversation={conversation} row={row} source={source} computers={computers} />
+      {continuable === null ? null : (
+        <div className="-mt-4 mb-6 flex flex-col items-start gap-2 text-xs text-muted-foreground">
+          <p>
+            Continuing on this computer starts a new conversation here from this copy. New messages
+            then go here, and the conversation on {source} stays as it was.
+          </p>
+          {continueHere.problem ? (
+            <p className="text-destructive-foreground">{continueHere.problem}</p>
+          ) : continueHere.needsCloudCopy ? (
+            <p className="text-foreground">{CLOUD_COPY_NEEDED}</p>
+          ) : null}
+          {continueHere.chooser}
+        </div>
+      )}
       <SnapshotConversationView conversation={conversation} loadBlob={api.blob} />
     </ReaderFrame>
   );
@@ -400,34 +434,37 @@ function CopyFacts({
   );
 }
 
-function ContinueHereButton({ api, row }: { api: CloudApi; row: ThreadIndexRow }) {
+function ContinueHereButton({
+  continueHere,
+  row,
+  thisComputer,
+}: {
+  continueHere: ReturnType<typeof useContinueHere>;
+  row: ThreadIndexRow;
+  thisComputer: string;
+}) {
   const navigate = useNavigate();
-  const continueHere = useContinueHere(api);
-  const thisComputer = usePrimaryEnvironmentId();
-  if (thisComputer === null || thisComputer === row.ownerEnvironmentId) return null;
   return (
-    <>
-      {continueHere.problem ? (
-        <span className="text-xs text-destructive-foreground">{continueHere.problem}</span>
-      ) : null}
-      {continueHere.chooser}
-      <Button
-        size="sm"
-        disabled={continueHere.running}
-        onClick={async () => {
-          const imported = await continueHere.run(row, thisComputer);
-          if (imported === null) return;
-          await navigate({
-            to: "/$environmentId/$threadId",
-            params: buildThreadRouteParams({
-              environmentId: EnvironmentId.make(thisComputer),
-              threadId: ThreadId.make(imported),
-            }),
-          });
-        }}
-      >
-        {continueHere.running ? "Continuing…" : "Continue on this computer"}
-      </Button>
-    </>
+    <Button
+      size="sm"
+      disabled={continueHere.running}
+      onClick={async () => {
+        const imported = await continueHere.run(row, thisComputer, continueHere.needsCloudCopy);
+        if (imported === null) return;
+        await navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams({
+            environmentId: EnvironmentId.make(thisComputer),
+            threadId: ThreadId.make(imported),
+          }),
+        });
+      }}
+    >
+      {continueHere.running
+        ? "Continuing…"
+        : continueHere.needsCloudCopy
+          ? "Turn on Cloud copy and continue"
+          : "Continue on this computer"}
+    </Button>
   );
 }

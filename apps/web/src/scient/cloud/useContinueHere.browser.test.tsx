@@ -41,7 +41,7 @@ const api = { lease: async () => ({ generation: 2 }) } as unknown as CloudApi;
 
 // The hook navigates nowhere itself, so these renders need no router.
 function Continue() {
-  const continueHere = useContinueHere(api);
+  const continueHere = useContinueHere({ api, userId: "user_1" });
   return (
     <>
       <button type="button" onClick={() => void continueHere.run(row, "env-b")}>

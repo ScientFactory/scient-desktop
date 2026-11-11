@@ -12,7 +12,7 @@ import { buildThreadRouteParams } from "~/threadRoutes";
 import { hasCloudAccount, useCloudAccount } from "./useCloudAccount";
 import { useCloudList } from "./useCloudList";
 import { useCloudStatus } from "./useCloudStatus";
-import { useContinueHere } from "./useContinueHere";
+import { CLOUD_COPY_NEEDED, useContinueHere } from "./useContinueHere";
 
 /**
  * Cloud facts about the open conversation: the banner when another of the person's computers
@@ -94,14 +94,17 @@ function TakeBackButton({
   environmentId: EnvironmentId;
   threadId: string;
 }) {
-  const { api } = useCloudAccount();
-  const continueHere = useContinueHere(api);
+  const account = useCloudAccount();
+  const { api } = account;
+  const continueHere = useContinueHere(account);
   const navigate = useNavigate();
   const [problem, setProblem] = useState<string | null>(null);
   return (
     <div className="flex flex-wrap items-center gap-2">
       {(problem ?? continueHere.problem) ? (
         <span className="text-xs text-muted-foreground">{problem ?? continueHere.problem}</span>
+      ) : continueHere.needsCloudCopy ? (
+        <span className="text-xs text-muted-foreground">{CLOUD_COPY_NEEDED}</span>
       ) : null}
       {continueHere.chooser}
       <Button
@@ -123,6 +126,7 @@ function TakeBackButton({
               return null;
             },
             environmentId,
+            continueHere.needsCloudCopy,
           );
           if (imported === null) return;
           await navigate({
@@ -131,7 +135,11 @@ function TakeBackButton({
           });
         }}
       >
-        {continueHere.running ? "Taking it back…" : "Take it back"}
+        {continueHere.running
+          ? "Taking it back…"
+          : continueHere.needsCloudCopy
+            ? "Turn on Cloud copy and take it back"
+            : "Take it back"}
       </Button>
     </div>
   );

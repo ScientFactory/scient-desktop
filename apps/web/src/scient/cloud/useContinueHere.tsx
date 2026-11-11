@@ -17,18 +17,23 @@ import { useEnvironmentProviders } from "~/state/environments";
 
 import { newChatModelSelection } from "../conversationImport/importDestination.logic";
 import type { CloudApi } from "./cloudApi";
-import { readCloudStatus, takeOverCloudThread } from "./serverCloud";
+import { readCloudStatus, takeOverCloudThread, turnOnCloudCopy } from "./serverCloud";
 
 type Candidate = { readonly projectId: ProjectId; readonly title: string };
+
+/** Why continuing asks for Cloud copy on this computer, beside the button that turns it on. */
+export const CLOUD_COPY_NEEDED =
+  "Continuing needs Cloud copy on this computer too: it copies this computer's conversations (not project files), so the conversation can move between your computers.";
 
 /** Conversations being continued here right now: a repeat click never takes a second lease. */
 const inFlight = new Set<string>();
 
 /**
  * "Continue on this computer": takes the conversation's lease for this computer, then imports the
- * copy into the matching local project as a new thread that continues it.
+ * copy into the matching local project as a new thread that continues it. When Cloud copy is off
+ * here, `needsCloudCopy` asks for the person's click, and `run(..., true)` turns it on first.
  */
-export function useContinueHere(api: CloudApi) {
+export function useContinueHere({ api, userId }: { api: CloudApi; userId: string | null }) {
   const projects = useProjects();
   const configs = useServerConfigs();
   const providersByEnvironment = useEnvironmentProviders();
@@ -39,6 +44,7 @@ export function useContinueHere(api: CloudApi) {
   const stickyActiveProvider = useComposerDraftStore((store) => store.stickyActiveProvider);
   const [running, setRunning] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
+  const [needsCloudCopy, setNeedsCloudCopy] = useState(false);
   const [choice, setChoice] = useState<{
     readonly candidates: ReadonlyArray<Candidate>;
     readonly resolve: (projectId: ProjectId | null) => void;
@@ -90,15 +96,23 @@ export function useContinueHere(api: CloudApi) {
     });
   };
 
-  const continueRow = async (row: ThreadIndexRow, here: string): Promise<string | null> => {
+  const continueRow = async (
+    row: ThreadIndexRow,
+    here: string,
+    turnOnCopy: boolean,
+  ): Promise<string | null> => {
     const environmentId = EnvironmentId.make(here);
     setProblem(null);
     try {
       const status = await readCloudStatus(environmentId).catch(() => null);
       if (status !== null && (status.enrolledUserId === null || !status.enabled)) {
-        setProblem("Turn on Cloud copy on this computer first, in Settings > Sharing & access.");
-        return null;
+        if (!turnOnCopy || userId === null) {
+          setNeedsCloudCopy(true);
+          return null;
+        }
+        await turnOnCloudCopy({ environmentId, userId, api });
       }
+      setNeedsCloudCopy(false);
       if (unmounted.current) return null;
       const { generation } = await api.lease(row.environmentId, row.threadId, environmentId);
       let projectId: ProjectId | null = null;
@@ -135,20 +149,25 @@ export function useContinueHere(api: CloudApi) {
   };
 
   /** Continues `row` here and gives the new thread's id, or null. */
-  const run = (row: ThreadIndexRow, here: string) =>
-    once(`${row.environmentId}/${row.threadId}`, () => continueRow(row, here));
+  const run = (row: ThreadIndexRow, here: string, turnOnCopy = false) =>
+    once(`${row.environmentId}/${row.threadId}`, () => continueRow(row, here, turnOnCopy));
   /** Like `run`, finding the row first inside the same guard, keyed by `key`. */
-  const runFound = (key: string, find: () => Promise<ThreadIndexRow | null>, here: string) =>
+  const runFound = (
+    key: string,
+    find: () => Promise<ThreadIndexRow | null>,
+    here: string,
+    turnOnCopy = false,
+  ) =>
     once(key, async () => {
       const row = await find();
-      return row === null ? null : continueRow(row, here);
+      return row === null ? null : continueRow(row, here, turnOnCopy);
     });
 
   const chooser =
     choice === null ? null : (
       <ProjectChooser candidates={choice.candidates} onChoose={choice.resolve} />
     );
-  return { run, runFound, running, problem, chooser };
+  return { run, runFound, running, problem, needsCloudCopy, chooser };
 }
 
 function ProjectChooser({
