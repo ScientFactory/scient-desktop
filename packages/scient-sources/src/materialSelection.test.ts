@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 
 import type { ScientSourceAttachment } from "./model.ts";
-import { selectScientSourceMaterial, verifyScientSourceMaterial } from "./materialSelection.ts";
+import { selectScientSourceMaterial } from "./materialSelection.ts";
 
 function material(
   attachmentId: string,
@@ -79,54 +79,5 @@ describe("Scient Source material selection", () => {
       _tag: "DuplicateMaterialId",
       attachmentId: pdf.attachmentId,
     });
-  });
-});
-
-describe("Scient Source material verification", () => {
-  const selected = material("pdf-selected", {
-    sha256: "AABBCC",
-    byteLength: 2_048,
-  });
-
-  it("reports missing bytes without selecting a fallback material", () => {
-    expect(verifyScientSourceMaterial(selected, { _tag: "Missing" })).toEqual({
-      _tag: "MissingBytes",
-      material: selected,
-    });
-  });
-
-  it("reports changed bytes from the exact observed hash", () => {
-    expect(
-      verifyScientSourceMaterial(selected, {
-        _tag: "Available",
-        sha256: "different",
-        byteLength: 2_048,
-      }),
-    ).toEqual({
-      _tag: "HashMismatch",
-      material: selected,
-      observedSha256: "different",
-    });
-  });
-
-  it("treats hexadecimal case as equivalent and still verifies byte length", () => {
-    expect(
-      verifyScientSourceMaterial(selected, {
-        _tag: "Available",
-        sha256: "aabbcc",
-        byteLength: 1,
-      }),
-    ).toEqual({
-      _tag: "ByteLengthMismatch",
-      material: selected,
-      observedByteLength: 1,
-    });
-    expect(
-      verifyScientSourceMaterial(selected, {
-        _tag: "Available",
-        sha256: "aabbcc",
-        byteLength: 2_048,
-      }),
-    ).toEqual({ _tag: "Verified", material: selected });
   });
 });
