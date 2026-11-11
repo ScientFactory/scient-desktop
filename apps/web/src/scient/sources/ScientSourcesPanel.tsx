@@ -25,6 +25,7 @@ import {
   MoreVertical,
   RefreshCw,
   Search,
+  Users,
   X,
 } from "lucide-react";
 import {
@@ -43,7 +44,7 @@ import { useManagedBibliography } from "./useManagedBibliography";
 import { useLibrarySourceRequest } from "./librarySourceRequest";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import {
   Select,
@@ -539,6 +540,9 @@ export function ScientSourcesPanel(props: {
   const selectedZoteroCollection = selectedZoteroCollectionKey
     ? sources.zoteroCollections.find((collection) => collection.key === selectedZoteroCollectionKey)
     : null;
+  const zoteroLibraryName =
+    sources.zoteroGroups.find((group) => group.groupId === sources.zoteroGroupId)?.name ??
+    "My Library";
 
   const moveToTrash = async (record: {
     readonly sourceId: string;
@@ -640,7 +644,7 @@ export function ScientSourcesPanel(props: {
       return (
         <CenteredState
           icon={<AlertCircle />}
-          title="Sources could not be loaded"
+          title="The Library could not be loaded"
           description={sources.error}
           action={
             <Button
@@ -670,7 +674,7 @@ export function ScientSourcesPanel(props: {
           conflicting
             ? (sources.overview.issues[0]?.message ?? "Scient will not change conflicting files.")
             : (setupError ??
-              "Sources are kept in this project so they remain portable and reviewable.")
+              "The Library is kept in this project so it stays portable and reviewable.")
         }
         action={
           conflicting ? null : (
@@ -745,22 +749,53 @@ export function ScientSourcesPanel(props: {
             <MenuTrigger
               render={
                 <Button variant="ghost" size="xs" className="max-w-48">
-                  {sources.zoteroScope.kind === "library" ? <Library /> : <Folder />}
-                  <span className="truncate">{selectedZoteroCollection?.name ?? "My Library"}</span>
+                  {sources.zoteroScope.kind === "collection" ? (
+                    <Folder />
+                  ) : sources.zoteroGroupId ? (
+                    <Users />
+                  ) : (
+                    <Library />
+                  )}
+                  <span className="truncate">
+                    {selectedZoteroCollection?.name ?? zoteroLibraryName}
+                  </span>
                 </Button>
               }
             />
             <MenuPopup align="start" side="bottom" className="max-h-80 min-w-56 overflow-y-auto">
-              <MenuItem
-                onClick={() => {
-                  setQuery("");
-                  setSelectedKeys(new Set());
-                  void sources.selectZoteroScope({ kind: "library" });
-                }}
-              >
-                <Library />
-                My Library
-              </MenuItem>
+              {sources.zoteroMyLibrary ? (
+                <MenuItem
+                  onClick={() => {
+                    setQuery("");
+                    setSelectedKeys(new Set());
+                    void (sources.zoteroGroupId
+                      ? sources.selectZoteroLibrary(null)
+                      : sources.selectZoteroScope({ kind: "library" }));
+                  }}
+                >
+                  <Library />
+                  My Library
+                </MenuItem>
+              ) : null}
+              {sources.zoteroGroups.map((group) => (
+                <MenuItem
+                  key={group.groupId}
+                  title={group.name}
+                  onClick={() => {
+                    setQuery("");
+                    setSelectedKeys(new Set());
+                    void (sources.zoteroGroupId === group.groupId
+                      ? sources.selectZoteroScope({ kind: "library" })
+                      : sources.selectZoteroLibrary(group.groupId));
+                  }}
+                >
+                  <Users />
+                  <span className="min-w-0 truncate">{group.name}</span>
+                </MenuItem>
+              ))}
+              {sources.zoteroGroups.length > 0 && zoteroCollectionChoices.length > 0 ? (
+                <MenuSeparator />
+              ) : null}
               {zoteroCollectionChoices.map((collection) => (
                 <MenuItem
                   key={collection.key}
@@ -835,7 +870,7 @@ export function ScientSourcesPanel(props: {
             <TooltipPopup side="bottom">
               {sources.zoteroScope.kind === "collection"
                 ? `Import ${sources.library.total} references in this collection`
-                : `Import all ${sources.library.total} references in My Library`}
+                : `Import all ${sources.library.total} references in ${zoteroLibraryName}`}
             </TooltipPopup>
           </Tooltip>
         </div>
@@ -1115,7 +1150,11 @@ export function ScientSourcesPanel(props: {
             });
           }}
           onRemove={() => moveToTrash(selectedRecord)}
-          onSendToZotero={() => void zoteroSync.sendToZotero(selectedRecord.sourceId)}
+          onSendToZotero={(groupId) =>
+            void zoteroSync.sendToZotero(selectedRecord.sourceId, groupId)
+          }
+          zoteroWritableGroups={zoteroSync.writableGroups}
+          onSourceActionsOpen={zoteroSync.loadWritableGroups}
           onOpenHistory={() => setHistorySourceId(selectedRecord.sourceId)}
           onGetPdf={async () => {
             const doi = selectedRecord.identifiers.find(
@@ -1248,7 +1287,7 @@ export function ScientSourcesPanel(props: {
         threadId={props.threadId}
       />
       <PanelHeader
-        title="Sources"
+        title="Library"
         action={
           <div className="flex shrink-0 items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
@@ -1329,7 +1368,7 @@ export function ScientSourcesPanel(props: {
       />
       {dragActive ? (
         <div className="mx-3 mt-2 rounded-md border border-dashed border-foreground/30 bg-muted/35 px-3 py-2 text-center text-xs text-muted-foreground">
-          Drop PDFs or a reference file to add them to Sources
+          Drop PDFs or a reference file to add them to the Library
         </div>
       ) : null}
       {sources.importPreparation ? (
@@ -1746,7 +1785,7 @@ function ImportReview(props: {
       ? itemKeys.length > 1
         ? `Add ${itemKeys.length} anyway`
         : "Add anyway"
-      : "Add to Sources";
+      : "Add to Library";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1809,11 +1848,11 @@ function ImportReview(props: {
             const metadataSummary = candidateMetadataSummary(item.candidate);
             const duplicateStatus =
               item.duplicate.kind === "same-origin"
-                ? "Already in Sources"
+                ? "Already in the Library"
                 : item.duplicate.kind === "same-identifier"
-                  ? "A source with this identifier is already in Sources"
+                  ? "A source with this identifier is already in the Library"
                   : item.duplicate.kind === "same-pdf"
-                    ? "This PDF is already in Sources"
+                    ? "This PDF is already in the Library"
                     : item.duplicate.reason;
             return (
               <div key={itemKey} className={willImport ? "bg-accent/20 px-3 py-3" : "px-3 py-3"}>
@@ -2035,7 +2074,7 @@ function AlreadyPresentSummary(props: {
     <div className="m-3 flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-3">
       <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">Already in Sources</div>
+        <div className="text-sm font-medium">Already in the Library</div>
         <div className="mt-0.5 text-xs text-muted-foreground">
           {count === 1
             ? "This source is already in this project."

@@ -23,11 +23,13 @@ import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
 import {
   applyResolvedSourceMetadata,
   resolveSourceIdentifierBatch,
+  type ResearchKeys,
   type SourceIdentifierResolution,
 } from "./SourceIdentifierResolver.ts";
 
 export type ResolveSourceIdentifierBatch = (
   identifiers: ReadonlyArray<ScientSourceIdentifier>,
+  keys?: ResearchKeys,
 ) => Promise<ReadonlyArray<SourceIdentifierResolution>>;
 
 const ENRICH_PARALLEL = 4;
@@ -306,7 +308,10 @@ export async function addScientSourcesByIdentifier(
 
 export const SourceIdentifierBatchLookup = Context.Reference<ResolveSourceIdentifierBatch>(
   "scient/sources/SourceIdentifierBatchLookup",
-  { defaultValue: () => (identifiers) => resolveSourceIdentifierBatch(identifiers) },
+  {
+    defaultValue: () => (identifiers, keys) =>
+      resolveSourceIdentifierBatch(identifiers, keys ? { keys } : {}),
+  },
 );
 
 /** "Added 2 of 4. 1 already in the Library. 1 not found.", for people and agents. */

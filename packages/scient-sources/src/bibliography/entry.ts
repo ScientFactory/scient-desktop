@@ -70,6 +70,8 @@ export interface BibliographyExportItem {
 export interface BibliographyExportOptions {
   /** Project notes are private by default; include them only when asked. */
   readonly includeNotes: boolean;
+  /** Abstracts are written unless left out; the managed project files leave them out. */
+  readonly includeAbstracts?: boolean;
 }
 
 export interface BibliographyUnreadableEntry {

@@ -171,7 +171,7 @@ Source can contain citation syntax such as `[@smith2024]` or
 `[@smith2024; @jones2025]`. The rich document exposes a citation-source field
 that preserves the keys and surrounding citation text. The rich editor does not
 resolve keys, generate a bibliography, or connect automatically to the
-[Sources library](./sources.md). There is no Markdown citation-picker command.
+[Library](./sources.md). There is no Markdown citation-picker command.
 These fields are distinct from LaTeX citation tools and from quoting selected
 text into chat.
 

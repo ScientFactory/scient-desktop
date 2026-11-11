@@ -49,7 +49,7 @@ import {
   resolveProjectBibliographyFile,
   writeProjectBibliographyFile,
 } from "../../../scient/sources/BibliographyFileAdapter.ts";
-import { keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
+import { keyedBatchLookup, keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
 import {
   addScientSourcesByIdentifier,
   SourceIdentifierBatchLookup,
@@ -100,7 +100,7 @@ const attempt = <A>(run: () => Promise<A>) =>
     // Store and filesystem errors can contain an absolute project path. MCP
     // results deliberately keep that host-only context out of model-visible
     // output.
-    catch: () => toolError("operation-failed", "The Sources operation could not be completed."),
+    catch: () => toolError("operation-failed", "The Library operation could not be completed."),
   });
 
 // PDF-only adds often share a filename-derived title. Include the content hash
@@ -626,7 +626,7 @@ const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolki
         validationIssues: [{ field: extra, message }],
       };
     }
-    const resolveIdentifiers = yield* SourceIdentifierBatchLookup;
+    const resolveIdentifiers = yield* keyedBatchLookup(yield* SourceIdentifierBatchLookup);
     const observeImport = yield* makeSourceImportAnalytics("agent");
     const results = yield* attempt(() =>
       addScientSourcesByIdentifier(
@@ -901,7 +901,7 @@ const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit.readTe
         sourceId: input.sourceId,
         ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
         fromPage: Math.max(1, input.fromPage ?? 1),
-        maxCharacters: Math.min(60_000, Math.max(1_000, input.maxCharacters ?? 20_000)),
+        maxCharacters: Math.min(30_000, Math.max(1_000, input.maxCharacters ?? 12_000)),
       }),
     );
   },
@@ -1067,7 +1067,7 @@ const citeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.cite")(fu
   readonly format?: "markdown" | "latex";
 }) {
   const { root } = yield* resolveScientSourcesProject();
-  const resolveIdentifiers = yield* ReferenceIdentifierLookup;
+  const resolveIdentifiers = yield* keyedBatchLookup(yield* ReferenceIdentifierLookup);
   return yield* attempt(() =>
     citeLibrarySources(
       { root, sources: input.sources, format: input.format ?? "markdown" },

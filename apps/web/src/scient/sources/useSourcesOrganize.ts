@@ -29,7 +29,7 @@ function bulkResultSummary(result: ScientSourcesBulkResult): string | null {
   if (failed.length === 0 && missing.length === 0 && !note) return null;
   const parts = [
     failed.length > 0 ? `${failed.length} could not be changed` : null,
-    missing.length > 0 ? `${missing.length} no longer in Sources` : null,
+    missing.length > 0 ? `${missing.length} no longer in the Library` : null,
   ].filter(Boolean);
   return [parts.length > 0 ? `${parts.join(", ")}.` : null, note].filter(Boolean).join(" ");
 }
@@ -259,7 +259,7 @@ export function useSourcesOrganize(input: {
       toastManager.add({
         type: "success",
         title: `Deleted collection “${name}”`,
-        description: "Its sources stay in Sources.",
+        description: "Its sources stay in the Library.",
         actionProps: {
           children: "Undo",
           onClick: () => {

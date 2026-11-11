@@ -502,9 +502,15 @@ export async function forgetSourceCategories(root: string, sourceId: string): Pr
 const passes = new Map<string, Promise<void>>();
 const passRequested = new Set<string>();
 let lookupsEnabled = false;
+let readKeys = (): Promise<ResearchKeys> => Promise.resolve({});
 
 export function enableSourceCategoryLookups(): void {
   lookupsEnabled = true;
+}
+
+/** Where background passes read the user's research keys, again at each pass. */
+export function readSourceCategoryKeysFrom(read: () => Promise<ResearchKeys>): void {
+  readKeys = read;
 }
 
 /** Runs one background pass per project at a time, and another if asked again meanwhile. */
@@ -521,7 +527,8 @@ export function scheduleSourceCategorization(
   const pass = (async () => {
     do {
       passRequested.delete(root);
-      await categorizeSources(root, options).catch(() => undefined);
+      const keys = options.keys ?? (await readKeys().catch((): ResearchKeys => ({})));
+      await categorizeSources(root, { ...options, keys }).catch(() => undefined);
     } while (passRequested.has(root));
   })().finally(() => passes.delete(root));
   passes.set(root, pass);

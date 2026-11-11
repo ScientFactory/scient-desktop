@@ -3,6 +3,7 @@ import {
   normalizeImportedCitationKey,
   normalizeScientSourceAbstractDocument,
   scientSourceTypeFromZotero,
+  zoteroGroupLibraryId,
   type ScientSourceCandidate,
   type ScientSourceCreator,
   type ScientSourceFieldProvenance,
@@ -254,7 +255,10 @@ export function zoteroItemToCandidate(raw: ZoteroRawItem): ScientSourceCandidate
     externalReferences: [
       {
         system: "zotero",
-        libraryId: String(raw.library.id),
+        libraryId:
+          raw.library.type === "group"
+            ? zoteroGroupLibraryId(String(raw.library.id))
+            : String(raw.library.id),
         itemKey: raw.key,
         itemVersion: raw.version,
         rawItemType: data.itemType,

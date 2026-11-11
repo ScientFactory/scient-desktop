@@ -31,7 +31,9 @@ afterEach(async () => {
 });
 
 /** An in-memory zotero.org personal library that checks versions like the real API. */
-function zoteroOrg(options: { readonly write?: boolean } = {}) {
+function zoteroOrg(
+  options: { readonly write?: boolean; readonly groups?: Record<string, object> } = {},
+) {
   const items = new Map<string, ZoteroRawItem>();
   const writes: ZoteroWebRequest[] = [];
   let version = 10;
@@ -49,7 +51,15 @@ function zoteroOrg(options: { readonly write?: boolean } = {}) {
         return json({
           userID: USER,
           username: "ada",
-          access: { user: { library: true, files: true, write: options.write ?? true } },
+          access: {
+            user: { library: true, files: true, write: options.write ?? true },
+            ...(options.groups ? { groups: options.groups } : {}),
+          },
+        });
+      }
+      if (path === `/users/${USER}/groups`) {
+        return json([{ id: 77, data: { name: "Lab", libraryEditing: "members" } }], {
+          "total-results": "1",
         });
       }
       if (request.method === "POST" && path === `/users/${USER}/items`) {
@@ -276,5 +286,21 @@ describe("Send to Zotero", () => {
     await expect(
       sendSourcesToZotero({ root, sourceIds: [sourceId], actor: "user", zotero: org.zotero }),
     ).rejects.toThrow(/can only read/u);
+  });
+
+  it("refuses a group the key may only read, and writes nothing", async () => {
+    const { root, sourceId } = await sourceInScient();
+    const org = zoteroOrg({ groups: { "77": { library: true, write: false } } });
+
+    await expect(
+      sendSourcesToZotero({
+        root,
+        sourceIds: [sourceId],
+        groupId: "77",
+        actor: "user",
+        zotero: org.zotero,
+      }),
+    ).rejects.toThrow(/cannot write to this group/u);
+    expect(org.writes).toEqual([]);
   });
 });

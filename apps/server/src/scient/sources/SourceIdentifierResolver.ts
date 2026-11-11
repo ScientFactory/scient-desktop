@@ -536,8 +536,8 @@ const IDENTIFIER_SCHEMES: Readonly<Record<SourceAddIdentifierScheme, IdentifierS
   isbn: {
     wellFormed: isValidIsbn,
     perRequest: ISBNS_PER_REQUEST,
-    lookup: (values, request, pace, _keys, progress) =>
-      lookupIsbns(values, request, pace, progress),
+    lookup: (values, request, pace, keys, progress) =>
+      lookupIsbns(values, request, pace, progress, keys),
   },
   openalex: {
     wellFormed: isWellFormedOpenAlexWorkId,
@@ -622,6 +622,7 @@ export interface ResearchKeys {
   readonly openAlex?: Redacted.Redacted<string>;
   readonly semanticScholar?: Redacted.Redacted<string>;
   readonly ncbi?: Redacted.Redacted<string>;
+  readonly googleBooks?: Redacted.Redacted<string>;
   /** Unpaywall takes an email address instead of a key. */
   readonly unpaywallEmail?: Redacted.Redacted<string>;
 }

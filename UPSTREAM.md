@@ -2052,6 +2052,16 @@ Two marked focus seams keep the caret where the person is typing:
 - `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
   takes the caret only if focus is still in the composer or nowhere in particular.
 
+## Desktop tab relay ends with a detach
+
+`DesktopBrowserChannel.ts` carries one marked block that T3 lacks: when the desktop detaches a
+tab, its relay socket closes, so Playwright's pending CDP commands fail. Upstream keeps the socket
+open after shutting the tab's queue, so a tab detached while the server was setting it up never
+settles. The desktop attach and preview event consumers await each setup in turn, so every later
+desktop tab is never set up and keeps showing the start page over a page that loaded. Offered to
+T3 as pingdotgg/t3code#34252 (issue #34251). When it merges, take T3's version, then delete the
+marked block and `DesktopBrowserChannel.scient.test.ts`.
+
 ## Multiple app windows
 
 Scient Desktop can run several full app windows in one Electron process

@@ -1532,8 +1532,13 @@ export async function createSourceImportOperation(input: {
   readonly intake?: "zotero" | "local-pdf" | "identifier" | "file";
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides?: ReadonlyArray<string>;
+  /** The Zotero group library the item keys belong to; omitted for My Library. */
+  readonly zoteroGroupId?: string;
 }): Promise<ScientSourceImportOperation> {
   assertSafeIdentifier(input.operationId, "Operation ID");
+  if (input.zoteroGroupId !== undefined && !/^[1-9][0-9]{0,11}$/u.test(input.zoteroGroupId)) {
+    throw new Error("The Zotero group ID is invalid.");
+  }
   const uniqueItemKeys = [...new Set(input.itemKeys)];
   if (uniqueItemKeys.length === 0) throw new Error("Choose at least one source to import.");
   if (uniqueItemKeys.length > SCIENT_SOURCE_IMPORT_ITEM_LIMIT) {
@@ -1562,6 +1567,7 @@ export async function createSourceImportOperation(input: {
         existingKeys.join("\0") !== uniqueItemKeys.join("\0") ||
         existingOverrides.join("\0") !== normalizedOverrides.join("\0") ||
         existing.adapter !== input.adapter ||
+        existing.zoteroGroupId !== input.zoteroGroupId ||
         existing.actor !== (input.actor ?? "user") ||
         existing.intake !==
           (input.intake ?? (input.adapter === "local-files" ? "local-pdf" : "zotero"))
@@ -1595,6 +1601,7 @@ export async function createSourceImportOperation(input: {
         sourceId: null,
         message: null,
       })),
+      ...(input.zoteroGroupId ? { zoteroGroupId: input.zoteroGroupId } : {}),
     };
     await atomicWriteJson(
       operationPath(paths.operations, input.operationId),

@@ -519,9 +519,9 @@ export async function readSourceText(input: {
       nextPage = page.page;
       break;
     }
-    const kept = page.text.slice(0, input.maxCharacters);
-    pages.push({ page: page.page, text: kept });
-    characters += kept.length;
+    // A page is never cut: one longer than the budget comes back whole, alone.
+    pages.push({ page: page.page, text: page.text });
+    characters += page.text.length;
   }
   return {
     outcome: "read",

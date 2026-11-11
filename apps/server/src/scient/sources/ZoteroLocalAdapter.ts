@@ -2,7 +2,8 @@
 import * as NodeHttp from "node:http";
 import * as NodeURL from "node:url";
 
-import type { ZoteroConnectionStatus } from "@scientfactory/scient-sources";
+import type { ZoteroConnectionStatus, ZoteroGroup } from "@scientfactory/scient-sources";
+import * as Schema from "effect/Schema";
 
 import type { ZoteroResponse, ZoteroTransport } from "./ZoteroLibraryReader.ts";
 
@@ -12,7 +13,7 @@ const ZOTERO_API_VERSION = 3;
 const REQUEST_TIMEOUT_MS = 4_000;
 const BETTER_BIBTEX_TIMEOUT_MS = 2_000;
 const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
-const LIBRARY_PATH = "/api/users/0";
+const USER_LIBRARY_PATH = "/api/users/0";
 const BETTER_BIBTEX_PATH = "/better-bibtex/json-rpc";
 
 function localRequest(
@@ -67,13 +68,82 @@ function localRequest(
   });
 }
 
-async function libraryGet(path: string): Promise<ZoteroResponse> {
-  const response = await localRequest(`${LIBRARY_PATH}${path}`);
+async function libraryGet(libraryPath: string, path: string): Promise<ZoteroResponse> {
+  const response = await localRequest(`${libraryPath}${path}`);
   const version = Number.parseInt(response.headers["zotero-api-version"] ?? "", 10);
   if (response.status === 200 && version !== ZOTERO_API_VERSION) {
     throw new Error("ZOTERO_INCOMPATIBLE");
   }
   return response;
+}
+
+const LocalGroups = Schema.Array(
+  Schema.Struct({
+    id: Schema.Number,
+    name: Schema.optionalKey(Schema.String),
+    data: Schema.optionalKey(Schema.Struct({ name: Schema.optionalKey(Schema.String) })),
+  }),
+);
+const decodeLocalGroups = Schema.decodeUnknownSync(LocalGroups);
+
+/** Zotero on this computer lists the groups it syncs; items there are read-only to Scient. */
+export function localZoteroGroupsFrom(body: string): ReadonlyArray<ZoteroGroup> {
+  const parsed = JSON.parse(body) as unknown;
+  const entries = decodeLocalGroups(
+    Array.isArray(parsed) ? parsed : ((parsed as { readonly data?: unknown } | null)?.data ?? []),
+  );
+  return entries.flatMap((entry) => {
+    if (!Number.isSafeInteger(entry.id) || entry.id <= 0) return [];
+    const name = (entry.data?.name ?? entry.name ?? "").trim() || `Group ${entry.id}`;
+    return [{ groupId: String(entry.id), name, canWrite: false }];
+  });
+}
+
+export async function listLocalZoteroGroups(): Promise<ReadonlyArray<ZoteroGroup>> {
+  const response = await libraryGet(USER_LIBRARY_PATH, "/groups?format=json");
+  if (response.status === 404) return [];
+  if (response.status !== 200) throw new Error(`Zotero returned HTTP ${response.status}.`);
+  return localZoteroGroupsFrom(response.body);
+}
+
+const BetterBibTexLibraries = Schema.Array(
+  Schema.Struct({ id: Schema.Number, name: Schema.optionalKey(Schema.String) }),
+);
+const decodeBetterBibTexLibraries = Schema.decodeUnknownSync(BetterBibTexLibraries);
+
+/**
+ * Better BibTeX names group items by Zotero's own library number, which the local API never
+ * shows; its library list gives the number for the group's name when only one library has it.
+ */
+export function betterBibTexLibraryId(body: string, groupName: string): number | null {
+  const parsed = JSON.parse(body) as { readonly result?: unknown };
+  const matches = decodeBetterBibTexLibraries(parsed.result ?? []).filter(
+    (library) => library.name?.trim() === groupName,
+  );
+  return matches.length === 1 && matches[0] ? matches[0].id : null;
+}
+
+async function betterBibTex(method: string, params: ReadonlyArray<unknown>) {
+  return localRequest(BETTER_BIBTEX_PATH, {
+    body: JSON.stringify({ jsonrpc: "2.0", method, params }),
+    timeoutMs: BETTER_BIBTEX_TIMEOUT_MS,
+  });
+}
+
+async function groupCitationKeys(
+  groupId: string,
+  itemKeys: ReadonlyArray<string>,
+): Promise<ReadonlyMap<string, string>> {
+  const group = (await listLocalZoteroGroups()).find((entry) => entry.groupId === groupId);
+  if (!group) return new Map();
+  const libraries = await betterBibTex("user.groups", []);
+  if (libraries.status !== 200) return new Map();
+  const libraryId = betterBibTexLibraryId(libraries.body, group.name);
+  if (libraryId === null) return new Map();
+  const response = await betterBibTex("item.citationkey", [
+    itemKeys.map((key) => `${libraryId}:${key}`),
+  ]);
+  return response.status === 200 ? betterBibTexCitationKeys(response.body) : new Map();
 }
 
 /** Better BibTeX answers `item.citationkey` with keys by item key, sometimes library-prefixed. */
@@ -88,29 +158,33 @@ export function betterBibTexCitationKeys(body: string): ReadonlyMap<string, stri
   return keys;
 }
 
-export const localZoteroTransport: ZoteroTransport = {
-  connection: "local",
-  get: libraryGet,
-  attachmentFile: async (attachment) => {
-    const response = await libraryGet(`/items/${attachment.key}/file/view/url`);
-    if (response.status === 404) return null;
-    if (response.status !== 200) throw new Error(`Zotero returned HTTP ${response.status}.`);
-    const url = new URL(response.body.trim());
-    if (url.protocol !== "file:") throw new Error("Zotero returned a non-local attachment URL.");
-    return {
-      path: NodeURL.fileURLToPath(url),
-      fileName: attachment.data.filename?.trim() || null,
-      release: async () => undefined,
-    };
-  },
-  citationKeys: async (itemKeys) => {
-    const response = await localRequest(BETTER_BIBTEX_PATH, {
-      body: JSON.stringify({ jsonrpc: "2.0", method: "item.citationkey", params: [itemKeys] }),
-      timeoutMs: BETTER_BIBTEX_TIMEOUT_MS,
-    });
-    return response.status === 200 ? betterBibTexCitationKeys(response.body) : new Map();
-  },
-};
+/** Zotero on this computer: My Library, or the group with this zotero.org group ID. */
+export function localZoteroTransportFor(groupId?: string): ZoteroTransport {
+  const libraryPath = groupId ? `/api/groups/${groupId}` : USER_LIBRARY_PATH;
+  return {
+    connection: "local",
+    get: (path) => libraryGet(libraryPath, path),
+    attachmentFile: async (attachment) => {
+      const response = await libraryGet(libraryPath, `/items/${attachment.key}/file/view/url`);
+      if (response.status === 404) return null;
+      if (response.status !== 200) throw new Error(`Zotero returned HTTP ${response.status}.`);
+      const url = new URL(response.body.trim());
+      if (url.protocol !== "file:") throw new Error("Zotero returned a non-local attachment URL.");
+      return {
+        path: NodeURL.fileURLToPath(url),
+        fileName: attachment.data.filename?.trim() || null,
+        release: async () => undefined,
+      };
+    },
+    citationKeys: async (itemKeys) => {
+      if (groupId) return groupCitationKeys(groupId, itemKeys);
+      const response = await betterBibTex("item.citationkey", [itemKeys]);
+      return response.status === 200 ? betterBibTexCitationKeys(response.body) : new Map();
+    },
+  };
+}
+
+export const localZoteroTransport: ZoteroTransport = localZoteroTransportFor();
 
 export async function inspectZoteroConnection(): Promise<ZoteroConnectionStatus> {
   let response: ZoteroResponse;

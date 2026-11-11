@@ -1,4 +1,5 @@
 import { isbn13, type ScientSourceCreator } from "@scientfactory/scient-sources";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { METADATA_USER_AGENT, type MetadataRequest } from "./metadataHttp.ts";
@@ -8,6 +9,7 @@ import type {
   IdentifierLookup,
   LookupProgress,
   RequestPace,
+  ResearchKeys,
   ResolvedSourceMetadata,
 } from "./SourceIdentifierResolver.ts";
 
@@ -188,16 +190,24 @@ async function lookupGoogleBooks(
   request: MetadataRequest,
   pace: RequestPace,
   signal: AbortSignal | undefined,
+  key: Redacted.Redacted<string> | undefined,
 ): Promise<CatalogAnswer> {
-  const parameters = new URLSearchParams({ q: `isbn:${isbn}`, maxResults: "5" });
-  const response = await pace(() =>
-    signal?.aborted
-      ? Promise.resolve(null)
-      : request(new URL(`https://www.googleapis.com/books/v1/volumes?${parameters}`), {
-          Accept: "application/json",
-          "User-Agent": METADATA_USER_AGENT,
-        }),
-  ).catch(() => null);
+  const ask = (withKey: Redacted.Redacted<string> | undefined) => {
+    const parameters = new URLSearchParams({ q: `isbn:${isbn}`, maxResults: "5" });
+    if (withKey) parameters.set("key", Redacted.value(withKey));
+    return pace(() =>
+      signal?.aborted
+        ? Promise.resolve(null)
+        : request(new URL(`https://www.googleapis.com/books/v1/volumes?${parameters}`), {
+            Accept: "application/json",
+            "User-Agent": METADATA_USER_AGENT,
+          }),
+    ).catch(() => null);
+  };
+  let response = await ask(key);
+  // Google answers 400 for a key it does not accept and 403 for one without the Books API.
+  if (key && (response?.status === 400 || response?.status === 403))
+    response = await ask(undefined);
   if (!response || response.status < 200 || response.status >= 300) {
     return { status: "unavailable" };
   }
@@ -240,6 +250,7 @@ export async function lookupIsbns(
   request: MetadataRequest,
   pace?: RequestPace,
   progress?: LookupProgress,
+  keys: ResearchKeys = {},
 ): Promise<ReadonlyMap<string, IdentifierLookup>> {
   const openLibrary = await lookupOpenLibrary(
     isbns,
@@ -267,6 +278,7 @@ export async function lookupIsbns(
       request,
       pace ?? runWithGoogleBooksRequestLimit,
       progress?.signal,
+      keys.googleBooks,
     );
     settle(
       isbn,

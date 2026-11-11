@@ -10,6 +10,7 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as ServerConfig from "./config.ts";
@@ -147,4 +148,20 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("removed agent ke
       assert.deepEqual(keyLinks, []);
     }).pipe(Effect.scoped, Effect.provide(layerFailingRemove));
   });
+});
+
+it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("guest links default", (it) => {
+  // Scient turned guest links on by default; an older default-off file has no key and turns on.
+  it.effect("stores turning guest links off, and nothing while they are on", () =>
+    Effect.gen(function* () {
+      const service = yield* ServerSettingsModule.ServerSettingsService;
+      const config = yield* ServerConfig.ServerConfig;
+      const fs = yield* FileSystem.FileSystem;
+      assert.isTrue((yield* service.getSettings).guestSharingEnabled);
+      yield* service.updateSettings({ guestSharingEnabled: false });
+      assert.include(yield* fs.readFileString(config.settingsPath), '"guestSharingEnabled": false');
+      yield* service.updateSettings({ guestSharingEnabled: true });
+      assert.notInclude(yield* fs.readFileString(config.settingsPath), "guestSharingEnabled");
+    }).pipe(Effect.provide(layerSettings)),
+  );
 });

@@ -54,7 +54,13 @@ import {
   updateSourceNote,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
-import { addScientSourcesByIdentifier } from "./SourceIdentifierAdd.ts";
+import {
+  addScientSourcesByIdentifier,
+  SourceIdentifierBatchLookup,
+} from "./SourceIdentifierAdd.ts";
+import { SourceIdentifierLookup } from "./SourceIdentifierResolver.ts";
+import { researchKeysReader } from "./researchKeys.ts";
+import { readSourceCategoryKeysFrom } from "./SourceCategories.ts";
 import {
   beginBibliographyFileImport,
   exportBibliography,
@@ -96,6 +102,16 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
     const zotero = {
       ...(yield* ZoteroTransports),
       webKey: yield* zoteroKeyLookup({ actor: "user" }),
+    };
+    const researchKeys = yield* researchKeysReader();
+    readSourceCategoryKeysFrom(researchKeys);
+    const lookup = yield* SourceIdentifierLookup;
+    const batchLookup = yield* SourceIdentifierBatchLookup;
+    const keyed = {
+      resolveIdentifier: async (identifiers: Parameters<typeof lookup>[0]) =>
+        lookup(identifiers, await researchKeys()),
+      resolveIdentifiers: async (identifiers: Parameters<typeof batchLookup>[0]) =>
+        batchLookup(identifiers, await researchKeys()),
     };
     return yield* Effect.succeed(
       handlers
@@ -150,7 +166,10 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         )
         .handle("savePage", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            saveWebPageSource({ ...args.payload, actor: "user" }, observeImport),
+            saveWebPageSource(
+              { ...args.payload, actor: "user", resolveIdentifier: keyed.resolveIdentifier },
+              observeImport,
+            ),
           ),
         )
         .handle("journalIcon", (args) =>
@@ -196,7 +215,10 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         )
         .handle("refreshMetadata", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            refreshScientSourceMetadata(args.payload),
+            refreshScientSourceMetadata({
+              ...args.payload,
+              resolveIdentifier: keyed.resolveIdentifier,
+            }),
           ),
         )
         .handle("remove", (args) =>
@@ -237,6 +259,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 entries: args.payload.entries,
                 actor: "user",
                 enrich: true,
+                resolveIdentifiers: keyed.resolveIdentifiers,
               },
               observeImport,
             ),
@@ -269,7 +292,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         )
         .handle("zoteroStatus", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
-            inspectZoteroConnection({ ...args.payload, zotero }),
+            inspectZoteroConnection({ ...args.payload, zotero, groups: true }),
           ),
         )
         .handle("zoteroLibrary", (args) =>
