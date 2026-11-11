@@ -234,7 +234,7 @@ function SharedLinkRow({
       title={title}
       description={facts.join(" · ")}
       control={
-        <div className="flex flex-wrap items-center justify-end gap-1.5">
+        <div className="flex max-w-96 flex-wrap items-center justify-end gap-1.5">
           <Select
             value={share.access.mode === "people" ? "link" : share.access.mode}
             onValueChange={(mode) =>
