@@ -44,7 +44,9 @@ import {
   type ScientSourceRecord,
   type ScientSourceVerification,
   type ZoteroConnection,
+  type ZoteroConnectionStatus,
   type ZoteroImportScope,
+  zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
 import {
   bulkUpdateScientSources,
@@ -91,6 +93,7 @@ import {
 
 import {
   inspectZotero,
+  listZoteroGroups,
   localOnlyZoteroAccess,
   zoteroTransport,
   type ZoteroAccess,
@@ -145,19 +148,26 @@ async function withOperationLane<A>(key: string, run: () => Promise<A>): Promise
   }
 }
 
+/** With `groups`, a ready status lists the group libraries too; a failed listing lists none. */
 export async function inspectZoteroConnection(input: {
   readonly connection?: ZoteroConnection;
   readonly zotero?: ZoteroAccess;
-}) {
-  return inspectZotero(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  readonly groups?: boolean;
+}): Promise<ZoteroConnectionStatus> {
+  const zotero = input.zotero ?? localOnlyZoteroAccess;
+  const status = await inspectZotero(zotero, input.connection);
+  if (!input.groups || status.state !== "ready") return status;
+  const groups = await listZoteroGroups(zotero, status.connection ?? "local").catch(() => []);
+  return { ...status, groups: [...groups] };
 }
 
 export async function listZoteroCollections(input: {
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly zotero?: ZoteroAccess;
 }) {
   return listZoteroCollectionsWith(
-    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection),
+    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection, input.groupId),
   );
 }
 
@@ -167,10 +177,11 @@ export async function listZoteroLibrary(input: {
   readonly start: number;
   readonly limit: number;
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly zotero?: ZoteroAccess;
 }) {
   return listZoteroLibraryWith(
-    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection),
+    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection, input.groupId),
     input,
   );
 }
@@ -986,10 +997,15 @@ export async function preflightZoteroImport(input: {
   readonly root: string;
   readonly itemKeys: ReadonlyArray<string>;
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly zotero?: ZoteroAccess;
 }) {
   const records = await listScientSourceRecords(input.root);
-  const transport = await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  const transport = await zoteroTransport(
+    input.zotero ?? localOnlyZoteroAccess,
+    input.connection,
+    input.groupId,
+  );
   // Only local PDFs are cheap enough to hash for a duplicate check before import.
   const hasImportedPdf =
     transport.connection === "local" &&
@@ -1020,6 +1036,7 @@ export async function beginZoteroImport(input: {
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly actor?: "user" | "agent";
 }) {
   return createSourceImportOperation({
@@ -1028,6 +1045,7 @@ export async function beginZoteroImport(input: {
     itemKeys: input.itemKeys,
     possibleMetadataMatchOverrides: input.possibleMetadataMatchOverrides,
     adapter: zoteroAdapter(input.connection),
+    ...(input.groupId ? { zoteroGroupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
   });
 }
@@ -1037,24 +1055,30 @@ export async function beginZoteroScopedImport(input: {
   readonly operationId: string;
   readonly scope: ZoteroImportScope;
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly actor?: "user" | "agent";
   readonly zotero?: ZoteroAccess;
 }) {
   const adapter = zoteroAdapter(input.connection);
   const existing = await readSourceImportOperation(input.root, input.operationId);
   if (existing) {
-    if (existing.adapter !== adapter) {
+    if (existing.adapter !== adapter || existing.zoteroGroupId !== input.groupId) {
       throw new Error("This operation ID already belongs to another import adapter.");
     }
     return existing;
   }
-  const transport = await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  const transport = await zoteroTransport(
+    input.zotero ?? localOnlyZoteroAccess,
+    input.connection,
+    input.groupId,
+  );
   const itemKeys = await listZoteroScopeItemKeysWith(transport, input.scope);
   return createSourceImportOperation({
     root: input.root,
     operationId: input.operationId,
     adapter,
     itemKeys,
+    ...(input.groupId ? { zoteroGroupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
   });
 }
@@ -1237,11 +1261,26 @@ async function importZoteroOperationItem(input: {
   readonly allowPossibleMetadataMatch: boolean;
   readonly zotero: ZoteroAccess;
 }) {
+  const groupId = input.operation.zoteroGroupId;
   const transport = await zoteroTransport(
     input.zotero,
     input.operation.adapter === "zotero-web" ? "web" : "local",
+    groupId,
   );
-  const { candidate, material, files } = await zoteroImportMaterial(transport, input.itemKey);
+  const imported = await zoteroImportMaterial(transport, input.itemKey);
+  const { material, files } = imported;
+  // A group item's source ID and link must differ from a My Library item with the same key.
+  const candidate = groupId
+    ? {
+        ...imported.candidate,
+        sourceKey: `zotero-group-${groupId}-${input.itemKey}`,
+        externalReferences: imported.candidate.externalReferences.map((reference) =>
+          reference.system === "zotero"
+            ? { ...reference, libraryId: zoteroGroupLibraryId(groupId) }
+            : reference,
+        ),
+      }
+    : imported.candidate;
   try {
     const [primary, ...extra] = files;
     const result = await importScientSourceOperationItem({

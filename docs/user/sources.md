@@ -29,7 +29,7 @@ personal library.
 1. Open Zotero on the same computer as the selected Scient environment, or
    save a Zotero API key in **Accounts** (see below).
 2. In **Sources**, choose **Import sources → Import from Zotero**.
-3. Select **My Library** or a specific Zotero collection.
+3. Select **My Library**, one of your Zotero groups, or a specific collection.
 4. Select individual references, import the selected collection, or import the
    complete library.
 
@@ -47,6 +47,18 @@ remote project, that means Zotero must run on the remote computer, not only on
 the computer displaying Scient. If Zotero blocks local access, enable **Allow
 other applications on this computer to communicate with Zotero** in Zotero's
 advanced settings and try again.
+
+### Zotero groups
+
+The library menu in the import picker lists the group libraries you can read
+after **My Library**: the groups Zotero on this computer syncs, or on zotero.org
+the groups your key may read (allow group access when you create the key). A
+key that reads groups but not your personal library works too; the picker then
+opens on a group and leaves **My Library** out.
+Choose a group to browse its collections and import from it; sources still go
+into the current project. A group item and an item of yours stay two separate
+sources, even when Zotero gives them the same key, and **Refresh from Zotero**
+reads each source again from the library it came from.
 
 ### Your library on zotero.org
 
@@ -77,6 +89,12 @@ Zotero. If the item was changed in Zotero after Scient last read it, nothing is
 overwritten: refresh from Zotero first, then send again. This needs the Zotero
 key in Accounts with write access. Changes are not sent automatically; there is
 no two-way sync.
+
+When your key may write to a group and the group lets you edit its library,
+**Send to Zotero** asks where to send: **My Library** or that group. A source
+sent to a library other than the one it came from gets a new item there and is
+linked to it from then on. Scient refuses to send to a group the key can only
+read.
 
 Long imports can continue in the background. Completed items remain saved, and
 an interrupted import can resume when Sources reopens. Exact duplicates are
@@ -538,7 +556,6 @@ them to send.
 
 Sources supports Zotero (on this computer or on zotero.org), direct PDF import
 and reference files (BibTeX, RIS, CSL-JSON, EndNote XML). It does not yet
-provide evidence grading. Zotero group libraries and automatic two-way sync are
-not supported; Send to Zotero does not upload PDFs. Highlights need selectable
+provide evidence grading. Automatic two-way sync with Zotero is not supported; Send to Zotero does not upload PDFs. Highlights need selectable
 text: a scanned PDF without a text layer, chat attachments and generated PDFs
 cannot be highlighted yet.

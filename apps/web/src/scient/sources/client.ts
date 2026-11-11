@@ -234,6 +234,7 @@ export function readZoteroLibrary(
     readonly start: number;
     readonly limit: number;
     readonly connection?: ZoteroConnection;
+    readonly groupId?: string;
   },
 ) {
   return runtime.runPromise(
@@ -241,8 +242,14 @@ export function readZoteroLibrary(
   );
 }
 
-export function readZoteroCollections(environmentId: EnvironmentId, connection?: ZoteroConnection) {
-  return runtime.runPromise(listEnvironmentZoteroCollections(prepared(environmentId), connection));
+export function readZoteroCollections(
+  environmentId: EnvironmentId,
+  connection?: ZoteroConnection,
+  groupId?: string,
+) {
+  return runtime.runPromise(
+    listEnvironmentZoteroCollections(prepared(environmentId), connection, groupId),
+  );
 }
 
 export function preflightZoteroItems(
@@ -251,6 +258,7 @@ export function preflightZoteroItems(
     readonly root: string;
     readonly itemKeys: ReadonlyArray<string>;
     readonly connection?: ZoteroConnection;
+    readonly groupId?: string;
   },
 ) {
   return runtime.runPromise(
@@ -266,6 +274,7 @@ export function beginZoteroItemsImport(
     readonly itemKeys: ReadonlyArray<string>;
     readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
     readonly connection?: ZoteroConnection;
+    readonly groupId?: string;
   },
 ) {
   return runSourcesCommand(sourcesCommands.beginImport, environmentId, input);
@@ -278,6 +287,7 @@ export function beginZoteroScopeImport(
     readonly operationId: string;
     readonly scope: ZoteroImportScope;
     readonly connection?: ZoteroConnection;
+    readonly groupId?: string;
   },
 ) {
   return runSourcesCommand(sourcesCommands.beginScopedImport, environmentId, input);

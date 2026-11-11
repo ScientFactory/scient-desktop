@@ -91,3 +91,25 @@ export const fakeZoteroAccess = (local: ZoteroTransport): ZoteroAccess => ({
   local,
   inspectLocal: async () => ({ state: "ready", apiVersion: 3, message: "Ready." }),
 });
+
+/** Zotero on this computer with My Library from `local` and one group from `group`. */
+export const fakeZoteroAccessWithGroup = (
+  local: ZoteroTransport,
+  groupId: string,
+  group: ZoteroTransport,
+): ZoteroAccess => ({
+  ...fakeZoteroAccess(local),
+  localGroups: {
+    list: async () => [{ groupId, name: "Lab", canWrite: false }],
+    transport: (id) => {
+      if (id !== groupId) throw new Error(`No group ${id} in this fixture.`);
+      return group;
+    },
+  },
+});
+
+export const zoteroGroupItem = (
+  key: string,
+  data: Omit<Partial<ItemData>, "key">,
+  groupId: string,
+): ZoteroRawItem => ({ ...zoteroItem(key, data), library: { type: "group", id: Number(groupId) } });

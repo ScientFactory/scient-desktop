@@ -6,7 +6,7 @@ import * as NodeHttps from "node:https";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import type { ZoteroConnectionStatus } from "@scientfactory/scient-sources";
+import type { ZoteroConnectionStatus, ZoteroGroup } from "@scientfactory/scient-sources";
 import * as Schema from "effect/Schema";
 
 import { METADATA_USER_AGENT } from "./metadataHttp.ts";
@@ -145,6 +145,11 @@ function nodeDownload(
 
 export const nodeZoteroWebHttp: ZoteroWebHttp = { request: nodeRequest, download: nodeDownload };
 
+const GroupKeyAccess = Schema.Struct({
+  library: Schema.optionalKey(Schema.Boolean),
+  write: Schema.optionalKey(Schema.Boolean),
+});
+
 const ZoteroKeyInfo = Schema.Struct({
   userID: Schema.Number,
   username: Schema.optionalKey(Schema.String),
@@ -158,18 +163,91 @@ const ZoteroKeyInfo = Schema.Struct({
           write: Schema.optionalKey(Schema.Boolean),
         }),
       ),
+      // `all`, or a group ID, to what the key may do there.
+      groups: Schema.optionalKey(Schema.Record(Schema.String, GroupKeyAccess)),
     }),
   ),
 });
 const decodeZoteroKeyInfo = Schema.decodeUnknownSync(ZoteroKeyInfo);
 
-/** What a zotero.org key may do in its owner's personal library. */
+/** What a zotero.org key may do in its owner's personal library and in groups. */
 export interface ZoteroWebAccount {
   readonly userId: string;
   readonly username: string | null;
   readonly canRead: boolean;
   readonly canWrite: boolean;
   readonly canReadFiles: boolean;
+  readonly groupAccess: Readonly<
+    Record<string, { readonly read: boolean; readonly write: boolean }>
+  >;
+}
+
+export function keyGroupAccess(account: ZoteroWebAccount, groupId: string) {
+  return account.groupAccess[groupId] ?? account.groupAccess.all ?? { read: false, write: false };
+}
+
+/** A key may read groups without reading its owner's personal library. */
+export const keyReadsSomeLibrary = (account: ZoteroWebAccount): boolean =>
+  account.canRead || Object.values(account.groupAccess).some((access) => access.read);
+
+const ZoteroWebGroups = Schema.Array(
+  Schema.Struct({
+    id: Schema.Number,
+    data: Schema.Struct({
+      name: Schema.optionalKey(Schema.String),
+      owner: Schema.optionalKey(Schema.Number),
+      libraryEditing: Schema.optionalKey(Schema.String),
+      admins: Schema.optionalKey(Schema.Array(Schema.Number)),
+    }),
+  }),
+);
+const decodeZoteroWebGroups = Schema.decodeUnknownSync(ZoteroWebGroups);
+const MAX_GROUP_PAGES = 10;
+
+/**
+ * The groups the key can read. Writing needs the key's write access and a role the group lets
+ * edit: members, or only admins and the owner.
+ */
+export async function listZoteroWebGroups(input: {
+  readonly apiKey: string;
+  readonly account: ZoteroWebAccount;
+  readonly http?: ZoteroWebHttp;
+}): Promise<ReadonlyArray<ZoteroGroup>> {
+  const http = input.http ?? nodeZoteroWebHttp;
+  const userId = Number(input.account.userId);
+  const groups: ZoteroGroup[] = [];
+  for (let page = 0, start = 0; page < MAX_GROUP_PAGES; page += 1) {
+    const parameters = new URLSearchParams({ format: "json", limit: "100", start: String(start) });
+    const response = await http.request({
+      method: "GET",
+      url: new URL(
+        `${ZOTERO_API_ORIGIN}/users/${encodeURIComponent(input.account.userId)}/groups?${parameters.toString()}`,
+      ),
+      headers: apiHeaders(input.apiKey),
+    });
+    if (response.status === 403 || response.status === 404) return groups;
+    if (response.status !== 200) throw new Error(`zotero.org returned HTTP ${response.status}.`);
+    const entries = decodeZoteroWebGroups(JSON.parse(response.body));
+    for (const entry of entries) {
+      const groupId = String(entry.id);
+      const access = keyGroupAccess(input.account, groupId);
+      if (!Number.isSafeInteger(entry.id) || entry.id <= 0 || !access.read) continue;
+      const editing = entry.data.libraryEditing ?? "members";
+      const editor =
+        editing === "members" ||
+        (editing === "admins" &&
+          (entry.data.owner === userId || (entry.data.admins ?? []).includes(userId)));
+      groups.push({
+        groupId,
+        name: entry.data.name?.trim() || `Group ${groupId}`,
+        canWrite: access.write && editor,
+      });
+    }
+    start += entries.length;
+    const total = Number.parseInt(response.headers["total-results"] ?? "", 10);
+    if (entries.length === 0 || !Number.isFinite(total) || start >= total) break;
+  }
+  return groups;
 }
 
 function apiHeaders(apiKey: string): Record<string, string> {
@@ -205,6 +283,12 @@ export async function inspectZoteroWebKey(
   // The response repeats the key itself; only the fields below are kept.
   const info = decodeZoteroKeyInfo(JSON.parse(response.body));
   const user = info.access?.user;
+  const groupAccess = Object.fromEntries(
+    Object.entries(info.access?.groups ?? {}).map(([id, access]) => [
+      id,
+      { read: access.library === true, write: access.write === true },
+    ]),
+  );
   return {
     state: "ready",
     account: {
@@ -213,6 +297,7 @@ export async function inspectZoteroWebKey(
       canRead: user?.library === true,
       canWrite: user?.write === true,
       canReadFiles: user?.files === true,
+      groupAccess,
     },
   };
 }
@@ -226,13 +311,23 @@ export function zoteroWebStatus(result: ZoteroWebAccountResult): ZoteroConnectio
       message: "Scient could not reach zotero.org. Check the connection, then try again.",
     };
   }
-  if (result.state === "rejected" || !result.account.canRead) {
+  if (result.state === "rejected" || !keyReadsSomeLibrary(result.account)) {
     return {
       state: "access-disabled",
       apiVersion: null,
       connection: "web",
       message:
         "zotero.org refused the Zotero key in Accounts. Create a key that can read your library.",
+    };
+  }
+  if (!result.account.canRead) {
+    return {
+      state: "ready",
+      apiVersion: 3,
+      connection: "web",
+      canWrite: false,
+      myLibrary: false,
+      message: "Using the Zotero groups your key can read on zotero.org.",
     };
   }
   return {
@@ -246,23 +341,31 @@ export function zoteroWebStatus(result: ZoteroWebAccountResult): ZoteroConnectio
   };
 }
 
-/** Reads and writes the key owner's personal library on zotero.org. */
+/** Reads and writes the key owner's personal library on zotero.org, or one of their groups. */
 export function makeZoteroWebLibrary(input: {
   readonly apiKey: string;
   readonly account: ZoteroWebAccount;
+  readonly groupId?: string;
   readonly http?: ZoteroWebHttp;
   readonly temporaryDirectory?: string;
 }) {
   const http = input.http ?? nodeZoteroWebHttp;
-  const libraryUrl = (path: string) =>
-    new URL(`${ZOTERO_API_ORIGIN}/users/${encodeURIComponent(input.account.userId)}${path}`);
+  const { groupId } = input;
+  const libraryPath = groupId
+    ? `/groups/${encodeURIComponent(groupId)}`
+    : `/users/${encodeURIComponent(input.account.userId)}`;
+  const libraryUrl = (path: string) => new URL(`${ZOTERO_API_ORIGIN}${libraryPath}${path}`);
   const headers = apiHeaders(input.apiKey);
+  // Group files follow the group's library access; the key has no separate file switch there.
+  const canReadFiles = groupId
+    ? keyGroupAccess(input.account, groupId).read
+    : input.account.canReadFiles;
 
   const transport: ZoteroTransport = {
     connection: "web",
     get: (path) => http.request({ method: "GET", url: libraryUrl(path), headers }),
     attachmentFile: async (attachment) => {
-      if (!input.account.canReadFiles || attachment.data.linkMode === "linked_file") return null;
+      if (!canReadFiles || attachment.data.linkMode === "linked_file") return null;
       const directory = await NodeFSP.mkdtemp(
         NodePath.join(input.temporaryDirectory ?? NodeOS.tmpdir(), "scient-zotero-"),
       );
@@ -301,7 +404,11 @@ export function makeZoteroWebLibrary(input: {
     });
     if (response.status === 412) return response;
     if (response.status === 403) {
-      throw new Error("The Zotero key in Accounts cannot write to your library.");
+      throw new Error(
+        groupId
+          ? "The Zotero key in Accounts cannot write to this group."
+          : "The Zotero key in Accounts cannot write to your library.",
+      );
     }
     if (response.status === 429 || response.status === 503) {
       throw new Error("zotero.org is busy. Try again in a minute.");
@@ -314,6 +421,7 @@ export function makeZoteroWebLibrary(input: {
 
   return {
     account: input.account,
+    groupId: groupId ?? null,
     transport,
     /** Creates items in one request; the write token makes a retried request create nothing new. */
     createItems: async (

@@ -910,8 +910,8 @@ One reader (`ZoteroLibraryReader.ts`) works over two transports. The local
 transport (`ZoteroLocalAdapter.ts`) uses Zotero's read-only local API v3 at the
 fixed loopback endpoint `127.0.0.1:23119`, plus Better BibTeX's local JSON-RPC
 `item.citationkey` for keys an item does not carry itself. The web transport
-(`ZoteroWebAdapter.ts`) reads and writes the key owner's personal library at
-`api.zotero.org`. Neither scans Zotero's database or accepts arbitrary hosts.
+(`ZoteroWebAdapter.ts`) reads and writes the key owner's personal library, or a
+group library, at `api.zotero.org`. Neither scans Zotero's database or accepts arbitrary hosts.
 Responses are time- and size-bounded and decoded through explicit schemas;
 mapping lives in `ZoteroItems.ts`.
 
@@ -931,7 +931,28 @@ travels with browse, preflight and import requests, and a zotero.org import is
 recorded with the `zotero-web` operation adapter so resumed steps read the same
 library. Local item keys and zotero.org keys name the same items in the user's
 personal library (local library ID `0` and the zotero.org user ID are the same
-library). Group libraries are not supported.
+library).
+
+### Group libraries
+
+Groups are listed from `/api/users/0/groups` locally (Zotero answers
+`{ data: [...] }` with the groups it syncs) and from `/users/<id>/groups` on
+zotero.org, keeping those the key's `access.groups` (`all` or the group ID)
+lets it read. A group reads from `/api/groups/<groupId>` or `/groups/<groupId>`;
+the local API takes the zotero.org group ID and resolves Zotero's internal
+library ID itself. The status endpoint carries `groups` when ready, and browse,
+collections, preflight and both import requests take an optional `groupId`; the
+import operation stores it (`zoteroGroupId`) so resumed steps read the same
+group. A group item is linked with `libraryId` `groups/<groupId>` (My Library
+keeps the bare user ID) and gets source key `zotero-group-<groupId>-<itemKey>`,
+so a group item and a My Library item with the same key are two records and
+same-origin duplicate checks compare library and key. Refresh opens one
+transport per library found in the sources' links. Better BibTeX names group
+items `<libraryID>:<itemKey>` with Zotero's internal library ID, which the local
+API never shows; it is taken from `user.groups` when exactly one library there
+has the group's name, otherwise group citation keys come only from the item.
+Group files on zotero.org follow the key's group read access (keys have no
+separate group file switch).
 
 Connection states distinguish ready, access disabled (or a refused key),
 incompatible API, malformed response, and unreachable. The local API alone
@@ -988,9 +1009,16 @@ own field set and `If-Unmodified-Since-Version`; if the item changed in Zotero
 since Scient last read it, nothing is sent and the user is asked to refresh.
 Empty values here are never sent. Extra keeps its unmanaged lines and carries
 the citation key and identifiers without a Zotero field. PDFs are not uploaded.
+Without a `groupId` sends go to My Library. With one, the key is checked again
+and the group must be writable: the key's group `write` and the group's
+`libraryEditing` (`members`, or `admins` with the user as owner or admin);
+otherwise the send is refused before any write. A source linked to a different
+library than the target is created anew there and relinked; Zotero's own items
+are never moved.
 
 Agent tools `scient_sources_zotero_browse`, `_import`, `_refresh` and `_send`
-give agents the same power; their messages pass through only Zotero's own
+give agents the same power (browse returns `groups`; browse, import and send
+take `library`, a group ID, defaulting to My Library); their messages pass through only Zotero's own
 explanations, never local paths.
 
 ## Operations and recovery
