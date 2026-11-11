@@ -18,9 +18,16 @@ import {
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
+import { CitationStylePicker } from "./CitationStylePicker";
+import {
+  refreshProjectCitationStyle,
+  useProjectCitationStyle,
+  type CitationStyleProject,
+} from "./useProjectCitationStyle";
 
 type SourceRecord = ScientSourceDetailResult;
 type CitationModule = typeof import("@scientfactory/scient-citations");
+type StyleSource = Parameters<CitationModule["formatSourceReference"]>[1];
 
 const REFERENCE_STYLE_ITEMS = SCIENT_REFERENCE_STYLES.map((style) => ({
   value: style.id,
@@ -53,9 +60,9 @@ function formatReference(
   citations: CitationModule | null,
   loadFailed: boolean,
   record: SourceRecord,
-  style: ScientReferenceStyleId,
+  style: StyleSource | null,
 ): ReferenceState {
-  if (!citations) return loadFailed ? { status: "error" } : { status: "loading" };
+  if (!citations || style === null) return loadFailed ? { status: "error" } : { status: "loading" };
   try {
     return { status: "ready", value: citations.formatSourceReference(record, style) };
   } catch {
@@ -63,12 +70,18 @@ function formatReference(
   }
 }
 
-export function SourceReference(props: { readonly record: SourceRecord }) {
+/** The project's citation style comes first; without one, this browser's earlier choice. */
+export function SourceReference(props: {
+  readonly record: SourceRecord;
+  readonly project?: CitationStyleProject;
+}) {
   const [style, setStyle] = useLocalStorage<ScientReferenceStyleId, ScientReferenceStyleId>(
     referenceStyleStorageKey(props.record.projectId),
     "vancouver",
     REFERENCE_STYLE_SCHEMA,
   );
+  const projectStyle = useProjectCitationStyle(props.project ?? null);
+  const [picking, setPicking] = useState(false);
   const [citations, setCitations] = useState(citationModule);
   const [loadFailed, setLoadFailed] = useState(false);
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "reference" });
@@ -90,39 +103,80 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
     };
   }, [citations]);
 
-  const reference = formatReference(citations, loadFailed, props.record, style);
+  const localLabel = SCIENT_REFERENCE_STYLES.find((item) => item.id === style)?.label ?? style;
+  const source: StyleSource | null =
+    props.project === undefined
+      ? style
+      : projectStyle === null
+        ? null
+        : projectStyle._tag === "ready"
+          ? { xml: projectStyle.xml }
+          : style;
+  const reference = formatReference(citations, loadFailed, props.record, source);
+  const styleLabel = projectStyle?._tag === "ready" ? projectStyle.title : localLabel;
+  const { project } = props;
+  // Reaching for the reference re-reads the style, so what is copied is the project's current one.
+  const rereadStyle = project ? () => refreshProjectCitationStyle(project) : undefined;
 
   return (
-    <section className="space-y-2.5" aria-labelledby="source-reference-heading">
+    <section
+      className="space-y-2.5"
+      aria-labelledby="source-reference-heading"
+      onPointerEnter={rereadStyle}
+      onFocus={rereadStyle}
+    >
       <div className="flex flex-wrap items-center gap-1">
         <h3 id="source-reference-heading" className="text-sm font-medium text-foreground">
           Reference
         </h3>
-        <Select
-          value={style}
-          items={REFERENCE_STYLE_ITEMS}
-          onValueChange={(value) => {
-            if (value === "vancouver" || value === "apa") setStyle(value);
-          }}
-        >
-          <SelectTrigger
+        {props.project ? (
+          <Button
             size="xs"
             variant="ghost"
-            className="w-auto min-w-0 cursor-pointer"
-            aria-label="Reference style"
+            className="min-w-0 max-w-full"
+            aria-label={`Citation style: ${styleLabel}`}
+            onClick={() => setPicking(true)}
           >
             <PenLine className="size-3.5" aria-hidden="true" />
-            <SelectValue className="flex-none" />
-          </SelectTrigger>
-          <SelectPopup align="start" alignItemWithTrigger={false} matchTriggerWidth={false}>
-            {SCIENT_REFERENCE_STYLES.map((item) => (
-              <SelectItem key={item.id} value={item.id}>
-                {item.label}
-              </SelectItem>
-            ))}
-          </SelectPopup>
-        </Select>
+            <span className="truncate">{styleLabel}</span>
+          </Button>
+        ) : (
+          <Select
+            value={style}
+            items={REFERENCE_STYLE_ITEMS}
+            onValueChange={(value) => {
+              if (value === "vancouver" || value === "apa") setStyle(value);
+            }}
+          >
+            <SelectTrigger
+              size="xs"
+              variant="ghost"
+              className="w-auto min-w-0 cursor-pointer"
+              aria-label="Reference style"
+            >
+              <PenLine className="size-3.5" aria-hidden="true" />
+              <SelectValue className="flex-none" />
+            </SelectTrigger>
+            <SelectPopup align="start" alignItemWithTrigger={false} matchTriggerWidth={false}>
+              {SCIENT_REFERENCE_STYLES.map((item) => (
+                <SelectItem key={item.id} value={item.id}>
+                  {item.label}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        )}
       </div>
+
+      {projectStyle?._tag === "unavailable" ? (
+        <p className="text-xs text-muted-foreground">
+          {projectStyle.message} Showing {localLabel} instead.
+        </p>
+      ) : projectStyle?._tag === "failed" ? (
+        <p className="text-xs text-muted-foreground">
+          Scient could not read this project's citation style. Showing {localLabel} instead.
+        </p>
+      ) : null}
 
       <div className="flex min-h-22 items-start gap-2 border border-border/70 bg-muted/30 px-3 py-2.5">
         {reference.status === "ready" ? (
@@ -149,7 +203,9 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
           </>
         ) : reference.status === "error" ? (
           <p className="text-sm text-muted-foreground">
-            Scient could not format this reference. Check the source metadata and try again.
+            {projectStyle?._tag === "ready"
+              ? `${projectStyle.title} could not format this reference. Check the source metadata, or choose another citation style.`
+              : "Scient could not format this reference. Check the source metadata and try again."}
           </p>
         ) : (
           <p className="text-sm text-muted-foreground" role="status">
@@ -157,6 +213,9 @@ export function SourceReference(props: { readonly record: SourceRecord }) {
           </p>
         )}
       </div>
+      {picking && props.project ? (
+        <CitationStylePicker project={props.project} onClose={() => setPicking(false)} />
+      ) : null}
     </section>
   );
 }

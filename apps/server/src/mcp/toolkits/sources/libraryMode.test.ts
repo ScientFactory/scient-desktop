@@ -784,11 +784,12 @@ describe("Sources tools on the library backend", () => {
         await NodeFSP.mkdir(bulk, { recursive: true });
         await NodeFSP.writeFile(NodePath.join(bulk, "batch_1.json"), "{}\n");
       });
+      const moveOf = (result: object) => ("move" in result ? result.move : undefined);
       const readOnly = yield* run(listScientSourcesForInvocation({}), fixture, { write: false });
-      expect(readOnly.move?.state).toBe("waiting");
+      expect(moveOf(readOnly)).toMatchObject({ state: "waiting" });
 
       const moved = yield* run(listScientSourcesForInvocation({}), fixture);
-      expect(moved.move).toEqual({
+      expect(moveOf(moved)).toEqual({
         state: "done",
         message: "Undo for bulk edits made before the move was not kept.",
       });

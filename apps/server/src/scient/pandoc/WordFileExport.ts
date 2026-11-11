@@ -44,6 +44,7 @@ import {
   markdownReferenceDeclarations,
 } from "./markdownWordReferences.ts";
 import { bundledCslStyle } from "@scientfactory/scient-citations";
+import { readProjectCitationStyle } from "../sources/CitationStyles.ts";
 import { capturedWordDiagramAssets, planWordDiagrams } from "./wordDiagramCapture.ts";
 import { captureWordImages } from "./wordImageSnapshot.ts";
 
@@ -51,6 +52,12 @@ const MARKDOWN_FILE = /\.(?:md|markdown|mdown|mkd)$/iu;
 /** The most of one bibliography file a Markdown export reads, as for any project file read. */
 const BIBLIOGRAPHY_MAX_BYTES = 1024 * 1024;
 const isLatexPreparationError = Schema.is(LatexPreparationError);
+/** The styles of Settings → Documents → Word; pandoc's own default is Chicago author-date. */
+const SETTING_STYLE_NAMES = {
+  default: "Chicago author-date",
+  apa: "APA 7",
+  vancouver: "Vancouver",
+} as const;
 
 export interface ProducedWordFile {
   readonly path: string;
@@ -270,6 +277,17 @@ const make = Effect.gen(function* () {
               let cslStyle: string | null = request.citationStyle
                 ? bundledCslStyle(request.citationStyle)
                 : null;
+              let styleName: string = SETTING_STYLE_NAMES[request.citationStyle ?? "default"];
+              const project = yield* Effect.promise(() => readProjectCitationStyle(root));
+              if (project._tag === "ready") {
+                cslStyle = project.xml;
+                styleName = project.title;
+              } else if (project._tag === "unavailable" && declared.csl === null) {
+                warnings.push({
+                  code: "resource-unresolved",
+                  message: `${project.message} ${styleName} was used instead.`,
+                });
+              }
               if (declared.csl !== null) {
                 const named = declared.csl.toLowerCase();
                 if (named === "apa" || named === "vancouver") {
@@ -286,7 +304,7 @@ const make = Effect.gen(function* () {
                   else
                     warnings.push({
                       code: "resource-unresolved",
-                      message: `Citation style “${path.basename(declared.csl)}” is not a local .csl file or a bundled style (apa, vancouver); ${cslStyle === null ? "the default style" : "the chosen style"} was used.`,
+                      message: `Citation style “${path.basename(declared.csl)}” is not a local .csl file or a bundled style (apa, vancouver); ${styleName} was used.`,
                     });
                 }
               }

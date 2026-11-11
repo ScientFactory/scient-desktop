@@ -64,17 +64,26 @@ export interface MetadataResponse {
   readonly url: URL;
 }
 
+/** Larger downloads, such as the citation style catalogue, raise these. */
+export interface MetadataRequestLimits {
+  readonly maxBytes?: number;
+  readonly timeoutMs?: number;
+}
+
 export type MetadataRequest = (
   url: URL,
   headers: Readonly<Record<string, string>>,
+  limits?: MetadataRequestLimits,
 ) => Promise<MetadataResponse>;
 
-export const requestMetadata: MetadataRequest = (url, headers) => requestFollowing(url, headers, 0);
+export const requestMetadata: MetadataRequest = (url, headers, limits = {}) =>
+  requestFollowing(url, headers, 0, limits);
 
 function requestFollowing(
   url: URL,
   headers: Readonly<Record<string, string>>,
   redirects: number,
+  limits: MetadataRequestLimits,
 ): Promise<MetadataResponse> {
   if (url.protocol !== "https:") {
     return Promise.reject(new Error("Metadata requests must use HTTPS."));
@@ -88,10 +97,12 @@ function requestFollowing(
       const status = response.statusCode ?? 0;
       if (status >= 300 && status < 400 && response.headers.location) {
         response.resume();
-        void requestFollowing(new URL(response.headers.location, url), headers, redirects + 1).then(
-          resolve,
-          reject,
-        );
+        void requestFollowing(
+          new URL(response.headers.location, url),
+          headers,
+          redirects + 1,
+          limits,
+        ).then(resolve, reject);
         return;
       }
       if (status < 200 || status >= 300) {
@@ -103,7 +114,7 @@ function requestFollowing(
       let length = 0;
       response.on("data", (chunk: Buffer) => {
         length += chunk.byteLength;
-        if (length > MAX_METADATA_RESPONSE_BYTES) {
+        if (length > (limits.maxBytes ?? MAX_METADATA_RESPONSE_BYTES)) {
           request.destroy(new Error("The metadata service returned too much data."));
           return;
         }
@@ -113,7 +124,7 @@ function requestFollowing(
         resolve({ status, body: Buffer.concat(chunks).toString("utf8"), url }),
       );
     });
-    request.setTimeout(METADATA_TIMEOUT_MS, () => {
+    request.setTimeout(limits.timeoutMs ?? METADATA_TIMEOUT_MS, () => {
       request.destroy(new Error("The metadata request timed out."));
     });
     request.on("error", reject);

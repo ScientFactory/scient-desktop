@@ -34,6 +34,7 @@ import {
 } from "@scientfactory/scient-sources";
 import {
   isTrimmedUnadvertised,
+  ScientCitationStyleSummary,
   ScientManagedBibliographyFileName,
   ScientManagedBibliographyStatus,
 } from "@t3tools/contracts";
@@ -108,6 +109,16 @@ export const ScientSourceAgentSummary = Schema.Struct({
 
 /** Library mode: how many other projects on this computer pin the edited record. */
 const AlsoPinnedIn = Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0)));
+/** The project's citation style; `unavailable` names a style whose file is missing or broken. */
+const ScientAgentCitationStyle = Schema.NullOr(
+  Schema.Struct({
+    id: NonEmptyString,
+    title: Schema.String,
+    parentId: Schema.NullOr(NonEmptyString),
+    state: Schema.Literals(["ready", "unavailable"]),
+    message: Schema.optionalKey(Schema.String),
+  }),
+);
 
 export const ScientSourcesListResult = Schema.Struct({
   records: Schema.Array(ScientSourceAgentSummary).pipe(Schema.check(Schema.isMaxLength(50))),
@@ -127,6 +138,9 @@ export const ScientSourcesListResult = Schema.Struct({
       message: Schema.String,
     }),
   ),
+  citationStyle: Schema.optionalKey(ScientAgentCitationStyle),
+  citationStyles: Schema.optionalKey(Schema.Array(ScientCitationStyleSummary)),
+  catalogueMessage: Schema.optionalKey(Schema.String),
 });
 
 export const ScientSourceAgentDetail = Schema.Struct({
@@ -179,7 +193,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
 type SourcesBackendMode = "project" | "library";
 
 const LIST_FILTERS =
-  " query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources.";
+  " query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources. citationStyles finds CSL styles by journal or style name instead, with the project's style.";
 
 const listParameters = {
   query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
@@ -191,6 +205,7 @@ const listParameters = {
   topic: Schema.optionalKey(NonEmptyString),
   savedSearchId: Schema.optionalKey(NonEmptyString),
   inTrash: Schema.optionalKey(Schema.Boolean),
+  citationStyles: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(200)))),
   offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
 };
@@ -216,7 +231,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
     .annotate(Tool.Readonly, true)
     .annotate(Tool.Destructive, false)
     .annotate(Tool.Idempotent, true)
-    .annotate(Tool.OpenWorld, false)
+    .annotate(Tool.OpenWorld, true)
     .annotate(ScientOperation, sourceOperation("sources.list", false));
 
 const ScientSourcesListTool = sourcesListTool("project");
@@ -568,12 +583,18 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
 
 const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
   description:
-    "Write references.bib and references.json from the Library and report their state; documents cite by citationKey (Markdown `bibliography: references.bib`, LaTeX `\\bibliography{references}`). A hand-edited file is kept (edited, with keys added, changed or removed); an unmanaged file is never overwritten; kept lists earlier text moved aside (tell the user). importEdited imports its new entries; replaceEdited restores the Library version, only when the user wants that.",
+    "Write references.bib and references.json from the Library and report their state; documents cite by citationKey (Markdown `bibliography: references.bib`, LaTeX `\\bibliography{references}`). A hand-edited file is kept (edited, with keys added, changed or removed); an unmanaged file is never overwritten; kept lists earlier text moved aside (tell the user). importEdited imports its new entries; replaceEdited restores the Library version, only when the user wants that. citationStyle sets the project's style for references and Word export (an ID from scient_sources_list citationStyles; null clears).",
   parameters: Schema.Struct({
     replaceEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
     importEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
+    citationStyle: Schema.optionalKey(
+      Schema.NullOr(Schema.String.pipe(Schema.check(Schema.isMaxLength(200)))),
+    ),
   }),
-  success: ScientManagedBibliographyStatus,
+  success: Schema.Struct({
+    ...ScientManagedBibliographyStatus.fields,
+    citationStyle: Schema.optionalKey(ScientAgentCitationStyle),
+  }),
   failure: ScientSourcesToolError,
   dependencies,
 })
@@ -581,7 +602,7 @@ const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
   .annotate(Tool.Readonly, false)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
+  .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, sourceOperation("sources.bibliography", true));
 
 const PageNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1));

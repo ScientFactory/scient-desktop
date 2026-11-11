@@ -38,6 +38,7 @@ import { layerKnownWorkspacesAllowAll } from "../workspace/knownWorkspaces.testk
 import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import { importScientSource } from "@scientfactory/scient-sources/store";
+import { setProjectCitationStyle } from "../sources/CitationStyles.ts";
 
 const libraryCandidate: ScientSourceCandidate = {
   sourceKey: "A",
@@ -215,6 +216,45 @@ describe("WordFileExport", () => {
           expect(seen[2]?.cslStyle).toBeNull();
           expect(produced.warnings.map((warning) => warning.message).join("\n")).toContain(
             "Citation style “nature”",
+          );
+        }),
+      { seen },
+    );
+  });
+
+  it.live("uses the project's style between the document's own and the global setting", () => {
+    const seen: Array<WordConversionInput> = [];
+    return run(
+      ({ service, project, revisionOf }) =>
+        Effect.gen(function* () {
+          yield* Effect.promise(() =>
+            setProjectCitationStyle(
+              { root: project, styleId: "nature", actor: "user" },
+              { cacheRoot: null },
+            ),
+          );
+          const report = NodePath.join(project, "notes", "report.md");
+          const exportReport = (markdown: string) =>
+            Effect.gen(function* () {
+              NodeFS.writeFileSync(report, markdown);
+              return yield* service.export({
+                cwd: project,
+                relativePath: "notes/report.md",
+                revision: yield* revisionOf("notes/report.md"),
+                citationStyle: "apa",
+              });
+            });
+
+          yield* exportReport("See [@key].\n");
+          expect(seen[0]?.cslStyle).toContain("<title>Nature</title>");
+          yield* exportReport("---\ncsl: vancouver\n---\nSee [@key].\n");
+          expect(seen[1]?.cslStyle).toContain("Vancouver");
+
+          NodeFS.rmSync(NodePath.join(project, ".scient", "citations", "styles", "nature.csl"));
+          const produced = yield* exportReport("See [@key].\n");
+          expect(seen[2]?.cslStyle).toContain("American Psychological Association");
+          expect(produced.warnings.map((warning) => warning.message)).toContain(
+            "Nature is missing from this project (.scient/citations/styles/nature.csl). APA 7 was used instead.",
           );
         }),
       { seen },

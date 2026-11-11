@@ -6,6 +6,7 @@ import {
   LoaderCircle,
   MessageCircleQuestionIcon,
   MoreHorizontal,
+  PenLine,
   Trash2,
 } from "lucide-react";
 import { useRef, useState } from "react";
@@ -23,6 +24,7 @@ import { toastManager } from "../../components/ui/toast";
 import { useComposerHandleContext } from "../../composerHandleContext";
 import { ReferenceCheckDialog } from "../references/ReferenceCheckDialog";
 import { askLibraryInsertion } from "./askLibrary";
+import { CitationStylePicker } from "./CitationStylePicker";
 import { SourceTrashPopover } from "./SourceTrash";
 import {
   SourcesExportSubmenu,
@@ -47,6 +49,7 @@ export function SourcesHeaderMenu(props: {
   const trigger = useRef<HTMLButtonElement>(null);
   const [checkingReferences, setCheckingReferences] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
+  const [pickingStyle, setPickingStyle] = useState(false);
   const exporter = useSourcesExport({
     environmentId: props.environmentId,
     root: props.root,
@@ -129,6 +132,10 @@ export function SourcesHeaderMenu(props: {
             <ClipboardList />
             Systematic reviews
           </MenuItem>
+          <MenuItem onClick={() => setPickingStyle(true)}>
+            <PenLine />
+            Citation style…
+          </MenuItem>
           {props.totalCount > 0 ? (
             <SourcesExportSubmenu
               exporter={exporter}
@@ -156,6 +163,12 @@ export function SourcesHeaderMenu(props: {
         onOpenChange={setTrashOpen}
         onChanged={props.onTrashChanged}
       />
+      {pickingStyle ? (
+        <CitationStylePicker
+          project={{ environmentId: props.environmentId, root: props.root }}
+          onClose={() => setPickingStyle(false)}
+        />
+      ) : null}
       {checkingReferences ? (
         <ReferenceCheckDialog
           environmentId={props.environmentId}

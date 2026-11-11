@@ -106,6 +106,11 @@ import {
   ScientSourcesBackend,
   type ScientSourcesLibraryStore,
 } from "./SourcesBackend.ts";
+import {
+  citationStyleCacheRoot,
+  searchCitationStyles,
+  setProjectCitationStyle,
+} from "./CitationStyles.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
   "ScientSourcesOperationError",
@@ -171,6 +176,9 @@ const route = Effect.fn("ScientSourcesHttp.route")(function* <A>(
 /** A project store keeps the request's own root; a library import takes its view's target. */
 const importTarget = (library: ScientSourcesLibraryStore | null, pin: boolean | undefined) =>
   library ? libraryImportTarget(library, pin) : {};
+const citationStyleCache = Effect.map(ServerConfig.ServerConfig, (config) => ({
+  cacheRoot: citationStyleCacheRoot(config.stateDir),
+}));
 
 export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   EnvironmentHttpApi,
@@ -691,6 +699,24 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             syncManagedBibliographyWithImports(
               { ...args.payload, ...(library ? { library: library.library } : {}), actor: "user" },
               observeImport,
+            ),
+          ),
+        )
+        .handle("citationStyles", (args) =>
+          citationStyleCache.pipe(
+            Effect.flatMap((deps) =>
+              handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+                searchCitationStyles(args.payload, deps),
+              ),
+            ),
+          ),
+        )
+        .handle("citationStyleSet", (args) =>
+          citationStyleCache.pipe(
+            Effect.flatMap((deps) =>
+              handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+                setProjectCitationStyle({ ...args.payload, actor: "user" }, deps),
+              ),
             ),
           ),
         ),

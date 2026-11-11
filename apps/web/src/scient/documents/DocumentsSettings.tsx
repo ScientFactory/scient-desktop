@@ -446,7 +446,7 @@ function WordPanel(props: {
       <SettingsRow
         id="word-citation-style"
         title="Citation style"
-        description="For Markdown exported to Word. A document's own csl setting comes first."
+        description="For Markdown exported to Word. A document's own csl setting and the project's citation style come first."
         control={
           <OptionSelect
             label="Citation style"

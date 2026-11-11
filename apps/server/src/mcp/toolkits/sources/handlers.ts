@@ -54,11 +54,11 @@ import {
   restoreScientSource,
   revertScientSource,
 } from "@scientfactory/scient-sources/store";
+import type { ScientProjectCitationStyle } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
-import { ServerConfig } from "../../../config.ts";
 import { AgentInvocationContext } from "../../../scient/operations/AgentInvocationContext.ts";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 import {
@@ -87,6 +87,13 @@ import {
   writeProjectBibliographyFile,
 } from "../../../scient/sources/BibliographyFileAdapter.ts";
 import { keyedBatchLookup, keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
+import * as ServerConfig from "../../../config.ts";
+import {
+  citationStyleCacheRoot,
+  readProjectCitationStyle,
+  searchCitationStyles,
+  setProjectCitationStyle,
+} from "../../../scient/sources/CitationStyles.ts";
 import {
   addScientSourcesByIdentifier,
   SourceIdentifierBatchLookup,
@@ -316,7 +323,7 @@ export const resolveScientSourcesStore = Effect.fn("ScientSourcesToolkit.resolve
 /** Library backend only: the project's move while it has something to say. Reads only. */
 const libraryMoveNotice = Effect.fn("ScientSourcesToolkit.moveNotice")(function* (root: string) {
   if ((yield* ScientSourcesBackend) !== "library") return null;
-  const config = yield* Effect.serviceOption(ServerConfig);
+  const config = yield* Effect.serviceOption(ServerConfig.ServerConfig);
   if (Option.isNone(config)) return null;
   const status = yield* readLibraryMoveStatus({
     root,
@@ -383,6 +390,32 @@ const creatorName = (record: Awaited<ReturnType<typeof listScientSourceRecords>>
 const doiValue = (record: Awaited<ReturnType<typeof listScientSourceRecords>>[number]) =>
   record.identifiers.find((identifier) => identifier.scheme.toLowerCase() === "doi")?.value ?? null;
 
+/** Without the server's state folder (tests), the style catalogue is kept in memory only. */
+const citationStyleDependencies = Effect.map(
+  Effect.serviceOption(ServerConfig.ServerConfig),
+  (config) => ({
+    cacheRoot: Option.isSome(config) ? citationStyleCacheRoot(config.value.stateDir) : null,
+  }),
+);
+
+const agentCitationStyle = (style: ScientProjectCitationStyle) =>
+  style._tag === "none"
+    ? null
+    : style._tag === "ready"
+      ? {
+          id: style.id,
+          title: style.title,
+          parentId: style.parent?.id ?? null,
+          state: "ready" as const,
+        }
+      : {
+          id: style.id,
+          title: style.title,
+          parentId: null,
+          state: "unavailable" as const,
+          message: style.message,
+        };
+
 export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.list")(
   function* (input: {
     readonly query?: string;
@@ -394,6 +427,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly topic?: string;
     readonly savedSearchId?: string;
     readonly inTrash?: boolean;
+    readonly citationStyles?: string;
     readonly offset?: number;
     readonly limit?: number;
     readonly scope?: "project" | "library";
@@ -401,6 +435,23 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
     const library = store.kind === "library" ? store : null;
+    if (input.citationStyles !== undefined) {
+      const query = input.citationStyles;
+      const deps = yield* citationStyleDependencies;
+      const found = yield* attempt(() => searchCitationStyles({ root: store.root, query }, deps));
+      // Total counts this project's sources: its pins on a library, its records otherwise.
+      const total = library
+        ? (yield* attempt(() => projectPinsByLibraryId(library))).size
+        : (yield* attempt(() => listScientSourceRecords(root))).length;
+      return {
+        records: [],
+        total,
+        nextOffset: null,
+        citationStyle: agentCitationStyle(found.current),
+        citationStyles: found.results,
+        ...(found.catalogueMessage ? { catalogueMessage: found.catalogueMessage } : {}),
+      };
+    }
     // A read on a computer with no library yet still lists the project's pins from snapshots.
     const readable = library === null || library.exists;
     const listsPins = library !== null && !input.inTrash && input.scope !== "library";
@@ -1363,34 +1414,51 @@ export const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolk
   function* (input: {
     readonly replaceEdited?: ReadonlyArray<"references.bib" | "references.json">;
     readonly importEdited?: ReadonlyArray<"references.bib" | "references.json">;
+    readonly citationStyle?: string | null;
   }) {
     const store = yield* resolveScientSourcesStore();
+    // The citation style is a project file, whichever store holds the sources.
+    const { root } = store;
+    const { citationStyle: styleId, ...files } = input;
+    let style: ScientProjectCitationStyle;
+    if (styleId === undefined) {
+      style = yield* attempt(() => readProjectCitationStyle(root));
+    } else {
+      const deps = yield* citationStyleDependencies;
+      const set = yield* attempt(() =>
+        setProjectCitationStyle({ root, styleId, actor: "agent" }, deps),
+      );
+      if (set.error !== null) return yield* toolError("operation-failed", set.error);
+      style = set.style;
+    }
     if (store.kind === "library") {
       // Entries added to this project's file are meant for it, so they are always pinned here.
-      if (input.importEdited && input.importEdited.length > 0) {
+      if (files.importEdited && files.importEdited.length > 0) {
         const observeImport = yield* makeSourceImportAnalytics("agent");
-        return yield* attempt(() =>
+        const status = yield* attempt(() =>
           syncManagedBibliographyWithImports(
-            { root: store.root, library: store.library, ...input, actor: "agent" },
+            { root: store.root, library: store.library, ...files, actor: "agent" },
             observeImport,
           ),
         );
+        return { ...status, citationStyle: agentCitationStyle(style) };
       }
-      return yield* attempt(() =>
+      const status = yield* attempt(() =>
         syncPinnedBibliography({
           root: store.root,
           library: store.library,
           access: store.access,
           actor: "agent",
-          ...(input.replaceEdited ? { replaceEdited: input.replaceEdited } : {}),
+          ...(files.replaceEdited ? { replaceEdited: files.replaceEdited } : {}),
         }),
       );
+      return { ...status, citationStyle: agentCitationStyle(style) };
     }
-    const { root } = store;
     const observeImport = yield* makeSourceImportAnalytics("agent");
-    return yield* attempt(() =>
-      syncManagedBibliographyWithImports({ root, ...input, actor: "agent" }, observeImport),
+    const status = yield* attempt(() =>
+      syncManagedBibliographyWithImports({ root, ...files, actor: "agent" }, observeImport),
     );
+    return { ...status, citationStyle: agentCitationStyle(style) };
   },
 );
 

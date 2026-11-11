@@ -1,6 +1,8 @@
 import * as Effect from "effect/Effect";
 
 import type {
+  ScientCitationStyleSetRequest,
+  ScientCitationStylesRequest,
   ScientManagedBibliographySyncRequest,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
@@ -1019,5 +1021,42 @@ export const syncEnvironmentScientBibliography = Effect.fn(
           ...(input.importEdited ? { importEdited: input.importEdited } : {}),
         },
       }),
+  });
+});
+
+/** Downloading the style catalogue or a style can take a while on a slow network. */
+export const readEnvironmentScientCitationStyles = Effect.fn(
+  "clientRuntime.state.readEnvironmentScientCitationStyles",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientCitationStylesRequest) {
+  const { prepared, ...payload } = input;
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.citationStyles(),
+    timeoutMs: METADATA_REFRESH_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.citationStyles({ headers, payload }),
+  });
+});
+
+export const setEnvironmentScientCitationStyle = Effect.fn(
+  "clientRuntime.state.setEnvironmentScientCitationStyle",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientCitationStyleSetRequest) {
+  const { prepared, ...payload } = input;
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.citationStyleSet(),
+    timeoutMs: METADATA_REFRESH_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.citationStyleSet({ headers, payload }),
   });
 });

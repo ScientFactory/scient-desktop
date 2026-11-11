@@ -61,6 +61,7 @@ import { pdfVersionLabel } from "./sourcePdfVersion";
 import { SourceEditorialStatus } from "./SourceEditorialStatus";
 import { verificationProblemLabel } from "./sourceLifecycleLabels";
 import { SourceReference } from "./SourceReference";
+import type { CitationStyleProject } from "./useProjectCitationStyle";
 import { useSourceNoteControls } from "./SourceNote";
 import type { SourceAnchorPoint } from "./sourceAnchor";
 
@@ -621,6 +622,8 @@ export function SourceDetails(props: {
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
   /** Editable tags and collections; without it the tags are shown read-only. */
   readonly organize?: ReactNode;
+  /** The project whose citation style the reference uses. */
+  readonly citationProject?: CitationStyleProject;
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onSaveNote: (
@@ -920,7 +923,10 @@ export function SourceDetails(props: {
               </DetailsSection>
             ) : null)}
 
-          <SourceReference record={record} />
+          <SourceReference
+            record={record}
+            {...(props.citationProject ? { project: props.citationProject } : {})}
+          />
 
           {props.annotations}
 
