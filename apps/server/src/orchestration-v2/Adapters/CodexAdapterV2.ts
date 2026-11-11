@@ -1553,6 +1553,11 @@ const decodeCodexChildThread = Schema.decodeUnknownEffect(
   }),
 );
 
+// SCIENT-FORK:START — an app-server that ignores SIGTERM cannot hold shutdown forever.
+// Matches the Codex probe's deadline in CodexProvider.
+const CODEX_APP_SERVER_FORCE_KILL_AFTER = "2 seconds";
+// SCIENT-FORK:END
+
 export const makeCodexAppServerSpawnCommand = Effect.fn(
   "CodexAdapterV2.makeCodexAppServerSpawnCommand",
 )(function* (input: {
@@ -1580,6 +1585,10 @@ export const makeCodexAppServerSpawnCommand = Effect.fn(
     ...(input.env === undefined ? {} : { env: input.env }),
     ...(input.extendEnv === undefined ? {} : { extendEnv: input.extendEnv }),
     shell: spawnCommand.shell,
+    // SCIENT-FORK:START — an app-server that ignores SIGTERM cannot hold shutdown forever.
+    // Without a deadline the spawner waits for the process indefinitely after SIGTERM.
+    forceKillAfter: CODEX_APP_SERVER_FORCE_KILL_AFTER,
+    // SCIENT-FORK:END
   });
 });
 

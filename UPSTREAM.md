@@ -2062,6 +2062,35 @@ desktop tab is never set up and keeps showing the start page over a page that lo
 T3 as pingdotgg/t3code#34252 (issue #34251). When it merges, take T3's version, then delete the
 marked block and `DesktopBrowserChannel.scient.test.ts`.
 
+## Git maintenance, untracked scans and owned processes
+
+Scient's checkpoints publish with a `git fetch`, which T3 does not (T3 uses `update-ref`), so
+Scient owns the fix that keeps that fetch from starting Git's automatic maintenance
+(`ScientCheckpointCapture.ts`) and the server-owned upkeep that replaces it
+(`ScientCheckpointUpkeep.ts`, provided once in `server.ts`, requested from `GitVcsDriver.ts`).
+Detached maintenance escaped the app's process group, and on Git without the detached-lock fix
+(Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
+
+Marked blocks in T3-owned files, to offer upstream and then drop:
+
+- `GitVcsDriverCore.ts` and `GitVcsDriver.ts`: the worktree base fetch and the storage cleanup's
+  tracking-branch fetch pass `--no-auto-gc` (T3 already does this for its status fetch). Tested in
+  `GitVcsDriverCore.scient.test.ts`. Asked on pingdotgg/t3code#34042, which reworks these fetches.
+- `GitVcsDriverCore.ts`: branch change totals remember a failed untracked-file listing per folder
+  and back off (1 min doubling to 30 min) until the untracked roots change, and keep the failure's
+  real reason. Tested in `GitVcsDriverCore.scient.test.ts`. Offered as pingdotgg/t3code#34460
+  (issue #34457).
+- `CodexAdapterV2.ts`: the app-server gets a 2 s force-kill deadline. Tested in
+  `CodexAdapterV2.scient.test.ts`. Offered as pingdotgg/t3code#34461 (issue #34458).
+- `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): descendants that left the CLI's process group
+  (its detached Bash tool shells and helpers) stop with it. While the server runs, the CLI's tree
+  is sampled and stopped after the CLI exits (`@t3tools/shared/scientOwnedProcessTree`); if the
+  server dies, the fd-3 watcher lists the CLI's live descendants in other groups before its group
+  kill. Only the agent's own tree, never terminals. Tested in `ClaudeProcessGroup.scient.test.ts`.
+  Reported as pingdotgg/t3code#34459 with this design as a proposal.
+
+When T3 takes an equal change, use its version and delete the block and its `.scient` test.
+
 ## Multiple app windows
 
 Scient Desktop can run several full app windows in one Electron process

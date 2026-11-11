@@ -136,6 +136,9 @@ import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
 import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
+// SCIENT-FORK:START — checkpoint repositories get server-owned Git upkeep.
+import * as CheckpointUpkeep from "./vcs/ScientCheckpointUpkeep.ts";
+// SCIENT-FORK:END
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
@@ -1337,7 +1340,9 @@ const layerMakeServer = Layer.unwrap(
       Layer.provideMerge(layerHttpServer),
       Layer.provide(layerApplicationObservability),
       Layer.provideMerge(FetchHttpClient.layer),
-      Layer.provide(VcsProcess.layer),
+      // SCIENT-FORK:START — one checkpoint upkeep worker shared by every Git driver.
+      Layer.provide(Layer.mergeAll(CheckpointUpkeep.layer, VcsProcess.layer)),
+      // SCIENT-FORK:END
       Layer.provideMerge(AgentScopeLive.layer),
       Layer.provideMerge(layerPlatformServices),
     );

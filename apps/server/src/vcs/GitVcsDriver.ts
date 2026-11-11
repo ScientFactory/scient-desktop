@@ -44,6 +44,9 @@ import {
   publishStagedCheckpoint,
   scopedCheckpointCapture,
 } from "./ScientCheckpointCapture.ts";
+// SCIENT-FORK:START — checkpoint repositories get server-owned Git upkeep.
+import { CheckpointUpkeep } from "./ScientCheckpointUpkeep.ts";
+// SCIENT-FORK:END
 import { isMissingExecutable } from "@t3tools/source-control-core/server/discovery";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import {
@@ -263,6 +266,10 @@ export interface GitFetchRemoteInput {
   cwd: string;
   remoteName: string;
   refName?: string;
+  // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+  /** For fetches the person did not ask for: Git's maintenance would run detached, unowned. */
+  skipAutoMaintenance?: boolean;
+  // SCIENT-FORK:END
 }
 
 export interface GitRemoteExistsInput {
@@ -918,6 +925,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
   // SCIENT-FORK:START — checkpoint size limits live in ScientCheckpointCapture.
   const checkCheckpointSize = makeCheckpointSizeCheck({ execute });
+  // Absent in tests that build a bare driver; the server provides one for all drivers.
+  const checkpointUpkeep = yield* Effect.serviceOption(CheckpointUpkeep);
   // SCIENT-FORK:END
 
   // --verify prints HEAD after the paths; --quiet leaves only paths for an unborn HEAD.
@@ -1413,6 +1422,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           commitOid,
           checkpointRef: input.checkpointRef,
         });
+        // Publication skips Git's automatic maintenance; the server runs it later, owned.
+        if (Option.isSome(checkpointUpkeep)) yield* checkpointUpkeep.value.request(gitCommonDir);
         // SCIENT-FORK:END
       }).pipe(
         Effect.ensuring(cleanupTempIndex),
