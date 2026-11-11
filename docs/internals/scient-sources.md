@@ -1236,6 +1236,16 @@ provider carries its own copy. They cost 299 bytes in the canonical tool names
 (`scientAwarenessAllCapabilitiesBytes` 4,940 to 5,239), more where the provider
 prefixes tool names.
 
+With `skills:read` as well, the block ends by sending reference checks to the
+`references` skill by name, as the Overleaf block does for `overleaf-sync`. The
+turn's skill scope note carries only a count, and an agent that already has
+the Library rules starts on the Library tools without listing skills: in the
+support-check pilot the plain request "Check the references in X" loaded the
+skill in 0 of 3 runs, and with the sentence in 3 of 3
+(`reviews/sources-roadmap-20261110/support-check/followup-1` in the
+workspace). It costs 76 bytes (`scientAwarenessAllCapabilitiesBytes` 5,239 to
+5,315).
+
 The Library menu's **Ask the Library** puts the same rules, as the tested
 sentence (`ASK_LIBRARY_PROMPT` in `apps/web/src/scient/sources/askLibrary.ts`),
 at the start of the open thread's draft through the composer handle's
