@@ -36,3 +36,7 @@ jobs:
         env:
           CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          # Public Android signing fingerprints for assetlinks.json (docs/operations/mobile-release.md).
+          SCIENT_ANDROID_SHA256_PRODUCTION: ${{ vars.SCIENT_ANDROID_SHA256_PRODUCTION }}
+          SCIENT_ANDROID_SHA256_PREVIEW: ${{ vars.SCIENT_ANDROID_SHA256_PREVIEW }}
+          SCIENT_ANDROID_SHA256_DEV: ${{ vars.SCIENT_ANDROID_SHA256_DEV }}

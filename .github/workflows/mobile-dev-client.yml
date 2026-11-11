@@ -3,9 +3,10 @@ run-name: ${{ github.event_name == 'workflow_dispatch' && format('Dev client {0}
 
 # Builds the simulator and emulator development client for a commit's native
 # fingerprint and shares it through the native-client cache, the one
-# `vp run mobile:install` reads on every machine. Android builds with Gradle,
-# ccache, and pnpm state on a sticky disk; iOS builds on a macOS runner, so no
-# machine needs Xcode or an EAS build for it.
+# `vp run mobile:install` reads on every machine. Android builds with Gradle and
+# ccache state from the Actions cache; iOS builds on a macOS runner, so no
+# machine needs Xcode or an EAS build for it. Without a cache login (Scient's
+# case) the run keeps the client as an artifact instead.
 #
 # - push to main: main's client is cached before anyone asks for it.
 # - workflow_dispatch: `mobile:install` starts this for the checkout's HEAD on a
@@ -60,8 +61,9 @@ permissions:
 jobs:
   android:
     name: Android ${{ matrix.abi }}
-    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'android')
-    runs-on: blacksmith-32vcpu-ubuntu-2404
+    # SCIENT-FORK: off until the owner sets the SCIENT_MOBILE_RELEASE repository variable.
+    if: vars.SCIENT_MOBILE_RELEASE == 'true' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'android')
+    runs-on: ubuntu-24.04
     timeout-minutes: 45
     strategy:
       fail-fast: false
@@ -142,19 +144,28 @@ jobs:
 
       # Pull requests build cold: their code must not write Gradle or ccache state that
       # the runs holding the cache login restore.
-      - name: Mount build cache
+      # SCIENT-FORK:START mobile-release-gate
+      # GitHub-hosted runners have no sticky disk: free disk space and restore Gradle and
+      # ccache state from the Actions cache. Pull requests restore nothing and save nothing.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Restore build cache
         if: github.event_name != 'pull_request'
-        uses: useblacksmith/stickydisk@v1
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          key: ${{ github.repository }}-android-dev-client-${{ matrix.abi }}
-          path: ~/.cache/t3-android-dev-client
+          path: |
+            ~/.cache/t3-android-dev-client/gradle/caches
+            ~/.cache/t3-android-dev-client/ccache
+          key: mobile-android-dev-client-${{ matrix.abi }}-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: mobile-android-dev-client-${{ matrix.abi }}-
+      # SCIENT-FORK:END mobile-release-gate
 
       - name: Configure Gradle and ccache
         run: |
           mkdir -p "$GRADLE_USER_HOME" "$CCACHE_DIR"
-          # No daemon: nothing should hold the sticky disk open when it is committed.
+          # No daemon: nothing should hold the cache directories open when they are saved.
           printf 'org.gradle.caching=true\norg.gradle.daemon=false\n' > "$GRADLE_USER_HOME/gradle.properties"
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update -qq && sudo apt-get install -y -qq ccache
           ccache --zero-stats
 
@@ -178,10 +189,14 @@ jobs:
         env:
           WRITE_TOKEN: ${{ secrets.T3_NATIVE_CLIENT_WRITE_TOKEN }}
         run: |
+          # SCIENT-FORK:START mobile-release-gate
+          # Scient has no shared native-client cache: build anyway and keep the client on the run.
           if [ -z "$WRITE_TOKEN" ]; then
-            echo "::warning::T3_NATIVE_CLIENT_WRITE_TOKEN is not set; nothing can be shared, so nothing is built."
+            echo "T3_NATIVE_CLIENT_CACHE=off" >> "$GITHUB_ENV"
+            echo "::notice::No native-client cache login; the client is kept as a run artifact."
             exit 0
           fi
+          # SCIENT-FORK:END mobile-release-gate
           node --input-type=module <<'NODE'
           import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
           import { homedir } from "node:os";
@@ -198,13 +213,24 @@ jobs:
           echo "T3_NATIVE_CLIENT_SHARE=required" >> "$GITHUB_ENV"
           echo "ready=true" >> "$GITHUB_OUTPUT"
 
-      - name: Build and share
-        if: github.event_name == 'pull_request' || steps.login.outputs.ready == 'true'
+      - id: build
+        name: Build and share
         shell: bash # pipefail: a failed build fails the step through tee
         run: |
           node scripts/mobile-native-client.ts ensure android --prepare --abi "$ABI" ${EXPECTED_FINGERPRINT:+--expect-fingerprint "$EXPECTED_FINGERPRINT"} | tee "$RUNNER_TEMP/dev-client.log"
           result="$(tail -n 1 "$RUNNER_TEMP/dev-client.log")"
+          echo "file=$(jq -r '.file' <<<"$result")" >> "$GITHUB_OUTPUT"
           echo "### android dev client: \`$(jq -r '.source' <<<"$result")\` for fingerprint \`$(jq -r '.fingerprint' <<<"$result")\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # SCIENT-FORK: the copy testers download when no shared cache holds the client.
+      - name: Keep the client
+        if: env.T3_NATIVE_CLIENT_CACHE == 'off'
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobile-dev-client-android-${{ matrix.abi }}-${{ github.run_id }}
+          path: ${{ steps.build.outputs.file }}
+          retention-days: 14
+          if-no-files-found: error
 
       - name: Cache statistics
         if: success() || failure()
@@ -218,8 +244,10 @@ jobs:
 
   ios:
     name: iOS simulator
-    if: github.repository == 'pingdotgg/t3code' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios')
-    runs-on: blacksmith-12vcpu-macos-26
+    # SCIENT-FORK: off until the owner sets the SCIENT_MOBILE_RELEASE repository variable;
+    # SCIENT_MOBILE_MACOS_RUNNER names another macOS runner label.
+    if: vars.SCIENT_MOBILE_RELEASE == 'true' && (github.event_name != 'workflow_dispatch' || inputs.platform == 'ios')
+    runs-on: ${{ vars.SCIENT_MOBILE_MACOS_RUNNER || 'xcode-27' }}
     timeout-minutes: 60
     concurrency:
       group: mobile-dev-client-ios-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.fingerprint || github.sha }}
@@ -286,10 +314,14 @@ jobs:
         env:
           WRITE_TOKEN: ${{ secrets.T3_NATIVE_CLIENT_WRITE_TOKEN }}
         run: |
+          # SCIENT-FORK:START mobile-release-gate
+          # Scient has no shared native-client cache: build anyway and keep the client on the run.
           if [ -z "$WRITE_TOKEN" ]; then
-            echo "::warning::T3_NATIVE_CLIENT_WRITE_TOKEN is not set; nothing can be shared, so nothing is built."
+            echo "T3_NATIVE_CLIENT_CACHE=off" >> "$GITHUB_ENV"
+            echo "::notice::No native-client cache login; the client is kept as a run artifact."
             exit 0
           fi
+          # SCIENT-FORK:END mobile-release-gate
           node --input-type=module <<'NODE'
           import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
           import { homedir } from "node:os";
@@ -306,10 +338,21 @@ jobs:
           echo "T3_NATIVE_CLIENT_SHARE=required" >> "$GITHUB_ENV"
           echo "ready=true" >> "$GITHUB_OUTPUT"
 
-      - name: Build and share
-        if: github.event_name == 'pull_request' || steps.login.outputs.ready == 'true'
+      - id: build
+        name: Build and share
         shell: bash # pipefail: a failed build fails the step through tee
         run: |
           node scripts/mobile-native-client.ts ensure ios --prepare ${EXPECTED_FINGERPRINT:+--expect-fingerprint "$EXPECTED_FINGERPRINT"} | tee "$RUNNER_TEMP/dev-client.log"
           result="$(tail -n 1 "$RUNNER_TEMP/dev-client.log")"
+          echo "file=$(jq -r '.file' <<<"$result")" >> "$GITHUB_OUTPUT"
           echo "### ios dev client: \`$(jq -r '.source' <<<"$result")\` for fingerprint \`$(jq -r '.fingerprint' <<<"$result")\`" >> "$GITHUB_STEP_SUMMARY"
+
+      # SCIENT-FORK: the copy testers download when no shared cache holds the client.
+      - name: Keep the client
+        if: env.T3_NATIVE_CLIENT_CACHE == 'off'
+        uses: actions/upload-artifact@v7
+        with:
+          name: mobile-dev-client-ios-${{ github.run_id }}
+          path: ${{ steps.build.outputs.file }}
+          retention-days: 14
+          if-no-files-found: error

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds apps/web as Scient's hosted app and, with --deploy, publishes it to Cloudflare.
 # Public Scient Connect ids come from .env.example; CLOUDFLARE_API_TOKEN and
-# CLOUDFLARE_ACCOUNT_ID are needed only to deploy.
+# CLOUDFLARE_ACCOUNT_ID are needed only to deploy. Phone app link files: well-known.mjs.
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
@@ -17,11 +17,20 @@ export VITE_HOSTED_APP_CHANNEL=latest
 export T3CODE_WEB_SOURCEMAP=false
 
 pnpm exec vp run --filter @t3tools/web build
+# Phone app links; SCIENT_ANDROID_SHA256_* supply the Android signing fingerprints.
+node infra/scient-web/well-known.mjs apps/web/dist
 
-# Hashed build output never changes under the same name.
+# Hashed build output never changes under the same name. Apple and Android read the
+# .well-known files only with a JSON content type, and the AASA path has no extension.
 cat > apps/web/dist/_headers <<'HEADERS'
 /assets/*
   Cache-Control: public, max-age=31536000, immutable
+/.well-known/apple-app-site-association
+  Content-Type: application/json
+/.well-known/apple-app-site-association.json
+  Content-Type: application/json
+/.well-known/assetlinks.json
+  Content-Type: application/json
 /*
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
