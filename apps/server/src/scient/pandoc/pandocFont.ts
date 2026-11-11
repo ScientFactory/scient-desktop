@@ -213,8 +213,6 @@ function braceEnd(text: string, open: number): number {
 const LATEX_VERBATIM_START = /^\\begin\{(verbatim\*?|lstlisting|minted)\}/u;
 // `\verb|…|` and `\lstinline|…|` (or with braces): the delimiter closes the copied text.
 const LATEX_INLINE_VERBATIM = /^\\(?:verb\*?|lstinline(?:\[[^\]]*\])?)([^\sA-Za-z*])/u;
-// A brace right after a command name or a closing bracket is that command's argument, not a group.
-const LATEX_ARGUMENT_BEFORE = /[A-Za-z}\]*@]/u;
 
 function rewriteSizeGroups(
   text: string,
@@ -257,14 +255,14 @@ function rewriteSizeGroups(
       else if (next === ")" || next === "]") inMath = false;
     }
     if (char === "$" && !isEscaped(text, index)) inMath = !inMath;
-    const standalone = index === 0 || !LATEX_ARGUMENT_BEFORE.test(text[index - 1] ?? "");
-    if (char === "{" && standalone && !inMath && !isEscaped(text, index)) {
+    if (char === "{" && !inMath && !isEscaped(text, index)) {
       const declaration = latexDeclaration(text.slice(index + 1), classSize);
       const end = declaration === null ? -1 : braceEnd(text, index);
       if (declaration !== null && end >= 0) {
         counter.found = true;
         const body = text.slice(index + 1 + declaration.length, end);
-        out += `\\ScientSize{${declaration.carrier}}{${rewriteSizeGroups(body, counter, classSize)}}`;
+        // The group's own braces stay, so it is still a group (or an argument) to Pandoc.
+        out += `{\\ScientSize{${declaration.carrier}}{${rewriteSizeGroups(body, counter, classSize)}}}`;
         index = end;
         continue;
       }

@@ -12,7 +12,7 @@ import {
 } from "./pandocFont.ts";
 import { scientReferenceDocumentParts, type WordLocalFont } from "./scientReferenceDocument.ts";
 
-const carrier = (name: string, body: string) => `\\ScientSize{scient-size-${name}}{${body}}`;
+const carrier = (name: string, body: string) => `{\\ScientSize{scient-size-${name}}{${body}}}`;
 
 describe("rewriteLatexSizeGroups", () => {
   it("rewrites a size group and leaves the rest of the source unchanged", () => {
@@ -43,15 +43,19 @@ describe("rewriteLatexSizeGroups", () => {
     }
   });
 
-  it("leaves a size command inside a command argument alone", () => {
-    for (const source of [
-      "\\textbf{\\large x}",
-      "\\section{\\large Title}",
-      "\\newcommand{\\a}{\\small z}",
-      "\\begin{tabular}{l}\\\\[2pt]\\end{tabular}",
-    ]) {
-      expect(rewriteLatexSizeGroups(source)).toBe(source);
-    }
+  it("keeps the braces of a group, so an argument or a spaced group stays valid", () => {
+    expect(rewriteLatexSizeGroups("\\section {\\large Intro}")).toContain(
+      `\\section ${carrier("12", "Intro")}`,
+    );
+    expect(rewriteLatexSizeGroups("a{\\Large b}c")).toContain(`a${carrier("14p4", "b")}c`);
+    expect(rewriteLatexSizeGroups("\\textbf{x}{\\large y}")).toContain(
+      `\\textbf{x}${carrier("12", "y")}`,
+    );
+  });
+
+  it("leaves other braces alone", () => {
+    const source = "\\begin{tabular}{l}\\\\[2pt]\\end{tabular}";
+    expect(rewriteLatexSizeGroups(source)).toBe(source);
   });
 
   it("does not touch verbatim environments or bracket math", () => {
@@ -189,10 +193,10 @@ describe("LaTeX font sizes", () => {
   it("rewrites a font family group in both written forms", () => {
     const index = FONT_CATALOGUE.findIndex((font) => font.name === "Times New Roman");
     const code = rewriteLatexSizeGroups("{\\fontfamily{qtm}\\selectfont serif}");
-    expect(code).toContain(`\\ScientSize{scient-font-${index}}{serif}`);
+    expect(code).toContain(`{\\ScientSize{scient-font-${index}}{serif}}`);
     const named = rewriteLatexSizeGroups(
       "{\\IfFontExistsTF{Times New Roman}{\\fontspec{Times New Roman}}{\\fontspec{Latin Modern Roman}} serif}",
     );
-    expect(named).toContain(`\\ScientSize{scient-font-${index}}{serif}`);
+    expect(named).toContain(`{\\ScientSize{scient-font-${index}}{serif}}`);
   });
 });

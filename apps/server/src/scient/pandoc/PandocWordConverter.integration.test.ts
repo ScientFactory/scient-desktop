@@ -772,6 +772,27 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
       }),
     );
 
+    it.live("exports size groups next to commands and inside arguments", () =>
+      Effect.gen(function* () {
+        const { document } = yield* exportLatex(
+          "latex-brace-forms",
+          [
+            "\\documentclass{article}",
+            "\\begin{document}",
+            "\\section {\\large Intro}",
+            "Body\\footnote {\\small note}. a{\\Large b}c and \\textbf{x}{\\large y}.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        const run = (text: string) =>
+          new RegExp(`<w:r>(?:(?!</w:r>)[\\s\\S])*?${text}`, "u").exec(document)?.[0] ?? "";
+        expect(run("Intro")).toContain("Scient12pt");
+        expect(run(">b<")).toContain("Scient14_4pt");
+        expect(run(">y<")).toContain("Scient12pt");
+        expect(document).not.toContain("scient-size");
+      }),
+    );
+
     it.live("keeps a LaTeX font family group as a Word character style", () =>
       Effect.gen(function* () {
         const { document } = yield* exportLatex(

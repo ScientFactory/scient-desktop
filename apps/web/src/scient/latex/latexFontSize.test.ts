@@ -103,6 +103,29 @@ describe("named fonts in LaTeX", () => {
   });
 });
 
+describe("a size over math keeps every space", () => {
+  it("writes one group around text, math and text", () => {
+    const base = document("We see $x$ here");
+    const projection = projectLatexVisualDocument(base);
+    const paragraph = projection.content.content![0]!;
+    const size = { type: "latexFontSize", attrs: { points: 14, leading: 16.8 } };
+    const sized = {
+      ...projection.content,
+      content: [
+        {
+          ...paragraph,
+          content: paragraph.content!.map((node) => ({
+            ...node,
+            marks: [...(node.marks ?? []), size],
+          })),
+        },
+      ],
+    };
+    const result = applyLatexVisualDocumentChange(base, projection, sized, {});
+    expect(result?.source).toContain("{\\fontsize{14}{16.8}\\selectfont We see $x$ here}");
+  });
+});
+
 describe("fix-cm for exact sizes", () => {
   it("adds fix-cm once when a size group is first written, and not when a scalable package is loaded", () => {
     const base = document("Plain text.");
