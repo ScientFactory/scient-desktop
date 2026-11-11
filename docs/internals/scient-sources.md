@@ -1092,6 +1092,16 @@ shape and pure search (`/full-text`) and its filesystem store
   (annotations of a project file) goes through `readScientSourcePdfBytes`
   with its expected hash.
 
+Reading one source's text (`scient_sources_read_text`) returns whole pages from
+`fromPage` up to `maxCharacters` (default 12,000, at most 30,000) and the
+`nextPage` to continue from. A page is never cut: one longer than the budget
+comes back whole and alone. The sizes keep one result small enough for the
+providers to pass inline instead of saving it to a file; none of the providers'
+inline limits is stated in this repository or `.repos/`, so these are the
+planned defaults rather than measured values. The tool is strict: an unknown
+parameter (`page`, `pages`, `offset`) is refused with the accepted names, because
+Effect's MCP server otherwise drops unknown keys and the agent reads page 1.
+
 Search is a pure-JS scan of cached, folded page text rather than SQLite FTS5:
 the text is project data in project files, while the server's SQLite holds app
 state, and a second persistent index could drift from the files. Folding

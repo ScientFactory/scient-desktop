@@ -575,7 +575,7 @@ const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
     attachmentId: Schema.optionalKey(NonEmptyString),
     fromPage: Schema.optionalKey(PageNumber),
     maxCharacters: Schema.optionalKey(
-      Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60_000 })),
+      Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 30_000 })),
     ),
   }).annotate({
     messageUnexpectedKey:

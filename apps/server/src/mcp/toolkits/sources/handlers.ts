@@ -901,7 +901,7 @@ const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit.readTe
         sourceId: input.sourceId,
         ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
         fromPage: Math.max(1, input.fromPage ?? 1),
-        maxCharacters: Math.min(60_000, Math.max(1_000, input.maxCharacters ?? 20_000)),
+        maxCharacters: Math.min(30_000, Math.max(1_000, input.maxCharacters ?? 12_000)),
       }),
     );
   },
