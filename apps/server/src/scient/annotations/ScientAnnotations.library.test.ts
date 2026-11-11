@@ -286,6 +286,24 @@ describe("annotations on the library backend", () => {
       expect(
         listed.pdfs.flatMap((pdf) => pdf.annotations.map((entry) => entry.annotationId)).toSorted(),
       ).toEqual(["ann_after001", "ann_before01", "ann_own00001", "ann_own_later"]);
+
+      // A shard folder that is a link names bytes kept elsewhere: not library material.
+      const shard = NodePath.join(libraryFolder, "files", "sha256", material.sha256.slice(0, 2));
+      const outside = NodePath.join(project.base, "outside");
+      yield* Effect.promise(async () => {
+        await NodeFSP.rename(shard, outside);
+        await NodeFSP.symlink(outside, shard, "junction");
+      });
+      const linked = yield* annotations
+        .forDocument({ root, relativePath: sourcePdfPath })
+        .pipe(on("library", project));
+      expect(linked.status).toBe("unavailable");
+      // The listing follows the rule a change follows, so it lists nothing a change cannot reach.
+      const afterLink = yield* agentRead(root).pipe(on("library", project));
+      expect(ids(afterLink.pdfs.flatMap((pdf) => pdf.annotations))).toEqual([
+        "ann_own00001",
+        "ann_own_later",
+      ]);
     }).pipe(Effect.provide(layer)),
   );
 });

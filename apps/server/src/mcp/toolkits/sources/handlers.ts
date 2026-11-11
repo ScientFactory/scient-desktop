@@ -1010,6 +1010,8 @@ export const updateLibrarySourceForInvocation = Effect.fn("ScientSourcesToolkit.
       return yield* updateScientSourceForInvocation({ ...input, metadata });
     }
     const edited = metadata ? yield* updateLibrarySource(store, { ...input, metadata }) : null;
+    // A refused edit changes nothing, reading state included.
+    if (edited && (edited.outcome === "stale" || edited.outcome === "duplicate")) return edited;
     const reading =
       readingStatus !== undefined || starred !== undefined
         ? (yield* attempt(() =>
@@ -1018,6 +1020,15 @@ export const updateLibrarySourceForInvocation = Effect.fn("ScientSourcesToolkit.
               ...(readingStatus ? { readingStatus } : {}),
               ...(starred !== undefined ? { starred } : {}),
             }),
+          ).pipe(
+            Effect.mapError((error) =>
+              edited?.outcome === "updated"
+                ? toolError(
+                    "operation-failed",
+                    `The metadata was updated (revision ${edited.revision}); the reading state was not. Set it again.`,
+                  )
+                : error,
+            ),
           )).sources[0]!
         : null;
     if (reading?.outcome === "not-found" && !edited) {

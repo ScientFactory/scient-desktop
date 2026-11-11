@@ -971,6 +971,21 @@ describe("Sources tools on the library backend", () => {
         readingStatus: "read",
         starred: false,
       });
+      // A refused metadata edit leaves the reading state alone.
+      const record = (yield* Effect.promise(() =>
+        readScientSourceRecord(fixture.library, second.sourceId!),
+      ))!;
+      const refused = yield* run(
+        updateLibrarySourceForInvocation({
+          sourceId: second.sourceId!,
+          expectedRevision: record.revision + 1,
+          metadata: { ...editableMetadataFromRecord(record), title: "Edited too late" },
+          readingStatus: "read",
+        }),
+        fixture,
+      );
+      expect(refused.outcome).toBe("stale");
+      expect(yield* ids({ readingStatus: "read" })).toEqual([sourceId]);
       const empty = yield* Effect.flip(
         run(updateLibrarySourceForInvocation({ sourceId, expectedRevision: 1 }), fixture),
       );

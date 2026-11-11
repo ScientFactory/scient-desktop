@@ -109,12 +109,17 @@ const annotationScope = Effect.fn("ScientAnnotations.scope")(function* (
   return { canonicalRoot, library: { store, home } } satisfies AnnotationScope;
 });
 
-/** A library PDF is one whose bytes the library keeps; the hash alone decides, never a path. */
+/**
+ * A library PDF is one whose bytes the library keeps; the hash alone decides, never a path.
+ * A link anywhere below the library root names bytes kept elsewhere, so it does not count.
+ */
 async function isLibraryPdf(home: ScientLibraryLocation, sha256: string): Promise<boolean> {
-  return NodeFSP.lstat(scientSourceStorePdfPath(home, sha256)).then(
-    (stats) => stats.isFile(),
-    () => false,
-  );
+  const path = scientSourceStorePdfPath(home, sha256);
+  try {
+    return (await NodeFSP.realpath(path)) === path && (await NodeFSP.lstat(path)).isFile();
+  } catch {
+    return false;
+  }
 }
 
 async function annotationHome(
@@ -146,25 +151,25 @@ async function scopeRecords(scope: AnnotationScope): Promise<ReadonlyArray<Scien
 }
 
 /**
- * This project's annotation files: the project folder's, then the library's for the PDFs its
- * pins hold. A project file for a library PDF (left while the move cleans up) yields to the library's.
+ * This project's annotation files, each from the home `annotationHome` gives its PDF: the
+ * library's for the library PDFs its pins hold, the project folder's for every other PDF.
  */
 async function scopeAnnotationFiles(scope: AnnotationScope) {
   const project = await listScientAnnotationFiles(scope.canonicalRoot);
   if (!scope.library) return project;
-  const hashes = new Set(
-    (await pinnedLibraryRecords(scope)).flatMap((record) =>
-      record.attachments.flatMap((attachment) =>
-        attachment.kind === "pdf" ? [attachment.sha256] : [],
-      ),
-    ),
-  );
-  const library = await listScientAnnotationFiles(scope.library.home, hashes);
-  const inLibrary = new Set(library.files.map((file) => file.material.sha256));
+  const { home } = scope.library;
+  const held = new Set<string>();
+  for (const record of await pinnedLibraryRecords(scope)) {
+    for (const attachment of record.attachments) {
+      if (attachment.kind !== "pdf" || held.has(attachment.sha256)) continue;
+      if (await isLibraryPdf(home, attachment.sha256)) held.add(attachment.sha256);
+    }
+  }
+  const library = await listScientAnnotationFiles(home, held);
   const own: ScientAnnotationFile[] = [];
   for (const file of project.files) {
-    if (inLibrary.has(file.material.sha256)) continue;
-    if (!(await isLibraryPdf(scope.library.home, file.material.sha256))) own.push(file);
+    if (held.has(file.material.sha256)) continue;
+    if (!(await isLibraryPdf(home, file.material.sha256))) own.push(file);
   }
   return {
     files: [...own, ...library.files],
@@ -246,6 +251,7 @@ async function sourcePdf(
         : undefined
       : pdfs.find((candidate) => candidate.attachmentId === attachmentId);
   if (!attachment) return null;
+  if (scope.library && !(await isLibraryPdf(scope.library.home, attachment.sha256))) return null;
   const absolutePath = sourceAttachmentAbsolutePath(store, attachment);
   return {
     absolutePath,
