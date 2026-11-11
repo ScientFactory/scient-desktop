@@ -454,11 +454,10 @@ describe("the move status, one row per state", () => {
       ).toEqual({ outcome: "dismissed" });
       expect(yield* statusOf(fixture)).toEqual({ state: "done", lines: [] });
       // Kept in this instance's migration folder, never in the project.
-      expect(
-        yield* Effect.promise(() =>
-          NodeFSP.readdir(NodePath.join(fixture.root, ".scient"), { recursive: true }),
-        ),
-      ).not.toContain("summary.json");
+      const projectFiles = yield* Effect.promise(() =>
+        NodeFSP.readdir(fixture.root, { recursive: true }),
+      );
+      expect(projectFiles.filter((entry) => entry.endsWith("summary.json"))).toEqual([]);
       // An older Scient writes again: the next run has a summary of its own.
       yield* Effect.promise(async () => {
         await addV1Source(fixture.root, "later");
