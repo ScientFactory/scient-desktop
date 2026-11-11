@@ -309,6 +309,10 @@ const afterLibraryChange = (store: ScientSourcesStore, sourceIds: ReadonlyArray<
       )
     : Effect.void;
 
+/** False for a read-only library call: it reads PDF text without storing it in the shared library. */
+const storesFullText = (store: ScientSourcesStore) =>
+  !(store.kind === "library" && store.access === "read");
+
 /** Intake from a project pins what it added, so the person sees it here. */
 const pinAdded = (store: ScientSourcesStore, sourceIds: ReadonlyArray<string | null>) =>
   store.kind === "library"
@@ -613,8 +617,9 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
         readonly mergedSourceId: string;
         readonly keptDifferent: ReadonlyArray<string>;
       }> = [];
-      for (const other of requested ? sourceIds : rest) {
-        if (other === survivorId) continue;
+      const others = (requested ? sourceIds : rest).filter((other) => other !== survivorId);
+      let notMerged: ReadonlyArray<string> = [];
+      for (const [index, other] of others.entries()) {
         const merged = yield* attempt(() =>
           mergeScientLibrarySources({
             library: store.library,
@@ -622,8 +627,17 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
             ...(requested ? { survivorId } : {}),
             actor: "agent",
           }),
+        ).pipe(
+          // Earlier merges of this call have landed: report them and their undo IDs.
+          Effect.catch((error) =>
+            merges.length > 0 ? Effect.succeed({ outcome: "failed" as const }) : Effect.fail(error),
+          ),
         );
-        if (merged.outcome === "not-found") return { outcome: "not-found" as const };
+        if (merged.outcome === "not-found" || merged.outcome === "failed") {
+          if (merges.length === 0) return { outcome: "not-found" as const };
+          notMerged = others.slice(index);
+          break;
+        }
         if (merged.outcome === "already-merged") continue;
         survivorId = merged.merge.survivorId;
         merges.push({
@@ -639,7 +653,8 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
         outcome: "merged" as const,
         survivorId,
         merges,
-        ...(yield* reachOf(store, survivorId)),
+        ...(notMerged.length > 0 ? { notMerged } : {}),
+        ...(yield* reachOf(store, survivorId).pipe(Effect.orElseSucceed(() => ({})))),
       };
     }
     case "undo-merge": {
@@ -1319,6 +1334,7 @@ export const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.
         query: input.query,
         limit: Math.min(25, Math.max(1, input.limit ?? 10)),
         ...(sourceIds ? { sourceIds } : {}),
+        persist: storesFullText(store),
       }),
     );
     const pins =
@@ -1346,7 +1362,7 @@ export const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.
   },
 );
 
-const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit.readText")(
+export const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit.readText")(
   function* (input: {
     readonly sourceId: string;
     readonly attachmentId?: string;
@@ -1363,12 +1379,13 @@ const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit.readTe
         ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
         fromPage: Math.max(1, input.fromPage ?? 1),
         maxCharacters: Math.min(30_000, Math.max(1_000, input.maxCharacters ?? 12_000)),
+        persist: storesFullText(store),
       }),
     );
   },
 );
 
-const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesToolkit.checkQuotes")(
+export const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesToolkit.checkQuotes")(
   function* (input: {
     readonly quotes: ReadonlyArray<{ readonly quote: string; readonly sourceId?: string }>;
   }) {
@@ -1385,7 +1402,9 @@ const checkScientSourceQuotesForInvocation = Effect.fn("ScientSourcesToolkit.che
             Effect.map((resolved) => ({ quote, sourceId: resolved })),
           ),
     );
-    const results = yield* attempt(() => checkSourceQuotes({ root: store.store, quotes }));
+    const results = yield* attempt(() =>
+      checkSourceQuotes({ root: store.store, quotes, persist: storesFullText(store) }),
+    );
     return { results };
   },
 );

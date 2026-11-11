@@ -238,7 +238,17 @@ function inLane<A>(run: () => Promise<A>): Promise<A> {
 const textCache = makeSourceFullTextCache();
 const cacheText = (text: ScientSourceExtractedFullText) => textCache.add(text);
 
-const searchDocumentFor = (text: ScientSourceExtractedFullText) => cacheText(text).document;
+// Text read for a caller that may not write. It stays out of `textCache`, whose
+// entries count as stored, so a later indexing pass still writes it.
+const unsavedTextCache = makeSourceFullTextCache({ maxCost: 12_000_000, maxEntries: 2 });
+
+const searchDocumentFor = (text: ScientSourceExtractedFullText) =>
+  (unsavedTextCache.get(text.sha256) ?? cacheText(text)).document;
+
+/** `persist: false` is for a caller that may not write: no text is stored and no indexing pass starts. */
+interface SourceFullTextPersistence {
+  readonly persist?: boolean;
+}
 
 async function readStoredText(
   root: ScientSourceStoreLocation,
@@ -259,21 +269,28 @@ async function needsExtraction(text: ScientSourceFullText | null): Promise<boole
   );
 }
 
-/** The stored text for one material, extracting it first when it is missing. */
+/** The text for one material, extracting it first when it is missing; stored unless `persist` is false. */
 async function ensureMaterialText(
   root: ScientSourceStoreLocation,
   material: LibraryMaterial,
+  persist = true,
 ): Promise<ScientSourceFullText> {
-  const key = `${scientSourceStoreKey(root)}\0${material.sha256}`;
+  const key = `${scientSourceStoreKey(root)}\0${material.sha256}\0${persist}`;
   const inFlight = extractionsInFlight.get(key);
   if (inFlight) return inFlight;
   const run = (async () => {
     const stored = await readStoredText(root, material.sha256);
     if (stored && !(await needsExtraction(stored))) return stored;
+    const unsaved = persist ? undefined : unsavedTextCache.get(material.sha256);
+    if (unsaved) return unsaved.text;
     return inLane(async () => {
       const again = await readStoredText(root, material.sha256);
       if (again && !(await needsExtraction(again))) return again;
       const text = await extractMaterialText(root, material);
+      if (!persist) {
+        if (text.outcome === "extracted") unsavedTextCache.add(text);
+        return text;
+      }
       await writeScientSourceFullText(root, text);
       if (text.outcome === "extracted") cacheText(text);
       return text;
@@ -406,12 +423,14 @@ export interface SourceFullTextSearchHit {
 const textHash = (text: string) =>
   NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
 
-export async function searchSourceFullText(input: {
-  readonly root: ScientSourceStoreLocation;
-  readonly query: string;
-  readonly limit: number;
-  readonly sourceIds?: ReadonlyArray<string>;
-}): Promise<{
+export async function searchSourceFullText(
+  input: SourceFullTextPersistence & {
+    readonly root: ScientSourceStoreLocation;
+    readonly query: string;
+    readonly limit: number;
+    readonly sourceIds?: ReadonlyArray<string>;
+  },
+): Promise<{
   readonly hits: ReadonlyArray<SourceFullTextSearchHit>;
   readonly status: SourceFullTextStatus;
 }> {
@@ -421,7 +440,7 @@ export async function searchSourceFullText(input: {
   const scoped = wanted ? records.filter((record) => wanted.has(record.sourceId)) : records;
   const materials = libraryMaterials(scoped);
   const { texts, status } = await storedTexts(root, materials);
-  if (status.pending > 0) void scheduleSourceFullTextIndexing(root);
+  if (status.pending > 0 && input.persist !== false) void scheduleSourceFullTextIndexing(root);
   const extracted = [...texts.values()].filter(
     (text): text is ScientSourceExtractedFullText => text?.outcome === "extracted",
   );
@@ -489,13 +508,15 @@ export type SourceTextReadResult =
     };
 
 /** Pages of one source PDF's text, extracting it now if the background pass has not reached it. */
-export async function readSourceText(input: {
-  readonly root: ScientSourceStoreLocation;
-  readonly sourceId: string;
-  readonly attachmentId?: string;
-  readonly fromPage: number;
-  readonly maxCharacters: number;
-}): Promise<SourceTextReadResult> {
+export async function readSourceText(
+  input: SourceFullTextPersistence & {
+    readonly root: ScientSourceStoreLocation;
+    readonly sourceId: string;
+    readonly attachmentId?: string;
+    readonly fromPage: number;
+    readonly maxCharacters: number;
+  },
+): Promise<SourceTextReadResult> {
   const root = await canonicalScientSourceLocation(input.root);
   const record = await readScientSourceRecord(root, input.sourceId);
   if (!record) return { outcome: "source-not-found" };
@@ -516,7 +537,7 @@ export async function readSourceText(input: {
   if (selection._tag !== "Selected") return { outcome: "no-pdf" };
   const attachment = selection.material;
   const material = libraryMaterials([record]).get(attachment.sha256)!;
-  const text = await ensureMaterialText(root, material);
+  const text = await ensureMaterialText(root, material, input.persist !== false);
   if (text.outcome === "failed")
     return { outcome: "unreadable", attachmentId: attachment.attachmentId };
   if (!fullTextHasText(text)) return { outcome: "no-text", attachmentId: attachment.attachmentId };
@@ -570,10 +591,13 @@ export type SourceQuoteCheck =
  * needed; without one, the whole library is searched and a quote found in
  * several sources is ambiguous.
  */
-export async function checkSourceQuotes(input: {
-  readonly root: ScientSourceStoreLocation;
-  readonly quotes: ReadonlyArray<{ readonly quote: string; readonly sourceId?: string }>;
-}): Promise<ReadonlyArray<SourceQuoteCheck>> {
+export async function checkSourceQuotes(
+  input: SourceFullTextPersistence & {
+    readonly root: ScientSourceStoreLocation;
+    readonly quotes: ReadonlyArray<{ readonly quote: string; readonly sourceId?: string }>;
+  },
+): Promise<ReadonlyArray<SourceQuoteCheck>> {
+  const persist = input.persist !== false;
   const root = await canonicalScientSourceLocation(input.root);
   const records = await listScientSourceRecords(root);
   const results: SourceQuoteCheck[] = [];
@@ -591,7 +615,7 @@ export async function checkSourceQuotes(input: {
         material.sha256,
         sourceId === undefined
           ? await readStoredText(root, material.sha256)
-          : await ensureMaterialText(root, material).catch(() => null),
+          : await ensureMaterialText(root, material, persist).catch(() => null),
       );
     }
     const extracted = [...texts.values()].filter(
@@ -632,7 +656,7 @@ export async function checkSourceQuotes(input: {
     }
     const pending = [...texts.values()].filter((text) => text === null).length;
     if (pending > 0 && sourceId === undefined) {
-      void scheduleSourceFullTextIndexing(root);
+      if (persist) void scheduleSourceFullTextIndexing(root);
       results.push({ outcome: "not-indexed", pending });
       continue;
     }

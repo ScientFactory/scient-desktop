@@ -52,10 +52,12 @@ import {
 } from "../systematicReviews/handlers.ts";
 import {
   addScientSourceForInvocation,
+  checkScientSourceQuotesForInvocation,
   citeScientSourcesForInvocation,
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
   organizeLibrarySourcesForInvocation,
+  readScientSourceTextForInvocation,
   searchScientSourcesForInvocation,
   syncScientBibliographyForInvocation,
   updateScientSourceForInvocation,
@@ -566,6 +568,102 @@ describe("Sources tools on the library backend", () => {
           Promise.all(files.map((file) => NodeFSP.stat(file).then((stats) => stats.mtimeMs))),
         ),
       ).toEqual(stamps);
+    }),
+  );
+
+  it.effect(
+    "read-only search, read-text and quote-check leave the project and library untouched",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const pdfPath = NodePath.join(fixture.base, "readonly.pdf");
+        yield* Effect.promise(() => NodeFSP.writeFile(pdfPath, textPdf("Read only library text")));
+        const record = yield* Effect.promise(() =>
+          libraryRecord(fixture, "readonly", { citationKey: "readonly2026" }, pdfPath),
+        );
+        const trees = () =>
+          Effect.promise(() =>
+            Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
+          );
+        const before = yield* trees();
+
+        const read = yield* run(
+          readScientSourceTextForInvocation({ sourceId: record.sourceId }),
+          fixture,
+          { write: false },
+        );
+        expect(read).toMatchObject({ outcome: "read" });
+        expect(
+          read.outcome === "read" &&
+            read.pages.some((page) => page.text.includes("Read only library text")),
+        ).toBe(true);
+
+        const found = yield* run(
+          searchScientSourcesForInvocation({ query: "Read only library text" }),
+          fixture,
+          { write: false },
+        );
+        expect(found.hits).toEqual([]);
+        expect(found.status.pending).toBe(1);
+
+        const checked = yield* run(
+          checkScientSourceQuotesForInvocation({
+            quotes: [{ quote: "Read only library text", sourceId: record.sourceId }],
+          }),
+          fixture,
+          { write: false },
+        );
+        expect(["exact", "normalized"]).toContain(checked.results[0]!.outcome);
+
+        expect(yield* trees()).toEqual(before);
+
+        // Negative control: the same read with write access stores the text in the library.
+        const written = yield* run(
+          readScientSourceTextForInvocation({ sourceId: record.sourceId }),
+          fixture,
+        );
+        expect(written).toMatchObject({ outcome: "read" });
+        expect(yield* trees()).not.toEqual(before);
+      }),
+  );
+
+  it.effect("a merge that stops at a missing source still reports the merges that landed", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const pinned = yield* addSource(fixture, "Pinned sepsis trial", "10.1000/pinned-merge");
+      const twin = yield* Effect.promise(() =>
+        libraryRecord(fixture, "twin-merge", { title: "Pinned sepsis trial" }),
+      );
+      const missing = "library-source-missing";
+
+      const merged = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "merge", sourceIds: [pinned.sourceId!, twin.sourceId, missing] },
+        }),
+        fixture,
+      );
+      expect(merged.outcome).toBe("merged");
+      const merges = merged.outcome === "merged" ? (merged.merges ?? []) : [];
+      expect(merges).toHaveLength(1);
+      expect(merged.outcome === "merged" ? merged.notMerged : undefined).toEqual([missing]);
+
+      const undone = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "undo-merge", mergeId: merges[0]!.mergeId },
+        }),
+        fixture,
+      );
+      expect(undone).toMatchObject({ outcome: "undone" });
+
+      // Negative control: with nothing landed yet, a missing source is a plain not-found.
+      const control = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "merge", sourceIds: [pinned.sourceId!, missing] },
+        }),
+        fixture,
+      );
+      expect(control).toMatchObject({ outcome: "not-found" });
+      expect(control).not.toHaveProperty("notMerged");
     }),
   );
 

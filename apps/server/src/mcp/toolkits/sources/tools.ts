@@ -988,6 +988,8 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     ),
   ),
   survivorId: Schema.optionalKey(NonEmptyString),
+  /** Sources a merge stopped at (missing or failed) and did not reach; the listed merges landed. */
+  notMerged: Schema.optionalKey(Schema.Array(NonEmptyString)),
   unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
   alsoPinnedIn: AlsoPinnedIn,
 });
