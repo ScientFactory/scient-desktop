@@ -163,6 +163,8 @@ export type NativeSessionUpdate =
       readonly presentation?: OrchestrationV2Subagent["presentation"];
       /** Only an authoritative new activation may reopen a settled native task. */
       readonly reopen?: boolean;
+      /** SCIENT-FORK: saved steps follow, so the result waits for them and shows after. */
+      readonly stepsFollow?: boolean;
     }
   | {
       /** SCIENT-FORK: a native subagent's own steps, shown in its child thread. */
@@ -365,17 +367,107 @@ export function makeNativeSessionAdapterV2(
         const presentationOwners = new Map<string, NonNullable<typeof active>>();
         const subagentOwners = new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>();
         const subagents = new Map<string, OrchestrationV2Subagent>();
-        // SCIENT-FORK: child-thread items from native subagents' own steps, keyed by step.
-        const subagentSteps = new Map<string, OrchestrationV2TurnItem>();
-        const subagentNextOrdinal = new Map<string, number>();
-        const subagentResultText = new Map<string, string>();
-        const subagentResultOrdinal = new Map<string, number>();
-        // The assignment is ordinal 0; steps and an observed result follow in arrival order.
-        const allocateSubagentOrdinal = (key: string) => {
-          const ordinal = subagentNextOrdinal.get(key) ?? 1;
-          subagentNextOrdinal.set(key, ordinal + 1);
+        // SCIENT-FORK: native subagents' own steps in their child threads, per subagent.
+        // Once its steps are final, a subagent keeps only their places, not their content.
+        interface SubagentChildSteps {
+          readonly items: Map<string, OrchestrationV2TurnItem>;
+          readonly ordinals: Map<string, number>;
+          /** Answers its steps showed, so the ending frame's result is not shown again. */
+          readonly answers: Set<string>;
+          nextOrdinal: number;
+          pendingResult?: string;
+          shownResult?: string;
+          final: boolean;
+        }
+        const subagentChildren = new Map<string, SubagentChildSteps>();
+        const subagentChild = (key: string) => {
+          let child = subagentChildren.get(key);
+          if (!child) {
+            // The assignment is ordinal 0; steps and the result follow in arrival order.
+            child = {
+              items: new Map(),
+              ordinals: new Map(),
+              answers: new Set(),
+              nextOrdinal: 1,
+              final: false,
+            };
+            subagentChildren.set(key, child);
+          }
+          return child;
+        };
+        const subagentOrdinal = (child: SubagentChildSteps, stepKey: string) => {
+          let ordinal = child.ordinals.get(stepKey);
+          if (ordinal === undefined) {
+            ordinal = child.nextOrdinal++;
+            child.ordinals.set(stepKey, ordinal);
+          }
           return ordinal;
         };
+        const emitSubagentStep = Effect.fnUntraced(function* (
+          child: SubagentChildSteps,
+          stepKey: string,
+          next: OrchestrationV2TurnItem,
+        ) {
+          const previous = child.items.get(stepKey);
+          const content = (item: OrchestrationV2TurnItem) =>
+            encodeNativeJson({ ...item, startedAt: null, updatedAt: null, completedAt: null });
+          // Re-reads repeat settled steps; only a changed step is written.
+          if (previous && content(previous) === content(next)) return;
+          if (!child.final) child.items.set(stepKey, next);
+          yield* emit({ type: "turn_item.updated", driver, turnItem: next });
+        });
+        const showSubagentResult = Effect.fnUntraced(function* (
+          key: string,
+          owner: Extract<OrchestrationV2TurnItem, { type: "subagent" }>,
+          text: string,
+          now: DateTime.Utc,
+        ) {
+          const child = subagentChild(key);
+          if (!owner.childThreadId || child.shownResult === text || child.answers.has(text.trim()))
+            return;
+          child.shownResult = text;
+          const artifacts = makeSubagentConversationArtifacts({
+            messageId: idAllocator.derive.messageFromProviderItem({
+              driver,
+              nativeItemId: `${key}:result`,
+            }),
+            turnItemId: idAllocator.derive.turnItemFromProviderItem({
+              driver,
+              nativeItemId: `${key}:result`,
+            }),
+            threadId: owner.childThreadId,
+            rootNodeId: owner.subagentId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: subagents.get(key)?.nativeTaskRef ?? null,
+            role: "assistant",
+            text,
+            ordinal: subagentOrdinal(child, `${key}:result`),
+            now,
+          });
+          yield* emit({ type: "message.updated", driver, message: artifacts.message });
+          yield* emit({ type: "turn_item.updated", driver, turnItem: artifacts.turnItem });
+        });
+        /** Its steps are complete: unanswered calls stop running and a waiting result shows. */
+        const finishSubagentSteps = Effect.fnUntraced(function* (key: string, now: DateTime.Utc) {
+          const child = subagentChildren.get(key);
+          if (!child || child.final) return;
+          for (const [stepKey, step] of child.items) {
+            if (step.type === "dynamic_tool" && step.status === "running")
+              yield* emitSubagentStep(child, stepKey, {
+                ...step,
+                status: "interrupted",
+                completedAt: now,
+                updatedAt: now,
+              });
+          }
+          const owner = items.get(key);
+          if (child.pendingResult !== undefined && owner?.type === "subagent")
+            yield* showSubagentResult(key, owner, child.pendingResult, now);
+          child.final = true;
+          child.items.clear();
+          delete child.pendingResult;
+        });
         const nodes = new Map<string, OrchestrationV2ExecutionNode>();
         const messages = new Map<string, OrchestrationV2ConversationMessage>();
         const turns = new Map<string, OrchestrationV2ProviderTurn>();
@@ -566,6 +658,8 @@ export function makeNativeSessionAdapterV2(
                 }
               }
             }
+            // SCIENT-FORK: steps whose last read will not come stop running.
+            for (const key of subagentChildren.keys()) yield* finishSubagentSteps(key, now);
             yield* publishBackgroundRoster(now);
           },
         );
@@ -858,37 +952,12 @@ export function makeNativeSessionAdapterV2(
                   if (key === undefined || owner?.type !== "subagent" || !owner.childThreadId)
                     return;
                   const childThreadId = owner.childThreadId;
+                  const child = subagentChild(key);
                   const now = yield* DateTime.now;
-                  const emitStep = Effect.fnUntraced(function* (
-                    stepKey: string,
-                    next: OrchestrationV2TurnItem,
-                  ) {
-                    const previous = subagentSteps.get(stepKey);
-                    const content = (item: OrchestrationV2TurnItem) =>
-                      encodeNativeJson({
-                        ...item,
-                        startedAt: null,
-                        updatedAt: null,
-                        completedAt: null,
-                      });
-                    // Re-reads repeat settled steps; only a changed step is written.
-                    if (previous && content(previous) === content(next)) return;
-                    subagentSteps.set(stepKey, next);
-                    yield* emit({ type: "turn_item.updated", driver, turnItem: next });
-                  });
                   for (const step of update.steps) {
                     const stepKey = `${key}:step:${step.id}`;
-                    // An observed result already shows the final answer.
-                    if (
-                      step.kind === "text" &&
-                      step.role === "assistant" &&
-                      step.reasoning !== true &&
-                      !subagentSteps.has(stepKey) &&
-                      step.text.trim() === subagentResultText.get(key)?.trim()
-                    )
-                      continue;
-                    const previous = subagentSteps.get(stepKey);
-                    const ordinal = previous?.ordinal ?? allocateSubagentOrdinal(key);
+                    const previous = child.items.get(stepKey);
+                    const ordinal = subagentOrdinal(child, stepKey);
                     const turnItemId = idAllocator.derive.turnItemFromProviderItem({
                       driver,
                       nativeItemId: stepKey,
@@ -907,6 +976,7 @@ export function makeNativeSessionAdapterV2(
                       updatedAt: now,
                     };
                     if (step.kind === "text" && step.reasoning !== true) {
+                      if (step.role === "assistant") child.answers.add(step.text.trim());
                       const artifacts = makeSubagentConversationArtifacts({
                         messageId: idAllocator.derive.messageFromProviderItem({
                           driver,
@@ -929,9 +999,9 @@ export function makeNativeSessionAdapterV2(
                           driver,
                           message: artifacts.message,
                         });
-                      yield* emitStep(stepKey, artifacts.turnItem);
+                      yield* emitSubagentStep(child, stepKey, artifacts.turnItem);
                     } else if (step.kind === "text") {
-                      yield* emitStep(stepKey, {
+                      yield* emitSubagentStep(child, stepKey, {
                         ...common,
                         type: "reasoning",
                         title: null,
@@ -942,7 +1012,7 @@ export function makeNativeSessionAdapterV2(
                       });
                     } else if (step.kind === "tool") {
                       const prior = previous?.type === "dynamic_tool" ? previous : undefined;
-                      yield* emitStep(stepKey, {
+                      yield* emitSubagentStep(child, stepKey, {
                         ...common,
                         type: "dynamic_tool",
                         title: step.name,
@@ -953,7 +1023,7 @@ export function makeNativeSessionAdapterV2(
                         completedAt: step.status === "running" ? null : (prior?.completedAt ?? now),
                       });
                     } else {
-                      yield* emitStep(stepKey, {
+                      yield* emitSubagentStep(child, stepKey, {
                         ...common,
                         type: "system_notice",
                         title: null,
@@ -963,20 +1033,7 @@ export function makeNativeSessionAdapterV2(
                       });
                     }
                   }
-                  if (update.final) {
-                    for (const [stepKey, step] of subagentSteps) {
-                      if (
-                        stepKey.startsWith(`${key}:step:`) &&
-                        step.type === "dynamic_tool" &&
-                        step.status === "running"
-                      )
-                        yield* emitStep(stepKey, {
-                          ...step,
-                          status: "interrupted",
-                          completedAt: now,
-                        });
-                    }
-                  }
+                  if (update.final) yield* finishSubagentSteps(key, now);
                   return;
                 }
                 if (update.type === "question-resolved") {
@@ -1420,44 +1477,12 @@ export function makeNativeSessionAdapterV2(
                     });
                   }
                   const observedResult = scient ? update.result : update.detail;
-                  const resultShown = [...subagentSteps.entries()].some(
-                    ([stepKey, step]) =>
-                      stepKey.startsWith(`${nativeId}:step:`) &&
-                      step.type === "assistant_message" &&
-                      step.text.trim() === observedResult?.trim(),
-                  );
-                  if (observedResult && update.status !== "running" && !resultShown) {
-                    const resultOrdinal = subagentResultText.has(nativeId)
-                      ? (subagentResultOrdinal.get(nativeId) ?? 1)
-                      : allocateSubagentOrdinal(nativeId);
-                    subagentResultText.set(nativeId, observedResult);
-                    subagentResultOrdinal.set(nativeId, resultOrdinal);
-                    const artifacts = makeSubagentConversationArtifacts({
-                      messageId: idAllocator.derive.messageFromProviderItem({
-                        driver,
-                        nativeItemId: `${nativeId}:result`,
-                      }),
-                      turnItemId: idAllocator.derive.turnItemFromProviderItem({
-                        driver,
-                        nativeItemId: `${nativeId}:result`,
-                      }),
-                      threadId: childThreadId,
-                      rootNodeId: subagentId,
-                      providerThreadId: null,
-                      providerTurnId: null,
-                      nativeItemRef: ref(update.id),
-                      role: "assistant",
-                      text: observedResult,
-                      ordinal: resultOrdinal,
-                      now,
-                    });
-                    yield* emit({ type: "message.updated", driver, message: artifacts.message });
-                    yield* emit({
-                      type: "turn_item.updated",
-                      driver,
-                      turnItem: artifacts.turnItem,
-                    });
-                  }
+                  const resultPending =
+                    observedResult !== undefined &&
+                    update.status !== "running" &&
+                    update.stepsFollow === true &&
+                    subagentChildren.get(nativeId)?.final !== true;
+                  if (resultPending) subagentChild(nativeId).pendingResult = observedResult;
                   const completedAt =
                     update.status === "running" ? null : (previousSubagent?.completedAt ?? now);
                   const subagent: OrchestrationV2Subagent = {
@@ -1491,7 +1516,7 @@ export function makeNativeSessionAdapterV2(
                   subagents.set(nativeId, subagent);
                   yield* emit({ type: "subagent.updated", driver, subagent });
                   yield* publishBackgroundRoster(now, emit);
-                  item = {
+                  const subagentItem: Extract<OrchestrationV2TurnItem, { type: "subagent" }> = {
                     ...base,
                     type: "subagent",
                     subagentId,
@@ -1506,6 +1531,10 @@ export function makeNativeSessionAdapterV2(
                     result: scient ? result : (update.detail ?? null),
                     completedAt,
                   };
+                  item = subagentItem;
+                  // Without saved steps to wait for, the ending frame's result shows now.
+                  if (observedResult && update.status !== "running" && !resultPending)
+                    yield* showSubagentResult(nativeId, subagentItem, observedResult, now);
                 } else {
                   const requestId = yield* idAllocator.allocate.runtimeRequest({
                     driver,

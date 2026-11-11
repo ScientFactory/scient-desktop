@@ -711,7 +711,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             if (Option.isSome(real)) {
               if (sessionFileInsideRoot(root, real.value) === undefined) {
                 subagentTranscripts.delete(id);
-                return;
+                return yield* onUpdate({ type: "subagent-steps", id, steps: [], final: true });
               }
               state.checked = true;
             }
@@ -775,6 +775,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           }
           state.dirty = true;
           if (ended) state.ended = true;
+          else if (state.ended && !state.reading) {
+            // A reopened subagent is read again as it runs.
+            state.ended = false;
+            state.endedReads = 0;
+          }
           if (state.reading) return;
           state.reading = true;
           yield* drainSubagentSteps(id).pipe(Effect.forkIn(scope));
@@ -1141,6 +1146,9 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 onUpdate({
                   type: "subagent",
                   id: update.id,
+                  ...(update.sessionFile === undefined && !subagentTranscripts.has(update.id)
+                    ? {}
+                    : { stepsFollow: true }),
                   title:
                     target.driverKind === "scient"
                       ? client.redaction.text(update.title)

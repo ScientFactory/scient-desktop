@@ -3804,16 +3804,26 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(settled.turnItem.id, running.turnItem.id);
         assert.equal(settled.turnItem.output, "4");
         yield* TestClock.adjust("3 seconds");
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === childThreadId &&
+            event.turnItem.type === "assistant_message",
+        );
         const childItems = h.recorded.flatMap((event) =>
           event.type === "turn_item.updated" && event.turnItem.threadId === childThreadId
             ? [event.turnItem]
             : [],
         );
         assert.deepEqual(
-          [...new Set(childItems.map((item) => item.id))].map((id) => {
-            const item = childItems.findLast((candidate) => candidate.id === id)!;
-            return [item.type, item.type === "assistant_message" ? item.text : item.status];
-          }),
+          // In display order: the answer follows the steps it came from.
+          [...new Set(childItems.map((item) => item.id))]
+            .map((id) => childItems.findLast((candidate) => candidate.id === id)!)
+            .toSorted((left, right) => left.ordinal - right.ordinal)
+            .map((item) => [
+              item.type,
+              item.type === "assistant_message" ? item.text : item.status,
+            ]),
           [
             ["dynamic_tool", "completed"],
             ["assistant_message", "Two plus two is 4."],
