@@ -381,7 +381,6 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
     },
     {
       name: "a rename's destination",
-      create: true,
       occurrence: 1,
       captured: { "old.tex": "base", "guard.tex": "guard" },
       target: { "new.tex": "remote", "guard.tex": "guard" },
@@ -402,7 +401,6 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
     },
     {
       name: "a file in a folder replacing a file",
-      create: true,
       occurrence: 2,
       captured: { notes: "base", "guard.tex": "guard" },
       target: { "notes/a.tex": "remote", "notes/b.tex": "B", "guard.tex": "guard" },
@@ -414,14 +412,8 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
       target: { notes: "remote", "guard.tex": "guard" },
     },
     {
-      name: "a file replacing a folder",
-      create: true,
-      occurrence: 3,
-      captured: { "notes/a.tex": "base", "notes/b.tex": "B", "guard.tex": "guard" },
-      target: { notes: "remote", "guard.tex": "guard" },
-    },
-    {
-      name: "a folder's removal",
+      // Its third step removes the emptied folder, then writes the file in its place.
+      name: "a folder removed for a file",
       occurrence: 3,
       captured: { "notes/a.tex": "base", "notes/b.tex": "B", "guard.tex": "guard" },
       target: { notes: "remote", "guard.tex": "guard" },
