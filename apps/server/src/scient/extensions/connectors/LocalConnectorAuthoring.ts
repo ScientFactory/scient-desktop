@@ -33,13 +33,29 @@ import { agentStatusOf } from "./agentStatus.ts";
 import type { ConnectorLogs } from "./ConnectorLogs.ts";
 import { ConnectorRecord } from "./ConnectorStateStore.ts";
 import { connectorTemplate } from "./connectorTemplate.ts";
-import { manifestScientProblem, readFolderManifest } from "./LocalConnectorBundle.ts";
+import {
+  type BundleManifest,
+  manifestScientProblem,
+  readFolderManifest,
+} from "./LocalConnectorBundle.ts";
 import type { LocalLaunchError } from "./LocalConnectorLaunch.ts";
+import { bringInPackage, packageOf, type RunTool } from "./PackageSource.ts";
 import type { LocalConnectorHost } from "./LocalConnectorProcesses.ts";
 import type { CheckedStart, LocalConnectors } from "./LocalConnectors.ts";
 
 /** Left out of copies, saves and exports: system clutter, version control, Scient's marker. */
-const JUNK = new Set([".DS_Store", "Thumbs.db", "desktop.ini", ".git", "__MACOSX"]);
+const JUNK = new Set([
+  ".DS_Store",
+  "Thumbs.db",
+  "desktop.ini",
+  ".git",
+  "__MACOSX",
+  // uv makes these again when it starts; a moved .venv no longer runs.
+  ".venv",
+  "__pycache__",
+]);
+/** Programs a command runs that may be its code rather than a runtime. */
+const SCRIPT_FILE = /\.(?:py|js|mjs|cjs|ts|rb|sh|jar|r|jl|pl|php)$/iu;
 /** Written into an agent's copy, so a later copy of the same connector may replace it. */
 const COPY_MARKER = ".scient-connector.json";
 const SKIPPED = new Set([...JUNK, COPY_MARKER]);
@@ -180,7 +196,23 @@ export interface AuthoringDeps {
   /** Lets a removed connector's id be used again. */
   readonly revive: (connectorId: string) => void;
   readonly isoNow: Effect.Effect<string>;
+  /** Runs npm and uv to bring a package connector's code into a copy. */
+  readonly runTool: RunTool;
 }
+
+/** Script files a copied command runs from outside its folder, for the agent to bring in. */
+const outsidePrograms = async (manifest: BundleManifest, folder: string) => {
+  const config = manifest.server.mcp_config;
+  const candidates = [config?.command ?? "", ...(config?.args ?? [])].filter(
+    (part) => NodePath.isAbsolute(part) && SCRIPT_FILE.test(part),
+  );
+  const found: string[] = [];
+  for (const path of candidates) {
+    const inside = path === folder || path.startsWith(folder + NodePath.sep);
+    if (!inside && (await NodeFSP.stat(path).catch(() => undefined))?.isFile()) found.push(path);
+  }
+  return found;
+};
 
 export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
   const { local, host, logs } = deps;
@@ -295,6 +327,22 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     if (record === undefined) return { folder: target, variant: "new" as const };
     const summary = yield* deps.summaryOf(record);
     const log = clip(yield* logs.tail(record.connectorId), MAX_LOG_CHARS).trim();
+    const copied = yield* readFolderManifest(target).pipe(Effect.option);
+    const pkg = Option.isNone(copied) ? undefined : packageOf(copied.value);
+    let source: string | undefined;
+    if (pkg !== undefined && Option.isSome(copied))
+      source = yield* bringInPackage(target, copied.value, pkg, deps.runTool).pipe(
+        Effect.catch((error) =>
+          Effect.succeed(
+            `Its code is not here: ${error.message} Fix what the manifest runs, or bring the code in yourself.`,
+          ),
+        ),
+      );
+    else if (Option.isSome(copied)) {
+      const outside = yield* Effect.promise(() => outsidePrograms(copied.value, target));
+      if (outside.length > 0)
+        source = `It runs ${outside.join(", ")}, outside this folder. To change that code, copy it in here and point manifest.json at it (\${__dirname}/<file>).`;
+    }
     const manifest = yield* readFolderManifest(target).pipe(Effect.option);
     return {
       folder: target,
@@ -304,6 +352,7 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
       ...(summary.lastError === undefined ? {} : { lastError: summary.lastError }),
       ...(summary.local?.problem === undefined ? {} : { problem: summary.local.problem }),
       ...(log.length === 0 ? {} : { log }),
+      ...(source === undefined ? {} : { source }),
       ...(summary.local === undefined || summary.local.missing.length === 0
         ? {}
         : { missing: summary.local.missing }),

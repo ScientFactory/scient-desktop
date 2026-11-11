@@ -412,7 +412,7 @@ const connectorCopy = metadata(
     failure: AccountsError,
     dependencies: connectorDependencies,
     description:
-      "Make or fix a local connector (load the connector-authoring skill first). name: writes the template to connectors/<name>/ in this chat's folder. connector: copies that installed connector there, with its status, last error and error output. Then scient_connector_check, then scient_connector_save.",
+      "Make or fix a local connector (load the connector-authoring skill first). name: writes the template to connectors/<name>/ in this chat's folder. connector: copies that installed connector there, with its status, last error and error output; an npm or PyPI package's code comes too (source says where). Then scient_connector_check, then scient_connector_save.",
     parameters: Schema.Struct({
       connector: Schema.optional(ConnectorName).annotate({
         description: "Its MCP server name.",
@@ -429,6 +429,7 @@ const connectorCopy = metadata(
       problem: Schema.optional(Schema.String),
       missing: Schema.optional(Schema.Array(Schema.String)),
       log: Schema.optional(Schema.String),
+      source: Schema.optional(Schema.String),
       manifest: Schema.optional(
         Schema.Struct({
           name: Schema.String,

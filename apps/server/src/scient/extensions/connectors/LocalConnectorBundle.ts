@@ -415,12 +415,13 @@ export const readFolderManifest = Effect.fn("LocalConnectorBundle.readFolderMani
 export const writeFolderManifest = Effect.fn("LocalConnectorBundle.writeFolderManifest")(function* (
   directory: string,
   manifest: BundleManifest,
+  options: { readonly replace?: boolean } = {},
 ) {
   yield* Effect.tryPromise({
     try: async () => {
       await NodeFSP.mkdir(directory, { recursive: true });
       await NodeFSP.writeFile(NodePath.join(directory, MANIFEST_FILE), manifestText(manifest), {
-        flag: "wx",
+        flag: options.replace === true ? "w" : "wx",
       });
     },
     catch: () => invalid("Scient could not write the connector's folder."),

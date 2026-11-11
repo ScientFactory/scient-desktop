@@ -118,6 +118,7 @@ import { observeFeature } from "./observedFeature.ts";
 import { makeLocalConnectorAuthoring } from "./LocalConnectorAuthoring.ts";
 import { type LocalSignInHandler, makeLocalConnectorHost } from "./LocalConnectorProcesses.ts";
 import { makeLocalConnectors } from "./LocalConnectors.ts";
+import { makeRunTool, type RunTool } from "./PackageSource.ts";
 
 const MAX_CONNECTORS = 30;
 /** Refresh this long before the access token expires. */
@@ -152,6 +153,8 @@ export interface ConnectorRuntimeOptions {
   readonly secretsDir?: string;
   /** Stands in for Accounts' connector sessions (tests). */
   readonly signInSessions?: ConnectorSessionsShape;
+  /** Stands in for npm and uv when a copy brings in a package's code (tests). */
+  readonly runTool?: RunTool;
 }
 
 type Credential =
@@ -626,6 +629,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       removed.delete(connectorId);
     },
     isoNow,
+    runTool: options.runTool ?? (yield* makeRunTool),
   });
 
   /** Marks whether signing in again needs the person; the connector page shows Sign in. */
