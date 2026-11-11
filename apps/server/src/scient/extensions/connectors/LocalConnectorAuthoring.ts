@@ -262,6 +262,12 @@ export interface AuthoringDeps {
   readonly isoNow: Effect.Effect<string>;
   /** Runs npm and uv to bring a package connector's code into a copy. */
   readonly runTool: RunTool;
+  /** Why a chat in this project may not use an installed connector (its keys and sign-in). */
+  readonly unusableIn: (
+    record: ConnectorRecord,
+    projectId: ProjectId | undefined,
+    offAllowed: boolean,
+  ) => Effect.Effect<string | undefined>;
   /** Told when a change reaches a connector's lock, before it waits there. */
   readonly onLock?: (connectorId: string) => void;
 }
@@ -512,6 +518,10 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
   ) {
     const folder = yield* requireFolder(input.folder);
     const base = input.connector === undefined ? undefined : yield* findConnector(input.connector);
+    // Its keys and sign-in go only where a chat would get the connector.
+    const unusable =
+      base === undefined ? undefined : yield* deps.unusableIn(base, location?.projectId, true);
+    if (unusable !== undefined) return yield* invalid(unusable);
     const signIn = yield* checkSignIn(folder, input.signIn);
     const manifest = yield* readFolderManifest(folder).pipe(Effect.result);
     const failed = (error: string, log?: string): CheckResult => ({

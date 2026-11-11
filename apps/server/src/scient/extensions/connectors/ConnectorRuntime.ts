@@ -495,6 +495,24 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       connectorId: record.connectorId,
       pluginId: record.source.type === "plugin" ? record.source.pluginId : undefined,
     });
+  /**
+   * Why an agent may not use a connector from a chat in `projectId`, the rules delivery uses
+   * (on, eligible, available in the project); undefined when it may. Fixing one the user turned
+   * off is allowed (`offAllowed`): agents may turn it on anyway, while the project is the user's.
+   */
+  const unusableIn = Effect.fn("ConnectorRuntime.unusableIn")(function* (
+    record: ConnectorRecord,
+    projectId: ProjectId | undefined,
+    offAllowed = false,
+  ) {
+    if (!(yield* isPluginEligible(record)))
+      return `${record.displayName} belongs to a plugin that is off or not verified.`;
+    if (!record.enabled && !offAllowed)
+      return `${record.displayName} is off. Turn it on first (scient_connector_control).`;
+    if (!isAvailableIn(record, projectId))
+      return `${record.displayName} isn't available in this chat's project; the user can make it available on its page in Settings → Extensions.`;
+    return undefined;
+  });
 
   /** Best-effort revocation outside the connector's lifetime (it may already be aborted). */
   const revokeLater = (record: ConnectorRecord, session: ConnectorOAuthSession) =>
@@ -635,6 +653,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     },
     isoNow,
     runTool: options.runTool ?? (yield* makeRunTool),
+    unusableIn,
     ...(options.onConnectorLock === undefined ? {} : { onLock: options.onConnectorLock }),
   });
 
@@ -1984,10 +2003,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     if (record.status === "needs-auth") return result("needs-auth", "Sign in to use this service.");
     // Calling its tools is using it: only where a chat would get it (on, eligible, this project).
     if ((input.calls?.length ?? 0) > 0) {
-      if (!record.enabled || !(yield* isPluginEligible(record)))
-        return result("error", "It is off. Turn it on before calling its tools.");
-      if (!isAvailableIn(record, input.location?.projectId))
-        return result("error", "It isn't available in this chat's project.");
+      const unusable = yield* unusableIn(record, input.location?.projectId);
+      if (unusable !== undefined) return result("error", unusable);
     }
     if (record.local !== undefined) {
       const local = (yield* summaryOf(record)).local;

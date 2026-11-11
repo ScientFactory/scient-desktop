@@ -3605,6 +3605,20 @@ describe("connectors agents make and fix", () => {
         tools: [{ name: "search", description: "Search mail, edited" }],
         calls: [{ tool: "search", isError: false, text: "dep says hi" }],
       });
+      // regression: a folder check borrowed the keys and sign-in of a connector kept to another
+      // project; neither the check nor the save's own check may now.
+      yield* harness.runtime.update({
+        connectorId,
+        availability: { type: "projects", projectIds: [] },
+      });
+      const elsewhere = { folder: copied.folder, connector: connectorId };
+      const checkedElsewhere = yield* Effect.flip(
+        harness.runtime.checkFolder({ ...elsewhere, calls: [{ tool: "search" }] }, undefined),
+      );
+      expect(checkedElsewhere.message).toContain("isn't available");
+      const savedElsewhere = yield* Effect.flip(harness.runtime.saveFolder(elsewhere, undefined));
+      expect(savedElsewhere.message).toContain("isn't available");
+      yield* harness.runtime.update({ connectorId, availability: { type: "all-projects" } });
       const saved = yield* harness.runtime.saveFolder(
         { folder: copied.folder, connector: connectorId },
         undefined,
