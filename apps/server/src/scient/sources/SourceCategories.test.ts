@@ -8,9 +8,15 @@ import { initializeScientProject, readScientProjectIdentity } from "@scientfacto
 import { readScientSourceCategories } from "@scientfactory/scient-sources/categories-store";
 import { SCIENT_SOURCE_RECORDS_DIRECTORY } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import * as Redacted from "effect/Redacted";
 
 import type { MetadataRequest } from "./metadataHttp.ts";
-import { categorizeSources } from "./SourceCategories.ts";
+import {
+  categorizeSources,
+  enableSourceCategoryLookups,
+  readSourceCategoryKeysFrom,
+  scheduleSourceCategorization,
+} from "./SourceCategories.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -82,6 +88,25 @@ const arxivFeed = `<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http:/
 </entry></feed>`;
 
 describe("Source categories", () => {
+  it("sends the user's OpenAlex key in the background pass", async () => {
+    const root = await project([
+      { sourceId: "work", identifiers: [{ scheme: "openalex", value: "W2741809807" }] },
+    ]);
+    const sent: Array<string | null> = [];
+    const request: MetadataRequest = async (url) => {
+      sent.push(url.searchParams.get("api_key"));
+      return { status: 200, body: JSON.stringify({ results: [] }), url };
+    };
+    enableSourceCategoryLookups();
+    readSourceCategoryKeysFrom(async () => ({ openAlex: Redacted.make("synthetic-openalex-key") }));
+    try {
+      await scheduleSourceCategorization(root, { request, pace: (run) => run() });
+    } finally {
+      readSourceCategoryKeysFrom(async () => ({}));
+    }
+    expect(sent).toEqual(["synthetic-openalex-key"]);
+  });
+
   it("finds PMIDs for DOIs, maps study designs, adds topics, and resumes after an outage", async () => {
     const root = await project([
       // Its PMID is found from its DOI.

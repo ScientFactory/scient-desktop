@@ -7,6 +7,7 @@ import {
   ReferenceIdentifierLookup,
 } from "../../../scient/references/ReferenceCheck.ts";
 import { resolveReferenceFindings } from "../../../scient/references/ReferenceResolution.ts";
+import { keyedBatchLookup } from "../../../scient/sources/researchKeys.ts";
 import { resolveScientSourcesProject } from "../sources/handlers.ts";
 import { ScientSourcesToolError } from "../sources/tools.ts";
 import { ScientReferencesToolkit } from "./tools.ts";
@@ -27,7 +28,7 @@ const attempt = <A>(run: () => Promise<A>) =>
 export const checkReferencesForInvocation = Effect.fn("ScientReferencesToolkit.check")(
   function* (input: { readonly path?: string }) {
     const { root } = yield* resolveScientSourcesProject();
-    const resolveIdentifiers = yield* ReferenceIdentifierLookup;
+    const resolveIdentifiers = yield* keyedBatchLookup(yield* ReferenceIdentifierLookup);
     return yield* attempt(() =>
       checkReferences(
         {

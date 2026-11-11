@@ -330,7 +330,7 @@ export function formatEndnoteXml(
       element("isbn", standardNumbers),
       element("accession-num", pmid ?? (arxiv ? `arXiv:${arxiv}` : null)),
       element("electronic-resource-num", identifier("doi")),
-      element("abstract", record.abstract),
+      options.includeAbstracts !== false ? element("abstract", record.abstract) : "",
       options.includeNotes ? element("notes", record.note ?? null) : "",
       element("label", citationKey),
       record.url ? `<urls><related-urls>${element("url", record.url)}</related-urls></urls>` : "",

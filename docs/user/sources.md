@@ -1,6 +1,6 @@
-# Sources and PDF import
+# Library and PDF import
 
-Sources is the project's managed library of scientific references. Use it for
+The Library is the project's managed collection of scientific references. Use it for
 papers, books, datasets, protocols, guidelines, and other works that you want
 to identify, review, cite, or make available to the AI as research evidence.
 Each source has structured bibliographic metadata and can include an imported
@@ -13,11 +13,11 @@ the Browser or information mentioned in chat is also not added automatically.
 Import or create a source when you want it to become part of the project's
 explicit reference library.
 
-## Open Sources
+## Open the Library
 
-Open a project, then choose **Sources** from the right-panel add menu. Keep the
-library beside the conversation or expand it when you need more room. If the
-folder is not yet set up as a Scient project, Sources offers the same optional
+Open a project, then choose **Library** from the right-panel add menu. Keep the
+Library beside the conversation or expand it when you need more room. If the
+folder is not yet set up as a Scient project, the Library offers the same optional
 project setup used by **Add project**.
 
 Source records and imported PDFs are stored under `.scient/sources/` inside the
@@ -28,7 +28,7 @@ personal library.
 
 1. Open Zotero on the same computer as the selected Scient environment, or
    save a Zotero API key in **Accounts** (see below).
-2. In **Sources**, choose **Import sources → Import from Zotero**.
+2. In the **Library**, choose **Import sources → Import from Zotero**.
 3. Select **My Library**, one of your Zotero groups, or a specific collection.
 4. Select individual references, import the selected collection, or import the
    complete library.
@@ -67,7 +67,7 @@ zotero.org instead. Create a key at zotero.org (**Settings → Security →
 Create new private key**), allow it to read your library and files, and save
 it in **Accounts** as the Zotero key. Allow write access too if you want to use
 **Send to Zotero**. Scient keeps the key in Accounts and sends it only to
-zotero.org. Turning the key **Off** in Accounts stops Sources from using it.
+zotero.org. Turning the key **Off** in Accounts stops the Library from using it.
 Zotero on the computer is used first when both are available.
 
 ### Keep sources up to date with Zotero
@@ -97,13 +97,13 @@ linked to it from then on. Scient refuses to send to a group the key can only
 read.
 
 Long imports can continue in the background. Completed items remain saved, and
-an interrupted import can resume when Sources reopens. Exact duplicates are
+an interrupted import can resume when the Library reopens. Exact duplicates are
 skipped. When a title, creator, and year look similar but do not prove that two
 records are identical, Scient asks whether to import the item separately.
 
 ## Import PDF files
 
-1. In **Sources**, choose **Import sources → Import PDF files**.
+1. In the **Library**, choose **Import sources → Import PDF files**.
 2. Select one or more PDFs.
 3. Review the imported records and correct any incomplete metadata.
 
@@ -121,6 +121,17 @@ To get faster, more reliable answers from Crossref, OpenAlex and Unpaywall, add
 a contact email in **Settings ▸ Documents ▸ Library**. Scient sends it only to
 those services, and sends no email while the field is empty.
 
+Scient also uses your own research keys when you add them in **Accounts** under
+**Research**: **OpenAlex** (get a free key at
+[openalex.org/settings/api](https://openalex.org/settings/api)), **Google Books**
+(an API key from the
+[Google Cloud console](https://console.cloud.google.com/apis/credentials) with
+the Books API turned on; if Google refuses the key, Scient asks without it),
+**NCBI / PubMed**, **Semantic Scholar** and the
+**Unpaywall email**. Without a key these services share a small allowance per
+network address, which can run out while adding many sources. A key you turn
+off in Accounts is not sent.
+
 For remote projects, the selected PDFs are transferred to the selected project
 environment. Metadata services receive only the exact public identifier used
 for lookup, not the PDF itself. PubMed metadata is provided through NCBI
@@ -129,7 +140,7 @@ E-utilities and remains subject to the
 
 ## Add by identifier
 
-1. In **Sources**, choose **Import sources → Add by identifier**.
+1. In the **Library**, choose **Import sources → Add by identifier**.
 2. Paste one or more DOIs, PMIDs, arXiv IDs or ISBNs, one per line. Links such
    as `https://doi.org/…` or `arxiv.org/abs/…` and prefixes such as `PMID:` or
    `ISBN` work too, and a list may mix them.
@@ -152,8 +163,8 @@ is not trusted; Scient asks Google Books instead.
 Bring a library from Zotero, Mendeley, EndNote, JabRef, Google Scholar or any
 other reference manager by exporting it to a file and importing that file.
 
-1. In **Sources**, choose **Import sources → Import a reference file**, or drop
-   the file on the Sources panel.
+1. In the **Library**, choose **Import sources → Import a reference file**, or drop
+   the file on the Library panel.
 2. Select a BibTeX or BibLaTeX (`.bib`), RIS (`.ris`), CSL-JSON (`.json`) or
    EndNote XML (`.xml`) file.
 
@@ -429,7 +440,9 @@ never writes over a `references.bib` it did not create, or over a change you
 save while it is writing. If a write fails part way (for example on a full
 disk), the earlier text is kept beside it as `references.bib.kept-…`, and the
 Library says where until you delete that copy. These files hold the same entries as **Export** to
-BibTeX or CSL-JSON.
+BibTeX or CSL-JSON, without abstracts: abstracts make the files several times
+larger and no document needs them. The Library keeps every abstract, and
+**Export** (or an agent's export) still writes them.
 
 ### Export to Word with a citation style
 
@@ -524,7 +537,7 @@ You can paste those IDs or links when you add by identifier, too.
 
 When you ask an agent to get papers for your library, it fetches them with
 `scient_paper_get` or `scient_papers_queue` and files each PDF on the paper's
-source. A paper that is not in Sources yet is added from its DOI's registry
+source. A paper that is not in the Library yet is added from its DOI's registry
 record, the same check as above. Scient prefers the published version and falls
 back to a free accepted manuscript or preprint; the source's details then say
 "PDF is a preprint" or "PDF is the accepted manuscript". Each PDF also records
@@ -546,7 +559,7 @@ page, and what the paper says instead when it is not there. An agent can also
 save a web page with `scient_sources_save_page`, keeping a passage as you would.
 
 The conversation's [permission mode](permission-modes.md) and provider approval
-flow still apply to writes. Sources tools stay scoped to the current project:
+flow still apply to writes. Library tools stay scoped to the current project:
 they do not grant arbitrary host file paths or turn uncertain metadata into
 verified evidence. Agents can browse and import from Zotero, refresh from it
 and send to it with the same rules as you; they change Zotero only when you ask
@@ -554,7 +567,7 @@ them to send.
 
 ## Current limits
 
-Sources supports Zotero (on this computer or on zotero.org), direct PDF import
+The Library supports Zotero (on this computer or on zotero.org), direct PDF import
 and reference files (BibTeX, RIS, CSL-JSON, EndNote XML). It does not yet
 provide evidence grading. Automatic two-way sync with Zotero is not supported; Send to Zotero does not upload PDFs. Highlights need selectable
 text: a scanned PDF without a text layer, chat attachments and generated PDFs

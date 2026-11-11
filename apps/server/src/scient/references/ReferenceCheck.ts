@@ -35,6 +35,7 @@ import * as Schema from "effect/Schema";
 import {
   resolveSourceIdentifierBatch,
   verifiableSourceIdentifier,
+  type ResearchKeys,
   type SourceIdentifierResolution,
 } from "../sources/SourceIdentifierResolver.ts";
 import {
@@ -78,11 +79,15 @@ export const SKIPPED_DIRECTORIES = new Set([
 /** The shared resolver's batch lookup; each identifier resolves as its own work. */
 export type ResolveIdentifierBatch = (
   identifiers: ReadonlyArray<ScientSourceIdentifier>,
+  keys?: ResearchKeys,
 ) => Promise<ReadonlyArray<SourceIdentifierResolution>>;
 
 export const ReferenceIdentifierLookup = Context.Reference<ResolveIdentifierBatch>(
   "scient/references/ReferenceIdentifierLookup",
-  { defaultValue: () => (identifiers) => resolveSourceIdentifierBatch(identifiers) },
+  {
+    defaultValue: () => (identifiers, keys) =>
+      resolveSourceIdentifierBatch(identifiers, keys ? { keys } : {}),
+  },
 );
 
 export interface ReferenceCheckOptions {

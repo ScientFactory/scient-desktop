@@ -729,7 +729,7 @@ export function formatBibtex(
       }
       raw("pmid", identifierValues(item, "pmid")[0]);
       raw("pmcid", identifierValues(item, "pmcid")[0]);
-      add("abstract", record.abstract);
+      if (options.includeAbstracts !== false) add("abstract", record.abstract);
       if (record.tags.length > 0) add("keywords", record.tags.join(", "));
       add("language", record.language);
       if (record.type === "other" && record.customType) add("type", record.customType);

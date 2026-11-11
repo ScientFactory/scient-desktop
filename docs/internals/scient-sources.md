@@ -193,10 +193,17 @@ provenance.
 
 Registry lookups read the user's research keys from Accounts through
 `researchKeys.ts`: the API-key row whose sites match the service (OpenAlex,
-Semantic Scholar, NCBI, and the Unpaywall email), skipping a row set to Off.
-Tools take the resolver through `keyedIdentifierLookup`, which passes the keys
-as `Redacted` values; the Effect HTTP client gets them as `Redacted` URL
-parameters so spans show them redacted. Paper downloads send the OpenAlex key
+Semantic Scholar, NCBI, Google Books at `www.googleapis.com`, and the Unpaywall
+email), skipping a row set to Off. Tools take the resolver through
+`keyedIdentifierLookup` and the batch lookups (identifier add, cite, reference
+check) through `keyedBatchLookup`, which pass the keys as `Redacted` values; the
+Effect HTTP client gets them as `Redacted` URL parameters so spans show them
+redacted. Work outside a tool call reads the keys again at each use through
+`researchKeysReader`, captured when the Sources HTTP layer starts: the
+Library's add, refresh and save-page routes, and the background category pass
+(`readSourceCategoryKeysFrom`), whose OpenAlex topics request sends `api_key`.
+Google Books gets the key as `key`; when Google refuses the key (400 or 403)
+the request is repeated once without it. Paper downloads send the OpenAlex key
 and ask Unpaywall only when OpenAlex has no free copy. The Library's registry
 contact email goes to OpenAlex as `mailto` and to Unpaywall when no Unpaywall
 email is saved.
@@ -532,8 +539,14 @@ is assigned.
 the project's `references.bib` and `references.json` (CSL-JSON, `id` = citation
 key), rendered by `@scientfactory/scient-citations/bibliography` and sorted by
 key. Entries come from the same writers as Library export (`formatBibtex`,
-`cslJsonItem` in `@scientfactory/scient-sources/bibliography`; notes stay
-out), so a managed file and an export hold the same entry for a source; Word
+`cslJsonItem` in `@scientfactory/scient-sources/bibliography`; notes and
+abstracts stay out through `includeNotes: false, includeAbstracts: false`), so
+a managed file holds an export's entry minus the abstract. Abstracts are left
+out because they multiply the file size and turn every registry refresh into a
+large diff, and nothing that builds a document reads them; explicit export
+keeps them. The first sync after this change rewrote each file once: the file
+still matched the written copy, so it was replaced quietly (no `edited`, no
+`kept-` copy). Word
 export and reference formatting read sources through the same CSL-JSON writer. The store reports every settled write through
 `onScientSourceRecordsChanged`; the server coalesces those into one sync per
 project, so writes from people, agents and every import path keep both files
@@ -1091,6 +1104,16 @@ shape and pure search (`/full-text`) and its filesystem store
   attachment's size and `sha256` before pdf.js sees them. Any other PDF
   (annotations of a project file) goes through `readScientSourcePdfBytes`
   with its expected hash.
+
+Reading one source's text (`scient_sources_read_text`) returns whole pages from
+`fromPage` up to `maxCharacters` (default 12,000, at most 30,000) and the
+`nextPage` to continue from. A page is never cut: one longer than the budget
+comes back whole and alone. The sizes keep one result small enough for the
+providers to pass inline instead of saving it to a file; none of the providers'
+inline limits is stated in this repository or `.repos/`, so these are the
+planned defaults rather than measured values. The tool is strict: an unknown
+parameter (`page`, `pages`, `offset`) is refused with the accepted names, because
+Effect's MCP server otherwise drops unknown keys and the agent reads page 1.
 
 Search is a pure-JS scan of cached, folded page text rather than SQLite FTS5:
 the text is project data in project files, while the server's SQLite holds app
