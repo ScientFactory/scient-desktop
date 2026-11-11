@@ -621,6 +621,14 @@ Best effort: values named like secrets, and unknown token-looking values, are hi
 HTML and XML (with CDATA and `srcset`), multipart, forms, and JSON (and JSON inside JSON strings
 or `data-` attributes, one level deep). A format Scient cannot parse is left out.
 
+Bodies are read from the browser only when their decoded size is known first, from the tab's
+own CDP session (`Network.dataReceived` byte counts per request, final at `loadingFinished`),
+never from the page. A response is matched to those counts by method, address and status, the
+largest count when several match; with no count the body is left out. Bytes are reserved before
+reading, so reads at once stay within 24 MB, and the same rule holds for bodies read as they
+arrive and for an agent's request. A left-out GET body's note tells the agent to fetch it in the
+page with `preview_evaluate`, streaming and stopping at 1 MiB; other methods are never repeated.
+
 The work is linear. Bodies are cut to their output limit before masking (32 KB shown, 1 MB saved
 to a file), the tokenizers use no recursion, and nesting past the limits leaves the body out with
 a note. Known values are found by one Aho-Corasick automaton per written form, so the work does

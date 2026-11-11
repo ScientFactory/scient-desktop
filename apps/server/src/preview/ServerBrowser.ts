@@ -920,6 +920,9 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
+    // SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
+    await networkStudyOf(page).watch(cdp);
+    // SCIENT-FORK:END
     await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.

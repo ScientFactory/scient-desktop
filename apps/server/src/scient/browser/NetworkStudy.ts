@@ -5,7 +5,7 @@
  * them the headers and bodies. Every value Scient knows is secret in the tab is hidden from all
  * of it; the real session reaches a connector only through Scient's sign-in files.
  */
-import type { Page, Request, Response } from "playwright-core";
+import type { CDPSession, Page, Request, Response } from "playwright-core";
 
 import {
   type CheckedBody,
@@ -119,18 +119,32 @@ const within = <A>(read: () => Promise<A>, fallback: A, ms: number): Promise<A> 
 
 const NONE: ReadonlyArray<string> = [];
 
-/** Bytes as they came over the wire: the declared length, else what arrived once it all came. */
-const sentSize = async (response: Response): Promise<number | undefined> => {
-  const declared = Number(safely(() => response.headers()["content-length"], undefined));
-  if (Number.isFinite(declared) && declared >= 0) return declared;
-  if ((await response.finished()) !== null) return undefined;
-  return (await response.request().sizes()).responseBodySize;
+/** The browser's own count of one request's decoded body bytes, from the tab's CDP session. */
+interface Counted {
+  readonly url: string;
+  readonly method: string;
+  status: number | undefined;
+  bytes: number;
+  outcome: "loading" | "finished" | "failed";
+  readonly settled: Promise<void>;
+  readonly settle: () => void;
+}
+
+/** Counts kept, oldest dropped first: a little more than the requests the study keeps. */
+const KEEP_COUNTED = 2 * KEEP;
+/** Most bytes being read from the browser at once, for every reason. */
+const READING_BYTES = 24 * 1024 * 1024;
+
+const withoutFragment = (url: string) => {
+  const at = url.indexOf("#");
+  return at === -1 ? url : url.slice(0, at);
 };
 
-const isCompressed = (response: Response) => {
-  const encoding = safely(() => response.headers()["content-encoding"], undefined)?.trim();
-  return encoding !== undefined && encoding !== "" && encoding.toLowerCase() !== "identity";
-};
+/** How an agent reads a body Scient left out, itself, without repeating a change. */
+const readItYourself = (method: string) =>
+  method === "GET"
+    ? " To read it yourself, run preview_evaluate with a fetch of this request's url in the page that reads the response stream and stops at 1 MiB."
+    : ` It answered a ${method}; don't repeat it to read the answer.`;
 
 const leftOutNote = (checked: CheckedBody, contentType: string) =>
   "leftOut" in checked && checked.leftOut === "too-deep"
@@ -200,31 +214,49 @@ const makeNetworkStudy = (page: Page) => {
     return cookiesAt(at === -1 ? url : url.slice(0, at));
   };
 
+  /** Decoded body bytes per CDP request id, as the browser received them. */
+  const counted = new Map<string, Counted>();
+  let reading = 0;
+
   /**
-   * The body's size once read, known before reading it. A compressed body's comes from the page's
-   * own resource timing; when the page can't say (another origin, a frame), it is unknown.
+   * The body's decoded size, before it is read, from the browser's own count: requests with the
+   * same method, address and status, the largest when several match. The page's own numbers are
+   * never used. Undefined when no count is known or one is still loading.
    */
   const bodySize = async (response: Response): Promise<number | undefined> => {
-    if (!isCompressed(response)) return sentSize(response);
     if ((await response.finished()) !== null) return undefined;
-    const decoded = await within(
-      () =>
-        page.evaluate(
-          (name: string) =>
-            Math.max(
-              0,
-              ...performance
-                .getEntriesByName(name)
-                .map(
-                  (entry) => (entry as { readonly decodedBodySize?: number }).decodedBodySize ?? 0,
-                ),
-            ),
-          response.url(),
-        ),
-      0,
-      PAGE_MS,
+    const url = withoutFragment(response.url());
+    const method = response.request().method();
+    const status = response.status();
+    const candidates = [...counted.values()].filter(
+      (item) =>
+        item.url === url &&
+        item.method === method &&
+        (item.status === undefined || item.status === status),
     );
-    return typeof decoded === "number" && decoded > 0 ? decoded : undefined;
+    if (candidates.length === 0) return undefined;
+    const settled = await within(
+      () => Promise.all(candidates.map((item) => item.settled)).then(() => true),
+      false,
+      HEADERS_MS,
+    );
+    const sizes = candidates
+      .filter((item) => item.outcome === "finished")
+      .map((item) => item.bytes);
+    return settled && sizes.length > 0 ? Math.max(...sizes) : undefined;
+  };
+
+  /** Reads a body whose size is known, counted before reading so reads at once stay bounded. */
+  const readCounted = async (response: Response, size: number) => {
+    if (reading + size > READING_BYTES) return undefined;
+    reading += size;
+    try {
+      return await response.body();
+    } catch {
+      return undefined;
+    } finally {
+      reading -= size;
+    }
   };
 
   const forget = () => {
@@ -304,30 +336,72 @@ const makeNetworkStudy = (page: Page) => {
       entry.status = response.status();
       entry.finishedAt = Date.now();
       if (!EAGER_TYPES.has(response.request().resourceType())) return;
-      // Only bodies of a known size are read, and the bytes are counted before reading, so
-      // reads at once stay within the total.
+      // Only bodies the browser counted are read, within what is kept and being read.
       void bodySize(response).then(
-        (size) => {
+        async (size) => {
           const fits = (bytes: number) =>
             bytes <= EAGER_BODY_BYTES &&
             eagerBytes + bytes <= EAGER_TOTAL_BYTES &&
             entries.includes(entry);
           if (size === undefined || !fits(size)) return;
           eagerBytes += size;
-          return response.body().then(
-            (body) => {
-              eagerBytes -= size;
-              if (!fits(body.length)) return;
-              entry.body = body;
-              eagerBytes += body.length;
-            },
-            () => {
-              eagerBytes -= size;
-            },
-          );
+          const body = await readCounted(response, size);
+          eagerBytes -= size;
+          if (body === undefined || !fits(body.length)) return;
+          entry.body = body;
+          eagerBytes += body.length;
         },
         () => undefined,
       );
+    },
+    /**
+     * Counts each request's decoded body bytes on the tab's CDP session. Attached when the tab
+     * opens, before its first request, so every count starts from the request's first byte.
+     */
+    watch: async (cdp: CDPSession) => {
+      const found = (requestId: string) => counted.get(requestId);
+      cdp.on("Network.requestWillBeSent", (event) => {
+        // A redirect reuses the id: the earlier hop's count ends there.
+        found(event.requestId)?.settle();
+        const done = Promise.withResolvers<void>();
+        counted.delete(event.requestId);
+        counted.set(event.requestId, {
+          url: withoutFragment(event.request.url),
+          method: event.request.method,
+          status: undefined,
+          bytes: 0,
+          outcome: "loading",
+          settled: done.promise,
+          settle: done.resolve,
+        });
+        for (const id of counted.keys()) {
+          if (counted.size <= KEEP_COUNTED) break;
+          counted.get(id)?.settle();
+          counted.delete(id);
+        }
+      });
+      cdp.on("Network.responseReceived", (event) => {
+        const item = found(event.requestId);
+        if (item !== undefined) item.status = event.response.status;
+      });
+      cdp.on("Network.dataReceived", (event) => {
+        const item = found(event.requestId);
+        if (item !== undefined) item.bytes += event.dataLength;
+      });
+      cdp.on("Network.loadingFinished", (event) => {
+        const item = found(event.requestId);
+        if (item === undefined) return;
+        item.outcome = "finished";
+        item.settle();
+      });
+      cdp.on("Network.loadingFailed", (event) => {
+        const item = found(event.requestId);
+        if (item === undefined) return;
+        item.outcome = "failed";
+        item.settle();
+      });
+      // Without the count, every body is left out; the page itself still works.
+      await cdp.send("Network.enable").catch(() => undefined);
     },
     onFailed: (request: Request) => {
       const entry = byRequest.get(request);
@@ -403,15 +477,22 @@ const makeNetworkStudy = (page: Page) => {
       let body = entry.body;
       if (body === undefined) {
         const size = await within(() => bodySize(response), undefined, HEADERS_MS);
+        const yourself = readItYourself(request.method());
         if (size === undefined || size > READ_BODY_BYTES)
           return {
             ...withHeaders,
             note:
-              size === undefined
-                ? "The body is still coming or its size is unknown, so it is left out."
-                : `The body is ${Math.ceil(size / (1024 * 1024))} MB, too large to read here.`,
+              (size === undefined
+                ? "Scient could not count this body's size in the browser, so it is left out."
+                : `The body is ${Math.ceil(size / (1024 * 1024))} MB, too large to read here.`) +
+              yourself,
           };
-        body = await response.body().catch(() => undefined);
+        body = await readCounted(response, size);
+        if (body === undefined)
+          return {
+            ...withHeaders,
+            note: `Scient is reading other bodies now, or the browser no longer has this one. Ask again.${yourself}`,
+          };
       }
       if (body === undefined)
         return { ...withHeaders, note: "The browser no longer has this body. Repeat the action." };
