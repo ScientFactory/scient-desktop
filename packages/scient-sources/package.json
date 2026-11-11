@@ -44,6 +44,10 @@
       "types": "./src/libraryInstanceMap.ts",
       "import": "./src/libraryInstanceMap.ts"
     },
+    "./library-reviews": {
+      "types": "./src/libraryReviews.ts",
+      "import": "./src/libraryReviews.ts"
+    },
     "./library-merge": {
       "types": "./src/libraryMerge.ts",
       "import": "./src/libraryMerge.ts"

@@ -147,8 +147,8 @@ than scattering version checks through adapters and UI code.
 The personal library is the same store over a library root instead of a
 project root. It is code only until the switch (build step 5e): no request,
 agent tool or UI routes to it, and the project store above stays the only
-active backend. Review snapshots, the move of existing projects and the
-routes and agent tools over pins come in later steps.
+active backend. The move of existing projects and the routes and agent tools
+over pins and reviews come in later steps.
 
 The library lives under the server's resolved state directory for the launch
 mode, `scientLibraryRootFor(stateDir)` = `<stateDir>/scient/library/`, so dev
@@ -420,6 +420,84 @@ pin's key as preferred key), recorded as `hydrated` in the map. Its source ID
 is derived from the library ID and the project source ID, so a repeat after a
 lost map finds the same record. `ambiguous` and `removed` pins are never
 hydrated, so hydration never adds a duplicate or brings back a removed record.
+
+### Review record snapshots
+
+`@scientfactory/scient-sources/library-reviews` is the library-mode review
+store. Reviews stay in the project, in `<project>/.scient/library/reviews/`,
+with the same schema and rules as the project store: both run one shared
+change function (`changeReviewIn` in `systematicReviewStore.ts`) and differ
+only in the folder, the set of known source IDs and a hook that runs before
+the review is written. `changeScientSystematicReview` passes no
+hook, so the active path writes no snapshot.
+
+Each review has a record snapshot, `<review-id>.works.json`, so a collaborator
+without the author's library can still list, screen and count:
+
+```json
+{
+  "formatVersion": 1,
+  "reviewId": "review_…",
+  "records": {
+    "source_3f…": {
+      "type": "article",
+      "title": "…",
+      "creators": [],
+      "issuedYear": 2020,
+      "identifiers": [],
+      "containerTitle": "…",
+      "abstract": "…",
+      "abstractSections": [],
+      "capturedAt": "2026-11-12T09:00:00.000Z",
+      "capturedRevision": 4
+    }
+  }
+}
+```
+
+- Keys are the project source IDs the review stores, never the resolved library
+  ID. Entries hold no notes, tags, PDFs or full text. Keys are in code-unit
+  order, fields in a fixed order, unknown fields kept after them, and the file
+  is written only when its bytes would change.
+- `changeScientLibraryReview`, under the reviews lock: resolves the IDs the
+  review names and the IDs the change brings in (`write` mode), builds entries
+  for named IDs that have none from the library records, publishes the
+  snapshot (atomic write, then read back), checks that it holds every record
+  the change adds, and only then writes the review. `create-review` publishes
+  an empty snapshot first. New IDs must resolve in this library; others are
+  skipped, as the project store skips IDs it does not hold.
+- Every ID the review names counts in screening and PRISMA: from the library,
+  from the snapshot, or with its details missing. Only an ID this computer's
+  library reports `removed` (in the trash) is left out, as the project store
+  counts a trashed record as removed before screening. Review records are
+  never hydrated into the library.
+- `listScientLibraryReviewRecords` and `readScientLibraryReviewRecord` return
+  `from: "library"` with the library record, `from: "snapshot"` with a record
+  built from the entry (the project source ID as `sourceId`,
+  `capturedRevision` as `revision`), or `from: "missing"`. When the library
+  record has no abstract the snapshot's is used (`abstractFrom: "snapshot"`).
+  `readScientLibraryReview` returns the usual detail; possible duplicates also
+  pair review IDs that now resolve to one library record.
+- `read` mode writes nothing at all. `write` mode also records resolutions and
+  fills missing entries.
+- `refreshScientLibraryReviewSnapshot` updates entries from the library. A
+  field the library lacks keeps the snapshot's value (an imported abstract
+  survives), `capturedAt` and `capturedRevision` change only with the content,
+  entries the review no longer names anywhere (searches, records, duplicates,
+  distinct pairs, screening, retrieval) are dropped, and nothing is written
+  when nothing changed.
+- Recovery: entries the review does not name (a crash after the snapshot, before
+  the review) are ignored by readers and reused by a retry. A file that does not
+  decode is read as empty; a `write` call renames it to
+  `<name>.broken-<time>` and rebuilds what this library resolves. A
+  `write` listing removes snapshots whose review file does not exist.
+- Size: a 10,000-record snapshot with realistic abstracts is about 58 MiB
+  (records keep the abstract text and its sections). Once one file would pass
+  32 MiB the snapshot moves to sixteen shard files, `<review-id>.works/<h>.json`,
+  where `<h>` is the first hex digit of the ID's SHA-256, and stays sharded.
+  Only shards whose bytes change are written. After a crash while sharding,
+  readers merge both layouts (shard entries win) and the next write removes
+  the single file.
 
 ## Source truth and provenance
 

@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 
 import { readScientSourcesOrganization } from "./collections.ts";
-import type { ScientSourceActor, ScientSourceRecord } from "./model.ts";
+import type { ScientSourceActor } from "./model.ts";
 import { assertScientProjectDirectory } from "./projectFiles.ts";
 import {
   listScientSourceRecords,
@@ -47,19 +47,31 @@ const {
 } = scientSourceStoreInternals;
 const validateReview = Schema.decodeSync(ScientSystematicReview);
 
-function reviewsDirectory(root: string): string {
-  return NodePath.join(root, SCIENT_SOURCE_REVIEWS_DIRECTORY);
+/** Where a project keeps its reviews: `.scient/sources/reviews` today, `.scient/library/reviews` after the move. */
+interface ReviewFolder {
+  readonly root: string;
+  readonly directory: string;
+  /** Files with this suffix sit beside the reviews and are not reviews. */
+  readonly siblingSuffix?: string;
 }
 
-function reviewPath(root: string, reviewId: string): string {
+function v1Folder(root: string): ReviewFolder {
+  return { root, directory: SCIENT_SOURCE_REVIEWS_DIRECTORY };
+}
+
+function reviewsDirectory(folder: ReviewFolder): string {
+  return NodePath.join(folder.root, folder.directory);
+}
+
+function reviewPath(folder: ReviewFolder, reviewId: string): string {
   assertSafeIdentifier(reviewId, "Review ID");
-  return NodePath.join(reviewsDirectory(root), `${reviewId}.json`);
+  return NodePath.join(reviewsDirectory(folder), `${reviewId}.json`);
 }
 
 /** Every directory from the project root down is checked, so a symlinked ancestor is refused. */
-async function reviewsDirectoryExists(root: string): Promise<boolean> {
+async function reviewsDirectoryExists(folder: ReviewFolder): Promise<boolean> {
   try {
-    await assertScientProjectDirectory(root, reviewsDirectory(root));
+    await assertScientProjectDirectory(folder.root, reviewsDirectory(folder));
     return true;
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return false;
@@ -68,9 +80,9 @@ async function reviewsDirectoryExists(root: string): Promise<boolean> {
 }
 
 /** A review is stored under its own ID; a file naming another review is damaged, never followed. */
-async function readReviewEntry(root: string, fileName: string) {
+async function readReviewEntry(folder: ReviewFolder, fileName: string) {
   const review = await readBoundedJson(
-    NodePath.join(reviewsDirectory(root), fileName),
+    NodePath.join(reviewsDirectory(folder), fileName),
     MAX_REVIEW_BYTES,
     ScientSystematicReview,
   );
@@ -80,23 +92,24 @@ async function readReviewEntry(root: string, fileName: string) {
   return review;
 }
 
-async function readReviewFile(root: string, reviewId: string) {
-  const filePath = reviewPath(root, reviewId);
-  if (!(await reviewsDirectoryExists(root))) return null;
+async function readReviewFile(folder: ReviewFolder, reviewId: string) {
+  const filePath = reviewPath(folder, reviewId);
+  if (!(await reviewsDirectoryExists(folder))) return null;
   if ((await snapshot(filePath)) === "missing") return null;
-  return readReviewEntry(root, `${reviewId}.json`);
+  return readReviewEntry(folder, `${reviewId}.json`);
 }
 
-async function readAllReviews(root: string) {
-  if (!(await reviewsDirectoryExists(root))) return { reviews: [], issues: [] };
+async function readAllReviews(folder: ReviewFolder) {
+  if (!(await reviewsDirectoryExists(folder))) return { reviews: [], issues: [] };
   const reviews: ScientSystematicReview[] = [];
   const issues: string[] = [];
-  for (const entry of await NodeFSP.readdir(reviewsDirectory(root), { withFileTypes: true })) {
+  for (const entry of await NodeFSP.readdir(reviewsDirectory(folder), { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+    if (folder.siblingSuffix && entry.name.endsWith(folder.siblingSuffix)) continue;
     try {
-      reviews.push(await readReviewEntry(root, entry.name));
+      reviews.push(await readReviewEntry(folder, entry.name));
     } catch {
-      issues.push(`${SCIENT_SOURCE_REVIEWS_DIRECTORY}/${entry.name} could not be read.`);
+      issues.push(`${folder.directory}/${entry.name} could not be read.`);
     }
   }
   return { reviews, issues };
@@ -123,15 +136,23 @@ export async function listScientSystematicReviews(
 ): Promise<ScientSystematicReviewList> {
   const paths = await sourceStorePaths(root);
   const [{ reviews, issues }, records] = await Promise.all([
-    readAllReviews(paths.root),
+    readAllReviews(v1Folder(paths.root)),
     listScientSourceRecords(paths.root),
   ]);
   const present = new Set(records.map((record) => record.sourceId));
+  return reviewList(reviews, issues, () => present);
+}
+
+function reviewList(
+  reviews: ReadonlyArray<ScientSystematicReview>,
+  issues: ReadonlyArray<string>,
+  presentFor: (review: ScientSystematicReview) => ReadonlySet<string>,
+): ScientSystematicReviewList {
   return {
     reviews: reviews
       .filter((review) => review.deletedAt === undefined)
       .toSorted((left, right) => right.updatedAt.localeCompare(left.updatedAt))
-      .map((review) => summary(review, present)),
+      .map((review) => summary(review, presentFor(review))),
     issues,
   };
 }
@@ -141,16 +162,24 @@ export async function readScientSystematicReview(
   reviewId: string,
 ): Promise<ScientSystematicReviewDetail | null> {
   const paths = await sourceStorePaths(root);
-  const review = await readReviewFile(paths.root, reviewId);
+  const review = await readReviewFile(v1Folder(paths.root), reviewId);
   if (!review || review.deletedAt !== undefined) return null;
   const records = await listScientSourceRecords(paths.root);
   const present = new Set(records.map((record) => record.sourceId));
+  return reviewDetail(review, present, scientReviewPossibleDuplicates(review, records));
+}
+
+function reviewDetail(
+  review: ScientSystematicReview,
+  present: ReadonlySet<string>,
+  possibleDuplicates: ScientSystematicReviewDetail["possibleDuplicates"],
+): ScientSystematicReviewDetail {
   const prisma = scientPrismaCounts(review, present);
   return {
     review,
     prisma,
     mermaid: scientPrismaMermaid(prisma),
-    possibleDuplicates: scientReviewPossibleDuplicates(review, records),
+    possibleDuplicates,
     screeningSourceIds: scientReviewScreeningIds(review, present),
   };
 }
@@ -173,11 +202,10 @@ function applyChange(input: {
   readonly change: ScientSystematicReviewAction;
   readonly actor: ScientSourceActor;
   readonly now: string;
-  readonly records: ReadonlyArray<ScientSourceRecord>;
+  readonly present: ReadonlySet<string>;
   readonly collectionMembers: ReadonlyArray<string> | null;
 }): Change {
-  const { change, actor, now } = input;
-  const present = new Set(input.records.map((record) => record.sourceId));
+  const { change, actor, now, present } = input;
   const notFound: Change = { review: null, result: { outcome: "not-found", reviewId: null } };
   if (change.action === "create-review") {
     const review: ScientSystematicReview = {
@@ -505,17 +533,33 @@ function applyChange(input: {
   }
 }
 
-/** The single entry point for review changes from HTTP and agent tools. */
-export async function changeScientSystematicReview(input: {
-  readonly root: string;
-  readonly change: ScientSystematicReviewAction;
-  readonly actor: ScientSourceActor;
-}): Promise<ScientSystematicReviewChangeResult> {
-  const paths = await sourceStorePaths(input.root);
-  return withOperationLock(`${paths.root}:reviews-write`, async () => {
+interface ReviewChangeContext {
+  /** Source IDs this store knows: new IDs outside it are skipped, and only these are screened. */
+  readonly present: ReadonlySet<string>;
+  readonly collectionMembers: ReadonlyArray<string> | null;
+}
+
+interface ReviewChangeHooks {
+  readonly context: (
+    review: ScientSystematicReview | null,
+    change: ScientSystematicReviewAction,
+  ) => Promise<ReviewChangeContext>;
+  /** Runs under the reviews lock before the review is written, and when nothing changed. */
+  readonly beforeReviewWrite?: (input: {
+    readonly previous: ScientSystematicReview | null;
+    readonly next: ScientSystematicReview | null;
+  }) => Promise<void>;
+}
+
+async function changeReviewIn(
+  folder: ReviewFolder,
+  hooks: ReviewChangeHooks,
+  input: { readonly change: ScientSystematicReviewAction; readonly actor: ScientSourceActor },
+): Promise<ScientSystematicReviewChangeResult> {
+  return withOperationLock(`${folder.root}:reviews-write`, async () => {
     const { change } = input;
     if (change.action === "create-review") {
-      const existing = (await readAllReviews(paths.root)).reviews.find(
+      const existing = (await readAllReviews(folder)).reviews.find(
         (entry) =>
           entry.deletedAt === undefined &&
           entry.title.trim().toLocaleLowerCase() === change.title.trim().toLocaleLowerCase(),
@@ -523,42 +567,73 @@ export async function changeScientSystematicReview(input: {
       if (existing) return { outcome: "unchanged", reviewId: existing.reviewId };
     }
     const review =
-      change.action === "create-review" ? null : await readReviewFile(paths.root, change.reviewId);
-    const records = await listScientSourceRecords(paths.root);
-    const collectionMembers =
-      change.action === "log-search" && change.collectionId
-        ? ((
-            await readScientSourcesOrganization(
-              paths.root,
-              new Set(records.map((record) => record.sourceId)),
-            )
-          ).collections.find((collection) => collection.collectionId === change.collectionId)
-            ?.sourceIds ?? null)
-        : [];
+      change.action === "create-review" ? null : await readReviewFile(folder, change.reviewId);
+    const context = await hooks.context(review, change);
     const applied = applyChange({
       review,
       change,
       actor: input.actor,
       now: new Date().toISOString(),
-      records,
-      collectionMembers,
+      present: context.present,
+      collectionMembers: context.collectionMembers,
     });
-    if (applied.review) {
-      await assertScientProjectDirectory(paths.root, reviewsDirectory(paths.root), {
-        create: true,
-      });
-      const next = validateReview(applied.review);
+    const writesSnapshot = hooks.beforeReviewWrite !== undefined && review !== null;
+    if (applied.review || writesSnapshot) {
+      await assertScientProjectDirectory(folder.root, reviewsDirectory(folder), { create: true });
+    }
+    const next = applied.review ? validateReview(applied.review) : null;
+    if (hooks.beforeReviewWrite && (review || next)) {
+      await hooks.beforeReviewWrite({ previous: review, next });
+    }
+    if (next) {
       if (change.action === "create-review") {
-        if (
-          !(await atomicCreateJson(reviewPath(paths.root, next.reviewId), next, MAX_REVIEW_BYTES))
-        ) {
+        if (!(await atomicCreateJson(reviewPath(folder, next.reviewId), next, MAX_REVIEW_BYTES))) {
           throw new Error("The new review could not be saved. Try again.");
         }
       } else {
         // The destination is the file that was read and validated, never an ID from its contents.
-        await atomicWriteJson(reviewPath(paths.root, change.reviewId), next, MAX_REVIEW_BYTES);
+        await atomicWriteJson(reviewPath(folder, change.reviewId), next, MAX_REVIEW_BYTES);
       }
     }
     return applied.result;
   });
 }
+
+/** The single entry point for review changes from HTTP and agent tools. */
+export async function changeScientSystematicReview(input: {
+  readonly root: string;
+  readonly change: ScientSystematicReviewAction;
+  readonly actor: ScientSourceActor;
+}): Promise<ScientSystematicReviewChangeResult> {
+  const paths = await sourceStorePaths(input.root);
+  return changeReviewIn(
+    v1Folder(paths.root),
+    {
+      context: async (_review, change) => {
+        const records = await listScientSourceRecords(paths.root);
+        const present = new Set(records.map((record) => record.sourceId));
+        const collectionMembers =
+          change.action === "log-search" && change.collectionId
+            ? ((await readScientSourcesOrganization(paths.root, present)).collections.find(
+                (collection) => collection.collectionId === change.collectionId,
+              )?.sourceIds ?? null)
+            : [];
+        return { present, collectionMembers };
+      },
+    },
+    input,
+  );
+}
+
+/** For the personal library's review store (`libraryReviews.ts`), which shares this one's rules. */
+export const scientSystematicReviewStoreInternals = {
+  changeReviewIn,
+  readReviewFile,
+  readAllReviews,
+  reviewList,
+  reviewDetail,
+  reviewPath,
+  reviewsDirectory,
+  reviewsDirectoryExists,
+};
+export type { ReviewFolder as ScientReviewFolder };
