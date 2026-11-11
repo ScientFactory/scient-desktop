@@ -1,4 +1,5 @@
 import { TextSelection } from "prosemirror-state";
+import { CellSelection } from "prosemirror-tables";
 import { describe, expect, it } from "vite-plus/test";
 import {
   runScientMarkdownCommand,
@@ -131,6 +132,21 @@ describe("Markdown font size and family", () => {
     const written = session.session.draftSource;
     expect(written.startsWith("# Title\n\n")).toBe(true);
     expect(written.endsWith("\n\nsecond paragraph\n")).toBe(true);
+  });
+
+  it("applies a size to every selected table cell", () => {
+    const session = open("| A | B |\n| --- | --- |\n| c | d |\n");
+    const cells: number[] = [];
+    session.state.doc.descendants((node, position) => {
+      if (node.type.name === "table_header") cells.push(position);
+      return node.type.name === "table" || node.type.name === "table_row";
+    });
+    session.applyTransaction(
+      session.state.tr.setSelection(CellSelection.create(session.state.doc, cells[0]!, cells[1]!)),
+      "user",
+    );
+    run(session, "font-size-14");
+    expect(markedText(session, "font_size")).toEqual(["A", "B"]);
   });
 
   it("round-trips a span inside bold, a list item and a table cell", () => {
