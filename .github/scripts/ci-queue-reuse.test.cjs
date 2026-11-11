@@ -127,6 +127,7 @@ function fixture(t, event = "push") {
     // `origin` is the attempt a job actually ran in; later attempts carry it with its start time.
     const job = (name) => ({ name, conclusion: "success", origin: run.run_attempt });
     jobs.set(run.id, [
+      job("Check"),
       job("Qualification receipt"),
       job("Reuse exact CI"),
       ...Array.from({ length: SHARDS.web }, (_, i) => job(`Test Web ${i + 1}`)),
@@ -336,8 +337,9 @@ const pushMismatches = [
   ["other repository", "source", "repository", { full_name: "someone/fork" }],
   ["other queue", "source", "head_branch", "gh-readonly-queue/release/pr-1"],
   ["PR source", "source", "event", "pull_request"],
-  ["failed queue", "source", "conclusion", "failure"],
-  ["unfinished queue", "source", "status", "in_progress"],
+  ["cancelled queue", "source", "conclusion", "cancelled"],
+  ["timed-out queue", "source", "conclusion", "timed_out"],
+  ["queue run not yet started", "source", "status", "queued"],
   ["old proof schema", "receipt", "schemaVersion", 1],
   ["PR proof", "receipt", "event", "pull_request"],
   ["old workflow source", "receipt", "workflowSha", BASE],
@@ -353,6 +355,14 @@ const pushMismatches = [
 const fail = () => {
   throw new Error("unavailable");
 };
+const gate = (f, name) => f.jobs.get(10).find((job) => job.name === name);
+function cancelDuringDownloads(f) {
+  const download = f.actions.downloadArtifact;
+  f.actions.downloadArtifact = async (input) => {
+    f.source.conclusion = "cancelled";
+    return download(input);
+  };
+}
 const commonFailures = [
   ["missing proof", (f) => f.artifacts.get(10).shift()],
   ["ambiguous proof", (f) => f.artifacts.get(10).push({ ...f.artifacts.get(10)[0] })],
@@ -364,6 +374,27 @@ const commonFailures = [
     (f) => (f.report(10, "vitest-web-1-attempt-1").testResults = [{ status: "failed" }]),
   ],
   ["false test success", (f) => (f.report(10, "vitest-server-3-attempt-1").success = false)],
+  ["failed Check", (f) => (gate(f, "Check").conclusion = "failure")],
+  [
+    "unfinished Check",
+    (f) => Object.assign(gate(f, "Check"), { status: "in_progress", conclusion: null }),
+  ],
+  [
+    "missing Check",
+    (f) =>
+      f.jobs.set(
+        10,
+        f.jobs.get(10).filter((job) => job.name !== "Check"),
+      ),
+  ],
+  ["duplicate Check", (f) => f.jobs.get(10).push({ ...gate(f, "Check") })],
+  ["failed receipt job", (f) => (gate(f, "Qualification receipt").conclusion = "failure")],
+  [
+    "a newer unqualified run of the same head",
+    // Its evidence would otherwise qualify, so only its state can refuse it.
+    (f) => f.addRun({ ...f.source, id: 15, conclusion: "cancelled" }, { ...f.receipt, runId: 15 }),
+  ],
+  ["source cancelled during downloads", (f) => cancelDuringDownloads(f)],
   ["run list failure", (f) => Object.assign(f.actions, { listWorkflowRuns: fail })],
   ["commit lookup failure", (f) => Object.assign(f.git, { getCommit: fail })],
   ["download failure", (f) => Object.assign(f.actions, { downloadArtifact: fail })],
@@ -420,7 +451,8 @@ const queueMismatches = [
   ["another group head", "context.payload.merge_group", "head_sha", OTHER],
   ["a current run outside the queue", "current", "head_branch", "feature"],
   ["a fork PR run", "source", "head_repository", { full_name: "someone/fork" }],
-  ["a failed PR run", "source", "conclusion", "failure"],
+  ["a cancelled PR run", "source", "conclusion", "cancelled"],
+  ["a PR run waiting to start", "source", "status", "waiting"],
   ["a PR run of another head", "source", "head_sha", OTHER],
   ["a queue proof", "receipt", "event", "merge_group"],
   ["a PR run against another base", "receipt", "baseSha", OTHER],
@@ -997,31 +1029,43 @@ test("a push whose queue run reused PR CI restores the reports its probe republi
   }
 });
 
-test("a push waits for its queue run to finish instead of rerunning everything", async (t) => {
-  const f = fixture(t);
-  const finished = f.source;
-  // The queue run still reports in progress for the first two looks.
-  let looks = 0;
-  const list = f.actions.listWorkflowRuns;
-  f.actions.listWorkflowRuns = async (input) => {
-    if (input.status === undefined && looks++ < 2)
-      return {
-        data: { workflow_runs: [{ ...finished, status: "in_progress", conclusion: null }] },
-      };
-    return list(input);
-  };
-  const waits = [];
-  await restore({ ...f.args, sleep: async (ms) => waits.push(ms) });
-  reused(f);
-  assert.equal(waits.length, 2);
+// Advisory jobs (ci-check.cjs ADVISORY) can still run, or fail, after the gates passed.
+for (const event of ["push", "merge_group"]) {
+  for (const [name, state] of [
+    ["is still finishing advisory work", { status: "in_progress", conclusion: null }],
+    ["failed only in advisory work", { status: "completed", conclusion: "failure" }],
+  ]) {
+    test(`${event}: a source whose gates passed and that ${name} reuses`, async (t) => {
+      const f = fixture(t, event);
+      Object.assign(f.source, state);
+      await restore(f.args);
+      reused(f);
+    });
+  }
+}
+
+test("a source rerun with every job waits for its new gates", async (t) => {
+  const f = fixture(t, "merge_group");
+  Object.assign(f.source, { run_attempt: 2, status: "in_progress", conclusion: null });
+  // Re-run all jobs: the new attempt's gates have not finished yet.
+  for (const job of f.jobs.get(10)) job.origin = 2;
+  Object.assign(gate(f, "Check"), { status: "queued", conclusion: null });
+  await refused(f);
+  assert.match(f.messages.join("\n"), /No single successful Check job/);
 });
 
-test("a queue run that never finishes leaves the push on full CI after a bounded wait", async (t) => {
-  const f = fixture(t);
-  f.source.status = "in_progress";
-  f.source.conclusion = null;
-  const waits = [];
-  f.args.sleep = async (ms) => waits.push(ms);
+test("a cancelled source names its state as the reason for full CI", async (t) => {
+  const f = fixture(t, "merge_group");
+  f.source.conclusion = "cancelled";
   await refused(f);
-  assert.ok(waits.length > 0 && waits.length < 10, String(waits.length));
+  assert.match(f.messages.join("\n"), /No qualified exact-content pull_request run/);
+});
+
+test("an advisory-only rerun keeps the gates and reports of the first attempt", async (t) => {
+  const f = fixture(t, "merge_group");
+  Object.assign(f.source, { run_attempt: 2, status: "in_progress", conclusion: null });
+  // Re-run failed jobs carries every passed job, with its start time, into attempt 2.
+  for (const job of f.jobs.get(10)) job.origin = 1;
+  await restore(f.args);
+  reused(f);
 });
