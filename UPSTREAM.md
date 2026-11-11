@@ -2078,10 +2078,14 @@ Marked blocks in T3-owned files, to offer upstream and then drop:
   `GitVcsDriverCore.scient.test.ts`. Asked on pingdotgg/t3code#34042, which reworks these fetches.
 - `GitVcsDriverCore.ts`: branch change totals remember a failed untracked-file listing per folder
   and back off (1 min doubling to 30 min) until the untracked roots change, and keep the failure's
-  real reason. Tested in `GitVcsDriverCore.scient.test.ts`. Offered as pingdotgg/t3code#34460
-  (issue #34457).
+  real reason. Tested in `GitVcsDriverCore.scient.test.ts`. Merged in T3 as
+  pingdotgg/t3code#34460 (issue #34457). Follow-up in the same blocks: overlapping status reads
+  share one running listing, and the error keeps the listing's `GitCommandError` as `cause`;
+  offered as pingdotgg/t3code#34574.
 - `CodexAdapterV2.ts`: the app-server gets a 2 s force-kill deadline. Tested in
-  `CodexAdapterV2.scient.test.ts`. Offered as pingdotgg/t3code#34461 (issue #34458).
+  `CodexAdapterV2.scient.test.ts`, which waits for the stand-in's `ready` line before stopping it.
+  Merged in T3 as pingdotgg/t3code#34461 (issue #34458); the test's wait offered as
+  pingdotgg/t3code#34575.
 - `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): descendants that left the CLI's process group
   (its detached Bash tool shells and helpers) stop with it. While the server runs, the CLI's tree
   is sampled and stopped after the CLI exits (`@t3tools/shared/scientOwnedProcessTree`); if the
