@@ -938,6 +938,15 @@ Scient Agent.
   Sparse updates retain known metadata without changing child identity or the original
   background launch's ownership. Native read-only child conversations project the supplied
   assignment and terminal result as stable message artifacts.
+  Their steps come from the conversation OMP saves for each subagent (the lifecycle and progress
+  `sessionFile`, which must resolve inside the session directory). `OmpSubagentTranscript.ts`
+  reads complete records in bounded chunks; `OmpAdapterV2` reads at most once a second per
+  subagent while it runs, two reads at a time per session, outside the event consumer, then
+  twice after it ends. `NativeSessionAdapterV2` projects text, reasoning and tool calls into the
+  child thread with ids derived from the saved records, so a re-read writes nothing new; the
+  terminal result appears once, after the steps. Tool input and output use the parent's previews
+  and redaction. The RPC's `get_subagent_messages` returns the same records, unbounded, and only
+  while the process remembers the subagent, so Scient reads the file.
   Terminal progress can precede the closing lifecycle frame. Matching terminal frames
   enrich retained metadata and any supplied result or error without reopening the child;
   identical repeats are ignored.
