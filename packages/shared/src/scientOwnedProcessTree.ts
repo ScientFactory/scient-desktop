@@ -7,6 +7,9 @@
 import * as NodeChildProcess from "node:child_process";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 export interface OwnedProcess {
   readonly pid: number;
@@ -34,37 +37,48 @@ export function parseProcessTable(text: string): ReadonlyArray<OwnedProcess> {
   return processes;
 }
 
-/** Best effort: an unreadable table reads as empty, so nothing is signalled. */
-export const readProcessTable: Effect.Effect<ReadonlyArray<OwnedProcess>> = Effect.callback(
-  (resume) => {
-    NodeChildProcess.execFile(
-      "ps",
-      ["-A", "-o", "pid=,ppid=,pgid=,lstart=,comm="],
-      {
-        // A fixed locale and zone keep `lstart` identical between reads.
-        env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
-        maxBuffer: 16 * 1024 * 1024,
-        timeout: 10_000,
-        windowsHide: true,
-      },
-      (error, stdout) => resume(Effect.succeed(error ? [] : parseProcessTable(stdout))),
-    );
-  },
-);
+/** `ps` failed or timed out. Never read as "nothing is running": that would forget what is owned. */
+export class ProcessTableUnavailable extends Schema.TaggedError<ProcessTableUnavailable>()(
+  "ProcessTableUnavailable",
+  { cause: Schema.Defect() },
+) {}
+
+export const readProcessTable: Effect.Effect<
+  ReadonlyArray<OwnedProcess>,
+  ProcessTableUnavailable
+> = Effect.callback((resume) => {
+  NodeChildProcess.execFile(
+    "ps",
+    ["-A", "-o", "pid=,ppid=,pgid=,lstart=,comm="],
+    {
+      // A fixed locale and zone keep `lstart` identical between reads.
+      env: { ...process.env, LC_ALL: "C", TZ: "UTC" },
+      maxBuffer: 16 * 1024 * 1024,
+      timeout: 10_000,
+      windowsHide: true,
+    },
+    (error, stdout) =>
+      resume(
+        error
+          ? Effect.fail(new ProcessTableUnavailable({ cause: error }))
+          : Effect.succeed(parseProcessTable(stdout)),
+      ),
+  );
+});
 
 /** Every process whose parent chain leads to `rootPid`, excluding the root itself. */
-export function descendantsOf(
-  table: ReadonlyArray<OwnedProcess>,
+export function descendantsOf<Entry extends { readonly pid: number; readonly ppid: number }>(
+  table: ReadonlyArray<Entry>,
   rootPid: number,
-): ReadonlyArray<OwnedProcess> {
-  const children = new Map<number, Array<OwnedProcess>>();
+): ReadonlyArray<Entry> {
+  const children = new Map<number, Array<Entry>>();
   for (const entry of table) {
     if (entry.pid === entry.ppid) continue;
     const siblings = children.get(entry.ppid);
     if (siblings === undefined) children.set(entry.ppid, [entry]);
     else siblings.push(entry);
   }
-  const found: Array<OwnedProcess> = [];
+  const found: Array<Entry> = [];
   const seen = new Set<number>([rootPid]);
   const queue = [rootPid];
   while (queue.length > 0) {
@@ -79,10 +93,12 @@ export function descendantsOf(
 }
 
 export interface OwnedProcessTreeOptions {
-  readonly readTable?: Effect.Effect<ReadonlyArray<OwnedProcess>>;
+  readonly readTable?: Effect.Effect<ReadonlyArray<OwnedProcess>, ProcessTableUnavailable>;
   readonly signal?: (pid: number, signal: NodeJS.Signals) => void;
   /** The root must be this process's child; defaults to the current process. */
   readonly parentPid?: number;
+  /** Wait between attempts when stopping finds the table unreadable; defaults to one second. */
+  readonly readRetrySpacing?: Duration.Input;
 }
 
 export interface ReapResult {
@@ -90,10 +106,15 @@ export interface ReapResult {
   readonly terminated: number;
   /** Of those, the ones that had to be killed after the grace period. */
   readonly killed: number;
+  /** Processes not stopped, or not seen to stop, because the process table stayed unreadable. */
+  readonly unverified: number;
 }
 
 export interface OwnedProcessTree {
-  /** Records the root's living descendants and forgets recorded ones that have exited. */
+  /**
+   * Records the root's living descendants and forgets recorded ones that have exited. An unreadable
+   * table changes nothing.
+   */
   readonly sample: Effect.Effect<void>;
   /** Stops recorded processes still running and their descendants: SIGTERM, then SIGKILL. */
   readonly reap: (grace: Duration.Input) => Effect.Effect<ReapResult>;
@@ -126,7 +147,9 @@ export function makeOwnedProcessTree(
     entry.pid > 1 && entry.pid !== process.pid && entry.pgid !== process.pid;
 
   const sample = Effect.gen(function* () {
-    const table = yield* readTable;
+    const read = yield* Effect.option(readTable);
+    if (Option.isNone(read)) return;
+    const table = read.value;
     const byPid = indexByPid(table);
     for (const entry of recorded.values()) {
       if (!isSame(byPid, entry)) recorded.delete(entry.pid);
@@ -147,9 +170,22 @@ export function makeOwnedProcessTree(
     for (const entry of targets) signal(entry.pid, name);
   };
 
+  // Stopping reads the table twice; each read gets two more attempts before it gives up.
+  const readForReap = readTable.pipe(
+    Effect.retry({ times: 2, schedule: Schedule.spaced(options.readRetrySpacing ?? "1 second") }),
+    Effect.option,
+  );
+
   const reap = Effect.fn("scient.ownedProcessTree.reap")(function* (grace: Duration.Input) {
-    if (recorded.size === 0) return { terminated: 0, killed: 0 };
-    const table = yield* readTable;
+    if (recorded.size === 0) return { terminated: 0, killed: 0, unverified: 0 };
+    const read = yield* readForReap;
+    // Only a process seen as itself during this reap is signalled; without a table, none is.
+    if (Option.isNone(read)) {
+      const unverified = recorded.size;
+      recorded.clear();
+      return { terminated: 0, killed: 0, unverified };
+    }
+    const table = read.value;
     const byPid = indexByPid(table);
     // Recorded processes that are still themselves, plus whatever they started since the last
     // sample, as seen now.
@@ -162,13 +198,18 @@ export function makeOwnedProcessTree(
       }
     }
     recorded.clear();
-    if (targets.size === 0) return { terminated: 0, killed: 0 };
+    if (targets.size === 0) return { terminated: 0, killed: 0, unverified: 0 };
     const terminated = [...targets.values()];
     signalAll(terminated, "SIGTERM");
     yield* Effect.sleep(grace);
     // Look again: a survivor may have started more processes during the grace. Children are
-    // killed before their parents, so none is re-parented out of reach first.
-    const afterTable = yield* readTable;
+    // killed before their parents, so none is re-parented out of reach first. Without a table, a
+    // target that exited may have handed its PID on, so none is killed.
+    const afterRead = yield* readForReap;
+    if (Option.isNone(afterRead)) {
+      return { terminated: terminated.length, killed: 0, unverified: terminated.length };
+    }
+    const afterTable = afterRead.value;
     const after = indexByPid(afterTable);
     const stubborn = terminated.filter((entry) => isSame(after, entry));
     const known = new Set(stubborn.map((entry) => entry.pid));
@@ -178,7 +219,7 @@ export function makeOwnedProcessTree(
       ),
     );
     signalAll([...late.reverse(), ...stubborn.reverse()], "SIGKILL");
-    return { terminated: terminated.length, killed: stubborn.length + late.length };
+    return { terminated: terminated.length, killed: stubborn.length + late.length, unverified: 0 };
   });
 
   return { sample, reap };

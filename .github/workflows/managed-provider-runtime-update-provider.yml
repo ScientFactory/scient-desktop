@@ -428,6 +428,7 @@ jobs:
             apps/server/src/process \
             apps/server/src/provider \
             apps/server/src/resourceTelemetry \
+            apps/server/src/scient/observability/ResourceRecord.ts \
             apps/server/src/scient/providerLifecycle \
             apps/server/src/scient/sourceControl \
             apps/server/src/scient/threadSections \

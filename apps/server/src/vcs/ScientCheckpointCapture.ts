@@ -30,6 +30,17 @@ const isCheckpointUnavailable = Schema.is(VcsCheckpointUnavailableError);
 
 /** Fork admission persists its expected OID before the first external ref write.
  * Ordinary checkpoints have no pre-admission ownership record. */
+/**
+ * One pack thread and a bounded delta window, as for upkeep: a turn that adds large files packs
+ * them without Git's per-thread delta memory. They reduce memory use; they are not a hard ceiling.
+ */
+export const CHECKPOINT_PACK_MEMORY_CONFIG = [
+  "-c",
+  "pack.threads=1",
+  "-c",
+  "pack.windowMemory=256m",
+] as const;
+
 export class CheckpointPublicationWitness extends Context.Reference<
   (input: {
     readonly cwd: string;
@@ -331,6 +342,7 @@ export const publishStagedCheckpoint = Effect.fnUntraced(function* (input: {
       stagingRepo,
       "-c",
       "pack.packSizeLimit=0",
+      ...CHECKPOINT_PACK_MEMORY_CONFIG,
       "pack-objects",
       "--revs",
       "--local",

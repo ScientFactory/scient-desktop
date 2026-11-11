@@ -290,3 +290,115 @@ it.layer(layerTest)("branch change totals", (it) => {
     }),
   );
 });
+
+// Drafting a commit message stages with `add -A`; without a commit, nothing it hashed may remain.
+it.layer(layerTest)("commit preparation", (it) => {
+  it.effect("leaves no objects in the repository, in a linked worktree too", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+        driver
+          .execute({ operation: "GitVcsDriver.test.git", cwd, args: [...args], timeoutMs: 10_000 })
+          .pipe(Effect.map((result) => result.stdout.trim()));
+      const repo = yield* fs.makeTempDirectoryScoped({ prefix: "git-prepare-objects-" });
+      yield* git(repo, "init", "--quiet");
+      yield* git(repo, "config", "user.email", "test@test.com");
+      yield* git(repo, "config", "user.name", "Test");
+      yield* fs.writeFileString(path.join(repo, "kept.txt"), "kept\n");
+      yield* git(repo, "add", ".");
+      yield* git(repo, "commit", "--quiet", "-m", "initial");
+      const linked = path.join(repo, "linked");
+      yield* git(repo, "worktree", "add", "--quiet", linked);
+
+      for (const cwd of [repo, linked]) {
+        yield* fs.writeFileString(path.join(cwd, "kept.txt"), `changed in ${cwd}\n`);
+        yield* fs.writeFileString(path.join(cwd, "draft.txt"), `drafted in ${cwd}\n`);
+        const blobs = [
+          yield* git(cwd, "hash-object", "draft.txt"),
+          yield* git(cwd, "hash-object", "kept.txt"),
+        ];
+        const context = yield* driver.prepareCommitContext(cwd, undefined);
+        assert.include(context?.stagedPatch ?? "", `+drafted in ${cwd}`);
+        assert.include(context?.stagedPatch ?? "", "-kept");
+        for (const blob of blobs) {
+          const probe = yield* driver.execute({
+            operation: "GitVcsDriver.test.git",
+            cwd,
+            args: ["cat-file", "-e", blob],
+            allowNonZeroExit: true,
+            timeoutMs: 10_000,
+          });
+          assert.notEqual(probe.exitCode, 0, `${blob} stayed in the repository`);
+        }
+      }
+    }),
+  );
+
+  // A borrower whose alternates come only from the environment still reads its history.
+  it.effect("keeps alternates the environment lists", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+        driver
+          .execute({ operation: "GitVcsDriver.test.git", cwd, args: [...args], timeoutMs: 10_000 })
+          .pipe(Effect.map((result) => result.stdout.trim()));
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "git-prepare-alternates-" });
+      const seed = path.join(root, "seed");
+      yield* fs.makeDirectory(seed);
+      yield* git(seed, "init", "--quiet");
+      yield* git(seed, "config", "user.email", "test@test.com");
+      yield* git(seed, "config", "user.name", "Test");
+      yield* fs.writeFileString(path.join(seed, "a"), "old\n");
+      yield* git(seed, "add", ".");
+      yield* git(seed, "commit", "--quiet", "-m", "initial");
+      const borrower = path.join(root, "borrower");
+      yield* git(root, "clone", "--quiet", "--shared", seed, borrower);
+      yield* fs.remove(path.join(borrower, ".git", "objects", "info", "alternates"));
+      yield* fs.writeFileString(path.join(borrower, "a"), "new\n");
+      const environment = yield* HostProcess.Environment;
+      const context = yield* driver.prepareCommitContext(borrower, undefined).pipe(
+        Effect.provideService(HostProcess.Environment, {
+          ...environment,
+          GIT_ALTERNATE_OBJECT_DIRECTORIES: path.join(seed, ".git", "objects"),
+        }),
+      );
+      assert.include(context?.stagedSummary ?? "", "M\ta");
+      assert.include(context?.stagedPatch ?? "", "-old");
+    }),
+  );
+
+  // Six shared clones deep is within Git's alternate limit for the clone, not one level deeper.
+  it.effect("reads history through a chain of shared clones", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const driver = yield* GitVcsDriver.GitVcsDriver;
+      const git = (cwd: string, ...args: ReadonlyArray<string>) =>
+        driver
+          .execute({ operation: "GitVcsDriver.test.git", cwd, args: [...args], timeoutMs: 10_000 })
+          .pipe(Effect.map((result) => result.stdout.trim()));
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "git-prepare-chain-" });
+      let previous = path.join(root, "clone-0");
+      yield* fs.makeDirectory(previous);
+      yield* git(previous, "init", "--quiet");
+      yield* git(previous, "config", "user.email", "test@test.com");
+      yield* git(previous, "config", "user.name", "Test");
+      yield* fs.writeFileString(path.join(previous, "a"), "old\n");
+      yield* git(previous, "add", ".");
+      yield* git(previous, "commit", "--quiet", "-m", "initial");
+      for (let index = 1; index <= 6; index += 1) {
+        const next = path.join(root, `clone-${index}`);
+        yield* git(root, "clone", "--quiet", "--shared", previous, next);
+        previous = next;
+      }
+      yield* fs.writeFileString(path.join(previous, "a"), "new\n");
+      const context = yield* driver.prepareCommitContext(previous, ["a"]);
+      assert.include(context?.stagedSummary ?? "", "M\ta");
+      assert.include(context?.stagedPatch ?? "", "-old");
+    }),
+  );
+});

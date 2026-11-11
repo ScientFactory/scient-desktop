@@ -2070,6 +2070,10 @@ Scient owns the fix that keeps that fetch from starting Git's automatic maintena
 (`ScientCheckpointUpkeep.ts`, provided once in `server.ts`, requested from `GitVcsDriver.ts`).
 Detached maintenance escaped the app's process group, and on Git without the detached-lock fix
 (Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
+Checkpoint packing and upkeep share one pack-memory setting (one thread, a 256 MiB delta window).
+The server keeps a minute-by-minute memory record that outlives a crash
+(`scient/observability/ResourceRecord.ts`, `logs/resource-record.ndjson`, provided in `server.ts`
+beside the upkeep).
 
 Marked blocks in T3-owned files, to offer upstream and then drop:
 
@@ -2082,6 +2086,10 @@ Marked blocks in T3-owned files, to offer upstream and then drop:
   pingdotgg/t3code#34460 (issue #34457). Follow-up in the same blocks: overlapping status reads
   share one running listing, and the error keeps the listing's `GitCommandError` as `cause`;
   offered as pingdotgg/t3code#34574.
+- `GitVcsDriverCore.ts` (`prepareCommitContext`): drafting a commit message stages into a
+  temporary object directory, reading the repository's own objects and every alternate it lists
+  directly, so a draft without a commit leaves no objects in the repository. Tested in
+  `GitVcsDriverCore.scient.test.ts`. Offered as pingdotgg/t3code#34595 (issue #34594).
 - `CodexAdapterV2.ts`: the app-server gets a 2 s force-kill deadline. Tested in
   `CodexAdapterV2.scient.test.ts`, which waits for the stand-in's `ready` line before stopping it.
   Merged in T3 as pingdotgg/t3code#34461 (issue #34458); the test's wait offered as

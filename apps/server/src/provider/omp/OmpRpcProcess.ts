@@ -596,7 +596,15 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
       const killed = yield* child.exitCode.pipe(Effect.timeout("3 seconds"), Effect.option);
       code = killed._tag === "Some" ? Number(killed.value) : null;
     }
-    if (ownedTree !== undefined) yield* ownedTree.reap(OMP_TREE_REAP_GRACE);
+    if (ownedTree !== undefined) {
+      const { unverified } = yield* ownedTree.reap(OMP_TREE_REAP_GRACE);
+      if (unverified > 0) {
+        yield* Effect.logWarning(
+          `${target.name} processes may still be running: the process table was unreadable`,
+          { unverified },
+        );
+      }
+    }
     return {
       code,
       exited: code !== null || !(yield* child.isRunning.pipe(Effect.orElseSucceed(() => true))),
