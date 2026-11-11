@@ -147,9 +147,19 @@ abbreviations and `crossref` entries are resolved, and Google Scholar's
 Entries already in the Library are left out, so importing the same file again
 adds only what is new, even for entries with little more than a title. Up to 500 new references are imported at a time; for a
 larger file, choose **Import the rest** (or import the file again) to continue.
+PDFs the file links to (the `.bib` `file` field, RIS `L1` and `L4`, EndNote
+PDF links) are attached to their sources when they are inside the project or
+inside the folder the reference file is in (or a folder within it); a relative
+path starts from that folder. Export from Zotero or JabRef with its files into
+one folder and import from there. When you import through the web app or from
+another computer, Scient does not know the file's folder, so only PDFs inside
+the project are attached.
+
 After the import, a short note lists entries that could not be read (with
-their line) and fields that have no place in a Scient source, such as `file`
-links, `address` or `edition`. Nothing else is dropped silently. Identifiers
+their line), fields that have no place in a Scient source, such as `address`
+or `edition`, and linked PDFs that were not attached, with the reason (not
+found, outside the project and the file's folder, or not a PDF). Nothing else
+is dropped silently. Identifiers
 from a file are stored as given; Scient has not yet checked them against their
 registries.
 
@@ -381,7 +391,9 @@ edit one of these files yourself, Scient keeps your edits and says so in the
 Library: choose **Import new entries** to add entries you typed to the Library,
 or **Use Library version** to write the file again from the Library. Scient
 never writes over a `references.bib` it did not create, or over a change you
-save while it is writing. These files hold the same entries as **Export** to
+save while it is writing. If a write fails part way (for example on a full
+disk), the earlier text is kept beside it as `references.bib.kept-…`, and the
+Library says where until you delete that copy. These files hold the same entries as **Export** to
 BibTeX or CSL-JSON.
 
 ### Export to Word with a citation style
@@ -433,7 +445,8 @@ new one. It can also organize the Library the way you can: create, rename and
 delete collections, save searches, list a collection or a tag, change tags,
 type or collections on many sources at once, and run a systematic review. It
 can import a reference file from the project (`scient_sources_import_file`),
-which reports the same unreadable entries and fields not kept, and write the
+which attaches the same linked PDFs and reports the same unreadable entries and
+fields not kept, and write the
 Library to a project file in any of the four formats (`scient_sources_export`),
 never replacing an existing file unless asked to. Everything an agent changes is
 credited to it and can be undone the same way as your own changes.

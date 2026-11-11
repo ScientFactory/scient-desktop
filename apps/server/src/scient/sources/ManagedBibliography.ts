@@ -21,7 +21,9 @@ import {
 import {
   assertScientProjectDirectory,
   publishScientProjectFile,
+  ScientProjectFilePublicationError,
 } from "@scientfactory/scient-sources/project-files";
+import * as Schema from "effect/Schema";
 
 const MANAGED_BIBLIOGRAPHY_FILES = ["references.bib", "references.json"] as const;
 export type ManagedBibliographyFileName = (typeof MANAGED_BIBLIOGRAPHY_FILES)[number];
@@ -44,6 +46,8 @@ export interface ManagedBibliographyFileStatus {
   readonly name: ManagedBibliographyFileName;
   readonly state: ManagedBibliographyFileState;
   readonly changes: BibliographyEntryChanges | null;
+  /** Project files holding earlier text of this file that a write moved aside; kept until the person removes them. */
+  readonly kept?: ReadonlyArray<string>;
 }
 
 export interface ManagedBibliographyStatus {
@@ -56,6 +60,22 @@ type FileRead =
   | { readonly kind: "missing" }
   | { readonly kind: "unsafe" }
   | { readonly kind: "file"; readonly contents: string };
+
+const isPublicationError = Schema.is(ScientProjectFilePublicationError);
+
+/** `references.bib.kept-<id>`, or the hidden `.references.bib.<uuid>.replaced` when even that rename failed. */
+const KEPT_COPY =
+  /^(?:(references\.(?:bib|json))\.kept-[0-9a-f]{8}|\.(references\.(?:bib|json))\.[0-9a-f-]{36}\.replaced)$/u;
+
+async function keptCopies(root: string): Promise<ReadonlyMap<string, ReadonlyArray<string>>> {
+  const kept = new Map<string, string[]>();
+  for (const entry of await NodeFSP.readdir(root, { withFileTypes: true })) {
+    const match = entry.isFile() ? KEPT_COPY.exec(entry.name) : null;
+    const name = match?.[1] ?? match?.[2];
+    if (name) kept.set(name, [...(kept.get(name) ?? []), entry.name].toSorted());
+  }
+  return kept;
+}
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
@@ -192,7 +212,13 @@ async function syncFile(input: {
   }
   if (current.contents === next) return publish();
   if (copy.kind === "missing") return { name, state: "unmanaged", changes: null };
-  if (current.contents === copy.contents || input.replaceEdited) return publish();
+  if (current.contents === copy.contents || input.replaceEdited) {
+    // The earlier text was moved aside and could not go back; `kept` names where it is.
+    return publish().catch((error: unknown) => {
+      if (!isPublicationError(error)) throw error;
+      return edited(null);
+    });
+  }
   return edited(current.contents);
 }
 
@@ -227,7 +253,14 @@ async function syncInLane(
       }),
     );
   }
-  return { files, citedSourceCount: rendered.keys.length };
+  const kept = await keptCopies(root);
+  return {
+    files: files.map((file) => {
+      const paths = kept.get(file.name);
+      return paths ? { ...file, kept: paths } : file;
+    }),
+    citedSourceCount: rendered.keys.length,
+  };
 }
 
 /**

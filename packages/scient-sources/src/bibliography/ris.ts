@@ -235,7 +235,10 @@ function entryFromRaw(raw: RawRisRecord, index: number): BibliographyEntry {
     if (doi) builder.addIdentifier("doi", decodeURIComponent(doi), "UR");
     builder.set("url", url, "UR");
   }
-  use("L2", "LK");
+  use("L2", "LK", "L1", "L4");
+  for (const tag of ["L1", "L4"]) {
+    for (const value of values(tag)) builder.addLinkedFile(value, tag);
+  }
   const key = first("ID");
   if (key && !/^\d+$/u.test(key)) builder.citationKey = normalizeImportedCitationKey(key);
   if (

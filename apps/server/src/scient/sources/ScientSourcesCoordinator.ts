@@ -110,7 +110,7 @@ import {
   beginBibliographyFileImport,
   discardBibliographyFileImport,
   fileImportVerification,
-  getBibliographyFileImportCandidate,
+  getBibliographyFileImportMaterial,
   readBibliographyFile,
   resolveProjectBibliographyFile,
 } from "./BibliographyFileAdapter.ts";
@@ -1118,6 +1118,53 @@ async function addToZoteroCollections(input: {
   }
 }
 
+/** A reference-file entry, with the PDFs its file names attached like any other PDF. */
+async function importFileOperationItem(input: {
+  readonly root: string;
+  readonly operation: ScientSourceImportOperation;
+  readonly itemKey: string;
+  readonly allowPossibleMetadataMatch: boolean;
+}) {
+  const { candidate, pdfs } = await getBibliographyFileImportMaterial(
+    input.root,
+    input.operation.operationId,
+    input.itemKey,
+  );
+  const [primary, ...extra] = pdfs;
+  const result = await importScientSourceOperationItem({
+    root: input.root,
+    operationId: input.operation.operationId,
+    candidate: primary
+      ? {
+          ...candidate,
+          pdfAvailable: true,
+          pdfFileName: primary.fileName,
+          pdfAttachmentCount: pdfs.length,
+        }
+      : candidate,
+    actor: input.operation.actor,
+    intake: input.operation.intake,
+    verification: fileImportVerification(candidate),
+    ...(primary ? { pdfPath: primary.path } : {}),
+    allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
+  });
+  let record = result.record;
+  if (result.outcome !== "imported") return result;
+  for (const pdf of extra) {
+    if (!record) break;
+    const attached = await attachScientSourcePdf({
+      root: input.root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      pdfPath: pdf.path,
+      fileName: pdf.fileName,
+      actor: input.operation.actor,
+    });
+    record = attached.record;
+  }
+  return { ...result, record };
+}
+
 async function importZoteroOperationItem(input: {
   readonly root: string;
   readonly operation: ScientSourceImportOperation;
@@ -1203,27 +1250,24 @@ export async function advanceSourceImport(
               zotero: input.zotero ?? localOnlyZoteroAccess,
             });
           }
-          const { candidate, pdfPath, expectedPdf } =
-            operation.adapter === "file"
-              ? {
-                  candidate: await getBibliographyFileImportCandidate(
-                    root,
-                    input.operationId,
-                    pending.itemKey,
-                  ),
-                  pdfPath: null,
-                  expectedPdf: undefined,
-                }
-              : await getLocalPdfImportMaterial(root, pending.itemKey);
+          if (operation.adapter === "file") {
+            return importFileOperationItem({
+              root,
+              operation,
+              itemKey: pending.itemKey,
+              allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
+            });
+          }
+          const { candidate, pdfPath, expectedPdf } = await getLocalPdfImportMaterial(
+            root,
+            pending.itemKey,
+          );
           return importScientSourceOperationItem({
             root,
             operationId: input.operationId,
             candidate,
             actor: operation.actor,
             intake: operation.intake,
-            ...(operation.adapter === "file"
-              ? { verification: fileImportVerification(candidate) }
-              : {}),
             ...(pdfPath ? { pdfPath } : {}),
             ...(expectedPdf ? { expectedPdf } : {}),
             allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,

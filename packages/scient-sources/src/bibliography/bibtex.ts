@@ -359,6 +359,42 @@ function plainUrl(value: string): string {
     .trim();
 }
 
+/**
+ * JabRef, Zotero and Mendeley write `description:path:type` items joined by `;`, escaping
+ * `\:`, `\;` and `\\`; Mendeley spells the escape `$\backslash$`. A plain BibLaTeX value is one path.
+ */
+function linkedFilePaths(value: string): string[] {
+  const text = value.replace(/\$\\backslash\$/gu, "\\");
+  const items: string[][] = [];
+  let parts: string[] = [];
+  let part = "";
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index] ?? "";
+    if (char === "\\" && index + 1 < text.length) {
+      index += 1;
+      part += text[index] ?? "";
+    } else if (char === ":") {
+      parts.push(part);
+      part = "";
+    } else if (char === ";") {
+      items.push([...parts, part]);
+      parts = [];
+      part = "";
+    } else if (char !== "{" && char !== "}") part += char;
+  }
+  items.push([...parts, part]);
+  return items.flatMap((item) => {
+    const fields = item.map((entry) => entry.trim());
+    if (fields.length >= 3) return fields.slice(1, -1).join(":") || [];
+    const [first = "", second = ""] = fields;
+    if (fields.length === 1) return first || [];
+    // An unescaped drive letter or URL scheme, a `path:type` pair, or `description:path`.
+    if (/^(?:[a-z]|file|https?)$/iu.test(first)) return `${first}:${second}`;
+    if (!/[./\\]/u.test(second)) return first || [];
+    return second || [];
+  });
+}
+
 function pages(value: string): string {
   return collapseWhitespace(decodeLatex(value).replace(/\s*[–—]+\s*|\s*-{1,3}\s*/gu, "-"));
 }
@@ -511,6 +547,12 @@ function entryFromRaw(raw: RawBibtexEntry, index: number): BibliographyEntry {
     else if (PREPRINT_CONTAINER.test(value) && !container) {
       builder.set("containerTitle", decodeLatex(howpublished), "howpublished");
     } else builder.notKeep("howpublished");
+  }
+
+  const file = fields.get("file");
+  if (file !== undefined) {
+    use("file");
+    for (const path of linkedFilePaths(file)) builder.addLinkedFile(path, "file");
   }
 
   const abstract = text("abstract");
