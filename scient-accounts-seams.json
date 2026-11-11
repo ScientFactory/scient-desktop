@@ -546,7 +546,7 @@
     {
       "path": "apps/server/src/scient/sources/researchKeys.ts",
       "anchor": "import { AccountsService } from \"../accounts/AccountsService.ts\";",
-      "purpose": "Read the user's OpenAlex, Semantic Scholar, NCBI and Unpaywall keys from Accounts for Sources' registry requests; keys turned off are skipped and values stay redacted."
+      "purpose": "Read the user's OpenAlex, Semantic Scholar, NCBI, Google Books and Unpaywall keys from Accounts for Sources' registry requests, in tools, HTTP routes and the background category pass; keys turned off are skipped and values stay redacted."
     },
     {
       "path": "packages/contracts/src/scient/sourcesPermissions.ts",

@@ -1,4 +1,5 @@
 import { isbn13, type ScientSourceCreator } from "@scientfactory/scient-sources";
+import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
 import { METADATA_USER_AGENT, type MetadataRequest } from "./metadataHttp.ts";
@@ -8,6 +9,7 @@ import type {
   IdentifierLookup,
   LookupProgress,
   RequestPace,
+  ResearchKeys,
   ResolvedSourceMetadata,
 } from "./SourceIdentifierResolver.ts";
 
@@ -188,8 +190,10 @@ async function lookupGoogleBooks(
   request: MetadataRequest,
   pace: RequestPace,
   signal: AbortSignal | undefined,
+  key: Redacted.Redacted<string> | undefined,
 ): Promise<CatalogAnswer> {
   const parameters = new URLSearchParams({ q: `isbn:${isbn}`, maxResults: "5" });
+  if (key) parameters.set("key", Redacted.value(key));
   const response = await pace(() =>
     signal?.aborted
       ? Promise.resolve(null)
@@ -240,6 +244,7 @@ export async function lookupIsbns(
   request: MetadataRequest,
   pace?: RequestPace,
   progress?: LookupProgress,
+  keys: ResearchKeys = {},
 ): Promise<ReadonlyMap<string, IdentifierLookup>> {
   const openLibrary = await lookupOpenLibrary(
     isbns,
@@ -267,6 +272,7 @@ export async function lookupIsbns(
       request,
       pace ?? runWithGoogleBooksRequestLimit,
       progress?.signal,
+      keys.googleBooks,
     );
     settle(
       isbn,

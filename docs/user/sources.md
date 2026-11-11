@@ -121,6 +121,16 @@ To get faster, more reliable answers from Crossref, OpenAlex and Unpaywall, add
 a contact email in **Settings ▸ Documents ▸ Library**. Scient sends it only to
 those services, and sends no email while the field is empty.
 
+Scient also uses your own research keys when you add them in **Accounts** under
+**Research**: **OpenAlex** (get a free key at
+[openalex.org/settings/api](https://openalex.org/settings/api)), **Google Books**
+(an API key from the
+[Google Cloud console](https://console.cloud.google.com/apis/credentials) with
+the Books API turned on), **NCBI / PubMed**, **Semantic Scholar** and the
+**Unpaywall email**. Without a key these services share a small allowance per
+network address, which can run out while adding many sources. A key you turn
+off in Accounts is not sent.
+
 For remote projects, the selected PDFs are transferred to the selected project
 environment. Metadata services receive only the exact public identifier used
 for lookup, not the PDF itself. PubMed metadata is provided through NCBI

@@ -193,10 +193,16 @@ provenance.
 
 Registry lookups read the user's research keys from Accounts through
 `researchKeys.ts`: the API-key row whose sites match the service (OpenAlex,
-Semantic Scholar, NCBI, and the Unpaywall email), skipping a row set to Off.
-Tools take the resolver through `keyedIdentifierLookup`, which passes the keys
-as `Redacted` values; the Effect HTTP client gets them as `Redacted` URL
-parameters so spans show them redacted. Paper downloads send the OpenAlex key
+Semantic Scholar, NCBI, Google Books at `www.googleapis.com`, and the Unpaywall
+email), skipping a row set to Off. Tools take the resolver through
+`keyedIdentifierLookup` and the batch lookups (identifier add, cite, reference
+check) through `keyedBatchLookup`, which pass the keys as `Redacted` values; the
+Effect HTTP client gets them as `Redacted` URL parameters so spans show them
+redacted. Work outside a tool call reads the keys again at each use through
+`researchKeysReader`, captured when the Sources HTTP layer starts: the
+Library's add, refresh and save-page routes, and the background category pass
+(`readSourceCategoryKeysFrom`), whose OpenAlex topics request sends `api_key`.
+Google Books gets the key as `key`. Paper downloads send the OpenAlex key
 and ask Unpaywall only when OpenAlex has no free copy. The Library's registry
 contact email goes to OpenAlex as `mailto` and to Unpaywall when no Unpaywall
 email is saved.

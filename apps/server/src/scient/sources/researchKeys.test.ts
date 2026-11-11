@@ -7,7 +7,12 @@ import * as Redacted from "effect/Redacted";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { fakeAccounts, syntheticValue } from "../accounts/Accounts.testkit.ts";
 import { keyedIdentifierLookup, readResearchKeys } from "./researchKeys.ts";
-import { SourceIdentifierLookup, type ResearchKeys } from "./SourceIdentifierResolver.ts";
+import type { MetadataRequest } from "./metadataHttp.ts";
+import {
+  resolveSourceIdentifier,
+  SourceIdentifierLookup,
+  type ResearchKeys,
+} from "./SourceIdentifierResolver.ts";
 
 const keyRow = (
   id: string,
@@ -62,6 +67,35 @@ it.effect("hands the keys to whichever resolver the tools use", () =>
     const identifiers: ReadonlyArray<ScientSourceIdentifier> = [{ scheme: "doi", value: "10.1/x" }];
     yield* Effect.promise(() => resolve(identifiers));
     expect(Object.keys(seen[0] ?? {})).toEqual(["semanticScholar"]);
+  }),
+);
+
+it.effect("sends the Google Books key from Accounts, and none once the row is turned off", () =>
+  Effect.gen(function* () {
+    const value = syntheticValue();
+    const sent: Array<string | null> = [];
+    const request: MetadataRequest = async (url) => {
+      if (url.host === "www.googleapis.com") sent.push(url.searchParams.get("key"));
+      const body = url.host === "openlibrary.org" ? {} : { totalItems: 0 };
+      return { status: 200, body: JSON.stringify(body), url };
+    };
+    for (const access of ["allowed", "off"] as const) {
+      const accounts = fakeAccounts({
+        accounts: [keyRow("books", "www.googleapis.com", access)],
+        values: { token: value },
+      });
+      const keys = yield* readResearchKeys().pipe(
+        Effect.provideService(AccountsService, accounts.service),
+      );
+      yield* Effect.promise(() =>
+        resolveSourceIdentifier([{ scheme: "isbn", value: "9780300102864" }], {
+          request,
+          pace: (run) => run(),
+          keys,
+        }),
+      );
+    }
+    expect(sent).toEqual([value, null]);
   }),
 );
 

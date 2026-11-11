@@ -49,7 +49,7 @@ import {
   resolveProjectBibliographyFile,
   writeProjectBibliographyFile,
 } from "../../../scient/sources/BibliographyFileAdapter.ts";
-import { keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
+import { keyedBatchLookup, keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
 import {
   addScientSourcesByIdentifier,
   SourceIdentifierBatchLookup,
@@ -626,7 +626,7 @@ const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolki
         validationIssues: [{ field: extra, message }],
       };
     }
-    const resolveIdentifiers = yield* SourceIdentifierBatchLookup;
+    const resolveIdentifiers = yield* keyedBatchLookup(yield* SourceIdentifierBatchLookup);
     const observeImport = yield* makeSourceImportAnalytics("agent");
     const results = yield* attempt(() =>
       addScientSourcesByIdentifier(
@@ -1067,7 +1067,7 @@ const citeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.cite")(fu
   readonly format?: "markdown" | "latex";
 }) {
   const { root } = yield* resolveScientSourcesProject();
-  const resolveIdentifiers = yield* ReferenceIdentifierLookup;
+  const resolveIdentifiers = yield* keyedBatchLookup(yield* ReferenceIdentifierLookup);
   return yield* attempt(() =>
     citeLibrarySources(
       { root, sources: input.sources, format: input.format ?? "markdown" },
