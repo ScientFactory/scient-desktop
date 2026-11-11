@@ -208,7 +208,8 @@ const RegistryPackage = Schema.Struct({
   version: Schema.optional(Schema.String),
   fileSha256: Schema.optional(Schema.String),
   transport: Schema.optional(Schema.Struct({ type: Schema.String })),
-  runtimeArguments: Schema.optional(Schema.Array(RegistryArgument)),
+  // Read one by one: an option Scient can't read is a reason to give, not a package to skip.
+  runtimeArguments: Schema.optional(Schema.Array(Schema.Unknown)),
   packageArguments: Schema.optional(Schema.Array(RegistryArgument)),
   environmentVariables: Schema.optional(
     Schema.Array(
@@ -224,6 +225,7 @@ const RegistryPackage = Schema.Struct({
 });
 type RegistryPackage = typeof RegistryPackage.Type;
 const decodeRegistryPackage = Schema.decodeUnknownExit(RegistryPackage);
+const decodeRegistryArgument = Schema.decodeUnknownOption(RegistryArgument);
 const isLocalPackage = Schema.is(LocalPackage);
 const isLocalBundle = Schema.is(LocalBundleDownload);
 
@@ -261,7 +263,10 @@ function localChoiceOf(pkg: RegistryPackage): LocalChoice {
   if (transport !== "stdio")
     return { reason: `Runs here as a ${transport} server, which Scient doesn't start` };
   const unknown = (pkg.runtimeArguments ?? [])
-    .map((argument) => nonBlank(argument.name) ?? nonBlank(argument.value) ?? "")
+    .map((raw) => {
+      const argument = Option.getOrUndefined(decodeRegistryArgument(raw));
+      return nonBlank(argument?.name) ?? nonBlank(argument?.value) ?? "an option it can't read";
+    })
     .filter((flag) => !APPLIED_RUNNER_FLAGS[runner]!.has(flag));
   if (unknown.length > 0)
     return { reason: `Needs runner options Scient doesn't pass (${unknown.join(" ")})` };
@@ -314,7 +319,12 @@ function localChoiceFor(packages: ReadonlyArray<unknown>): LocalChoice | undefin
     if (!("reason" in choice)) return choice;
     first ??= choice;
   }
-  return first;
+  return (
+    first ??
+    (packages.length > 0
+      ? { reason: "Its packages are listed in a form Scient can't read" }
+      : undefined)
+  );
 }
 
 /** Normalize one active registry server into a Discover entry. */

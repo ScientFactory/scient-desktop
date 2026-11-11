@@ -309,6 +309,12 @@ describe("MCP Registry discover", () => {
         [{ ...npm, runtimeArguments: [{ type: "named", name: "--package" }] }],
         "Needs runner options Scient doesn't pass (--package)",
       ],
+      // regression: an option that did not decode skipped the package: "Publishes no remote endpoint".
+      [
+        [{ ...npm, runtimeArguments: [{ type: "named", name: "--registry", isRequired: "yes" }] }],
+        "Needs runner options Scient doesn't pass (an option it can't read)",
+      ],
+      [[{ registryType: "npm" }], "listed in a form Scient can't read"],
       [
         [{ ...npm, packageArguments: [{ type: "named", name: "--root", isRequired: true }] }],
         "Needs a value for --root",
