@@ -29,6 +29,7 @@ import { scientSourcesErrorMessage } from "../sources/errorMessage";
 import { useCanChangeLibrary } from "../sources/sourcesCommands";
 import { checkReferences, readReferenceDocuments, resolveReferences } from "./client";
 import { findingGroups, referenceCheckSummary, targetLabel } from "./referenceCheckModel";
+import { settleAfter } from "../sources/settleAfter";
 
 const LIBRARY = "library";
 
@@ -69,19 +70,22 @@ export function ReferenceCheckDialog(props: {
   const run = async (chosen: string) => {
     setRunning(true);
     setError(null);
-    try {
-      const next = await checkReferences(environmentId, {
-        root,
-        target: chosen === LIBRARY ? { kind: "library" } : { kind: "file", path: chosen },
-      });
-      setReport(next);
-      setRows(new Map());
-      setIgnored(new Map());
-    } catch (cause) {
-      setError(errorMessage(cause));
-    } finally {
-      setRunning(false);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          const next = await checkReferences(environmentId, {
+            root,
+            target: chosen === LIBRARY ? { kind: "library" } : { kind: "file", path: chosen },
+          });
+          setReport(next);
+          setRows(new Map());
+          setIgnored(new Map());
+        } catch (cause) {
+          setError(errorMessage(cause));
+        }
+      },
+      () => setRunning(false),
+    );
   };
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- opening the dialog starts the check and loads the documents it can switch to

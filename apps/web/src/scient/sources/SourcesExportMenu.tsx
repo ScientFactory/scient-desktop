@@ -17,6 +17,7 @@ import { downloadBlob } from "../../components/preview/staticImageActions";
 import { toastManager } from "../../components/ui/toast";
 import { exportScientSources } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { settleAfter } from "./settleAfter";
 
 const FORMATS: ReadonlyArray<{
   readonly format: ScientSourcesExportRequest["format"];
@@ -52,35 +53,38 @@ export function useSourcesExport(props: {
 
   const exportAs = async (option: (typeof FORMATS)[number]) => {
     setExporting(true);
-    try {
-      const result = await exportScientSources(props.environmentId, {
-        root: props.root,
-        format: option.format,
-        ...(props.scope ? { sourceIds: [...props.scope.sourceIds] } : {}),
-        includeNotes,
-      });
-      downloadBlob(new Blob([result.content], { type: option.mediaType }), result.fileName);
-      if (result.notKept.length > 0) {
-        const lost = result.notKept
-          .map(({ field, entryCount }) =>
-            entryCount === 1 ? `${field} (1 source)` : `${field} (${entryCount} sources)`,
-          )
-          .join(", ");
-        toastManager.add({
-          type: "warning",
-          title: "Some details are not in this file",
-          description: `${option.label} has no place for: ${lost}.`,
-        });
-      }
-    } catch (cause) {
-      toastManager.add({
-        type: "error",
-        title: "Export failed",
-        description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
-      });
-    } finally {
-      setExporting(false);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          const result = await exportScientSources(props.environmentId, {
+            root: props.root,
+            format: option.format,
+            ...(props.scope ? { sourceIds: [...props.scope.sourceIds] } : {}),
+            includeNotes,
+          });
+          downloadBlob(new Blob([result.content], { type: option.mediaType }), result.fileName);
+          if (result.notKept.length > 0) {
+            const lost = result.notKept
+              .map(({ field, entryCount }) =>
+                entryCount === 1 ? `${field} (1 source)` : `${field} (${entryCount} sources)`,
+              )
+              .join(", ");
+            toastManager.add({
+              type: "warning",
+              title: "Some details are not in this file",
+              description: `${option.label} has no place for: ${lost}.`,
+            });
+          }
+        } catch (cause) {
+          toastManager.add({
+            type: "error",
+            title: "Export failed",
+            description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+          });
+        }
+      },
+      () => setExporting(false),
+    );
   };
 
   return { includeNotes, setIncludeNotes, exporting, exportAs };

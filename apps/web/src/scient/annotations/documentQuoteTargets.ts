@@ -23,10 +23,16 @@ interface Registered {
 const registered = new Set<Registered>();
 let focusOrder = 0;
 
+// Outside the hook: the React Compiler skips a hook that updates a module variable.
+function nextFocusOrder(): number {
+  focusOrder += 1;
+  return focusOrder;
+}
+
 function noteFocus(event: FocusEvent): void {
   const node = event.target instanceof Node ? event.target : null;
   for (const entry of registered) {
-    if (node && entry.target.current?.element()?.contains(node)) entry.focusedAt = ++focusOrder;
+    if (node && entry.target.current?.element()?.contains(node)) entry.focusedAt = nextFocusOrder();
   }
 }
 
@@ -41,7 +47,7 @@ export function useDocumentQuoteTarget(target: DocumentQuoteTarget | null): void
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- registers this editor with the window's quote targets, which track focus across editors
   useEffect(() => {
     if (!enabled) return;
-    const entry: Registered = { target: latest, focusedAt: ++focusOrder };
+    const entry: Registered = { target: latest, focusedAt: nextFocusOrder() };
     if (registered.size === 0) window.addEventListener("focusin", noteFocus, true);
     registered.add(entry);
     return () => {
