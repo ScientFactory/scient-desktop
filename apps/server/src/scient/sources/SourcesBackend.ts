@@ -3,6 +3,8 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import { readScientProjectIdentity } from "@scientfactory/project-init";
+import type { ScientSourceActor } from "@scientfactory/scient-sources";
+import { readScientLibraryMoveState } from "@scientfactory/scient-sources/library-move";
 import {
   ensureScientLibrary,
   isScientLibraryLocation,
@@ -18,6 +20,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../../config.ts";
+import { moveProjectIntoLibrary } from "./LibraryMove.ts";
 
 export type ScientSourcesBackendKind = "project" | "library";
 
@@ -58,28 +61,57 @@ async function libraryExists(root: string): Promise<boolean> {
   );
 }
 
+/** Reads only. A folder that cannot be inspected keeps the library answer it had before 5d. */
+const projectNotMoved = (root: string, library: ScientLibraryLocation | null) =>
+  Effect.promise(() =>
+    readScientLibraryMoveState({ library, projectRoot: root }).then(
+      (state) => !state.moved,
+      () => false,
+    ),
+  );
+
+/** Until a project is moved, its v1 store stays the truth, whichever backend this build runs. */
+const projectStore = (project: ScientSourcesProject): ScientSourcesStore => ({
+  kind: "project",
+  ...project,
+  store: project.root,
+});
+
 /**
  * Where a Sources call reads and writes: today's project root, or the project root plus the
- * personal library under the server's state folder. A write call creates the library once.
+ * personal library under the server's state folder. A write call creates the library once and
+ * moves the project into it first (section 5); a read on a project not yet moved reads its v1
+ * store and never starts the move.
  */
 export const resolveScientSourcesStoreFor = Effect.fn("ScientSourcesBackend.resolve")(function* (
   project: ScientSourcesProject,
   access: ScientSourcesAccess,
+  actor: ScientSourceActor = "user",
 ) {
   const backend = yield* ScientSourcesBackend;
-  if (backend === "project") {
-    return { kind: "project", ...project, store: project.root } satisfies ScientSourcesStore;
-  }
+  if (backend === "project") return projectStore(project);
   // Read optionally, so the project backend adds no service requirement to any caller.
   const config = yield* Effect.serviceOption(ServerConfig);
   if (Option.isNone(config)) {
     return yield* Effect.die(new Error("The library backend needs the server configuration."));
   }
   const root = scientLibraryRootFor(config.value.stateDir);
-  const exists = yield* Effect.promise(() =>
-    access === "write" ? ensureScientLibrary(root).then(() => true) : libraryExists(root),
-  );
   const library = scientLibraryLocation(root);
+  let exists: boolean;
+  if (access === "write") {
+    yield* Effect.promise(() => ensureScientLibrary(root));
+    exists = true;
+    const outcome = yield* moveProjectIntoLibrary({ root: project.root, library, actor });
+    if (outcome === "moved-back" || outcome === "waiting-import") return projectStore(project);
+    if (outcome === "failed" && (yield* projectNotMoved(project.root, library))) {
+      return projectStore(project);
+    }
+  } else {
+    exists = yield* Effect.promise(() => libraryExists(root));
+    if (yield* projectNotMoved(project.root, exists ? library : null)) {
+      return projectStore(project);
+    }
+  }
   return {
     kind: "library",
     ...project,

@@ -284,6 +284,8 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     survivorId: Schema.optionalKey(NonEmptyString),
   }),
   Schema.Struct({ action: Schema.Literal("undo-merge"), mergeId: NonEmptyString }),
+  /** The move's Undo: the project's Sources go back into `.scient/sources`. */
+  Schema.Struct({ action: Schema.Literal("move-back") }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -309,6 +311,9 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "already-undone",
     "survivor-missing",
     "loser-missing",
+    "moved-back",
+    "not-moved",
+    "project-store-present",
   ]),
   pin: Schema.optionalKey(
     Schema.Struct({
@@ -332,6 +337,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
   notMerged: Schema.optionalKey(Schema.Array(NonEmptyString)),
   unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
   alsoPinnedIn: AlsoPinnedIn,
+  restoredSources: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type ScientSourcesOrganizeResult = typeof ScientSourcesOrganizeResult.Type;
 

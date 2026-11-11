@@ -30,6 +30,7 @@ import {
   mergeScientLibrarySources,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
+import { moveScientProjectBackIntoProject } from "@scientfactory/scient-sources/library-move";
 import {
   pinScientLibrarySource,
   renameScientProjectPinKey,
@@ -285,6 +286,7 @@ export const resolveScientSourcesStore = Effect.fn("ScientSourcesToolkit.resolve
     return yield* resolveScientSourcesStoreFor(
       project,
       invocation.capabilities.has("sources:write") ? "write" : "read",
+      "agent",
     );
   },
 );
@@ -542,7 +544,8 @@ const isLibraryOrganizeChange = (
   change.action === "pin" ||
   change.action === "unpin" ||
   change.action === "merge" ||
-  change.action === "undo-merge";
+  change.action === "undo-merge" ||
+  change.action === "move-back";
 
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
 export const organizeLibrarySourcesForInvocation = Effect.fn(
@@ -667,6 +670,18 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
         survivorId: undone.survivor.sourceId,
         unrevertedFields: undone.unrevertedFields,
       };
+    }
+    case "move-back": {
+      const moved = yield* attempt(() =>
+        moveScientProjectBackIntoProject({
+          library: store.library,
+          projectRoot: store.root,
+          actor: "agent",
+        }),
+      );
+      return moved.outcome === "moved-back"
+        ? { outcome: moved.outcome, restoredSources: moved.restoredSources }
+        : { outcome: moved.outcome };
     }
   }
 });

@@ -236,6 +236,7 @@ import * as ProviderLifecycleCoordinator from "./scient/providerLifecycle/Provid
 import * as GeneratedDocumentStore from "./scient/documentArtifacts/GeneratedDocumentStore.ts";
 import * as OwnedLocalEndpoints from "./localEndpoints/OwnedLocalEndpointRegistry.ts";
 import { documentCaptureStartupSweepLayer } from "./scient/documentExport/DocumentCapture.ts";
+import { libraryMovePassLayer } from "./scient/sources/LibraryMovePass.ts";
 // SCIENT-FORK:START — generated-image temp files a crash left behind.
 import { generatedImageTempSweepLayer } from "./generatedImageAttachments.ts";
 // SCIENT-FORK:END
@@ -894,6 +895,7 @@ export const layerMakeRoutes = Layer.mergeAll(
     wordDiagramRequestBodyLayer,
     scientFeatureUsageLayer,
     documentCaptureStartupSweepLayer,
+    libraryMovePassLayer,
     // SCIENT-FORK:START — generated-image temp files a crash left behind.
     generatedImageTempSweepLayer,
     // SCIENT-FORK:END

@@ -400,6 +400,41 @@ describe("Sources tools on the library backend", () => {
   );
 
   it.effect(
+    "a read on a project not moved yet reads its v1 store; the first write call moves it",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const own = yield* Effect.promise(() =>
+          importScientSource({
+            root: fixture.root,
+            operationId: NodeCrypto.randomUUID(),
+            candidate: candidate("v1", { citationKey: "lovelace2026v1" }),
+          }),
+        );
+        yield* Effect.promise(() => libraryRecord(fixture, "elsewhere"));
+        const trees = () =>
+          Effect.promise(() =>
+            Promise.all([folderBytes(fixture.root), folderBytes(fixture.libraryRoot)]),
+          );
+        const before = yield* trees();
+
+        const read = yield* run(listScientSourcesForInvocation({}), fixture, { write: false });
+        expect(read.records.map((record) => record.sourceId)).toEqual([own.record!.sourceId]);
+        expect(yield* trees()).toEqual(before);
+
+        const written = yield* run(listScientSourcesForInvocation({}), fixture);
+        expect(written.records).toMatchObject([
+          { sourceId: own.record!.sourceId, citationKey: "lovelace2026v1", pinned: true },
+        ]);
+        expect(
+          yield* Effect.promise(() => exists(NodePath.join(fixture.root, ".scient/sources"))),
+        ).toBe(false);
+        const afterMove = yield* run(listScientSourcesForInvocation({}), fixture, { write: false });
+        expect(afterMove.records.map((record) => record.pinned)).toEqual([true]);
+      }),
+  );
+
+  it.effect(
     "without sources:write an unresolved pin comes from its snapshot and nothing is written",
     () =>
       Effect.gen(function* () {

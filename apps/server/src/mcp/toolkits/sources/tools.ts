@@ -977,6 +977,7 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     survivorId: Schema.optionalKey(NonEmptyString),
   }),
   Schema.Struct({ action: Schema.Literal("undo-merge"), mergeId: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("move-back") }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -993,6 +994,9 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     "already-undone",
     "survivor-missing",
     "loser-missing",
+    "moved-back",
+    "not-moved",
+    "project-store-present",
   ]),
   pin: Schema.optionalKey(
     Schema.Struct({
@@ -1017,10 +1021,11 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
   notMerged: Schema.optionalKey(Schema.Array(NonEmptyString)),
   unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
   alsoPinnedIn: AlsoPinnedIn,
+  restoredSources: Schema.optionalKey(Schema.Int),
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; pinning again returns the pin, with the new note); unpin by citationKey; merge duplicate sources (undo-merge with mergeId).`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; pinning again returns the pin, with the new note); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); move-back returns this project's sources from the Library into the project.`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );

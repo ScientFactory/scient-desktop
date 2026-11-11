@@ -19,6 +19,7 @@ import {
   mergeScientLibrarySources,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
+import { moveScientProjectBackIntoProject } from "@scientfactory/scient-sources/library-move";
 import {
   changeScientLibraryReview,
   listScientLibraryReviewRecords,
@@ -480,7 +481,8 @@ export const isLibraryOrganizeAction = (
   change.action === "pin" ||
   change.action === "unpin" ||
   change.action === "merge" ||
-  change.action === "undo-merge";
+  change.action === "undo-merge" ||
+  change.action === "move-back";
 
 const pinSummary = (pin: ScientProjectPin) => ({
   citationKey: pin.citationKey,
@@ -552,6 +554,16 @@ export async function organizeLibrarySources(
         survivorId: undone.survivor.sourceId,
         unrevertedFields: undone.unrevertedFields,
       };
+    }
+    case "move-back": {
+      const moved = await moveScientProjectBackIntoProject({
+        library: store.library,
+        projectRoot: store.root,
+        actor: ACTOR,
+      });
+      return moved.outcome === "moved-back"
+        ? { outcome: moved.outcome, restoredSources: moved.restoredSources }
+        : { outcome: moved.outcome };
     }
   }
 }
