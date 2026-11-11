@@ -1,5 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Merge tests exercise the real library files.
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -22,12 +24,43 @@ import {
   readScientSourceTrashEntries,
   restoreScientSource,
   updateScientSourceMetadata,
+  updateScientSourceNote,
 } from "./store.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 
 const fixtures: string[] = [];
+const originalRename = NodeFS.promises.rename;
+const originalUnlink = NodeFS.promises.unlink;
+
+function restoreFileOperations(): void {
+  NodeFS.promises.rename = originalRename;
+  NodeFS.promises.unlink = originalUnlink;
+  NodeModule.syncBuiltinESMExports();
+}
+
+/** Fails the next rename onto, or unlink of, a matching path, as a crash at that write would. */
+function failNext(operation: "rename" | "unlink", target: RegExp): void {
+  const fail = (path: unknown) => {
+    if (!target.test(String(path))) return;
+    restoreFileOperations();
+    throw new Error("Injected file failure.");
+  };
+  if (operation === "rename") {
+    NodeFS.promises.rename = async (from, to) => {
+      fail(to);
+      return originalRename(from, to);
+    };
+  } else {
+    NodeFS.promises.unlink = async (path) => {
+      fail(path);
+      return originalUnlink(path);
+    };
+  }
+  NodeModule.syncBuiltinESMExports();
+}
 
 afterEach(async () => {
+  restoreFileOperations();
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -325,5 +358,110 @@ describe("library merge engine", () => {
     expect(await undoScientLibraryMerge({ library, mergeId: merge!.mergeId })).toEqual({
       outcome: "already-undone",
     });
+  });
+
+  it("lists a shared ISBN or ISSN for one title or two whole books, never across different DOIs", async () => {
+    const { root, library } = await newLibrary();
+    const issn = { scheme: "issn", value: "1234-5679" };
+    const isbn = { scheme: "isbn", value: "9780000000026" };
+    const editorial = (sourceId: string, issuedYear: number, doi?: string) =>
+      record(sourceId, {
+        title: "Editorial",
+        issuedYear,
+        identifiers: [issn, ...(doi ? [{ scheme: "doi", value: doi }] : [])],
+      });
+    await seed(root, [
+      editorial("source_a1", 2020, "10.1000/editorial.1"),
+      editorial("source_a2", 2021),
+      editorial("source_a3", 2022, "10.1000/editorial.3"),
+      record("source_b1", { type: "book", title: "Atlas", identifiers: [isbn] }),
+      record("source_b2", {
+        type: "book",
+        title: "Atlas of the world, second edition",
+        issuedYear: 2021,
+        identifiers: [isbn],
+      }),
+    ]);
+
+    const result = await mergeScientLibraryDuplicates({ library });
+
+    expect(result.mergedCount).toBe(0);
+    expect(result.possibleDuplicates).toEqual([
+      { sourceIds: ["source_a1", "source_a2"], kind: "possible-container-match" },
+      { sourceIds: ["source_a2", "source_a3"], kind: "possible-container-match" },
+      { sourceIds: ["source_b1", "source_b2"], kind: "possible-container-match" },
+    ]);
+  });
+
+  it.each([
+    { edited: false, live: ["source_old"], resolvesTo: "source_old", trashed: 1 },
+    { edited: true, live: ["source_new", "source_old"], resolvesTo: "source_new", trashed: 0 },
+  ])(
+    "settles a merge whose loser stayed live beside its trash entry (edited since: $edited)",
+    async ({ edited, live, resolvesTo, trashed }) => {
+      const { root, library } = await newLibrary();
+      const doi = { scheme: "doi", value: "10.1000/stuck" };
+      await seed(root, [
+        record("source_old", { identifiers: [doi] }),
+        record("source_new", {
+          identifiers: [doi],
+          publisher: "Press",
+          importedAt: "2026-02-01T00:00:00.000Z",
+        }),
+      ]);
+      failNext("unlink", /records[\\/]source_new\.json$/u);
+      expect((await mergeScientLibraryDuplicates({ library })).failures).toHaveLength(1);
+      expect(await liveIds(library)).toEqual(["source_new", "source_old"]);
+      if (edited) {
+        const update = await updateScientSourceNote({
+          root: library,
+          sourceId: "source_new",
+          expectedRevision: 1,
+          note: "Written after the failure.",
+        });
+        expect(update.outcome).toBe("updated");
+      }
+
+      // Any merge write settles what the failure left.
+      expect(await undoScientLibraryMerge({ library, mergeId: "merge_none" })).toEqual({
+        outcome: "not-found",
+      });
+
+      expect(await liveIds(library)).toEqual(live);
+      expect(resolveScientLibraryAlias(await readScientLibraryAliases(library), "source_new")).toBe(
+        resolvesTo,
+      );
+      expect(await readScientSourceTrashEntries(library)).toHaveLength(trashed);
+    },
+  );
+
+  it("keeps collection membership for Undo when a crash follows the collection rewrite", async () => {
+    const { root, library } = await newLibrary();
+    const doi = { scheme: "doi", value: "10.1000/crash" };
+    await seed(root, [
+      record("source_keep", { identifiers: [doi] }),
+      record("source_gone", { identifiers: [doi], importedAt: "2026-02-01T00:00:00.000Z" }),
+    ]);
+    const created = await organizeScientSources({
+      root: library,
+      change: { action: "create-collection", name: "Grant", sourceIds: ["source_gone"] },
+      actor: "user",
+    });
+    const membership = async () =>
+      (await readScientSourcesOrganization(library)).collections.find(
+        (entry) => entry.collectionId === created.collection?.collectionId,
+      )?.sourceIds;
+    failNext("rename", /merges[\\/]merge_[^\\/]+\.json$/u);
+    await expect(mergeScientLibraryDuplicates({ library })).rejects.toThrow("Injected");
+    expect(await membership()).toEqual(["source_keep"]);
+    const [entry] = await readScientSourceTrashEntries(library);
+
+    const undone = await undoScientLibraryMerge({
+      library,
+      mergeId: entry!.mergedInto!.mergeId,
+    });
+
+    expect(undone.outcome).toBe("undone");
+    expect(await membership()).toEqual(["source_gone"]);
   });
 });

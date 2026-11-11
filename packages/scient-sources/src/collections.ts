@@ -184,6 +184,8 @@ function rewriteLibraryCollections<A>(
     collections: ReadonlyArray<ScientSourceCollection>,
     now: string,
   ) => { readonly collections: ReadonlyArray<ScientSourceCollection>; readonly result: A },
+  /** Runs once the change is known and before any collection file is written. */
+  beforeWrite?: (result: A) => Promise<void>,
 ): Promise<A> {
   if (paths.owner.kind !== "library") throw new Error("Only a library merges sources.");
   return withStoreLock(paths, "collections-write", async () => {
@@ -191,6 +193,7 @@ function rewriteLibraryCollections<A>(
     const { collections, result } = change(document.collections, new Date().toISOString());
     const next: ScientSourceCollectionsDocument = { ...document, collections: [...collections] };
     validateCollectionsDocument(next);
+    await beforeWrite?.(result);
     await writeLibraryDocument(paths, document, next);
     return result;
   });

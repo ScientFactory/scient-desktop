@@ -73,12 +73,6 @@ function titleKey(record: Pick<ScientSourceRecord, "title">): string {
     .trim();
 }
 
-function hasWorkLevelIdentifier(record: ScientSourceRecord): boolean {
-  return record.identifiers.some(
-    (identifier) => workLevelIdentifierKey(identifier.scheme, identifier.value) !== null,
-  );
-}
-
 /**
  * The record a merge keeps: the most recent registry check, otherwise the oldest import. The ID
  * breaks ties so every computer picks the same one.
@@ -117,9 +111,9 @@ function buckets(
 
 /**
  * Library-wide duplicates, design order: same Zotero item, a shared work-level identifier, or the
- * same PDF with matching titles and no conflicting identifiers merge. Title, lead author and year,
- * or an ISBN/ISSN plus title, are only possible: chapters share an ISBN, articles an ISSN. A pair
- * `isDistinct` names never lands in one group, even through a third record.
+ * same PDF with matching titles and no conflicting identifiers merge. Title, lead author and year
+ * are only possible; so is an ISBN or ISSN shared by one title or two whole books, unless their
+ * DOIs differ. A pair `isDistinct` names never lands in one group, even through a third record.
  */
 export function assessScientLibraryDuplicates(input: {
   readonly records: ReadonlyArray<ScientSourceRecord>;
@@ -208,6 +202,7 @@ export function assessScientLibraryDuplicates(input: {
   const addPossible = (
     bucket: ReadonlyArray<ScientSourceRecord>,
     kind: ScientLibraryPossibleDuplicateKind,
+    excluded?: (left: ScientSourceRecord, right: ScientSourceRecord) => boolean,
   ) => {
     for (const [index, left] of bucket.entries()) {
       for (const right of bucket.slice(index + 1)) {
@@ -215,6 +210,7 @@ export function assessScientLibraryDuplicates(input: {
         const rightId = survivorOf.get(right.sourceId) ?? right.sourceId;
         const key = pairKey(leftId, rightId);
         if (leftId === rightId || listed.has(key) || input.isDistinct(leftId, rightId)) continue;
+        if (excluded?.(left, right)) continue;
         listed.add(key);
         possibleDuplicates.push({
           sourceIds: leftId < rightId ? [leftId, rightId] : [rightId, leftId],
@@ -231,15 +227,18 @@ export function assessScientLibraryDuplicates(input: {
   }
   for (const bucket of buckets(input.records, (record) => {
     const title = titleKey(record);
-    if (!title || hasWorkLevelIdentifier(record)) return [];
     return record.identifiers.flatMap((identifier) => {
       const scheme = identifier.scheme.trim().toLowerCase();
-      return scheme === "isbn" || scheme === "issn"
-        ? [`${normalizePersistentIdentifier(scheme, identifier.value)}\0${title}`]
-        : [];
+      if (scheme !== "isbn" && scheme !== "issn") return [];
+      const container = normalizePersistentIdentifier(scheme, identifier.value);
+      return [
+        ...(title ? [`${container}\0${title}`] : []),
+        // An ISSN names a whole journal; only two whole-book records share an ISBN as one work.
+        ...(scheme === "isbn" && record.type === "book" ? [`${container}\0\0book`] : []),
+      ];
     });
   })) {
-    addPossible(bucket, "possible-container-match");
+    addPossible(bucket, "possible-container-match", scientLibraryIdentifiersConflict);
   }
 
   return { groups, possibleDuplicates };

@@ -380,32 +380,52 @@ async function finishMerges(
   pending: ReadonlyArray<ScientLibraryMerge>,
 ): Promise<ReadonlyArray<ScientLibraryMerge>> {
   if (pending.length === 0) return [];
-  const moved = await rewriteLibraryCollections(paths, (collections, now) => {
-    const result = new Map<string, { collectionIds: string[]; added: string[] }>();
-    let next = collections;
-    for (const merge of pending) {
-      const collectionIds: string[] = [];
-      const added: string[] = [];
-      next = next.map((collection) => {
-        if (!collection.sourceIds.includes(merge.loserId)) return collection;
-        collectionIds.push(collection.collectionId);
-        const hasSurvivor = collection.sourceIds.includes(merge.survivorId);
-        if (!hasSurvivor) added.push(collection.collectionId);
-        return {
-          ...collection,
-          sourceIds: hasSurvivor
-            ? collection.sourceIds.filter((sourceId) => sourceId !== merge.loserId)
-            : collection.sourceIds.map((sourceId) =>
-                sourceId === merge.loserId ? merge.survivorId : sourceId,
-              ),
-          updatedAt: now,
-          updatedBy: merge.mergedBy,
-        };
-      });
-      result.set(merge.mergeId, { collectionIds, added });
-    }
-    return { collections: next, result };
-  });
+  const moved = await rewriteLibraryCollections(
+    paths,
+    (collections, now) => {
+      const result = new Map<string, ScientLibraryMerge>();
+      let next = collections;
+      for (const merge of pending) {
+        // A receipt that already names collections was interrupted after they were rewritten.
+        const collectionIds = new Set(merge.collectionIds);
+        const added = new Set(merge.addedToCollectionIds);
+        next = next.map((collection) => {
+          if (!collection.sourceIds.includes(merge.loserId)) return collection;
+          collectionIds.add(collection.collectionId);
+          const hasSurvivor = collection.sourceIds.includes(merge.survivorId);
+          if (!hasSurvivor) added.add(collection.collectionId);
+          return {
+            ...collection,
+            sourceIds: hasSurvivor
+              ? collection.sourceIds.filter((sourceId) => sourceId !== merge.loserId)
+              : collection.sourceIds.map((sourceId) =>
+                  sourceId === merge.loserId ? merge.survivorId : sourceId,
+                ),
+            updatedAt: now,
+            updatedBy: merge.mergedBy,
+          };
+        });
+        result.set(merge.mergeId, {
+          ...merge,
+          collectionIds: [...collectionIds],
+          addedToCollectionIds: [...added],
+        });
+      }
+      return { collections: next, result };
+    },
+    // Undo reads the membership from the receipt, so it lands before the collections change.
+    async (planned) => {
+      for (const merge of pending) {
+        const next = planned.get(merge.mergeId)!;
+        if (
+          next.collectionIds.length > merge.collectionIds.length ||
+          next.addedToCollectionIds.length > merge.addedToCollectionIds.length
+        ) {
+          await atomicWriteJson(pendingMergePath(paths, merge.mergeId), next, MAX_MERGE_BYTES);
+        }
+      }
+    },
+  );
 
   const aliases = await readLibraryAliasesAt(paths.root);
   for (const merge of pending) {
@@ -420,13 +440,7 @@ async function finishMerges(
 
   const finished: ScientLibraryMerge[] = [];
   for (const merge of pending) {
-    const membership = moved.get(merge.mergeId);
-    const done: ScientLibraryMerge = {
-      ...merge,
-      state: "done",
-      collectionIds: membership?.collectionIds ?? [],
-      addedToCollectionIds: membership?.added ?? [],
-    };
+    const done: ScientLibraryMerge = { ...(moved.get(merge.mergeId) ?? merge), state: "done" };
     await atomicWriteJson(mergePath(paths, merge.mergeId), done, MAX_MERGE_BYTES);
     await NodeFSP.rm(pendingMergePath(paths, merge.mergeId), { force: true });
     finished.push(done);
@@ -436,7 +450,8 @@ async function finishMerges(
 
 /**
  * Finishes merges a crash interrupted. One whose survivor revision landed is completed; one that
- * stopped before it is dropped, and the next pass finds the pair again. Caller holds the lock.
+ * stopped before it, or whose records changed since, is dropped, and the next pass finds the pair
+ * again. Caller holds the lock.
  */
 async function settlePendingMerges(paths: StorePaths): Promise<void> {
   const directory = NodePath.join(paths.root, MERGES_DIRECTORY, PENDING_MERGES_DIRECTORY);
@@ -450,11 +465,13 @@ async function settlePendingMerges(paths: StorePaths): Promise<void> {
     );
     if (!merge) continue;
     const trashed = await readTrashEntry(paths, merge.loserId).catch(() => null);
-    if (trashed?.mergedInto?.mergeId === merge.mergeId) {
+    const trashedByMerge = trashed?.mergedInto?.mergeId === merge.mergeId;
+    // The trash entry lands before the record goes, so it does not prove the loser left.
+    const loser = await readScientSourceRecordIfPresent(paths, merge.loserId);
+    if (!loser && trashedByMerge) {
       finishing.push(merge);
       continue;
     }
-    const loser = await readScientSourceRecordIfPresent(paths, merge.loserId);
     const survivor = await readScientSourceRecordIfPresent(paths, merge.survivorId);
     if (loser?.revision === merge.loserRevision && survivor?.revision === merge.survivorRevision) {
       await moveRecordToTrash(paths, loser, merge.mergedBy, {
@@ -463,6 +480,10 @@ async function settlePendingMerges(paths: StorePaths): Promise<void> {
       });
       finishing.push(merge);
       continue;
+    }
+    // Edited since: the loser stays as it is now, so the entry holding its old revision goes.
+    if (loser && trashedByMerge) {
+      await NodeFSP.rm(NodePath.join(paths.trash, `${merge.loserId}.json`), { force: true });
     }
     await NodeFSP.rm(filePath, { force: true });
   }
