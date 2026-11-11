@@ -55,7 +55,7 @@ import { APP_BASE_NAME } from "../../branding";
 import { ScientReleaseNotes } from "../../scient/releaseNotes/ScientReleaseNotes";
 import { requestConversationImport } from "../../scient/conversationImport/requests";
 // SCIENT-FORK:START — Scient Cloud conversations.
-import { hasCloudAccount } from "../../scient/cloud/useCloudAccount";
+import { useCloudConversationsAvailable } from "../../scient/cloud/cloudConversationsAvailable";
 // SCIENT-FORK:END
 import { ScientSymbol } from "../ScientSymbol";
 
@@ -282,7 +282,7 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   };
   // SCIENT-FORK:END
   // SCIENT-FORK:START — conversations the person's computers copied to Scient Cloud.
-  const cloudAvailable = hasCloudAccount();
+  const cloudAvailable = useCloudConversationsAvailable();
   const handleCloudClick = () => {
     closeMobileSidebar();
     void navigate({ to: "/cloud" });

@@ -17,6 +17,7 @@ import type {
 import { runtime } from "../../lib/runtime";
 import { readPreparedConnection } from "../../state/session";
 import type { CloudApi } from "./cloudApi";
+import { markCloudConversationsAvailable } from "./cloudConversationsAvailable";
 
 function prepared(environmentId: EnvironmentId) {
   const connection = readPreparedConnection(environmentId);
@@ -62,9 +63,11 @@ export async function turnOnCloudCopy(input: {
       completeEnvironmentScientCloudEnrollment({ prepared: connection, userId: input.userId }),
     );
   }
-  return runtime.runPromise(
+  const enabled = await runtime.runPromise(
     setEnvironmentScientCloudEnabled({ prepared: connection, enabled: true }),
   );
+  markCloudConversationsAvailable(input.userId);
+  return enabled;
 }
 
 export async function turnOffCloudCopy(environmentId: EnvironmentId) {
