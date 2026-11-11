@@ -3385,6 +3385,25 @@ describe("connectors agents run", () => {
         ]);
         expect(JSON.stringify(used)).not.toContain(key);
         expect(JSON.stringify(used)).not.toContain(Buffer.from(key).toString("base64"));
+        // regression: an agent's calls reached a connector that was off, or not in its project.
+        const addedId = (yield* harness.runtime.list()).connectors.find(
+          (item) => item.serverName === added.connector,
+        )!.connectorId;
+        const reached = vendor.upstream.length;
+        const callSearch = testConnector(added.connector, undefined, [{ tool: "search" }]);
+        yield* harness.runtime.update({ connectorId: addedId, enabled: false });
+        expect((yield* agent(callSearch)).error).toContain("off");
+        yield* harness.runtime.update({ connectorId: addedId, enabled: true });
+        yield* harness.runtime.update({
+          connectorId: addedId,
+          availability: { type: "projects", projectIds: [] },
+        });
+        expect((yield* agent(callSearch)).error).toContain("isn't available");
+        expect(vendor.upstream).toHaveLength(reached);
+        yield* harness.runtime.update({
+          connectorId: addedId,
+          availability: { type: "all-projects" },
+        });
         const own = yield* agent(addConnector({ from: ownApp.name, asks }));
         expect(own.status).toBe("needs-sign-in");
         expect(

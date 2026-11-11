@@ -1982,6 +1982,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       ...(message === undefined ? {} : { message }),
     });
     if (record.status === "needs-auth") return result("needs-auth", "Sign in to use this service.");
+    // Calling its tools is using it: only where a chat would get it (on, eligible, this project).
+    if ((input.calls?.length ?? 0) > 0) {
+      if (!record.enabled || !(yield* isPluginEligible(record)))
+        return result("error", "It is off. Turn it on before calling its tools.");
+      if (!isAvailableIn(record, input.location?.projectId))
+        return result("error", "It isn't available in this chat's project.");
+    }
     if (record.local !== undefined) {
       const local = (yield* summaryOf(record)).local;
       if (local?.problem !== undefined) return result("error", local.problem);
