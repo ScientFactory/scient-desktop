@@ -3,6 +3,7 @@ import {
   normalizePersistentIdentifier,
   normalizeScientSourceAbstractDocument,
   type ScientSourceIdentifier,
+  type ScientSourceTopic,
 } from "@scientfactory/scient-sources";
 import { XMLParser } from "fast-xml-parser";
 
@@ -24,7 +25,8 @@ const arxivXmlParser = new XMLParser({
   parseTagValue: false,
   processEntities: true,
   trimValues: true,
-  isArray: (name) => name === "entry" || name === "author" || name === "link",
+  isArray: (name) =>
+    name === "entry" || name === "author" || name === "link" || name === "category",
 });
 
 interface ArxivEntry {
@@ -34,6 +36,23 @@ interface ArxivEntry {
   readonly published: string | null;
   readonly authors: ReadonlyArray<string>;
   readonly doi: string | null;
+  readonly categories: ReadonlyArray<ScientSourceTopic>;
+}
+
+/** The primary category first, then cross-lists, as arXiv's own category codes. */
+function entryCategories(entry: Record<string, unknown>): ReadonlyArray<ScientSourceTopic> {
+  const term = (value: unknown) =>
+    value && typeof value === "object" && "@_term" in value ? textOf(value["@_term"]) : null;
+  const primary = term(entry["arxiv:primary_category"]);
+  const terms = [primary, ...records(entry["category"]).map(term)].filter(
+    (value): value is string => value !== null,
+  );
+  return [...new Set(terms)].map((code) => ({
+    scheme: "arxiv",
+    id: code,
+    name: code,
+    ...(code === primary ? { primary: true } : {}),
+  }));
 }
 
 function textOf(value: unknown): string | null {
@@ -80,6 +99,7 @@ function parseArxivFeed(xml: string): ReadonlyArray<ArxivEntry> {
         published: textOf(entry["published"]),
         authors: records(entry["author"]).flatMap((author) => textOf(author["name"]) ?? []),
         doi: doi && isWellFormedDoi(doi.toLowerCase()) ? doi : null,
+        categories: entryCategories(entry),
       },
     ];
   });
@@ -112,6 +132,7 @@ function metadataFromEntry(entry: ArxivEntry): IdentifierLookup {
       pages: null,
       language: null,
       url: `https://arxiv.org/abs/${entry.id}`,
+      ...(entry.categories.length > 0 ? { topics: entry.categories } : {}),
     },
   };
 }

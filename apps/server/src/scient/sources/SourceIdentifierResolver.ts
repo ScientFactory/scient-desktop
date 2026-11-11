@@ -22,6 +22,7 @@ import {
   type ScientSourceEditorialNotice,
   type ScientSourceFieldProvenance,
   type ScientSourceIdentifier,
+  type ScientSourceTopic,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
 import * as Context from "effect/Context";
@@ -246,6 +247,8 @@ export interface ResolvedSourceMetadata {
   readonly editorialNotices?: ReadonlyArray<ScientSourceEditorialNotice>;
   readonly updates?: ReadonlyArray<RegistryUpdateNotice>;
   readonly relations?: ReadonlyArray<RegistryRelation>;
+  /** arXiv's categories, read from the same response. */
+  readonly topics?: ReadonlyArray<ScientSourceTopic>;
 }
 
 const isRecord = (value: unknown): value is Readonly<Record<string, unknown>> =>

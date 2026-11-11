@@ -18,6 +18,7 @@ import { importScientSource, listScientSourceRecords } from "@scientfactory/scie
 import * as Context from "effect/Context";
 
 import { observeSourceImport, type SourceImportObserver } from "./SourceImportObservation.ts";
+import { scheduleSourceCategorization, seedSourceCategories } from "./SourceCategories.ts";
 import { enrichScientSourceCandidate } from "./SourceMetadataEnricher.ts";
 import {
   applyResolvedSourceMetadata,
@@ -272,6 +273,7 @@ export async function addScientSourcesByIdentifier(
       (result) => (result.outcome === "imported" ? "imported" : "skipped"),
     );
     if (imported.outcome === "imported" && imported.record) {
+      seedSourceCategories(input.root, imported.record.sourceId, resolution.metadata.topics);
       results.push({
         input: step.input,
         identifier: step.identifier,
@@ -295,6 +297,9 @@ export async function addScientSourcesByIdentifier(
         imported.duplicate.kind === "possible-metadata-match",
       ),
     );
+  }
+  if (results.some((item) => item.outcome === "imported")) {
+    void scheduleSourceCategorization(input.root);
   }
   return results;
 }

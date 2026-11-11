@@ -6,6 +6,8 @@ import {
   takenCitationKeys,
   compileScientSourceFilter,
   normalizeScientSourceEditableMetadata,
+  scientSourceCategoryBasis,
+  scientSourceCategoryCounts,
   scientSourceTagCounts,
   validateScientSourceEditableMetadata,
   type ScientSourceCandidate,
@@ -13,9 +15,15 @@ import {
   type ScientSourceFilter,
   type ScientSourcesBulkRequestChange,
   type ScientSourcesOrganizeAction,
+  type ScientSourceStudyDesign,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
 import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
+import {
+  currentScientSourceCategories,
+  readScientSourceCategories,
+  scientSourceCategorySummaryFor,
+} from "@scientfactory/scient-sources/categories-store";
 import { resolveScientSourceInputPdf } from "@scientfactory/scient-sources/store";
 import {
   deleteTrashedScientSource,
@@ -243,6 +251,8 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly collectionId?: string;
     readonly type?: ScientSourceType;
     readonly hasPdf?: boolean;
+    readonly studyDesign?: ScientSourceStudyDesign;
+    readonly topic?: string;
     readonly savedSearchId?: string;
     readonly inTrash?: boolean;
     readonly offset?: number;
@@ -257,9 +267,14 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
           ]),
         )
       : null;
-    const all = trash
+    const records = trash
       ? [...trash.values()].map((entry) => entry.record)
       : yield* attempt(() => listScientSourceRecords(root));
+    const categories = yield* attempt(() => readScientSourceCategories(root));
+    const all = records.map((record) => {
+      const category = scientSourceCategorySummaryFor(record, categories);
+      return category ? { ...record, categories: category } : record;
+    });
     const narrowsByOrganization =
       input.collectionId !== undefined || input.savedSearchId !== undefined;
     const organization = narrowsByOrganization
@@ -279,6 +294,8 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         ...(input.collectionId ? { collectionId: input.collectionId } : {}),
         ...(input.type ? { type: input.type } : {}),
         ...(input.hasPdf !== undefined ? { hasPdf: input.hasPdf } : {}),
+        ...(input.studyDesign ? { studyDesign: input.studyDesign } : {}),
+        ...(input.topic ? { topic: input.topic } : {}),
       },
     ];
     const predicates = filters.map((filter) => compileScientSourceFilter(filter, organization));
@@ -313,6 +330,12 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
             }
           : {}),
         ...(record.tags.length > 0 ? { tags: record.tags } : {}),
+        ...("categories" in record && record.categories.studyDesign
+          ? { studyDesign: record.categories.studyDesign }
+          : {}),
+        ...("categories" in record && record.categories.topics
+          ? { topics: record.categories.topics.map((topic) => topic.name) }
+          : {}),
       })),
       total: matching.length,
       nextOffset: offset + page.length < matching.length ? offset + page.length : null,
@@ -328,10 +351,25 @@ export const readScientSourceCollectionsForInvocation = Effect.fn(
   const organization = yield* attempt(() =>
     readScientSourcesOrganization(root, new Set(records.map((record) => record.sourceId))),
   );
+  const categories = yield* attempt(() => readScientSourceCategories(root));
+  const counts = scientSourceCategoryCounts(
+    records.map((record) => {
+      const category = scientSourceCategorySummaryFor(record, categories);
+      return category ? { categories: category } : {};
+    }),
+  );
+  const categorizing = records.filter(
+    (record) =>
+      scientSourceCategoryBasis(record.identifiers) !== null &&
+      !currentScientSourceCategories(record, categories),
+  ).length;
   return {
     collections: organization.collections.map((collection) => ({
       collectionId: collection.collectionId,
       name: collection.name,
+      ...(collection.parentCollectionId
+        ? { parentCollectionId: collection.parentCollectionId }
+        : {}),
       sourceCount: collection.sourceIds.length,
     })),
     savedSearches: organization.savedSearches.map(({ searchId, name, filter }) => ({
@@ -340,6 +378,9 @@ export const readScientSourceCollectionsForInvocation = Effect.fn(
       filter,
     })),
     tags: scientSourceTagCounts(records).slice(0, 200),
+    studyDesigns: counts.studyDesigns,
+    topics: counts.topics.slice(0, 200),
+    ...(categorizing > 0 ? { categorizing } : {}),
     ...(organization.issue ? { message: organization.issue } : {}),
   };
 });
@@ -375,6 +416,10 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
     const record = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
     if (!record) return yield* toolError("not-found", "The source was not found in this project.");
     const revisions = yield* attempt(() => listScientSourceRevisions(root, input.sourceId));
+    const categories = currentScientSourceCategories(
+      record,
+      yield* attempt(() => readScientSourceCategories(root)),
+    );
     const maximumAbstractCharacters = 50_000;
     const abstract = record.abstract;
     const abstractTruncated = abstract !== null && abstract.length > maximumAbstractCharacters;
@@ -384,6 +429,18 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       abstractTruncated,
       note: record.note ?? null,
       revisions: revisions ?? [],
+      ...(categories
+        ? {
+            categories: {
+              ...(categories.studyDesign ? { studyDesign: categories.studyDesign } : {}),
+              ...(categories.publicationTypes
+                ? { publicationTypes: categories.publicationTypes }
+                : {}),
+              ...(categories.topics ? { topics: categories.topics } : {}),
+              checkedAt: categories.checkedAt,
+            },
+          }
+        : {}),
       attachments: record.attachments.map(
         ({
           attachmentId,

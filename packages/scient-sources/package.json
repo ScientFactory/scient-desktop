@@ -16,6 +16,10 @@
       "types": "./src/collections.ts",
       "import": "./src/collections.ts"
     },
+    "./categories-store": {
+      "types": "./src/categoriesStore.ts",
+      "import": "./src/categoriesStore.ts"
+    },
     "./bibtex": {
       "types": "./src/bibtex.ts",
       "import": "./src/bibtex.ts"
