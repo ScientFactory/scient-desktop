@@ -217,8 +217,11 @@ export const holdServerOwnershipForMaintenance = (statePath: string) => {
     }),
     (db) =>
       Effect.sync(() => {
-        NodeFS.rmSync(maintenanceMarker(stateDir), { force: true });
-        db.close();
+        try {
+          NodeFS.rmSync(maintenanceMarker(stateDir), { force: true });
+        } finally {
+          db.close();
+        }
       }),
   );
 };
@@ -263,23 +266,7 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         isSqliteBusy(cause)
           ? new ServerAlreadyRunningError({ stateDir })
           : new ServerOwnershipError({ stateDir, cause }),
-    }).pipe(
-      // SCIENT-FORK:START — a database repair holds the lock for minutes; wait for it to finish
-      // instead of failing the launch.
-      Effect.tapError((error) =>
-        error._tag === "ServerAlreadyRunningError" && NodeFS.existsSync(maintenanceMarker(stateDir))
-          ? Effect.logInfo("Waiting for a database repair to finish before starting")
-          : Effect.void,
-      ),
-      Effect.retry({
-        while: (error) =>
-          error._tag === "ServerAlreadyRunningError" &&
-          NodeFS.existsSync(maintenanceMarker(stateDir)),
-        schedule: Schedule.spaced("1 second"),
-        times: MAINTENANCE_WAIT_SECONDS,
-      }),
-      // SCIENT-FORK:END
-    ),
+    }),
     ({ db }) =>
       readPersistedServerRuntimeState(statePath).pipe(
         Effect.flatMap((state) =>
@@ -290,6 +277,23 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         Effect.ignore({ log: true }),
         Effect.ensuring(Effect.sync(() => db.close())),
       ),
+  ).pipe(
+    // SCIENT-FORK:START — a database repair holds the lock for minutes; wait for it to finish
+    // instead of failing the launch. Each attempt is atomic; the wait between them is
+    // outside acquisition, so cancelling the launch interrupts it.
+    Effect.tapError((error) =>
+      error._tag === "ServerAlreadyRunningError" && NodeFS.existsSync(maintenanceMarker(stateDir))
+        ? Effect.logInfo("Waiting for a database repair to finish before starting")
+        : Effect.void,
+    ),
+    Effect.retry({
+      while: (error) =>
+        error._tag === "ServerAlreadyRunningError" &&
+        NodeFS.existsSync(maintenanceMarker(stateDir)),
+      schedule: Schedule.spaced("1 second"),
+      times: MAINTENANCE_WAIT_SECONDS,
+    }),
+    // SCIENT-FORK:END
   );
 
   const previous = yield* readPersistedServerRuntimeState(statePath).pipe(

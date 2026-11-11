@@ -234,13 +234,6 @@ const HANDOFF_ITEM_SUMMARY_MIN_BYTES = 64 * 1024;
 /** Private persisted reference to an item summary's shared body; never on the wire. */
 export const HANDOFF_ITEM_SUMMARY_BODY_FIELD = "scientSummaryBody";
 
-const readItemChunk = (sql: SqlClient.SqlClient, itemId: string, start: number, length: number) =>
-  sql<{ readonly chunk: Uint8Array | null }>`
-    SELECT substr(CAST(payload_json AS BLOB), ${start + 1}, ${length}) AS chunk
-    FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${itemId}`.pipe(
-    Effect.map((rows) => rows[0]?.chunk ?? new Uint8Array(0)),
-  );
-
 const hasLoneSurrogate = (text: string) => {
   for (let at = 0; at < text.length; at++) {
     const unit = text.charCodeAt(at);
@@ -277,8 +270,6 @@ export const shareHandoffItemSummary = Effect.fn("SharedHistory.shareItemSummary
       AND json_type(item.payload_json, ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}) IS NULL`;
   const row = rows[0];
   if (row === undefined || row.summary_hash === null) return "skipped" as const;
-  const read = (byteOffset: number, length: number) =>
-    readItemChunk(sql, itemId, byteOffset, length);
   const itemDocument = sql`(SELECT payload_json FROM orchestration_v2_projection_turn_items
     WHERE turn_item_id = ${itemId})`;
   const located = yield* locateStringField(sql, itemDocument, "summary");
@@ -291,11 +282,18 @@ export const shareHandoffItemSummary = Effect.fn("SharedHistory.shareItemSummary
     ${located.start + 1}, ${located.length}) AS TEXT) || ${SUMMARY_SUFFIX}
     FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${itemId})`;
   if (!(yield* putBody(sql, digest, expression))) return "skipped" as const;
+  // The prefix comes from the immutable verified body, never from the item, which may be
+  // rewritten (even back to the same text) while this runs.
   const head = yield* readJsonStringFieldPage({
-    field: "summary",
+    field: SHARED_SUMMARY_FIELD,
     offset: 0,
     maxChars: HANDOFF_ITEM_SUMMARY_PREFIX_CHARS + 1,
-    read,
+    read: (byteOffset, length) =>
+      sql<{ readonly chunk: Uint8Array | null }>`
+        SELECT substr(CAST(body AS BLOB), ${byteOffset + 1}, ${length}) AS chunk
+        FROM scient_history_bodies WHERE hash = ${digest}`.pipe(
+        Effect.map((rows) => rows[0]?.chunk ?? new Uint8Array(0)),
+      ),
   }).pipe(
     Effect.map((page) => page.text),
     Effect.option,

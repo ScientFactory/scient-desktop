@@ -292,13 +292,13 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(DatabaseMaintenance, make);
 
 // SCIENT-FORK:START — durable repair phases: interrupted-repair recovery and restart gating.
-/** Writes an empty file and flushes it and its directory entry, so it outlives a power loss
- * that happens after the VACUUM it guards commits. */
+/** Writes an empty file and flushes it, and on macOS and Linux its directory entry too, so a
+ * power loss after the VACUUM it guards commits still finds it. Windows flushes only the file:
+ * it cannot open a directory for flushing, so the entry's durability is the filesystem's. */
 const writeDurably = Effect.fn("DatabaseMaintenance.writeDurably")(function* (
   file: string,
   directory: string,
 ) {
-  // Windows cannot open a directory for flushing; NTFS journals the new entry itself.
   const flushDirectory = (yield* HostProcess.Platform) !== "win32";
   yield* Effect.tryPromise({
     try: async () => {

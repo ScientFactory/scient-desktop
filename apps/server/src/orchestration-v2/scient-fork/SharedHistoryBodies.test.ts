@@ -349,6 +349,80 @@ it.layer(TestLayer)("shared archived history bodies", (it) => {
         assert.equal(kept[0]!.summary.length, rewritten.length);
         assert.isNull(kept[0]!.body);
 
+        // A rewrite and a rewrite back (A -> B -> A) during conversion: the summary ends equal
+        // to the body, and the inline prefix must come from that body, never from B.
+        const returnedItemId = TurnItemId.make("shared:returned-item");
+        yield* store.apply({
+          id: EventId.make("shared-write:returned-item"),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: returnedItemId,
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 12,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "handoff",
+            contextHandoffId: prepared.id,
+            fromProviderThreadIds: [],
+            toProviderThreadId: ProviderThreadId.make("target"),
+            fromProviderInstanceIds: [instance],
+            toProviderInstanceId: instance,
+            strategy: "full_thread_summary",
+            summary,
+          },
+        });
+        const original = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM orchestration_v2_projection_turn_items
+        WHERE turn_item_id = ${returnedItemId}`;
+        const rewrite = (payload: import("effect/sql/Statement").Fragment) =>
+          sql`UPDATE orchestration_v2_projection_turn_items SET payload_json = ${payload}
+          WHERE turn_item_id = ${returnedItemId}`.pipe(
+            Effect.provideService(Statement.CurrentTransformer, undefined),
+            Effect.orDie,
+          );
+        const steps: Array<string> = [];
+        const returned = yield* shareLegacyContextHistories(sql, Effect.void).pipe(
+          Effect.provideService(Statement.CurrentTransformer, (statement) => {
+            const [text] = statement.compile();
+            // B lands while the prefix is read, after the body was proven equal to A.
+            if (
+              steps.length === 0 &&
+              text.includes("substr(CAST(body AS BLOB)") &&
+              text.includes("FROM scient_history_bodies WHERE hash")
+            ) {
+              steps.push("B");
+              return rewrite(
+                sql`json_set(payload_json, '$.summary', ${"B".repeat(summary.length)})`,
+              ).pipe(Effect.as(statement));
+            }
+            if (
+              steps.length === 1 &&
+              text.includes("UPDATE orchestration_v2_projection_turn_items")
+            ) {
+              steps.push("A");
+              return rewrite(sql`${original[0]!.payload_json}`).pipe(Effect.as(statement));
+            }
+            return Effect.succeed(statement);
+          }),
+        );
+        assert.deepEqual(steps, ["B", "A"]);
+        assert.equal(returned.items, 1);
+        const settled = yield* sql<{ readonly summary: string }>`
+        SELECT json_extract(payload_json, '$.summary') AS summary
+        FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${returnedItemId}`;
+        assert.equal(settled[0]!.summary, summary.slice(0, 960));
+
         // A lost body is reported, never hidden behind source metadata.
         yield* sql`DELETE FROM scient_history_bodies WHERE rowid = (
         SELECT body.rowid FROM scient_handoff_shared_sources AS shared

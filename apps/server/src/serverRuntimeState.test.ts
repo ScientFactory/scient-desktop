@@ -210,6 +210,35 @@ describe("server ownership", () => {
       assert.equal((yield* Fiber.join(launch))._tag, "Success");
     }).pipe(Effect.provide(layerOwnership)),
   );
+
+  it.effect("lets a launch waiting for a repair be cancelled", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-owner-cancel-" });
+      const statePath = path.join(root, "server-runtime.json");
+      const finished = yield* Deferred.make<void>();
+      const holding = yield* Deferred.make<void>();
+      const repair = yield* Effect.forkChild(
+        Effect.scoped(
+          ServerOwnership.holdServerOwnershipForMaintenance(statePath).pipe(
+            Effect.andThen(Deferred.succeed(holding, undefined)),
+            Effect.andThen(Deferred.await(finished)),
+          ),
+        ),
+      );
+      yield* Deferred.await(holding);
+      const launch = yield* Effect.forkChild(
+        Effect.scoped(ServerOwnership.acquireServerOwnership(statePath)),
+      );
+      yield* TestClock.adjust("3 seconds");
+      // Cancelling finishes while the repair still holds the lock.
+      yield* Fiber.interrupt(launch);
+      assert.isUndefined(repair.pollUnsafe());
+      yield* Deferred.succeed(finished, undefined);
+      yield* Fiber.join(repair);
+    }).pipe(Effect.provide(layerOwnership)),
+  );
   // SCIENT-FORK:END
 
   it.effect("refuses a second owner without touching its record, then allows a restart", () =>
