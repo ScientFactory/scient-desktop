@@ -64,6 +64,9 @@ import * as AgentActivityRows from "../agentActivity/AgentActivityRows.ts";
 import * as Devices from "../agentActivity/Devices.ts";
 import * as DpopProofs from "../auth/DpopProofs.ts";
 import * as RelayTokens from "../auth/RelayTokens.ts";
+// SCIENT-FORK:START clerk-legacy-instance
+import * as ClerkInstances from "../auth/ClerkInstances.ts";
+// SCIENT-FORK:END clerk-legacy-instance
 import * as EnvironmentCredentials from "../environments/EnvironmentCredentials.ts";
 import * as EnvironmentLinks from "../environments/EnvironmentLinks.ts";
 import * as HeldHooks from "../hooks/HeldHooks.ts";
@@ -1675,29 +1678,59 @@ function verifyClerkBearerToken(
   config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
+  // SCIENT-FORK:START clerk-legacy-instance — verify with the instance that issued the token.
+  const instance = ClerkInstances.clerkInstanceForJwt(config, token);
+  // SCIENT-FORK:END clerk-legacy-instance
   return Effect.tryPromise({
     try: () =>
       verifyToken(token, {
-        secretKey: Redacted.value(config.clerkSecretKey),
+        // SCIENT-FORK:START clerk-legacy-instance
+        secretKey: Redacted.value(instance.secretKey),
+        // SCIENT-FORK:END clerk-legacy-instance
         audience: config.clerkJwtAudience,
       }),
     catch: (cause) => new ClerkTokenVerificationFailed({ cause }),
   }).pipe(
     Effect.withSpan("verify_clerk_bearer_token", {
-      attributes: { "relay.auth.token_length": token.length },
+      attributes: {
+        "relay.auth.token_length": token.length,
+        // SCIENT-FORK:START clerk-legacy-instance
+        "relay.auth.clerk_instance": instance.name,
+        // SCIENT-FORK:END clerk-legacy-instance
+      },
     }),
   );
 }
 
+// SCIENT-FORK:START clerk-legacy-instance — opaque tokens name no issuer: primary, then legacy.
 function verifyClerkOAuthBearerToken(
   config: RelayConfiguration.RelayConfiguration["Service"],
   token: string,
 ) {
+  const primary = verifyClerkOAuthBearerTokenWith(
+    config,
+    ClerkInstances.primaryClerkInstance(config),
+    token,
+  );
+  const legacy = ClerkInstances.legacyClerkInstance(config);
+  return legacy
+    ? primary.pipe(Effect.catch(() => verifyClerkOAuthBearerTokenWith(config, legacy, token)))
+    : primary;
+}
+
+function verifyClerkOAuthBearerTokenWith(
+  config: RelayConfiguration.RelayConfiguration["Service"],
+  instance: ClerkInstances.ClerkInstance,
+  token: string,
+) {
+  // SCIENT-FORK:END clerk-legacy-instance
   return Effect.tryPromise({
     try: async () => {
       const client = createClerkClient({
-        secretKey: Redacted.value(config.clerkSecretKey),
-        publishableKey: config.clerkPublishableKey,
+        // SCIENT-FORK:START clerk-legacy-instance
+        secretKey: Redacted.value(instance.secretKey),
+        publishableKey: instance.publishableKey,
+        // SCIENT-FORK:END clerk-legacy-instance
       });
       const state = await client.authenticateRequest(
         new Request(config.relayIssuer, {

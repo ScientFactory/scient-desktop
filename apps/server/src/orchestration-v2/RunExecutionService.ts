@@ -93,6 +93,9 @@ import {
   routeWorkflowSubagentEvent,
 } from "./scient-fork/NativeWorkflowOwnership.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — the turn-start workspace binding survives adapter row updates.
+import { withRecordedWorkspace } from "./scient-provider/RecordedWorkspace.ts";
+// SCIENT-FORK:END
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { userFacingDatabaseErrorMessage } from "./UserFacingErrors.ts";
 
@@ -1776,7 +1779,11 @@ export const layer: Layer.Layer<
                 }
                 if (event.type === "provider_thread.updated") {
                   if (event.providerThread.id === input.providerThread.id && storedEventCount > 0) {
-                    yield* Ref.set(latestProviderThread, event.providerThread);
+                    // SCIENT-FORK: finalization writes this row; keep the recorded workspace.
+                    yield* Ref.set(
+                      latestProviderThread,
+                      withRecordedWorkspace(input.providerThread, event.providerThread),
+                    );
                     rootSnapshotPendingWork = event.pendingBackgroundWork === true;
                   }
                 }

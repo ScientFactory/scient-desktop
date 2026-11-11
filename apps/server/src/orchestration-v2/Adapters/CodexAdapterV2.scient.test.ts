@@ -5328,6 +5328,96 @@ describe("Codex restored Sessions", () => {
         ),
       ),
     );
+    it.effect.each([
+      {
+        name: "a handoff unload waits for the withheld thread/closed",
+        idleFirst: false,
+        awaitRelease: true,
+      },
+      {
+        name: "an idle unload returns on the unsubscribe reply",
+        idleFirst: false,
+        awaitRelease: false,
+      },
+      {
+        name: "a handoff after an idle unsubscribe waits for that pending thread/closed",
+        idleFirst: true,
+        awaitRelease: true,
+      },
+    ])("$name", ({ idleFirst, awaitRelease }) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "handoff-thread";
+        const closed = {
+          type: "emit_inbound" as const,
+          label: "withheld closure",
+          frame: { method: "thread/closed", params: { threadId: nativeThreadId } },
+        };
+        const unsubscribe = (id: number, status: string) => [
+          {
+            type: "expect_outbound" as const,
+            frame: { id, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+          },
+          { type: "emit_inbound" as const, frame: { id, result: { status } } },
+        ];
+        const transcript = makeCodexReplayTranscript({
+          scenario: `handoff-release-${idleFirst}-${awaitRelease}`,
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: "unused",
+              prompt: "unused",
+            }).slice(0, 5),
+            ...unsubscribe(3, "unsubscribed"),
+            // Codex 0.167 answers a second unsubscribe while the first close is still pending.
+            ...(idleFirst ? unsubscribe(4, "notSubscribed") : []),
+            closed,
+          ],
+        });
+        const withheld = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        yield* Effect.addFinalizer(() => Deferred.succeed(release, undefined));
+        const driver = yield* CodexReplay.makeReplayDriver(transcript, {
+          beforeEmitInbound: (entry) =>
+            entry.label === closed.label
+              ? Deferred.succeed(withheld, undefined).pipe(Effect.andThen(Deferred.await(release)))
+              : Effect.void,
+        });
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { replayDriver: driver },
+        );
+        if (idleFirst) {
+          yield* harness.runtime.unloadThread!({ providerThread: harness.providerThread });
+        }
+        const done = yield* Ref.make(false);
+        const unload = yield* harness.runtime.unloadThread!({
+          providerThread: harness.providerThread,
+          awaitRelease,
+        }).pipe(Effect.andThen(Ref.set(done, true)), Effect.forkChild);
+        yield* Deferred.await(withheld);
+        // Codex has acknowledged the unsubscribe but still holds the writer.
+        yield* Effect.yieldNow;
+        const doneBeforeClose = yield* Ref.get(done);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(unload);
+        assert.equal(doneBeforeClose, !awaitRelease);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+            McpProviderSessions.layer,
+          ),
+        ),
+      ),
+    );
     // regression: de34391427 feat(orchestrator): introduce new orchestrator (#2829)
 
     it.effect("keeps the app-server failure as the cause when an unload is rejected", () =>

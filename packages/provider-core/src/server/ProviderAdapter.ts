@@ -772,6 +772,8 @@ export interface ProviderAdapterV2SessionRuntime extends ScientTextSnapshotRunti
   }) => Effect.Effect<void | ProviderAdapterV2SubagentOutcome, ProviderAdapterV2Error>;
   readonly unloadThread?: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
+    // SCIENT-FORK: a detach hands the native writer to another process; wait for its release.
+    readonly awaitRelease?: boolean;
   }) => Effect.Effect<void, ProviderAdapterV2Error>;
   readonly respondToRuntimeRequest: (
     input: ProviderAdapterV2RuntimeRequestResponseInput,

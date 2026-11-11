@@ -2079,6 +2079,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const pendingRuntimeRequests = yield* Ref.make(
           new Map<string, PendingCodexRuntimeRequest>(),
         );
+        /** Completed by thread/closed after this connection unsubscribes from the native thread. */
+        const threadClosings = new Map<string, Deferred.Deferred<void>>();
         /** Codex acceptForSession covers only the exact command or patch, not future commands. */
         const sessionApprovals = new Map<
           string,
@@ -5136,6 +5138,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         // their command items, while the shared provider session stays alive.
         yield* client.handleServerNotification("thread/closed", (payload) =>
           Effect.gen(function* () {
+            const closing = threadClosings.get(payload.threadId);
+            threadClosings.delete(payload.threadId);
+            if (closing !== undefined) yield* Deferred.succeed(closing, undefined);
             const completedAt = yield* DateTime.now;
             for (const context of (yield* Ref.get(settledTurns)).values()) {
               if (context.providerThread.nativeThreadRef?.nativeId !== payload.threadId) continue;
@@ -7137,7 +7142,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
-        // Codex refuses to resume a session archived elsewhere until it is unarchived.
+        // Codex refuses to resume a session archived elsewhere until it is unarchived, and
+        // one it is still unloading after thread/unsubscribe until it emits thread/closed.
         const resumeNativeThread = Effect.fn("CodexAdapterV2.resumeNativeThread")(function* (
           threadId: string,
           params: Record<string, unknown>,
@@ -7145,12 +7151,22 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const resume = client.raw.request("thread/resume", { threadId, ...params });
           return yield* resume.pipe(
             Effect.catchTags({
-              CodexAppServerRequestError: (cause) =>
-                /\bsession \S+ is archived\b|\bcodex unarchive\b/i.test(cause.errorMessage)
-                  ? client.raw
-                      .request("thread/unarchive", { threadId })
-                      .pipe(Effect.andThen(resume))
-                  : Effect.fail(cause),
+              CodexAppServerRequestError: (cause) => {
+                if (/\bsession \S+ is archived\b|\bcodex unarchive\b/i.test(cause.errorMessage)) {
+                  return client.raw
+                    .request("thread/unarchive", { threadId })
+                    .pipe(Effect.andThen(resume));
+                }
+                if (/\bthread \S+ is closing\b/i.test(cause.errorMessage)) {
+                  const closing = threadClosings.get(threadId);
+                  return (
+                    closing === undefined
+                      ? Effect.void
+                      : Deferred.await(closing).pipe(Effect.timeoutOption("10 seconds"))
+                  ).pipe(Effect.andThen(resume));
+                }
+                return Effect.fail(cause);
+              },
             }),
           );
         });
@@ -7705,7 +7721,33 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             function* (unloadInput) {
               const nativeThreadId = yield* getNativeThreadId(unloadInput.providerThread);
               sessionApprovals.delete(nativeThreadId);
-              yield* client.request("thread/unsubscribe", { threadId: nativeThreadId });
+              // SCIENT-FORK:START — an earlier (idle) unsubscribe may still be closing the thread.
+              const pendingClose = threadClosings.get(nativeThreadId);
+              // SCIENT-FORK:END
+              // A resume may already wait on the pending entry; replacing it would strand that wait.
+              if (!threadClosings.has(nativeThreadId)) {
+                threadClosings.set(nativeThreadId, yield* Deferred.make<void>());
+              }
+              // SCIENT-FORK:START — a handoff's next owner is another process; Codex releases the
+              // writer only when the thread closes, after the unsubscribe reply.
+              const closing = threadClosings.get(nativeThreadId);
+              const unsubscribed = yield* client.request("thread/unsubscribe", {
+                threadId: nativeThreadId,
+              });
+              if (closing === undefined) return;
+              // No thread/closed follows when the thread is gone or this call opened no close.
+              if (
+                unsubscribed.status === "notLoaded" ||
+                (unsubscribed.status === "notSubscribed" && pendingClose === undefined)
+              ) {
+                if (threadClosings.get(nativeThreadId) === closing) {
+                  threadClosings.delete(nativeThreadId);
+                }
+                yield* Deferred.succeed(closing, undefined);
+              } else if (unloadInput.awaitRelease === true) {
+                yield* Deferred.await(closing).pipe(Effect.timeoutOption("5 seconds"));
+              }
+              // SCIENT-FORK:END
             },
             (effect, unloadInput) =>
               effect.pipe(
