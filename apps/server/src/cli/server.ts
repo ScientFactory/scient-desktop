@@ -40,7 +40,9 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
     Effect.provideService(ServerConfig.ServerConfig, config),
     // Settings' Reclaim stops the server; repair once the database is closed, before the restart.
     Effect.ensuring(
-      DatabaseMaintenance.runRequestedReclaim(config.dbPath).pipe(
+      // SCIENT-FORK:START — the repair holds server ownership until it finishes.
+      DatabaseMaintenance.runRequestedReclaim(config.dbPath, config.serverRuntimeStatePath).pipe(
+        // SCIENT-FORK:END
         Effect.provide(DatabaseMaintenance.layer),
       ),
     ),

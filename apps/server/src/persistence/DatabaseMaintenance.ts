@@ -16,6 +16,9 @@ import { isSqlError } from "effect/sql/SqlError";
 
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import { rebuildMessageSearch } from "../orchestration-v2/messageSearchIndex.ts";
+// SCIENT-FORK:START — the repair keeps the server lock until it finishes.
+import { holdServerOwnershipForMaintenance } from "../serverOwnership.ts";
+// SCIENT-FORK:END
 
 export class DatabaseMissingError extends Schema.TaggedError<DatabaseMissingError>()(
   "DatabaseMissingError",
@@ -191,11 +194,35 @@ const make = Effect.gen(function* () {
         yield* lockExclusively(databasePath);
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
         const summary = yield* maintenance.pruneEventStore();
+        // SCIENT-FORK:START — recheck space under the lock; a marker covers a stop after VACUUM.
+        // Space was checked when the repair was requested; check again now that nothing else
+        // writes, before the copy that needs it.
+        const storage = yield* readStorage;
+        const shortfall = yield* reclaimSpaceShortfall(
+          databasePath,
+          storage.databaseBytes - storage.reclaimableBytes,
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fs),
+          Effect.provideService(Path.Path, path),
+        );
+        if (shortfall !== null)
+          return yield* new DatabaseCompactError({
+            path: databasePath,
+            cause: `Needs ${shortfall.neededBytes} free bytes; ${shortfall.freeBytes} are free.`,
+          });
+        // VACUUM renumbers the rows the search index points at. If the process stops after
+        // VACUUM commits but before the rebuild, the marker makes the next start rebuild it.
+        const marker = searchRebuildMarker(path, databasePath);
+        yield* writeDurably(marker, path.dirname(marker));
+        // SCIENT-FORK:END
         // VACUUM is required to enable incremental auto_vacuum on existing databases.
         yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
         yield* sql`VACUUM`;
         yield* rebuildMessageSearch(sql);
         yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+        // SCIENT-FORK:START — search is rebuilt and checkpointed.
+        yield* fs.remove(marker, { force: true });
+        // SCIENT-FORK:END
         return summary;
       }).pipe(
         Effect.provide(
@@ -264,23 +291,104 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(DatabaseMaintenance, make);
 
+// SCIENT-FORK:START — durable repair phases: interrupted-repair recovery and restart gating.
+/** Writes an empty file and flushes it, and on macOS and Linux its directory entry too, so a
+ * power loss after the VACUUM it guards commits still finds it. Windows flushes only the file:
+ * it cannot open a directory for flushing, so the entry's durability is the filesystem's. */
+const writeDurably = Effect.fn("DatabaseMaintenance.writeDurably")(function* (
+  file: string,
+  directory: string,
+) {
+  const flushDirectory = (yield* HostProcess.Platform) !== "win32";
+  yield* Effect.tryPromise({
+    try: async () => {
+      const handle = await NodeFSP.open(file, "w");
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      if (!flushDirectory) return;
+      const folder = await NodeFSP.open(directory, "r");
+      try {
+        await folder.sync();
+      } finally {
+        await folder.close();
+      }
+    },
+    catch: (cause) => new DatabaseCompactError({ path: file, cause }),
+  });
+});
+
+/** Present while a repair has renumbered rows but not yet rebuilt message search. */
+export const searchRebuildMarker = (path: Path.Path, databasePath: string) =>
+  path.join(path.dirname(databasePath), "search-rebuild-required");
+
+/** Rebuilds message search left stale by a repair that stopped after its VACUUM.
+ * Runs when the database opens, before anything reads search. */
+export const recoverInterruptedRepair = Effect.fn("DatabaseMaintenance.recoverInterruptedRepair")(
+  function* (databasePath: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const marker = searchRebuildMarker(yield* Path.Path, databasePath);
+    if (!(yield* fs.exists(marker))) return;
+    yield* Effect.logWarning("A database repair stopped before search was rebuilt; rebuilding it.");
+    const sql = yield* SqlClient.SqlClient;
+    const rebuilt = yield* rebuildMessageSearch(sql).pipe(Effect.exit);
+    if (rebuilt._tag === "Success") return yield* fs.remove(marker, { force: true });
+    // Stale row ids would match the wrong messages. An empty index matches none, so the app
+    // can still open; the marker stays and the next start rebuilds. If even emptying it
+    // fails, opening is refused rather than serving wrong results.
+    yield* Effect.logError(
+      "Could not rebuild message search; it stays empty until the next start",
+      {
+        cause: rebuilt.cause,
+      },
+    );
+    yield* sql`INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search)
+      VALUES ('delete-all')`;
+  },
+);
+
+// Only the process that asked for a repair restarts into it. A request found by any other
+// exit or start belongs to a repair that never finished, so it becomes a failure instead.
+let reclaimRestartRequested = false;
+export const markReclaimRestartRequested = Effect.sync(() => {
+  reclaimRestartRequested = true;
+});
+const INTERRUPTED_RECLAIM =
+  "The previous repair did not finish. Nothing was changed. You can try again.";
+
 /** Settings' Reclaim writes the request; the failure stays for Settings until the next request. */
 export const reclaimFiles = (path: Path.Path, databasePath: string) => ({
   request: path.join(path.dirname(databasePath), "reclaim-requested"),
   failure: path.join(path.dirname(databasePath), "reclaim-failed"),
 });
 
-/** Runs a repair that Settings requested. The server calls this on exit, once its database is closed. */
-export const runRequestedReclaim = Effect.fn("DatabaseMaintenance.runRequestedReclaim")(
+/** A request left by a repair that never ran to completion becomes a failure Settings shows. */
+export const settleInterruptedReclaim = Effect.fn("DatabaseMaintenance.settleInterruptedReclaim")(
   function* (databasePath: string) {
     const fs = yield* FileSystem.FileSystem;
     const files = reclaimFiles(yield* Path.Path, databasePath);
     if (!(yield* fs.exists(files.request))) return;
-    // One attempt per request, so a repair killed midway (it rolls back) cannot delay later exits.
+    yield* fs.writeFileString(files.failure, INTERRUPTED_RECLAIM);
     yield* fs.remove(files.request, { force: true });
+  },
+);
+
+/** Runs a repair that Settings requested. The server calls this on exit, once its database is closed.
+ * Server ownership is held for the whole repair, so no other server opens the database meanwhile. */
+export const runRequestedReclaim = Effect.fn("DatabaseMaintenance.runRequestedReclaim")(
+  function* (databasePath: string, serverRuntimeStatePath?: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const files = reclaimFiles(yield* Path.Path, databasePath);
+    if (!(yield* fs.exists(files.request))) return;
+    // Ordinary quits and updates stop the server within seconds, too soon for a repair, so only
+    // the restart the request asked for runs it.
+    if (!reclaimRestartRequested) return yield* settleInterruptedReclaim(databasePath);
+    reclaimRestartRequested = false;
     yield* Effect.logInfo("Reclaiming database space before the restart. This can take minutes.");
     const maintenance = yield* DatabaseMaintenance;
-    yield* maintenance.compact(databasePath).pipe(
+    const repair = maintenance.compact(databasePath).pipe(
       // Worker threads and agent processes can hold the file for a moment after the server stops.
       Effect.retry({
         times: 10,
@@ -305,9 +413,28 @@ export const runRequestedReclaim = Effect.fn("DatabaseMaintenance.runRequestedRe
             ),
       }),
     );
+    yield* (
+      serverRuntimeStatePath === undefined
+        ? repair
+        : holdServerOwnershipForMaintenance(serverRuntimeStatePath).pipe(
+            Effect.andThen(repair),
+            Effect.scoped,
+            Effect.catchTags({
+              ServerAlreadyRunningError: () =>
+                fs.writeFileString(
+                  files.failure,
+                  "Scient started again before the repair could run. Try again.",
+                ),
+            }),
+          )
+    ).pipe(
+      // The request ends with its attempt, so a failed repair does not rerun on later exits.
+      Effect.ensuring(fs.remove(files.request, { force: true }).pipe(Effect.ignore)),
+    );
   },
   Effect.catchCause((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
 );
+// SCIENT-FORK:END
 
 // SQLite's search order for its temporary files (unixTempFileDir in os_unix.c).
 const sqliteTempDirectory = Effect.gen(function* () {

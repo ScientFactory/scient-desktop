@@ -13,7 +13,7 @@ export class JsonStringFieldReadError extends Schema.TaggedError<JsonStringField
 export const readJsonStringFieldPage = Effect.fn("ContextHistory.readStringPage")(function* <
   E,
 >(input: {
-  readonly field: "summary" | "summaryText";
+  readonly field: "summary" | "summaryText" | "text";
   readonly offset: number;
   readonly maxChars: number;
   readonly read: (byteOffset: number, byteLength: number) => Effect.Effect<Uint8Array, E>;

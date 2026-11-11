@@ -4749,6 +4749,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             yield* Effect.yieldNow;
           }
         }
+        // SCIENT-FORK:START — a source converted to shared bodies has no inline payload by design.
+        const sharedSourceKept = sql`EXISTS (
+          SELECT 1 FROM scient_handoff_shared_sources AS shared
+          JOIN scient_history_bodies AS body ON body.hash = shared.summary_hash
+          WHERE shared.source_id = json_extract(context.payload_json, '$.historySource.id'))`;
+        // SCIENT-FORK:END
         // Source identity must not hide a missing body behind otherwise-decodable metadata.
         const brokenSources = yield* sql<{ readonly thread_id: string }>`
           WITH context AS (SELECT thread_id, context_handoff_id,
@@ -4757,7 +4763,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           SELECT context.thread_id FROM context
           WHERE json_type(context.payload_json, '$.historySource') = 'object' AND (
             (EXISTS (SELECT 1 FROM scient_handoff_legacy_sources AS source
-              WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')) AND NOT EXISTS (
+              WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')) AND NOT ${sharedSourceKept} AND NOT EXISTS (
                 SELECT 1 FROM scient_handoff_legacy_sources AS source
                 LEFT JOIN orchestration_events AS event ON event.event_id = source.event_id
                 WHERE source.source_id = json_extract(context.payload_json, '$.historySource.id')

@@ -15,6 +15,9 @@ import { startHostFreezeToasts } from "./components/HostFreezeToastCoordinator";
 import { startKeybindingsUpdateToasts } from "./components/KeybindingsUpdateToast";
 import { startLegacyThreadMigrationToast } from "./components/LegacyThreadMigrationToast";
 import { startPermissionUpdateNotices } from "./components/PermissionUpdateNotice";
+// SCIENT-FORK:START — remind once when a database holds space Settings > Storage can reclaim.
+import { startDatabaseStorageReminders } from "./scient/storage/databaseStorageReminder";
+// SCIENT-FORK:END
 import { startAgentOpenedPreviews } from "./components/preview/agentOpenedPreviews";
 import { startMainAppLocationTracking } from "./components/sidebar/mainAppLocation";
 import { startDesktopUpdateLaunchNotice } from "./components/sidebar/updateEverythingRun";
@@ -237,6 +240,9 @@ export function startAppServices(): AppRouter {
   startHostFreezeToasts();
   startLegacyThreadMigrationToast();
   startPermissionUpdateNotices(router);
+  // SCIENT-FORK:START — see startDatabaseStorageReminders.
+  startDatabaseStorageReminders(router);
+  // SCIENT-FORK:END
   startThreadNotifications(appAtomRegistry, router);
   // SCIENT-FORK:START — Scient Accounts: saved sign-ins and session checks run in the background.
   startAccountWatchers(appAtomRegistry);
