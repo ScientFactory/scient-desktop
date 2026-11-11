@@ -1637,6 +1637,27 @@ response must have a PDF media type and `%PDF-` bytes, and its body is read
 within 100 MB and cancelled once over, before it goes to the Library's normal
 PDF import.
 
+## Interface and agent parity
+
+Agents can do everything a person can in the Library. The table in
+`apps/server/src/mcp/toolkits/sources/libraryParity.ts` gives every Library
+change command (`SCIENT_SOURCES_HTTP_COMMANDS`) and every read endpoint of the
+`scientSources`, `scientPdf` annotation and `scientReferences` groups the agent
+tool that does the same thing, with the tool input that selects it when the
+tool does more. The only exemptions are one step of an interactive flow that a
+single tool call covers (`flow-step`), a browser upload whose tool takes a
+project path instead (`upload`), and an endpoint that serves pixels or files
+for display (`display`); each names its tool or reason. "Not built yet" is not
+an exemption: such a command is a `gap` with its reason, and
+`libraryParity.test.ts` lists each gap as a todo.
+
+Adding a Library command or read endpoint fails typecheck until the table has
+its entry. `libraryParity.test.ts` then checks that each named tool is
+registered by a Library toolkit and listed in the `scient.sources` plugin
+(`BuiltInPlugins.ts`), that a tool named for a change command requires
+`sources:write`, and that a named input is in the tool's input schema. Add the
+tool, or the input on an existing tool, in the same change as the button.
+
 ## Deliberate exclusions
 
 This slice does not implement two-way Zotero sync, Zotero group libraries,
