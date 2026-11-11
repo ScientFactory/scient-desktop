@@ -19,7 +19,11 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/toolt
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { CitationStylePicker } from "./CitationStylePicker";
-import { useProjectCitationStyle, type CitationStyleProject } from "./useProjectCitationStyle";
+import {
+  refreshProjectCitationStyle,
+  useProjectCitationStyle,
+  type CitationStyleProject,
+} from "./useProjectCitationStyle";
 
 type SourceRecord = ScientSourceDetailResult;
 type CitationModule = typeof import("@scientfactory/scient-citations");
@@ -109,9 +113,17 @@ export function SourceReference(props: {
           : style;
   const reference = formatReference(citations, loadFailed, props.record, source);
   const styleLabel = projectStyle?._tag === "ready" ? projectStyle.title : localLabel;
+  const { project } = props;
+  // Reaching for the reference re-reads the style, so what is copied is the project's current one.
+  const rereadStyle = project ? () => refreshProjectCitationStyle(project) : undefined;
 
   return (
-    <section className="space-y-2.5" aria-labelledby="source-reference-heading">
+    <section
+      className="space-y-2.5"
+      aria-labelledby="source-reference-heading"
+      onPointerEnter={rereadStyle}
+      onFocus={rereadStyle}
+    >
       <div className="flex flex-wrap items-center gap-1">
         <h3 id="source-reference-heading" className="text-sm font-medium text-foreground">
           Reference
@@ -159,6 +171,10 @@ export function SourceReference(props: {
         <p className="text-xs text-muted-foreground">
           {projectStyle.message} Showing {localLabel} instead.
         </p>
+      ) : projectStyle?._tag === "failed" ? (
+        <p className="text-xs text-muted-foreground">
+          Scient could not read this project's citation style. Showing {localLabel} instead.
+        </p>
       ) : null}
 
       <div className="flex min-h-22 items-start gap-2 border border-border/70 bg-muted/30 px-3 py-2.5">
@@ -186,7 +202,9 @@ export function SourceReference(props: {
           </>
         ) : reference.status === "error" ? (
           <p className="text-sm text-muted-foreground">
-            Scient could not format this reference. Check the source metadata and try again.
+            {projectStyle?._tag === "ready"
+              ? `${projectStyle.title} could not format this reference. Check the source metadata, or choose another citation style.`
+              : "Scient could not format this reference. Check the source metadata and try again."}
           </p>
         ) : (
           <p className="text-sm text-muted-foreground" role="status">

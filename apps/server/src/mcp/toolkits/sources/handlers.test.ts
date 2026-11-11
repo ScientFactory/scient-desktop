@@ -407,8 +407,9 @@ describe("Scient Sources MCP handlers", () => {
         listScientSourcesForInvocation({ citationStyles: "" }),
         context,
       );
+      if (!("citationStyles" in listed)) throw new Error("expected citation styles");
       expect(listed.citationStyle).toEqual(set.citationStyle);
-      expect(listed.citationStyles?.some((style) => style.id === "nature")).toBe(true);
+      expect(listed.citationStyles.some((style) => style.id === "nature")).toBe(true);
     }),
   );
 

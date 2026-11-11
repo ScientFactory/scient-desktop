@@ -40,6 +40,23 @@ function styleStartTag(xml: string): string | null {
   return /<style\b[^>]*>/u.exec(xml)?.[0] ?? null;
 }
 
+const XML_ASIDE = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>/gu;
+const XML_TAG = /<(\/?)([A-Za-z_][\w:.-]*)(?:\s(?:"[^"]*"|'[^']*'|[^>"'])*?)?(\/?)>/gu;
+
+/** Whether every element closes, in order. citeproc-js renders markup that Pandoc rejects. */
+function elementsClose(xml: string): boolean {
+  const open: string[] = [];
+  let inOrder = true;
+  const text = xml
+    .replace(XML_ASIDE, "")
+    .replace(XML_TAG, (_tag, closing: string, name: string, selfClosing: string) => {
+      if (closing) inOrder &&= open.pop() === name;
+      else if (!selfClosing) open.push(name);
+      return "";
+    });
+  return inOrder && open.length === 0 && !text.includes("<");
+}
+
 /**
  * Reads a CSL style's identity, or null when the text is not a complete CSL style: an
  * independent style must define its citation layout, a dependent one must name its parent.
@@ -47,7 +64,7 @@ function styleStartTag(xml: string): string | null {
 export function readCslStyle(xml: string): CslStyleInfo | null {
   const start = styleStartTag(xml);
   if (start === null || !start.includes('xmlns="http://purl.org/net/xbiblio/csl"')) return null;
-  if (!/<\/style>\s*$/u.test(xml)) return null;
+  if (!/<\/style>\s*$/u.test(xml) || !elementsClose(xml)) return null;
   const info = /<info>([\s\S]*?)<\/info>/u.exec(xml)?.[1];
   if (info === undefined) return null;
   const title = /<title>([\s\S]*?)<\/title>/u.exec(info)?.[1];

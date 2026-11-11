@@ -1,9 +1,10 @@
 import type { ScientSourceRecord } from "@scientfactory/scient-sources";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { bundledCslStyleXml } from "./catalog.ts";
+import { BUNDLED_CSL_STYLES, bundledCslStyleXml } from "./catalog.ts";
 import {
   SCIENT_REFERENCE_STYLES,
+  cslStyleRenders,
   formatSourceReference,
   readCslStyle,
   renderableCslStyle,
@@ -153,5 +154,34 @@ describe("formatSourceReference", () => {
     expect(formatSourceReference(article, { xml })).toBe(
       "1.  Ioannidis JPA. Why Most Published Research Findings Are False. PLOS Medicine. 2005;2: e124. doi:10.1371/journal.pmed.0020124",
     );
+  });
+});
+
+describe("a style that cannot be used", () => {
+  const nature = bundledCslStyleXml("nature")!;
+  const head = nature.slice(0, nature.indexOf("</info>") + "</info>".length);
+  const style = (layout: string) =>
+    `${head}<citation><layout>${layout}</layout></citation><bibliography><layout>${layout}</layout></bibliography></style>`;
+
+  it("is none of the bundled styles, nor a style with citations and no reference list", () => {
+    const unusable = BUNDLED_CSL_STYLES.filter((entry) => {
+      const xml = bundledCslStyleXml(entry.id)!;
+      return readCslStyle(xml) === null || !cslStyleRenders(xml);
+    });
+    expect(unusable).toEqual([]);
+    const citationsOnly = `${head}<citation><layout><text variable="title"/></layout></citation></style>`;
+    expect(readCslStyle(citationsOnly)).not.toBeNull();
+    expect(cslStyleRenders(citationsOnly)).toBe(true);
+  });
+
+  // regression: review B4-1, a file with the shape of a CSL style that prints nothing counted as usable
+  it("is one with an undefined macro, which prints nothing", () => {
+    expect(cslStyleRenders(style('<text variable="title"/>'))).toBe(true);
+    expect(cslStyleRenders(style('<text macro="missing"/>'))).toBe(false);
+  });
+
+  it("is one whose markup does not close, which Pandoc rejects", () => {
+    expect(readCslStyle(style('<text variable="title"/>'))).not.toBeNull();
+    expect(readCslStyle(style('<text variable="title">'))).toBeNull();
   });
 });

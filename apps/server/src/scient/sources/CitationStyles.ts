@@ -4,7 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { readCslStyle, renderableCslStyle } from "@scientfactory/scient-citations";
+import { cslStyleRenders, readCslStyle, renderableCslStyle } from "@scientfactory/scient-citations";
 import {
   BUNDLED_CSL_STYLES,
   bundledCslStyleXml,
@@ -72,6 +72,7 @@ export interface CitationStyleDependencies {
 class CitationStyleError extends Schema.TaggedError<CitationStyleError>()("CitationStyleError", {
   message: Schema.String,
 }) {}
+const isCitationStyleError = Schema.is(CitationStyleError);
 
 function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
@@ -124,7 +125,7 @@ export async function readProjectCitationStyle(root: string): Promise<ScientProj
     };
   }
   const { id, title, parent } = setting.value;
-  const unavailable = (file: string, problem: "missing" | "invalid") =>
+  const unavailable = (file: string, problem: "missing" | "invalid" | "broken") =>
     ({
       _tag: "unavailable",
       id,
@@ -132,13 +133,18 @@ export async function readProjectCitationStyle(root: string): Promise<ScientProj
       message:
         problem === "missing"
           ? `${title} is missing from this project (${CITATIONS_DIRECTORY}/${file}).`
-          : `${title} could not be read: ${CITATIONS_DIRECTORY}/${file} is not a CSL style.`,
+          : problem === "invalid"
+            ? `${title} could not be read: ${CITATIONS_DIRECTORY}/${file} is not a CSL style.`
+            : `${title} could not be used: ${CITATIONS_DIRECTORY}/${file} does not format a reference.`,
     }) as const;
   const style = await readCitationsFile(canonicalRoot, styleFileName(id));
   if (style === null) return unavailable(styleFileName(id), "missing");
   const info = readCslStyle(style);
   if (info === null) return unavailable(styleFileName(id), "invalid");
-  if (info.parentId === null) return { _tag: "ready", id, title, parent: null, xml: style };
+  if (info.parentId === null) {
+    if (!cslStyleRenders(style)) return unavailable(styleFileName(id), "broken");
+    return { _tag: "ready", id, title, parent: null, xml: style };
+  }
   const parentId = parent?.id ?? info.parentId;
   const parentXml = await readCitationsFile(canonicalRoot, styleFileName(parentId));
   if (parentXml === null) return unavailable(styleFileName(parentId), "missing");
@@ -146,13 +152,10 @@ export async function readProjectCitationStyle(root: string): Promise<ScientProj
   if (parentInfo === null || parentInfo.parentId !== null) {
     return unavailable(styleFileName(parentId), "invalid");
   }
-  return {
-    _tag: "ready",
-    id,
-    title,
-    parent: { id: parentId, title: parentInfo.title },
-    xml: renderableCslStyle(style, parentXml),
-  };
+  const xml = renderableCslStyle(style, parentXml);
+  // The layout is the parent's, so a style that prints nothing is the parent file's fault.
+  if (!cslStyleRenders(xml)) return unavailable(styleFileName(parentId), "broken");
+  return { _tag: "ready", id, title, parent: { id: parentId, title: parentInfo.title }, xml };
 }
 
 interface CatalogueCache {
@@ -294,7 +297,7 @@ export async function setProjectCitationStyle(
   try {
     return { style: await saveProjectCitationStyle(input, deps), error: null };
   } catch (error) {
-    if (!(error instanceof CitationStyleError)) throw error;
+    if (!isCitationStyleError(error)) throw error;
     return { style: await readProjectCitationStyle(input.root), error: error.message };
   }
 }
@@ -343,6 +346,11 @@ async function saveProjectCitationStyle(
       });
     }
     parent = { id: parentInfo.id, title: parentInfo.title, xml };
+  }
+  if (!cslStyleRenders(renderableCslStyle(style, parent?.xml ?? null))) {
+    throw new CitationStyleError({
+      message: `${info.title} does not format a reference, so it was not saved.`,
+    });
   }
   if (parent) await writeCitationsFile(root, styleFileName(parent.id), parent.xml);
   await writeCitationsFile(root, styleFileName(info.id), style);

@@ -2,6 +2,7 @@ import type { EnvironmentId, ScientProjectCitationStyle } from "@t3tools/contrac
 import { useEffect } from "react";
 import { create } from "zustand";
 
+import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { readCitationStyles } from "./client";
 
 export interface CitationStyleProject {
@@ -30,6 +31,31 @@ export function publishProjectCitationStyle(
   useCitationStyleStore.setState((state) => ({ byProject: { ...state.byProject, [key]: style } }));
 }
 
+/**
+ * Reads the style again. It is a project file on the server, so an agent or another window can
+ * change it while a reference is open; a failed re-read keeps the style already shown.
+ */
+export function refreshProjectCitationStyle(project: CitationStyleProject): void {
+  const key = projectKey(project);
+  if (loading.has(key)) return;
+  loading.add(key);
+  const generation = generations.get(key) ?? 0;
+  void readCitationStyles(project.environmentId, { root: project.root })
+    .then(
+      (result) => {
+        if ((generations.get(key) ?? 0) !== generation) return;
+        publishProjectCitationStyle(project, result.current);
+      },
+      () => {
+        if (useCitationStyleStore.getState().byProject[key]) return;
+        useCitationStyleStore.setState((state) => ({
+          byProject: { ...state.byProject, [key]: { _tag: "failed" } },
+        }));
+      },
+    )
+    .finally(() => loading.delete(key));
+}
+
 /** The project's style, or null while it loads; `failed` when the server could not be asked. */
 export function useProjectCitationStyle(project: CitationStyleProject | null): Loaded | null {
   const key = project ? projectKey(project) : null;
@@ -39,24 +65,16 @@ export function useProjectCitationStyle(project: CitationStyleProject | null): L
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the style is a project file on the server, which an agent can change; read it again when a reference opens
   useEffect(() => {
-    if (key === null || environmentId === null || root === null || loading.has(key)) return;
-    loading.add(key);
-    const generation = generations.get(key) ?? 0;
-    void readCitationStyles(environmentId, { root })
-      .then(
-        (result) => {
-          if ((generations.get(key) ?? 0) !== generation) return;
-          publishProjectCitationStyle({ environmentId, root }, result.current);
-        },
-        () => {
-          if (useCitationStyleStore.getState().byProject[key]) return;
-          useCitationStyleStore.setState((state) => ({
-            byProject: { ...state.byProject, [key]: { _tag: "failed" } },
-          }));
-        },
-      )
-      .finally(() => loading.delete(key));
-  }, [environmentId, key, root]);
+    if (environmentId === null || root === null) return;
+    refreshProjectCitationStyle({ environmentId, root });
+  }, [environmentId, root]);
+
+  useLiveRefresh(
+    environmentId === null || root === null
+      ? null
+      : () => refreshProjectCitationStyle({ environmentId, root }),
+    { enabled: key !== null, key: `scient-citation-style:${key}` },
+  );
 
   return loaded ?? null;
 }

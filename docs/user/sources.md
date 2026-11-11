@@ -442,8 +442,9 @@ When the catalogue cannot be reached, the picker says so and searches those.
 The chosen style is saved in the project, under `.scient/citations`, so the
 project formats references the same way offline, for a collaborator and in CI.
 Most journal styles borrow the layout of another style; Scient saves that style
-too. If the style's file goes missing or is damaged, Scient names the style and
-the one it used instead; it never switches style without saying so.
+too. If the style's file goes missing, is damaged or formats nothing, or the
+project's style cannot be read, Scient names the problem and the style it used
+instead; it never switches style without saying so.
 
 ## Copy a formatted reference
 

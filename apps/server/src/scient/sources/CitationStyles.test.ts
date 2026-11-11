@@ -159,6 +159,38 @@ describe("setProjectCitationStyle", () => {
     });
   });
 
+  // regression: review B4-1, a style file that prints nothing was handed to both engines
+  it("names a style that formats nothing, and does not save one", async () => {
+    const root = await project();
+    const deps = { request: recordedRequest(), cacheRoot: null };
+    await setProjectCitationStyle({ root, styleId: "nature", actor: "user" }, deps);
+    const file = NodePath.join(root, ".scient", "citations", "styles", "nature.csl");
+    const nature = await NodeFSP.readFile(file, "utf8");
+    const layout = '<layout><text macro="missing"/></layout>';
+    const broken = (xml: string) =>
+      `${xml.slice(0, xml.indexOf("</info>") + "</info>".length)}<citation>${layout}</citation><bibliography>${layout}</bibliography></style>`;
+
+    await NodeFSP.writeFile(file, broken(nature));
+    expect(await readProjectCitationStyle(root)).toEqual({
+      _tag: "unavailable",
+      id: "nature",
+      title: "Nature",
+      message:
+        "Nature could not be used: .scient/citations/styles/nature.csl does not format a reference.",
+    });
+
+    const other = await project();
+    const brackets = broken(RESPONSES["https://www.zotero.org/styles/nature-brackets"]!);
+    const set = await setProjectCitationStyle(
+      { root: other, styleId: "nature-brackets", actor: "user" },
+      { request: async (url) => ({ status: 200, body: brackets, url }), cacheRoot: null },
+    );
+    expect(set).toEqual({
+      style: { _tag: "none" },
+      error: "Nature (brackets, no superscript) does not format a reference, so it was not saved.",
+    });
+    expect(NodeFS.existsSync(NodePath.join(other, ".scient", "citations"))).toBe(false);
+  });
   it("reports an unknown style and keeps the project's style", async () => {
     const root = await project();
     const set = await setProjectCitationStyle(
