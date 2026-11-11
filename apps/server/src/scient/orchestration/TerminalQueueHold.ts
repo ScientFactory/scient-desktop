@@ -91,6 +91,7 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
         !isAutomaticCompletionRun(projection, candidate),
     );
     const queueBoundaries = new Map<RunId, number>();
+    const releasedAfterStop = new Set<RunId>();
     let terminalSequence = stored.sequence;
     if (queued.length > 0) {
       // Only this rare terminal reaction reads historical run facts. Resume,
@@ -101,6 +102,9 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
       const admissionSequences = new Map<RunId, number>();
       const releaseReceipts = new Map<CommandId, number>();
       const heldRuns = new Set<RunId>();
+      // The latest explicit Send/Resume release of each queued run, and where the stopped run began.
+      const explicitReleases = new Map<RunId, number>();
+      let terminalRunStart: number | undefined;
       yield* Stream.concat(
         eventStore.read({ threadId, eventType: "run.created", throughSequence }),
         eventStore.read({ threadId, eventType: "run.updated", throughSequence }),
@@ -110,6 +114,8 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
             const event = entry.event;
             if (event.type !== "run.created" && event.type !== "run.updated") return;
             const payload = event.payload;
+            if (payload.id === terminal.id)
+              terminalRunStart = Math.min(terminalRunStart ?? entry.sequence, entry.sequence);
             if (
               event.type === "run.updated" &&
               payload.id === terminal.id &&
@@ -154,14 +160,57 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
                   : 0;
               releaseReceipts.set(entry.commandId, released);
             }
-            if (released >= entry.sequence)
+            if (released >= entry.sequence) {
               queueBoundaries.set(
                 payload.id,
                 Math.max(queueBoundaries.get(payload.id) ?? 0, entry.sequence),
               );
+              explicitReleases.set(
+                payload.id,
+                Math.max(explicitReleases.get(payload.id) ?? 0, entry.sequence),
+              );
+            }
           }),
         ),
       );
+      // A Send or Resume made after Stop was asked for, while the run was still ending, means
+      // the person wants the queue to go on once it ends.
+      const stopRequested = projection.turnItems.some(
+        (item) => item.type === "run_interrupt_request" && item.runId === run.id,
+      );
+      const latestEarlyRelease = Math.max(
+        0,
+        ...[...explicitReleases.values()].filter((sequence) => sequence <= terminalSequence),
+      );
+      if (run.status === "interrupted" && stopRequested && latestEarlyRelease > 0) {
+        let stopSequence: number | undefined;
+        yield* eventStore
+          .read({
+            threadId,
+            eventType: "turn-item.updated",
+            ...(terminalRunStart === undefined ? {} : { afterSequence: terminalRunStart - 1 }),
+            throughSequence: latestEarlyRelease,
+          })
+          .pipe(
+            Stream.runForEach((entry) =>
+              Effect.sync(() => {
+                const event = entry.event;
+                if (
+                  event.type === "turn-item.updated" &&
+                  event.payload.type === "run_interrupt_request" &&
+                  event.payload.runId === run.id
+                )
+                  stopSequence = Math.min(stopSequence ?? entry.sequence, entry.sequence);
+              }),
+            ),
+          );
+        if (stopSequence !== undefined) {
+          for (const [runId, sequence] of explicitReleases) {
+            if (sequence > stopSequence && sequence <= terminalSequence)
+              releasedAfterStop.add(runId);
+          }
+        }
+      }
       for (const [runId, sequence] of admissionSequences) {
         queueBoundaries.set(runId, Math.max(queueBoundaries.get(runId) ?? 0, sequence));
       }
@@ -184,7 +233,11 @@ export const makeScientTerminalQueueHold = <OrdinalError, WriteError>({
       rootNode !== undefined &&
       !nativeReceipt;
     const events: Array<Omit<OrchestrationV2DomainEvent, "id">> = queued
-      .filter((candidate) => (queueBoundaries.get(candidate.id) ?? 0) <= terminalSequence)
+      .filter(
+        (candidate) =>
+          !releasedAfterStop.has(candidate.id) &&
+          (queueBoundaries.get(candidate.id) ?? 0) <= terminalSequence,
+      )
       .map((candidate) => ({
         type: "run.updated",
         threadId,
