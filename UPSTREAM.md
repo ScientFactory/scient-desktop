@@ -2059,8 +2059,8 @@ tab, its relay socket closes, so Playwright's pending CDP commands fail. Upstrea
 open after shutting the tab's queue, so a tab detached while the server was setting it up never
 settles. The desktop attach and preview event consumers await each setup in turn, so every later
 desktop tab is never set up and keeps showing the start page over a page that loaded. Offered to
-T3 as pingdotgg/t3code#TBD. When it merges, take T3's version, then delete the marked block and
-`DesktopBrowserChannel.scient.test.ts`.
+T3 as pingdotgg/t3code#34252 (issue #34251). When it merges, take T3's version, then delete the
+marked block and `DesktopBrowserChannel.scient.test.ts`.
 
 ## Multiple app windows
 

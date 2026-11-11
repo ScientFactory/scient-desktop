@@ -19,7 +19,7 @@ vi.mock("node:net", () => ({
   },
 }));
 
-// Carries pingdotgg/t3code#TBD; drop with the marked block in DesktopBrowserChannel.ts once T3 merges it.
+// Carries pingdotgg/t3code#34252; drop with the marked block in DesktopBrowserChannel.ts once T3 merges it.
 it.live("closes a tab's relay connection when the desktop detaches the tab", () =>
   Effect.gen(function* () {
     const input = yield* Queue.unbounded<Uint8Array>();
