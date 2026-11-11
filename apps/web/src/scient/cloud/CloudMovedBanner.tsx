@@ -4,6 +4,7 @@ import { CloudIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
 import type { ComposerBannerStackItem } from "~/components/chat/ComposerBannerStack";
+import { ComposerBannerText } from "~/components/chat/scient-import/ConversationImportBanner";
 import { Button } from "~/components/ui/button";
 import { useEnvironments } from "~/state/environments";
 import { buildThreadRouteParams } from "~/threadRoutes";
@@ -33,6 +34,7 @@ export function useCloudThreadBanner(
       ? undefined
       : status?.movedThreads.find((entry) => entry.threadId === thread.id);
   if (thread === null || moved === undefined) return { moved: null, continuedFrom };
+  const canTakeBack = hasCloudAccount();
   return {
     continuedFrom,
     moved: {
@@ -44,8 +46,16 @@ export function useCloudThreadBanner(
           Continued on <ComputerName environmentId={moved.movedTo} />
         </>
       ),
-      description: "New messages go to that computer now. This conversation stays as it was here.",
-      ...(hasCloudAccount()
+      children: (
+        <ComposerBannerText>
+          New messages go to that computer now. This conversation stays here as it was and takes no
+          new messages.
+          {canTakeBack
+            ? " Take it back to continue its latest copy here, as a new conversation."
+            : null}
+        </ComposerBannerText>
+      ),
+      ...(canTakeBack
         ? { actions: <TakeBackButton environmentId={thread.environmentId} threadId={thread.id} /> }
         : {}),
     },

@@ -7,6 +7,7 @@ import { importTimesShiftedNotice } from "@scientfactory/conversation";
 import { ImportIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 
+import { ComposerBanner } from "../ComposerBanner";
 import type { ComposerBannerStackItem } from "../ComposerBannerStack";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
 
@@ -58,7 +59,7 @@ export function conversationImportNotice(
       document
         ? "The original document is attached to this conversation."
         : takenOver
-          ? "Copied from that computer's cloud copy. Files stay where they are."
+          ? "Copied from that computer's cloud copy; files stay where they are. New messages go here now, and the conversation there stays as it was."
           : markdown
             ? "Text copied from a Scient Markdown export, which anyone can edit."
             : "Copied from a Scient conversation file, which anyone can edit.",
@@ -135,11 +136,24 @@ export function conversationImportBannerItem(
     id: `conversation-import:${thread.id}`,
     variant: "info",
     icon: <ImportIcon />,
-    title: continuedFrom === null ? notice.title : <>Continued from {continuedFrom}</>,
-    description: notice.description,
     dismissLabel: "Dismiss import notice",
     onDismiss,
+    ...(continuedFrom === null
+      ? { title: notice.title, description: notice.description }
+      : {
+          title: <>Continued from {continuedFrom}</>,
+          children: <ComposerBannerText>{notice.description}</ComposerBannerText>,
+        }),
   };
+}
+
+/** A banner's explanation in full, wrapped under its title, where the row would cut it off. */
+export function ComposerBannerText({ children }: { readonly children: ReactNode }) {
+  return (
+    <ComposerBanner.Body className="pe-2 pb-1.5 text-muted-foreground">
+      {children}
+    </ComposerBanner.Body>
+  );
 }
 
 /** The open thread's import notice, until the reader dismisses it on that thread. */
