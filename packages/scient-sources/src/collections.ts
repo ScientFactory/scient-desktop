@@ -177,6 +177,27 @@ async function writeLibraryDocument(
   }
 }
 
+/** For library merges: rewrites library collections under the collections lock, listing no records. */
+function rewriteLibraryCollections<A>(
+  paths: StorePaths,
+  change: (
+    collections: ReadonlyArray<ScientSourceCollection>,
+    now: string,
+  ) => { readonly collections: ReadonlyArray<ScientSourceCollection>; readonly result: A },
+): Promise<A> {
+  if (paths.owner.kind !== "library") throw new Error("Only a library merges sources.");
+  return withStoreLock(paths, "collections-write", async () => {
+    const document = await readDocument(paths);
+    const { collections, result } = change(document.collections, new Date().toISOString());
+    const next: ScientSourceCollectionsDocument = { ...document, collections: [...collections] };
+    validateCollectionsDocument(next);
+    await writeLibraryDocument(paths, document, next);
+    return result;
+  });
+}
+
+export const scientSourceCollectionsInternals = { rewriteLibraryCollections };
+
 function collectionsLabel(paths: StorePaths): string {
   return paths.owner.kind === "library"
     ? `${LIBRARY_COLLECTIONS_DIRECTORY}/ or ${LIBRARY_SAVED_SEARCHES_FILE}`

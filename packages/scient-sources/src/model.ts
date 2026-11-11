@@ -432,6 +432,10 @@ export const ScientSourceTrashEntry = Schema.Struct({
   removedAt: NonEmptyString,
   removedBy: ScientSourceActor,
   record: ScientSourceRecord,
+  /** Set when a library merge put the source here; only that merge's Undo brings it back. */
+  mergedInto: Schema.optionalKey(
+    Schema.Struct({ sourceId: NonEmptyString, mergeId: NonEmptyString }),
+  ),
 });
 export type ScientSourceTrashEntry = typeof ScientSourceTrashEntry.Type;
 

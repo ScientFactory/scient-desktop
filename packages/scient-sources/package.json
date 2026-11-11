@@ -36,6 +36,14 @@
       "types": "./src/libraryLock.ts",
       "import": "./src/libraryLock.ts"
     },
+    "./library-aliases": {
+      "types": "./src/libraryAliases.ts",
+      "import": "./src/libraryAliases.ts"
+    },
+    "./library-merge": {
+      "types": "./src/libraryMerge.ts",
+      "import": "./src/libraryMerge.ts"
+    },
     "./library-root": {
       "types": "./src/libraryRoot.ts",
       "import": "./src/libraryRoot.ts"

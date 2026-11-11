@@ -14,7 +14,7 @@ type SourceMetadata = Pick<ScientSourceRecord, "creators" | "identifiers" | "iss
 // work in their catalogue.
 const WORK_LEVEL_IDENTIFIER_SCHEMES = new Set(["arxiv", "doi", "pmcid", "pmid", "openalex", "s2"]);
 
-function workLevelIdentifierKey(scheme: string, value: string): string | null {
+export function workLevelIdentifierKey(scheme: string, value: string): string | null {
   const normalizedScheme = scheme.trim().toLowerCase();
   if (!WORK_LEVEL_IDENTIFIER_SCHEMES.has(normalizedScheme)) return null;
   const canonical =

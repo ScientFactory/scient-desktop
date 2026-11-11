@@ -705,20 +705,7 @@ export async function removeScientSource(input: {
       };
     }
 
-    await preserveSourceRevision(paths, current);
-    const entry: ScientSourceTrashEntry = {
-      formatVersion: storeFormatVersion(paths),
-      sourceId: current.sourceId,
-      ...projectField(paths),
-      removedAt: new Date().toISOString(),
-      removedBy: input.actor ?? "user",
-      record: current,
-    };
-    // The trash entry lands before the record goes: a crash in between leaves the source listed,
-    // never lost. PDFs stay until the trash is emptied.
-    await atomicWriteJson(trashEntryPath(paths, current.sourceId), entry, MAX_TRASH_ENTRY_BYTES);
-    await NodeFSP.unlink(recordPath);
-
+    await moveRecordToTrash(paths, current, input.actor ?? "user");
     return {
       outcome: "removed",
       sourceId: current.sourceId,
@@ -728,6 +715,63 @@ export async function removeScientSource(input: {
       restorable: true,
     };
   });
+}
+
+/** Caller holds the source-write lock. */
+async function moveRecordToTrash(
+  paths: SourceStorePaths,
+  current: ScientSourceRecord,
+  removedBy: ScientSourceActor,
+  mergedInto?: ScientSourceTrashEntry["mergedInto"],
+): Promise<void> {
+  await preserveSourceRevision(paths, current);
+  const entry: ScientSourceTrashEntry = {
+    formatVersion: storeFormatVersion(paths),
+    sourceId: current.sourceId,
+    ...projectField(paths),
+    removedAt: new Date().toISOString(),
+    removedBy,
+    record: current,
+    ...(mergedInto ? { mergedInto } : {}),
+  };
+  // The trash entry lands before the record goes: a crash in between leaves the source listed,
+  // never lost. PDFs stay until the trash is emptied.
+  await atomicWriteJson(trashEntryPath(paths, current.sourceId), entry, MAX_TRASH_ENTRY_BYTES);
+  await NodeFSP.unlink(sourceRecordPath(paths, current.sourceId));
+}
+
+/**
+ * Puts a trashed record back as a new revision; null when a live record already has its ID.
+ * Caller holds the source-write lock.
+ */
+async function restoreTrashedRecord(
+  paths: SourceStorePaths,
+  entry: ScientSourceTrashEntry,
+  existing: ReadonlyArray<ScientSourceRecord>,
+  restoredBy: ScientSourceActor,
+): Promise<ScientSourceRecord | null> {
+  const { sourceId } = entry;
+  await preserveSourceRevision(paths, entry.record);
+  const revision = Math.max(
+    entry.record.revision,
+    await latestSourceHistoryRevision(paths, sourceId),
+  );
+  const restored: ScientSourceRecord = {
+    ...entry.record,
+    // Another source may have taken the key while this one was in the trash.
+    ...(entry.record.citationKey
+      ? { citationKey: uniqueCitationKey(entry.record.citationKey, takenCitationKeys(existing)) }
+      : {}),
+    revision: revision + 1,
+    updatedAt: new Date().toISOString(),
+    updatedBy: restoredBy,
+  };
+  if (!(await atomicCreateJson(sourceRecordPath(paths, sourceId), restored, MAX_RECORD_BYTES))) {
+    return null;
+  }
+  await NodeFSP.rm(trashEntryPath(paths, sourceId), { force: true });
+  await pruneSourceHistory(paths, sourceId);
+  return restored;
 }
 
 function trashEntryPath(paths: SourceStorePaths, sourceId: string): string {
@@ -844,6 +888,10 @@ export async function restoreScientSource(input: {
     if ((await snapshot(recordPath)) !== "missing") {
       return { ...empty, outcome: "exists", matchingSourceIds: [input.sourceId] };
     }
+    // Restoring a merged source on its own would leave its alias pointing at the survivor.
+    if (entry.mergedInto) {
+      return { ...empty, outcome: "duplicate", matchingSourceIds: [entry.mergedInto.sourceId] };
+    }
     const existing = await listScientSourceRecordsFromPaths(paths);
     const duplicate = assessSourceMetadataDuplicate({
       source: editableMetadataFromRecord(entry.record),
@@ -852,26 +900,8 @@ export async function restoreScientSource(input: {
     if (duplicate.kind === "same-identifier") {
       return { ...empty, outcome: "duplicate", matchingSourceIds: duplicate.matchingSourceIds };
     }
-    await preserveSourceRevision(paths, entry.record);
-    const revision = Math.max(
-      entry.record.revision,
-      await latestSourceHistoryRevision(paths, input.sourceId),
-    );
-    const restored: ScientSourceRecord = {
-      ...entry.record,
-      // Another source may have taken the key while this one was in the trash.
-      ...(entry.record.citationKey
-        ? { citationKey: uniqueCitationKey(entry.record.citationKey, takenCitationKeys(existing)) }
-        : {}),
-      revision: revision + 1,
-      updatedAt: new Date().toISOString(),
-      updatedBy: input.actor ?? "user",
-    };
-    if (!(await atomicCreateJson(recordPath, restored, MAX_RECORD_BYTES))) {
-      return { ...empty, outcome: "exists", matchingSourceIds: [input.sourceId] };
-    }
-    await NodeFSP.rm(trashEntryPath(paths, input.sourceId), { force: true });
-    await pruneSourceHistory(paths, input.sourceId);
+    const restored = await restoreTrashedRecord(paths, entry, existing, input.actor ?? "user");
+    if (!restored) return { ...empty, outcome: "exists", matchingSourceIds: [input.sourceId] };
     return {
       outcome: "restored",
       sourceId: input.sourceId,
@@ -2589,6 +2619,15 @@ export async function updateScientSourceExternalReferences(input: {
 /** For sibling store modules (collections, reviews) that share this store's safety rules. */
 export const scientSourceStoreInternals = {
   sourceStorePaths,
+  readSourceRecordFromPaths,
+  readScientSourceRecordIfPresent,
+  listScientSourceRecordsFromPaths,
+  persistSourceRevision,
+  moveRecordToTrash,
+  restoreTrashedRecord,
+  readTrashEntry,
+  zoteroSyncPath,
+  maxRecordBytes: MAX_RECORD_BYTES,
   withStoreLock,
   asLibraryWriter,
   snapshot,

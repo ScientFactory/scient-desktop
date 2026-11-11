@@ -147,8 +147,8 @@ than scattering version checks through adapters and UI code.
 The personal library is the same store over a library root instead of a
 project root. It is code only until the switch (build step 5e): no request,
 agent tool or UI routes to it, and the project store above stays the only
-active backend. Pins, the instance map, review snapshots, the merge engine and
-the move of existing projects come in later steps.
+active backend. Pins, the instance map, review snapshots and the move of
+existing projects come in later steps.
 
 The library lives under the server's resolved state directory for the launch
 mode, `scientLibraryRootFor(stateDir)` = `<stateDir>/scient/library/`, so dev
@@ -167,6 +167,10 @@ apps never touch the installed app's library.
 ├── saved-searches.json
 ├── categories.json
 ├── instances.json           this computer's project checkouts
+├── aliases.json             merged source ID → survivor, with Undo tombstones
+├── distinct-pairs.json      pairs never merged automatically
+├── merges/<merge-id>.json   one per merge: report and what Undo reverts
+├── merges/pending/          merges a crash interrupted, finished by the next write
 ├── zotero/<source-id>.json  Zotero merge bases
 └── bulk-edits/ operations/ receipts/ staging/
 ```
@@ -218,6 +222,78 @@ comparing its identity before and after locking.
 
 The server's ownership lock already stops two servers from sharing one state
 folder. `library.lock` covers the writers that are not that server.
+
+### Merge engine and aliases
+
+`@scientfactory/scient-sources/library-merge` merges duplicates library-wide.
+Every function takes a `ScientLibraryLocation` and writes under the library
+lock. Nothing calls it yet; the move (5d) runs the bulk pass and 5f lists the
+possible duplicates.
+
+The assessment follows the design's order. These merge automatically:
+
+1. The same external item (`system`, `libraryId`, `itemKey`), such as one
+   Zotero item imported twice.
+2. A shared work-level identifier from `WORK_LEVEL_IDENTIFIER_SCHEMES` in
+   `duplicates.ts` (DOI, PMID, PMCID, arXiv, OpenAlex, Semantic Scholar).
+3. The same PDF hash, titles equal once case, punctuation and spacing are
+   ignored, and no conflicting identifiers. Identifiers conflict when both
+   records name a scheme (ISBN included) and share none of its values.
+
+Two kinds of match are only listed as `possibleDuplicates`, never merged:
+title, lead author and year (`possible-metadata-match`), and a shared ISBN or
+ISSN plus the same title between records with no work-level identifier
+(`possible-container-match`). Chapters of one book share an ISBN and articles
+of one journal an ISSN, so a shared container identifier alone lists nothing.
+Pairs in `distinct-pairs.json` (`marked-distinct` from a person or agent,
+`divergent-copies` from the move) are never grouped, not even through a third
+record, and are not listed. Pair members resolve through aliases.
+
+`mergeScientLibrarySources` merges one pair on request; the bulk pass
+`mergeScientLibraryDuplicates` merges every group and returns `mergedCount`,
+`keptDifferentCount` (merges with a non-empty report), the merges, failed
+pairs and what is left as possible duplicates. One merge:
+
+- The survivor has the latest `verification.checkedAt`, otherwise the oldest
+  `importedAt`, then the lower source ID, so every computer picks the same one.
+  A request may name the survivor.
+- Bibliographic fields: an empty value takes the loser's, a different one
+  keeps the survivor's and goes into the report. The citation key,
+  verification and editorial status fill when empty and are never reported.
+  Abstract sections come along only with the abstract they belong to.
+- Tags (case-insensitive), identifiers, attachments (by hash) and external
+  references are united. A second value of a work-level scheme, such as
+  another DOI, is reported instead of added. Personal notes are joined, each
+  under `From <label>:`, where the label is the caller's (the project name at
+  the move), else the citation key.
+- Library collection membership moves to the survivor. When the survivor
+  gains a Zotero link it lacked, the loser's Zotero base is copied to it.
+- The loser goes to the trash with `mergedInto` (survivor and merge ID). A
+  plain restore refuses it; only the merge's Undo brings it back.
+- `aliases.json` maps the loser to the survivor. `resolveScientLibraryAlias`
+  (`/library-aliases`) follows aliases to the last survivor and skips
+  tombstones; the instance map (5c) resolves through it.
+
+A merge first writes `merges/pending/<id>.json`, then the survivor revision,
+then the trash entry, then membership, aliases and the final merge file. The
+next merge, bulk pass or Undo finishes a pending merge whose loser is in the
+trash or whose survivor revision landed, and drops one that stopped earlier;
+the pair is then found again.
+
+`undoScientLibraryMerge` restores the loser as a new revision, reverts each
+field the merge set only where the survivor still holds the merged value,
+removes united items that are still there, and names the fields a later edit
+changed (`unrevertedFields`), which keep the later value. It puts collection
+membership back and marks the alias `undoneAt`; the tombstone stays so sync
+never brings the alias back. Undo refuses while the survivor itself was merged
+on or removed, and when the trash was emptied.
+
+Measured once at 20,000 records with 1,000 seeded DOI duplicates (generated
+records in a temporary folder; Apple M5 Pro, Node 24.19, load average about 8):
+the bulk pass took 34 s and merged all 1,000, each with a kept title in its
+report; peak process memory grew 65 MiB. A second pass, finding nothing, took
+1.6 s. Each merge is about six synced file writes of about 5.5 ms each, so the
+time is the disk's.
 
 ### Derived record index
 
