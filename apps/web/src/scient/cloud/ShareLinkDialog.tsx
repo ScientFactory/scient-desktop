@@ -731,7 +731,7 @@ function ShareLinkDialog({
               <Button
                 size="sm"
                 variant="ghost-muted"
-                render={<Link to="/settings/connections" hash="shared-links" onClick={onClose} />}
+                render={<Link to="/settings/access" hash="shared-links" onClick={onClose} />}
               >
                 All links
               </Button>
