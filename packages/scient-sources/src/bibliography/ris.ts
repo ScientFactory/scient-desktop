@@ -336,7 +336,7 @@ export function formatRis(
       }
       add("UR", record.url);
       add("LA", record.language);
-      add("AB", record.abstract);
+      if (options.includeAbstracts !== false) add("AB", record.abstract);
       for (const tag of record.tags) add("KW", tag);
       if (options.includeNotes) add("N1", record.note ?? null, true);
       if (record.type === "preprint") add("M3", "Preprint");

@@ -4,9 +4,13 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
+import { formatBibliography } from "@scientfactory/scient-sources/bibliography";
 import {
+  importScientSource,
+  listScientSourceRecords,
   readScientSourceRecord,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
+  SCIENT_SOURCES_DIRECTORY,
 } from "@scientfactory/scient-sources/store";
 import { scientProjectFilePublicationHooks } from "@scientfactory/scient-sources/project-files";
 import { afterEach, describe, expect, it } from "@effect/vitest";
@@ -64,6 +68,45 @@ describe("managed bibliography", () => {
     const status = await syncManagedBibliography(root);
     expect(status.citedSourceCount).toBe(2);
     expect(await read(root, "references.bib")).toContain("@article{lovelace1843sketch,");
+  });
+
+  it("drops abstracts from files an earlier version wrote with them, without reporting an edit", async () => {
+    const root = await project();
+    await importScientSource({
+      root,
+      operationId: "abstract-upgrade",
+      candidate: {
+        ...sourceCandidate("A", "Notes on the analytical engine"),
+        abstract: "Long abstract.",
+      },
+    });
+    await syncManagedBibliography(root);
+    const [source] = await listScientSourceRecords(root);
+    const items = [{ record: source!, citationKey: source!.citationKey! }];
+    for (const [name, format] of [
+      ["references.bib", "bibtex"],
+      ["references.json", "csl-json"],
+    ] as const) {
+      const earlier = (await read(root, name)).replace(
+        formatBibliography(items, format, { includeNotes: false, includeAbstracts: false }),
+        formatBibliography(items, format, { includeNotes: false }),
+      );
+      expect(earlier).toContain("Long abstract.");
+      await NodeFSP.writeFile(NodePath.join(root, name), earlier);
+      await NodeFSP.writeFile(
+        NodePath.join(root, SCIENT_SOURCES_DIRECTORY, "bibliography", name),
+        earlier,
+      );
+    }
+
+    const status = await syncManagedBibliography(root);
+    expect(status.files).toEqual([
+      { name: "references.bib", state: "current", changes: null },
+      { name: "references.json", state: "current", changes: null },
+    ]);
+    expect(await read(root, "references.bib")).not.toContain("Long abstract.");
+    expect(await read(root, "references.json")).not.toContain("Long abstract.");
+    expect((await NodeFSP.readdir(root)).filter((name) => name.includes(".kept-"))).toEqual([]);
   });
 
   it("keeps a hand edit, reports it, and replaces it only when asked", async () => {

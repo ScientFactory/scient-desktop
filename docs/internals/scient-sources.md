@@ -532,8 +532,14 @@ is assigned.
 the project's `references.bib` and `references.json` (CSL-JSON, `id` = citation
 key), rendered by `@scientfactory/scient-citations/bibliography` and sorted by
 key. Entries come from the same writers as Library export (`formatBibtex`,
-`cslJsonItem` in `@scientfactory/scient-sources/bibliography`; notes stay
-out), so a managed file and an export hold the same entry for a source; Word
+`cslJsonItem` in `@scientfactory/scient-sources/bibliography`; notes and
+abstracts stay out through `includeNotes: false, includeAbstracts: false`), so
+a managed file holds an export's entry minus the abstract. Abstracts are left
+out because they multiply the file size and turn every registry refresh into a
+large diff, and nothing that builds a document reads them; explicit export
+keeps them. The first sync after this change rewrote each file once: the file
+still matched the written copy, so it was replaced quietly (no `edited`, no
+`kept-` copy). Word
 export and reference formatting read sources through the same CSL-JSON writer. The store reports every settled write through
 `onScientSourceRecordsChanged`; the server coalesces those into one sync per
 project, so writes from people, agents and every import path keep both files

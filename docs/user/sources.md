@@ -429,7 +429,9 @@ never writes over a `references.bib` it did not create, or over a change you
 save while it is writing. If a write fails part way (for example on a full
 disk), the earlier text is kept beside it as `references.bib.kept-…`, and the
 Library says where until you delete that copy. These files hold the same entries as **Export** to
-BibTeX or CSL-JSON.
+BibTeX or CSL-JSON, without abstracts: abstracts make the files several times
+larger and no document needs them. The Library keeps every abstract, and
+**Export** (or an agent's export) still writes them.
 
 ### Export to Word with a citation style
 
