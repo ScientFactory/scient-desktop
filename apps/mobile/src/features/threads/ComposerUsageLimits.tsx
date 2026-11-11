@@ -1,4 +1,6 @@
-import { providerClients } from "@t3tools/client-runtime/provider-clients";
+// SCIENT-FORK:START — Scient provider names
+import { providerClients } from "@t3tools/client-runtime/scient-provider-clients";
+// SCIENT-FORK:END
 import type { EnvironmentId, UsageLimitsReport } from "@t3tools/contracts";
 import { Pressable, ScrollView, View } from "react-native";
 
