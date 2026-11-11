@@ -1224,6 +1224,37 @@ describe("the library lock during a move", () => {
     }
   });
 
+  it("the move back keeps and counts a record removed from the library while its PDFs were copied", async () => {
+    const { library, project, a, sha256 } = await seededMove();
+    await move(library, project);
+    const pause = pauseAtFirstFileCopy();
+    const movingBack = moveScientProjectBackIntoProject({
+      library,
+      projectRoot: project,
+      actor: "user",
+      faults: { beforeFileCopy: pause.beforeFileCopy },
+    });
+    await pause.reached;
+    const inLibrary = (await readScientSourceRecord(library, a.sourceId))!;
+    await removeScientSource({
+      root: library,
+      sourceId: a.sourceId,
+      expectedRevision: inLibrary.revision,
+    });
+    pause.release();
+    expect(await movingBack).toMatchObject({
+      outcome: "moved-back",
+      restoredSources: 2,
+      restoredPdfs: 1,
+    });
+    expect(await readScientSourceRecord(project, a.sourceId)).not.toBeNull();
+    expect(
+      await exists(
+        NodePath.join(project, ".scient/sources/files/sha256", sha256.slice(0, 2), `${sha256}.pdf`),
+      ),
+    ).toBe(true);
+  });
+
   it("the move back copies its PDFs with the library lock free", async () => {
     const { library, project, sha256 } = await seededMove();
     await move(library, project);

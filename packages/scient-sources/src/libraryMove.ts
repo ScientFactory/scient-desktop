@@ -2291,8 +2291,15 @@ async function writeRestoredRecords(
         ? await readLibraryRecord(ctx, resolveScientLibraryAlias(aliases, resolution.sourceId))
         : null;
     if (!library) {
-      if (backup) restoredSources += 1;
-      else skippedPins += 1;
+      if (!backup) {
+        skippedPins += 1;
+        continue;
+      }
+      // Kept as the backup or an earlier pass wrote it, so its PDFs still belong to the store.
+      restoredSources += 1;
+      for (const attachment of backup.attachments) {
+        if (SHA256.test(attachment.sha256)) pdfs.add(attachment.sha256);
+      }
       continue;
     }
     const sameLineage = library.sourceId === pin.sourceId;
