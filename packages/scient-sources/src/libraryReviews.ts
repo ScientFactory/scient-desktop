@@ -408,18 +408,24 @@ function withReviewsLock<A>(root: string, run: () => Promise<A>): Promise<A> {
 
 type Mode = "read" | "write";
 
+/** A read may name no library (none on this computer yet): every record then comes from the snapshot. */
+type ReviewAccess =
+  | { readonly library: ScientLibraryLocation; readonly mode: Mode }
+  | { readonly library: null; readonly mode: "read" };
+
 interface Resolved {
   readonly resolutions: ReadonlyMap<string, ScientProjectSourceResolution>;
   readonly records: ReadonlyMap<string, ScientSourceRecord>;
 }
 
-async function resolveReviewIds(input: {
-  readonly library: ScientLibraryLocation;
-  readonly root: string;
-  readonly mode: Mode;
-  readonly sourceIds: ReadonlyArray<string>;
-  readonly entries: ReadonlyMap<string, StoredWork>;
-}): Promise<Resolved> {
+async function resolveReviewIds(
+  input: ReviewAccess & {
+    readonly root: string;
+    readonly sourceIds: ReadonlyArray<string>;
+    readonly entries: ReadonlyMap<string, StoredWork>;
+  },
+): Promise<Resolved> {
+  if (input.library === null) return { resolutions: new Map(), records: new Map() };
   const resolutions = await resolveScientProjectSources({
     library: input.library,
     projectRoot: input.root,
@@ -435,6 +441,11 @@ async function resolveReviewIds(input: {
     records: new Map(records.map((record) => [record.sourceId, record])),
   };
 }
+
+const reviewAccess = (input: ReviewAccess): ReviewAccess =>
+  input.library === null
+    ? { library: null, mode: "read" }
+    : { library: input.library, mode: input.mode };
 
 function libraryRecordFor(resolved: Resolved, sourceId: string): ScientSourceRecord | undefined {
   const resolution = resolved.resolutions.get(sourceId);
@@ -637,12 +648,9 @@ interface ReviewView {
  * Loads a live review with its snapshot and resolutions. `write` also records resolutions and
  * fills entries for named IDs that have none; `read` writes nothing at all.
  */
-async function loadReview(input: {
-  readonly projectRoot: string;
-  readonly library: ScientLibraryLocation;
-  readonly reviewId: string;
-  readonly mode: Mode;
-}): Promise<ReviewView | null> {
+async function loadReview(
+  input: ReviewAccess & { readonly projectRoot: string; readonly reviewId: string },
+): Promise<ReviewView | null> {
   const root = await projectRootFor(input.projectRoot);
   const folder = libraryFolder(root);
   const load = async (): Promise<ReviewView | null> => {
@@ -650,9 +658,8 @@ async function loadReview(input: {
     if (!review || review.deletedAt !== undefined) return null;
     const document = await readSnapshotState(folder, review.reviewId, input.mode);
     const resolved = await resolveReviewIds({
-      library: input.library,
+      ...reviewAccess(input),
       root,
-      mode: input.mode,
       sourceIds: scientReviewNamedIds(review),
       entries: document.entries,
     });
@@ -718,12 +725,9 @@ function recordsOf(view: ReviewView): ReadonlyArray<ScientLibraryReviewRecord> {
 }
 
 /** A review with PRISMA counts; records served from the snapshot are screened and counted. */
-export async function readScientLibraryReview(input: {
-  readonly projectRoot: string;
-  readonly library: ScientLibraryLocation;
-  readonly reviewId: string;
-  readonly mode: Mode;
-}): Promise<ScientSystematicReviewDetail | null> {
+export async function readScientLibraryReview(
+  input: ReviewAccess & { readonly projectRoot: string; readonly reviewId: string },
+): Promise<ScientSystematicReviewDetail | null> {
   const view = await loadReview(input);
   if (!view) return null;
   return reviewDetail(
@@ -734,24 +738,21 @@ export async function readScientLibraryReview(input: {
 }
 
 /** The review's records in the order they entered it. */
-export async function listScientLibraryReviewRecords(input: {
-  readonly projectRoot: string;
-  readonly library: ScientLibraryLocation;
-  readonly reviewId: string;
-  readonly mode: Mode;
-}): Promise<ReadonlyArray<ScientLibraryReviewRecord> | null> {
+export async function listScientLibraryReviewRecords(
+  input: ReviewAccess & { readonly projectRoot: string; readonly reviewId: string },
+): Promise<ReadonlyArray<ScientLibraryReviewRecord> | null> {
   const view = await loadReview(input);
   return view ? recordsOf(view) : null;
 }
 
 /** One record a review names, for the screening panel; null when the review does not name it. */
-export async function readScientLibraryReviewRecord(input: {
-  readonly projectRoot: string;
-  readonly library: ScientLibraryLocation;
-  readonly reviewId: string;
-  readonly sourceId: string;
-  readonly mode: Mode;
-}): Promise<ScientLibraryReviewRecord | null> {
+export async function readScientLibraryReviewRecord(
+  input: ReviewAccess & {
+    readonly projectRoot: string;
+    readonly reviewId: string;
+    readonly sourceId: string;
+  },
+): Promise<ScientLibraryReviewRecord | null> {
   const view = await loadReview(input);
   if (!view || !scientReviewNamedIds(view.review).includes(input.sourceId)) return null;
   return reviewRecord(input.sourceId, view.entries, view.resolved);
@@ -761,11 +762,9 @@ export async function readScientLibraryReviewRecord(input: {
  * Live reviews, newest change first. With `write`, a snapshot whose review was never created
  * (a crash between the two) is removed.
  */
-export async function listScientLibraryReviews(input: {
-  readonly projectRoot: string;
-  readonly library: ScientLibraryLocation;
-  readonly mode: Mode;
-}): Promise<ScientSystematicReviewList> {
+export async function listScientLibraryReviews(
+  input: ReviewAccess & { readonly projectRoot: string },
+): Promise<ScientSystematicReviewList> {
   const root = await projectRootFor(input.projectRoot);
   const folder = libraryFolder(root);
   const list = async () => {
@@ -775,9 +774,8 @@ export async function listScientLibraryReviews(input: {
       if (review.deletedAt !== undefined) continue;
       const document = await readSnapshotState(folder, review.reviewId, "read");
       const resolved = await resolveReviewIds({
-        library: input.library,
+        ...reviewAccess(input),
         root,
-        mode: input.mode,
         sourceIds: scientReviewNamedIds(review),
         entries: document.entries,
       });

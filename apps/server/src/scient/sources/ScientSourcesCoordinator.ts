@@ -48,7 +48,12 @@ import {
   type ZoteroImportScope,
   zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
-import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
+import {
+  isScientLibraryLocation,
+  type ScientLibraryLocation,
+  type ScientSourceStoreLocation,
+} from "@scientfactory/scient-sources/library-root";
+import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
 import {
   bulkUpdateScientSources,
   createScientSourceCollection,
@@ -112,8 +117,15 @@ import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import {
   syncManagedBibliography,
+  syncPinnedBibliography,
   type ManagedBibliographyFileName,
 } from "./ManagedBibliography.ts";
+import {
+  libraryImportPinInstance,
+  pinLibraryImport,
+  syncLibraryImportBibliography,
+} from "./LibraryImportPins.ts";
+import { canonicalScientSourceLocation, scientSourceStoreKey } from "./SourcesBackend.ts";
 import {
   beginBibliographyFileImport,
   discardBibliographyFileImport,
@@ -997,7 +1009,7 @@ export async function assessSourcePreflightDuplicate(input: {
 }
 
 export async function preflightZoteroImport(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly itemKeys: ReadonlyArray<string>;
   readonly connection?: ZoteroConnection;
   readonly groupId?: string;
@@ -1033,14 +1045,26 @@ export async function preflightZoteroImport(input: {
   return { items };
 }
 
+/** A library import started from a project pins into its checkout; a project import never pins. */
+async function importPinInstance(
+  root: ScientSourceStoreLocation,
+  pinInto: string | undefined,
+): Promise<{ readonly pinInstanceId?: string }> {
+  return pinInto && isScientLibraryLocation(root)
+    ? { pinInstanceId: await libraryImportPinInstance(root, pinInto) }
+    : {};
+}
+
 export async function beginZoteroImport(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operationId: string;
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
   readonly connection?: ZoteroConnection;
   readonly groupId?: string;
   readonly actor?: "user" | "agent";
+  /** Library stores: the project the imported sources are pinned in. */
+  readonly pinInto?: string;
 }) {
   return createSourceImportOperation({
     root: input.root,
@@ -1050,17 +1074,20 @@ export async function beginZoteroImport(input: {
     adapter: zoteroAdapter(input.connection),
     ...(input.groupId ? { zoteroGroupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
+    ...(await importPinInstance(input.root, input.pinInto)),
   });
 }
 
 export async function beginZoteroScopedImport(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operationId: string;
   readonly scope: ZoteroImportScope;
   readonly connection?: ZoteroConnection;
   readonly groupId?: string;
   readonly actor?: "user" | "agent";
   readonly zotero?: ZoteroAccess;
+  /** Library stores: the project the imported sources are pinned in. */
+  readonly pinInto?: string;
 }) {
   const adapter = zoteroAdapter(input.connection);
   const existing = await readSourceImportOperation(input.root, input.operationId);
@@ -1083,11 +1110,12 @@ export async function beginZoteroScopedImport(input: {
     itemKeys,
     ...(input.groupId ? { zoteroGroupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
+    ...(await importPinInstance(input.root, input.pinInto)),
   });
 }
 
 export async function uploadLocalPdfSource(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourcePath: string;
   readonly fileName: string;
 }) {
@@ -1095,19 +1123,26 @@ export async function uploadLocalPdfSource(input: {
 }
 
 export async function beginLocalPdfImport(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operationId: string;
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
+  /** Library stores: the project the imported sources are pinned in. */
+  readonly pinInto?: string;
 }) {
   for (const sourceKey of new Set(input.itemKeys)) {
     await getLocalPdfImportMaterial(input.root, sourceKey);
   }
-  return createSourceImportOperation({ ...input, adapter: "local-files" });
+  const { pinInto, ...operation } = input;
+  return createSourceImportOperation({
+    ...operation,
+    adapter: "local-files",
+    ...(await importPinInstance(input.root, pinInto)),
+  });
 }
 
 export async function discardLocalPdfSources(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly itemKeys: ReadonlyArray<string>;
 }) {
   const keys = [...new Set(input.itemKeys)];
@@ -1165,14 +1200,14 @@ function zoteroCollectionPlacesFor(
  * a note naming the collections nested too deep to keep, or null.
  */
 async function addToZoteroCollections(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operation: ScientSourceImportOperation;
   readonly transport: ZoteroTransport;
   readonly sourceId: string;
   readonly collectionKeys: ReadonlyArray<string>;
 }): Promise<string | null> {
   if (input.collectionKeys.length === 0) return null;
-  const cacheKey = `${input.root}\0${input.operation.operationId}`;
+  const cacheKey = `${scientSourceStoreKey(input.root)}\0${input.operation.operationId}`;
   let places = zoteroCollectionPlaces.get(cacheKey);
   if (!places) {
     places = listZoteroCollectionsWith(input.transport).then((result) =>
@@ -1212,7 +1247,7 @@ async function addToZoteroCollections(input: {
 
 /** A reference-file entry, with the PDFs its file names attached like any other PDF. */
 async function importFileOperationItem(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operation: ScientSourceImportOperation;
   readonly itemKey: string;
   readonly allowPossibleMetadataMatch: boolean;
@@ -1258,7 +1293,7 @@ async function importFileOperationItem(input: {
 }
 
 async function importZoteroOperationItem(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operation: ScientSourceImportOperation;
   readonly itemKey: string;
   readonly allowPossibleMetadataMatch: boolean;
@@ -1330,16 +1365,45 @@ async function importZoteroOperationItem(input: {
   }
 }
 
+/**
+ * What a library import pins: the record it brought in, or the record an exact duplicate is. A
+ * possible metadata match may be another work, so it is not pinned.
+ */
+function importedOrSameWork(result: {
+  readonly record: ScientSourceRecord | null;
+  readonly duplicate: ScientSourceDuplicateAssessment;
+}): string | null {
+  if (result.record) return result.record.sourceId;
+  return result.duplicate.kind === "possible-metadata-match"
+    ? null
+    : (result.duplicate.matchingSourceIds[0] ?? null);
+}
+
+/** A settled library import that pins builds its project's managed files once. */
+async function settleLibraryImport(
+  root: ScientSourceStoreLocation,
+  operation: ScientSourceImportOperation,
+): Promise<void> {
+  if (operation.state === "running" || !operation.pinInstanceId) return;
+  if (!isScientLibraryLocation(root)) return;
+  // The import has landed; managed files that fail here are rewritten by the next write.
+  await syncLibraryImportBibliography({
+    library: root,
+    instanceId: operation.pinInstanceId,
+    actor: operation.actor,
+  }).catch(() => undefined);
+}
+
 export async function advanceSourceImport(
   input: {
-    readonly root: string;
+    readonly root: ScientSourceStoreLocation;
     readonly operationId: string;
     readonly zotero?: ZoteroAccess;
   },
   observer?: SourceImportObserver,
 ) {
-  const root = await canonicalizeScientSourceRoot(input.root);
-  return withOperationLane(`${root}\0${input.operationId}`, async () => {
+  const root = await canonicalScientSourceLocation(input.root);
+  return withOperationLane(`${scientSourceStoreKey(root)}\0${input.operationId}`, async () => {
     const operation = await readSourceImportOperation(root, input.operationId);
     if (!operation) throw new Error("The source import operation was not found.");
     if (operation.state !== "running") return operation;
@@ -1383,6 +1447,16 @@ export async function advanceSourceImport(
         },
         (result) => (result.outcome === "imported" ? "imported" : "skipped"),
       );
+      // Pinned before the item is recorded, so a crash in between pins it when the item runs again.
+      const pinned = importedOrSameWork(result);
+      if (operation.pinInstanceId && isScientLibraryLocation(root) && pinned) {
+        await pinLibraryImport({
+          library: root,
+          instanceId: operation.pinInstanceId,
+          sourceIds: [pinned],
+          actor: operation.actor,
+        });
+      }
       const updated = await updateSourceImportOperationItem({
         root,
         operationId: input.operationId,
@@ -1404,6 +1478,7 @@ export async function advanceSourceImport(
       ) {
         await discardBibliographyFileImport(root, input.operationId);
       }
+      await settleLibraryImport(root, updated);
       return updated;
     } catch (error) {
       const message = error instanceof Error ? error.message : "The source could not be imported.";
@@ -1414,17 +1489,18 @@ export async function advanceSourceImport(
         state: "failed",
         message,
       });
+      await settleLibraryImport(root, updated);
       return updated;
     }
   });
 }
 
 export async function cancelSourceImport(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operationId: string;
 }) {
-  const root = await canonicalizeScientSourceRoot(input.root);
-  return withOperationLane(`${root}\0${input.operationId}`, async () => {
+  const root = await canonicalScientSourceLocation(input.root);
+  return withOperationLane(`${scientSourceStoreKey(root)}\0${input.operationId}`, async () => {
     const operation = await readSourceImportOperation(root, input.operationId);
     if (!operation) throw new Error("The source import operation was not found.");
     const cancelled = await cancelSourceImportOperation(root, input.operationId);
@@ -1436,49 +1512,58 @@ export async function cancelSourceImport(input: {
           .map((item) => discardLocalPdfImportMaterial(root, item.itemKey).catch(() => undefined)),
       );
     }
+    // What was pinned before the cancel stays pinned, as imported records stay imported.
+    await settleLibraryImport(root, cancelled);
     return cancelled;
   });
 }
 
 export async function retrySourceImport(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operationId: string;
   readonly itemKeys: ReadonlyArray<string>;
 }) {
-  const root = await canonicalizeScientSourceRoot(input.root);
+  const root = await canonicalScientSourceLocation(input.root);
   return retryFailedSourceImportOperationItems(root, input.operationId, input.itemKeys);
 }
 
 /**
- * Offers hand edits to the managed bibliography back to the Library: new entries
- * are imported like any reference file. A file whose only edits were new
- * entries, all now in the Library under their keys, is then written again;
- * one with changed or removed entries stays as the person left it.
+ * Offers hand edits to the managed bibliography back to the Library (with a library, pinned
+ * here). A file whose only edits were new entries, all now in the Library under their keys, is
+ * written again; one with changed or removed entries stays as the person left it.
  */
 export async function syncManagedBibliographyWithImports(
   input: {
     readonly root: string;
+    readonly library?: ScientLibraryLocation;
     readonly replaceEdited?: ReadonlyArray<ManagedBibliographyFileName>;
     readonly importEdited?: ReadonlyArray<ManagedBibliographyFileName>;
     readonly actor: ScientSourceActor;
   },
   observer?: SourceImportObserver,
 ) {
+  const { library } = input;
+  const sync = (replaceEdited?: ReadonlyArray<ManagedBibliographyFileName>) =>
+    library
+      ? syncPinnedBibliography({
+          root: input.root,
+          library,
+          access: "write",
+          actor: input.actor,
+          ...(replaceEdited ? { replaceEdited } : {}),
+        })
+      : syncManagedBibliography(input.root, replaceEdited ? { replaceEdited } : {});
   const importEdited = input.importEdited ?? [];
-  if (importEdited.length === 0) {
-    return syncManagedBibliography(
-      input.root,
-      input.replaceEdited ? { replaceEdited: input.replaceEdited } : {},
-    );
-  }
-  const before = await syncManagedBibliography(input.root);
+  if (importEdited.length === 0) return sync(input.replaceEdited);
+  const before = await sync();
   let imported = 0;
   for (const name of importEdited) {
     if (before.files.find((file) => file.name === name)?.state !== "edited") continue;
     const file = await resolveProjectBibliographyFile(input.root, name);
     const result = await importBibliographyFile(
       {
-        root: input.root,
+        root: library ?? input.root,
+        ...(library ? { projectRoot: input.root, pinInto: input.root } : {}),
         operationId: `bibliography_${NodeCrypto.randomUUID()}`,
         fileName: file.fileName,
         text: await readBibliographyFile(file.absolutePath),
@@ -1488,10 +1573,13 @@ export async function syncManagedBibliographyWithImports(
     );
     imported += result.operation?.items.filter((item) => item.state === "imported").length ?? 0;
   }
+  // Keys the files are written under: this project's pins with a library, else the records'.
   const keys = new Set(
-    (await listScientSourceRecords(input.root)).flatMap((record) =>
-      record.citationKey ? [record.citationKey] : [],
-    ),
+    library
+      ? (await readScientProjectPins(input.root)).map((pin) => pin.citationKey)
+      : (await listScientSourceRecords(input.root)).flatMap((record) =>
+          record.citationKey ? [record.citationKey] : [],
+        ),
   );
   const fullyImported = before.files.flatMap((file) =>
     importEdited.includes(file.name) &&
@@ -1503,9 +1591,7 @@ export async function syncManagedBibliographyWithImports(
       ? [file.name]
       : [],
   );
-  const status = await syncManagedBibliography(input.root, {
-    replaceEdited: [...(input.replaceEdited ?? []), ...fullyImported],
-  });
+  const status = await sync([...(input.replaceEdited ?? []), ...fullyImported]);
   return { ...status, imported };
 }
 

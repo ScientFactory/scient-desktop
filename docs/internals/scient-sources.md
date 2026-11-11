@@ -523,10 +523,38 @@ share operations and handlers.
   (`fromSnapshot` marks a pin this library lacks); `scope: "library"` lists the
   whole library with `pinned` per record. `scient_sources_search` searches the
   whole library and marks pinned hits with their project key.
-- Intake (`scient_sources_add`, identifier lists, `scient_sources_save_page`)
-  adds to the library and pins the source here. Review searches log existing
-  library IDs and pin nothing. Reference-file import, `importEdited` and the
-  Zotero tools still run only on project stores and refuse in library mode.
+- Intake (`scient_sources_add`, identifier lists, `scient_sources_save_page`,
+  reference files, `importEdited`, Zotero, `scient_paper_get` and the papers
+  queue) adds to the library and pins the source here, or the record an exact
+  duplicate is; a possible metadata match is not pinned. Review searches log
+  existing library IDs and pin nothing.
+- The durable imports (`ScientSourcesCoordinator.ts`: Zotero, local PDFs,
+  reference files) take a `ScientSourceStoreLocation`, so their operation,
+  receipt and staging files live in the library's `operations/`, `receipts/`
+  and `staging/`, and Zotero merge bases in `zotero/<sourceId>.json`. An import
+  started from a project names it with `pinInto`; the operation stores that
+  checkout's `pinInstanceId`, so an import resumed, retried or advanced later,
+  by any caller, still pins the rest into it. Each item is pinned before the
+  item is recorded, so a crash in between pins it when the item runs again.
+  When the import settles (completed or cancelled) the project's managed files
+  are built from the pins once. A cancel keeps what was pinned. Reference-file
+  entries already in the library never become items; they are pinned when the
+  import begins. A pin target whose folder is gone or holds another project is
+  skipped.
+- `scient_sources_import_file` and `scient_sources_zotero_import` take an
+  optional `pin` in library mode only: `false` brings the records into the
+  library without pinning them and leaves the project untouched.
+  `importEdited` always pins, because the entries were added to this project's
+  file.
+- `scient_sources_zotero_refresh` and `scient_sources_zotero_send` act on the
+  library records the call names, by library ID or by this project's source
+  ID; refresh with no IDs refreshes this project's pinned records. A refresh
+  refreshes the pin and review snapshots like an edit.
+- The papers queue keeps its own state in the project. In library mode a paper
+  filed on a source goes onto the library record (its PDF copied into the
+  library's `files/`), and a paper added to the Library is pinned here. The
+  N1 rule is unchanged: filing or adding needs `sources:write` when it is
+  asked for.
 - `scient_sources_cite` pins each source first and cites it by its project
   key, never the record's preferred key; the managed files are written from
   the pins first, so pins this library lacks are hydrated before the check.
@@ -555,6 +583,11 @@ share operations and handlers.
   mode; review records keep the project source ID the review stores, are
   labelled "From this review's snapshot" or "Details missing" when this
   library lacks them, and never carry the personal note.
+- On a computer with no library, read calls pass `library: null` to the review
+  readers (`readScientLibraryReview`, `listScientLibraryReviews` and the record
+  readers accept it in `read` mode only): every record comes from the review's
+  snapshot and nothing is created. A `write` call needs a library and creates
+  it.
 
 ## Source truth and provenance
 

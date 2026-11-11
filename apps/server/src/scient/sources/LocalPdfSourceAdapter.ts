@@ -17,6 +17,7 @@ import {
   type ScientSourceRecord,
 } from "@scientfactory/scient-sources";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
+import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import {
   listScientSourceRecords,
   inspectScientSourcePdf,
@@ -683,7 +684,7 @@ export async function refreshExistingSourceCandidate(input: {
 }
 
 export async function prepareLocalPdfSource(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourcePath: string;
   readonly fileName: string;
 }): Promise<ScientSourcePreflightItem> {
@@ -737,7 +738,10 @@ export async function prepareProjectPdfSource(input: {
   };
 }
 
-export async function getLocalPdfImportMaterial(root: string, sourceKey: string) {
+export async function getLocalPdfImportMaterial(
+  root: ScientSourceStoreLocation,
+  sourceKey: string,
+) {
   const material = await readScientSourceStagedMaterial(root, sourceKey);
   return {
     candidate: material.candidate,

@@ -546,6 +546,8 @@ export const ScientSourceImportOperation = Schema.Struct({
   items: Schema.Array(ScientSourceOperationItem),
   /** A Zotero import from a group library; absent for My Library and other adapters. */
   zoteroGroupId: Schema.optionalKey(Schema.String),
+  /** Library imports started from a project: the checkout instance each imported source is pinned in. */
+  pinInstanceId: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceImportOperation = typeof ScientSourceImportOperation.Type;
 

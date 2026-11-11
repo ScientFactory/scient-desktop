@@ -788,34 +788,45 @@ export const ScientSourcesZoteroImportResult = Schema.Struct({
   ).pipe(Schema.check(Schema.isMaxLength(500))),
 });
 
-const ScientSourcesZoteroImportTool = Tool.make("scient_sources_zotero_import", {
-  description:
-    "Import from the user's Zotero library after the user asks: itemKeys, a collectionKey or all, with notes, tags, PDFs and citation keys. Already imported: skipped (same-origin); possible-metadata-match: skipped unless in possibleMetadataMatchOverrides. At most 500 per call.",
-  parameters: Schema.Struct({
-    connection: Schema.optionalKey(ZoteroConnectionInput),
-    library: Schema.optionalKey(ZoteroLibraryInput),
-    itemKeys: Schema.optionalKey(
-      Schema.Array(ZoteroItemKey).pipe(
-        Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
-      ),
-    ),
-    collectionKey: Schema.optionalKey(ZoteroItemKey),
-    includeSubcollections: Schema.optionalKey(Schema.Boolean),
-    all: Schema.optionalKey(Schema.Boolean),
-    possibleMetadataMatchOverrides: Schema.optionalKey(
-      Schema.Array(ZoteroItemKey).pipe(Schema.check(Schema.isMaxLength(500))),
-    ),
-  }),
-  success: ScientSourcesZoteroImportResult,
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Import from Zotero")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true)
-  .annotate(ScientOperation, sourceOperation("sources.zotero.import", true));
+/** Library mode: intake from a project pins what it brings in unless this is false. */
+const pinParameter = {
+  pin: Schema.optionalKey(Schema.Boolean.annotate({ description: "false: not pinned here" })),
+};
+
+const zoteroImportParameters = {
+  connection: Schema.optionalKey(ZoteroConnectionInput),
+  library: Schema.optionalKey(ZoteroLibraryInput),
+  itemKeys: Schema.optionalKey(
+    Schema.Array(ZoteroItemKey).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+  ),
+  collectionKey: Schema.optionalKey(ZoteroItemKey),
+  includeSubcollections: Schema.optionalKey(Schema.Boolean),
+  all: Schema.optionalKey(Schema.Boolean),
+  possibleMetadataMatchOverrides: Schema.optionalKey(
+    Schema.Array(ZoteroItemKey).pipe(Schema.check(Schema.isMaxLength(500))),
+  ),
+};
+
+const zoteroImportTool = (mode: SourcesBackendMode) =>
+  Tool.make("scient_sources_zotero_import", {
+    description:
+      "Import from the user's Zotero library after the user asks: itemKeys, a collectionKey or all, with notes, tags, PDFs and citation keys. Already imported: skipped (same-origin); possible-metadata-match: skipped unless in possibleMetadataMatchOverrides. At most 500 per call.",
+    parameters:
+      mode === "project"
+        ? Schema.Struct(zoteroImportParameters)
+        : Schema.Struct({ ...zoteroImportParameters, ...pinParameter }),
+    success: ScientSourcesZoteroImportResult,
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Import from Zotero")
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, true)
+    .annotate(ScientOperation, sourceOperation("sources.zotero.import", true));
+
+const ScientSourcesZoteroImportTool = zoteroImportTool("project");
 
 const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh", {
   description:
@@ -1045,25 +1056,33 @@ export const ScientSourcesImportFileResult = Schema.Struct({
   pdfsAttached: Schema.Int,
 });
 
-const ScientSourcesImportFileTool = Tool.make("scient_sources_import_file", {
-  description:
-    "Import a project reference file into the Library after the user asks: .bib (BibTeX, BibLaTeX), .ris, CSL-JSON .json or EndNote .xml. Keeps citation keys, identifiers, tags and notes; skips entries already present; identifiers stay unchecked. Up to 500 new entries per call: while remaining is above 0, call again. Tell the user about unreadable entries and notKept fields.",
-  parameters: Schema.Struct({
-    relativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
-    format: Schema.optionalKey(
-      FileFormat.annotate({ description: "Only when the extension does not say." }),
-    ),
-  }),
-  success: ScientSourcesImportFileResult,
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Import a reference file")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, sourceOperation("sources.import.file", true));
+const importFileParameters = {
+  relativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
+  format: Schema.optionalKey(
+    FileFormat.annotate({ description: "Only when the extension does not say." }),
+  ),
+};
+
+const importFileTool = (mode: SourcesBackendMode) =>
+  Tool.make("scient_sources_import_file", {
+    description:
+      "Import a project reference file into the Library after the user asks: .bib (BibTeX, BibLaTeX), .ris, CSL-JSON .json or EndNote .xml. Keeps citation keys, identifiers, tags and notes; skips entries already present; identifiers stay unchecked. Up to 500 new entries per call: while remaining is above 0, call again. Tell the user about unreadable entries and notKept fields.",
+    parameters:
+      mode === "project"
+        ? Schema.Struct(importFileParameters)
+        : Schema.Struct({ ...importFileParameters, ...pinParameter }),
+    success: ScientSourcesImportFileResult,
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Import a reference file")
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, sourceOperation("sources.import.file", true));
+
+const ScientSourcesImportFileTool = importFileTool("project");
 
 const ScientSourcesExportTool = Tool.make("scient_sources_export", {
   description:
@@ -1222,10 +1241,10 @@ export const ScientSourcesLibraryToolkit = Toolkit.make(
   ScientSourceReadTextTool,
   ScientSourceQuoteCheckTool,
   ScientSourceSavePageTool,
-  ScientSourcesImportFileTool,
+  importFileTool("library"),
   ScientSourcesExportTool,
   ScientSourcesZoteroBrowseTool,
-  ScientSourcesZoteroImportTool,
+  zoteroImportTool("library"),
   ScientSourcesZoteroRefreshTool,
   ScientSourcesZoteroSendTool,
   ScientSourcesCollectionsTool,

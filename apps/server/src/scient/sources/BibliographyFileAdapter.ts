@@ -37,6 +37,18 @@ import {
   SCIENT_SOURCE_LINKED_PDF_LIMIT,
 } from "@scientfactory/scient-sources/store";
 import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
+import {
+  isScientLibraryLocation,
+  readScientLibraryManifest,
+  type ScientSourceStoreLocation,
+} from "@scientfactory/scient-sources/library-root";
+
+import {
+  libraryImportPinInstance,
+  pinLibraryImport,
+  syncLibraryImportBibliography,
+} from "./LibraryImportPins.ts";
+import { canonicalScientSourceLocation, scientSourceStoreKey } from "./SourcesBackend.ts";
 
 export interface BibliographyFileImportResult {
   readonly operation: ScientSourceImportOperation | null;
@@ -261,8 +273,23 @@ async function resolveLinkedPdfs(
   return { pdfs, pdfCount, losses };
 }
 
+/** The ID the store gives a source key, so entries imported before count as present. */
+async function storeSourceIdFor(
+  root: ScientSourceStoreLocation,
+  existing: ReadonlyArray<ScientSourceRecord>,
+): Promise<(sourceKey: string) => string> {
+  if (isScientLibraryLocation(root)) {
+    const { libraryId } = await readScientLibraryManifest(root.root);
+    return (sourceKey) => scientSourceIdFor(libraryId, sourceKey);
+  }
+  // Every listed record belongs to this project, so any one carries its ID.
+  const projectId = existing[0]?.projectId;
+  return (sourceKey) => (projectId ? scientSourceIdFor(projectId, sourceKey) : sourceKey);
+}
+
 async function plan(
-  root: string,
+  root: ScientSourceStoreLocation,
+  projectRoot: string,
   input: {
     readonly fileName: string;
     readonly text: string;
@@ -275,20 +302,19 @@ async function plan(
     throw new Error(`Scient could not tell what kind of reference file this is. ${FORMAT_HELP}`);
   }
   const existing = await listScientSourceRecords(root);
-  // Every listed record belongs to this project, so any one carries its ID.
-  const projectId = existing[0]?.projectId;
   const planned = planBibliographyImport({
     parse: parseBibliography(input.text, format),
     existing,
     sourceKeyFor: fileImportSourceKey,
-    sourceIdFor: (sourceKey) => (projectId ? scientSourceIdFor(projectId, sourceKey) : sourceKey),
+    sourceIdFor: await storeSourceIdFor(root, existing),
     limit: SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   });
-  const linked = await resolveLinkedPdfs(root, input.sourceFolder, planned.linkedFiles);
+  const linked = await resolveLinkedPdfs(projectRoot, input.sourceFolder, planned.linkedFiles);
   return {
     candidates: planned.candidates,
     report: withLinkedFileReport(planned.report, linked),
     pdfs: linked.pdfs,
+    presentSourceIds: planned.presentSourceIds,
   };
 }
 
@@ -298,7 +324,11 @@ async function plan(
  * same operation ID returns that operation.
  */
 export async function beginBibliographyFileImport(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
+  /** The project linked PDFs may come from; a project store's own root when omitted. */
+  readonly projectRoot?: string;
+  /** Library stores: the project the file's sources, new or already present, are pinned in. */
+  readonly pinInto?: string;
   readonly operationId: string;
   readonly fileName: string;
   readonly text: string;
@@ -307,7 +337,9 @@ export async function beginBibliographyFileImport(input: {
   readonly sourceFolder?: string;
   readonly actor: ScientSourceActor;
 }): Promise<BibliographyFileImportResult> {
-  const root = await canonicalizeScientSourceRoot(input.root);
+  const root = await canonicalScientSourceLocation(input.root);
+  const projectRoot = input.projectRoot ?? (isScientLibraryLocation(root) ? null : root);
+  if (projectRoot === null) throw new Error("A library import needs the project it came from.");
   const existingOperation = await readSourceImportOperation(root, input.operationId);
   if (existingOperation) {
     if (existingOperation.adapter !== "file") {
@@ -316,10 +348,21 @@ export async function beginBibliographyFileImport(input: {
     const staged = await readScientSourceStagedFileImport(root, input.operationId);
     return {
       operation: existingOperation,
-      report: staged?.report ?? (await plan(root, input)).report,
+      report: staged?.report ?? (await plan(root, projectRoot, input)).report,
     };
   }
-  const { candidates, report, pdfs } = await plan(root, input);
+  const { candidates, report, pdfs, presentSourceIds } = await plan(root, projectRoot, input);
+  const pin =
+    input.pinInto && isScientLibraryLocation(root)
+      ? { library: root, instanceId: await libraryImportPinInstance(root, input.pinInto) }
+      : null;
+  // Entries already in the library never become operation items, so they are pinned here.
+  if (pin) {
+    await pinLibraryImport({ ...pin, sourceIds: presentSourceIds, actor: input.actor });
+    if (candidates.length === 0 && presentSourceIds.length > 0) {
+      await syncLibraryImportBibliography({ ...pin, actor: input.actor }).catch(() => undefined);
+    }
+  }
   if (candidates.length === 0) return { operation: null, report };
   await writeScientSourceStagedFileImport(root, {
     formatVersion: 1,
@@ -337,6 +380,7 @@ export async function beginBibliographyFileImport(input: {
       intake: "file",
       actor: input.actor,
       itemKeys: candidates.map((candidate) => candidate.sourceKey),
+      ...(pin ? { pinInstanceId: pin.instanceId } : {}),
     });
     return { operation, report };
   } catch (error) {
@@ -353,14 +397,14 @@ let cachedStage: {
 
 /** The staged candidate and its linked PDFs for one operation item; the parsed stage is reused across items. */
 export async function getBibliographyFileImportMaterial(
-  root: string,
+  root: ScientSourceStoreLocation,
   operationId: string,
   itemKey: string,
 ): Promise<{
   readonly candidate: ScientSourceCandidate;
   readonly pdfs: ReadonlyArray<LinkedPdf>;
 }> {
-  const key = `${root}\0${operationId}`;
+  const key = `${scientSourceStoreKey(root)}\0${operationId}`;
   if (cachedStage?.key !== key) {
     const staged = await readScientSourceStagedFileImport(root, operationId);
     if (!staged) throw new Error("The reference file for this import is no longer staged.");
@@ -380,8 +424,11 @@ export async function getBibliographyFileImportMaterial(
   return { candidate, pdfs };
 }
 
-export async function discardBibliographyFileImport(root: string, operationId: string) {
-  if (cachedStage?.key === `${root}\0${operationId}`) cachedStage = null;
+export async function discardBibliographyFileImport(
+  root: ScientSourceStoreLocation,
+  operationId: string,
+) {
+  if (cachedStage?.key === `${scientSourceStoreKey(root)}\0${operationId}`) cachedStage = null;
   await removeScientSourceStagedFileImport(root, operationId);
 }
 

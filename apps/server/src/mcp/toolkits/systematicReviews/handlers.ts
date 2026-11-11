@@ -63,6 +63,12 @@ function reviewRecord(
   };
 }
 
+/** A read on a computer with no library serves every record from the review's snapshot. */
+const reviewAccess = (store: ScientSourcesLibraryStore) =>
+  store.exists
+    ? { library: store.library, mode: store.access }
+    : { library: null, mode: "read" as const };
+
 /**
  * Library mode: the review's own records, keyed by the project source ID it stores, from the
  * library or the review's snapshot. Read access writes nothing.
@@ -71,12 +77,7 @@ const libraryReviewView = Effect.fn("ScientSystematicReviewsToolkit.libraryView"
   store: ScientSourcesLibraryStore,
   reviewId: string,
 ) {
-  const input = {
-    projectRoot: store.root,
-    library: store.library,
-    reviewId,
-    mode: store.access,
-  };
+  const input = { ...reviewAccess(store), projectRoot: store.root, reviewId };
   const detail = yield* attempt(() => readScientLibraryReview(input));
   const records = detail ? yield* attempt(() => listScientLibraryReviewRecords(input)) : null;
   return {
@@ -118,11 +119,7 @@ export const readSystematicReviewsForInvocation = Effect.fn("ScientSystematicRev
     if (!input.reviewId) {
       const listed = yield* attempt(() =>
         store.kind === "library"
-          ? listScientLibraryReviews({
-              projectRoot: store.root,
-              library: store.library,
-              mode: store.access,
-            })
+          ? listScientLibraryReviews({ ...reviewAccess(store), projectRoot: store.root })
           : listSystematicReviews(root),
       );
       return {

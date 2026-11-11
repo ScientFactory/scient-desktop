@@ -6,6 +6,7 @@ import {
   type ScientSourceIdentifier,
   type ScientSourceRecord,
 } from "@scientfactory/scient-sources";
+import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import {
   attachScientSourcePdf,
   inspectScientSourcePdf,
@@ -32,7 +33,7 @@ const ATTACH_ATTEMPTS = 3;
 
 /** Attaches to whatever revision the source has now: adding a PDF changes nothing else. */
 async function attachToSource(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly record: ScientSourceRecord;
   readonly pdfPath: string;
   readonly fileName: string;
@@ -70,7 +71,10 @@ async function attachToSource(input: {
  */
 export async function addPaperToLibrary(
   input: {
+    /** The project the PDF was saved in. */
     readonly root: string;
+    /** Where the source goes; the project's own store when omitted. */
+    readonly store?: ScientSourceStoreLocation;
     readonly pdfRelativePath: string;
     readonly doi?: string;
     readonly arxiv?: string;
@@ -85,6 +89,7 @@ export async function addPaperToLibrary(
   observer?: SourceImportObserver,
 ): Promise<PaperIntakeResult> {
   const pdf = await resolveScientSourceInputPdf(input.root, input.pdfRelativePath);
+  const store = input.store ?? input.root;
   const named: ReadonlyArray<ScientSourceIdentifier> = [
     ...(input.doi ? [{ scheme: "doi", value: input.doi }] : []),
     ...(input.arxiv ? [{ scheme: "arxiv", value: input.arxiv }] : []),
@@ -95,13 +100,13 @@ export async function addPaperToLibrary(
       outcome: "not-added",
       message: "The paper has no DOI or arXiv ID, so add it with scient_sources_add.",
     };
-  const records = await listScientSourceRecords(input.root);
+  const records = await listScientSourceRecords(store);
   const existing = records.find((record) =>
     record.identifiers.some((identifier) => keys.has(identifierKey(identifier))),
   );
   const attach = (record: ScientSourceRecord) =>
     attachToSource({
-      root: input.root,
+      root: store,
       record,
       pdfPath: pdf.absolutePath,
       fileName: pdf.fileName,
@@ -153,7 +158,7 @@ export async function addPaperToLibrary(
   };
   const result = await addAgentSource(
     {
-      root: input.root,
+      root: store,
       candidate,
       enrich: input.enrich ?? true,
       pdfPath: pdf.absolutePath,

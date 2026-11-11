@@ -10,6 +10,7 @@ import {
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
+import { ProjectId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import { makeSourceImportAnalytics } from "../../../telemetry/SourceImportAnalytics.ts";
@@ -32,8 +33,13 @@ import {
   safeZoteroMessage,
   sendSourcesToZotero,
 } from "../../../scient/sources/ZoteroSync.ts";
-import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
-import { resolveScientSourcesProject } from "./handlers.ts";
+import type { ScientSourcesStore } from "../../../scient/sources/SourcesBackend.ts";
+import {
+  projectPinsByLibraryId,
+  refreshProjectAfterLibraryChange,
+  resolveLibrarySourceId,
+} from "../../../scient/sources/LibraryProjectSources.ts";
+import { resolveScientSourcesStore } from "./handlers.ts";
 import { ScientSourcesToolError } from "./tools.ts";
 
 const MAX_COLLECTIONS_SHOWN = 1_000;
@@ -48,22 +54,33 @@ const zoteroAttempt = <A>(run: () => Promise<A>) =>
       new ScientSourcesToolError({ code: "operation-failed", message: safeZoteroMessage(cause) }),
   });
 
-/** The project and the Zotero access an agent in it has, following the Accounts switches. */
+/** The store and the Zotero access an agent in this project has, following the Accounts switches. */
 const agentZotero = Effect.fn("ScientSourcesToolkit.zoteroAccess")(function* () {
-  const project = yield* resolveScientSourcesProject();
-  // Zotero runs through the durable import operations, which still serve project stores only.
-  if ((yield* ScientSourcesBackend) === "library") {
-    return yield* new ScientSourcesToolError({
-      code: "operation-failed",
-      message: "This works with project Sources only for now.",
-    });
-  }
+  const store = yield* resolveScientSourcesStore();
   const zotero: ZoteroAccess = {
     ...(yield* ZoteroTransports),
-    webKey: yield* zoteroKeyLookup({ actor: "agent", projectId: project.projectId }),
+    webKey: yield* zoteroKeyLookup({ actor: "agent", projectId: ProjectId.make(store.projectId) }),
   };
-  return { root: project.root, zotero };
+  return { store, root: store.store, zotero };
 });
+
+/**
+ * The library records a call names, by library ID or by this project's source ID; with none
+ * named, the records this project pins. A project store keeps the IDs as given.
+ */
+const librarySourceIds = (
+  store: ScientSourcesStore,
+  sourceIds: ReadonlyArray<string> | undefined,
+) =>
+  zoteroAttempt(async () => {
+    if (store.kind !== "library") return sourceIds;
+    if (!sourceIds) return [...(await projectPinsByLibraryId(store)).keys()];
+    return Promise.all(
+      sourceIds.map(
+        async (sourceId) => (await resolveLibrarySourceId(store, sourceId)) ?? sourceId,
+      ),
+    );
+  });
 
 const readyConnection = Effect.fn("ScientSourcesToolkit.zoteroReady")(function* (
   zotero: ZoteroAccess,
@@ -88,7 +105,7 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
     readonly start?: number;
     readonly limit?: number;
   }) {
-    const { root, zotero } = yield* agentZotero();
+    const { store, root, zotero } = yield* agentZotero();
     const status = yield* zoteroAttempt(() =>
       inspectZoteroConnection({
         zotero,
@@ -145,7 +162,8 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
           ...library,
           zotero,
         }),
-        listScientSourceRecords(root),
+        // A read on a computer with no library yet has nothing imported.
+        store.kind === "library" && !store.exists ? [] : listScientSourceRecords(root),
       ]),
     );
     // Item keys repeat across libraries, so a key counts as imported only from its own one.
@@ -201,6 +219,8 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
     readonly includeSubcollections?: boolean;
     readonly all?: boolean;
     readonly possibleMetadataMatchOverrides?: ReadonlyArray<string>;
+    /** Library mode: false brings the items into the library without pinning them here. */
+    readonly pin?: boolean;
   }) {
     const choices = [
       input.itemKeys !== undefined,
@@ -213,11 +233,12 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
         message: "Pass exactly one of itemKeys, collectionKey or all.",
       });
     }
-    const { root, zotero } = yield* agentZotero();
+    const { store, root, zotero } = yield* agentZotero();
     const connection = yield* readyConnection(zotero, input.connection);
     const operationId = `agent_zotero_${NodeCrypto.randomUUID()}`;
     const itemKeys = input.itemKeys;
     const library = input.library ? { groupId: input.library } : {};
+    const pin = store.kind === "library" && input.pin !== false ? { pinInto: store.root } : {};
     yield* zoteroAttempt(() =>
       itemKeys
         ? beginZoteroImport({
@@ -230,6 +251,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
             connection,
             ...library,
             actor: "agent",
+            ...pin,
           })
         : beginZoteroScopedImport({
             root,
@@ -245,6 +267,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
             ...library,
             actor: "agent",
             zotero,
+            ...pin,
           }),
     );
     const observeImport = yield* makeSourceImportAnalytics("agent");
@@ -286,11 +309,12 @@ export const refreshZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zotero
     readonly useZotero?: ReadonlyArray<ScientSourceZoteroRefreshField>;
     readonly keepLocal?: ReadonlyArray<ScientSourceZoteroRefreshField>;
   }) {
-    const { root, zotero } = yield* agentZotero();
+    const { store, root, zotero } = yield* agentZotero();
+    const sourceIds = yield* librarySourceIds(store, input.sourceIds);
     const result = yield* zoteroAttempt(() =>
       refreshZoteroSources({
         root,
-        ...(input.sourceIds ? { sourceIds: input.sourceIds } : {}),
+        ...(sourceIds ? { sourceIds } : {}),
         ...(input.connection ? { connection: input.connection } : {}),
         choices: {
           useZotero: new Set(input.useZotero ?? []),
@@ -300,6 +324,15 @@ export const refreshZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zotero
         zotero,
       }),
     );
+    if (store.kind === "library") {
+      const changed = result.items.flatMap((item) =>
+        item.outcome === "updated" ? [item.sourceId] : [],
+      );
+      // The refresh has landed; a snapshot that fails here is refreshed by the next write.
+      yield* Effect.promise(() =>
+        refreshProjectAfterLibraryChange(store, changed, "agent").catch(() => undefined),
+      );
+    }
     const listed = result.items.filter(
       (item) => item.outcome !== "unchanged" || item.conflicts.length > 0,
     );
@@ -313,11 +346,12 @@ export const refreshZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zotero
 
 export const sendToZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroSend")(
   function* (input: { readonly sourceIds: ReadonlyArray<string>; readonly library?: string }) {
-    const { root, zotero } = yield* agentZotero();
+    const { store, root, zotero } = yield* agentZotero();
+    const sourceIds = (yield* librarySourceIds(store, input.sourceIds)) ?? input.sourceIds;
     return yield* zoteroAttempt(() =>
       sendSourcesToZotero({
         root,
-        sourceIds: input.sourceIds,
+        sourceIds,
         ...(input.library ? { groupId: input.library } : {}),
         actor: "agent",
         zotero,

@@ -23,8 +23,14 @@ import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts"
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { userRunInvocation } from "../accounts/checkAccounts.ts";
 import type { ScientSourceAttachmentRetrieval } from "@scientfactory/scient-sources";
+import { pinScientLibrarySource } from "@scientfactory/scient-sources/project-pins";
 import { attachSourcePdf } from "../sources/ScientSourcesCoordinator.ts";
 import { addPaperToLibrary, type PaperIntakeResult } from "../sources/paperIntake.ts";
+import {
+  resolveLibrarySourceId,
+  syncProjectBibliography,
+} from "../sources/LibraryProjectSources.ts";
+import { resolveScientLibraryStoreAt } from "../sources/SourcesBackend.ts";
 import { keyedIdentifierLookup } from "../sources/researchKeys.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
 import {
@@ -200,11 +206,23 @@ const attach = Effect.fn("Papers.attach")(function* (
   requester: PaperRequester,
 ) {
   const path = yield* Path.Path;
+  // A request to file a paper was allowed to change the Library when it was made.
+  const library = yield* resolveScientLibraryStoreAt(root, "write").pipe(
+    Effect.mapError(
+      () =>
+        new AccountsError({
+          reason: "unavailable",
+          message: `The PDF is in ${relative}, but it could not be attached to this source.`,
+        }),
+    ),
+  );
   return yield* Effect.tryPromise({
-    try: () =>
+    try: async () =>
       attachSourcePdf({
-        root,
-        sourceId: source.sourceId,
+        root: library?.store ?? root,
+        sourceId: library
+          ? ((await resolveLibrarySourceId(library, source.sourceId)) ?? source.sourceId)
+          : source.sourceId,
         expectedRevision: source.expectedRevision,
         pdfPath: path.join(root, relative),
         fileName: path.basename(relative),
@@ -228,11 +246,20 @@ const intoLibrary = Effect.fn("Papers.intoLibrary")(function* (
 ) {
   const resolveIdentifier = yield* keyedIdentifierLookup();
   const observer = yield* makeSourceImportAnalytics(actorOf(requester));
+  const failed: PaperIntakeResult = {
+    outcome: "not-added",
+    message: "The Library could not be updated.",
+  };
+  // A request to add a paper was allowed to change the Library when it was made.
+  const library = yield* resolveScientLibraryStoreAt(root, "write").pipe(
+    Effect.mapError(() => failed),
+  );
   return yield* Effect.tryPromise({
-    try: () =>
-      addPaperToLibrary(
+    try: async () => {
+      const added = await addPaperToLibrary(
         {
           root,
+          ...(library ? { store: library.store } : {}),
           pdfRelativePath: relative,
           ...(paper.doi ? { doi: paper.doi } : {}),
           ...(paper.arxiv ? { arxiv: paper.arxiv } : {}),
@@ -245,11 +272,22 @@ const intoLibrary = Effect.fn("Papers.intoLibrary")(function* (
           ...(retrieval ? { retrieval } : {}),
         },
         observer,
-      ),
-    catch: (): PaperIntakeResult => ({
-      outcome: "not-added",
-      message: "The Library could not be updated.",
-    }),
+      );
+      // A paper added from a project is pinned there, as any other intake is. The source is in
+      // the Library either way, so a pin that fails does not undo the add.
+      if (library && added.outcome !== "not-added") {
+        await pinScientLibrarySource({
+          projectRoot: library.root,
+          library: library.library,
+          sourceId: added.sourceId,
+          actor: actorOf(requester),
+        })
+          .then(() => syncProjectBibliography(library, actorOf(requester)))
+          .catch(() => undefined);
+      }
+      return added;
+    },
+    catch: () => failed,
   }).pipe(Effect.catch(Effect.succeed));
 });
 

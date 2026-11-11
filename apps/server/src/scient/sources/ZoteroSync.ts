@@ -22,6 +22,7 @@ import {
   updateScientSourceNote,
   writeScientSourceZoteroSync,
 } from "@scientfactory/scient-sources/store";
+import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 
 import {
   inspectZotero,
@@ -61,7 +62,7 @@ function zoteroReference(
 
 /** Records what Zotero held when a source was imported, so a later refresh has a base. */
 export async function recordZoteroSync(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly record: ScientSourceRecord;
   readonly material: ZoteroItemMaterial;
   readonly attachmentKeys: ReadonlyArray<string>;
@@ -124,7 +125,7 @@ function isMissingItem(error: unknown): boolean {
 }
 
 async function attachNewPdfs(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly transport: ZoteroTransport;
   readonly record: ScientSourceRecord;
   readonly material: ZoteroItemMaterial;
@@ -160,7 +161,7 @@ async function attachNewPdfs(input: {
 }
 
 async function refreshOne(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly record: ScientSourceRecord;
   readonly transport: ZoteroTransport;
   readonly actor: ScientSourceActor;
@@ -283,7 +284,7 @@ async function refreshOne(input: {
 
 /** Brings Zotero's changes into imported sources, keeping edits made here. */
 export async function refreshZoteroSources(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceIds?: ReadonlyArray<string>;
   readonly connection?: ZoteroConnection;
   readonly actor: ScientSourceActor;
@@ -363,7 +364,7 @@ function writeToken(record: ScientSourceRecord, purpose: string): string {
 }
 
 async function syncAfterSend(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly library: ZoteroWebLibrary;
   readonly record: ScientSourceRecord;
   readonly itemKey: string;
@@ -391,7 +392,7 @@ async function syncAfterSend(input: {
 }
 
 async function sendOne(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly record: ScientSourceRecord;
   readonly library: ZoteroWebLibrary;
   readonly actor: ScientSourceActor;
@@ -465,7 +466,7 @@ async function sendOne(input: {
  * linked to it. An item changed in Zotero since Scient last read it is left alone and reported.
  */
 export async function sendSourcesToZotero(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceIds: ReadonlyArray<string>;
   readonly groupId?: string;
   readonly actor: ScientSourceActor;

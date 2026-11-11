@@ -338,8 +338,6 @@ async function pinSources(
   return keys;
 }
 
-const NOT_IN_LIBRARY_MODE = "This works with project Sources only for now.";
-
 const creatorName = (record: Awaited<ReturnType<typeof listScientSourceRecords>>[number]) => {
   const creator = record.creators[0];
   return creator?.familyName ?? creator?.literalName ?? creator?.givenName ?? null;
@@ -1291,8 +1289,15 @@ export const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolk
   }) {
     const store = yield* resolveScientSourcesStore();
     if (store.kind === "library") {
+      // Entries added to this project's file are meant for it, so they are always pinned here.
       if (input.importEdited && input.importEdited.length > 0) {
-        return yield* toolError("operation-failed", NOT_IN_LIBRARY_MODE);
+        const observeImport = yield* makeSourceImportAnalytics("agent");
+        return yield* attempt(() =>
+          syncManagedBibliographyWithImports(
+            { root: store.root, library: store.library, ...input, actor: "agent" },
+            observeImport,
+          ),
+        );
       }
       return yield* attempt(() =>
         syncPinnedBibliography({
@@ -1445,9 +1450,13 @@ const saveScientSourcePageForInvocation = Effect.fn("ScientSourcesToolkit.savePa
 );
 
 export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesToolkit.importFile")(
-  function* (input: { readonly relativePath: string; readonly format?: BibliographyFormat }) {
+  function* (input: {
+    readonly relativePath: string;
+    readonly format?: BibliographyFormat;
+    /** Library mode: false brings the entries into the library without pinning them here. */
+    readonly pin?: boolean;
+  }) {
     const store = yield* resolveScientSourcesStore();
-    if (store.kind === "library") return yield* toolError("operation-failed", NOT_IN_LIBRARY_MODE);
     const { root } = store;
     const observeImport = yield* makeSourceImportAnalytics("agent");
     const { operation, report } = yield* Effect.tryPromise({
@@ -1455,7 +1464,10 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
         const file = await resolveProjectBibliographyFile(root, input.relativePath);
         return importBibliographyFile(
           {
-            root,
+            root: store.store,
+            ...(store.kind === "library"
+              ? { projectRoot: root, ...(input.pin === false ? {} : { pinInto: root }) }
+              : {}),
             operationId: `agent_file_${NodeCrypto.randomUUID()}`,
             fileName: file.fileName,
             text: await readBibliographyFile(file.absolutePath),
@@ -1477,8 +1489,18 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
       item.state === "imported" && item.sourceId ? [item.sourceId] : [],
     );
     const records =
-      importedIds.length > 0 ? yield* attempt(() => listScientSourceRecords(root)) : [];
-    const keys = new Map(records.map((record) => [record.sourceId, record.citationKey ?? null]));
+      importedIds.length > 0 ? yield* attempt(() => listScientSourceRecords(store.store)) : [];
+    // A source pinned here is cited by its pin's key, which can differ from the record's.
+    const pins =
+      store.kind === "library" && importedIds.length > 0
+        ? yield* attempt(() => projectPinsByLibraryId(store))
+        : new Map<string, { readonly citationKey: string }>();
+    const keys = new Map(
+      records.map((record) => [
+        record.sourceId,
+        pins.get(record.sourceId)?.citationKey ?? record.citationKey ?? null,
+      ]),
+    );
     return {
       format: report.format,
       entryCount: report.entryCount,

@@ -1534,8 +1534,11 @@ export async function createSourceImportOperation(input: {
   readonly possibleMetadataMatchOverrides?: ReadonlyArray<string>;
   /** The Zotero group library the item keys belong to; omitted for My Library. */
   readonly zoteroGroupId?: string;
+  /** Library stores only: the checkout instance the imported sources are pinned in. */
+  readonly pinInstanceId?: string;
 }): Promise<ScientSourceImportOperation> {
   assertSafeIdentifier(input.operationId, "Operation ID");
+  if (input.pinInstanceId !== undefined) assertSafeIdentifier(input.pinInstanceId, "Instance ID");
   if (input.zoteroGroupId !== undefined && !/^[1-9][0-9]{0,11}$/u.test(input.zoteroGroupId)) {
     throw new Error("The Zotero group ID is invalid.");
   }
@@ -1556,6 +1559,9 @@ export async function createSourceImportOperation(input: {
   }
   const normalizedOverrides = uniqueItemKeys.filter((itemKey) => overrides.has(itemKey));
   const paths = await sourceStorePaths(input.root);
+  if (input.pinInstanceId !== undefined && paths.owner.kind !== "library") {
+    throw new Error("Only a library import pins its sources into a project.");
+  }
   return withStoreLock(paths, "active-operation", async () => {
     const existing = await readSourceImportOperationFromPaths(paths, input.operationId);
     if (existing) {
@@ -1568,6 +1574,7 @@ export async function createSourceImportOperation(input: {
         existingOverrides.join("\0") !== normalizedOverrides.join("\0") ||
         existing.adapter !== input.adapter ||
         existing.zoteroGroupId !== input.zoteroGroupId ||
+        existing.pinInstanceId !== input.pinInstanceId ||
         existing.actor !== (input.actor ?? "user") ||
         existing.intake !==
           (input.intake ?? (input.adapter === "local-files" ? "local-pdf" : "zotero"))
@@ -1602,6 +1609,7 @@ export async function createSourceImportOperation(input: {
         message: null,
       })),
       ...(input.zoteroGroupId ? { zoteroGroupId: input.zoteroGroupId } : {}),
+      ...(input.pinInstanceId ? { pinInstanceId: input.pinInstanceId } : {}),
     };
     await atomicWriteJson(
       operationPath(paths.operations, input.operationId),

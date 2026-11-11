@@ -12,6 +12,8 @@ import { FetchHttpClient } from "effect/http";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { consumeAgentWorkspace } from "../operations/AgentWorkspaceScope.ts";
 import { readScientSourceRecord } from "@scientfactory/scient-sources/store";
+import { resolveLibrarySourceId } from "../sources/LibraryProjectSources.ts";
+import { resolveScientLibraryStoreAt } from "../sources/SourcesBackend.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { authorizationDecision } from "../accounts/AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../accounts/AccountsService.ts";
@@ -131,8 +133,16 @@ export const askedForLibrary = Effect.fn("Papers.askedForLibrary")(function* (
   if (!invocation.capabilities.has("sources:write"))
     return { asked: paper, note: NO_LIBRARY_ACCESS };
   if (sourceId === undefined) return { asked: { ...paper, library: true } };
+  // Library mode: a library ID, or this project's source ID resolved to its library record.
+  const library = yield* resolveScientLibraryStoreAt(root, "write").pipe(
+    Effect.mapError(() => unavailable("The Library could not be read.")),
+  );
   const record = yield* Effect.tryPromise({
-    try: () => readScientSourceRecord(root, sourceId),
+    try: async () => {
+      if (!library) return readScientSourceRecord(root, sourceId);
+      const libraryId = await resolveLibrarySourceId(library, sourceId);
+      return libraryId ? readScientSourceRecord(library.store, libraryId) : null;
+    },
     catch: () => unavailable("The Library could not be read."),
   });
   return record

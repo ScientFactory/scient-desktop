@@ -172,6 +172,8 @@ export interface BibliographyImportPlan {
     readonly label: string;
     readonly files: ReadonlyArray<BibliographyLinkedFile>;
   }>;
+  /** Records the left-out entries are the same work as (not a possible metadata match). */
+  readonly presentSourceIds: ReadonlyArray<string>;
 }
 
 function hasContent(candidate: ScientSourceCandidate): boolean {
@@ -203,6 +205,7 @@ export function planBibliographyImport(input: {
   const labels = new Map<string, string>();
   const linked = new Map<string, ReadonlyArray<BibliographyLinkedFile>>();
   let alreadyInLibrary = 0;
+  const present = new Set<string>();
   let withoutCitationKey = 0;
   for (const entry of parse.entries) {
     const label =
@@ -254,8 +257,11 @@ export function planBibliographyImport(input: {
     }
     for (const key of workKeys) seenWorks.set(key, entry.line);
     const sourceId = input.sourceIdFor(sourceKey);
-    if (assessSourceDuplicate({ candidate, existing: input.existing, sourceId }).kind !== "new") {
+    const duplicate = assessSourceDuplicate({ candidate, existing: input.existing, sourceId });
+    if (duplicate.kind !== "new") {
       alreadyInLibrary += 1;
+      const [match] = duplicate.matchingSourceIds;
+      if (duplicate.kind !== "possible-metadata-match" && match) present.add(match);
       continue;
     }
     fresh.push(candidate);
@@ -273,6 +279,7 @@ export function planBibliographyImport(input: {
         ? [{ sourceKey: candidate.sourceKey, label: labels.get(candidate.sourceKey) ?? "", files }]
         : [];
     }),
+    presentSourceIds: [...present],
     report: {
       format: parse.format,
       entryCount: parse.entries.length + parse.unreadable.length,

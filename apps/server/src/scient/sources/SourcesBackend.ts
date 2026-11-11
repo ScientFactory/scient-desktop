@@ -2,6 +2,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
+import { readScientProjectIdentity } from "@scientfactory/project-init";
 import {
   ensureScientLibrary,
   isScientLibraryLocation,
@@ -14,6 +15,7 @@ import { SCIENT_SOURCE_FILES_DIRECTORY } from "@scientfactory/scient-sources/sto
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../../config.ts";
 
@@ -87,6 +89,28 @@ export const resolveScientSourcesStoreFor = Effect.fn("ScientSourcesBackend.reso
     exists,
   } satisfies ScientSourcesStore;
 });
+
+class ScientLibraryProjectError extends Schema.TaggedError<ScientLibraryProjectError>()(
+  "ScientLibraryProjectError",
+  { message: Schema.String },
+) {}
+
+/**
+ * Library mode only: the library store for a caller that knows just the project folder, such as
+ * the papers queue. Under the project backend it is null and reads nothing.
+ */
+export const resolveScientLibraryStoreAt = Effect.fn("ScientSourcesBackend.resolveLibraryAt")(
+  function* (root: string, access: ScientSourcesAccess) {
+    if ((yield* ScientSourcesBackend) === "project") return null;
+    const { projectId } = yield* Effect.tryPromise({
+      try: () => readScientProjectIdentity(root),
+      catch: () =>
+        new ScientLibraryProjectError({ message: "This folder is not a Scient project." }),
+    });
+    const store = yield* resolveScientSourcesStoreFor({ projectId, root }, access);
+    return store.kind === "library" ? store : null;
+  },
+);
 
 /** A stable string for per-store caches and lanes; a library never shares one with a project. */
 export function scientSourceStoreKey(location: ScientSourceStoreLocation): string {
