@@ -23,6 +23,41 @@ function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
+/** Hard links are missing on the volume: EPERM or ENOTSUP, and EISDIR from Windows on FAT and exFAT. */
+function linkUnsupported(error: unknown): boolean {
+  return ["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EISDIR"].some((code) =>
+    isNodeError(error, code),
+  );
+}
+
+/**
+ * Creates `target` exclusively and writes `source` into it. A write that fails part way
+ * removes the file it created, never one another writer put at the name since.
+ */
+async function copyNoClobber(source: string, target: string): Promise<boolean> {
+  const [contents, stats] = await Promise.all([NodeFSP.readFile(source), NodeFSP.stat(source)]);
+  let handle: NodeFSP.FileHandle;
+  try {
+    handle = await NodeFSP.open(target, "wx", stats.mode & 0o777);
+  } catch (error) {
+    if (isNodeError(error, "EEXIST")) return false;
+    throw error;
+  }
+  const created = await handle.stat({ bigint: true }).catch(() => null);
+  try {
+    await handle.writeFile(contents);
+    await handle.close();
+    return true;
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    const current = await NodeFSP.lstat(target, { bigint: true }).catch(() => null);
+    if (created && current && current.ino === created.ino && current.dev === created.dev) {
+      await NodeFSP.rm(target, { force: true }).catch(() => undefined);
+    }
+    throw error;
+  }
+}
+
 /** Creates `target` from `source` and never replaces a file already there. */
 async function linkNoClobber(source: string, target: string): Promise<boolean> {
   try {
@@ -31,14 +66,8 @@ async function linkNoClobber(source: string, target: string): Promise<boolean> {
   } catch (error) {
     if (isNodeError(error, "EEXIST")) return false;
     // Volumes without hard links (FAT, some network shares) still refuse to clobber here.
-    if (!isNodeError(error, "EPERM") && !isNodeError(error, "ENOTSUP")) throw error;
-    try {
-      await NodeFSP.copyFile(source, target, NodeFSP.constants.COPYFILE_EXCL);
-      return true;
-    } catch (copyError) {
-      if (isNodeError(copyError, "EEXIST")) return false;
-      throw copyError;
-    }
+    if (!linkUnsupported(error)) throw error;
+    return copyNoClobber(source, target);
   }
 }
 
