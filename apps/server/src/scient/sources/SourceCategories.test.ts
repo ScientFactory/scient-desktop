@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Tests exercise the real project filesystem boundary.
+// @effect-diagnostics globalDate:off -- Lookups take a fixed ISO clock, as stored entries do.
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -6,7 +7,7 @@ import * as NodePath from "node:path";
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { readScientSourceCategories } from "@scientfactory/scient-sources/categories-store";
 import { SCIENT_SOURCE_RECORDS_DIRECTORY } from "@scientfactory/scient-sources/store";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import type { MetadataRequest } from "./metadataHttp.ts";
 import { categorizeSources } from "./SourceCategories.ts";
