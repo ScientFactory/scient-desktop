@@ -186,6 +186,33 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
  * data and must never be unlinked: the OS releases it when the process exits,
  * even on SIGKILL, so a crashed owner never blocks the next start.
  */
+/** Holds the server lock while maintenance repairs a stopped server's database, so a server
+ * started meanwhile reports "already running" instead of opening it mid-repair. */
+export const holdServerOwnershipForMaintenance = (statePath: string) => {
+  const stateDir = NodePath.dirname(statePath);
+  const lockPath = NodePath.join(stateDir, "server-owner.sqlite");
+  return Effect.acquireRelease(
+    Effect.try({
+      try: () => {
+        NodeFS.mkdirSync(stateDir, { recursive: true });
+        const db = new NodeSqlite.DatabaseSync(lockPath);
+        try {
+          db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+          return db;
+        } catch (cause) {
+          db.close();
+          throw cause;
+        }
+      },
+      catch: (cause) =>
+        isSqliteBusy(cause)
+          ? new ServerAlreadyRunningError({ stateDir })
+          : new ServerOwnershipError({ stateDir, cause }),
+    }),
+    (db) => Effect.sync(() => db.close()),
+  );
+};
+
 export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(function* (
   statePath: string,
 ) {

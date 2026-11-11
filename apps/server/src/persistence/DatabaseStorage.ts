@@ -57,6 +57,8 @@ const make = Effect.gen(function* () {
   const statusRef = yield* SubscriptionRef.make<DatabaseStorageStatus | null>(null);
   const restart = yield* ServerRestart;
   const reclaimFiles = DatabaseMaintenance.reclaimFiles(path, config.dbPath);
+  // A request still here at start belongs to a repair that never finished.
+  yield* DatabaseMaintenance.settleInterruptedReclaim(config.dbPath).pipe(Effect.ignore);
   let reclaimFailure = Option.getOrUndefined(
     yield* fs.readFileString(reclaimFiles.failure).pipe(Effect.option),
   );
@@ -242,6 +244,7 @@ const make = Effect.gen(function* () {
     reclaimFailure = undefined;
     yield* publishStatus;
     const requestedAt = yield* Clock.currentTimeMillis;
+    yield* DatabaseMaintenance.markReclaimRestartRequested;
     // One step: a request interrupted between them would repair on some unrelated later exit.
     yield* Effect.uninterruptible(
       fs.writeFileString(reclaimFiles.request, String(requestedAt)).pipe(
