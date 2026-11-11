@@ -48,6 +48,14 @@
       "types": "./src/libraryReviews.ts",
       "import": "./src/libraryReviews.ts"
     },
+    "./library-move": {
+      "types": "./src/libraryMove.ts",
+      "import": "./src/libraryMove.ts"
+    },
+    "./library-review-conflicts": {
+      "types": "./src/libraryReviewConflicts.ts",
+      "import": "./src/libraryReviewConflicts.ts"
+    },
     "./library-merge": {
       "types": "./src/libraryMerge.ts",
       "import": "./src/libraryMerge.ts"

@@ -341,7 +341,7 @@ async function publishSnapshot(
 }
 
 /** Every source ID the review names: records, duplicates, distinct pairs, screening, retrieval. */
-function scientReviewNamedIds(review: ScientSystematicReview): ReadonlyArray<string> {
+export function scientReviewNamedIds(review: ScientSystematicReview): ReadonlyArray<string> {
   return [
     ...new Set([
       ...scientReviewRecordIds(review),
@@ -353,7 +353,10 @@ function scientReviewNamedIds(review: ScientSystematicReview): ReadonlyArray<str
   ];
 }
 
-function workFromRecord(record: ScientSourceRecord, capturedAt: string): ScientReviewWork {
+export function scientReviewWorkFromRecord(
+  record: ScientSourceRecord,
+  capturedAt: string,
+): ScientReviewWork {
   return {
     type: record.type,
     title: record.title,
@@ -381,7 +384,7 @@ function refreshedWork(
   record: ScientSourceRecord,
   now: string,
 ): ScientReviewWork {
-  const fresh = workFromRecord(record, now);
+  const fresh = scientReviewWorkFromRecord(record, now);
   const next: ScientReviewWork = {
     ...fresh,
     title: fresh.title ?? existing.title,
@@ -394,6 +397,38 @@ function refreshedWork(
       : {}),
   };
   return workContent(next) === workContent(existing) ? existing : next;
+}
+
+/** The exact single-file snapshot bytes for these entries. */
+export function scientReviewSnapshotText(
+  reviewId: string,
+  entries: ReadonlyMap<string, ScientReviewWork>,
+): string {
+  return formatJson(
+    encodeSnapshot(reviewId, {
+      entries: new Map([...entries].map(([sourceId, work]) => [sourceId, { work, extra: {} }])),
+      extra: {},
+    }),
+  );
+}
+
+/** A snapshot file's entries, or null when its bytes are not this review's snapshot. */
+export function decodeScientReviewSnapshotText(
+  text: string,
+  reviewId: string,
+): ReadonlyMap<string, ScientReviewWork> | null {
+  try {
+    const header = decodeSnapshotHeader(JSON.parse(text));
+    if (header.reviewId !== reviewId) return null;
+    return new Map(Object.entries(header.records).map(([id, raw]) => [id, decodeWork(raw)]));
+  } catch {
+    return null;
+  }
+}
+
+/** Two entries say the same about a work, whenever they were captured. */
+export function scientReviewWorksEqual(left: ScientReviewWork, right: ScientReviewWork): boolean {
+  return workContent(left) === workContent(right);
 }
 
 async function projectRootFor(projectRoot: string): Promise<string> {
@@ -478,7 +513,7 @@ function filledEntries(
   for (const sourceId of scientReviewNamedIds(review)) {
     if (next.has(sourceId)) continue;
     const record = libraryRecordFor(resolved, sourceId);
-    if (record) next.set(sourceId, { work: workFromRecord(record, now), extra: {} });
+    if (record) next.set(sourceId, { work: scientReviewWorkFromRecord(record, now), extra: {} });
   }
   return next;
 }
@@ -844,7 +879,7 @@ export async function refreshScientLibraryReviewSnapshot(input: {
       } else if (stored) {
         entries.set(sourceId, stored);
       } else if (record) {
-        entries.set(sourceId, { work: workFromRecord(record, now), extra: {} });
+        entries.set(sourceId, { work: scientReviewWorkFromRecord(record, now), extra: {} });
       }
     }
     const published = await publishSnapshot(folder, review.reviewId, document, entries, []);

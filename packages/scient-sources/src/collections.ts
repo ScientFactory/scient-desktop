@@ -199,7 +199,23 @@ function rewriteLibraryCollections<A>(
   });
 }
 
-export const scientSourceCollectionsInternals = { rewriteLibraryCollections };
+/** For the move: rewrites the library's collections and saved searches in one locked change. */
+function rewriteLibraryOrganization(
+  paths: StorePaths,
+  change: (document: ScientSourceCollectionsDocument) => ScientSourceCollectionsDocument,
+): Promise<void> {
+  if (paths.owner.kind !== "library") throw new Error("Only a library takes in collections.");
+  return withStoreLock(paths, "collections-write", async () => {
+    const document = await readDocument(paths);
+    const next = validateCollectionsDocument(change(document));
+    await writeLibraryDocument(paths, document, next);
+  });
+}
+
+export const scientSourceCollectionsInternals = {
+  rewriteLibraryCollections,
+  rewriteLibraryOrganization,
+};
 
 function collectionsLabel(paths: StorePaths): string {
   return paths.owner.kind === "library"

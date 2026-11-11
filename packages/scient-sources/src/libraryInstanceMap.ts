@@ -42,6 +42,7 @@ const ResolutionStep = Schema.Literals([
   "identifier",
   "metadata",
   "hydrated",
+  "moved",
 ]);
 type ResolutionStep = typeof ResolutionStep.Type;
 
@@ -375,6 +376,27 @@ async function resolveAt(
     await writeInstanceMap(root, instanceId, recorded);
   }
   return results;
+}
+
+/**
+ * Records where the move put each project source ID, for the copies the resolver cannot find on
+ * its own (a diverged copy imported under a new ID). Caller holds the library lock.
+ */
+export async function recordScientProjectSourceMappings(input: {
+  readonly library: ScientLibraryLocation;
+  readonly instanceId: string;
+  readonly mappings: ReadonlyArray<{ readonly projectSourceId: string; readonly sourceId: string }>;
+}): Promise<void> {
+  const root = await NodeFSP.realpath(input.library.root);
+  const map = await readInstanceMap(root, input.instanceId);
+  const resolvedAt = new Date().toISOString();
+  let changed = false;
+  for (const { projectSourceId, sourceId } of input.mappings) {
+    if (map.get(projectSourceId)?.sourceId === sourceId) continue;
+    map.set(projectSourceId, { projectSourceId, sourceId, resolvedBy: "moved", resolvedAt });
+    changed = true;
+  }
+  if (changed) await writeInstanceMap(root, input.instanceId, map);
 }
 
 /**

@@ -167,17 +167,7 @@ async function readPinsDocument(root: string): Promise<PinsDocument> {
   const stats = await NodeFSP.lstat(filePath);
   if (stats.size > MAX_PINS_BYTES) throw new Error("pins.json exceeds the safe size limit.");
   const text = await NodeFSP.readFile(filePath, "utf8");
-  const value: unknown = JSON.parse(text);
-  const header = decodePinsHeader(value);
-  return {
-    pins: header.pins.map((raw) => ({
-      pin: decodePin(raw),
-      extra: extraFields(raw, PIN_FIELDS),
-      workExtra: extraFields(isJsonObject(raw) ? raw["work"] : undefined, WORK_FIELDS),
-    })),
-    extra: extraFields(value, FILE_FIELDS),
-    text,
-  };
+  return { ...parsePinsText(text), text };
 }
 
 /** Writes only when the bytes would change, so an unchanged project never shows a git diff. */
@@ -202,7 +192,7 @@ function withPinsLock<A>(root: string, run: () => Promise<A>): Promise<A> {
   return scientSourceStoreInternals.withOperationLock(`${root}:pins-write`, run);
 }
 
-function scientPinWorkFromRecord(record: ScientSourceRecord): ScientPinWork {
+export function scientPinWorkFromRecord(record: ScientSourceRecord): ScientPinWork {
   return {
     type: record.type,
     title: record.title,
@@ -234,6 +224,54 @@ function resolvePinsRead(
     mode: "read",
     sources: pins.map(({ pin }) => ({ projectSourceId: pin.sourceId, work: pin.work })),
   });
+}
+
+/** The exact `pins.json` bytes for these pins, as every pin write produces them. */
+export function scientProjectPinsText(
+  pins: ReadonlyArray<ScientProjectPin>,
+  extra: Readonly<Record<string, unknown>> = {},
+): string {
+  return `${JSON.stringify(
+    encodePins({ pins: pins.map((pin) => ({ pin, extra: {}, workExtra: {} })), extra }),
+    null,
+    2,
+  )}\n`;
+}
+
+function parsePinsText(text: string): Pick<PinsDocument, "pins" | "extra"> {
+  const value: unknown = JSON.parse(text);
+  const header = decodePinsHeader(value);
+  return {
+    pins: header.pins.map((raw) => ({
+      pin: decodePin(raw),
+      extra: extraFields(raw, PIN_FIELDS),
+      workExtra: extraFields(isJsonObject(raw) ? raw["work"] : undefined, WORK_FIELDS),
+    })),
+    extra: extraFields(value, FILE_FIELDS),
+  };
+}
+
+/** Decodes `pins.json` bytes; throws when they are not a pins file this version reads. */
+export function decodeScientProjectPinsText(text: string): ReadonlyArray<ScientProjectPin> {
+  return parsePinsText(text)
+    .pins.map(({ pin }) => pin)
+    .toSorted(comparePins);
+}
+
+/** `pins.json` bytes with more pins added; every existing pin keeps its bytes and newer fields. */
+export function joinScientProjectPinsText(
+  text: string,
+  additions: ReadonlyArray<ScientProjectPin>,
+): string {
+  const document = parsePinsText(text);
+  return `${JSON.stringify(
+    encodePins({
+      pins: [...document.pins, ...additions.map((pin) => ({ pin, extra: {}, workExtra: {} }))],
+      extra: document.extra,
+    }),
+    null,
+    2,
+  )}\n`;
 }
 
 /** The project's pins, sorted by key. A project with no `pins.json` has none. */
