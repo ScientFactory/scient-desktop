@@ -205,6 +205,10 @@ export function useSourcesOrganize(input: {
       update({ filter: { tags: [tag] }, savedSearchId: null, selection: new Set() });
       input.setQuery("");
     },
+    showOnly: (only: Pick<SourcesListFilter, "studyDesign" | "topic">) => {
+      update({ filter: only, savedSearchId: null, selection: new Set() });
+      input.setQuery("");
+    },
     clearFilter: () => {
       update({ filter: {}, savedSearchId: null });
       input.setQuery("");
@@ -226,12 +230,17 @@ export function useSourcesOrganize(input: {
     clearSelection: () => update({ selection: new Set() }),
     organize,
     bulk,
-    createCollection: async (name: string, sourceIds?: ReadonlyArray<string>) => {
+    createCollection: async (
+      name: string,
+      sourceIds?: ReadonlyArray<string>,
+      parentCollectionId?: string,
+    ) => {
       const result = await organize(
         {
           action: "create-collection",
           name,
           ...(sourceIds && sourceIds.length > 0 ? { sourceIds } : {}),
+          ...(parentCollectionId ? { parentCollectionId } : {}),
         },
         "Collection was not created",
       );

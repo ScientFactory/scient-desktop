@@ -36,9 +36,11 @@ personal library.
 Scient copies each reference's metadata, tags, child notes (as the source's
 note) and every PDF attachment into the project. A citation key the item
 already has, from Zotero or Better BibTeX, is kept. Each source also joins a
-Library collection named after each Zotero collection it is in; nested ones
-are named like **Thesis / Chapter 2**. The original Zotero records and
-attachments are never changed by an import.
+Library collection named after each Zotero collection it is in. The Library
+keeps one level of nesting, so **Chapter 2** inside **Thesis** stays inside it;
+a collection nested deeper joins its ancestor one level down, and the import
+result says which ones did. The original Zotero records and attachments are
+never changed by an import.
 
 Zotero must be open in the same environment where the project runs. For a
 remote project, that means Zotero must run on the remote computer, not only on
@@ -275,13 +277,27 @@ details, the **Collections** row shows where it belongs; use **+ Collection** to
 add it to more. Deleting a collection keeps all of its sources, and **Undo** in
 the message brings the collection back.
 
+A collection can hold one level of subcollections. Show a top-level collection
+and choose **New subcollection…** from the actions beside the filter row.
+Showing a collection lists its subcollections' sources too. Two parents can
+each have a subcollection with the same name.
+
 **Tags** are short labels such as a method or a screening decision. In a
 source's details, use **+ Tag** to add an existing tag or create a new one, and
 the ✕ on a tag to remove it. Selecting a tag shows every source with that tag.
 Tags match without regard to capitals, so `RCT` and `rct` are the same tag.
 
 The filter button also narrows the list by type and by whether a source has a
-PDF. While a filter is on, a row under the search box shows each part, how many
+PDF, and, once Scient has looked them up, by **Study design** and **Topic**,
+each with how many sources have it. Study design comes from PubMed for papers
+it indexes (randomized trial, meta-analysis, systematic review, cohort study,
+case-control study, case report, review, or another design); a paper with
+only a DOI is found in PubMed by its DOI. Topics are a preprint's arXiv
+categories and the main OpenAlex topics of a paper. Scient looks them up in
+the background, a few dozen papers per request, and again when you refresh a
+source's metadata; a source's details show them under **Categories**, and
+selecting one lists the sources that share it. The lookups use the contact
+email from Library settings when one is set, and need no key. While a filter is on, a row under the search box shows each part, how many
 sources match, and actions to rename or delete the collection or to save the
 search. **Saved searches** keep the search text and filters under a name;
 choose one from **Saved searches** to run it again.
@@ -299,7 +315,8 @@ Undo fails, the message says so and **Try again** finishes the rest. The latest
 50 bulk changes can be undone.
 
 Collections and saved searches are kept in `.scient/sources/collections.json`
-with the rest of the project's Library.
+with the rest of the project's Library; study designs and topics in
+`.scient/sources/categories.json`.
 
 ## Run a systematic review
 
@@ -430,8 +447,11 @@ In a project conversation, an agent can search and read the same project-owned
 library, maintain source notes, update metadata, attach or detach a project PDF,
 move a source to the trash and restore it, restore an earlier version, or add a
 new one. It can also organize the Library the way you can: create, rename and
-delete collections, save searches, list a collection or a tag, change tags,
-type or collections on many sources at once, and run a systematic review. It
+delete collections and subcollections, save searches, list a collection, a
+tag, a study design or a topic, change tags, type or collections on many
+sources at once, sort sources into themes (it creates the collections and
+fills them in one change, which **Undo** reverses whole, removing the
+collections it made), and run a systematic review. It
 can import a reference file from the project (`scient_sources_import_file`),
 which reports the same unreadable entries and fields not kept, and write the
 Library to a project file in any of the four formats (`scient_sources_export`),

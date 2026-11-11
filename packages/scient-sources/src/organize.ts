@@ -359,7 +359,7 @@ export function scientSourceFilterIsEmpty(filter: ScientSourceFilter): boolean {
 }
 
 /** A collection's sources with those of its subcollections. */
-function scientSourceCollectionMemberIds(
+export function scientSourceCollectionMemberIds(
   organization: Pick<ScientSourcesOrganization, "collections">,
   collectionId: string,
 ): ReadonlySet<string> {

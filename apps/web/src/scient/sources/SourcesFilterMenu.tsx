@@ -1,8 +1,16 @@
-import { scientSourceTagCounts, scientSourceTagKey } from "@scientfactory/scient-sources";
+import {
+  scientSourceCategoryCounts,
+  scientSourceCollectionMemberIds,
+  scientSourceTagCounts,
+  scientSourceTagKey,
+  scientSourceTopicKey,
+} from "@scientfactory/scient-sources";
 import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import {
   FileTextIcon,
+  FlaskConicalIcon,
   FolderIcon,
+  HashIcon,
   LayersIcon,
   ListFilterIcon,
   SearchIcon,
@@ -27,7 +35,8 @@ import {
   MenuTrigger,
 } from "../../components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
-import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
+import { orderedCollections } from "./collectionTree";
+import { SCIENT_SOURCE_STUDY_DESIGN_LABELS, SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
 
@@ -91,6 +100,55 @@ function TagChoices(props: {
   );
 }
 
+function TopicChoices(props: {
+  readonly organize: SourcesOrganize;
+  readonly topics: ReadonlyArray<{ readonly topic: string; readonly count: number }>;
+}) {
+  const [query, setQuery] = useState("");
+  const { filter } = props.organize;
+  const needle = query.trim().toLocaleLowerCase();
+  const visible = props.topics
+    .filter((entry) => !needle || entry.topic.toLocaleLowerCase().includes(needle))
+    .slice(0, 50);
+  const selected = filter.topic === undefined ? ALL : scientSourceTopicKey(filter.topic);
+  return (
+    <>
+      {props.topics.length > 8 ? (
+        <MenuSearchInput
+          autoFocus
+          value={query}
+          onChange={(event) => setQuery(event.currentTarget.value)}
+          placeholder="Search topics"
+          aria-label="Search topics"
+        />
+      ) : null}
+      <MenuRadioGroup
+        value={selected}
+        onValueChange={(value) =>
+          props.organize.setFilter({
+            ...filter,
+            topic: props.topics.find((entry) => scientSourceTopicKey(entry.topic) === value)?.topic,
+          })
+        }
+      >
+        <MenuRadioItem value={ALL}>Any topic</MenuRadioItem>
+        {visible.length === 0 ? <MenuItem disabled>No matching topics</MenuItem> : null}
+        {visible.map((entry) => (
+          <MenuRadioItem
+            key={scientSourceTopicKey(entry.topic)}
+            value={scientSourceTopicKey(entry.topic)}
+          >
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="min-w-0 flex-1 truncate">{entry.topic}</span>
+              <Count value={entry.count} />
+            </span>
+          </MenuRadioItem>
+        ))}
+      </MenuRadioGroup>
+    </>
+  );
+}
+
 /** One menu for every way of narrowing the list: collection, tags, type, PDF and saved searches. */
 export function SourcesFilterMenu(props: {
   readonly organize: SourcesOrganize;
@@ -102,6 +160,7 @@ export function SourcesFilterMenu(props: {
   const { filter, organization } = organize;
   const tags = scientSourceTagCounts(props.records);
   const types = [...new Set(props.records.map((record) => record.type))];
+  const categories = scientSourceCategoryCounts(props.records);
   const selectedTagCount = filter.tags?.length ?? 0;
   const canSave = organize.filterActive || props.query.trim().length > 0;
   const newCollection = () =>
@@ -168,18 +227,24 @@ export function SourcesFilterMenu(props: {
                   <Count value={props.records.length} />
                 </span>
               </MenuRadioItem>
-              {organization.collections
-                .toSorted((left, right) =>
-                  left.name.localeCompare(right.name, undefined, { sensitivity: "base" }),
-                )
-                .map((collection) => (
-                  <MenuRadioItem key={collection.collectionId} value={collection.collectionId}>
-                    <span className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate">{collection.name}</span>
-                      <Count value={collection.sourceIds.length} />
-                    </span>
-                  </MenuRadioItem>
-                ))}
+              {orderedCollections(organization.collections).map(({ collection, child }) => (
+                <MenuRadioItem key={collection.collectionId} value={collection.collectionId}>
+                  <span
+                    className={
+                      child
+                        ? "flex min-w-0 items-center gap-2 ps-4"
+                        : "flex min-w-0 items-center gap-2"
+                    }
+                  >
+                    <span className="min-w-0 flex-1 truncate">{collection.name}</span>
+                    <Count
+                      value={
+                        scientSourceCollectionMemberIds(organization, collection.collectionId).size
+                      }
+                    />
+                  </span>
+                </MenuRadioItem>
+              ))}
             </MenuRadioGroup>
             <MenuSeparator />
             <MenuItem disabled={!organize.canChange} onClick={newCollection}>
@@ -224,6 +289,54 @@ export function SourcesFilterMenu(props: {
             </MenuRadioGroup>
           </MenuSubPopup>
         </MenuSub>
+        {categories.studyDesigns.length > 0 ? (
+          <MenuSub>
+            <MenuSubTrigger>
+              <FlaskConicalIcon aria-hidden className="size-3.5" />
+              <span className="flex-1">Study design</span>
+              <SubmenuValue>
+                {filter.studyDesign ? SCIENT_SOURCE_STUDY_DESIGN_LABELS[filter.studyDesign] : "Any"}
+              </SubmenuValue>
+            </MenuSubTrigger>
+            <MenuSubPopup>
+              <MenuRadioGroup
+                value={filter.studyDesign ?? ALL}
+                onValueChange={(value) =>
+                  organize.setFilter({
+                    ...filter,
+                    studyDesign: categories.studyDesigns.find(
+                      (entry) => entry.studyDesign === value,
+                    )?.studyDesign,
+                  })
+                }
+              >
+                <MenuRadioItem value={ALL}>Any design</MenuRadioItem>
+                {categories.studyDesigns.map((entry) => (
+                  <MenuRadioItem key={entry.studyDesign} value={entry.studyDesign}>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 flex-1 truncate">
+                        {SCIENT_SOURCE_STUDY_DESIGN_LABELS[entry.studyDesign]}
+                      </span>
+                      <Count value={entry.count} />
+                    </span>
+                  </MenuRadioItem>
+                ))}
+              </MenuRadioGroup>
+            </MenuSubPopup>
+          </MenuSub>
+        ) : null}
+        {categories.topics.length > 0 ? (
+          <MenuSub>
+            <MenuSubTrigger>
+              <HashIcon aria-hidden className="size-3.5" />
+              <span className="flex-1">Topic</span>
+              <SubmenuValue>{filter.topic ?? "Any"}</SubmenuValue>
+            </MenuSubTrigger>
+            <MenuSubPopup>
+              <TopicChoices organize={organize} topics={categories.topics} />
+            </MenuSubPopup>
+          </MenuSub>
+        ) : null}
         <MenuSub>
           <MenuSubTrigger>
             <FileTextIcon aria-hidden className="size-3.5" />

@@ -155,7 +155,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Library (Sources); total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with its subcollections), type, hasPdf, studyDesign (from PubMed), topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
+    "List a page of this project's Library (Sources); total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
     tags: Schema.optionalKey(ScientSourceFilter.fields.tags),
@@ -853,7 +853,7 @@ const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
 
 const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
   description:
-    "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing); parentCollectionId nests it one level (too-deep otherwise); move-collection changes the parent (null: top level). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.",
+    "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing); parentCollectionId nests one level; move-collection changes it (null: top level). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.",
   parameters: Schema.Struct({ change: ScientSourcesOrganizeAction }),
   success: ScientSourcesOrganizeResult,
   failure: ScientSourcesToolError,
@@ -868,7 +868,7 @@ const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
 
 const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
   description:
-    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections; or {themes: [{name, parent?, sourceIds}]} to sort sources into new or existing collections (parent made if missing). Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
+    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections; or {themes: [{name, parent?, sourceIds}]} fills new or existing collections (parent made if missing). Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
   parameters: Schema.Struct({ change: ScientSourcesBulkRequestChange }),
   success: ScientSourcesBulkResult,
   failure: ScientSourcesToolError,

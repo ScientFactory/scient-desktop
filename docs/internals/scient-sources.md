@@ -103,6 +103,7 @@ their own subtree:
 ├── trash/<source-id>.json   removed sources, whole, until restored or deleted
 ├── text/sha256/<prefix>/    extracted PDF text, one JSON file per PDF hash
 ├── collections.json         collections and saved searches
+├── categories.json          study design and topics per source, from registries
 ├── reviews/<review-id>.json systematic reviews
 ├── bulk-edits/<batch-id>.json what a bulk edit changed, for Undo
 ├── operations/              resumable import state
@@ -670,7 +671,7 @@ same two functions.
 
 `packages/scient-sources/src/collections.ts` owns
 `.scient/sources/collections.json`; `organize.ts` holds its schemas and the
-one filter model (text, tags, collection, type, PDF) that the panel list,
+one filter model (text, tags, collection, type, PDF, study design, topic) that the panel list,
 saved searches and `scient_sources_list` all compile through
 `compileScientSourceFilter`, so a search means the same thing to a person and
 an agent.
@@ -679,9 +680,14 @@ an agent.
   are source IDs; a removed source keeps its membership and is only hidden, so
   restoring it from the trash restores its collections too. Reads project
   members onto the sources that exist.
-- Names are unique per project without regard to case. Creating a name that
-  exists returns that collection and adds the given sources, so a repeated
-  agent request is harmless. Deleting a collection or saved search marks it
+- A collection may have a `parentCollectionId`, one level only: a parent has
+  no parent, and a collection with subcollections cannot become one
+  (`too-deep`). Names are unique among siblings without regard to case.
+  Creating a name that exists under the same parent returns that collection
+  and adds the given sources, so a repeated agent request is harmless.
+  Filtering by a collection includes its subcollections' members. A
+  subcollection of a deleted parent is shown at the top level, and rejoins it
+  when the parent is restored; nothing is rewritten. Deleting a collection or saved search marks it
   deleted (the latest 50 are kept) so it can be restored.
 - Every change goes through `organizeScientSources` (one action union shared by
   the `organize` HTTP endpoint and `scient_sources_organize`) under one write
@@ -719,6 +725,49 @@ an agent.
   undone again and only what is left is tried. If a receipt write fails during
   Undo, the rest is reported as failed. The receipt itself is marked undone
   when no entry is left.
+- `{ themes: [{ name, parent?, sourceIds }] }` is the same bulk edit for
+  sorting sources into collections: each named collection (and its parent, at
+  the top level) is found by name or created, then filled. A collection it
+  creates is written ahead as a `created` receipt entry; Undo, working newest
+  first, empties it and then deletes it, or keeps it and reports a conflict
+  when sources or subcollections were added since.
+
+## Study design and topics
+
+`apps/server/src/scient/sources/SourceCategories.ts` looks them up and
+`packages/scient-sources/src/categoriesStore.ts` keeps them in
+`.scient/sources/categories.json`, keyed by source ID and apart from records,
+so a lookup never makes a revision, a bulk-edit conflict or a history entry.
+Each entry records the identifiers it was looked up by (`basis`); once a
+source's DOI, PMID, arXiv ID or OpenAlex ID changes, the entry no longer
+applies and the source is looked up again. A damaged file is treated as empty
+and replaced, since it is derived data.
+
+- Study design: PubMed efetch XML for the source's PMID, or for the PMID that
+  esearch (`"<doi>"[aid]`, 20 DOIs per request) finds for its DOI, matched back
+  by the article's own `ArticleIdList` DOI (never a reference's). Publication
+  types decide first (meta-analysis, systematic review, randomized trial, case
+  report, review), then the design MeSH headings (case-control, then cohort,
+  prospective, retrospective or longitudinal studies), else `other`. The raw
+  publication types and design headings are kept. Requests share the NCBI
+  lane.
+- Topics: arXiv's primary and cross-list categories, read from the same feed
+  the resolver already fetched when a source is added by arXiv ID (seeded in
+  memory, so no extra call), else one id_list request per 50; and the top
+  three OpenAlex topics with scores from one `works?filter=doi:…|…` request
+  per 50 sources (PMID or OpenAlex ID when there is no DOI), with the contact
+  email as `mailto` through `metadataHttp`.
+- A background pass (`scheduleSourceCategorization`, one per project at a
+  time) runs when the overview is read, after an add, and after a metadata
+  refresh, which forgets the source's entry first. It saves each chunk of 50,
+  so a pass that stops resumes where it left off. A registry that cannot be
+  reached sets `retryAfter` (6 hours) on what it left unanswered; what was
+  answered is kept. Passes run only on a server built with the registry
+  contact layer, so tests make no requests. They use no Accounts keys.
+- Clients get a `categories` summary (study design, topic names) on each
+  overview record; agents get the same on `scient_sources_list`, the full
+  entry on `scient_sources_get`, and counts (with how many are still being
+  looked up) on `scient_sources_collections`.
 
 ## Systematic reviews
 
@@ -863,8 +912,10 @@ read; S2's key rules keep it.
 
 Zotero collections are intake scopes when browsing. After an item is imported
 it joins a Library collection (`collections.json`) named after each Zotero
-collection it belongs to, nested ones as `Parent / Child`; a collection problem
-never fails the import. Scope discovery is capped at 500 importable references
+collection it belongs to. One level of Zotero's nesting is kept as a
+subcollection; a deeper collection's items join its ancestor at that level,
+and the item's `note` in the operation (and the agent import result) names
+each one flattened. A collection problem never fails the import. Scope discovery is capped at 500 importable references
 per operation and fails with a request to choose a smaller scope above that
 bound. Collection and whole-library actions skip the separate preflight
 screen; each item is still validated, duplicate-assessed and committed by the
