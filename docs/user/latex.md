@@ -225,7 +225,7 @@ creating another.
 ### Font and size
 
 In Visual, **Text > Font / Size** works as in the Markdown editor: a size in
-points from 1 to 100 (field, minus and plus buttons, presets) and a font from a
+points from 1 to 100 (field, minus and plus buttons) and a font from a
 searchable list. A size is saved as a group `{\fontsize{12}{14.4}\selectfont …}`
 (the baseline is 1.2 times the size). Existing `\large`-style commands stay as
 written and show their number; they change only when you edit that text. With

@@ -1,24 +1,18 @@
+import { ChevronDownIcon } from "lucide-react";
 import { useState } from "react";
+import { catalogueFont } from "@scientfactory/scient-markdown";
 import { Input } from "~/components/ui/input";
 import {
   NumberField,
   NumberFieldDecrement,
-  NumberFieldGroup,
   NumberFieldIncrement,
   NumberFieldInput,
 } from "~/components/ui/number-field";
-import { cn } from "~/lib/utils";
-import {
-  FONT_GROUPS,
-  FONT_SIZE_MAX,
-  FONT_SIZE_MIN,
-  FONT_SIZE_PRESETS,
-  normalizeFontSize,
-} from "./fontChoices";
+import { FONT_GROUPS, FONT_SIZE_MAX, FONT_SIZE_MIN, normalizeFontSize } from "./fontChoices";
 
 /**
  * Content of `Text > Font / Size`, identical in both editors: a scrolling list of
- * fonts, each drawn in its own face, and a size row (minus, number, plus, presets).
+ * fonts opened from one button, each drawn in its own face, and a size row (minus, number, plus).
  * A null value means the document default; "Default font" removes the style.
  */
 export function FontControls(props: {
@@ -31,12 +25,18 @@ export function FontControls(props: {
   readonly onFamily: (family: string | null) => void;
   readonly onSize: (size: number | null) => void;
 }) {
+  const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const needle = query.trim().toLowerCase();
   const groups = FONT_GROUPS.map((group) => ({
     ...group,
     fonts: group.fonts.filter((font) => font.name.toLowerCase().includes(needle)),
   })).filter((group) => group.fonts.length > 0);
+  const choose = (family: string | null) => {
+    props.onFamily(family);
+    setOpen(false);
+    setQuery("");
+  };
   return (
     <div
       className="grid w-64 gap-3 p-2 text-sm"
@@ -47,47 +47,63 @@ export function FontControls(props: {
     >
       <div className="grid gap-1.5">
         <span className="text-xs text-foreground/70">Font</span>
-        <Input
-          size="sm"
-          type="search"
-          aria-label="Search fonts"
-          placeholder="Search fonts"
-          value={query}
+        <button
+          type="button"
+          aria-expanded={open}
           disabled={props.disabled}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-        <div className="max-h-52 overflow-y-auto" role="listbox" aria-label="Font">
-          <FontOption
-            label="Default font"
-            selected={props.family === null}
-            disabled={props.disabled}
-            onSelect={() => props.onFamily(null)}
-          />
-          {groups.map((group) => (
-            <div key={group.label}>
-              <div className="px-2 pt-2 pb-0.5 text-xs text-foreground/70">{group.label}</div>
-              {group.fonts.map((font) => (
-                <FontOption
-                  key={font.name}
-                  label={font.name}
-                  css={font.css}
-                  selected={props.family === font.name}
-                  disabled={props.disabled || props.isAvailable?.(font.name) === false}
-                  note={
-                    props.isAvailable?.(font.name) === false ? props.unavailableNote : undefined
-                  }
-                  onSelect={() => props.onFamily(font.name)}
-                />
+          className="flex h-8 w-full items-center justify-between gap-2 rounded-md border border-input px-2 text-start hover:bg-accent disabled:opacity-50"
+          style={
+            props.family === null ? undefined : { fontFamily: catalogueFont(props.family)?.css }
+          }
+          onClick={() => setOpen(!open)}
+        >
+          <span className="truncate">{props.family ?? "Default font"}</span>
+          <ChevronDownIcon className="size-4 shrink-0 text-foreground/70" />
+        </button>
+        {open && (
+          <>
+            <Input
+              size="sm"
+              type="search"
+              aria-label="Search fonts"
+              placeholder="Search fonts"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+            />
+            <div className="max-h-52 overflow-y-auto" role="listbox" aria-label="Font">
+              <FontOption
+                label="Default font"
+                selected={props.family === null}
+                disabled={props.disabled}
+                onSelect={() => choose(null)}
+              />
+              {groups.map((group) => (
+                <div key={group.label}>
+                  <div className="px-2 pt-2 pb-0.5 text-xs text-foreground/70">{group.label}</div>
+                  {group.fonts.map((font) => (
+                    <FontOption
+                      key={font.name}
+                      label={font.name}
+                      css={font.css}
+                      selected={props.family === font.name}
+                      disabled={props.disabled || props.isAvailable?.(font.name) === false}
+                      note={
+                        props.isAvailable?.(font.name) === false ? props.unavailableNote : undefined
+                      }
+                      onSelect={() => choose(font.name)}
+                    />
+                  ))}
+                </div>
               ))}
             </div>
-          ))}
-        </div>
+          </>
+        )}
       </div>
       <div className="grid gap-1.5">
         <span className="text-xs text-foreground/70">Size (pt)</span>
         <NumberField
           size="sm"
-          className="w-36"
+          variant="compact"
           min={FONT_SIZE_MIN}
           max={FONT_SIZE_MAX}
           step={1}
@@ -100,36 +116,18 @@ export function FontControls(props: {
             if (size !== null) props.onSize(size);
           }}
         >
-          <NumberFieldGroup>
-            <NumberFieldDecrement aria-label="Smaller" />
-            <NumberFieldInput aria-label="Font size in points" />
-            <NumberFieldIncrement aria-label="Larger" />
-          </NumberFieldGroup>
-        </NumberField>
-        <div className="flex flex-wrap gap-1">
-          {FONT_SIZE_PRESETS.map((preset) => (
-            <button
-              key={preset}
-              type="button"
-              disabled={props.disabled}
-              className={cn(
-                "rounded-md border px-1.5 py-0.5 text-xs tabular-nums hover:bg-accent disabled:opacity-50",
-                props.size === preset ? "border-ring" : "border-border text-foreground/70",
-              )}
-              onClick={() => props.onSize(preset)}
-            >
-              {preset}
-            </button>
-          ))}
+          <NumberFieldDecrement aria-label="Smaller" />
+          <NumberFieldInput aria-label="Font size in points" />
+          <NumberFieldIncrement aria-label="Larger" />
           <button
             type="button"
             disabled={props.disabled || props.size === null}
-            className="rounded-md px-1.5 py-0.5 text-xs text-foreground/70 hover:bg-accent disabled:opacity-50"
+            className="ms-auto rounded-md px-1.5 py-0.5 text-xs text-foreground/70 hover:bg-accent disabled:opacity-50"
             onClick={() => props.onSize(null)}
           >
             Default size
           </button>
-        </div>
+        </NumberField>
       </div>
     </div>
   );

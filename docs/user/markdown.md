@@ -380,9 +380,9 @@ purpose of the edit.
 
 **Text > Font / Size** sets the font and the size of the selected text. The size
 is a number of points from 1 to 100, typed in the field, stepped with the minus
-and plus buttons (1 pt; 0.5 pt with Shift) or taken from the preset buttons.
+and plus buttons (1 pt; 0.5 pt with Shift).
 Sizes are absolute, as in Word: 12 means 12 pt whatever the surrounding text.
-The font list is searchable and scrolls inside its panel; each name is shown in
+The font list opens when you click the font button; it is searchable and scrolls inside its panel; each name is shown in
 its own face. **Default** removes the local setting.
 
 The choice is saved in the file as `<span style="font-size:12pt">…</span>` and
