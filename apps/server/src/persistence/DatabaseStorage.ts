@@ -20,6 +20,9 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
 import { forkParked } from "../serverActivation.ts";
+// SCIENT-FORK:START — archived handoff history moves to shared bodies in the background.
+import { shareLegacyContextHistories } from "../orchestration-v2/scient-fork/ContextHistorySource.ts";
+// SCIENT-FORK:END
 
 // Bound each reclaim pass to one minute of churn.
 const RECLAIM_PAGES_PER_PASS = 1024;
@@ -176,6 +179,31 @@ const make = Effect.gen(function* () {
       ),
     ),
   );
+  // SCIENT-FORK:START — share archived handoff bodies at 10% duty, once soon after start and
+  // then with each compaction interval (new legacy-path handoffs keep arriving).
+  const shareArchivedHistory = Effect.gen(function* () {
+    let sliceStarted = yield* Clock.monotonicTimeNanos;
+    const between = Effect.gen(function* () {
+      const elapsed = (yield* Clock.monotonicTimeNanos) - sliceStarted;
+      yield* Effect.sleep(Math.max(50, (Number(elapsed) / 1_000_000) * 9));
+      sliceStarted = yield* Clock.monotonicTimeNanos;
+    });
+    const result = yield* shareLegacyContextHistories(sql, between);
+    if (result.converted > 0 || result.failed > 0)
+      yield* Effect.logInfo("Shared archived context history bodies", result);
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Sharing archived context history failed", { cause }),
+    ),
+  );
+  yield* forkParked(
+    Effect.sleep("2 minutes").pipe(
+      Effect.andThen(
+        shareArchivedHistory.pipe(Effect.repeat(Schedule.spaced(COMPACTION_INTERVAL))),
+      ),
+    ),
+  );
+  // SCIENT-FORK:END
   yield* forkParked(
     publishStatus.pipe(
       Effect.andThen(Effect.sleep("1 minute")),
