@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./scientOwnedProcessTree": {
+      "types": "./src/scientOwnedProcessTree.ts",
+      "import": "./src/scientOwnedProcessTree.ts"
+    },
     "./scientAccountSecretRequest": {
       "types": "./src/scientAccountSecretRequest.ts",
       "import": "./src/scientAccountSecretRequest.ts"

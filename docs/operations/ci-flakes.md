@@ -22,6 +22,7 @@ They had passed 48 runs in a row before that job stopped using setup-vp's cache.
 and the tests and runner now print hdiutil's own message; if it recurs, that message decides the fix.
 
 Windows packaging's "Installed desktop must survive the smoke interval and drain on shutdown"
-recurs (2026-11-09; 2026-11-10,
-[run 42876010394](https://github.com/ScientFactory/scient-desktop/actions/runs/42876010394)) but
-stays off the list: it checks the packaged app's lifecycle, so it is investigated, never re-added.
+(2026-11-09 to 11-11) was the check, not the app: a helper the backend started (Azure CLI's Python,
+from source control discovery) inherited the app's output pipes and could hold them past the 8 s
+drain after a forced stop. The smoke now captures output to files and requires the app's own
+processes to end, and also checks a normal quit.

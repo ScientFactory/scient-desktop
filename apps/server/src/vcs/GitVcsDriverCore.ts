@@ -86,6 +86,12 @@ const REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES = 120_000;
 const REVIEW_METADATA_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 // Temporary-index git add scales poorly (50k files took ~30 s); report incomplete totals above this cap.
 const REVIEW_UNTRACKED_MAX_FILES = 5_000;
+// SCIENT-FORK:START — branch totals stop rescanning untracked files after a failed scan.
+// The scan cost grows with the untracked tree, not the cap, so a folder that failed once (too
+// many files, output limit or timeout) is not scanned again on every status poll.
+const UNTRACKED_TOTALS_RETRY_MIN_MS = 60_000;
+const UNTRACKED_TOTALS_RETRY_MAX_MS = 30 * 60_000;
+// SCIENT-FORK:END
 const REVIEW_DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const REVIEW_BRANCH_COMMIT_LIMIT = 100;
 const REVIEW_BRANCH_SUBJECT_LIMIT = 300;
@@ -1655,6 +1661,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   const statusRemoteRefreshFailures = new Map<string, { count: number; retryAt: number }>();
+  // SCIENT-FORK:START — branch totals stop rescanning untracked files after a failed scan.
+  const untrackedTotalsFailures = new Map<
+    string,
+    {
+      readonly roots: string;
+      readonly count: number;
+      readonly retryAt: number;
+      readonly detail: string;
+    }
+  >();
+  // SCIENT-FORK:END
   const statusRemoteRefreshFailureKey = (cacheKey: StatusRemoteRefreshCacheKey) =>
     `${cacheKey.gitCommonDir}\0${cacheKey.remoteName}`;
   const recordStatusRemoteRefreshFailure = Effect.fn(
@@ -3181,7 +3198,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return stdout.trim();
   });
 
-  const prepareUntrackedReviewIndex = Effect.fn("prepareUntrackedReviewIndex")(function* (
+  // SCIENT-FORK:START — branch totals stop rescanning untracked files after a failed scan.
+  // `unavailable` says why the untracked files could not be indexed.
+  const prepareUntrackedReviewIndexOrReason = Effect.fn("prepareUntrackedReviewIndex")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
     onlyPath?: string,
@@ -3191,15 +3210,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       cwd,
       ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathArgs],
       { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
-    ).pipe(Effect.orElseSucceed(() => null));
-    if (untracked === null) return null;
+    ).pipe(
+      Effect.catchTags({
+        GitCommandError: (error) =>
+          Effect.succeed({ unavailable: `Could not list untracked files: ${error.detail}` }),
+      }),
+    );
+    if ("unavailable" in untracked) return untracked;
     // ls-files lists a nested repository with a trailing slash; its diff path has none.
     const paths = splitNullSeparatedGitStdoutPaths(untracked).filter(
       (candidate) =>
         onlyPath === undefined || candidate === onlyPath || candidate === `${onlyPath}/`,
     );
     if (paths.length === 0) return { env: undefined };
-    if (paths.length > REVIEW_UNTRACKED_MAX_FILES) return null;
+    if (paths.length > REVIEW_UNTRACKED_MAX_FILES)
+      return { unavailable: "Too many untracked files to count." };
     const env = yield* prepareReviewIndex(cwd, paths).pipe(
       Effect.catchTags({
         PlatformError: (cause) =>
@@ -3216,6 +3241,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     );
     return { env };
   });
+  const prepareUntrackedReviewIndex = (
+    cwd: string,
+    pathArgs: ReadonlyArray<string>,
+    onlyPath?: string,
+  ) =>
+    prepareUntrackedReviewIndexOrReason(cwd, pathArgs, onlyPath).pipe(
+      Effect.map((result) => ("unavailable" in result ? null : result)),
+    );
+  // SCIENT-FORK:END
 
   const resolveReviewMergeBase = Effect.fn("resolveReviewMergeBase")(function* (
     cwd: string,
@@ -3289,16 +3323,50 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       roots.length <= 128 && roots.reduce((length, root) => length + root.length + 16, 0) < 8_000
         ? roots.map((root) => `:(top,literal)${root}`)
         : [];
-    // Empty status can mean untracked files are hidden; retain the full scan.
-    const untracked = yield* prepareUntrackedReviewIndex(cwd, pathspecs);
-    if (untracked === null) {
+    // SCIENT-FORK:START — branch totals stop rescanning untracked files after a failed scan.
+    // Until the retry time, the same untracked roots get the remembered failure without a scan;
+    // different roots (files added or removed at status level) scan again at once.
+    const rootsKey = roots.join("\0");
+    const remembered = untrackedTotalsFailures.get(cwd);
+    if (
+      remembered !== undefined &&
+      remembered.roots === rootsKey &&
+      (yield* Clock.currentTimeMillis) < remembered.retryAt
+    ) {
       return yield* new GitCommandError({
         operation: "GitVcsDriver.readBranchChangeTotals",
         command: "git ls-files",
         cwd,
-        detail: "Too many untracked files to count.",
+        detail: remembered.detail,
       });
     }
+    // Empty status can mean untracked files are hidden; retain the full scan.
+    const untracked = yield* prepareUntrackedReviewIndexOrReason(cwd, pathspecs);
+    if ("unavailable" in untracked) {
+      const count = remembered?.roots === rootsKey ? remembered.count + 1 : 1;
+      // Bounded like the remote refresh failures: the oldest folder is forgotten first.
+      untrackedTotalsFailures.delete(cwd);
+      untrackedTotalsFailures.set(cwd, {
+        roots: rootsKey,
+        count,
+        retryAt:
+          (yield* Clock.currentTimeMillis) +
+          Math.min(UNTRACKED_TOTALS_RETRY_MIN_MS * 2 ** (count - 1), UNTRACKED_TOTALS_RETRY_MAX_MS),
+        detail: untracked.unavailable,
+      });
+      if (untrackedTotalsFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
+        const oldestKey = untrackedTotalsFailures.keys().next().value;
+        if (oldestKey !== undefined) untrackedTotalsFailures.delete(oldestKey);
+      }
+      return yield* new GitCommandError({
+        operation: "GitVcsDriver.readBranchChangeTotals",
+        command: "git ls-files",
+        cwd,
+        detail: untracked.unavailable,
+      });
+    }
+    untrackedTotalsFailures.delete(cwd);
+    // SCIENT-FORK:END
     const readNumstat = (ref: string) =>
       executeGit(
         "GitVcsDriver.readBranchChangeTotals",
@@ -4609,7 +4677,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     });
 
   const fetchRemote = Effect.fn("fetchRemote")(function* (input: GitVcsDriver.GitFetchRemoteInput) {
-    const args = ["fetch", "--quiet", "--", input.remoteName];
+    // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+    const maintenanceArgs = input.skipAutoMaintenance === true ? ["--no-auto-gc"] : [];
+    const args = ["fetch", "--quiet", ...maintenanceArgs, "--", input.remoteName];
+    // SCIENT-FORK:END
     const options = {
       env: STATUS_UPSTREAM_REFRESH_ENV,
       fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
@@ -4662,6 +4733,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       "fetch",
       "--quiet",
       "--no-tags",
+      // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+      ...maintenanceArgs,
+      // SCIENT-FORK:END
       "--",
       input.remoteName,
       `+refs/heads/${branch}:refs/remotes/${input.remoteName}/${branch}`,
@@ -4748,7 +4822,16 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const { remoteName, branchName } = target;
       const remoteRefName = `${remoteName}/${branchName}`;
       // A missing remote branch can leave a stale tracking ref; never resolve it.
-      if (!(yield* fetchRemote({ cwd: input.cwd, remoteName, refName: remoteRefName }))) {
+      // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+      // Runs for every worktree thread, including delegated agents, often several at once.
+      const fetched = yield* fetchRemote({
+        cwd: input.cwd,
+        remoteName,
+        refName: remoteRefName,
+        skipAutoMaintenance: true,
+      });
+      // SCIENT-FORK:END
+      if (!fetched) {
         return null;
       }
       const resolved = yield* executeGit(
@@ -4795,6 +4878,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "fetch",
         "--quiet",
         "--no-tags",
+        // SCIENT-FORK:START — automatic fetches skip Git's detached automatic maintenance.
+        // Storage cleanup refreshes these refs hourly; nobody asked for this fetch.
+        "--no-auto-gc",
+        // SCIENT-FORK:END
         "--",
         input.remoteName,
         `+refs/heads/${input.remoteBranch}:refs/remotes/${input.remoteName}/${input.remoteBranch}`,

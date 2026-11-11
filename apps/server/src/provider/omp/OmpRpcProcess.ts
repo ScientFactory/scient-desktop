@@ -13,6 +13,8 @@ import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { resolveCommandPath, resolveSpawnCommand } from "@t3tools/shared/shell";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import { makeOwnedProcessTree } from "@t3tools/shared/scientOwnedProcessTree";
 import type { ModelConnectionReadiness } from "@t3tools/contracts";
 import type { OmpRpcModel } from "effect-omp-rpc/schema";
 
@@ -64,6 +66,10 @@ export const OMP_ISOLATED_ARGS = [
 
 /** How long a closed-stdin child gets to exit on its own before it is killed. */
 const OMP_SHUTDOWN_GRACE = "2 seconds";
+// The agent's own tree: first look shortly after start, then at this interval.
+const OMP_TREE_FIRST_SAMPLE = "1 second";
+const OMP_TREE_SAMPLE_INTERVAL = "10 seconds";
+const OMP_TREE_REAP_GRACE = "1 second";
 /** The native kill implementation can await exit after its signal timers expire. */
 const OMP_SHUTDOWN_KILL_DEADLINE = "3 seconds";
 /**
@@ -535,6 +541,22 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
         (cause) => new OmpRpcProtocolError({ detail: `Failed to start ${target.name}.`, cause }),
       ),
     );
+  // Stopping signals the agent's process group; tools it started in groups of their own
+  // (detached shells, setsid builds) would outlive it, so its tree is sampled while it runs and
+  // what is left is stopped after it. Windows' taskkill /T already ends the whole tree.
+  const ownedTree =
+    (yield* HostProcess.Platform) === "win32" ? undefined : makeOwnedProcessTree(Number(child.pid));
+  if (ownedTree !== undefined) {
+    yield* Effect.sleep(OMP_TREE_FIRST_SAMPLE).pipe(
+      Effect.andThen(
+        ownedTree.sample.pipe(
+          Effect.andThen(Effect.sleep(OMP_TREE_SAMPLE_INTERVAL)),
+          Effect.forever,
+        ),
+      ),
+      Effect.forkIn(scope),
+    );
+  }
   const stderrTail = yield* Ref.make(emptyOmpStderrTail);
   const stderrDecoder = new TextDecoder("utf-8", { fatal: false });
   // Each chunk is redacted as it arrives, before anything is truncated.
@@ -574,6 +596,7 @@ export const makeOmpRpcProcess = Effect.fn("makeOmpRpcProcess")(function* (
       const killed = yield* child.exitCode.pipe(Effect.timeout("3 seconds"), Effect.option);
       code = killed._tag === "Some" ? Number(killed.value) : null;
     }
+    if (ownedTree !== undefined) yield* ownedTree.reap(OMP_TREE_REAP_GRACE);
     return {
       code,
       exited: code !== null || !(yield* child.isRunning.pipe(Effect.orElseSucceed(() => true))),

@@ -208,6 +208,9 @@ import * as ServerSettings from "../../serverSettings.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
 import { spawnAndCollect } from "@t3tools/provider-core/server/snapshotProbe";
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
+// SCIENT-FORK:START — descendants that left the CLI's group stop when it exits.
+import { makeOwnedProcessTree } from "@t3tools/shared/scientOwnedProcessTree";
+// SCIENT-FORK:END
 import {
   claudeSignedOutMessage,
   makeClaudeEnvironment,
@@ -396,10 +399,28 @@ const CLAUDE_STDERR_DRAIN_TIMEOUT = Duration.seconds(1);
 const CLAUDE_ROOT_REFUSAL =
   "--dangerously-skip-permissions cannot be used with root/sudo privileges for security reasons";
 
+// SCIENT-FORK:START — descendants that left the CLI's group stop when it exits.
+const CLAUDE_TREE_FIRST_SAMPLE = Duration.seconds(1);
+const CLAUDE_TREE_SAMPLE_INTERVAL = Duration.seconds(10);
+const CLAUDE_TREE_REAP_GRACE = Duration.seconds(1);
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — descendants that left the CLI's group stop with it when the server dies.
+// The watcher's `$$` is the CLI (the wrapper execs into it). Before the group kill it lists the
+// CLI's live descendants in other process groups, which `kill 0` does not reach, and later kills
+// only those still the same process (PID, start time and command unchanged).
 const CLAUDE_GROUP_WATCH_SCRIPT = [
-  "{ trap '' TERM; read -r _ <&3; kill -TERM 0; sleep 5; kill -KILL 0; } </dev/null >/dev/null 2>&1 &",
+  "{ trap '' TERM; read -r _ <&3;",
+  "d=$(ps -A -o pid=,ppid=,pgid= 2>/dev/null | awk -v root=$$ '{ p[$1] = $2; g[$1] = $3 }",
+  "END { q[1] = root; n = 1; for (i = 1; i <= n; i++) for (k in p)",
+  "if (p[k] == q[i] && !(k in s)) { s[k] = 1; q[++n] = k; if (g[k] != root) print k } }');",
+  "ids() { [ -n \"$d\" ] && LC_ALL=C ps -o pid=,lstart=,comm= -p \"$(echo $d | tr ' ' ',')\" 2>/dev/null; };",
+  "before=$(ids); kill -TERM 0 $d; sleep 5;",
+  'k=$({ echo "$before"; echo --; ids; } | awk \'$0 == "--" { m = 1; next } !m { b[$0] = 1; next } ($0 in b) { print $1 }\');',
+  "kill -KILL $k 0; } </dev/null >/dev/null 2>&1 &",
   'exec "$@" 3<&-',
 ].join("\n");
+// SCIENT-FORK:END
 
 /**
  * Kill the CLI's group on exit to stop MCP grandchildren; `onExit` stops its agent scope for
@@ -425,10 +446,35 @@ export function spawnClaudeProcessGroup(
   );
   // Always drained, so a chatty CLI never blocks on a full stderr pipe.
   child.stderr?.setEncoding("utf8").on("data", onStderr).once("close", onStderrClose);
+  // SCIENT-FORK:START — descendants that left the CLI's group stop when it exits.
+  // The CLI runs its Bash tool shells and helpers detached, in groups of their own, so the group
+  // kill below misses them; the tree is sampled while the CLI lives, as they lose that link at exit.
+  const ownedTree = child.pid === undefined ? undefined : makeOwnedProcessTree(child.pid);
+  const sampling =
+    ownedTree === undefined
+      ? undefined
+      : Effect.runFork(
+          Effect.sleep(CLAUDE_TREE_FIRST_SAMPLE).pipe(
+            Effect.andThen(
+              ownedTree.sample.pipe(
+                Effect.andThen(Effect.sleep(CLAUDE_TREE_SAMPLE_INTERVAL)),
+                Effect.forever,
+              ),
+            ),
+          ),
+        );
+  // SCIENT-FORK:END
   child.once("exit", () => {
     try {
       signalProcessGroup(child.pid ?? 0, "SIGKILL");
     } catch {}
+    // SCIENT-FORK:START — descendants that left the CLI's group stop when it exits.
+    if (sampling !== undefined && ownedTree !== undefined) {
+      Effect.runFork(
+        Fiber.interrupt(sampling).pipe(Effect.andThen(ownedTree.reap(CLAUDE_TREE_REAP_GRACE))),
+      );
+    }
+    // SCIENT-FORK:END
     onExit?.();
   });
   // Node's typings make stdin and stdout nullable once stdio has a fourth entry; both are pipes.
