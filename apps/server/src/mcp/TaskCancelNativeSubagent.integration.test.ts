@@ -538,17 +538,21 @@ const cancelBackgroundOnlyTask = (
         );
         if (cancelAt === "recorded") {
           const commandId = CommandId.make("stop-recorded");
-          yield* orchestrator.cancelDelegatedTask({
-            parentThreadId,
-            taskId: task.id,
-            command: {
-              type: "thread.stop",
-              commandId,
-              threadId: task.childThreadId!,
-              stopDelegatedTasks: false,
-            },
-            stopDescendants: () => Effect.void,
-          });
+          yield* orchestrator
+            .cancelDelegatedTask({
+              parentThreadId,
+              taskId: task.id,
+              command: {
+                type: "thread.stop",
+                commandId,
+                threadId: task.childThreadId!,
+              },
+              stopDescendants: () => Effect.void,
+            })
+            .pipe(
+              // SCIENT-FORK: Scient marks a caller-handled stop through this reference, not a command field.
+              Effect.provideService(Orchestrator.DelegatedStopHandledByCaller, task.childThreadId!),
+            );
           const committed = yield* eventSink.readByCommandId({ commandId }).pipe(Stream.runCollect);
           assert.isTrue(
             committed.some(

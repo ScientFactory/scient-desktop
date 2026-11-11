@@ -2139,7 +2139,7 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
                 },
               },
             },
-            // Codex restores context only after the compacting turn completes (T3 #25911).
+            // Codex restores context only after the compacting turn completes.
             {
               type: "emit_inbound",
               label: "done",

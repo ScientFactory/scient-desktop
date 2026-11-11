@@ -2767,7 +2767,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const endedRunId = options?.endedRunId;
       const queueDelivery =
         endedRunId === undefined ||
-        queuedRun.queueHeld === true ||
+        // SCIENT-FORK: a held queue already returned above, so only the Stop marker decides.
         (yield* projectionStore
           .getThreadRecords(threadId, ["turnItems"], {
             turnItemTypes: ["run_interrupt_request"],
@@ -14463,7 +14463,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
       // SCIENT-FORK:START — a failed root can still own live native child turns. A cancelled
-      // task waits only for its work to stop, as the caller's T3 guard does (#21676).
+      // task waits only for its work to stop, as the caller guard does.
       const taskProgress = delegatedTaskProgress(
         taskRuns.length === 0
           ? childControls

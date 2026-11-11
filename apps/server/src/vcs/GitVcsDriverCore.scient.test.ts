@@ -28,7 +28,7 @@ const isUntrackedListing = (command: ChildProcess.Command) =>
   command.args.includes("ls-files") &&
   command.args.includes("--others");
 
-// T3 #34460 (GitVcsDriverCore.test.ts) covers the backoff for a listing over the 5,000-path cap.
+// GitVcsDriverCore.test.ts covers the backoff for a listing over the 5,000-path cap.
 it.layer(layerTest)("branch change totals", (it) => {
   // A listing that fails (here: output past the limit) backs off like one over the cap.
   it.effect("do not repeat an untracked listing that failed", () =>

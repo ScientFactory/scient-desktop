@@ -1665,7 +1665,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly count: number;
       readonly retryAt: number;
       readonly detail: string;
-      // SCIENT-FORK: the listing's GitCommandError stays the cause (offered as T3 #34574).
+      // SCIENT-FORK: the listing's GitCommandError stays the cause; also offered upstream.
       readonly cause: GitCommandError | undefined;
     }
   >();
@@ -3196,7 +3196,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   // SCIENT-FORK:START — overlapping reads of the same paths share one untracked listing
-  // instead of each walking the tree (offered as T3 #34574). The result is never kept, so a
+  // instead of each walking the tree; also offered upstream. The result is never kept, so a
   // later read lists again.
   const untrackedListings = yield* Cache.makeWith(
     (key: string) => {
@@ -3217,7 +3217,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     pathArgs: ReadonlyArray<string>,
     onlyPath?: string,
   ) {
-    // SCIENT-FORK:START — one shared listing per paths; its error stays the cause (T3 #34574).
+    // SCIENT-FORK:START — one shared listing per paths; its error stays the cause.
     const untracked = yield* Cache.get(untrackedListings, [cwd, ...pathArgs].join("\0")).pipe(
       Effect.catchTags({
         GitCommandError: (error) =>
@@ -3347,7 +3347,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         command: "git ls-files",
         cwd,
         detail: remembered.detail,
-        // SCIENT-FORK: keeps the listing error as cause (offered as T3 #34574).
+        // SCIENT-FORK: keeps the listing error as cause; also offered upstream.
         ...(remembered.cause === undefined ? {} : { cause: remembered.cause }),
       });
     }
@@ -3363,7 +3363,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           (yield* Clock.currentTimeMillis) +
           Math.min(UNTRACKED_TOTALS_RETRY_MIN_MS * 2 ** (count - 1), UNTRACKED_TOTALS_RETRY_MAX_MS),
         detail: untracked.unavailable,
-        // SCIENT-FORK: keeps the listing error as cause (offered as T3 #34574).
+        // SCIENT-FORK: keeps the listing error as cause; also offered upstream.
         cause: "cause" in untracked ? untracked.cause : undefined,
       });
       if (untrackedTotalsFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
@@ -3375,7 +3375,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         command: "git ls-files",
         cwd,
         detail: untracked.unavailable,
-        // SCIENT-FORK: keeps the listing error as cause (offered as T3 #34574).
+        // SCIENT-FORK: keeps the listing error as cause; also offered upstream.
         ...("cause" in untracked ? { cause: untracked.cause } : {}),
       });
     }

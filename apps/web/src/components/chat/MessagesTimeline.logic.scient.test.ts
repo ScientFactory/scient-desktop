@@ -1249,7 +1249,6 @@ it("treats only the strict list end as the live edge", async () => {
     resolveTimelineMinimapHeightStyle,
     resolveTimelineMinimapHitStripWidth,
     resolveTimelineMinimapIndexFromPointer,
-    resolveTimelineMinimapInteractiveWidth,
     resolveTimelineMinimapNavigationInteractive,
     resolveTimelineMinimapTopPercent,
   } = await import("./MessagesTimeline.logic");
@@ -1366,13 +1365,4 @@ it("treats only the strict list end as the live edge", async () => {
   expect(resolveTimelineMinimapNavigationInteractive(14)).toBe(true);
   expect(resolveTimelineMinimapNavigationInteractive(8)).toBe(false);
   expect(resolveTimelineMinimapNavigationInteractive(0)).toBe(false);
-
-  // The collapsed target stays narrow, but an open preview keeps its full
-  // 20rem width plus the 2rem offset from the minimap rail interactive.
-  expect(resolveTimelineMinimapInteractiveWidth(0, false)).toBe(0);
-  expect(resolveTimelineMinimapInteractiveWidth(14, false)).toBe(14);
-  expect(resolveTimelineMinimapInteractiveWidth(40, false)).toBe(40);
-  expect(resolveTimelineMinimapInteractiveWidth(0, true)).toBe("22rem");
-  expect(resolveTimelineMinimapInteractiveWidth(14, true)).toBe("22rem");
-  expect(resolveTimelineMinimapInteractiveWidth(40, true)).toBe("22rem");
 });

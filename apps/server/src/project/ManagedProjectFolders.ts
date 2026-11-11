@@ -2,14 +2,7 @@
  * Each Scratch thread gets its own folder; named projects get a new Git repository.
  * @module ManagedProjectFolders
  */
-import {
-  CommandId,
-  GitCommandError,
-  type GitManagerServiceError,
-  ProjectId,
-  type ThreadId,
-  VcsProcessSpawnError,
-} from "@t3tools/contracts";
+import { CommandId, GitCommandError, ProjectId, type ThreadId } from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
 // SCIENT-FORK:START — product admission policy.
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";

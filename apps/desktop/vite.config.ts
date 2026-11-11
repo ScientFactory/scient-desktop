@@ -181,7 +181,8 @@ export default defineConfig({
         test: {
           name: "unit",
           include: [...defaultInclude, "../../native/kde-snap-shot/src/*.test.ts"],
-          exclude: ["**/node_modules/**", ...domTests],
+          // SCIENT-FORK: Scient's preload sampler tests run in their own project.
+          exclude: [...defaultExclude, ...domTests, ...preloadTests],
           setupFiles: [
             "../../packages/shared/src/testing/longTempDir.ts",
             "../../packages/shared/src/testing/providerEnv.ts",
@@ -198,25 +199,20 @@ export default defineConfig({
           setupFiles: ["../../packages/shared/src/testing/providerEnv.ts"],
         },
       },
-    ],
-    projects: [
-      {
-        extends: true,
-        test: {
-          name: "unit",
-          include: [...defaultInclude, "../../native/kde-snap-shot/src/*.test.ts"],
-          exclude: [...defaultExclude, ...preloadTests],
-        },
-      },
+      // SCIENT-FORK:START — the sampler runs inside Electron's isolated preload, not the web renderer.
       {
         extends: true,
         test: {
           name: "preload",
           include: preloadTests,
-          // The sampler runs inside Electron's isolated preload, not the web renderer.
           environment: "happy-dom",
+          setupFiles: [
+            "../../packages/shared/src/testing/longTempDir.ts",
+            "../../packages/shared/src/testing/providerEnv.ts",
+          ],
         },
       },
+      // SCIENT-FORK:END
     ],
   },
 });

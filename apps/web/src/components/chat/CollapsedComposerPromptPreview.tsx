@@ -1,6 +1,7 @@
 import { isProviderSkillUserInvocable } from "@t3tools/client-runtime/providerSkills";
 import type { ServerProviderSkill } from "@t3tools/contracts";
-import { assistantCitationLabel } from "@t3tools/shared/assistantCitations";
+// SCIENT-FORK: Scient quotes also name files, PDFs, Compute outputs and Office documents.
+import { composerCitationLabel } from "@t3tools/shared/composerCitations";
 import { formatProviderSkillDisplayName } from "@t3tools/shared/inlineSkills";
 import { fileBasename } from "@t3tools/shared/path";
 import {
@@ -79,7 +80,7 @@ export function CollapsedComposerPromptPreview(props: {
           <ContextChip key={key} kind="citation">
             <QuoteIcon aria-hidden="true" />
             <ContextChipLabel className="max-w-[16em]">
-              {assistantCitationLabel(segment.citation)}
+              {composerCitationLabel(segment.citation)}
             </ContextChipLabel>
           </ContextChip>
         );

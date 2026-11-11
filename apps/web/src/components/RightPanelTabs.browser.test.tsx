@@ -103,6 +103,14 @@ describe("RightPanelTabs", () => {
           onAddPullRequest={noop}
           onAddPullRequests={noop}
           onAddDevice={noop}
+          // SCIENT-FORK:START — Scient's agents, sources and Compute tabs.
+          onAddAgents={noop}
+          onAddSources={noop}
+          onAddCompute={noop}
+          agentsAvailable={false}
+          sourcesAvailable={false}
+          computeAvailable={false}
+          // SCIENT-FORK:END
           browserAvailable={false}
           terminalAvailable
           diffAvailable={false}

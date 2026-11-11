@@ -658,18 +658,18 @@ function ProjectDetail({
         <ProjectActionsSettings />
         {/* SCIENT-FORK:START — this project's Overleaf links */}
         <OverleafProjectSettingsSection
-          environmentId={representative.environmentId}
-          workspaceRoot={representative.workspaceRoot}
+          environmentId={filePickerProject.environmentId}
+          workspaceRoot={filePickerProject.workspaceRoot}
         />
         <ProjectBrowserProfile
-          environmentId={representative.environmentId}
-          projectId={representative.id}
+          environmentId={filePickerProject.environmentId}
+          projectId={filePickerProject.id}
         />
         {/* SCIENT-FORK:END */}
         <SettingsSection title="Skills">
           <ProjectSkillsSettings
-            environmentId={representative.environmentId}
-            projectId={representative.id}
+            environmentId={filePickerProject.environmentId}
+            projectId={filePickerProject.id}
           />
         </SettingsSection>
         {checkoutChoices}

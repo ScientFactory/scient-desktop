@@ -816,7 +816,6 @@ describe("MessagesTimeline messages", () => {
       <MessagesTimeline
         {...props}
         routeThreadKey={routeThreadKey}
-        liveFollowEnabled={false}
         {...(inline
           ? {}
           : {

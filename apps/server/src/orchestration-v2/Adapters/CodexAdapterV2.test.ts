@@ -56,7 +56,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
-// SCIENT-FORK: until T3 #34575 lands, the kill-deadline test reads its ready line.
+// SCIENT-FORK: until upstream adopts it, the kill-deadline test reads its ready line.
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Sink from "effect/Sink";
@@ -10702,7 +10702,7 @@ describe("CodexAdapterV2 app-server process", () => {
           } catch {}
         };
         yield* Effect.addFinalizer(() => Effect.sync(killGroup));
-        // SCIENT-FORK:START — until T3 #34575 lands: stop it only once its SIGTERM trap is set;
+        // SCIENT-FORK:START — until upstream adopts it: stop it only once its SIGTERM trap is set;
         // an early exit would pass without testing the deadline.
         const firstLine = yield* child.stdout.pipe(
           Stream.decodeText(),

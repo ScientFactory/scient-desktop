@@ -952,8 +952,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
         const expectRefused = (
           ordinal: number,
           restoreFiles?: boolean,
-          reason: CheckpointRollbackService.CheckpointRollbackExecutionError["reason"] =
-            "rollback-target-invalid",
+          reason: CheckpointRollbackService.CheckpointRollbackExecutionError["reason"] = "rollback-target-invalid",
         ) =>
           Effect.gen(function* () {
             const refused = yield* Effect.flip(history.rollback(ordinal, restoreFiles));
@@ -962,7 +961,7 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           });
 
         yield* expectRefused(2);
-        // The rollback context reads no attempt of a rolled-back run (T3 #18379).
+        // The rollback context reads no attempt of a rolled-back run.
         yield* expectRefused(7, false, "provider-turn-unavailable");
         assert.deepEqual(history.rollbackCounts, []);
 

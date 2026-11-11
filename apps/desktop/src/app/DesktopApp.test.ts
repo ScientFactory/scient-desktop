@@ -76,7 +76,6 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as MacPermissions from "../permissions/MacPermissions.ts";
 import * as PreviewManager from "../preview/Manager.ts";
 // SCIENT-FORK:START — services Scient's desktop program adds.
-import { ChildProcessSpawner } from "effect/process";
 import * as DesktopVoice from "./DesktopVoice.ts";
 import * as DesktopKeepAwake from "../scient/keepAwake/DesktopKeepAwake.ts";
 // SCIENT-FORK:END

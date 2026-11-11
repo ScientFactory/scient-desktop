@@ -22,7 +22,7 @@ import { isAutomaticCompletionRun } from "../../orchestration-v2/QueuedRunOrder.
 /** A run stopped to start a queued command lets that command and the queue behind it proceed. */
 const QUEUED_COMMAND_STOP_REASONS: ReadonlySet<string> = new Set([
   "Stopped to apply /goal",
-  // T3 #32902: a restart a provider cannot interrupt-restart stops the turn and runs next.
+  // A restart a provider cannot interrupt-restart stops the turn and runs next.
   "Stopped to send a new message",
   "Skipped compaction to send a queued message",
 ]);

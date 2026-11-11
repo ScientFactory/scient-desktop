@@ -189,6 +189,11 @@ import {
   shellFleetEvents as transferV2ShellFleetEvents,
   SHELL_IDLE_SUBAGENTS as TRANSFER_V2_SHELL_IDLE_SUBAGENTS,
   SHELL_SETTLED_THREADS as TRANSFER_V2_SHELL_SETTLED_THREADS,
+  STALE_TODO_LAST_FINISHED_CHECKPOINT_ID as TRANSFER_V2_STALE_TODO_LAST_FINISHED_CHECKPOINT_ID,
+  STALE_TODO_LIVE_RUN_ID as TRANSFER_V2_STALE_TODO_LIVE_RUN_ID,
+  STALE_TODO_SUBAGENTS_PER_RUN as TRANSFER_V2_STALE_TODO_SUBAGENTS_PER_RUN,
+  STALE_TODO_THREAD_ID as TRANSFER_V2_STALE_TODO_THREAD_ID,
+  staleTodoListThreadBatches as transferV2StaleTodoListThreadBatches,
 } from "../integration/TransferBudgetV2Fixture.integration.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -14904,6 +14909,39 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                     TRANSFER_V2_SHELL_IDLE_SUBAGENTS,
                 );
 
+                for (const events of transferV2StaleTodoListThreadBatches(provider)) {
+                  yield* app.v2.eventSink.write({ events });
+                }
+                const staleTodoHttp = yield* getTransferPath(
+                  `/api/orchestration/threads/${TRANSFER_V2_STALE_TODO_THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
+                );
+                const staleTodo = (yield* decodeTransferThreadSnapshot(
+                  Buffer.from(staleTodoHttp.decodedBody).toString("utf8"),
+                )).projection;
+                // Clients show the diff of the last finished turn from this record.
+                assert.include(
+                  staleTodo.checkpoints.map((checkpoint) => checkpoint.id),
+                  TRANSFER_V2_STALE_TODO_LAST_FINISHED_CHECKPOINT_ID,
+                );
+                // The caps below also pass when the running turn loses its own tasks.
+                assert.lengthOf(
+                  staleTodo.subagents.filter(
+                    (subagent) => subagent.runId === TRANSFER_V2_STALE_TODO_LIVE_RUN_ID,
+                  ),
+                  TRANSFER_V2_STALE_TODO_SUBAGENTS_PER_RUN,
+                );
+                const staleTodoColdOpen = {
+                  http: staleTodoHttp,
+                  rows: staleTodo.visibleTurnItems.length,
+                  records: {
+                    nodes: staleTodo.nodes.length,
+                    subagents: staleTodo.subagents.length,
+                    plans: staleTodo.plans.length,
+                    providerTurns: staleTodo.providerTurns.length,
+                    checkpoints: staleTodo.checkpoints.length,
+                  },
+                };
+
                 return {
                   provider,
                   startupTransport: "bounded-compact-http-with-live-cursor",
@@ -14928,6 +14966,7 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   longTurnHistoryPage,
                   fleetShellLegacy,
                   fleetShell,
+                  staleTodoColdOpen,
                 } satisfies TransferBudgetRun;
               }),
             );

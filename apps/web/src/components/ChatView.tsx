@@ -650,7 +650,7 @@ function ChatViewContent(props: ChatViewProps) {
   const delayedThreadSyncing = useDelayedStatus(
     routeThreadKey,
     threadSyncPhase === "syncing" ? threadSyncPhase : null,
-    { showDelayMs: 2_000 },
+    2_000,
   );
   const delayedThreadSyncPhase = delayedThreadLoading ?? delayedThreadSyncing;
   // SCIENT-FORK:END

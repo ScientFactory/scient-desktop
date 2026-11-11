@@ -39,7 +39,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as TestClock from "effect/testing/TestClock";
 
 import * as ProviderHost from "@t3tools/provider-core/server/ProviderHost";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
@@ -380,11 +379,14 @@ describe("OpenCodeAdapterV2", () => {
         },
         {},
         {
-          model: "opencode/big-pickle",
-          options: [
-            ...(kind === "unset" ? [] : [{ id: "variant", value: "medium" }]),
-            { id: "agent", value: "plan" },
-          ],
+          // SCIENT-FORK: Scient's harness takes the model as the thread's preference.
+          preference: {
+            model: "opencode/big-pickle",
+            options: [
+              ...(kind === "unset" ? [] : [{ id: "variant", value: "medium" }]),
+              { id: "agent", value: "plan" },
+            ],
+          },
         },
       );
       yield* harness.startTurn(request === "command" ? "/review staged changes" : "hello");
@@ -440,7 +442,13 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         {},
-        { model: "opencode/big-pickle", options: [{ id: "variant", value: "medium" }] },
+        // SCIENT-FORK: Scient's harness takes the model as the thread's preference.
+        {
+          preference: {
+            model: "opencode/big-pickle",
+            options: [{ id: "variant", value: "medium" }],
+          },
+        },
       );
       const submit = Effect.fnUntraced(function* () {
         yield* harness.startTurn();
@@ -532,7 +540,13 @@ describe("OpenCodeAdapterV2", () => {
           },
         },
         {},
-        { model: "opencode/big-pickle", options: [{ id: "variant", value: "medium" }] },
+        // SCIENT-FORK: Scient's harness takes the model as the thread's preference.
+        {
+          preference: {
+            model: "opencode/big-pickle",
+            options: [{ id: "variant", value: "medium" }],
+          },
+        },
       );
       const start = yield* harness.startTurn().pipe(Effect.forkScoped);
       yield* Effect.promise(() => catalogStarted.promise);

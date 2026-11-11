@@ -3093,7 +3093,10 @@ export const layerWithOptions = (
                 const current = (yield* Ref.get(sessions)).get(
                   sessionKey(entry.runtime.providerSessionId),
                 );
-                if (current?.runtime !== entry.runtime || nativeEvent.driver !== entry.runtime.driver)
+                if (
+                  current?.runtime !== entry.runtime ||
+                  nativeEvent.driver !== entry.runtime.driver
+                )
                   return;
                 yield* providerRegistry.setProviderAuthenticationFailure({
                   instanceId: entry.runtime.instanceId,

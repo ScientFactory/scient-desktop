@@ -534,7 +534,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const codex = yield* registry.getInstance(codexId);
       expect(codex).toBeDefined();
       yield* codex!.snapshot.refresh;
-      expect(yield* codex!.consumeResetCredit!()).toBe("alreadyRedeemed");
+      expect(yield* codex!.consumeResetCredit!(undefined)).toBe("alreadyRedeemed");
     }).pipe(Effect.provide(testLayer)),
   );
 
@@ -689,7 +689,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
             : [],
         )[0]?.label;
       expect(maxLabel).toBe("Max (capped to High)");
-    }).pipe(Effect.provide(layerTest)),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("keeps usage and uncapped efforts when the CLI rejects get_settings", () =>
@@ -727,7 +727,7 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       expect(effortLabels.some((label) => label.includes("capped"))).toBe(false);
       expect(snapshot.auth).toMatchObject({ status: "authenticated", email: "test@example.com" });
       expect(snapshot.usageLimits?.windows[0]?.usedPercent).toBe(100);
-    }).pipe(Effect.provide(layerTest)),
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.effect("scopes Claude's one-probe fallback to the logged-in organization", () =>

@@ -47,6 +47,8 @@ import * as DeviceService from "../device/DeviceService.ts";
 import * as PullRequestReviewGuideService from "../pullRequest/PullRequestReviewGuideService.ts";
 import * as ServerConfig from "../config.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
 import { advertisedJsonSchema } from "./advertisedJsonSchema.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
@@ -316,7 +318,12 @@ const layerRecordingTools = (calls: Array<unknown>) => {
           namedProjectsRoot: process.cwd(),
         }),
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
-        Layer.mock(ServerSettings.ServerSettingsService)({}),
+        // SCIENT-FORK:START — Scient's project tools also read custom models and clone progress.
+        Layer.mock(ServerSettings.ServerSettingsService)({
+          committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
+        }),
+        Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({}),
+        // SCIENT-FORK:END
         Layer.mock(DocumentText.DocumentText)({}),
         Layer.mock(ProviderRegistry.ProviderRegistry)({}),
         ServerConfig.layerTest(process.cwd(), { prefix: "t3-mcp-http-server-test-" }),

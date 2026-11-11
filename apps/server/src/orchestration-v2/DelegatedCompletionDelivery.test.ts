@@ -2987,17 +2987,24 @@ it.layer(Layer.merge(layerTest, ProviderContinuationRequests.layer))(
                 },
               ],
             });
-            yield* orchestrator.cancelDelegatedTask({
-              parentThreadId,
-              taskId: run.delegatedTaskId!,
-              command: {
-                type: "thread.stop",
-                commandId: CommandId.make(`cancel-followup-${outcome}`),
-                threadId: child.childThreadId,
-                stopDelegatedTasks: false,
-              },
-              stopDescendants: () => Effect.void,
-            });
+            yield* orchestrator
+              .cancelDelegatedTask({
+                parentThreadId,
+                taskId: run.delegatedTaskId!,
+                command: {
+                  type: "thread.stop",
+                  commandId: CommandId.make(`cancel-followup-${outcome}`),
+                  threadId: child.childThreadId,
+                },
+                stopDescendants: () => Effect.void,
+              })
+              .pipe(
+                // SCIENT-FORK: Scient marks a caller-handled stop through this reference, not a command field.
+                Effect.provideService(
+                  Orchestrator.DelegatedStopHandledByCaller,
+                  child.childThreadId,
+                ),
+              );
           }
           yield* eventSink.write({
             commandId: reconcileCommandId(`followup-finish-${outcome}`),
@@ -3876,17 +3883,21 @@ it.layer(layerTest)("delegated tasks across a server restart", (it) => {
         runStatus: "completed",
         now,
       });
-      yield* orchestrator.cancelDelegatedTask({
-        parentThreadId: threadId,
-        taskId: child.taskId,
-        command: {
-          type: "thread.stop",
-          commandId: CommandId.make("cancel-finished-child"),
-          threadId: child.childThreadId,
-          stopDelegatedTasks: false,
-        },
-        stopDescendants: () => Effect.void,
-      });
+      yield* orchestrator
+        .cancelDelegatedTask({
+          parentThreadId: threadId,
+          taskId: child.taskId,
+          command: {
+            type: "thread.stop",
+            commandId: CommandId.make("cancel-finished-child"),
+            threadId: child.childThreadId,
+          },
+          stopDescendants: () => Effect.void,
+        })
+        .pipe(
+          // SCIENT-FORK: Scient marks a caller-handled stop through this reference, not a command field.
+          Effect.provideService(Orchestrator.DelegatedStopHandledByCaller, child.childThreadId),
+        );
       const task = (yield* orchestrator.getThreadProjection(threadId)).subagents.find(
         (row) => row.id === child.taskId,
       );
