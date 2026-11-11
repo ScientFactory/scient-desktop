@@ -10,9 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
 
-import type { PreviewAutomationStatus } from "@t3tools/contracts";
-
-import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
+import { PreviewManager } from "../../../preview/Manager.ts";
 import {
   addConnector as addFor,
   changeReport,
@@ -23,7 +21,6 @@ import {
 import { consumeAgentWorkspace } from "../../operations/AgentWorkspaceScope.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { ConnectorRuntime } from "../../extensions/ExtensionsServices.ts";
-import { previewInvoker } from "./broker.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
 
@@ -107,25 +104,26 @@ export const addConnector = Effect.fn("AccountsAgent.connectorAdd")(function* (
   }).pipe(Effect.mapError(toAccountsError));
 });
 
-/** Shows a sign-in page in this chat's browser; false when the chat has no browser. */
-const openForUser = Effect.fn("AccountsAgent.openForUser")(function* (url: string) {
+/**
+ * Opens a sign-in page in this chat's browser as the user's own tab, ready for them: no agent
+ * holds it, so there is nothing to take over. False when the chat has no browser.
+ */
+export const openForUser = Effect.fn("AccountsAgent.openForUser")(function* (url: string) {
   const invocation = yield* AgentInvocationContext;
-  if (!invocation.capabilities.has("preview")) return false;
-  const invoke = previewInvoker(yield* PreviewAutomationBroker, invocation);
-  return yield* invoke<PreviewAutomationStatus>("open", {
-    url,
-    open: true,
-    reuseExistingTab: false,
-  }).pipe(
-    Effect.map((status) => status.tabId !== null),
-    Effect.orElseSucceed(() => false),
-  );
+  const previews = yield* Effect.serviceOption(PreviewManager);
+  if (!invocation.capabilities.has("preview") || Option.isNone(previews)) return false;
+  return yield* previews.value
+    .open({ threadId: invocation.threadId, url, runtime: "server", reveal: true })
+    .pipe(
+      Effect.as(true),
+      Effect.orElseSucceed(() => false),
+    );
 });
 
 export const controlConnector = Effect.fn("AccountsAgent.connectorControl")(function* (
   input: Input<"scient_connector_control">,
 ) {
-  const context = yield* Effect.context<AgentInvocationContext | PreviewAutomationBroker>();
+  const context = yield* Effect.context<AgentInvocationContext>();
   return yield* controlFor(input, (url) => openForUser(url).pipe(Effect.provide(context))).pipe(
     Effect.mapError(toAccountsError),
   );
