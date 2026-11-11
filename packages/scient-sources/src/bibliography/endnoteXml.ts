@@ -196,7 +196,12 @@ function entryFromRecord(record: XmlElement, index: number): BibliographyEntry {
       if (!value || !/^https?:\/\//iu.test(value)) continue;
       builder.set("url", value, "urls/related-urls");
     }
-    if (childElements(urls, "pdf-urls").length > 0) builder.notKeep("urls/pdf-urls");
+    for (const pdfUrls of childElements(urls, "pdf-urls")) {
+      for (const url of findElements(pdfUrls, "url")) {
+        const value = text(url);
+        if (value) builder.addLinkedFile(value, "urls/pdf-urls");
+      }
+    }
   }
   builder.citationKey = normalizeImportedCitationKey(text(child("label")));
 

@@ -374,9 +374,11 @@ export const ScientSourcesFileImportRequest = Schema.Struct({
   root: NonEmptyString,
   operationId: NonEmptyString,
   file: Multipart.SingleFileSchema,
+  /** The file's path on the server's computer, when the client is that computer; PDFs it links in its folder are attached. */
+  sourcePath: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(4_096))),
 }).pipe(
   HttpApiSchema.asMultipart({
-    maxParts: 3,
+    maxParts: 4,
     maxFieldSize: 16 * 1024,
     maxFileSize: 32 * 1024 * 1024,
     maxTotalSize: 32 * 1024 * 1024 + 64 * 1024,

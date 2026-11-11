@@ -18,6 +18,7 @@ import {
   type BibliographyExportItem,
   type BibliographyExportOptions,
   type BibliographyFormat,
+  type BibliographyLinkedFile,
   type BibliographyParseResult,
   type BibliographyUnreadableEntry,
 } from "./entry.ts";
@@ -28,6 +29,7 @@ export type {
   BibliographyExportItem,
   BibliographyExportOptions,
   BibliographyFormat,
+  BibliographyLinkedFile,
   BibliographyParseResult,
 } from "./entry.ts";
 export { BIBLIOGRAPHY_FORMATS } from "./entry.ts";
@@ -130,6 +132,8 @@ const REPORT_KEY_LIMIT = 5;
 /** A field that some entries could not keep, with the first few entries' keys. */
 export const BibliographyFieldLoss = Schema.Struct({
   field: Schema.String,
+  /** Why a value of the field was not kept, when the field itself has a place (linked PDFs). */
+  reason: Schema.optionalKey(Schema.String),
   entryCount: Schema.Int,
   citationKeys: Schema.Array(Schema.String),
 });
@@ -154,12 +158,20 @@ export const BibliographyImportReport = Schema.Struct({
   ),
   notKept: Schema.Array(BibliographyFieldLoss),
   withoutCitationKey: Schema.Int,
+  /** PDFs named in the file that will be attached to the staged entries. */
+  linkedPdfCount: Schema.optionalKey(Schema.Int),
 });
 export type BibliographyImportReport = typeof BibliographyImportReport.Type;
 
 export interface BibliographyImportPlan {
   readonly candidates: ReadonlyArray<ScientSourceCandidate>;
   readonly report: BibliographyImportReport;
+  /** Files the staged entries name, by source key, with the entry's report label. */
+  readonly linkedFiles: ReadonlyArray<{
+    readonly sourceKey: string;
+    readonly label: string;
+    readonly files: ReadonlyArray<BibliographyLinkedFile>;
+  }>;
 }
 
 function hasContent(candidate: ScientSourceCandidate): boolean {
@@ -188,6 +200,8 @@ export function planBibliographyImport(input: {
   const seenKeys = new Map<string, number | null>();
   const seenWorks = new Map<string, number | null>();
   const fresh: ScientSourceCandidate[] = [];
+  const labels = new Map<string, string>();
+  const linked = new Map<string, ReadonlyArray<BibliographyLinkedFile>>();
   let alreadyInLibrary = 0;
   let withoutCitationKey = 0;
   for (const entry of parse.entries) {
@@ -245,10 +259,20 @@ export function planBibliographyImport(input: {
       continue;
     }
     fresh.push(candidate);
+    if (entry.linkedFiles.length > 0) {
+      labels.set(sourceKey, label);
+      linked.set(sourceKey, entry.linkedFiles);
+    }
   }
   const candidates = fresh.slice(0, input.limit);
   return {
     candidates,
+    linkedFiles: candidates.flatMap((candidate) => {
+      const files = linked.get(candidate.sourceKey);
+      return files
+        ? [{ sourceKey: candidate.sourceKey, label: labels.get(candidate.sourceKey) ?? "", files }]
+        : [];
+    }),
     report: {
       format: parse.format,
       entryCount: parse.entries.length + parse.unreadable.length,
@@ -263,6 +287,50 @@ export function planBibliographyImport(input: {
         .map(([field, summary]) => ({ field, ...summary })),
       withoutCitationKey,
     },
+  };
+}
+
+/**
+ * Adds what became of the staged entries' linked files: how many PDFs will be
+ * attached, and each one that will not, under its field with the reason.
+ */
+export function withLinkedFileReport(
+  report: BibliographyImportReport,
+  linked: {
+    readonly pdfCount: number;
+    readonly losses: ReadonlyArray<{
+      readonly field: string;
+      readonly reason: string;
+      readonly label: string;
+    }>;
+  },
+): BibliographyImportReport {
+  const losses = new Map<string, { field: string; reason: string; labels: Set<string> }>();
+  for (const loss of linked.losses) {
+    const key = `${loss.field}\0${loss.reason}`;
+    const summary = losses.get(key) ?? {
+      field: loss.field,
+      reason: loss.reason,
+      labels: new Set(),
+    };
+    summary.labels.add(loss.label);
+    losses.set(key, summary);
+  }
+  const notKept = [
+    ...report.notKept,
+    ...[...losses.values()].map((loss) => ({
+      field: loss.field,
+      reason: loss.reason,
+      entryCount: loss.labels.size,
+      citationKeys: [...loss.labels].slice(0, REPORT_KEY_LIMIT),
+    })),
+  ]
+    .toSorted((left, right) => right.entryCount - left.entryCount)
+    .slice(0, REPORT_LIST_LIMIT);
+  return {
+    ...report,
+    notKept,
+    ...(linked.pdfCount > 0 ? { linkedPdfCount: linked.pdfCount } : {}),
   };
 }
 

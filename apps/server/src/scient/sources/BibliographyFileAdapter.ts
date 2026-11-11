@@ -2,6 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import {
   bibliographyExportItems,
@@ -9,9 +10,11 @@ import {
   exportBibliographyFile,
   parseBibliography,
   planBibliographyImport,
+  withLinkedFileReport,
   BIBLIOGRAPHY_FILE_EXTENSIONS,
   BIBLIOGRAPHY_FILE_MAX_BYTES,
   type BibliographyFormat,
+  type BibliographyImportPlan,
   type BibliographyImportReport,
 } from "@scientfactory/scient-sources/bibliography";
 import {
@@ -30,6 +33,7 @@ import {
   removeScientSourceStagedFileImport,
   scientSourceIdFor,
   writeScientSourceStagedFileImport,
+  SCIENT_SOURCE_LINKED_PDF_LIMIT,
 } from "@scientfactory/scient-sources/store";
 import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
 
@@ -70,6 +74,33 @@ export async function readBibliographyFile(filePath: string): Promise<string> {
   return decodeText(await NodeFSP.readFile(filePath));
 }
 
+/**
+ * The folder of an uploaded reference file, when the client named the path it came
+ * from on this computer and that file holds exactly the uploaded bytes.
+ */
+export async function verifiedUploadFolder(
+  sourcePath: string | undefined,
+  uploadedPath: string,
+): Promise<string | undefined> {
+  if (!sourcePath || !NodePath.isAbsolute(sourcePath)) return undefined;
+  const [claimed, uploaded] = await Promise.all([
+    NodeFSP.stat(sourcePath).catch(() => null),
+    NodeFSP.stat(uploadedPath),
+  ]);
+  if (
+    !claimed?.isFile() ||
+    claimed.size !== uploaded.size ||
+    claimed.size > BIBLIOGRAPHY_FILE_MAX_BYTES
+  ) {
+    return undefined;
+  }
+  const [claimedBytes, uploadedBytes] = await Promise.all([
+    NodeFSP.readFile(sourcePath).catch(() => null),
+    NodeFSP.readFile(uploadedPath),
+  ]);
+  return claimedBytes?.equals(uploadedBytes) ? NodePath.dirname(sourcePath) : undefined;
+}
+
 const REFERENCE_FILE_EXTENSIONS = [".bib", ".bibtex", ".biblatex", ".ris", ".json", ".xml", ".txt"];
 
 /** A project reference file; Library storage and the rest of `.scient` are refused. */
@@ -80,9 +111,163 @@ export async function resolveProjectBibliographyFile(root: string, relativePath:
   });
 }
 
+function insideFolder(folder: string, path: string): boolean {
+  const relative = NodePath.relative(folder, path);
+  return (
+    relative !== "" &&
+    relative !== ".." &&
+    !relative.startsWith(`..${NodePath.sep}`) &&
+    !NodePath.isAbsolute(relative)
+  );
+}
+
+interface LinkedPdf {
+  readonly path: string;
+  readonly fileName: string;
+}
+
+const LINKED_FILE_REASONS = {
+  web: "a web link",
+  missing: "not found",
+  outside: "outside the project and the reference file's folder",
+  outsideProject: "outside the project",
+  scient: "in Scient's own folder",
+  notPdf: "not a PDF",
+  tooMany: `more than ${SCIENT_SOURCE_LINKED_PDF_LIMIT} PDFs for one entry`,
+} as const;
+
+async function startsAsPdf(path: string): Promise<boolean> {
+  const handle = await NodeFSP.open(path, "r");
+  try {
+    const header = Buffer.alloc(5);
+    const { bytesRead } = await handle.read(header, 0, 5, 0);
+    return bytesRead === 5 && header.toString("ascii") === "%PDF-";
+  } finally {
+    await handle.close();
+  }
+}
+
+/** EndNote names its PDFs relative to the `PDF` folder inside the library's `.Data` folder. */
+async function endnoteInternalPdf(folder: string, rest: string): Promise<string | null> {
+  const entries = await NodeFSP.readdir(folder, { withFileTypes: true }).catch(() => []);
+  const parts = rest.split("/").filter(Boolean);
+  for (const entry of entries) {
+    if (!entry.isDirectory() || !entry.name.toLowerCase().endsWith(".data")) continue;
+    const candidate = NodePath.join(folder, entry.name, "PDF", ...parts);
+    const found = await NodeFSP.lstat(candidate).catch(() => null);
+    if (found) return candidate;
+  }
+  return null;
+}
+
+/**
+ * Finds the PDF a reference file names for an entry. Only a PDF inside the project
+ * (outside `.scient`) or inside the reference file's own folder is used; relative
+ * paths start from that folder, else from the project.
+ */
+async function resolveLinkedPdf(
+  link: string,
+  bases: { readonly root: string; readonly folder: string | null },
+): Promise<LinkedPdf | { readonly reason: string }> {
+  const value = link.trim();
+  if (/^https?:\/\//iu.test(value)) return { reason: LINKED_FILE_REASONS.web };
+  const start = bases.folder ?? bases.root;
+  let lexical: string | null;
+  const internal = value.match(/^internal-pdf:\/\/(.+)$/iu)?.[1];
+  if (internal) {
+    lexical = await endnoteInternalPdf(start, safeDecodeUri(internal));
+  } else if (/^file:/iu.test(value)) {
+    lexical = fileUrlPath(value);
+  } else {
+    lexical = NodePath.isAbsolute(value)
+      ? value
+      : NodePath.resolve(start, ...value.split(/[\\/]/u).filter(Boolean));
+  }
+  const real = lexical ? await NodeFSP.realpath(lexical).catch(() => null) : null;
+  if (!real) return { reason: LINKED_FILE_REASONS.missing };
+  const inProject = insideFolder(bases.root, real);
+  if (!inProject && !(bases.folder && insideFolder(bases.folder, real))) {
+    return {
+      reason: bases.folder ? LINKED_FILE_REASONS.outside : LINKED_FILE_REASONS.outsideProject,
+    };
+  }
+  if (
+    inProject &&
+    NodePath.relative(bases.root, real)
+      .split(NodePath.sep)
+      .some((part) => part.toLowerCase() === ".scient")
+  ) {
+    return { reason: LINKED_FILE_REASONS.scient };
+  }
+  const stats = await NodeFSP.lstat(real).catch(() => null);
+  if (!stats?.isFile()) return { reason: LINKED_FILE_REASONS.missing };
+  if (!(await startsAsPdf(real).catch(() => false))) return { reason: LINKED_FILE_REASONS.notPdf };
+  return { path: real, fileName: NodePath.basename(real) };
+}
+
+function safeDecodeUri(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
+}
+
+function fileUrlPath(value: string): string | null {
+  try {
+    return NodeURL.fileURLToPath(value);
+  } catch {
+    return null;
+  }
+}
+
+/** A filesystem root as "the file's folder" would admit every file on the volume. */
+async function referenceFileFolder(folder: string | undefined): Promise<string | null> {
+  if (!folder) return null;
+  const real = await NodeFSP.realpath(folder).catch(() => null);
+  return real && NodePath.parse(real).root !== real ? real : null;
+}
+
+async function resolveLinkedPdfs(
+  root: string,
+  sourceFolder: string | undefined,
+  linkedFiles: BibliographyImportPlan["linkedFiles"],
+) {
+  const bases = { root, folder: await referenceFileFolder(sourceFolder) };
+  const pdfs: Record<string, LinkedPdf[]> = {};
+  const losses: { field: string; reason: string; label: string }[] = [];
+  let pdfCount = 0;
+  for (const entry of linkedFiles) {
+    const found: LinkedPdf[] = [];
+    for (const file of entry.files) {
+      const resolved = await resolveLinkedPdf(file.path, bases);
+      const reason =
+        "reason" in resolved
+          ? resolved.reason
+          : found.length >= SCIENT_SOURCE_LINKED_PDF_LIMIT
+            ? LINKED_FILE_REASONS.tooMany
+            : null;
+      if (reason) losses.push({ field: file.field, reason, label: entry.label });
+      else if ("path" in resolved && !found.some((pdf) => pdf.path === resolved.path)) {
+        found.push(resolved);
+      }
+    }
+    if (found.length > 0) {
+      pdfs[entry.sourceKey] = found;
+      pdfCount += found.length;
+    }
+  }
+  return { pdfs, pdfCount, losses };
+}
+
 async function plan(
   root: string,
-  input: { readonly fileName: string; readonly text: string; readonly format?: BibliographyFormat },
+  input: {
+    readonly fileName: string;
+    readonly text: string;
+    readonly format?: BibliographyFormat;
+    readonly sourceFolder?: string;
+  },
 ) {
   const format = input.format ?? detectBibliographyFormat(input.fileName, input.text);
   if (!format) {
@@ -91,13 +276,19 @@ async function plan(
   const existing = await listScientSourceRecords(root);
   // Every listed record belongs to this project, so any one carries its ID.
   const projectId = existing[0]?.projectId;
-  return planBibliographyImport({
+  const planned = planBibliographyImport({
     parse: parseBibliography(input.text, format),
     existing,
     sourceKeyFor: fileImportSourceKey,
     sourceIdFor: (sourceKey) => (projectId ? scientSourceIdFor(projectId, sourceKey) : sourceKey),
     limit: SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   });
+  const linked = await resolveLinkedPdfs(root, input.sourceFolder, planned.linkedFiles);
+  return {
+    candidates: planned.candidates,
+    report: withLinkedFileReport(planned.report, linked),
+    pdfs: linked.pdfs,
+  };
 }
 
 /**
@@ -111,6 +302,8 @@ export async function beginBibliographyFileImport(input: {
   readonly fileName: string;
   readonly text: string;
   readonly format?: BibliographyFormat;
+  /** The folder the reference file came from on this computer; PDFs it names inside it are attached. */
+  readonly sourceFolder?: string;
   readonly actor: ScientSourceActor;
 }): Promise<BibliographyFileImportResult> {
   const root = await canonicalizeScientSourceRoot(input.root);
@@ -125,7 +318,7 @@ export async function beginBibliographyFileImport(input: {
       report: staged?.report ?? (await plan(root, input)).report,
     };
   }
-  const { candidates, report } = await plan(root, input);
+  const { candidates, report, pdfs } = await plan(root, input);
   if (candidates.length === 0) return { operation: null, report };
   await writeScientSourceStagedFileImport(root, {
     formatVersion: 1,
@@ -133,6 +326,7 @@ export async function beginBibliographyFileImport(input: {
     fileName: NodePath.basename(input.fileName),
     report,
     candidates: [...candidates],
+    ...(Object.keys(pdfs).length > 0 ? { pdfs } : {}),
   });
   try {
     const operation = await createSourceImportOperation({
@@ -153,14 +347,18 @@ export async function beginBibliographyFileImport(input: {
 let cachedStage: {
   readonly key: string;
   readonly candidates: ReadonlyMap<string, ScientSourceCandidate>;
+  readonly pdfs: Readonly<Record<string, ReadonlyArray<LinkedPdf>>>;
 } | null = null;
 
-/** The staged candidate for one operation item; the parsed stage is reused across items. */
-export async function getBibliographyFileImportCandidate(
+/** The staged candidate and its linked PDFs for one operation item; the parsed stage is reused across items. */
+export async function getBibliographyFileImportMaterial(
   root: string,
   operationId: string,
   itemKey: string,
-): Promise<ScientSourceCandidate> {
+): Promise<{
+  readonly candidate: ScientSourceCandidate;
+  readonly pdfs: ReadonlyArray<LinkedPdf>;
+}> {
   const key = `${root}\0${operationId}`;
   if (cachedStage?.key !== key) {
     const staged = await readScientSourceStagedFileImport(root, operationId);
@@ -168,11 +366,17 @@ export async function getBibliographyFileImportCandidate(
     cachedStage = {
       key,
       candidates: new Map(staged.candidates.map((candidate) => [candidate.sourceKey, candidate])),
+      pdfs: staged.pdfs ?? {},
     };
   }
   const candidate = cachedStage.candidates.get(itemKey);
   if (!candidate) throw new Error("This entry is not part of the staged reference file.");
-  return candidate;
+  // A linked PDF is used only where it was found at staging, never through a path swapped in since.
+  const pdfs: LinkedPdf[] = [];
+  for (const pdf of cachedStage.pdfs[itemKey] ?? []) {
+    if ((await NodeFSP.realpath(pdf.path).catch(() => null)) === pdf.path) pdfs.push(pdf);
+  }
+  return { candidate, pdfs };
 }
 
 export async function discardBibliographyFileImport(root: string, operationId: string) {

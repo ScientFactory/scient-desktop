@@ -542,7 +542,17 @@ in place (or is kept beside the file as `<name>.kept-<id>`) and the file reports
 as `edited`. If writing fails after the move, the moved-aside text goes back in
 place, or stays as `<name>.kept-<id>` and the error
 (`ScientProjectFilePublicationError.recoveryPath`) names it; it is deleted only
-once another copy is in place. The copies folder is reached only through real folders
+once another copy is in place. Where hard links are missing (EPERM, ENOTSUP,
+and EISDIR from Windows on FAT and exFAT) the file is created exclusively and
+written; a write that fails part way removes the file it created (checked by
+file identity), so a partial copy never takes the managed name. A sync reports
+every `references.{bib,json}.kept-<id>` and leftover hidden `.replaced` file
+at the project root in the file's `kept` list, whether the write failed in this
+sync or an earlier one, automatic or explicit, until the person deletes it; a
+failed write reports the file `edited` without changes. The Library's notice
+and the `scient_sources_bibliography` result show the list. Windows coverage:
+`ManagedBibliography.test.ts` and `projectFilePublication.test.ts` run in CI's
+Overleaf Windows job. The copies folder is reached only through real folders
 (`assertScientProjectDirectory`); a link anywhere on that path makes both files
 `unmanaged`.
 
@@ -801,6 +811,22 @@ the registry's. Agents import a project-relative file with
 files inside `.scient/sources` are refused. Adapter error messages are written
 for people, while filesystem errors (which can carry host paths) are replaced
 before they reach a model.
+
+Linked files (BibTeX `file` in JabRef, Zotero and Mendeley syntax, RIS
+`L1`/`L4`, EndNote `pdf-urls` including `internal-pdf://` under the library's
+`.Data/PDF` folder, and `file:` URLs) are resolved when the batch is staged.
+A PDF is attached only when its real path is inside the project (outside
+`.scient`) or inside the reference file's folder; relative paths start from
+that folder, else the project. Agents pass the project file's folder; the
+upload route uses `sourcePath` only when the client is on the server's computer
+and the named file holds exactly the uploaded bytes, so a client cannot name an
+arbitrary folder. A filesystem root is never used as the folder. Up to
+`SCIENT_SOURCE_LINKED_PDF_LIMIT` real paths per entry are staged; advancing
+uses a path only if it still resolves to itself, passes the first through the
+ordinary PDF intake (hash, validation, PDF duplicate check) and attaches the
+rest with `attachScientSourcePdf`. Every other link is reported in `notKept`
+under its field with a `reason`; the report's `linkedPdfCount` and the agent
+result's `pdfsAttached` count what was attached.
 
 Export (`exportBibliography`) writes the Library or a selection under each
 record's citation key; a record without one gets a free key from the same

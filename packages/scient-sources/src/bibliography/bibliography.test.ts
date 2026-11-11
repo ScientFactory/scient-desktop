@@ -119,7 +119,10 @@ describe("BibTeX import", () => {
     ]);
     expect(article.abstract).toBe("Background: We study reconstruction.\n\nResults: It works.");
     expect(article.note).toBe("Publisher: Nature Publishing Group");
-    expect(article.notKept).toEqual(["urldate", "file"]);
+    expect(article.notKept).toEqual(["urldate"]);
+    expect(article.linkedFiles).toEqual([
+      { field: "file", path: "/Users/someone/Zotero/storage/ABCD/garcia.pdf" },
+    ]);
     expect(byKey(entries, "knuth_art_1997").identifiers).toHaveLength(2);
     expect(byKey(entries, "lee_thesis_2018")).toMatchObject({
       type: "thesis",
@@ -131,6 +134,18 @@ describe("BibTeX import", () => {
     });
   });
 
+  it("reads linked files from JabRef, Windows Zotero and Mendeley file fields", () => {
+    const { entries } = parseBibtex(String.raw`@article{a, title={A},
+  file = {Main:papers/a\;1.pdf:PDF;:C\:\\Users\\me\\a{\_}b.pdf:application/pdf}}
+@article{b, title={B}, file = {:C$\backslash$:/Users/me/b.pdf:pdf}}
+@article{c, title={C}, file = {files/c.pdf}}`);
+    expect(entries.map((entry) => entry.linkedFiles.map((file) => file.path))).toEqual([
+      ["papers/a;1.pdf", "C:\\Users\\me\\a_b.pdf"],
+      ["C:/Users/me/b.pdf"],
+      ["files/c.pdf"],
+    ]);
+  });
+
   it("reads Mendeley escapes and arXiv eprints", () => {
     const [entry] = parseFixture("mendeley.bib").entries;
     expect(entry).toMatchObject({
@@ -138,7 +153,8 @@ describe("BibTeX import", () => {
       title: "Alpha decay in samples",
       abstract: "We measured the $α$ decay in 50% of samples & controls.",
       tags: ["decay"],
-      notKept: ["file"],
+      notKept: [],
+      linkedFiles: [{ field: "file", path: "home/user/Mendeley/Kowalski2015.pdf" }],
     });
     expect(entry?.identifiers.map((identifier) => identifier.scheme)).toEqual([
       "doi",
@@ -283,7 +299,8 @@ describe("EndNote XML import", () => {
         { scheme: "issn", value: "0000-1111" },
         { scheme: "pmid", value: "27000001" },
       ],
-      notKept: ["urls/pdf-urls", "auth-address"],
+      notKept: ["auth-address"],
+      linkedFiles: [{ field: "urls/pdf-urls", path: "internal-pdf://ahmed.pdf" }],
     });
     expect(entries[0]?.creators[2]?.literalName).toBe("Heart Study Consortium");
     expect(entries[1]).toMatchObject({
