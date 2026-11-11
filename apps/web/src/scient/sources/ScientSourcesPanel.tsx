@@ -1313,7 +1313,7 @@ export function ScientSourcesPanel(props: {
               }
               trashedCount={sources.overview.trashedCount ?? 0}
               onTrashChanged={sources.refreshOverview}
-              missingPdfCount={missingPdfs.length}
+              missingPdfCount={canChange ? missingPdfs.length : 0}
               onGetMissingPdfs={() => void requestPapers({ root: props.root, papers: missingPdfs })}
               onOpenReviews={() => setShowingReviews(true)}
               onOpenSource={setSelectedSourceId}
