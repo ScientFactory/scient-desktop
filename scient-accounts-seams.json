@@ -537,6 +537,16 @@
       "path": "apps/server/src/scient/extensions/connectors/LocalConnectors.ts",
       "anchor": "kind: \"local-connector\"",
       "purpose": "Resolve a local connector's linked Accounts keys at start and when Accounts changes."
+    },
+    {
+      "path": "apps/server/src/scient/sources/ZoteroAccountKey.ts",
+      "anchor": "import { AccountsService, type AccountsServiceShape } from \"../accounts/AccountsService.ts\";",
+      "purpose": "Read the Zotero API key from Accounts for Sources' Zotero import, refresh and send, following each account's agent switches; the key stays in server request headers."
+    },
+    {
+      "path": "apps/server/src/scient/sources/researchKeys.ts",
+      "anchor": "import { AccountsService } from \"../accounts/AccountsService.ts\";",
+      "purpose": "Read the user's OpenAlex, Semantic Scholar, NCBI and Unpaywall keys from Accounts for Sources' registry requests; keys turned off are skipped and values stay redacted."
     }
   ]
 }
