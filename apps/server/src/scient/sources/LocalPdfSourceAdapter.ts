@@ -34,6 +34,7 @@ import { METADATA_USER_AGENT, requestMetadataJson } from "./metadataHttp.ts";
 import {
   cslCreators,
   cslIssuedDate,
+  cslTitle,
   decodeCslMetadata,
   decodePubmedResponse,
   decodePubmedSummary,
@@ -221,7 +222,7 @@ function candidateFromCsl(input: {
     type: sourceTypeFromCsl(input.csl.type),
     customType:
       input.csl.type && sourceTypeFromCsl(input.csl.type) === "other" ? input.csl.type : null,
-    title: text(input.csl.title) ?? input.fallback.title,
+    title: cslTitle(input.csl.title) ?? input.fallback.title,
     creators: creators.length > 0 ? creators : input.fallback.creators,
     issuedRaw: issued.raw ?? input.fallback.issuedRaw,
     issuedYear: issued.year ?? input.fallback.issuedYear,
@@ -246,7 +247,7 @@ function candidateFromCsl(input: {
       ...input.fallback.fieldProvenance,
       ...provenance("doi", [
         ["type", "type", text(input.csl.type) !== null],
-        ["title", "title", text(input.csl.title) !== null],
+        ["title", "title", cslTitle(input.csl.title) !== null],
         ["creators", "author", creators.length > 0],
         ["issuedRaw", "issued", issued.raw !== null],
         ["abstract", "abstract", text(input.csl.abstract) !== null],

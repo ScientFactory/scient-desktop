@@ -311,7 +311,9 @@ title the agent supplied returns `identifier-mismatch` with the registry's title
 three creators, year and container. Neither writes a record. A confirmed
 identifier makes the registry's bibliographic fields authoritative, with `doi`
 or `pubmed` field provenance carrying the identifier and retrieval time, and
-stores verification `verified`. An unreachable or unusable registry adds the
+stores verification `verified`. A CSL title is read as plain text: Crossref
+passes on the inline markup (`<i>`, `<sub>`, MathML) and line breaks of the
+deposited XML, and Library titles are plain text. An unreachable or unusable registry adds the
 source as given with `unchecked`; a source without a DOI, PMID, arXiv ID or ISBN
 is `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. The same add path serves a person
@@ -344,11 +346,15 @@ in its own file registered in the resolver's scheme table
 every three seconds as arXiv asks); an ID missing from the feed does not exist.
 Its record is a `preprint` with publisher `arXiv`, and the published version's
 DOI from `arxiv:doi` joins its identifiers. Version suffixes (`v2`) are not
-part of the identity. An ISBN must have a valid check digit and is stored as
+part of the identity. An old-style ID written with its subject class
+(`math.DG/0211159`) is asked for without it (`math/0211159`): the API returns an
+empty feed for the longer form. An ISBN must have a valid check digit and is stored as
 ISBN-13. Open Library answers first (several ISBNs per request); an entry
 without authors is not accepted, since the openly edited catalogue holds spam
 listings under real ISBNs, and Google Books is asked instead, counting only a
-volume that lists the same ISBN. Not found needs both catalogues to say so;
+volume that lists the same ISBN. A name Open Library lists twice (one person
+under two author records) is kept once; its list can also include an edition's
+translators, which the API does not mark. Not found needs both catalogues to say so;
 otherwise the ISBN is unavailable. Field provenance names `arxiv`,
 `open-library` or `google-books`. None of these requests carries the contact
 email.

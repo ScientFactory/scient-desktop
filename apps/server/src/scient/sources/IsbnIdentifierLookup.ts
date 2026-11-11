@@ -149,7 +149,14 @@ async function lookupOpenLibrary(
       const book = books[`ISBN:${isbn}`];
       if (!book) return [isbn, { status: "not-found" }];
       const title = fullTitle(book.title, book.subtitle);
-      const names = (book.authors ?? []).flatMap((author) => text(author.name) ?? []);
+      // Open Library can list one person under two author records with the same name.
+      const seen = new Set<string>();
+      const names = (book.authors ?? []).flatMap((author) => {
+        const name = text(author.name);
+        if (!name || seen.has(name.toLowerCase())) return [];
+        seen.add(name.toLowerCase());
+        return [name];
+      });
       // Open Library is openly editable and carries spam entries under real ISBNs; those
       // have no authors, so an entry without one only counts as a sign the ISBN exists.
       if (!title || names.length === 0) return [isbn, { status: "weak" }];

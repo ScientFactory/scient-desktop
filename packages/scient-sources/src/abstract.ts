@@ -43,7 +43,14 @@ function collectInlineText(node: AbstractNode, parts: string[]): void {
     return;
   }
   if (!isElement(node) && !("childNodes" in node)) return;
-  if (isElement(node) && OMIT_CONTENT_ELEMENTS.has(elementName(node))) return;
+  if (isElement(node)) {
+    const name = elementName(node);
+    if (OMIT_CONTENT_ELEMENTS.has(name)) return;
+    if (name === "br") {
+      parts.push(" ");
+      return;
+    }
+  }
   for (const child of node.childNodes) collectInlineText(child, parts);
 }
 
@@ -177,6 +184,73 @@ export function normalizeScientSourceAbstractDocument(
   return abstractDocumentFromSections([
     { title: null, paragraphs: normalizePlainParagraphs(trimmed) },
   ]);
+}
+
+const TITLE_MARKUP_ELEMENTS = new Set([
+  ...OMIT_CONTENT_ELEMENTS,
+  "a",
+  "b",
+  "bold",
+  "br",
+  "em",
+  "font",
+  "i",
+  "italic",
+  "sc",
+  "scp",
+  "small",
+  "span",
+  "strong",
+  "sub",
+  "sup",
+  "tt",
+  "u",
+  "math",
+  "mfenced",
+  "mfrac",
+  "mi",
+  "mn",
+  "mo",
+  "mover",
+  "mroot",
+  "mrow",
+  "ms",
+  "mspace",
+  "msqrt",
+  "mstyle",
+  "msub",
+  "msubsup",
+  "msup",
+  "mtable",
+  "mtd",
+  "mtext",
+  "mtr",
+  "munder",
+  "munderover",
+  "semantics",
+  "annotation",
+]);
+const MARKUP_TAG =
+  /<\/?([a-z][\w.-]*(?::[\w.-]+)?)(?:\s+[\w:.-]+\s*=\s*(?:"[^"]*"|'[^']*'))*\s*\/?>/giu;
+
+// Registry titles are text with occasional inline markup, so a literal
+// comparison such as "x<y and z>0" must not be parsed as an element.
+function escapeLiteralAngleBrackets(value: string): string {
+  let escaped = "";
+  let last = 0;
+  for (const match of value.matchAll(MARKUP_TAG)) {
+    const name = match[1]!.toLowerCase();
+    if (!name.includes(":") && !TITLE_MARKUP_ELEMENTS.has(name)) continue;
+    escaped += value.slice(last, match.index).replaceAll("<", "&lt;") + match[0];
+    last = match.index + match[0].length;
+  }
+  return escaped + value.slice(last).replaceAll("<", "&lt;");
+}
+
+/** Plain text of a registry string with inline markup (`<i>`, `<sub>`, MathML) and entities. */
+export function plainTextFromMarkup(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? inlineText(parseFragment(escapeLiteralAngleBrackets(trimmed))) : null;
 }
 
 export function normalizeScientSourceAbstract(value: string | null | undefined): string | null {

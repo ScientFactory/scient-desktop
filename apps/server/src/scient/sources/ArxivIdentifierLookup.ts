@@ -116,11 +116,9 @@ function metadataFromEntry(entry: ArxivEntry): IdentifierLookup {
   };
 }
 
-/** arXiv matches old-style subject classes case-sensitively ("math.GT"). */
+/** arXiv knows an old-style ID without its subject class: math.DG/0211159 is math/0211159. */
 function queryId(id: string): string {
-  return id.replace(/^([a-z-]+)\.([a-z]{2})\//u, (_, archive: string, subject: string) => {
-    return `${archive}.${subject.toUpperCase()}/`;
-  });
+  return id.replace(/^([a-z-]+)\.[a-z]{2}\//iu, "$1/");
 }
 
 /** Looks up version-less arXiv IDs in one request; an ID missing from the feed does not exist. */
@@ -150,7 +148,7 @@ export async function lookupArxivIds(
   );
   return new Map(
     ids.map((id): [string, IdentifierLookup] => {
-      const entry = found.get(normalizePersistentIdentifier("arxiv", id));
+      const entry = found.get(normalizePersistentIdentifier("arxiv", queryId(id)));
       return [id, entry ? metadataFromEntry(entry) : { status: "not-found" }];
     }),
   );
