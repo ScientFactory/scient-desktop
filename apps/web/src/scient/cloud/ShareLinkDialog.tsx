@@ -1,10 +1,15 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { ShareAccess, ShareRecord } from "@scientfactory/scient-cloud/api";
-import { CloudConversation } from "@scientfactory/scient-cloud/api";
+import {
+  CloudConversation,
+  shareLink,
+  type ShareAccess,
+  type ShareRecord,
+} from "@scientfactory/scient-cloud/api";
 import type { MessageId, ScientCloudShareBuild, ScopedThreadRef } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, CopyIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useEffectEvent, useState } from "react";
 
 import { Button } from "~/components/ui/button";
 import {
@@ -34,7 +39,7 @@ import { cloudShareDialogThreadAtom } from "./shareDialogState";
 import { EXPIRY_CHOICES, expiresAtFor, expiryChoice, type ExpiryChoice } from "./shareOptions";
 import { publishShare } from "./sharePublish";
 import { SnapshotConversationView } from "./SnapshotConversationView";
-import type { CloudApi } from "./cloudApi";
+import { shareLinkOrigin, type CloudApi } from "./cloudApi";
 import { InfoTip } from "./InfoTip";
 import { useCloudAccount } from "./useCloudAccount";
 
@@ -113,6 +118,42 @@ function messageOf(error: unknown, fallback: string): string {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+function findShare(
+  shares: ReadonlyArray<ShareRecord>,
+  threadRef: ScopedThreadRef,
+): ShareRecord | null {
+  return (
+    shares.find(
+      (candidate) =>
+        candidate.source.env === threadRef.environmentId &&
+        candidate.source.thread === threadRef.threadId,
+    ) ?? null
+  );
+}
+
+function accessSummary(access: ShareAccess): string {
+  switch (access.mode) {
+    case "link":
+      return "Anyone with the link";
+    case "me":
+      return "Only me";
+    case "people":
+      return access.emails.length === 1 ? "1 person" : `${access.emails.length} people`;
+  }
+}
+
+/** Whether the conversation has messages newer than the link's last published version. */
+function hasChangesSince(share: ShareRecord, document: CloudConversation): boolean {
+  const published = share.versions.at(-1)?.publishedAt;
+  if (published === undefined) return true;
+  const publishedAt = Date.parse(published);
+  return document.snapshot.messages.some((message) => Date.parse(message.updatedAt) > publishedAt);
+}
+
+/**
+ * Making a link shows its settings; once it exists, the dialog is the link itself:
+ * copy it, look at it, or open its settings again.
+ */
 function ShareLinkDialog({
   threadRef,
   api,
@@ -123,6 +164,8 @@ function ShareLinkDialog({
   onClose: () => void;
 }) {
   const [existing, setExisting] = useState<ShareRecord | null | undefined>(undefined);
+  const [editing, setEditing] = useState(false);
+  const [confirmingStop, setConfirmingStop] = useState(false);
   const [reasoning, setReasoning] = useState(false);
   const [excluded, setExcluded] = useState<ReadonlyArray<MessageId>>([]);
   const [keep, setKeep] = useState<ReadonlyArray<string>>([]);
@@ -140,26 +183,23 @@ function ShareLinkDialog({
   const [publish, setPublish] = useState<PublishState>({ status: "idle" });
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "share link" });
 
+  const adoptShare = (share: ShareRecord | null) => {
+    setExisting(share);
+    if (share === null) return;
+    setEncrypted(share.encrypted);
+    setIndexable(share.indexable);
+    setAccess(share.access);
+    setEmails(share.access.mode === "people" ? share.access.emails.join(", ") : "");
+    setExpiry(expiryChoice(share.expiresAt));
+  };
+
+  const adoptFoundShare = useEffectEvent(adoptShare);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- finds this conversation's existing link in Scient Cloud
   useEffect(() => {
     let cancelled = false;
     api.shares().then(
       (shares) => {
-        if (cancelled) return;
-        const share =
-          shares.find(
-            (candidate) =>
-              candidate.source.env === threadRef.environmentId &&
-              candidate.source.thread === threadRef.threadId,
-          ) ?? null;
-        setExisting(share);
-        if (share !== null) {
-          setEncrypted(share.encrypted);
-          setIndexable(share.indexable);
-          setAccess(share.access);
-          if (share.access.mode === "people") setEmails(share.access.emails.join(", "));
-          setExpiry(expiryChoice(share.expiresAt));
-        }
+        if (!cancelled) adoptFoundShare(findShare(shares, threadRef));
       },
       () => {
         if (!cancelled) setExisting(null);
@@ -222,6 +262,7 @@ function ShareLinkDialog({
       : access;
   const lockedEncryption = existing != null;
   const ready = build.status === "ready" && existing !== undefined;
+  const busy = publish.status === "publishing";
 
   const doPublish = async () => {
     if (build.status !== "ready" || existing === undefined) return;
@@ -242,6 +283,14 @@ function ShareLinkDialog({
         readBlob: (relativeUrl) => fetchShareBlob(threadRef.environmentId, relativeUrl),
       });
       if (result.key !== null) rememberShareKey(result.id, result.key);
+      if (existing === null) copyToClipboard(result.link);
+      // The fresh record carries the new version, so "Update link" knows it's current.
+      const refreshed = await api.shares().then(
+        (shares) => shares.find((share) => share.id === result.id) ?? null,
+        () => null,
+      );
+      if (refreshed !== null) adoptShare(refreshed);
+      setEditing(false);
       setPublish({ status: "published", link: result.link });
     } catch (error) {
       setPublish({
@@ -259,6 +308,7 @@ function ShareLinkDialog({
       forgetShareKey(existing.id);
       onClose();
     } catch (error) {
+      setConfirmingStop(false);
       setPublish({ status: "failed", message: messageOf(error, "Sharing couldn't be stopped.") });
     }
   };
@@ -282,181 +332,231 @@ function ShareLinkDialog({
         )
       : [],
   );
-  const existingKeyMissing =
-    existing != null && existing.encrypted && readShareKey(existing.id) === null;
+  const existingKey = existing != null && existing.encrypted ? readShareKey(existing.id) : null;
+  const existingKeyMissing = existing != null && existing.encrypted && existingKey === null;
+  // The link view needs a link: the one just made, or the saved one.
+  const link =
+    publish.status === "published"
+      ? publish.link
+      : existing != null && !existingKeyMissing
+        ? shareLink(existing.id, existingKey ?? undefined, shareLinkOrigin())
+        : null;
+  const showLink = existing != null && !editing;
+  const outdated =
+    existing != null && build.status === "ready" && hasChangesSince(existing, build.document);
+
+  const settings = (
+    <div className="flex flex-col gap-2 text-sm">
+      <label className="flex items-center justify-between gap-3">
+        <span>Who can open it</span>
+        <Select
+          value={access.mode}
+          onValueChange={(mode) => {
+            if (mode === null) return;
+            setAccess(mode === "people" ? { mode, emails: [] } : { mode });
+          }}
+        >
+          <SelectTrigger size="sm" className="w-auto" aria-label="Who can open it">
+            <SelectValue>
+              {(mode: ShareAccess["mode"]) =>
+                mode === "link"
+                  ? "Anyone with the link"
+                  : mode === "me"
+                    ? "Only me"
+                    : "People I name"
+              }
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup alignItemWithTrigger={false}>
+            <SelectItem hideIndicator value="link">
+              Anyone with the link
+            </SelectItem>
+            <SelectItem hideIndicator value="people">
+              People I name
+            </SelectItem>
+            <SelectItem hideIndicator value="me">
+              Only me
+            </SelectItem>
+          </SelectPopup>
+        </Select>
+      </label>
+      {access.mode === "people" ? (
+        <Input
+          aria-label="Email addresses"
+          placeholder="Email addresses, separated by commas"
+          value={emails}
+          onChange={(event) => setEmails(event.target.value)}
+        />
+      ) : null}
+      <label className="flex items-center justify-between gap-3">
+        <span>Expires</span>
+        <Select value={expiry} onValueChange={(next) => next !== null && setExpiry(next)}>
+          <SelectTrigger size="sm" className="w-auto" aria-label="Expires">
+            <SelectValue>
+              {(choice: ExpiryChoice) => EXPIRY_CHOICES.find((entry) => entry.id === choice)?.label}
+            </SelectValue>
+          </SelectTrigger>
+          <SelectPopup alignItemWithTrigger={false}>
+            {EXPIRY_CHOICES.map((entry) => (
+              <SelectItem hideIndicator key={entry.id} value={entry.id}>
+                {entry.label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      </label>
+      <label className="flex items-center justify-between gap-3">
+        <span>Include reasoning</span>
+        <Switch checked={reasoning} onCheckedChange={(checked) => setReasoning(Boolean(checked))} />
+      </label>
+      <div className="flex items-center justify-between gap-3">
+        <span className="flex items-center gap-1.5">
+          <label htmlFor="share-link-encrypted">Encrypted</label>
+          <InfoTip label="About encryption">
+            {encrypted
+              ? "The key is part of the link, so Scient Cloud can't read what you share."
+              : "Scient Cloud can read it, and the link previews the title."}
+            {lockedEncryption ? " A link keeps the encryption it was created with." : null}
+          </InfoTip>
+        </span>
+        <Switch
+          id="share-link-encrypted"
+          checked={encrypted}
+          disabled={lockedEncryption}
+          onCheckedChange={(checked) => setEncrypted(Boolean(checked))}
+        />
+      </div>
+      {!encrypted && access.mode === "link" ? (
+        <label className="flex items-center justify-between gap-3">
+          <span>Show in search engines</span>
+          <Switch
+            checked={indexable}
+            onCheckedChange={(checked) => setIndexable(Boolean(checked))}
+          />
+        </label>
+      ) : null}
+      {build.status === "ready" ? (
+        <RedactionList
+          build={build.build}
+          excludedCount={excluded.length}
+          onShow={(id) => setKeep((current) => [...current, id])}
+          onBlank={(id) => setKeep((current) => current.filter((entry) => entry !== id))}
+          onPutBack={() => setExcluded([])}
+        />
+      ) : null}
+    </div>
+  );
+
+  const linkView =
+    existing != null ? (
+      <div className="flex flex-col gap-2">
+        {link !== null ? (
+          <div className="flex items-center gap-2">
+            <Input
+              readOnly
+              aria-label="Share link"
+              value={link}
+              onFocus={(event) => event.currentTarget.select()}
+            />
+            <Button size="sm" variant="outline" onClick={() => copyToClipboard(link)}>
+              {isCopied ? <CheckIcon /> : <CopyIcon />}
+              {isCopied ? "Copied" : "Copy"}
+            </Button>
+          </div>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            This link was made on another computer. Update it here to get a link you can copy; the
+            old one stops working.
+          </p>
+        )}
+        <p className="flex items-center gap-1 text-xs text-muted-foreground">
+          {accessSummary(existing.access)} ·{" "}
+          {EXPIRY_CHOICES.find((entry) => entry.id === expiryChoice(existing.expiresAt))?.label}
+          <Button size="xs" variant="ghost-muted" onClick={() => setEditing(true)}>
+            Change
+          </Button>
+        </p>
+      </div>
+    ) : null;
+
+  const title = showLink ? "Share link" : existing ? "Link settings" : "Share link";
+  const description = showLink
+    ? outdated
+      ? "The conversation has changed since you shared it."
+      : null
+    : existing
+      ? null
+      : "Shares the conversation as it is now.";
 
   return (
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && publish.status !== "publishing") onClose();
+        if (!open && !busy) onClose();
       }}
     >
       <DialogPopup className="max-w-md">
         <DialogHeader>
-          <DialogTitle>{existing ? "Update link" : "Share link"}</DialogTitle>
-          <DialogDescription>Shares the conversation as it is now.</DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          {description !== null ? <DialogDescription>{description}</DialogDescription> : null}
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-col gap-3">
-            {publish.status === "published" ? (
-              <div className="flex items-center gap-2">
-                <Input
-                  readOnly
-                  aria-label="Share link"
-                  value={publish.link}
-                  onFocus={(event) => event.currentTarget.select()}
-                />
-                <Button size="sm" variant="outline" onClick={() => copyToClipboard(publish.link)}>
-                  {isCopied ? <CheckIcon /> : <CopyIcon />}
-                  {isCopied ? "Copied" : "Copy"}
-                </Button>
-              </div>
-            ) : null}
-            <div className="flex flex-col gap-2 text-sm">
-              <label className="flex items-center justify-between gap-3">
-                <span>Who can open it</span>
-                <Select
-                  value={access.mode}
-                  onValueChange={(mode) => {
-                    if (mode === null) return;
-                    setAccess(mode === "people" ? { mode, emails: [] } : { mode });
-                  }}
+            {existing === undefined ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">Loading…</p>
+            ) : showLink ? (
+              linkView
+            ) : (
+              settings
+            )}
+
+            {existing !== undefined ? (
+              <>
+                <Button
+                  size="sm"
+                  variant="ghost-muted"
+                  className="-ms-2 self-start"
+                  aria-expanded={previewOpen}
+                  onClick={() => setPreviewOpen((open) => !open)}
                 >
-                  <SelectTrigger size="sm" className="w-auto" aria-label="Who can open it">
-                    <SelectValue>
-                      {(mode: ShareAccess["mode"]) =>
-                        mode === "link"
-                          ? "Anyone with the link"
-                          : mode === "me"
-                            ? "Only me"
-                            : "People I name"
-                      }
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup alignItemWithTrigger={false}>
-                    <SelectItem hideIndicator value="link">
-                      Anyone with the link
-                    </SelectItem>
-                    <SelectItem hideIndicator value="people">
-                      People I name
-                    </SelectItem>
-                    <SelectItem hideIndicator value="me">
-                      Only me
-                    </SelectItem>
-                  </SelectPopup>
-                </Select>
-              </label>
-              {access.mode === "people" ? (
-                <Input
-                  aria-label="Email addresses"
-                  placeholder="Email addresses, separated by commas"
-                  value={emails}
-                  onChange={(event) => setEmails(event.target.value)}
-                />
-              ) : null}
-              <label className="flex items-center justify-between gap-3">
-                <span>Expires</span>
-                <Select value={expiry} onValueChange={(next) => next !== null && setExpiry(next)}>
-                  <SelectTrigger size="sm" className="w-auto" aria-label="Expires">
-                    <SelectValue>
-                      {(choice: ExpiryChoice) =>
-                        EXPIRY_CHOICES.find((entry) => entry.id === choice)?.label
-                      }
-                    </SelectValue>
-                  </SelectTrigger>
-                  <SelectPopup alignItemWithTrigger={false}>
-                    {EXPIRY_CHOICES.map((entry) => (
-                      <SelectItem hideIndicator key={entry.id} value={entry.id}>
-                        {entry.label}
-                      </SelectItem>
-                    ))}
-                  </SelectPopup>
-                </Select>
-              </label>
-              <label className="flex items-center justify-between gap-3">
-                <span>Include reasoning</span>
-                <Switch
-                  checked={reasoning}
-                  onCheckedChange={(checked) => setReasoning(Boolean(checked))}
-                />
-              </label>
-              <div className="flex items-center justify-between gap-3">
-                <span className="flex items-center gap-1.5">
-                  <label htmlFor="share-link-encrypted">Encrypted</label>
-                  <InfoTip label="About encryption">
-                    {encrypted
-                      ? "The key is part of the link, so Scient Cloud can't read what you share."
-                      : "Scient Cloud can read it, and the link previews the title."}
-                    {lockedEncryption ? " A link keeps the encryption it was created with." : null}
-                  </InfoTip>
-                </span>
-                <Switch
-                  id="share-link-encrypted"
-                  checked={encrypted}
-                  disabled={lockedEncryption}
-                  onCheckedChange={(checked) => setEncrypted(Boolean(checked))}
-                />
-              </div>
-              {!encrypted && access.mode === "link" ? (
-                <label className="flex items-center justify-between gap-3">
-                  <span>Show in search engines</span>
-                  <Switch
-                    checked={indexable}
-                    onCheckedChange={(checked) => setIndexable(Boolean(checked))}
-                  />
-                </label>
-              ) : null}
-            </div>
-
-            {build.status === "ready" ? (
-              <RedactionList
-                build={build.build}
-                excludedCount={excluded.length}
-                onShow={(id) => setKeep((current) => [...current, id])}
-                onBlank={(id) => setKeep((current) => current.filter((entry) => entry !== id))}
-                onPutBack={() => setExcluded([])}
-              />
-            ) : null}
-
-            <Button
-              size="sm"
-              variant="ghost-muted"
-              className="-ms-2 self-start"
-              aria-expanded={previewOpen}
-              onClick={() => setPreviewOpen((open) => !open)}
-            >
-              {previewOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}
-              Preview
-            </Button>
-            {previewOpen ? (
-              <div className="max-h-[50vh] min-h-32 overflow-auto rounded-lg border border-border px-3 py-4">
-                {build.status === "building" ? (
-                  <p className="py-8 text-center text-sm text-muted-foreground">Preparing…</p>
-                ) : build.status === "failed" ? null : (
-                  <SnapshotConversationView
-                    conversation={build.document}
-                    loadBlob={loadBlob}
-                    preview={{
-                      markedMessageIds: redactedItems,
-                      messageAction: {
-                        label: "Leave out",
-                        onSelect: (messageId) => setExcluded((current) => [...current, messageId]),
-                      },
-                    }}
-                  />
-                )}
-              </div>
+                  {previewOpen ? <ChevronDownIcon /> : <ChevronRightIcon />}
+                  Preview
+                </Button>
+                {previewOpen ? (
+                  <div className="max-h-[50vh] min-h-32 overflow-auto rounded-lg border border-border px-3 py-4">
+                    {build.status === "building" ? (
+                      <p className="py-8 text-center text-sm text-muted-foreground">Preparing…</p>
+                    ) : build.status === "failed" ? null : (
+                      <SnapshotConversationView
+                        conversation={build.document}
+                        loadBlob={loadBlob}
+                        preview={
+                          showLink
+                            ? { markedMessageIds: redactedItems }
+                            : {
+                                markedMessageIds: redactedItems,
+                                messageAction: {
+                                  label: "Leave out",
+                                  onSelect: (messageId) =>
+                                    setExcluded((current) => [...current, messageId]),
+                                },
+                              }
+                        }
+                      />
+                    )}
+                  </div>
+                ) : null}
+              </>
             ) : null}
             {build.status === "failed" ? (
               <p role="alert" className="text-xs text-destructive-foreground">
                 {build.message}
               </p>
             ) : null}
-            {existingKeyMissing ? (
+            {editing && existingKeyMissing ? (
               <p className="text-xs text-muted-foreground">
-                This link was made on another device. Updating it here makes a new key, so send the
-                new link again.
+                This link was made on another computer. Updating it here makes a new key, so send
+                the new link again.
               </p>
             ) : null}
             {publish.status === "failed" ? (
@@ -467,40 +567,81 @@ function ShareLinkDialog({
           </div>
         </DialogPanel>
         <DialogFooter>
-          {existing ? (
-            <Button
-              size="sm"
-              variant="ghost-destructive"
-              className="me-auto"
-              disabled={publish.status === "publishing"}
-              onClick={() => void stopSharing()}
-            >
-              Stop sharing
-            </Button>
-          ) : null}
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onClose}
-            disabled={publish.status === "publishing"}
-          >
-            {publish.status === "published" ? "Done" : "Cancel"}
-          </Button>
-          {publish.status !== "published" ? (
-            <Button
-              size="sm"
-              disabled={!ready || publish.status === "publishing"}
-              onClick={() => void doPublish()}
-            >
-              {publish.status === "publishing"
-                ? existing
-                  ? "Updating link…"
-                  : "Creating link…"
-                : existing
-                  ? "Update link"
-                  : "Create link"}
-            </Button>
-          ) : null}
+          {showLink && confirmingStop ? (
+            <>
+              <p className="me-auto self-center text-xs text-muted-foreground">
+                The link stops working for everyone.
+              </p>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={() => setConfirmingStop(false)}
+              >
+                Keep sharing
+              </Button>
+              <Button
+                size="sm"
+                variant="destructive"
+                disabled={busy}
+                onClick={() => void stopSharing()}
+              >
+                {busy ? "Stopping…" : "Stop sharing"}
+              </Button>
+            </>
+          ) : showLink ? (
+            <>
+              <Button
+                size="sm"
+                variant="ghost-destructive"
+                className="me-auto"
+                disabled={busy}
+                onClick={() => setConfirmingStop(true)}
+              >
+                Stop sharing
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost-muted"
+                render={<Link to="/settings/connections" hash="shared-links" onClick={onClose} />}
+              >
+                All links
+              </Button>
+              {outdated || existingKeyMissing ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!ready || busy}
+                  onClick={() => void doPublish()}
+                >
+                  {busy ? "Updating…" : "Update link"}
+                </Button>
+              ) : null}
+              <Button size="sm" disabled={busy} onClick={onClose}>
+                Done
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={busy}
+                onClick={existing ? () => setEditing(false) : onClose}
+              >
+                {existing ? "Back" : "Cancel"}
+              </Button>
+              <Button size="sm" disabled={!ready || busy} onClick={() => void doPublish()}>
+                {busy
+                  ? existing
+                    ? "Saving…"
+                    : "Creating link…"
+                  : existing
+                    ? "Save"
+                    : "Create link"}
+              </Button>
+            </>
+          )}
         </DialogFooter>
       </DialogPopup>
     </Dialog>
