@@ -812,5 +812,10 @@ export const ScientSourcesOverviewResult = Schema.Struct({
       library: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     }),
   ),
+  /**
+   * Present only when the server keeps a personal library, also for a project still served from
+   * its own folder (not moved yet, or moved back), which has no `scopes`: ask `moveStatus`.
+   */
+  libraryBackend: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ScientSourcesOverviewResult = typeof ScientSourcesOverviewResult.Type;

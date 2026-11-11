@@ -13,7 +13,9 @@ import type {
   ScientSourcesBulkUpdateRequest,
   ScientSourcesOrganizeRequest,
   ScientSourcesScope,
+  ScientSourcesMoveStatusRequest,
   ScientSystematicReviewChangeRequest,
+  ScientSystematicReviewConflictRequest,
   ScientSystematicReviewRequest,
   ScientSystematicReviewsRequest,
   ScientSourcesExportRequest,
@@ -557,6 +559,62 @@ export const changeEnvironmentScientSystematicReview = Effect.fn(
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) => client.systematicReviewChange({ headers, payload }),
+  });
+});
+
+export const listEnvironmentScientSystematicReviewConflicts = Effect.fn(
+  "clientRuntime.state.listEnvironmentScientSystematicReviewConflicts",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSystematicReviewRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.systematicReviewConflicts(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.systematicReviewConflicts({ headers, payload }),
+  });
+});
+
+export const changeEnvironmentScientSystematicReviewConflict = Effect.fn(
+  "clientRuntime.state.changeEnvironmentScientSystematicReviewConflict",
+)(function* (
+  input: { readonly prepared: PreparedConnection } & ScientSystematicReviewConflictRequest,
+) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.systematicReviewConflict(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.systematicReviewConflict({ headers, payload }),
+  });
+});
+
+export const getEnvironmentScientSourcesMoveStatus = Effect.fn(
+  "clientRuntime.state.getEnvironmentScientSourcesMoveStatus",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourcesMoveStatusRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.moveStatus(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.moveStatus({ headers, payload }),
   });
 });
 

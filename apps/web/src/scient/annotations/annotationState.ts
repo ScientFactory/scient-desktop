@@ -11,6 +11,7 @@ import {
 import { toastManager } from "~/components/ui/toast";
 import { randomUUID } from "~/lib/utils";
 
+import { isLibraryMovingError, LIBRARY_MOVING_MESSAGE } from "../sources/errorMessage";
 import { mutateAnnotation } from "./client";
 
 /** Where a PDF's annotations live: its project and its bytes. */
@@ -94,8 +95,12 @@ async function send(
       toastManager.add({ type: "warning", title: "This PDF has too many annotations" });
     }
     return result;
-  } catch {
-    toastManager.add({ type: "error", title: "Couldn't save the annotation" });
+  } catch (cause) {
+    toastManager.add({
+      type: "error",
+      title: "Couldn't save the annotation",
+      ...(isLibraryMovingError(cause) ? { description: LIBRARY_MOVING_MESSAGE } : {}),
+    });
     return null;
   }
 }

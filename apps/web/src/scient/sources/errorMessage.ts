@@ -2,7 +2,23 @@ const INVALID_RESPONSE_PREFIX = "Remote environment endpoint returned an invalid
 const ENDPOINT_PREFIX = "Remote environment endpoint";
 const FETCH_PREFIX = "Failed to fetch remote environment endpoint";
 
+export const LIBRARY_MOVING_MESSAGE =
+  "The Library is still moving. Try again when it has finished.";
+
+/** A Library change that waited for the move into the personal Library and gave up. */
+export function isLibraryMovingError(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "EnvironmentInternalError" &&
+    "reason" in error &&
+    error.reason === "scient_sources_library_moving"
+  );
+}
+
 export function scientSourcesErrorMessage(error: unknown, development: boolean): string {
+  if (isLibraryMovingError(error)) return LIBRARY_MOVING_MESSAGE;
   if (
     typeof error === "object" &&
     error !== null &&

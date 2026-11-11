@@ -8,6 +8,7 @@ import {
   MoreHorizontal,
   PenLine,
   Trash2,
+  Undo2,
 } from "lucide-react";
 import { useRef, useState } from "react";
 
@@ -25,6 +26,7 @@ import { useComposerHandleContext } from "../../composerHandleContext";
 import { ReferenceCheckDialog } from "../references/ReferenceCheckDialog";
 import { askLibraryInsertion } from "./askLibrary";
 import { CitationStylePicker } from "./CitationStylePicker";
+import { MoveBackDialog } from "./LibraryMoveNotice";
 import { SourceTrashPopover } from "./SourceTrash";
 import {
   SourcesExportSubmenu,
@@ -45,8 +47,11 @@ export function SourcesHeaderMenu(props: {
   readonly onOpenReviews: () => void;
   readonly onOpenSource: (sourceId: string) => void;
   readonly onOpenFile?: (path: string, line: number) => void;
+  /** Present only on a moved project and for a session that may change the Library. */
+  readonly onMoveBack?: () => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
+  const [confirmingMoveBack, setConfirmingMoveBack] = useState(false);
   const [checkingReferences, setCheckingReferences] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
   const [pickingStyle, setPickingStyle] = useState(false);
@@ -143,6 +148,12 @@ export function SourcesHeaderMenu(props: {
               scope={props.exportScope}
             />
           ) : null}
+          {props.onMoveBack ? (
+            <MenuItem onClick={() => setConfirmingMoveBack(true)}>
+              <Undo2 />
+              Move back into this project
+            </MenuItem>
+          ) : null}
           {props.trashedCount > 0 ? (
             <>
               <MenuSeparator />
@@ -163,6 +174,13 @@ export function SourcesHeaderMenu(props: {
         onOpenChange={setTrashOpen}
         onChanged={props.onTrashChanged}
       />
+      {props.onMoveBack ? (
+        <MoveBackDialog
+          open={confirmingMoveBack}
+          onClose={() => setConfirmingMoveBack(false)}
+          onConfirm={props.onMoveBack}
+        />
+      ) : null}
       {pickingStyle ? (
         <CitationStylePicker
           project={{ environmentId: props.environmentId, root: props.root }}

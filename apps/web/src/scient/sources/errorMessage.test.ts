@@ -1,3 +1,4 @@
+import { EnvironmentInternalError } from "@t3tools/contracts";
 import {
   RemoteEnvironmentAuthFetchError,
   RemoteEnvironmentAuthTimeoutError,
@@ -51,6 +52,18 @@ describe("Scient Sources error messages", () => {
       ),
     ).toBe(
       "Scient received source data that this app version cannot read. Update or reconnect the selected environment, then try again.",
+    );
+  });
+
+  it("says the Library is still moving when a change waited for the move", () => {
+    const error = new EnvironmentInternalError({
+      code: "internal_error",
+      reason: "scient_sources_library_moving",
+      traceId: "trace-1",
+    });
+
+    expect(scientSourcesErrorMessage(error, false)).toBe(
+      "The Library is still moving. Try again when it has finished.",
     );
   });
 

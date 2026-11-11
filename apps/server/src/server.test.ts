@@ -5288,6 +5288,72 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
+    it.effect("marks a library server's overview and answers a repeated move back", () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({ scientSourcesBackend: "library" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-move-back-" });
+        yield* Effect.promise(async () => {
+          await initializeScientProject({ root });
+          await importScientSource({
+            root,
+            operationId: NodeCrypto.randomUUID(),
+            candidate: {
+              sourceKey: "move-back",
+              type: "article",
+              customType: null,
+              title: "A study that comes back",
+              creators: [],
+              issuedRaw: null,
+              issuedYear: 2026,
+              identifiers: [],
+              abstract: null,
+              containerTitle: null,
+              publisher: null,
+              volume: null,
+              issue: null,
+              pages: null,
+              language: null,
+              url: null,
+              tags: [],
+              externalReferences: [],
+              fieldProvenance: [],
+              pdfAvailable: false,
+              pdfFileName: null,
+              pdfAttachmentCount: 0,
+            },
+          });
+        });
+        const owner = { cookie: yield* getAuthenticatedSessionCookieHeader() };
+        const post = (path: string, body: object) =>
+          Effect.gen(function* () {
+            const response = yield* HttpClient.post(path, {
+              headers: owner,
+              body: yield* HttpBody.json(body),
+            });
+            return (yield* response.json) as Record<string, unknown>;
+          });
+
+        // Not moved yet: the project's own store, which has no scopes, on a library server.
+        const before = yield* post("/api/scient/sources/overview", { root });
+        assert.equal(before.libraryBackend, true);
+        assert.notProperty(before, "scopes");
+        // The change moves the project in first, then moves it back.
+        const movedBack = yield* post("/api/scient/sources/organize", {
+          root,
+          change: { action: "move-back" },
+        });
+        assert.equal(movedBack.outcome, "moved-back");
+        assert.deepEqual(
+          yield* post("/api/scient/sources/organize", { root, change: { action: "move-back" } }),
+          { outcome: "not-moved" },
+        );
+        const after = yield* post("/api/scient/sources/overview", { root });
+        assert.equal(after.libraryBackend, true);
+        assert.notProperty(after, "scopes");
+      }).pipe(Effect.provide(NodeHttpServerTest)),
+    );
+
     it.effect("serves the personal note only to a session that may change the Library", () =>
       Effect.gen(function* () {
         yield* buildAppUnderTest({ scientSourcesBackend: "library" });

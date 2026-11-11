@@ -94,6 +94,10 @@ export function createScientSourcesCommands<R, ER>(
       tags.systematicReviewChange,
       http.changeEnvironmentScientSystematicReview,
     ),
+    systematicReviewConflict: command(
+      tags.systematicReviewConflict,
+      http.changeEnvironmentScientSystematicReviewConflict,
+    ),
     bulkUpdate: command(tags.bulkUpdate, http.bulkUpdateEnvironmentScientSources),
     addByIdentifier: command(tags.addByIdentifier, http.addEnvironmentScientSourcesByIdentifier),
     restore: command(tags.restore, http.restoreEnvironmentScientSource),

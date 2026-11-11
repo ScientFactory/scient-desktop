@@ -93,6 +93,8 @@ import {
 import { SourceHistoryDialog } from "./SourceHistory";
 import { sourceTrustLabel } from "./sourceLifecycleLabels";
 import { SourceStoreNotice } from "./SourceStoreNotice";
+import { LibraryMoveNotice } from "./LibraryMoveNotice";
+import { useLibraryMoveStatus } from "./useLibraryMoveStatus";
 import { announceSourceMovedToTrash } from "./SourceTrash";
 import { useScientSources } from "./useScientSources";
 import { SourceOrganizeSection } from "./SourceOrganizeSection";
@@ -297,6 +299,12 @@ export function ScientSourcesPanel(props: {
     root: props.root,
     records: sources.overview?.records ?? null,
     onImported: () => void sources.refreshOverview(),
+  });
+  const move = useLibraryMoveStatus({
+    environmentId: props.environmentId,
+    root: props.root,
+    overview: sources.overview,
+    onStoreChanged: () => void sources.refreshOverview().catch(() => undefined),
   });
   const getPaper = useAccountCommand(accountsState.paperForSource, props.environmentId);
   const requestPapers = useAccountCommand(accountsState.requestPapers, props.environmentId);
@@ -1368,6 +1376,7 @@ export function ScientSourcesPanel(props: {
               onOpenReviews={() => setShowingReviews(true)}
               onOpenSource={setSelectedSourceId}
               {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
+              {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
             />
           </div>
         }
@@ -1394,6 +1403,7 @@ export function ScientSourcesPanel(props: {
       {sources.error ? (
         <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
       ) : null}
+      <LibraryMoveNotice move={move} />
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
       <ZoteroRefreshDialog
         state={zoteroSync.refresh}

@@ -932,6 +932,57 @@ becomes optional; reading state alone is not checked against the revision).
 The library tool list is 112,563 bytes; the project list is unchanged. Project
 servers refuse both new routes.
 
+#### The move in the Library panel (5e-3, switched off)
+
+**Which server.** A library server marks every overview with
+`libraryBackend: true`, also for a project it still serves from the project
+folder (not moved yet, moved back, or a failed move), whose overview has no
+`scopes`. A project server never sends the key, so its overview is unchanged.
+The panel asks `moveStatus` only when the overview carries the mark
+(`useLibraryMoveStatus`); a project server's panel sends no status request.
+
+**When the panel asks.** Once when the panel opens, after every Library change
+on that environment settles, landed or failed (`runSourcesCommand` notifies
+`libraryWrites.ts`; highlight writes go the same way), and about once a second
+after each answer while the state is `waiting`, `moving` or `restoring`, or
+while this panel's own move back is running. Nothing is asked while the panel
+is closed, and nothing animates: only the numbers change. When a move or a move
+back that the panel saw running ends, the overview is read again, because the
+project's store changed.
+
+**The line** (`libraryMoveLine`, `LibraryMoveNotice`) sits above the store
+notices, one line. A `done` or `cleanup-pending` summary is the server's lines
+plus "Undo history of bulk edits from before the move was not carried over.",
+which replaces the server's own bulk-edit line. `moveStatus` carries no
+"dismissed" flag, so empty `lines` (dismissed, or a move with nothing to say)
+show no summary; `cleanup-pending` still shows its files-left sentence. Dismiss
+(organize `dismiss-move-summary`) is offered for a summary, and a failure offers
+"Check again", which only reads the status. "Review" in the merge line is plain
+text until the duplicates screen exists. A write refused with
+`scient_sources_library_moving` shows "The Library is still moving. Try again
+when it has finished." (`scientSourcesErrorMessage`, and the reader's highlight
+toast).
+
+**Move back** is a command in "More Library actions", offered on a `done` or
+`cleanup-pending` project to a session holding operate, after a confirmation.
+It calls organize `move-back`. A failed answer is not shown as an error when
+the status then reads `restoring` or `moved-back`, since the move back runs on
+after a lost answer. On a library server, `move-back` on a project already
+moved back answers `not-moved` (the route serves that project from its own
+folder, where the action used to be refused). The project then stays on its own
+store: lazy moves and the background pass skip `moved-back`, and nothing moves
+it into the library again.
+
+**Review versions.** A review whose detail has `conflictVersions` shows "This
+review has another version from a copy of this project.", which opens a picker
+read fresh from `systematicReviewConflicts`: the version in force and each
+other version side by side, with "Keep this version", "Use the other" and
+"Combine" (`systematicReviewConflict`, its own command and grant). Combine's
+report stays on the review, counts first and the lists behind "Details", until
+dismissed. After a choice the review and the list are read again; nothing is
+patched locally. A read-only session sees the line and both versions, with the
+choices disabled and no Dismiss.
+
 ## Source truth and provenance
 
 The persisted record has a first-class Scient source type and normalized

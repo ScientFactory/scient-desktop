@@ -1,5 +1,7 @@
 import {
+  getEnvironmentScientSourcesMoveStatus,
   getEnvironmentScientSystematicReview,
+  listEnvironmentScientSystematicReviewConflicts,
   listEnvironmentScientSystematicReviews,
   getEnvironmentScientSourceAttachmentPreview,
   searchEnvironmentScientSourcesFullText,
@@ -30,6 +32,7 @@ import type {
   ScientSourcesOrganizeRequest,
   ScientSourcesScope,
   ScientSystematicReviewChangeRequest,
+  ScientSystematicReviewConflictRequest,
   ScientSystematicReviewRequest,
   ScientSystematicReviewsRequest,
   ScientSourcesExportRequest,
@@ -137,6 +140,29 @@ export function changeSystematicReview(
   input: ScientSystematicReviewChangeRequest,
 ) {
   return runSourcesCommand(sourcesCommands.systematicReviewChange, environmentId, input);
+}
+
+export function readSystematicReviewConflicts(
+  environmentId: EnvironmentId,
+  input: ScientSystematicReviewRequest,
+) {
+  return runtime.runPromise(
+    listEnvironmentScientSystematicReviewConflicts({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function changeSystematicReviewConflict(
+  environmentId: EnvironmentId,
+  input: ScientSystematicReviewConflictRequest,
+) {
+  return runSourcesCommand(sourcesCommands.systematicReviewConflict, environmentId, input);
+}
+
+/** Where this project's move into the personal Library is; a project server has nothing to move. */
+export function readLibraryMoveStatus(environmentId: EnvironmentId, root: string) {
+  return runtime.runPromise(
+    getEnvironmentScientSourcesMoveStatus({ prepared: prepared(environmentId), root }),
+  );
 }
 
 export function bulkUpdateScientSources(

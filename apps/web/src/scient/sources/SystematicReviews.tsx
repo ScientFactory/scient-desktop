@@ -32,6 +32,7 @@ import { toastManager } from "../../components/ui/toast";
 import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { PrismaDiagram } from "./PrismaDiagram";
+import { CombineReportNotice, ReviewVersionsLine } from "./ReviewVersions";
 import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
 import { SystematicReviewScreening, type ReviewRecordView } from "./SystematicReviewScreening";
 import {
@@ -718,6 +719,21 @@ export function SystematicReviewsView(props: {
             <>
               {detail.review.question ? (
                 <p className="text-sm text-muted-foreground">{detail.review.question}</p>
+              ) : null}
+              {reviews.conflictVersions > 0 ? (
+                <ReviewVersionsLine reviews={reviews} reviewId={detail.review.reviewId} />
+              ) : null}
+              {reviews.combineReport ? (
+                <CombineReportNotice
+                  reviews={reviews}
+                  reviewId={detail.review.reviewId}
+                  report={reviews.combineReport}
+                  title={(sourceId) => records.get(sourceId)?.title ?? sourceId}
+                  searchName={(searchId) =>
+                    detail.review.searches.find((search) => search.searchId === searchId)
+                      ?.database ?? searchId
+                  }
+                />
               ) : null}
               <ToggleGroup
                 aria-label="Review section"

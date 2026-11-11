@@ -209,11 +209,12 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           Effect.gen(function* () {
             yield* annotateEnvironmentRequest(args.endpoint.name);
             const session = yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+            const libraryBackend = (yield* ScientSourcesBackend) === "library";
             // A folder that is not a Scient project yet reports its state as before.
             const library = yield* resolveScientLibraryStoreAt(args.payload.root, "read").pipe(
               Effect.orElseSucceed(() => null),
             );
-            return yield* sourcesOperation(() =>
+            const overview = yield* sourcesOperation(() =>
               library
                 ? libraryOverview(library, {
                     scope: args.payload.scope ?? "project",
@@ -231,6 +232,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),
             );
+            return libraryBackend ? { ...overview, libraryBackend: true as const } : overview;
           }),
         )
         .handle("detail", (args) =>
@@ -423,19 +425,26 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("organize", (args) =>
-          route(
-            args.endpoint.name,
-            AuthOrchestrationOperateScope,
-            args.payload.root,
-            async (library) => {
-              if (library) return organizeLibrarySources(library, args.payload);
-              const { change } = args.payload;
-              if (isLibraryOrganizeAction(change)) {
-                throw new Error("Pins and merges need the personal Library.");
-              }
-              return organizeSources({ root: args.payload.root, change, actor: "user" });
-            },
-          ),
+          Effect.gen(function* () {
+            const libraryBackend = (yield* ScientSourcesBackend) === "library";
+            return yield* route(
+              args.endpoint.name,
+              AuthOrchestrationOperateScope,
+              args.payload.root,
+              async (library) => {
+                if (library) return organizeLibrarySources(library, args.payload);
+                const { change } = args.payload;
+                // Already moved back: the project keeps its own store, so a repeat has nothing to do.
+                if (libraryBackend && change.action === "move-back") {
+                  return { outcome: "not-moved" as const };
+                }
+                if (isLibraryOrganizeAction(change)) {
+                  throw new Error("Pins and merges need the personal Library.");
+                }
+                return organizeSources({ root: args.payload.root, change, actor: "user" });
+              },
+            );
+          }),
         )
         .handle("systematicReviews", (args) =>
           route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>

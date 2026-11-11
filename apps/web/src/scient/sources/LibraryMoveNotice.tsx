@@ -1,0 +1,64 @@
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
+import { Button } from "../../components/ui/button";
+import type { LibraryMoveStatus } from "./useLibraryMoveStatus";
+
+/** One line for the project's move into the personal Library, beside the store notices. */
+export function LibraryMoveNotice(props: { readonly move: LibraryMoveStatus }) {
+  const { line } = props.move;
+  if (!line) return null;
+  return (
+    <div className="mx-3 mt-2 flex items-center gap-2 text-xs text-muted-foreground">
+      <span className="min-w-0 flex-1 break-words tabular-nums">{line.text}</span>
+      {line.action === "dismiss" && props.move.canChange ? (
+        <Button size="xs" variant="ghost" onClick={() => void props.move.dismiss()}>
+          Dismiss
+        </Button>
+      ) : null}
+      {line.action === "retry" ? (
+        <Button size="xs" variant="ghost" onClick={props.move.retry}>
+          Check again
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+export function MoveBackDialog(props: {
+  readonly open: boolean;
+  readonly onClose: () => void;
+  readonly onConfirm: () => void;
+}) {
+  return (
+    <AlertDialog open={props.open} onOpenChange={(open) => (!open ? props.onClose() : undefined)}>
+      <AlertDialogPopup>
+        <AlertDialogHeader>
+          <AlertDialogTitle>Move the Library back into this project?</AlertDialogTitle>
+          <AlertDialogDescription>
+            The sources and their PDFs are copied back into this project’s folder. The papers also
+            stay in your personal Library, because other projects may use them. This project’s notes
+            and its reviews come back too. For a large Library this can take a while.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+          <Button
+            onClick={() => {
+              props.onClose();
+              props.onConfirm();
+            }}
+          >
+            Move back
+          </Button>
+        </AlertDialogFooter>
+      </AlertDialogPopup>
+    </AlertDialog>
+  );
+}

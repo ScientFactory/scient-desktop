@@ -2,15 +2,22 @@ import type { ScientSystematicReviewAction } from "@scientfactory/scient-sources
 import type {
   EnvironmentId,
   ScientSystematicReviewChangeResult,
+  ScientSystematicReviewConflictChange,
   ScientSystematicReviewList,
   ScientSystematicReviewResult,
 } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
-import { changeSystematicReview, readSystematicReview, readSystematicReviews } from "./client";
+import {
+  changeSystematicReview,
+  changeSystematicReviewConflict,
+  readSystematicReview,
+  readSystematicReviewConflicts,
+  readSystematicReviews,
+} from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
-import { useCanChangeLibrary } from "./sourcesCommands";
+import { sourcesCommands, useCanChangeLibrary, useCanRunSourcesCommand } from "./sourcesCommands";
 
 const message = (error: unknown) => scientSourcesErrorMessage(error, import.meta.env.DEV);
 
@@ -54,6 +61,10 @@ export function useSystematicReviews(input: {
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const canChange = useCanChangeLibrary(input.environmentId);
+  const canResolve = useCanRunSourcesCommand(
+    sourcesCommands.systematicReviewConflict,
+    input.environmentId,
+  );
 
   const reloadList = () =>
     readSystematicReviews(input.environmentId, { root: input.root })
@@ -115,6 +126,31 @@ export function useSystematicReviews(input: {
     );
   };
 
+  /** Picks between a review's versions or dismisses Combine's report, then reloads the review. */
+  const changeConflict = async (
+    id: string,
+    conflict: ScientSystematicReviewConflictChange,
+    failureTitle: string,
+  ) => {
+    setPending(true);
+    return settle(
+      async () => {
+        const changed = await changeSystematicReviewConflict(input.environmentId, {
+          root: input.root,
+          reviewId: id,
+          change: conflict,
+        }).catch((cause: unknown) => {
+          toastManager.add({ type: "error", title: failureTitle, description: message(cause) });
+          return null;
+        });
+        await Promise.all([reloadList(), id === reviewId ? reloadDetail(id) : null]);
+        return changed;
+      },
+      () => setPending(false),
+    );
+  };
+  const open = detail && detail.review.reviewId === reviewId ? result : null;
+
   return {
     list,
     error,
@@ -132,6 +168,15 @@ export function useSystematicReviews(input: {
       if (id) void reloadDetail(id);
     },
     change,
+    /** Other versions of the open review that a copy of the project brought (library server). */
+    conflictVersions: open?.conflictVersions ?? 0,
+    combineReport: open?.combineReport ?? null,
+    canResolve,
+    /** Choices between versions are off while one saves or without the Library grant. */
+    conflictsDisabled: pending || !canResolve,
+    readConflicts: (id: string) =>
+      readSystematicReviewConflicts(input.environmentId, { root: input.root, reviewId: id }),
+    changeConflict,
   };
 }
 
