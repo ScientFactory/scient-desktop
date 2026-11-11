@@ -19,6 +19,7 @@ import {
 } from "../../components/ui/menu";
 import { toastManager } from "../../components/ui/toast";
 import { restoreScientSource } from "./client";
+import { orderedCollections } from "./collectionTree";
 import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
@@ -181,7 +182,7 @@ export function SourcesBulkBar(props: {
           Collection
         </MenuTrigger>
         <MenuPopup align="end" side="bottom" className="min-w-48">
-          {organize.organization.collections.map((collection) => {
+          {orderedCollections(organize.organization.collections).map(({ collection, label }) => {
             const members = new Set(collection.sourceIds);
             const inAll = sourceIds.every((sourceId) => members.has(sourceId));
             return (
@@ -197,7 +198,7 @@ export function SourcesBulkBar(props: {
                   )
                 }
               >
-                <span className="min-w-0 truncate">{collection.name}</span>
+                <span className="min-w-0 truncate">{label}</span>
               </MenuCheckboxItem>
             );
           })}
