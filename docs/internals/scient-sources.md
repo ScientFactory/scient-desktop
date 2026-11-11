@@ -284,6 +284,12 @@ Sources MCP toolkit:
 Paper downloads reach the store through `paperIntake.ts`. A `scient_paper_get`
 or `scient_papers_queue` request with `addToLibrary` (or `sourceId`) needs the
 `sources:write` grant; without it the PDF is only saved and the result says so.
+From a client connection, `accounts.papers.getForSource` and an
+`accounts.papers.request` with any `source` or `library` paper need
+`orchestration:operate` on top of `settings:write`, the same grant as the other
+Library changes (`scientPaperRequestScopes`, shared by the client command check
+and the server's RPC authorization); a request that only saves PDFs needs
+`settings:write` alone.
 Once the queue has saved the PDF, the intake attaches it to the source whose DOI
 or arXiv ID matches, at that source's current revision, or creates a source
 through the same resolver as an agent add (`origin.intake: "paper"`, credited to
