@@ -19,6 +19,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { WorkspaceBindingResolutionError } from "../../../scient/projectScope/WorkspaceBinding.ts";
@@ -33,6 +34,7 @@ import {
   verifiableSourceIdentifier,
   type ResolveSourceIdentifier,
 } from "../../../scient/sources/SourceIdentifierResolver.ts";
+import * as MetadataHttp from "../../../scient/sources/metadataHttp.ts";
 import { SourceIdentifierBatchLookup } from "../../../scient/sources/SourceIdentifierAdd.ts";
 import {
   getScientSourceForInvocation,
@@ -50,6 +52,8 @@ import {
   updateScientSourceNoteForInvocation,
   updateScientSourceForInvocation,
 } from "./handlers.ts";
+
+vi.mock("../../../scient/sources/metadataHttp.ts", { spy: true });
 
 const fixtures: string[] = [];
 const now = "2026-08-13T12:00:00.000Z";
@@ -70,6 +74,27 @@ async function writeProjectPdf(root: string, relativePath: string, body: string)
   return pdfPath;
 }
 
+/** A one-page PDF whose document information names its title and author. */
+function pdfWithInfo(info: { readonly title: string; readonly author: string }): string {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+    `<< /Title (${info.title}) /Author (${info.author}) >>`,
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = objects.map((object, index) => {
+    const offset = body.length;
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    return offset;
+  });
+  const xref = body.length;
+  const entries = offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`);
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${entries.join("")}`;
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R /Info 4 0 R >>\n`;
+  return `${body}startxref\n${xref}\n%%EOF\n`;
+}
+
 async function writeSource(
   root: string,
   input: {
@@ -77,6 +102,7 @@ async function writeSource(
     readonly title: string;
     readonly abstract?: string | null;
     readonly hasPdf?: boolean;
+    readonly identifiers?: ReadonlyArray<{ readonly scheme: string; readonly value: string }>;
   },
 ) {
   const identity = await readScientProjectIdentity(root);
@@ -98,7 +124,7 @@ async function writeSource(
     ],
     issuedRaw: "2026",
     issuedYear: 2026,
-    identifiers: [{ scheme: "doi", value: `10.1000/${input.sourceId}` }],
+    identifiers: input.identifiers ?? [{ scheme: "doi", value: `10.1000/${input.sourceId}` }],
     abstract: input.abstract ?? null,
     containerTitle: "Scient Journal",
     publisher: null,
@@ -469,6 +495,145 @@ describe("Scient Sources MCP handlers", () => {
       });
       const record = yield* Effect.promise(() => readScientSourceRecord(root, "source_check"));
       expect(record?.updatedBy).toBe("agent");
+    }),
+  );
+
+  it.effect("refreshes a source from its DOI registry record and reports what changed", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() =>
+        vi.spyOn(MetadataHttp, "requestMetadataJson").mockImplementation(async (url) => {
+          if (url.href !== "https://doi.org/10.1000/source_refresh") {
+            throw new Error("No recorded response.");
+          }
+          return {
+            type: "article-journal",
+            DOI: "10.1000/source_refresh",
+            title: "Registered Title of the Work",
+            author: [{ given: "Grace", family: "Hopper" }],
+            issued: { "date-parts": [[1952, 5, 1]] },
+            "container-title": "Registry Journal",
+            volume: "7",
+            abstract: "<p>Recorded abstract.</p>",
+          };
+        }),
+      ),
+      () =>
+        Effect.gen(function* () {
+          const root = yield* Effect.promise(() => fixture("scient-sources-agent-refresh-"));
+          yield* Effect.promise(() =>
+            writeSource(root, { sourceId: "source_refresh", title: "Check" }),
+          );
+          const projectId = ProjectId.make("project-refresh");
+          const threadId = ThreadId.make("thread-refresh");
+          const identifier = { scheme: "doi", value: "10.1000/source_refresh" };
+          const context = {
+            invocation: makeInvocation(threadId),
+            query: makeQuery({
+              project: makeProject(projectId, root),
+              thread: makeThread({ threadId, projectId }),
+            }),
+            lookup: (async () => ({
+              status: "found",
+              identifier,
+              retrievedAt: now,
+              metadata: {
+                type: "article",
+                title: "Registered Title of the Work",
+                creators: [],
+                issuedRaw: null,
+                issuedYear: null,
+                identifiers: [identifier],
+                abstract: null,
+                abstractSections: [],
+                containerTitle: null,
+                publisher: null,
+                volume: null,
+                issue: null,
+                pages: null,
+                language: null,
+                url: null,
+              },
+            })) satisfies ResolveSourceIdentifier,
+          };
+          const refreshed = yield* provideContext(
+            checkScientSourceForInvocation({ sourceId: "source_refresh", refresh: true }),
+            context,
+          );
+          const record = yield* Effect.promise(() =>
+            readScientSourceRecord(root, "source_refresh"),
+          );
+          expect(refreshed).toMatchObject({
+            outcome: "refreshed",
+            revision: record?.revision,
+            registry: "found",
+            verification: { state: "verified", identifier },
+            changedFields: expect.arrayContaining([
+              "title",
+              "creators",
+              "containerTitle",
+              "volume",
+            ]),
+          });
+          expect(record).toMatchObject({
+            title: "Registered Title of the Work",
+            creators: [{ givenName: "Grace", familyName: "Hopper" }],
+            containerTitle: "Registry Journal",
+            updatedBy: "agent",
+          });
+        }),
+      (probe) => Effect.sync(() => probe.mockRestore()),
+    ),
+  );
+
+  it.effect("refreshes a source without a DOI or PMID from its PDF", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-refresh-pdf-"));
+      yield* Effect.promise(() =>
+        writeSource(root, { sourceId: "source_refresh_pdf", title: "Draft", identifiers: [] }),
+      );
+      const pdfPath = NodePath.join(root, "papers", "engines.pdf");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(pdfPath), { recursive: true });
+        await NodeFSP.writeFile(
+          pdfPath,
+          pdfWithInfo({ title: "Analytical Engines Revisited", author: "Charles Babbage" }),
+          "latin1",
+        );
+      });
+      const projectId = ProjectId.make("project-refresh-pdf");
+      const threadId = ThreadId.make("thread-refresh-pdf");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      yield* provideContext(
+        attachScientSourcePdfForInvocation({
+          sourceId: "source_refresh_pdf",
+          expectedRevision: 1,
+          pdfRelativePath: "papers/engines.pdf",
+        }),
+        context,
+      );
+      const refreshed = yield* provideContext(
+        checkScientSourceForInvocation({ sourceId: "source_refresh_pdf", refresh: true }),
+        context,
+      );
+      expect(refreshed).toMatchObject({
+        outcome: "refreshed",
+        registry: "none",
+        changedFields: expect.arrayContaining(["title", "creators"]),
+      });
+      const record = yield* Effect.promise(() =>
+        readScientSourceRecord(root, "source_refresh_pdf"),
+      );
+      expect(record).toMatchObject({
+        title: "Analytical Engines Revisited",
+        creators: [{ literalName: "Charles Babbage" }],
+        updatedBy: "agent",
+      });
     }),
   );
 

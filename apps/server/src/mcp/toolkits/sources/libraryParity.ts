@@ -52,10 +52,7 @@ export const LIBRARY_COMMAND_PARITY: Record<ScientSourcesHttpCommandTag, Library
   "scientSources.savePage": tool("scient_sources_save_page"),
   "scientSources.updateMetadata": tool("scient_sources_update"),
   "scientSources.updateNote": tool("scient_sources_note_update"),
-  "scientSources.refreshMetadata": {
-    kind: "gap",
-    reason: "No tool refreshes one Source's metadata from its registry or PDF.",
-  },
+  "scientSources.refreshMetadata": tool("scient_sources_check", "refresh"),
   "scientSources.remove": tool("scient_sources_remove"),
   "scientSources.organize": tool("scient_sources_organize"),
   "scientSources.systematicReviewChange": tool("scient_sources_systematic_review_update"),

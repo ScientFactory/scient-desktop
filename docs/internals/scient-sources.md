@@ -285,7 +285,11 @@ Sources MCP toolkit:
 - `scient_sources_restore` puts a trashed source back; and
 - `scient_sources_revert` makes a kept revision current again; and
 - `scient_sources_check` checks a source's DOI or PMID with its registry again
-  and records the verification and editorial status (below).
+  and records the verification and editorial status (below). With `refresh`
+  it first does what **Refresh metadata** does, through the same
+  `refreshAndCheckSourceMetadata` call credited to the agent: metadata from the
+  DOI or PMID registry, or from the PDF when there is neither, then the check,
+  and it reports `changedFields`.
   `scient_sources_get` returns the kept revisions with who saved each and which
   fields changed.
 
@@ -336,7 +340,7 @@ Retraction Watch; for PMIDs, from PubMed's `Retracted Publication` type.
 Unrecognized or malformed entries are skipped without losing the metadata.
 
 `checkSourceIdentifier` (the `scient_sources_check` tool, and the end of every
-user metadata refresh) re-resolves a source's identifier without touching its
+metadata refresh) re-resolves a source's identifier without touching its
 metadata: found and matching the stored title is `verified` with fresh
 editorial status; not found, or found with a different title, is `unverified`
 with `problem` `not-found` or `mismatch` and no editorial status; an
@@ -1202,7 +1206,7 @@ single tool call covers (`flow-step`), a browser upload whose tool takes a
 project path instead (`upload`), and an endpoint that serves pixels or files
 for display (`display`); each names its tool or reason. "Not built yet" is not
 an exemption: such a command is a `gap` with its reason, and
-`libraryParity.test.ts` lists each gap as a todo.
+`libraryParity.test.ts` lists each gap as a named test. No gaps are left.
 
 Adding a Library command or read endpoint fails typecheck until the table has
 its entry. `libraryParity.test.ts` then checks that each named tool is
