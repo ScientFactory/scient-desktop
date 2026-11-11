@@ -6,7 +6,19 @@ import {
   citationKeyComparisonValue,
   type ScientReferenceFindingKind,
   type ScientReferenceStatus,
+  type ScientSourceActor,
+  type ScientSourceRecord,
 } from "@scientfactory/scient-sources";
+import type {
+  ScientLibraryLocation,
+  ScientSourceStoreLocation,
+} from "@scientfactory/scient-sources/library-root";
+import {
+  listScientProjectPinnedWorks,
+  pinScientLibrarySource,
+  readScientProjectPins,
+  resolveScientProjectPins,
+} from "@scientfactory/scient-sources/project-pins";
 import {
   publishScientProjectFile,
   ScientProjectFilePublicationError,
@@ -23,7 +35,11 @@ import {
   type ResolveIdentifierBatch,
 } from "../references/ReferenceCheck.ts";
 import { renameCitationKeyInDocument } from "./citationKeyRename.ts";
-import { syncManagedBibliography } from "./ManagedBibliography.ts";
+import {
+  syncManagedBibliography,
+  syncPinnedBibliography,
+  type ManagedBibliographyStatus,
+} from "./ManagedBibliography.ts";
 
 const isPublicationError = Schema.is(ScientProjectFilePublicationError);
 const MAX_RENAMED_DOCUMENT_BYTES = 16 * 1024 * 1024;
@@ -213,6 +229,26 @@ export async function citeLibrarySources(
     }
     return [{ record, citationKey: record.citationKey }];
   });
+  return citationOf(
+    { root: input.root, format: input.format },
+    picked,
+    notFound,
+    bibliography,
+    options,
+  );
+}
+
+async function citationOf(
+  input: {
+    readonly root: string;
+    readonly format: "markdown" | "latex";
+    readonly store?: ScientSourceStoreLocation;
+  },
+  picked: ReadonlyArray<{ readonly record: ScientSourceRecord; readonly citationKey: string }>,
+  notFound: ReadonlyArray<string>,
+  bibliography: ManagedBibliographyStatus,
+  options: { readonly resolveIdentifiers: ResolveIdentifierBatch },
+): Promise<LibraryCitationResult> {
   const unique = [...new Map(picked.map((entry) => [entry.record.sourceId, entry])).values()];
   const report =
     unique.length === 0
@@ -221,6 +257,7 @@ export async function citeLibrarySources(
           {
             root: input.root,
             target: { kind: "library", sourceIds: unique.map(({ record }) => record.sourceId) },
+            ...(input.store ? { store: input.store } : {}),
           },
           options,
         );
@@ -265,4 +302,98 @@ export async function citeLibrarySources(
     bibliography:
       bibliography.files.find((file) => file.name === "references.bib")?.state ?? "absent",
   };
+}
+
+/**
+ * Library backend: each source is pinned into the project first when it is not, then cited by
+ * its project key, never the record's preferred key. Writing the managed files first hydrates
+ * pins this library lacks, so the check reads library records.
+ */
+export async function citePinnedSources(
+  input: {
+    readonly root: string;
+    readonly library: ScientLibraryLocation;
+    readonly sources: ReadonlyArray<string>;
+    readonly format: "markdown" | "latex";
+    readonly actor: ScientSourceActor;
+    readonly resolveLibraryId: (wanted: string) => Promise<string | null>;
+  },
+  options: { readonly resolveIdentifiers: ResolveIdentifierBatch },
+): Promise<LibraryCitationResult> {
+  const notFound: string[] = [];
+  for (const wanted of input.sources) {
+    const lower = citationKeyComparisonValue(wanted);
+    const pins = await readScientProjectPins(input.root);
+    if (
+      pins.some(
+        (pin) => pin.sourceId === wanted || citationKeyComparisonValue(pin.citationKey) === lower,
+      )
+    ) {
+      continue;
+    }
+    const records = await listScientSourceRecords(input.library);
+    const byKey = records.find(
+      (record) =>
+        record.citationKey !== undefined &&
+        citationKeyComparisonValue(record.citationKey) === lower,
+    );
+    const sourceId = byKey?.sourceId ?? (await input.resolveLibraryId(wanted));
+    const pinned = sourceId
+      ? await pinScientLibrarySource({
+          projectRoot: input.root,
+          library: input.library,
+          sourceId,
+          actor: input.actor,
+        })
+      : null;
+    if (!pinned || pinned.outcome === "not-found") notFound.push(wanted);
+  }
+  const bibliography = await syncPinnedBibliography({
+    root: input.root,
+    library: input.library,
+    access: "write",
+    actor: input.actor,
+  });
+  const resolved = await resolveScientProjectPins({
+    projectRoot: input.root,
+    library: input.library,
+    mode: "read",
+    actor: input.actor,
+  });
+  const records = new Map(
+    (await listScientSourceRecords(input.library)).map((record) => [record.sourceId, record]),
+  );
+  const works = await listScientProjectPinnedWorks({
+    projectRoot: input.root,
+    library: input.library,
+  });
+  const picked = input.sources.flatMap((wanted) => {
+    if (notFound.includes(wanted)) return [];
+    const lower = citationKeyComparisonValue(wanted);
+    const match = resolved.find(
+      ({ pin, resolution }) =>
+        pin.sourceId === wanted ||
+        citationKeyComparisonValue(pin.citationKey) === lower ||
+        (resolution.kind === "resolved" &&
+          (resolution.sourceId === wanted ||
+            citationKeyComparisonValue(records.get(resolution.sourceId)?.citationKey ?? "") ===
+              lower)),
+    );
+    if (!match) {
+      notFound.push(wanted);
+      return [];
+    }
+    const libraryId = match.resolution.kind === "resolved" ? match.resolution.sourceId : null;
+    const record =
+      (libraryId ? records.get(libraryId) : undefined) ??
+      works.find((work) => work.projectSourceId === match.pin.sourceId)?.record;
+    return record ? [{ record, citationKey: match.pin.citationKey }] : [];
+  });
+  return citationOf(
+    { root: input.root, format: input.format, store: input.library },
+    picked,
+    notFound,
+    bibliography,
+    options,
+  );
 }

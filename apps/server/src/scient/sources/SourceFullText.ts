@@ -2,7 +2,6 @@
 // @effect-diagnostics globalDate:off -- Stored text carries an interoperable ISO extraction time.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
-import * as NodePath from "node:path";
 
 import {
   fullTextHasText,
@@ -25,18 +24,22 @@ import {
   writeScientSourceFullText,
 } from "@scientfactory/scient-sources/full-text-store";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
+import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import {
-  canonicalizeScientSourceRoot,
   listScientSourceRecords,
   readScientSourceAttachmentPdf,
   readScientSourcePdfBytes,
   readScientSourceRecord,
-  SCIENT_SOURCE_FILES_DIRECTORY,
 } from "@scientfactory/scient-sources/store";
 import type { ScientSourceAttachment, ScientSourceRecord } from "@scientfactory/scient-sources";
 import * as Predicate from "effect/Predicate";
 
 import { makeSourceFullTextCache } from "./SourceFullTextCache.ts";
+import {
+  canonicalScientSourceLocation,
+  scientSourceStoreKey,
+  scientSourceStorePdfPath,
+} from "./SourcesBackend.ts";
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/u;
 const MAX_FAILURE_BYTES = 4_096;
@@ -171,7 +174,7 @@ export async function extractSourcePdfFileFullText(
 }
 
 async function extractMaterialText(
-  root: string,
+  root: ScientSourceStoreLocation,
   material: LibraryMaterial,
 ): Promise<ScientSourceFullText> {
   if (material.byteLength > MAX_PDF_BYTES) return failedText(material, "too-large");
@@ -237,7 +240,10 @@ const cacheText = (text: ScientSourceExtractedFullText) => textCache.add(text);
 
 const searchDocumentFor = (text: ScientSourceExtractedFullText) => cacheText(text).document;
 
-async function readStoredText(root: string, sha256: string): Promise<ScientSourceFullText | null> {
+async function readStoredText(
+  root: ScientSourceStoreLocation,
+  sha256: string,
+): Promise<ScientSourceFullText | null> {
   const cached = textCache.get(sha256);
   if (cached) return cached.text;
   const text = await readScientSourceFullText(root, sha256);
@@ -255,10 +261,10 @@ async function needsExtraction(text: ScientSourceFullText | null): Promise<boole
 
 /** The stored text for one material, extracting it first when it is missing. */
 async function ensureMaterialText(
-  root: string,
+  root: ScientSourceStoreLocation,
   material: LibraryMaterial,
 ): Promise<ScientSourceFullText> {
-  const key = `${root}\0${material.sha256}`;
+  const key = `${scientSourceStoreKey(root)}\0${material.sha256}`;
   const inFlight = extractionsInFlight.get(key);
   if (inFlight) return inFlight;
   const run = (async () => {
@@ -281,11 +287,9 @@ async function ensureMaterialText(
   }
 }
 
-async function pdfFileExists(root: string, sha256: string): Promise<boolean> {
+async function pdfFileExists(root: ScientSourceStoreLocation, sha256: string): Promise<boolean> {
   try {
-    const stats = await NodeFSP.lstat(
-      NodePath.join(root, SCIENT_SOURCE_FILES_DIRECTORY, sha256.slice(0, 2), `${sha256}.pdf`),
-    );
+    const stats = await NodeFSP.lstat(scientSourceStorePdfPath(root, sha256));
     return stats.isFile();
   } catch {
     return false;
@@ -293,8 +297,8 @@ async function pdfFileExists(root: string, sha256: string): Promise<boolean> {
 }
 
 /** Extracts every library PDF that has no stored text, then drops text whose PDF is gone. */
-export async function indexSourceFullText(root: string): Promise<void> {
-  const resolvedRoot = await canonicalizeScientSourceRoot(root);
+export async function indexSourceFullText(root: ScientSourceStoreLocation): Promise<void> {
+  const resolvedRoot = await canonicalScientSourceLocation(root);
   const materials = libraryMaterials(await listScientSourceRecords(resolvedRoot));
   for (const material of materials.values()) {
     // Only a missing file or a small one (a recorded failure) can need work, so a
@@ -316,19 +320,20 @@ const indexingPasses = new Map<string, Promise<void>>();
 const passRequested = new Set<string>();
 
 /** Starts a background indexing pass, or queues one more after the running pass. */
-export function scheduleSourceFullTextIndexing(root: string): Promise<void> {
-  const running = indexingPasses.get(root);
+export function scheduleSourceFullTextIndexing(root: ScientSourceStoreLocation): Promise<void> {
+  const key = scientSourceStoreKey(root);
+  const running = indexingPasses.get(key);
   if (running) {
-    passRequested.add(root);
+    passRequested.add(key);
     return running;
   }
   const pass = (async () => {
     do {
-      passRequested.delete(root);
+      passRequested.delete(key);
       await indexSourceFullText(root).catch(() => undefined);
-    } while (passRequested.has(root));
-  })().finally(() => indexingPasses.delete(root));
-  indexingPasses.set(root, pass);
+    } while (passRequested.has(key));
+  })().finally(() => indexingPasses.delete(key));
+  indexingPasses.set(key, pass);
   return pass;
 }
 
@@ -343,7 +348,10 @@ export interface SourceFullTextStatus {
   readonly unreadable: number;
 }
 
-async function storedTexts(root: string, materials: Map<string, LibraryMaterial>) {
+async function storedTexts(
+  root: ScientSourceStoreLocation,
+  materials: Map<string, LibraryMaterial>,
+) {
   const texts = new Map<string, ScientSourceFullText | null>();
   for (const sha256 of materials.keys()) {
     texts.set(sha256, await readStoredText(root, sha256));
@@ -361,8 +369,10 @@ async function storedTexts(root: string, materials: Map<string, LibraryMaterial>
   return { texts, status };
 }
 
-export async function getSourceFullTextStatus(root: string): Promise<SourceFullTextStatus> {
-  const resolvedRoot = await canonicalizeScientSourceRoot(root);
+export async function getSourceFullTextStatus(
+  root: ScientSourceStoreLocation,
+): Promise<SourceFullTextStatus> {
+  const resolvedRoot = await canonicalScientSourceLocation(root);
   const materials = libraryMaterials(await listScientSourceRecords(resolvedRoot));
   const { status } = await storedTexts(resolvedRoot, materials);
   if (status.pending > 0) void scheduleSourceFullTextIndexing(resolvedRoot);
@@ -397,7 +407,7 @@ const textHash = (text: string) =>
   NodeCrypto.createHash("sha256").update(text, "utf8").digest("hex");
 
 export async function searchSourceFullText(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly query: string;
   readonly limit: number;
   readonly sourceIds?: ReadonlyArray<string>;
@@ -405,7 +415,7 @@ export async function searchSourceFullText(input: {
   readonly hits: ReadonlyArray<SourceFullTextSearchHit>;
   readonly status: SourceFullTextStatus;
 }> {
-  const root = await canonicalizeScientSourceRoot(input.root);
+  const root = await canonicalScientSourceLocation(input.root);
   const records = await listScientSourceRecords(root);
   const wanted = input.sourceIds ? new Set(input.sourceIds) : null;
   const scoped = wanted ? records.filter((record) => wanted.has(record.sourceId)) : records;
@@ -480,13 +490,13 @@ export type SourceTextReadResult =
 
 /** Pages of one source PDF's text, extracting it now if the background pass has not reached it. */
 export async function readSourceText(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly attachmentId?: string;
   readonly fromPage: number;
   readonly maxCharacters: number;
 }): Promise<SourceTextReadResult> {
-  const root = await canonicalizeScientSourceRoot(input.root);
+  const root = await canonicalScientSourceLocation(input.root);
   const record = await readScientSourceRecord(root, input.sourceId);
   if (!record) return { outcome: "source-not-found" };
   const attachments = pdfAttachments(record);
@@ -561,10 +571,10 @@ export type SourceQuoteCheck =
  * several sources is ambiguous.
  */
 export async function checkSourceQuotes(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly quotes: ReadonlyArray<{ readonly quote: string; readonly sourceId?: string }>;
 }): Promise<ReadonlyArray<SourceQuoteCheck>> {
-  const root = await canonicalizeScientSourceRoot(input.root);
+  const root = await canonicalScientSourceLocation(input.root);
   const records = await listScientSourceRecords(root);
   const results: SourceQuoteCheck[] = [];
   for (const { quote, sourceId } of input.quotes) {

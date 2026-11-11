@@ -101,7 +101,13 @@ export const ScientSourceAgentSummary = Schema.Struct({
   tags: Schema.optionalKey(Schema.Array(Schema.String)),
   studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
   topics: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Library mode: whether this project pins it, and a pin this library lacks (snapshot). */
+  pinned: Schema.optionalKey(Schema.Boolean),
+  fromSnapshot: Schema.optionalKey(Schema.Boolean),
 });
+
+/** Library mode: how many other projects on this computer pin the edited record. */
+const AlsoPinnedIn = Schema.optionalKey(Schema.Int.check(Schema.isGreaterThan(0)));
 
 export const ScientSourcesListResult = Schema.Struct({
   records: Schema.Array(ScientSourceAgentSummary).pipe(Schema.check(Schema.isMaxLength(50))),
@@ -152,34 +158,54 @@ export const ScientSourceAgentDetail = Schema.Struct({
       checkedAt: NonEmptyString,
     }),
   ),
+  pinned: Schema.optionalKey(Schema.Boolean),
+  projectNote: Schema.optionalKey(NullableText),
 });
 
-const ScientSourcesListTool = Tool.make("scient_sources_list", {
-  description:
-    "List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
-  parameters: Schema.Struct({
-    query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
-    tags: Schema.optionalKey(ScientSourceFilter.fields.tags),
-    collectionId: Schema.optionalKey(NonEmptyString),
-    type: Schema.optionalKey(ScientSourceType),
-    hasPdf: Schema.optionalKey(Schema.Boolean),
-    studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
-    topic: Schema.optionalKey(NonEmptyString),
-    savedSearchId: Schema.optionalKey(NonEmptyString),
-    inTrash: Schema.optionalKey(Schema.Boolean),
-    offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-    limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
-  }),
-  success: ScientSourcesListResult,
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "List project sources")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, sourceOperation("sources.list", false));
+type SourcesBackendMode = "project" | "library";
+
+const LIST_FILTERS =
+  " query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources.";
+
+const listParameters = {
+  query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
+  tags: Schema.optionalKey(ScientSourceFilter.fields.tags),
+  collectionId: Schema.optionalKey(NonEmptyString),
+  type: Schema.optionalKey(ScientSourceType),
+  hasPdf: Schema.optionalKey(Schema.Boolean),
+  studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
+  topic: Schema.optionalKey(NonEmptyString),
+  savedSearchId: Schema.optionalKey(NonEmptyString),
+  inTrash: Schema.optionalKey(Schema.Boolean),
+  offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+};
+
+const sourcesListTool = (mode: SourcesBackendMode) =>
+  Tool.make("scient_sources_list", {
+    description:
+      mode === "project"
+        ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${LIST_FILTERS}`
+        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${LIST_FILTERS}`,
+    parameters:
+      mode === "project"
+        ? Schema.Struct(listParameters)
+        : Schema.Struct({
+            ...listParameters,
+            scope: Schema.optionalKey(Schema.Literals(["project", "library"])),
+          }),
+    success: ScientSourcesListResult,
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "List project sources")
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, sourceOperation("sources.list", false));
+
+const ScientSourcesListTool = sourcesListTool("project");
 
 const ScientSourceGetTool = Tool.make("scient_sources_get", {
   description:
@@ -201,26 +227,29 @@ export const ScientSourceNoteUpdateResult = Schema.Struct({
   sourceId: NonEmptyString,
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   note: ScientSourceNote,
+  alsoPinnedIn: AlsoPinnedIn,
 });
 
-const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update", {
-  description:
-    "Add, replace or clear (null) one Source's project note. Pass its current revision; if stale, re-read and redo. Markdown bold and italic work.",
-  parameters: Schema.Struct({
-    sourceId: NonEmptyString,
-    expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
-    note: ScientSourceNote,
-  }),
-  success: ScientSourceNoteUpdateResult,
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Update a source note")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, sourceOperation("sources.note.update", true));
+const sourceNoteUpdateTool = (mode: SourcesBackendMode) =>
+  Tool.make("scient_sources_note_update", {
+    description: `Add, replace or clear (null) one Source's ${mode === "project" ? "project note" : "personal note, which follows the paper (a project note: organize pin)"}. Pass its current revision; if stale, re-read and redo. Markdown bold and italic work.`,
+    parameters: Schema.Struct({
+      sourceId: NonEmptyString,
+      expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
+      note: ScientSourceNote,
+    }),
+    success: ScientSourceNoteUpdateResult,
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Update a source note")
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, sourceOperation("sources.note.update", true));
+
+const ScientSourceNoteUpdateTool = sourceNoteUpdateTool("project");
 
 const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
   description:
@@ -251,6 +280,7 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
     citationKeyRenameSkipped: Schema.optionalKey(
       Schema.Array(Schema.Struct({ path: NonEmptyString, reason: NonEmptyString })),
     ),
+    alsoPinnedIn: AlsoPinnedIn,
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -275,6 +305,7 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
     sourceId: NonEmptyString,
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
     restorable: Schema.optionalKey(Schema.Boolean),
+    alsoPinnedIn: AlsoPinnedIn,
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -320,6 +351,7 @@ const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
     revision: Schema.Int.check(Schema.isGreaterThan(0)),
     missingAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     matchingSourceIds: Schema.Array(NonEmptyString),
+    alsoPinnedIn: AlsoPinnedIn,
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -431,6 +463,8 @@ export const ScientSourceAddResult = Schema.Struct({
     }),
   ),
   message: Schema.optionalKey(NonEmptyString),
+  /** Library mode: the key this project cites the added source by. */
+  citationKey: Schema.optionalKey(CitationKey),
   results: Schema.optionalKey(
     Schema.Array(ScientSourceIdentifierAddItem).annotate({
       description:
@@ -467,6 +501,7 @@ const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
     outcome: Schema.Literals(["attached", "unchanged", "stale"]),
     sourceId: NonEmptyString,
     revision: Schema.Int.check(Schema.isGreaterThan(0)),
+    alsoPinnedIn: AlsoPinnedIn,
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -491,6 +526,7 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
     sourceId: NonEmptyString,
     attachmentId: NonEmptyString,
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
+    alsoPinnedIn: AlsoPinnedIn,
   }),
   failure: ScientSourcesToolError,
   dependencies,
@@ -532,40 +568,44 @@ export const ScientSourcesFullTextStatus = Schema.Struct({
   unreadable: TextOffset,
 });
 
-const ScientSourcesSearchTool = Tool.make("scient_sources_search", {
-  description:
-    'Search the full text of Source PDFs: ranked passages with source, PDF and page; quote a "phrase" to require it. status.pending above zero: text is still being read. Read around a hit with scient_sources_read_text; check quotes with scient_sources_quote_check.',
-  parameters: Schema.Struct({
-    query: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
-    sourceIds: Schema.optionalKey(
-      Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(100))),
-    ),
-    limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 }))),
-  }),
-  success: Schema.Struct({
-    hits: Schema.Array(
-      Schema.Struct({
-        sourceId: NonEmptyString,
-        attachmentId: NonEmptyString,
-        title: NullableText,
-        page: PageNumber,
-        start: TextOffset,
-        end: TextOffset,
-        passage: Schema.String,
-        matchedTerms: Schema.Array(Schema.String),
-      }),
-    ),
-    status: ScientSourcesFullTextStatus,
-  }),
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Search source full text")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, sourceOperation("sources.search", false));
+const sourcesSearchTool = (mode: SourcesBackendMode) =>
+  Tool.make("scient_sources_search", {
+    description: `Search the full text of ${mode === "project" ? "Source" : "Library"} PDFs: ranked passages with source, PDF and page${mode === "project" ? "" : " (pinned: pinned here, under citationKey)"}; quote a "phrase" to require it. status.pending above zero: text is still being read. Read around a hit with scient_sources_read_text; check quotes with scient_sources_quote_check.`,
+    parameters: Schema.Struct({
+      query: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
+      sourceIds: Schema.optionalKey(
+        Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(100))),
+      ),
+      limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 25 }))),
+    }),
+    success: Schema.Struct({
+      hits: Schema.Array(
+        Schema.Struct({
+          sourceId: NonEmptyString,
+          attachmentId: NonEmptyString,
+          title: NullableText,
+          page: PageNumber,
+          start: TextOffset,
+          end: TextOffset,
+          passage: Schema.String,
+          matchedTerms: Schema.Array(Schema.String),
+          pinned: Schema.optionalKey(Schema.Boolean),
+          citationKey: Schema.optionalKey(CitationKey),
+        }),
+      ),
+      status: ScientSourcesFullTextStatus,
+    }),
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Search source full text")
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, sourceOperation("sources.search", false));
+
+const ScientSourcesSearchTool = sourcesSearchTool("project");
 
 const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
   description:
@@ -865,20 +905,98 @@ const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
   .annotate(Tool.OpenWorld, false)
   .annotate(ScientOperation, sourceOperation("sources.collections", false));
 
-const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
-  description:
-    "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing); parentCollectionId nests one level; move-collection changes it (null: top level). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.",
-  parameters: Schema.Struct({ change: ScientSourcesOrganizeAction }),
-  success: ScientSourcesOrganizeResult,
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Organize sources")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, sourceOperation("sources.organize", true));
+const ORGANIZE_DESCRIPTION =
+  "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing); parentCollectionId nests one level; move-collection changes it (null: top level). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.";
+
+const organizeTool = <P extends Schema.Top, S extends Schema.Top>(
+  description: string,
+  change: P,
+  success: S,
+) =>
+  Tool.make("scient_sources_organize", {
+    description,
+    parameters: Schema.Struct({ change }),
+    success,
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Organize sources")
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, sourceOperation("sources.organize", true));
+
+const ScientSourcesOrganizeTool = organizeTool(
+  ORGANIZE_DESCRIPTION,
+  ScientSourcesOrganizeAction,
+  ScientSourcesOrganizeResult,
+);
+
+const LibrarySourceIds = Schema.Array(NonEmptyString).pipe(
+  Schema.check(Schema.isMinLength(2), Schema.isMaxLength(20)),
+);
+
+/** Library mode adds pins and merges to the same action list. */
+export const ScientSourcesLibraryOrganizeAction = Schema.Union([
+  ...ScientSourcesOrganizeAction.members,
+  Schema.Struct({
+    action: Schema.Literal("pin"),
+    sourceId: NonEmptyString,
+    note: Schema.optionalKey(NullableText),
+  }),
+  Schema.Struct({ action: Schema.Literal("unpin"), citationKey: NonEmptyString }),
+  Schema.Struct({
+    action: Schema.Literal("merge"),
+    sourceIds: LibrarySourceIds,
+    survivorId: Schema.optionalKey(NonEmptyString),
+  }),
+  Schema.Struct({ action: Schema.Literal("undo-merge"), mergeId: NonEmptyString }),
+]);
+export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
+
+export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
+  ...ScientSourcesOrganizeResult.fields,
+  outcome: Schema.Literals([
+    ...ScientSourcesOrganizeResult.fields.outcome.literals,
+    "pinned",
+    "unpinned",
+    "not-pinned",
+    "merged",
+    "already-merged",
+    "undone",
+    "already-undone",
+    "survivor-missing",
+    "loser-missing",
+  ]),
+  pin: Schema.optionalKey(
+    Schema.Struct({
+      citationKey: CitationKey,
+      sourceId: NonEmptyString,
+      note: Schema.optionalKey(Schema.String),
+    }),
+  ),
+  /** What each merge kept; undo-merge takes its mergeId. */
+  merges: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        mergeId: NonEmptyString,
+        survivorId: NonEmptyString,
+        mergedSourceId: NonEmptyString,
+        keptDifferent: Schema.Array(Schema.String),
+      }),
+    ),
+  ),
+  survivorId: Schema.optionalKey(NonEmptyString),
+  unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
+  alsoPinnedIn: AlsoPinnedIn,
+});
+
+const ScientSourcesLibraryOrganizeTool = organizeTool(
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; pinning again returns the pin, with the new note); unpin by citationKey; merge duplicate sources (undo-merge with mergeId).`,
+  ScientSourcesLibraryOrganizeAction,
+  ScientSourcesLibraryOrganizeResult,
+);
 
 const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
   description:
@@ -1011,46 +1129,48 @@ const ScientSourceSavePageTool = Tool.make("scient_sources_save_page", {
   .annotate(Tool.OpenWorld, true)
   .annotate(ScientOperation, sourceOperation("sources.page.save", true));
 
-const ScientSourcesCiteTool = Tool.make("scient_sources_cite", {
-  description:
-    "Get the citation for Library sources (IDs or citation keys): [@a; @b] in Markdown, \\cite{a,b} in LaTeX. Each is checked first (identifier resolves to the same work, no retraction or notice); problems never block, but tell the user. Keys resolve from references.bib, kept current here; the document must name it.",
-  parameters: Schema.Struct({
-    sources: Schema.Array(NonEmptyString).pipe(
-      Schema.check(Schema.isMinLength(1), Schema.isMaxLength(20)),
-    ),
-    format: Schema.optionalKey(Schema.Literals(["markdown", "latex"])),
-  }),
-  success: Schema.Struct({
-    citation: Schema.String,
-    sources: Schema.Array(
-      Schema.Struct({
-        sourceId: NonEmptyString,
-        citationKey: NonEmptyString,
-        title: NullableText,
-        status: ScientReferenceStatus,
-        problems: Schema.Array(
-          Schema.Struct({
-            kind: Schema.Union([
-              ScientReferenceFindingKind,
-              Schema.Literals(["not-checked", "no-identifier"]),
-            ]),
-            message: NonEmptyString,
-          }),
-        ),
-      }),
-    ),
-    notFound: Schema.Array(Schema.String),
-    bibliography: Schema.Literals(["current", "edited", "unmanaged", "absent"]),
-  }),
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Cite Library sources")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, true)
-  .annotate(ScientOperation, sourceOperation("sources.cite", true));
+const sourcesCiteTool = (mode: SourcesBackendMode) =>
+  Tool.make("scient_sources_cite", {
+    description: `Get the citation for Library sources (IDs or citation keys): [@a; @b] in Markdown, \\cite{a,b} in LaTeX.${mode === "project" ? "" : " Each is pinned here first and cited by this project's key."} Each is checked first (identifier resolves to the same work, no retraction or notice); problems never block, but tell the user. Keys resolve from references.bib, kept current here; the document must name it.`,
+    parameters: Schema.Struct({
+      sources: Schema.Array(NonEmptyString).pipe(
+        Schema.check(Schema.isMinLength(1), Schema.isMaxLength(20)),
+      ),
+      format: Schema.optionalKey(Schema.Literals(["markdown", "latex"])),
+    }),
+    success: Schema.Struct({
+      citation: Schema.String,
+      sources: Schema.Array(
+        Schema.Struct({
+          sourceId: NonEmptyString,
+          citationKey: NonEmptyString,
+          title: NullableText,
+          status: ScientReferenceStatus,
+          problems: Schema.Array(
+            Schema.Struct({
+              kind: Schema.Union([
+                ScientReferenceFindingKind,
+                Schema.Literals(["not-checked", "no-identifier"]),
+              ]),
+              message: NonEmptyString,
+            }),
+          ),
+        }),
+      ),
+      notFound: Schema.Array(Schema.String),
+      bibliography: Schema.Literals(["current", "edited", "unmanaged", "absent"]),
+    }),
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Cite Library sources")
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, true)
+    .annotate(ScientOperation, sourceOperation("sources.cite", true));
+
+const ScientSourcesCiteTool = sourcesCiteTool("project");
 
 export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesListTool,
@@ -1078,5 +1198,35 @@ export const ScientSourcesToolkit = Toolkit.make(
   ScientSourcesZoteroSendTool,
   ScientSourcesCollectionsTool,
   ScientSourcesOrganizeTool,
+  ScientSourcesBulkUpdateTool,
+);
+
+/** The same tools in the same order, with the library backend's scope, pins and merges. */
+export const ScientSourcesLibraryToolkit = Toolkit.make(
+  sourcesListTool("library"),
+  ScientSourceGetTool,
+  sourceNoteUpdateTool("library"),
+  ScientSourceMetadataUpdateTool,
+  ScientSourceRemoveTool,
+  ScientSourceRestoreTool,
+  ScientSourceRevertTool,
+  ScientSourceCheckTool,
+  ScientSourceAddTool,
+  ScientSourceAttachPdfTool,
+  ScientSourceDetachPdfTool,
+  ScientSourcesBibliographyTool,
+  sourcesCiteTool("library"),
+  sourcesSearchTool("library"),
+  ScientSourceReadTextTool,
+  ScientSourceQuoteCheckTool,
+  ScientSourceSavePageTool,
+  ScientSourcesImportFileTool,
+  ScientSourcesExportTool,
+  ScientSourcesZoteroBrowseTool,
+  ScientSourcesZoteroImportTool,
+  ScientSourcesZoteroRefreshTool,
+  ScientSourcesZoteroSendTool,
+  ScientSourcesCollectionsTool,
+  ScientSourcesLibraryOrganizeTool,
   ScientSourcesBulkUpdateTool,
 );

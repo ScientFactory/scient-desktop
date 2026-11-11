@@ -17,6 +17,7 @@ import {
   readScientSourceCategories,
   writeScientSourceCategories,
 } from "@scientfactory/scient-sources/categories-store";
+import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
@@ -26,6 +27,7 @@ import { ARXIV_IDS_PER_REQUEST, lookupArxivIds } from "./ArxivIdentifierLookup.t
 import { METADATA_USER_AGENT, requestMetadata, type MetadataRequest } from "./metadataHttp.ts";
 import { createSerialRequestLane, runWithNcbiRequestLimit } from "./NcbiRequestLane.ts";
 import type { RequestPace, ResearchKeys } from "./SourceIdentifierResolver.ts";
+import { scientSourceStoreKey } from "./SourcesBackend.ts";
 
 /** Sources looked up together; each registry answers a chunk in one or two requests. */
 const CHUNK = 50;
@@ -443,13 +445,13 @@ const seededTopics = new Map<string, ReadonlyArray<ScientSourceTopic>>();
 
 /** Keeps arXiv categories a lookup just returned, so categorizing the new source needs no call. */
 export function seedSourceCategories(
-  root: string,
+  root: ScientSourceStoreLocation,
   sourceId: string,
   topics: ReadonlyArray<ScientSourceTopic> | undefined,
 ): void {
   if (!topics || topics.length === 0) return;
   if (seededTopics.size >= 1_000) seededTopics.clear();
-  seededTopics.set(`${root}\0${sourceId}`, topics);
+  seededTopics.set(`${scientSourceStoreKey(root)}\0${sourceId}`, topics);
 }
 
 function needsLookup(
@@ -469,7 +471,7 @@ function needsLookup(
  * a pass that stops part way resumes where it left off.
  */
 export async function categorizeSources(
-  root: string,
+  root: ScientSourceStoreLocation,
   options: SourceCategoryOptions = {},
 ): Promise<{ readonly categorized: number }> {
   const now = (options.now ?? (() => new Date()))();
@@ -482,20 +484,24 @@ export async function categorizeSources(
     const chunk = pending.slice(start, start + CHUNK);
     const seeded = new Map(
       chunk.flatMap((record) => {
-        const topics = seededTopics.get(`${root}\0${record.sourceId}`);
+        const topics = seededTopics.get(`${scientSourceStoreKey(root)}\0${record.sourceId}`);
         return topics ? [[record.sourceId, topics] as const] : [];
       }),
     );
     const found = await lookupSourceCategories(chunk, { ...options, seeded });
     await writeScientSourceCategories(root, Object.fromEntries(found));
-    for (const sourceId of seeded.keys()) seededTopics.delete(`${root}\0${sourceId}`);
+    for (const sourceId of seeded.keys())
+      seededTopics.delete(`${scientSourceStoreKey(root)}\0${sourceId}`);
     categorized += found.size;
   }
   return { categorized };
 }
 
 /** Forgets a source's categories, so the next pass looks them up again. */
-export async function forgetSourceCategories(root: string, sourceId: string): Promise<void> {
+export async function forgetSourceCategories(
+  root: ScientSourceStoreLocation,
+  sourceId: string,
+): Promise<void> {
   await writeScientSourceCategories(root, { [sourceId]: null });
 }
 
@@ -515,22 +521,23 @@ export function readSourceCategoryKeysFrom(read: () => Promise<ResearchKeys>): v
 
 /** Runs one background pass per project at a time, and another if asked again meanwhile. */
 export function scheduleSourceCategorization(
-  root: string,
+  root: ScientSourceStoreLocation,
   options: SourceCategoryOptions = {},
 ): Promise<void> {
   if (!lookupsEnabled) return Promise.resolve();
-  const running = passes.get(root);
+  const key = scientSourceStoreKey(root);
+  const running = passes.get(key);
   if (running) {
-    passRequested.add(root);
+    passRequested.add(key);
     return running;
   }
   const pass = (async () => {
     do {
-      passRequested.delete(root);
+      passRequested.delete(key);
       const keys = options.keys ?? (await readKeys().catch((): ResearchKeys => ({})));
       await categorizeSources(root, { ...options, keys }).catch(() => undefined);
-    } while (passRequested.has(root));
-  })().finally(() => passes.delete(root));
-  passes.set(root, pass);
+    } while (passRequested.has(key));
+  })().finally(() => passes.delete(key));
+  passes.set(key, pass);
   return pass;
 }

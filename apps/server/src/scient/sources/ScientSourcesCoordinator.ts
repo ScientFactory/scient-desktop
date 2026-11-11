@@ -48,6 +48,7 @@ import {
   type ZoteroImportScope,
   zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
+import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import {
   bulkUpdateScientSources,
   createScientSourceCollection,
@@ -390,7 +391,7 @@ export type AgentSourceAddResult =
  */
 export async function addAgentSource(
   input: {
-    readonly root: string;
+    readonly root: ScientSourceStoreLocation;
     readonly candidate: ScientSourceCandidate;
     readonly allowPossibleMetadataMatch?: boolean;
     readonly enrich?: boolean;
@@ -521,7 +522,7 @@ export type SourceCheckRegistryOutcome =
  * keeps an earlier verdict for the same identifier.
  */
 export async function checkSourceIdentifier(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly actor: ScientSourceActor;
   readonly resolveIdentifier?: ResolveSourceIdentifier;

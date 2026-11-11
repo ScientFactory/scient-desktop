@@ -28,6 +28,7 @@ import {
   sourceIdentifierRegistryName,
 } from "@scientfactory/scient-sources";
 import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
+import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
@@ -452,7 +453,7 @@ interface Collected {
 }
 
 async function collectLibrary(
-  root: string,
+  root: ScientSourceStoreLocation,
   sourceIds: ReadonlyArray<string> | undefined,
 ): Promise<Collected> {
   const wanted = sourceIds ? new Set(sourceIds) : null;
@@ -681,7 +682,12 @@ function subjectFindings(subject: Subject, outcome: Outcome): ReadonlyArray<Plac
 const SEVERITY_ORDER = { problem: 0, warning: 1, note: 2 } as const;
 
 export async function checkReferences(
-  input: { readonly root: string; readonly target: ScientReferenceCheckTarget },
+  input: {
+    readonly root: string;
+    readonly target: ScientReferenceCheckTarget;
+    /** Where library targets read records; the project's own store when absent. */
+    readonly store?: ScientSourceStoreLocation;
+  },
   options: ReferenceCheckOptions,
 ): Promise<ScientReferenceCheckReport> {
   const root = await canonicalRoot(input.root);
@@ -689,7 +695,7 @@ export async function checkReferences(
   const startedAt = now().getTime();
   const collected =
     input.target.kind === "library"
-      ? await collectLibrary(root, input.target.sourceIds)
+      ? await collectLibrary(input.store ?? root, input.target.sourceIds)
       : await collectDocument(root, input.target.path);
   const scope = input.target.kind === "library" ? "library" : collected.files[0]!;
   const notes = [...collected.notes];

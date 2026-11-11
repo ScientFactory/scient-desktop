@@ -23,6 +23,12 @@ import {
   publishScientProjectFile,
   ScientProjectFilePublicationError,
 } from "@scientfactory/scient-sources/project-files";
+import type { ScientSourceActor, ScientSourceRecord } from "@scientfactory/scient-sources";
+import type { ScientLibraryLocation } from "@scientfactory/scient-sources/library-root";
+import {
+  listScientProjectPinnedWorks,
+  resolveScientProjectPins,
+} from "@scientfactory/scient-sources/project-pins";
 import * as Schema from "effect/Schema";
 
 const MANAGED_BIBLIOGRAPHY_FILES = ["references.bib", "references.json"] as const;
@@ -31,6 +37,8 @@ export type ManagedBibliographyFileName = (typeof MANAGED_BIBLIOGRAPHY_FILES)[nu
 /** What Scient last wrote, so a later difference in the project file is a hand edit. */
 const WRITTEN_COPY_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/bibliography`;
 const MAX_BIBLIOGRAPHY_BYTES = 8 * 1024 * 1024;
+/** The library backend keeps its written copies beside the pins. */
+const PINNED_COPY_DIRECTORY = ".scient/library/bibliography";
 
 export type ManagedBibliographyFileState =
   /** Matches the Library. */
@@ -93,8 +101,12 @@ async function readProjectFile(filePath: string): Promise<FileRead> {
 }
 
 /** The written copies live in Scient's own folder, reached only through real project folders. */
-async function readWrittenCopy(root: string, name: ManagedBibliographyFileName): Promise<FileRead> {
-  const directory = NodePath.join(root, WRITTEN_COPY_DIRECTORY);
+async function readWrittenCopy(
+  root: string,
+  copies: string,
+  name: ManagedBibliographyFileName,
+): Promise<FileRead> {
+  const directory = NodePath.join(root, copies);
   try {
     await assertScientProjectDirectory(root, directory);
   } catch (error) {
@@ -105,10 +117,11 @@ async function readWrittenCopy(root: string, name: ManagedBibliographyFileName):
 
 async function writeWrittenCopy(
   root: string,
+  copies: string,
   name: ManagedBibliographyFileName,
   contents: string,
 ): Promise<void> {
-  const directory = NodePath.join(root, WRITTEN_COPY_DIRECTORY);
+  const directory = NodePath.join(root, copies);
   await assertScientProjectDirectory(root, directory, { create: true });
   const filePath = NodePath.join(directory, name);
   const temporary = `${filePath}.${NodeCrypto.randomUUID()}.tmp`;
@@ -155,6 +168,7 @@ function inLane<A>(root: string, run: () => Promise<A>): Promise<A> {
 
 async function syncFile(input: {
   readonly root: string;
+  readonly copies: string;
   readonly name: ManagedBibliographyFileName;
   readonly next: string;
   readonly hasSources: boolean;
@@ -164,7 +178,7 @@ async function syncFile(input: {
   const target = NodePath.join(input.root, name);
   const [current, copy] = await Promise.all([
     readProjectFile(target),
-    readWrittenCopy(input.root, name),
+    readWrittenCopy(input.root, input.copies, name),
   ]);
   const edited = (contents: string | null): ManagedBibliographyFileStatus =>
     copy.kind === "file"
@@ -197,7 +211,7 @@ async function syncFile(input: {
       }
     }
     if (copy.kind !== "file" || copy.contents !== next) {
-      await writeWrittenCopy(input.root, name, next);
+      await writeWrittenCopy(input.root, input.copies, name, next);
     }
     return { name, state: "current", changes: null };
   };
@@ -222,30 +236,32 @@ async function syncFile(input: {
   return edited(current.contents);
 }
 
+/** What one sync renders and where it keeps its written copies. */
+interface BibliographyInput {
+  readonly copies: string;
+  /** Null when the project has no Library yet. */
+  readonly load: () => Promise<ReadonlyArray<ScientSourceRecord> | null>;
+}
+
 async function syncInLane(
   root: string,
   replaceEdited: ReadonlySet<ManagedBibliographyFileName>,
+  input: BibliographyInput,
 ): Promise<ManagedBibliographyStatus> {
-  if (!(await libraryExists(root))) {
+  const records = await input.load();
+  if (!records) {
     return {
       files: MANAGED_BIBLIOGRAPHY_FILES.map((name) => ({ name, state: "absent", changes: null })),
       citedSourceCount: 0,
     };
   }
-  // This write reports a change like any other; the records are read after it.
-  backfilling.add(root);
-  try {
-    await assignMissingScientSourceCitationKeys(root);
-  } finally {
-    backfilling.delete(root);
-  }
-  const records = await listScientSourceRecords(root);
   const rendered = renderManagedBibliography(records);
   const files: ManagedBibliographyFileStatus[] = [];
   for (const name of MANAGED_BIBLIOGRAPHY_FILES) {
     files.push(
       await syncFile({
         root,
+        copies: input.copies,
         name,
         next: name === "references.bib" ? rendered.bibtex : rendered.cslJson,
         hasSources: records.length > 0,
@@ -263,6 +279,21 @@ async function syncInLane(
   };
 }
 
+const projectLibraryInput = (root: string): BibliographyInput => ({
+  copies: WRITTEN_COPY_DIRECTORY,
+  load: async () => {
+    if (!(await libraryExists(root))) return null;
+    // This write reports a change like any other; the records are read after it.
+    backfilling.add(root);
+    try {
+      await assignMissingScientSourceCitationKeys(root);
+    } finally {
+      backfilling.delete(root);
+    }
+    return listScientSourceRecords(root);
+  },
+});
+
 /**
  * Writes `references.bib` and `references.json` from the Library. A file edited
  * by hand, or one Scient did not write, is never overwritten unless the person
@@ -273,7 +304,42 @@ export async function syncManagedBibliography(
   options: { readonly replaceEdited?: ReadonlyArray<ManagedBibliographyFileName> } = {},
 ): Promise<ManagedBibliographyStatus> {
   const canonical = await canonicalizeScientSourceRoot(root);
-  return inLane(canonical, () => syncInLane(canonical, new Set(options.replaceEdited ?? [])));
+  return inLane(canonical, () =>
+    syncInLane(canonical, new Set(options.replaceEdited ?? []), projectLibraryInput(canonical)),
+  );
+}
+
+/**
+ * The library backend's managed files: the project's pinned works under their project keys,
+ * from the pin's snapshot when this library lacks the record. With write authority the pins
+ * are resolved first, so unresolved ones are hydrated; the state machine is the same.
+ */
+export async function syncPinnedBibliography(input: {
+  readonly root: string;
+  readonly library: ScientLibraryLocation | null;
+  readonly access: "read" | "write";
+  readonly actor: ScientSourceActor;
+  readonly replaceEdited?: ReadonlyArray<ManagedBibliographyFileName>;
+}): Promise<ManagedBibliographyStatus> {
+  const canonical = await canonicalizeScientSourceRoot(input.root);
+  const library = input.library;
+  return inLane(canonical, () =>
+    syncInLane(canonical, new Set(input.replaceEdited ?? []), {
+      copies: PINNED_COPY_DIRECTORY,
+      load: async () => {
+        if (library && input.access === "write") {
+          await resolveScientProjectPins({
+            projectRoot: canonical,
+            library,
+            mode: "write",
+            actor: input.actor,
+          });
+        }
+        const works = await listScientProjectPinnedWorks({ projectRoot: canonical, library });
+        return works.map((work) => work.record);
+      },
+    }),
+  );
 }
 
 const scheduled = new Map<string, { again: boolean }>();

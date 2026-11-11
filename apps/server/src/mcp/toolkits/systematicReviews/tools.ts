@@ -26,6 +26,8 @@ const ReviewRecord = Schema.Struct({
   issuedYear: Schema.NullOr(Schema.Int),
   containerTitle: NullableText,
   abstract: NullableText,
+  /** Library mode: a record this library lacks, served from the review's snapshot or missing. */
+  label: Schema.optionalKey(Schema.Literals(["From this review's snapshot", "Details missing"])),
 });
 
 export const ScientSystematicReviewsReadResult = Schema.Struct({

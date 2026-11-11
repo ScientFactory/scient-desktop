@@ -12,7 +12,7 @@ import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
 import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
 import { ScientSystematicReviewsToolkit } from "./toolkits/systematicReviews/tools.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
-import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { ScientSourcesLibraryToolkit, ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 import { ScientThreadsToolkit } from "./toolkits/threads/tools.ts";
 
 export function makeScientOperationCatalog(tools: ReadonlyArray<Tool.Any>) {
@@ -49,4 +49,9 @@ export const scientTools = [
   ...Object.values(ScientThreadsToolkit.tools),
 ];
 export type ScientToolName = (typeof scientTools)[number]["name"];
+
+/** Library-backend definitions of listed tools: same names and operations, other schemas. */
+export const scientToolVariants: ReadonlyArray<Tool.Any> = Object.values(
+  ScientSourcesLibraryToolkit.tools,
+).filter((tool) => !(scientTools as ReadonlyArray<Tool.Any>).includes(tool));
 export const scientOperationCatalog = makeScientOperationCatalog(scientTools);

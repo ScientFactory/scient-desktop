@@ -32,6 +32,7 @@ import {
   safeZoteroMessage,
   sendSourcesToZotero,
 } from "../../../scient/sources/ZoteroSync.ts";
+import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
 import { resolveScientSourcesProject } from "./handlers.ts";
 import { ScientSourcesToolError } from "./tools.ts";
 
@@ -50,6 +51,13 @@ const zoteroAttempt = <A>(run: () => Promise<A>) =>
 /** The project and the Zotero access an agent in it has, following the Accounts switches. */
 const agentZotero = Effect.fn("ScientSourcesToolkit.zoteroAccess")(function* () {
   const project = yield* resolveScientSourcesProject();
+  // Zotero runs through the durable import operations, which still serve project stores only.
+  if ((yield* ScientSourcesBackend) === "library") {
+    return yield* new ScientSourcesToolError({
+      code: "operation-failed",
+      message: "This works with project Sources only for now.",
+    });
+  }
   const zotero: ZoteroAccess = {
     ...(yield* ZoteroTransports),
     webKey: yield* zoteroKeyLookup({ actor: "agent", projectId: project.projectId }),

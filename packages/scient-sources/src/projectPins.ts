@@ -324,6 +324,33 @@ export async function unpinScientLibrarySource(input: {
   });
 }
 
+/** A deliberate rename of a pin's project key; the caller rewrites this project's documents. */
+export async function renameScientProjectPinKey(input: {
+  readonly projectRoot: string;
+  readonly citationKey: string;
+  readonly to: string;
+}): Promise<
+  | { readonly outcome: "renamed" | "unchanged"; readonly pin: ScientProjectPin }
+  | { readonly outcome: "not-pinned" | "taken" }
+> {
+  const root = await projectRootFor(input.projectRoot);
+  return withPinsLock(root, async () => {
+    const document = await readPinsDocument(root);
+    const found = findPin(document.pins, input.citationKey);
+    if (!found) return { outcome: "not-pinned" };
+    if (found.pin.citationKey === input.to) return { outcome: "unchanged", pin: found.pin };
+    const other = findPin(document.pins, input.to);
+    if (other && other !== found) return { outcome: "taken" };
+    const pin: ScientProjectPin = { ...found.pin, citationKey: input.to };
+    await writePinsDocument(
+      root,
+      document,
+      document.pins.map((stored) => (stored === found ? { ...stored, pin } : stored)),
+    );
+    return { outcome: "renamed", pin };
+  });
+}
+
 /** Sets or clears the project note on a pin; the library record's personal note is untouched. */
 export async function setScientProjectPinNote(input: {
   readonly projectRoot: string;

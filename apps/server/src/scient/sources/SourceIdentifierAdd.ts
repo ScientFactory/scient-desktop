@@ -14,6 +14,7 @@ import {
   sourceIdentifierLabel,
   sourceIdentifierRegistryName,
 } from "@scientfactory/scient-sources";
+import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import { importScientSource, listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import * as Context from "effect/Context";
 
@@ -119,7 +120,7 @@ function existingItem(
  */
 export async function addScientSourcesByIdentifier(
   input: {
-    readonly root: string;
+    readonly root: ScientSourceStoreLocation;
     readonly entries: ReadonlyArray<string>;
     readonly actor: ScientSourceActor;
     readonly enrich?: boolean;

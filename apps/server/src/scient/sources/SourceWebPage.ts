@@ -12,6 +12,7 @@ import {
   type ScientSourceCandidate,
   type ScientSourceWebPage,
 } from "@scientfactory/scient-sources";
+import type { ScientSourceStoreLocation } from "@scientfactory/scient-sources/library-root";
 import {
   listScientSourceRecords,
   readScientSourceRecord,
@@ -55,7 +56,7 @@ function pageSourceKey(page: ScientSourceWebPage, identifiers: ReadonlyArray<str
 
 /** Adds the passage to the note of whatever revision the source has now. */
 async function savePassage(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly passage: string;
   readonly actor: ScientSourceActor;
@@ -85,7 +86,7 @@ async function savePassage(input: {
  */
 export async function saveWebPageSource(
   input: {
-    readonly root: string;
+    readonly root: ScientSourceStoreLocation;
     readonly page: ScientSourceWebPage;
     readonly actor: ScientSourceActor;
     readonly resolveIdentifier?: ResolveSourceIdentifier;

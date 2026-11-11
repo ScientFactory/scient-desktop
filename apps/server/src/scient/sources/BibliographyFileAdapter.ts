@@ -22,6 +22,7 @@ import {
   type ScientSourceActor,
   type ScientSourceCandidate,
   type ScientSourceImportOperation,
+  type ScientSourceRecord,
   type ScientSourceVerification,
 } from "@scientfactory/scient-sources";
 import {
@@ -400,8 +401,10 @@ export async function exportBibliography(input: {
   readonly format: BibliographyFormat;
   readonly sourceIds?: ReadonlyArray<string>;
   readonly includeNotes?: boolean;
+  /** The records to export from, under the keys to write; the project store's when absent. */
+  readonly records?: ReadonlyArray<ScientSourceRecord>;
 }) {
-  const records = await listScientSourceRecords(input.root);
+  const records = input.records ?? (await listScientSourceRecords(input.root));
   const wanted = input.sourceIds ? new Set(input.sourceIds) : null;
   const selected = wanted ? records.filter((record) => wanted.has(record.sourceId)) : records;
   const missing = wanted

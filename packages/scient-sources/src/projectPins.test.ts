@@ -17,6 +17,7 @@ import {
   pinScientLibrarySource,
   readScientProjectPins,
   refreshScientProjectPinSnapshots,
+  renameScientProjectPinKey,
   resolveScientProjectPins,
   setScientProjectPinNote,
   unpinScientLibrarySource,
@@ -479,5 +480,37 @@ describe("project pins", () => {
       { kind: "resolved", sourceId: records[0]?.sourceId, by: "hydrated" },
       { kind: "resolved", sourceId: records[0]?.sourceId, by: "metadata" },
     ]);
+  });
+
+  it("renames a pin's project key, refusing one another pin uses", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const first = await addRecord(library, "A", { citationKey: "smith2020" });
+    const second = await addRecord(library, "B", { citationKey: "jones2021" });
+    for (const record of [first, second]) {
+      await pinScientLibrarySource({
+        projectRoot,
+        library,
+        sourceId: record.sourceId,
+        actor: "agent",
+      });
+    }
+
+    expect(
+      await renameScientProjectPinKey({ projectRoot, citationKey: "smith2020", to: "Jones2021" }),
+    ).toEqual({ outcome: "taken" });
+    expect(
+      await renameScientProjectPinKey({
+        projectRoot,
+        citationKey: "SMITH2020",
+        to: "lovelace2020",
+      }),
+    ).toMatchObject({ outcome: "renamed", pin: { sourceId: first.sourceId } });
+    expect((await readScientProjectPins(projectRoot)).map((pin) => pin.citationKey)).toEqual([
+      "jones2021",
+      "lovelace2020",
+    ]);
+    expect((await readScientSourceRecord(library, first.sourceId))?.citationKey).toBe("smith2020");
   });
 });
