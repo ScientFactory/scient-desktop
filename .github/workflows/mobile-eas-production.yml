@@ -49,10 +49,6 @@ on:
           - ios
           - android
           - all
-      version:
-        description: "Optional build version override (blank uses profile default; store overrides are committed)"
-        required: false
-        type: string
       message:
         description: "OTA update message (mode=update only)"
         required: false
@@ -114,9 +110,8 @@ jobs:
         if: github.event_name == 'workflow_dispatch' && inputs.profile == 'testflight'
         env:
           PLATFORM: ${{ inputs.platform }}
-          VERSION: ${{ inputs.version }}
         run: |
-          if [ "$PLATFORM" != "ios" ] || [ -n "$VERSION" ]; then
+          if [ "$PLATFORM" != "ios" ]; then
             echo "::error::TestFlight uses platform=ios and its fixed version. Use production for a committed store version."
             exit 1
           fi
@@ -142,21 +137,13 @@ jobs:
             echo "EXPO_PRODUCTION_TOKEN is not available; skipping EAS production job."
           fi
 
-      - id: version_app_token
-        name: Mint release app token for version override
-        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build' && inputs.version != '' && inputs.profile != 'testflight'
-        uses: actions/create-github-app-token@v2
-        with:
-          app-id: ${{ secrets.RELEASE_APP_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-          owner: ${{ github.repository_owner }}
-
+      # SCIENT-FORK: no version-override input. It committed and pushed to the dispatched
+      # branch; app versions change through reviewed PRs and EAS numbers each build.
       - name: Checkout
         if: steps.expo-token.outputs.present == 'true'
         uses: actions/checkout@v6
         with:
           fetch-depth: 0
-          token: ${{ steps.version_app_token.outputs.token || github.token }}
           # No sparse-checkout here: it makes actions/checkout fetch with
           # --filter=blob:none, and eas-cli archives the project via
           # `git clone --depth 1 file://<workspace>`, which fails (exit 128)
@@ -210,49 +197,6 @@ jobs:
           }
           appendFileSync(process.env.GITHUB_ENV, `T3CODE_ANDROID_GOOGLE_SERVICES_FILE=${googleServicesFile}\n`);
           NODE
-
-      - name: Apply manual version override
-        if: steps.version_app_token.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ steps.version_app_token.outputs.token }}
-          APP_SLUG: ${{ steps.version_app_token.outputs.app-slug }}
-          RELEASE_VERSION: ${{ inputs.version }}
-        run: |
-          if [ "$GITHUB_REF_TYPE" != "branch" ]; then
-            echo "Version overrides require dispatching this workflow from a branch; received $GITHUB_REF_TYPE '$GITHUB_REF_NAME'." >&2
-            exit 1
-          fi
-          if ! [[ "$RELEASE_VERSION" =~ ^[0-9]+(\.[0-9]+){1,2}$ ]]; then
-            echo "Version override must contain two or three dot-separated integers; received '$RELEASE_VERSION'." >&2
-            exit 1
-          fi
-
-          node --input-type=module -e '
-            import fs from "node:fs";
-            const path = "apps/mobile/app.config.ts";
-            const source = fs.readFileSync(path, "utf8");
-            const next = source.replace(
-              /^(  version: repoEnv\.T3CODE_MOBILE_VERSION \?\? ")[^"]+(".*)$/m,
-              `$1${process.env.RELEASE_VERSION}$2`,
-            );
-            if (next === source && !source.includes(`  version: repoEnv.T3CODE_MOBILE_VERSION ?? "${process.env.RELEASE_VERSION}"`)) {
-              throw new Error("Could not update app version");
-            }
-            fs.writeFileSync(path, next);
-          '
-          vp fmt apps/mobile/app.config.ts
-
-          if git diff --quiet -- apps/mobile/app.config.ts; then
-            echo "app.config.ts is already at $RELEASE_VERSION; no version commit needed."
-            exit 0
-          fi
-
-          user_id="$(gh api "/users/${APP_SLUG}[bot]" --jq .id)"
-          git config user.name "${APP_SLUG}[bot]"
-          git config user.email "${user_id}+${APP_SLUG}[bot]@users.noreply.github.com"
-          git add apps/mobile/app.config.ts
-          git commit --no-verify -m "chore(mobile): bump app version to $RELEASE_VERSION"
-          git push origin "HEAD:refs/heads/${GITHUB_REF_NAME}"
 
       - name: Summarize manual build version
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build'

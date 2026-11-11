@@ -29,8 +29,9 @@ values are in `.env.example`.
 2. **Apple Developer Program** on team `XR49G75382`, with the three bundle IDs and an
    App Store Connect record for `com.scientfactory.mobile`. Give EAS an App Store
    Connect API key (`eas credentials`) so it manages signing, the push key and
-   TestFlight uploads. Put the App Store Connect app ID in `eas.json` as
-   `submit.production.ios.ascAppId`.
+   TestFlight uploads. `eas submit` finds the app from that App Store Connect record
+   once it exists; to pin it, add the record's Apple ID to `eas.json` as
+   `submit.production.ios.ascAppId` in a reviewed PR.
 3. **Google Play Console** with an app for each package you publish, Play App
    Signing turned on, and a service account with release permission. Upload the
    service-account JSON to EAS (`eas credentials`, Android, Google Service Account).
@@ -72,7 +73,6 @@ Repository settings, Actions. Variables are public values; secrets are not.
 | `MOBILE_IOS_LOCAL_BUILDS`                              | variable | optional; `true` builds iOS on the macOS runner instead of EAS        |
 | `MOBILE_IOS_ALLOW_XCODE_RC`                            | variable | optional; accepts the Xcode release candidate                         |
 | `MOBILE_SOURCEMAPS_R2`                                 | secret   | optional; uploads source maps for relay crash stacks                  |
-| `RELEASE_APP_ID`, `RELEASE_APP_PRIVATE_KEY`            | secret   | optional; only the production version-override dispatch commits       |
 | `SCIENT_MOBILE_FORK_PREVIEWS`                          | variable | `true` also runs previews for fork PRs                                |
 | `SCIENT_MOBILE_APK_MIRROR`                             | variable | `true` turns on the Android APK mirror                                |
 | `GOOGLE_PLAY_SERVICE_ACCOUNT_JSON`                     | secret   | Mobile Android APK                                                    |
@@ -138,7 +138,13 @@ Mobile EAS Production. It publishes an OTA update to binaries whose native finge
 matches. When a fingerprint has no build, it builds and submits: Android to the Play
 `internal` track, and the iOS `testflight` profile to TestFlight. App Store binaries
 come from a dispatch with `mode=build`, `profile=production` and `platform=ios`
-(or `all`). `mode=update` forces an OTA update. Build numbers increase on EAS.
+(or `all`). `mode=update` forces an OTA update.
+
+**Versions.** The app version is the default in `apps/mobile/app.config.ts`; the
+`testflight` profile in `eas.json` pins its own. Change either in a reviewed PR,
+never by a workflow commit. Build numbers come from EAS (`appVersionSource: remote`,
+`autoIncrement`). Apple closes a version after App Store approval, so raise the
+version in a PR before the next App Store build.
 
 **TestFlight.** Builds submitted by EAS appear in App Store Connect after processing.
 Add internal testers there; external testers need beta review.
