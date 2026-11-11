@@ -12,6 +12,7 @@ import { catalogueFont } from "@scientfactory/scient-markdown";
 const W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main";
 const BODY_FONT = `<w:rFonts w:ascii="Calibri" w:hAnsi="Calibri" w:eastAsia="Calibri" w:cs="Arial"/>`;
 const CODE_FONT = `<w:rFonts w:ascii="Consolas" w:hAnsi="Consolas" w:cs="Consolas"/>`;
+const HYPERLINK_LOOK = `<w:color w:val="0563C1"/><w:u w:val="single"/>`;
 const HEADING_COLOR = "1F3864";
 
 interface StyleSpec {
@@ -279,7 +280,7 @@ export const SCIENT_REFERENCE_STYLES: ReadonlyArray<StyleSpec> = [
     type: "character",
     id: "Hyperlink",
     name: "Hyperlink",
-    rPr: `<w:color w:val="0563C1"/><w:u w:val="single"/>`,
+    rPr: HYPERLINK_LOOK,
   },
   {
     type: "table",
@@ -364,6 +365,8 @@ export const DEFAULT_WORD_BASE_FONT: WordBaseFont = { sizePoints: 11, family: nu
 export interface WordLocalFont {
   readonly size?: number | undefined;
   readonly family?: string | undefined;
+  /** Inside a link: the run keeps the link's look, since a run carries only one style. */
+  readonly link?: boolean | undefined;
 }
 
 const escapeXml = (text: string): string =>
@@ -383,7 +386,7 @@ const familyFonts = (family: string | null): string => {
 
 /** Word style name for a local font: "12 pt", "Times New Roman" or "Times New Roman 12 pt". */
 export const wordFontStyleName = (font: WordLocalFont): string =>
-  [font.family, font.size === undefined ? null : `${font.size} pt`]
+  [font.family, font.size === undefined ? null : `${font.size} pt`, font.link ? "link" : null]
     .filter((part) => part !== undefined && part !== null)
     .join(" ");
 
@@ -397,6 +400,7 @@ function fontStyle(font: WordLocalFont): StyleSpec {
     rPr: [
       font.family === undefined ? "" : familyFonts(font.family),
       font.size === undefined ? "" : size(font.size),
+      font.link ? HYPERLINK_LOOK : "",
     ].join(""),
   };
 }

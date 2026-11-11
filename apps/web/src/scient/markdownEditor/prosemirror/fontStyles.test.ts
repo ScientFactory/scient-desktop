@@ -1,6 +1,10 @@
 import { TextSelection } from "prosemirror-state";
 import { describe, expect, it } from "vite-plus/test";
-import { runScientMarkdownCommand, type ScientMarkdownCommand } from "./commands";
+import {
+  runScientMarkdownCommand,
+  runScientMarkdownDocumentFont,
+  type ScientMarkdownCommand,
+} from "./commands";
 import { scientMarkdownSchema } from "./schema";
 import { ScientProseMirrorSession } from "./session";
 
@@ -55,6 +59,33 @@ describe("Markdown font size and family", () => {
     expect(markedText(session, "font_size")).toEqual([]);
     expect(markedText(session, "font_family")).toEqual([]);
     expect(session.session.draftSource).toBe(`${source}\n`);
+  });
+
+  it("keeps the outer text size when a size span sits inside another size span", () => {
+    const source =
+      'a <span style="font-size:12pt">x <span style="font-size:20pt">y</span> z</span>\n';
+    const session = open(source);
+    // The outer span stays source, so " z" keeps its meaning and the bytes are unchanged.
+    expect(markedText(session, "font_size")).toEqual(["y"]);
+    expect(session.session.draftSource).toBe(source);
+  });
+
+  it("lets a size span sit inside a font span", () => {
+    const session = open(
+      `<span style="font-family:'Arial'">a <span style="font-size:20pt">b</span> c</span>\n`,
+    );
+    expect(markedText(session, "font_family")).toEqual(["a ", "b", " c"]);
+    expect(markedText(session, "font_size")).toEqual(["b"]);
+  });
+
+  it("writes new front matter at the first byte, even before leading blank lines", () => {
+    const session = open("\n\nHello\n");
+    runScientMarkdownDocumentFont({ fontFamily: "Arial", fontSize: "12pt" }, session.state, (tr) =>
+      session.applyTransaction(tr, "user"),
+    );
+    expect(session.session.draftSource).toBe(
+      "---\nfontsize: 12pt\nmainfont: Arial\n---\n\nHello\n",
+    );
   });
 
   it("applies, replaces and removes a size on a selection, writing the exact span", () => {

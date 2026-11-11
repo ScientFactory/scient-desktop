@@ -565,6 +565,8 @@ export function projectScientMarkdownSource(
       if (patched !== null) cache.verified.set(node, source);
     }
     cache.sources.set(node, { original, source });
+    // A front matter block is valid only at the first byte: new, it replaces the blank prefix.
+    if (index === 0 && original === undefined && node.attrs.sourceKind === "yaml") output = "";
     const from = output.length;
     output += source;
     blockRanges.push({ from, to: from + source.length });

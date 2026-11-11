@@ -222,6 +222,28 @@ Abstracts support ordinary paragraphs and inline or display math. **Insert >
 Document blocks > Abstract** visits an existing abstract in the open file before
 creating another.
 
+### Font and size
+
+In Visual, **Text > Font / Size** works as in the Markdown editor: a size in
+points from 1 to 100 (field, minus and plus buttons, presets) and a font from a
+searchable list. A size is saved as a group `{\fontsize{12}{14.4}\selectfont …}`
+(the baseline is 1.2 times the size). Existing `\large`-style commands stay as
+written and show their number; they change only when you edit that text. With
+pdfLaTeX, Computer Modern has only fixed sizes, so Scient adds
+`\usepackage{fix-cm}` the first time an explicit size is written to a document
+that loads no scalable font package.
+
+A font is saved as `\fontfamily{qtm}\selectfont` in a pdfLaTeX document, which
+offers only the fonts with a free look-alike (TeX Gyre Termes for Times New
+Roman, Heros for Arial and Helvetica, Pagella for Palatino, Latin Modern). Under
+XeLaTeX, LuaLaTeX or Tectonic, or when `fontspec` is loaded, it is saved as an
+`\IfFontExistsTF` guard around `\fontspec{…}` with a Latin Modern fallback, so a
+font missing on the machine never stops the build. Other fonts are listed but
+disabled in a pdfLaTeX document, with a note. Arial and Helvetica share one
+pdfLaTeX family, so the list shows Arial for either. Hebrew text needs the Hebrew
+font of the language setup. Time-saving shortcuts for the size are not available
+yet.
+
 <a id="hebrew-and-mixed-language-documents"></a>
 
 ### Hebrew, language and paragraph direction

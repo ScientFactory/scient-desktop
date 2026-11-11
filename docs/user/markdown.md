@@ -376,6 +376,30 @@ continuous undo stack. Untouched source ranges are reused, but editing a rich
 block can normalize that block's Markdown. Use Source when exact syntax is the
 purpose of the edit.
 
+## Font and size
+
+**Text > Font / Size** sets the font and the size of the selected text. The size
+is a number of points from 1 to 100, typed in the field, stepped with the minus
+and plus buttons (1 pt; 0.5 pt with Shift) or taken from the preset buttons.
+Sizes are absolute, as in Word: 12 means 12 pt whatever the surrounding text.
+The font list is searchable and scrolls inside its panel; each name is shown in
+its own face. **Default** removes the local setting.
+
+The choice is saved in the file as `<span style="font-size:12pt">…</span>` and
+`<span style="font-family:'Times New Roman'">…</span>`. Only these exact forms
+are read; any other span stays literal source. A size inside another size, or a
+font inside another font, is not read either: the outer span stays source so no
+text silently loses its font. Fonts come from a fixed list; a name outside it is
+never applied.
+
+**Document > Document settings** sets the whole document's font and base size
+(10, 11 or 12 pt) in the file's front matter, as `mainfont:` and `fontsize:`.
+Only the key you change is rewritten; other lines and comments stay as they are.
+
+PDF export prints with the fonts installed on the machine; a font that is not
+installed is replaced by a similar one. Word export writes the font name and
+size, and Word substitutes when the reader lacks the font.
+
 ## Direction, spelling, and shortcuts
 
 Choose **Text → Direction → Auto**, **LTR**, or **RTL** for the current block.

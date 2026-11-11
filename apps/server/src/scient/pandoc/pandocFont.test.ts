@@ -175,6 +175,17 @@ describe("LaTeX font sizes", () => {
     expect(latexBaseFontOf(source)).toEqual({ sizePoints: 11, family: null });
   });
 
+  it("does not rewrite inside \\verb or \\lstinline", () => {
+    for (const source of [
+      "\\verb|{\\large x}| and more",
+      "\\lstinline{{\\large x}} and more",
+      "\\lstinline[language=C]|{\\large x}|",
+    ]) {
+      expect(rewriteLatexSizeGroups(source)).toBe(source);
+    }
+    expect(rewriteLatexSizeGroups("\\verb|x| {\\large y}")).toContain(carrier("12", "y"));
+  });
+
   it("rewrites a font family group in both written forms", () => {
     const index = FONT_CATALOGUE.findIndex((font) => font.name === "Times New Roman");
     const code = rewriteLatexSizeGroups("{\\fontfamily{qtm}\\selectfont serif}");

@@ -698,6 +698,19 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
       }),
     );
 
+    it.live("keeps the link look on a sized run inside a link", () =>
+      Effect.gen(function* () {
+        const { document, styles } = yield* exportMarkdown(
+          "font-link",
+          'See [a <span style="font-size:14pt">big</span> link](https://example.com).',
+        );
+        expect(document).toMatch(/<w:rStyle w:val="Scient14ptlink"\s*\/>[\s\S]*?big/u);
+        expect(styles).toMatch(
+          /w:styleId="Scient14ptlink"[\s\S]*?<w:sz w:val="28"\s*\/>[\s\S]*?<w:u w:val="single"/u,
+        );
+      }),
+    );
+
     it.live("still drops every other span", () =>
       Effect.gen(function* () {
         const { document, warnings } = yield* exportMarkdown(

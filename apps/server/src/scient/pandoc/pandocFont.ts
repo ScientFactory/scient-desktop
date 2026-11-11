@@ -89,7 +89,9 @@ export function applyFontSpans(value: unknown, pass: FontPass, outer: WordLocalF
     return;
   }
   if (!Predicate.isObject(value)) return;
-  for (const child of Object.values(value)) applyFontSpans(child, pass, outer);
+  // Runs in a link keep the link's look, which a character style would otherwise replace.
+  const within = isPandocNode(value) && value.t === "Link" ? { ...outer, link: true } : outer;
+  for (const child of Object.values(value)) applyFontSpans(child, pass, within);
 }
 
 /** The base font named by the document's metadata; anything unrecognised keeps the default. */
@@ -209,6 +211,8 @@ function braceEnd(text: string, open: number): number {
 
 // Environments whose content is copied as is.
 const LATEX_VERBATIM_START = /^\\begin\{(verbatim\*?|lstlisting|minted)\}/u;
+// `\verb|…|` and `\lstinline|…|` (or with braces): the delimiter closes the copied text.
+const LATEX_INLINE_VERBATIM = /^\\(?:verb\*?|lstinline(?:\[[^\]]*\])?)([^\sA-Za-z*])/u;
 // A brace right after a command name or a closing bracket is that command's argument, not a group.
 const LATEX_ARGUMENT_BEFORE = /[A-Za-z}\]*@]/u;
 
@@ -236,6 +240,16 @@ function rewriteSizeGroups(
         const stop = end < 0 ? text.length : end + close.length;
         out += text.slice(index, stop);
         index = stop - 1;
+        continue;
+      }
+      const inline = LATEX_INLINE_VERBATIM.exec(text.slice(index));
+      if (inline !== null) {
+        const opener = inline[1] ?? "";
+        const from = index + inline[0].length;
+        const stop = opener === "{" ? braceEnd(text, from - 1) : text.indexOf(opener, from);
+        const end = stop < 0 ? text.length : stop + 1;
+        out += text.slice(index, end);
+        index = end - 1;
         continue;
       }
       const next = text[index + 1];
@@ -323,5 +337,6 @@ export function applyLatexFontSpans(
       return;
     }
   }
-  for (const child of Object.values(value)) applyLatexFontSpans(child, pass, outer);
+  const within = isPandocNode(value) && value.t === "Link" ? { ...outer, link: true } : outer;
+  for (const child of Object.values(value)) applyLatexFontSpans(child, pass, within);
 }

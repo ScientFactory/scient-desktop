@@ -584,6 +584,20 @@ function fontSpanEnd(src: string, from: number, max: number): number {
   return -1;
 }
 
+/**
+ * Whether a span of the same kind (size or family) sits inside `src[from, to)`. A mark of one
+ * kind cannot nest in itself, so the outer span would lose its font after the inner one closes;
+ * such text is left as source instead.
+ */
+function hasNestedSpanOfKind(src: string, from: number, to: number, kind: "size" | "family") {
+  FONT_SPAN_TAG.lastIndex = from;
+  for (let tag = FONT_SPAN_TAG.exec(src); tag && tag.index < to; tag = FONT_SPAN_TAG.exec(src)) {
+    const inner = parseMarkdownFontSpanOpen(tag[0]);
+    if (inner !== null && kind in inner) return true;
+  }
+  return false;
+}
+
 gfmTokenizer.inline.ruler.before("html_inline", "scient_font_span", (state, silent) => {
   const tag = FONT_SPAN_OPEN_TAG.exec(state.src.slice(state.pos, state.posMax))?.[0];
   const span = tag === undefined ? null : parseMarkdownFontSpanOpen(tag);
@@ -591,6 +605,11 @@ gfmTokenizer.inline.ruler.before("html_inline", "scient_font_span", (state, sile
   const contentStart = state.pos + tag.length;
   const contentEnd = fontSpanEnd(state.src, contentStart, state.posMax);
   if (contentEnd < 0) return false;
+  if (
+    hasNestedSpanOfKind(state.src, contentStart, contentEnd, "size" in span ? "size" : "family")
+  ) {
+    return false;
+  }
   if (!silent) {
     const kind = "size" in span ? "font_size" : "font_family";
     const open = state.push(`${kind}_open`, "span", 1);
