@@ -15,6 +15,7 @@ import type { PreviewAutomationStatus } from "@t3tools/contracts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import {
   addConnector as addFor,
+  changeReport,
   controlConnector as controlFor,
   listConnectors as listFor,
   testConnector,
@@ -175,17 +176,5 @@ export const saveConnector = Effect.fn("AccountsAgent.connectorSave")(function* 
       where.location,
     )
     .pipe(Effect.mapError(toAccountsError));
-  const missing = saved.connector.local?.missing ?? [];
-  const name = saved.connector.displayName;
-  const serverName = saved.connector.serverName;
-  return {
-    connector: serverName,
-    status: missing.length > 0 ? ("needs-setup" as const) : ("ready" as const),
-    tools: saved.tools,
-    missing,
-    message:
-      missing.length > 0
-        ? `Saved ${name}, on for every project. It still needs ${missing.join(", ")}: call scient_connector_setup with {"connector":"${serverName}"}. Its tools reach new chats from the user's next message, as mcp__${serverName}__<tool>.`
-        : `Saved ${name}, on for every project. Its tools reach new chats from the user's next message, as mcp__${serverName}__<tool>. The user can undo this on its page in Settings → Extensions.`,
-  };
+  return changeReport("Saved", saved.connector, saved.tools);
 });

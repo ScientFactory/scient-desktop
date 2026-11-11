@@ -201,6 +201,29 @@ const nextStep = (summary: ConnectorSummary, status: AgentConnectorStatus) => {
   }
 };
 
+/** How a connector stands after an agent added or saved it, and what is left to do. */
+export const changeReport = (
+  verb: "Added" | "Saved",
+  summary: ConnectorSummary,
+  tools: ReadonlyArray<string>,
+) => {
+  const status = agentStatusOf(summary);
+  const reach = !summary.enabled
+    ? ""
+    : summary.availability.type === "all-projects"
+      ? ", on for every project"
+      : ", on for the projects the user chose";
+  const undo =
+    verb === "Saved" ? " The user can undo this on its page in Settings → Extensions." : "";
+  return {
+    connector: summary.serverName,
+    status,
+    tools,
+    missing: rowOf(summary).missing ?? [],
+    message: `${verb} ${summary.displayName}${reach}. ${nextStep(summary, status)}${undo}`,
+  };
+};
+
 const testedTools = Effect.fn("ConnectorAgentControl.testedTools")(function* (
   summary: ConnectorSummary,
   location: ConnectorLocation | undefined,
@@ -279,31 +302,16 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
         };
       }
       const added = yield* runtime.add(request);
-      let summary = added.connector;
-      let status = agentStatusOf(summary);
-      let tools: ReadonlyArray<string> = [];
-      if (added.nextStep === "ready" && status === "ready") {
-        const tested = yield* testedTools(summary, input.location);
-        tools = tested.tools;
-        if (tested.problem !== undefined) {
-          summary = findSummary((yield* runtime.list()).connectors, summary.connectorId) ?? summary;
-          status = "error";
-          return {
-            connector: summary.serverName,
-            status,
-            tools,
-            missing: [],
-            message: `Added ${summary.displayName}, on for every project, but its check failed: ${oneLine(tested.problem)} scient_connector_check {"connector":"${summary.serverName}"} shows more.`,
-          };
-        }
-      }
-      if (added.nextStep === "sign-in-required") status = "needs-sign-in";
+      const summary = added.connector;
+      if (agentStatusOf(summary) !== "ready") return changeReport("Added", summary, []);
+      const tested = yield* testedTools(summary, input.location);
+      if (tested.problem === undefined) return changeReport("Added", summary, tested.tools);
       return {
         connector: summary.serverName,
-        status,
-        tools,
-        missing: rowOf(summary).missing ?? [],
-        message: `Added ${summary.displayName}, on for every project. ${nextStep(summary, status)}`,
+        status: "error" as const,
+        tools: tested.tools,
+        missing: [],
+        message: `Added ${summary.displayName}, on for every project, but its check failed: ${oneLine(tested.problem)} scient_connector_check {"connector":"${summary.serverName}"} shows more.`,
       };
     }),
     (result) => ({ status: result.status, tools: result.tools.length }),

@@ -493,7 +493,7 @@ const connectorSave = metadata(
     parameters: Schema.Struct({ folder: FolderPath, connector: Schema.optional(ConnectorName) }),
     success: Schema.Struct({
       connector: Schema.String,
-      status: Schema.Literals(["ready", "needs-setup"]),
+      status: ConnectorStatus,
       tools: Schema.Array(Schema.String),
       missing: Schema.Array(Schema.String),
       message: Schema.String,

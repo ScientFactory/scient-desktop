@@ -51,6 +51,7 @@ import {
   controlConnector,
   listConnectors,
   testConnector,
+  changeReport,
 } from "../ConnectorAgentControl.ts";
 import { ConnectorRuntime, ExtensionsDiscover } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
@@ -3315,6 +3316,29 @@ describe("connectors agents make and fix", () => {
           ),
         ),
       ).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("says a saved connector is off when the user turned it off", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "agent-made");
+      yield* writeConnectorFolder(work, { version: "1.0.0", keyRequired: false });
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const connectorId = saved.connector.connectorId;
+      expect(changeReport("Saved", saved.connector, saved.tools)).toMatchObject({
+        status: "ready",
+        message: expect.stringContaining("on for every project"),
+      });
+      yield* harness.runtime.update({ connectorId, enabled: false });
+      const fixed = yield* harness.runtime.saveFolder(
+        { folder: work, connector: connectorId },
+        undefined,
+      );
+      const report = changeReport("Saved", fixed.connector, fixed.tools);
+      // regression: a save always said ready and on for every project.
+      expect(report).toMatchObject({ status: "off", message: expect.stringContaining("is off") });
+      expect(report.message).not.toContain("on for every project");
     }).pipe(Effect.provide(testLayer)),
   );
 
