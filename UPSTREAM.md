@@ -643,6 +643,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`44ebb2fe57465d32f2bd07c5eb3d8e871bdf5ed5` is recorded in
+[the 2026-11-11 44ebb2fe57 receipt](docs/internals/t3-upstream-sync-20261111-44ebb2fe57.md).
+Literal merge `18697158fb3c076f62fbe0aee8c9c37c0314d022` has owned base
+`b54217ce65ea261004b3222eec44de843db04f56` and the frozen official target as parents, retaining
+the 61 official commits after `7171fdd771`. T3's timeline viewport rules land in Scient's reader
+scrolling. A restart that Stop already reached is still refused, so nothing starts while a
+provider shuts down. No migrations. Release remains separate.
+
+The previous committed alignment through
 `7171fdd7716b05dc1b4be40c26ac78e8bb35f80c` is recorded in
 [the 2026-11-10 7171fdd771 receipt](docs/internals/t3-upstream-sync-20261110-7171fdd771.md).
 Literal merge `3bce08006815ca295d8e60f2402606ad4d666f0d` has owned base
@@ -652,7 +661,7 @@ runtime. T3's agent sign-in approval runs through Scient Connect, which merged f
 `@pierre/diffs` moves to 1.7.0-beta.3 with Scient's editor additions. No migrations.
 Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `33db45effd176c01a27b3f2976192e77ad82b301` is recorded in
 [the 2026-11-09 33db45effd receipt](docs/internals/t3-upstream-sync-20261109-33db45effd.md).
 Literal merge `dce80a7807a0f16dd1a3acdec885d3c644e48d73` has owned base

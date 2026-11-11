@@ -36,7 +36,7 @@ class FakeClient implements PiRpcClient {
   promptEvents: PiRpcEvent[] | undefined;
   output = '{"subject":"Ship Pi generation","body":"Use RPC output."}';
   getState = () => Effect.succeed(this.state);
-  getAvailableModels = () => Effect.succeed({ models: [] });
+  getAvailableModels: PiRpcClient["getAvailableModels"] = () => Effect.succeed({ models: [] });
   getCommands = () => Effect.succeed({ commands: [] });
   getThinkingLevels = () => Effect.succeed({ levels: ["high"] as PiThinkingLevel[] });
   synchronizeEvents = () => Effect.void;
@@ -398,6 +398,21 @@ it.effect("accepts the adopted thinking option while preserving explicit off", (
     );
     assert.deepEqual(client.thinking, ["off"]);
     assert.equal(client.promptCalls, 1);
+  });
+});
+
+it.effect("selects the provider and id Pi reported when the provider contains a slash", () => {
+  const provider = "llama-server=http://127.0.0.1:8080";
+  const client = new FakeClient();
+  client.getAvailableModels = () => Effect.succeed({ models: [{ provider, id: "qwen3" }] });
+  return Effect.gen(function* () {
+    yield* makeHarness(
+      client,
+      [],
+      undefined,
+      createModelSelection(selection.instanceId, `${provider}/qwen3`),
+    );
+    assert.deepEqual(client.models, [[provider, "qwen3"]]);
   });
 });
 

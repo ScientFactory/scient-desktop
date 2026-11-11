@@ -19,7 +19,7 @@ import {
 } from "@t3tools/shared/toolOutput";
 
 import { signalProcessGroup } from "@t3tools/provider-core/server/processGroup";
-import { decodePiModelSlug } from "./model.ts";
+import { decodePiModelSlug, encodePiModelSlug } from "./model.ts";
 
 export class PiRpcError extends Schema.TaggedError<PiRpcError>()("PiRpcError", {
   operation: Schema.String,
@@ -66,6 +66,39 @@ export function piRecordNumber(input: unknown, key: string): number | undefined 
  */
 export function parsePiModelSlug(slug: string): { provider: string; modelId: string } | null {
   return decodePiModelSlug(slug) ?? null;
+}
+
+// Pi provider names and model ids may both contain "/", so a slug only splits
+// reliably through the `{provider, id}` pairs `get_available_models` reported.
+export function findReportedPiModel(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | undefined {
+  if (!Array.isArray(reportedModels)) return undefined;
+  const reported = reportedModels.flatMap((model) => {
+    const provider = piRecordString(model, "provider");
+    const modelId = piRecordString(model, "id");
+    return provider !== undefined && modelId !== undefined ? [{ provider, modelId }] : [];
+  });
+  // SCIENT-FORK:START — Scient's catalog publishes percent-encoded canonical slugs; match those
+  // first, then the raw `provider/id` form upstream slugs use.
+  const canonical = reported.find(
+    ({ provider, modelId }) => encodePiModelSlug(provider, modelId) === slug,
+  );
+  if (canonical !== undefined) return canonical;
+  // SCIENT-FORK:END
+  return reported.find(({ provider, modelId }) => `${provider}/${modelId}` === slug);
+}
+
+export function resolvePiModelSlug(
+  slug: string,
+  reportedModels: unknown,
+): { provider: string; modelId: string } | null {
+  const reported = findReportedPiModel(slug, reportedModels);
+  if (reported !== undefined) return reported;
+  // SCIENT-FORK:START — unreported slugs must be canonical; Scient never guesses at a raw split.
+  return parsePiModelSlug(slug);
+  // SCIENT-FORK:END
 }
 
 export interface PiRpcSpawnOptions {
