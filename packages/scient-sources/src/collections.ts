@@ -55,6 +55,7 @@ const {
   readBoundedJson,
   atomicWriteJson,
   withStoreLock,
+  asLibraryWriter,
   assertSafeIdentifier,
 } = scientSourceStoreInternals;
 type StorePaths = Awaited<ReturnType<typeof sourceStorePaths>>;
@@ -153,7 +154,8 @@ async function writeLibraryDocument(
     previous.collections.map((collection) => [collection.collectionId, collection]),
   );
   for (const collection of next.collections) {
-    if (JSON.stringify(before.get(collection.collectionId)) === JSON.stringify(collection)) continue;
+    if (JSON.stringify(before.get(collection.collectionId)) === JSON.stringify(collection))
+      continue;
     await atomicWriteJson(
       libraryCollectionPath(paths, collection.collectionId),
       { formatVersion: 2, ...collection },
@@ -1001,21 +1003,23 @@ async function writeBulkReceipt(
   options: { readonly prune?: boolean } = {},
 ): Promise<void> {
   const directory = bulkEditsDirectory(paths);
-  await assertBulkEditsDirectory(paths, true);
-  await atomicWriteJson(
-    bulkReceiptPath(paths, receipt.batchId),
-    validateBulkReceipt(receipt),
-    MAX_BULK_RECEIPT_BYTES,
-  );
-  if (!options.prune) return;
-  const names = (await NodeFSP.readdir(directory))
-    .filter((name) => name.startsWith("bulk_") && name.endsWith(".json"))
-    .toSorted();
-  await Promise.all(
-    names
-      .slice(0, Math.max(0, names.length - BULK_RECEIPT_LIMIT))
-      .map((name) => NodeFSP.rm(NodePath.join(directory, name), { force: true })),
-  );
+  await asLibraryWriter(paths, async () => {
+    await assertBulkEditsDirectory(paths, true);
+    await atomicWriteJson(
+      bulkReceiptPath(paths, receipt.batchId),
+      validateBulkReceipt(receipt),
+      MAX_BULK_RECEIPT_BYTES,
+    );
+    if (!options.prune) return;
+    const names = (await NodeFSP.readdir(directory))
+      .filter((name) => name.startsWith("bulk_") && name.endsWith(".json"))
+      .toSorted();
+    await Promise.all(
+      names
+        .slice(0, Math.max(0, names.length - BULK_RECEIPT_LIMIT))
+        .map((name) => NodeFSP.rm(NodePath.join(directory, name), { force: true })),
+    );
+  });
 }
 
 async function readBulkReceipt(
@@ -1383,9 +1387,9 @@ export async function bulkUpdateScientSources(input: {
     }
   } finally {
     if (receiptSources.length === 0 && receiptCollections.length === 0) {
-      await NodeFSP.rm(bulkReceiptPath(paths, batchId), { force: true }).catch(
-        () => undefined,
-      );
+      await asLibraryWriter(paths, () =>
+        NodeFSP.rm(bulkReceiptPath(paths, batchId), { force: true }),
+      ).catch(() => undefined);
     }
   }
   if (receiptSources.length === 0 && receiptCollections.length === 0) {

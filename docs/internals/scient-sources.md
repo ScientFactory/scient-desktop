@@ -142,6 +142,102 @@ the current folder are rejected. All durable record reads enter through one
 explicit format-version decoder; future migrations extend that boundary rather
 than scattering version checks through adapters and UI code.
 
+## Personal library store (built, not active)
+
+The personal library is the same store over a library root instead of a
+project root. It is code only until the switch (build step 5e): no request,
+agent tool or UI routes to it, and the project store above stays the only
+active backend. Pins, the instance map, review snapshots, the merge engine and
+the move of existing projects come in later steps.
+
+The library lives under the server's resolved state directory for the launch
+mode, `scientLibraryRootFor(stateDir)` = `<stateDir>/scient/library/`, so dev
+apps never touch the installed app's library.
+
+```text
+<stateDir>/scient/library/
+├── library.json             formatVersion 2, libraryId, owner {kind: "user"}
+├── library.lock             cross-process write lock (below)
+├── records/                 one formatVersion 2 record per source, no projectId
+├── history/<source-id>/     kept revisions, same cap as projects
+├── trash/<source-id>.json   formatVersion 2 entries
+├── files/sha256/<prefix>/   PDFs
+├── text/sha256/<prefix>/    extracted text
+├── collections/<id>.json    one file per collection, nesting kept
+├── saved-searches.json
+├── categories.json
+├── instances.json           this computer's project checkouts
+├── zotero/<source-id>.json  Zotero merge bases
+└── bulk-edits/ operations/ receipts/ staging/
+```
+
+Store functions take a `ScientSourceStoreLocation`: a project root (a string)
+or `scientLibraryLocation(root)`. `ensureScientLibrary` creates the folder and
+publishes `library.json` with an exclusive create, so two processes agree on
+one library ID. In a library:
+
+- Records, trash entries, import operations and receipts are format version 2.
+  Records name no project; operations and receipts name the `libraryId`. New
+  source IDs are derived from the library ID. The single record decoder
+  accepts version 1 only with a `projectId` and refuses a version 2 record
+  that names one, so no project link is silently dropped.
+- Each collection is its own file (`formatVersion` plus the collection), so
+  two computers editing two collections never touch the same file. Writes
+  replace only the files that changed and remove the files of collections no
+  longer kept. Saved searches stay in one file.
+- Attachment paths are relative to the library root. The library folder is
+  Scient's own, so project link checks are skipped there; PDF reads still
+  refuse any path that resolves through a symlink.
+- `registerScientLibraryInstance` gives each (project ID, canonical real path)
+  pair a random `instanceId` in `instances.json`. A copied or moved folder is a
+  new instance. Nothing removes entries yet: an unattached drive looks like a
+  deleted folder, so the move decides.
+
+### Library lock
+
+`withScientLibraryLock(root, run, { timeoutMs, signal })` holds `library.lock`
+across processes while `run` runs. Every library write takes it: the store,
+collections, categories and full text through `withStoreLock`, and the move,
+background passes and sync worker are to call it directly. The library lock
+is taken before the store's process-local operation key, so a holder's nested
+writes never wait on a key a waiter holds. Calls nested inside `run` re-enter;
+other writers in the same process queue behind it.
+
+The lock is an exclusive transaction on an empty SQLite file
+(`node:sqlite`, `busy_timeout = 0`, in-memory journal), the technique the
+server's `server-owner.sqlite` ownership lock already uses. The operating
+system releases it when the holder's process exits, even on `SIGKILL` or a
+crash, on macOS, Linux and Windows, so a dead owner never leaves a stale lock
+and there is no PID file to clean up. A waiter retries with backoff and fails
+with `ScientLibraryBusyError` after 30 seconds by default; `timeoutMs: 0`
+tries once, for passes that can come back later. The held handle is kept in a
+module map, because a collected handle would close its file and drop the lock.
+Nothing else may open `library.lock`: closing any other descriptor of it in the
+holding process drops the POSIX lock. A replaced lock file is detected by
+comparing its identity before and after locking.
+
+The server's ownership lock already stops two servers from sharing one state
+folder. `library.lock` covers the writers that are not that server.
+
+### Derived record index
+
+Records stay the truth. Listing a library's records goes through an in-memory
+index per library root. The index keeps each record file's result under its
+stamp (inode, size, mtime, ctime) and the records folder's identity. While the
+folder is unchanged, a listing answers from the index without touching a
+file. When the folder changed, each file is checked by its stamp and only new
+or changed files are read again. Every Scient write replaces, creates or
+removes a record file by rename, which changes the folder. Timestamps within
+two seconds of the scan are not trusted, for volumes with coarse clocks. A
+record file edited in place by hand is seen once the folder changes or the
+server restarts.
+
+Measured at 20,000 records (generated in a temporary folder, about 1.6 KiB
+abstract each; Apple Silicon, Node 24, under the shared agent load of that
+day):
+
+MEASUREMENTS
+
 ## Source truth and provenance
 
 The persisted record has a first-class Scient source type and normalized

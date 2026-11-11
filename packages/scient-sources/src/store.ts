@@ -85,10 +85,8 @@ export const SCIENT_SOURCE_FILES_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/files/
 export const SCIENT_SOURCE_HISTORY_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/history`;
 export const SCIENT_SOURCE_OPERATIONS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/operations`;
 export const SCIENT_SOURCE_RECEIPTS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/receipts`;
-const SCIENT_SOURCE_TRASH_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/trash`;
 /** Kept revisions per source, counting the first one, which is never pruned. */
 export const SCIENT_SOURCE_HISTORY_LIMIT = 50;
-const SCIENT_SOURCE_STAGING_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/staging`;
 /** In the library, Zotero merge bases sit at `zotero/`; every other folder keeps its project name. */
 const SCIENT_LIBRARY_ZOTERO_SYNC_DIRECTORY = "zotero";
 
@@ -206,6 +204,11 @@ async function withStoreLock<A>(
   }
 }
 
+/** A library write outside the store's operation locks still holds the library lock. */
+function asLibraryWriter<A>(paths: SourceStorePaths, run: () => Promise<A>): Promise<A> {
+  return paths.owner.kind === "library" ? withScientLibraryLock(paths.root, run) : run();
+}
+
 export async function canonicalizeScientSourceRoot(root: string): Promise<string> {
   return NodeFSP.realpath(root);
 }
@@ -262,10 +265,7 @@ async function sourceStorePaths(location: ScientSourceStoreLocation): Promise<So
     location: root,
     root,
     owner: { kind: "project", projectId },
-    ...storeFolders(
-      NodePath.join(root, SCIENT_SOURCES_DIRECTORY),
-      NodePath.join("sync", "zotero"),
-    ),
+    ...storeFolders(NodePath.join(root, SCIENT_SOURCES_DIRECTORY), NodePath.join("sync", "zotero")),
   };
 }
 
@@ -305,7 +305,11 @@ function storeOwnerMessage(paths: SourceStorePaths, subject: string): string {
 
 function operationBelongsToStore(
   paths: SourceStorePaths,
-  operation: { readonly formatVersion: 1 | 2; readonly projectId?: string; readonly libraryId?: string },
+  operation: {
+    readonly formatVersion: 1 | 2;
+    readonly projectId?: string;
+    readonly libraryId?: string;
+  },
 ): boolean {
   return paths.owner.kind === "project"
     ? operation.formatVersion === 1 && operation.projectId === paths.owner.projectId
@@ -326,7 +330,6 @@ function issueMessage(error: unknown): string {
       ? error.message.split("\n")[0]!.slice(0, 500)
       : "The file could not be read.";
 }
-
 
 function operationCacheKey(paths: SourceStorePaths, operationId: string): string {
   return `${paths.root}\0${operationId}`;
@@ -380,11 +383,7 @@ export async function readScientSourceRecord(
   return readSourceRecordFromPaths(paths, sourceId);
 }
 
-function sourceHistoryPath(
-  paths: SourceStorePaths,
-  sourceId: string,
-  revision: number,
-) {
+function sourceHistoryPath(paths: SourceStorePaths, sourceId: string, revision: number) {
   assertSafeIdentifier(sourceId, "Source ID");
   return NodePath.join(paths.history, sourceId, `${revision}.json`);
 }
@@ -553,7 +552,9 @@ export async function updateScientSourceMetadata(input: {
  * Gives every source written before citation keys existed a generated key, oldest
  * first so earlier sources keep the unsuffixed key. Each assignment is a revision.
  */
-export async function assignMissingScientSourceCitationKeys(root: ScientSourceStoreLocation): Promise<number> {
+export async function assignMissingScientSourceCitationKeys(
+  root: ScientSourceStoreLocation,
+): Promise<number> {
   const paths = await sourceStorePaths(root);
   return withStoreLock(paths, "source-write", async () => {
     const records = await listScientSourceRecordsFromPaths(paths);
@@ -808,7 +809,9 @@ export async function readScientSourceTrashEntries(
   return (await scanTrash(await sourceStorePaths(root))).entries;
 }
 
-export async function listScientSourceTrash(root: ScientSourceStoreLocation): Promise<ScientSourceTrashListing> {
+export async function listScientSourceTrash(
+  root: ScientSourceStoreLocation,
+): Promise<ScientSourceTrashListing> {
   const { entries, issues } = await scanTrash(await sourceStorePaths(root));
   return {
     entries: entries.map(({ record, removedAt, removedBy }) => ({
@@ -1865,10 +1868,7 @@ export async function readScientSourceAttachmentPdf(
   });
 }
 
-function stagedLocalMaterialPaths(
-  paths: SourceStorePaths,
-  sourceKey: string,
-) {
+function stagedLocalMaterialPaths(paths: SourceStorePaths, sourceKey: string) {
   assertSafeIdentifier(sourceKey, "Source key");
   const directory = NodePath.join(paths.staging, "local-files");
   return {
@@ -1977,7 +1977,9 @@ export async function writeScientSourceStagedMaterial(
   if (inspected.sha256 !== decoded.pdfSha256 || inspected.byteLength !== decoded.byteLength) {
     throw new Error("The staged source PDF changed before metadata was saved.");
   }
-  await atomicWriteJson(materialPaths.metadata, decoded, MAX_STAGED_MATERIAL_BYTES);
+  await asLibraryWriter(paths, () =>
+    atomicWriteJson(materialPaths.metadata, decoded, MAX_STAGED_MATERIAL_BYTES),
+  );
 }
 
 export async function readScientSourceStagedMaterial(
@@ -2020,10 +2022,12 @@ export async function removeScientSourceStagedMaterial(
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
   const materialPaths = stagedLocalMaterialPaths(paths, sourceKey);
-  await Promise.all([
-    NodeFSP.rm(materialPaths.pdf, { force: true }),
-    NodeFSP.rm(materialPaths.metadata, { force: true }),
-  ]);
+  await asLibraryWriter(paths, () =>
+    Promise.all([
+      NodeFSP.rm(materialPaths.pdf, { force: true }),
+      NodeFSP.rm(materialPaths.metadata, { force: true }),
+    ]),
+  );
 }
 
 const MAX_STAGED_FILE_IMPORT_BYTES = 64 * 1024 * 1024;
@@ -2052,10 +2056,7 @@ const ScientSourceStagedFileImport = Schema.Struct({
 export type ScientSourceStagedFileImport = typeof ScientSourceStagedFileImport.Type;
 const decodeStagedFileImport = Schema.decodeSync(ScientSourceStagedFileImport);
 
-function stagedFileImportPath(
-  paths: SourceStorePaths,
-  operationId: string,
-): string {
+function stagedFileImportPath(paths: SourceStorePaths, operationId: string): string {
   assertSafeIdentifier(operationId, "Operation ID");
   return NodePath.join(paths.staging, "files", `${operationId}.json`);
 }
@@ -2066,10 +2067,12 @@ export async function writeScientSourceStagedFileImport(
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
   const decoded = decodeStagedFileImport(staged);
-  await atomicWriteJson(
-    stagedFileImportPath(paths, decoded.operationId),
-    decoded,
-    MAX_STAGED_FILE_IMPORT_BYTES,
+  await asLibraryWriter(paths, () =>
+    atomicWriteJson(
+      stagedFileImportPath(paths, decoded.operationId),
+      decoded,
+      MAX_STAGED_FILE_IMPORT_BYTES,
+    ),
   );
 }
 
@@ -2096,7 +2099,9 @@ export async function removeScientSourceStagedFileImport(
   operationId: string,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
-  await NodeFSP.rm(stagedFileImportPath(paths, operationId), { force: true });
+  await asLibraryWriter(paths, () =>
+    NodeFSP.rm(stagedFileImportPath(paths, operationId), { force: true }),
+  );
 }
 
 async function stagePdf(input: {
@@ -2533,7 +2538,9 @@ export async function writeScientSourceZoteroSync(
   state: ScientSourceZoteroSyncType,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
-  await atomicWriteJson(zoteroSyncPath(paths, state.sourceId), state, MAX_RECORD_BYTES);
+  await asLibraryWriter(paths, () =>
+    atomicWriteJson(zoteroSyncPath(paths, state.sourceId), state, MAX_RECORD_BYTES),
+  );
 }
 
 /** Replaces a source's links to other reference managers, as a new revision. */
@@ -2571,6 +2578,7 @@ export async function updateScientSourceExternalReferences(input: {
 export const scientSourceStoreInternals = {
   sourceStorePaths,
   withStoreLock,
+  asLibraryWriter,
   snapshot,
   readBoundedJson,
   atomicWriteJson,

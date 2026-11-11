@@ -16,9 +16,9 @@ import {
 } from "./storeFiles.ts";
 
 /** Where the server keeps the library, under its resolved state directory for the launch mode. */
-export const SCIENT_LIBRARY_STATE_PATH = ["scient", "library"] as const;
-export const SCIENT_LIBRARY_MANIFEST_FILE = "library.json";
-export const SCIENT_LIBRARY_INSTANCES_FILE = "instances.json";
+const SCIENT_LIBRARY_STATE_PATH = ["scient", "library"] as const;
+const SCIENT_LIBRARY_MANIFEST_FILE = "library.json";
+const SCIENT_LIBRARY_INSTANCES_FILE = "instances.json";
 
 const MAX_MANIFEST_BYTES = 64 * 1024;
 const MAX_INSTANCES_BYTES = 4 * 1024 * 1024;
@@ -76,7 +76,8 @@ async function readManifestFile(root: string): Promise<ScientLibraryManifest | n
   const filePath = NodePath.join(root, SCIENT_LIBRARY_MANIFEST_FILE);
   const state = await snapshot(filePath);
   if (state === "missing") return null;
-  if (state !== "file") throw new Error(`${SCIENT_LIBRARY_MANIFEST_FILE} is not a safe regular file.`);
+  if (state !== "file")
+    throw new Error(`${SCIENT_LIBRARY_MANIFEST_FILE} is not a safe regular file.`);
   return readBoundedJson(filePath, MAX_MANIFEST_BYTES, ScientLibraryManifest);
 }
 
@@ -111,7 +112,8 @@ async function readInstances(root: string): Promise<ReadonlyArray<ScientLibraryI
   const filePath = NodePath.join(root, SCIENT_LIBRARY_INSTANCES_FILE);
   const state = await snapshot(filePath);
   if (state === "missing") return [];
-  if (state !== "file") throw new Error(`${SCIENT_LIBRARY_INSTANCES_FILE} is not a safe regular file.`);
+  if (state !== "file")
+    throw new Error(`${SCIENT_LIBRARY_INSTANCES_FILE} is not a safe regular file.`);
   return (await readBoundedJson(filePath, MAX_INSTANCES_BYTES, ScientLibraryInstances)).instances;
 }
 

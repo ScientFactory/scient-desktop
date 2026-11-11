@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Categories share the project store's filesystem boundary.
+// @effect-diagnostics nodeBuiltinImport:off -- Categories share the source store's filesystem boundary.
 import * as NodePath from "node:path";
 
 import {
@@ -8,18 +8,20 @@ import {
   type ScientSourceCategories,
   type ScientSourceCategorySummary,
 } from "./categories.ts";
+import type { ScientSourceStoreLocation } from "./libraryRoot.ts";
 import type { ScientSourceIdentifier } from "./model.ts";
-import { SCIENT_SOURCES_DIRECTORY, scientSourceStoreInternals } from "./store.ts";
+import { scientSourceStoreInternals } from "./store.ts";
 
-const SCIENT_SOURCE_CATEGORIES_FILE = `${SCIENT_SOURCES_DIRECTORY}/categories.json`;
+/** `.scient/sources/categories.json` in a project, `categories.json` in the library. */
+const SCIENT_SOURCE_CATEGORIES_FILE = "categories.json";
 const MAX_CATEGORIES_BYTES = 32 * 1024 * 1024;
-const { sourceStorePaths, snapshot, readBoundedJson, atomicWriteJson, withOperationLock } =
+const { sourceStorePaths, snapshot, readBoundedJson, atomicWriteJson, withStoreLock } =
   scientSourceStoreInternals;
 
 type Entries = Readonly<Record<string, ScientSourceCategories>>;
 
-async function readEntries(root: string): Promise<Entries> {
-  const filePath = NodePath.join(root, SCIENT_SOURCE_CATEGORIES_FILE);
+async function readEntries(base: string): Promise<Entries> {
+  const filePath = NodePath.join(base, SCIENT_SOURCE_CATEGORIES_FILE);
   if ((await snapshot(filePath)) !== "file") return {};
   // Registry data is looked up again, so a damaged file is treated as empty and replaced.
   return readBoundedJson(filePath, MAX_CATEGORIES_BYTES, ScientSourceCategoriesDocument).then(
@@ -32,9 +34,11 @@ async function readEntries(root: string): Promise<Entries> {
  * Every stored entry by source ID, including ones whose source's identifiers have changed. A
  * project without a Library, or a file that cannot be read, has none.
  */
-export async function readScientSourceCategories(root: string): Promise<Entries> {
+export async function readScientSourceCategories(
+  root: ScientSourceStoreLocation,
+): Promise<Entries> {
   try {
-    return await readEntries((await sourceStorePaths(root)).root);
+    return await readEntries((await sourceStorePaths(root)).base);
   } catch {
     return {};
   }
@@ -42,18 +46,18 @@ export async function readScientSourceCategories(root: string): Promise<Entries>
 
 /** Sets (an entry) or forgets (null) the categories of some sources, keeping the rest. */
 export async function writeScientSourceCategories(
-  root: string,
+  root: ScientSourceStoreLocation,
   changes: Readonly<Record<string, ScientSourceCategories | null>>,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
-  await withOperationLock(`${paths.root}:categories-write`, async () => {
-    const next: Record<string, ScientSourceCategories> = { ...(await readEntries(paths.root)) };
+  await withStoreLock(paths, "categories-write", async () => {
+    const next: Record<string, ScientSourceCategories> = { ...(await readEntries(paths.base)) };
     for (const [sourceId, entry] of Object.entries(changes)) {
       if (entry) next[sourceId] = entry;
       else delete next[sourceId];
     }
     await atomicWriteJson(
-      NodePath.join(paths.root, SCIENT_SOURCE_CATEGORIES_FILE),
+      NodePath.join(paths.base, SCIENT_SOURCE_CATEGORIES_FILE),
       { formatVersion: 1, sources: next } satisfies ScientSourceCategoriesDocument,
       MAX_CATEGORIES_BYTES,
     );

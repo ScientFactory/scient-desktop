@@ -17,11 +17,11 @@ export function assertSafeIdentifier(value: string, label: string): void {
   }
 }
 
-export function formatJson(value: unknown): string {
+function formatJson(value: unknown): string {
   return `${JSON.stringify(value, null, 2)}\n`;
 }
 
-export function boundedJson(value: unknown, maximumBytes: number, label: string): string {
+function boundedJson(value: unknown, maximumBytes: number, label: string): string {
   const serialized = formatJson(value);
   if (Buffer.byteLength(serialized, "utf8") > maximumBytes) {
     throw new Error(`${label} exceeds the safe size limit.`);
@@ -29,7 +29,9 @@ export function boundedJson(value: unknown, maximumBytes: number, label: string)
   return serialized;
 }
 
-export async function snapshot(filePath: string): Promise<"missing" | "file" | "directory" | "unsafe"> {
+export async function snapshot(
+  filePath: string,
+): Promise<"missing" | "file" | "directory" | "unsafe"> {
   try {
     const value = await NodeFSP.lstat(filePath);
     if (value.isSymbolicLink()) return "unsafe";
@@ -121,4 +123,3 @@ export async function atomicCreateJson(
     await NodeFSP.rm(temporaryPath, { force: true });
   }
 }
-

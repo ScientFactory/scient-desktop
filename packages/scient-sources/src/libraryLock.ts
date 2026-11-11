@@ -1,21 +1,23 @@
 // @effect-diagnostics nodeBuiltinImport:off -- The library lock is an OS file lock held through node:sqlite.
 // @effect-diagnostics globalTimers:off globalDate:off -- Waiting for another process uses plain timers.
-import { AsyncLocalStorage } from "node:async_hooks";
+import * as NodeAsyncHooks from "node:async_hooks";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeSqlite from "node:sqlite";
 
-export const SCIENT_LIBRARY_LOCK_FILE = "library.lock";
+const SCIENT_LIBRARY_LOCK_FILE = "library.lock";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
 const FIRST_RETRY_MS = 10;
 const LONGEST_RETRY_MS = 250;
 
 /** Canonical lock paths the current async context holds, so a holder's own writes re-enter. */
-const heldLocks = new AsyncLocalStorage<ReadonlySet<string>>();
+const heldLocks = new NodeAsyncHooks.AsyncLocalStorage<ReadonlySet<string>>();
 /** One holder per lock path in this process; other processes are kept out by the file lock. */
 const processQueues = new Map<string, Promise<void>>();
+/** Held handles stay reachable: a collected handle closes its file and drops the lock. */
+const heldFiles = new Map<string, NodeSqlite.DatabaseSync>();
 
 // @effect-diagnostics-next-line extendsNativeError:off - The source stores are Promise-based; callers catch native errors.
 export class ScientLibraryBusyError extends Error {
@@ -55,7 +57,9 @@ function delay(milliseconds: number, signal: AbortSignal | undefined): Promise<v
 }
 
 function sameFile(left: NodeFS.BigIntStats | undefined, right: NodeFS.BigIntStats | undefined) {
-  return left !== undefined && right !== undefined && left.dev === right.dev && left.ino === right.ino;
+  return (
+    left !== undefined && right !== undefined && left.dev === right.dev && left.ino === right.ino
+  );
 }
 
 /**
@@ -140,12 +144,9 @@ async function takeProcessTurn(
 }
 
 /**
- * Runs `run` while holding the library's write lock, across processes. Every library writer takes
- * it: the server's stores, the move of project data, background passes and the sync worker.
- * Nested calls from inside `run` re-enter without waiting.
- *
- * Nothing else may open `library.lock`: closing any other descriptor of that file in the holding
- * process releases the OS lock (POSIX record-lock semantics). Never delete it while Scient runs.
+ * Holds the library's write lock across processes while `run` runs; every library writer takes it.
+ * Nested calls re-enter. Nothing else may open `library.lock`: closing another descriptor of it in
+ * the holding process releases the POSIX lock.
  */
 export async function withScientLibraryLock<A>(
   libraryRoot: string,
@@ -162,9 +163,13 @@ export async function withScientLibraryLock<A>(
   let db: NodeSqlite.DatabaseSync | null = null;
   try {
     db = await lockFile(lockPath, deadline, options.signal);
+    heldFiles.set(lockPath, db);
     return await heldLocks.run(new Set([...(held ?? []), lockPath]), run);
   } finally {
-    db?.close();
+    if (db) {
+      heldFiles.delete(lockPath);
+      db.close();
+    }
     finishTurn();
   }
 }

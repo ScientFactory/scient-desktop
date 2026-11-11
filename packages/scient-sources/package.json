@@ -32,6 +32,14 @@
       "types": "./src/fullTextStore.ts",
       "import": "./src/fullTextStore.ts"
     },
+    "./library-lock": {
+      "types": "./src/libraryLock.ts",
+      "import": "./src/libraryLock.ts"
+    },
+    "./library-root": {
+      "types": "./src/libraryRoot.ts",
+      "import": "./src/libraryRoot.ts"
+    },
     "./material-selection": {
       "types": "./src/materialSelection.ts",
       "import": "./src/materialSelection.ts"
