@@ -785,6 +785,60 @@ interface LegacyProjectSettingsRow {
   readonly scripts: string;
 }
 
+// SCIENT-FORK:START — Scient shipped "Continue threads after restarts" off, so most people never
+// chose it. The first load after the default became on turns it on everywhere, including where it
+// was switched off, and records that it did so; a later choice is kept.
+function turnOnThreadContinuation(
+  settings: ServerSettings,
+  defaults: ServerSettings,
+): { readonly settings: ServerSettings; readonly changed: boolean } {
+  if (settings.continueThreadsAfterServerUpdateTurnedOn) return { settings, changed: false };
+  let changed =
+    settings.continueThreadsAfterServerUpdate !== defaults.continueThreadsAfterServerUpdate;
+  const projectSettingsOverrides = Object.fromEntries(
+    Object.entries(settings.projectSettingsOverrides).flatMap(([projectId, entry]) => {
+      if (entry.continueThreadsAfterServerUpdate !== false) return [[projectId, entry]];
+      changed = true;
+      const { continueThreadsAfterServerUpdate: _off, ...rest } = entry;
+      return Object.keys(rest).length === 0 ? [] : [[projectId, rest]];
+    }),
+  );
+  return {
+    settings: {
+      ...settings,
+      // A managed policy's own default still decides.
+      continueThreadsAfterServerUpdate: defaults.continueThreadsAfterServerUpdate,
+      projectSettingsOverrides: changed
+        ? projectSettingsOverrides
+        : settings.projectSettingsOverrides,
+      continueThreadsAfterServerUpdateTurnedOn: true,
+    },
+    changed,
+  };
+}
+
+// The record only guards a stored "off", so a file without one carries no record either.
+function keepThreadContinuationRecordWithChoice(stripped: unknown): unknown {
+  if (typeof stripped !== "object" || stripped === null) return stripped;
+  const record = stripped as Record<string, unknown>;
+  if (record.continueThreadsAfterServerUpdateTurnedOn === undefined) return stripped;
+  const projects = record.projectSettingsOverrides;
+  const storesOff =
+    record.continueThreadsAfterServerUpdate === false ||
+    (typeof projects === "object" &&
+      projects !== null &&
+      Object.values(projects).some(
+        (entry) =>
+          typeof entry === "object" &&
+          entry !== null &&
+          (entry as Record<string, unknown>).continueThreadsAfterServerUpdate === false,
+      ));
+  if (storesOff) return stripped;
+  const { continueThreadsAfterServerUpdateTurnedOn: _record, ...rest } = record;
+  return rest;
+}
+// SCIENT-FORK:END
+
 // projectSettingsFolded prevents restarts from undoing later UI resets.
 function foldLegacyProjectSettings(
   settings: ServerSettings,
@@ -916,11 +970,12 @@ const make = Effect.gen(function* () {
 
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
-      const stripped =
+      const stripped = keepThreadContinuationRecordWithChoice(
         stripDefaultServerSettings(
           settings,
           withIdleCompaction(managed.defaults, globalIdleCompaction(managed.defaults)),
-        ) ?? {};
+        ) ?? {},
+      );
       const sparseSettingsJson = yield* encodeServerSettingsJson(
         managed.keepStored === undefined
           ? stripped
@@ -1096,9 +1151,16 @@ const make = Effect.gen(function* () {
     // Preserve the prior runtime behavior where historical use opts a
     // default-off provider instance back in after settings have moved to the
     // provider-instance schema. Explicit disables still take precedence.
-    const loaded = foldProviderInstanceEnabledFlags(
+    const providerFolded = foldProviderInstanceEnabledFlags(
       migrateLegacyProviderSettings(settings, legacyProviders ?? {}, providerHistory),
     );
+    // SCIENT-FORK:START — the one-time switch-on runs only on a readable settings file, and
+    // rewrites it only when it removed a stored "off".
+    const continuation = settingsFileTrusted
+      ? turnOnThreadContinuation(providerFolded, managed.defaults)
+      : { settings: providerFolded, changed: false };
+    const loaded = continuation.settings;
+    // SCIENT-FORK:END
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
@@ -1143,6 +1205,7 @@ const make = Effect.gen(function* () {
       : folded;
     if (
       migrated !== loaded ||
+      continuation.changed || // SCIENT-FORK
       (settingsFileTrusted && legacyProviders !== undefined) ||
       hasLegacySourceControl
     ) {
