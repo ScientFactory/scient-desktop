@@ -126,7 +126,8 @@ Scient also uses your own research keys when you add them in **Accounts** under
 [openalex.org/settings/api](https://openalex.org/settings/api)), **Google Books**
 (an API key from the
 [Google Cloud console](https://console.cloud.google.com/apis/credentials) with
-the Books API turned on), **NCBI / PubMed**, **Semantic Scholar** and the
+the Books API turned on; if Google refuses the key, Scient asks without it),
+**NCBI / PubMed**, **Semantic Scholar** and the
 **Unpaywall email**. Without a key these services share a small allowance per
 network address, which can run out while adding many sources. A key you turn
 off in Accounts is not sent.

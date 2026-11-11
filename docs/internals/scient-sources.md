@@ -202,7 +202,8 @@ redacted. Work outside a tool call reads the keys again at each use through
 `researchKeysReader`, captured when the Sources HTTP layer starts: the
 Library's add, refresh and save-page routes, and the background category pass
 (`readSourceCategoryKeysFrom`), whose OpenAlex topics request sends `api_key`.
-Google Books gets the key as `key`. Paper downloads send the OpenAlex key
+Google Books gets the key as `key`; when Google refuses the key (400 or 403)
+the request is repeated once without it. Paper downloads send the OpenAlex key
 and ask Unpaywall only when OpenAlex has no free copy. The Library's registry
 contact email goes to OpenAlex as `mailto` and to Unpaywall when no Unpaywall
 email is saved.
