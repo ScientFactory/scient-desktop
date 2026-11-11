@@ -41,19 +41,39 @@ const pageHeaders = (config: CloudSettings, indexable: boolean) => ({
   ].join("; "),
 });
 
-const FALLBACK_SHELL = `<!doctype html>
+/** A one-message page in the share page's look: same header, type and colors, light and dark. */
+const messagePage = (title: string, heading: string, text: string) => `<!doctype html>
 <html lang="en">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Shared conversation · Scient</title></head>
-<body><main><h1>Shared conversation</h1><p>This page is being updated. Try again shortly.</p></main></body>
+<meta name="robots" content="noindex"><meta name="color-scheme" content="light dark">
+<title>${title} · Scient</title>
+<style>
+:root{--bg:oklch(99.2% 0 0);--fg:#18181b;--muted:#71717a;--border:#e4e4e7}
+@media (prefers-color-scheme:dark){:root{--bg:#000;--fg:#f1f3f7;--muted:#a3a3a3;--border:rgb(255 255 255/8%)}}
+*{box-sizing:border-box}
+body{margin:0;min-height:100dvh;background:var(--bg);color:var(--fg);font:14px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+header{border-bottom:1px solid var(--border)}
+header div,main{max-width:48rem;margin:0 auto;padding:12px 16px}
+header div{font-size:16px;font-weight:500}
+main{padding-top:64px;text-align:center}
+h1{margin:0 0 8px;font-size:16px;font-weight:500}
+p{margin:0 auto;max-width:28rem;color:var(--muted);overflow-wrap:anywhere}
+</style></head>
+<body><header><div>Scient</div></header>
+<main><h1>${heading}</h1><p>${text}</p></main></body>
 </html>`;
 
-const ENDED = `<!doctype html>
-<html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex"><title>Link ended · Scient</title></head>
-<body><main><h1>This link has ended</h1><p>The person who shared it may have stopped sharing it, or it expired.</p></main></body>
-</html>`;
+const FALLBACK_SHELL = messagePage(
+  "Shared conversation",
+  "Shared conversation",
+  "This page is being updated. Try again shortly.",
+);
+
+const ENDED = messagePage(
+  "Link ended",
+  "This link has ended",
+  "The person who shared it may have stopped sharing it, or it expired.",
+);
 
 /** `<head>` additions: robots and, only for public unencrypted links, the sender's card. */
 const headTags = (
