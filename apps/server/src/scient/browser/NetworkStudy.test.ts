@@ -3,13 +3,17 @@ import type { Page, Request, Response } from "playwright-core";
 
 import { networkStudyOf } from "./NetworkStudy.ts";
 
-/** A tab whose profile holds one cookie and whose password field holds what was typed. */
-const fakePage = () =>
+/**
+ * A tab whose profile holds one cookie and whose password field holds what was typed; its
+ * resource timing knows the decoded size of the addresses in `decoded`.
+ */
+const fakePage = (decoded: Readonly<Record<string, number>> = {}) =>
   ({
     context: () => ({
       cookies: async () => [{ name: "sid", value: "tab-cookie-77" }],
     }),
-    evaluate: async () => ["typed-pass-1"],
+    evaluate: async (expression: unknown, url?: string) =>
+      typeof expression === "function" ? (decoded[url ?? ""] ?? 0) : ["typed-pass-1"],
   }) as unknown as Page;
 
 const fakeRequest = (url: string, headers: Record<string, string> = {}, received = 0) =>
@@ -112,5 +116,43 @@ describe("the network study", () => {
     const huge = (await study.list()).find((item) => item.url.endsWith("/huge"))!;
     expect((await study.detail(huge.id))?.note).toContain("too large to read");
     expect(reads).toBe(12);
+  });
+
+  it("reads a compressed body only when the page confirms its decoded size fits", async () => {
+    const MB = 1024 * 1024;
+    const study = networkStudyOf(
+      fakePage({ "https://app.test/bomb": 64 * MB, "https://app.test/small": 2_000 }),
+    );
+    const read: string[] = [];
+    // Each sent compressed and small: only the decoded size tells what reading it costs.
+    for (const url of [
+      "https://app.test/bomb",
+      "https://app.test/unknown",
+      "https://app.test/small",
+    ]) {
+      const request = fakeRequest(url, {}, 1_000);
+      const headers = { "content-type": "application/json", "content-encoding": "gzip" };
+      study.onRequest(request);
+      study.onResponse({
+        request: () => request,
+        url: () => url,
+        headers: () => headers,
+        allHeaders: async () => headers,
+        status: () => 200,
+        finished: async () => null,
+        body: async () => {
+          read.push(url);
+          return Buffer.from("{}");
+        },
+      } as unknown as Response);
+    }
+    await vi.waitFor(() => expect(read).toEqual(["https://app.test/small"]));
+    const listed = await study.list();
+    const note = async (path: string) =>
+      (await study.detail(listed.find((item) => item.url.endsWith(path))!.id))?.note;
+    // regression: a small compressed answer was read whole, whatever it decoded to.
+    expect(await note("/bomb")).toContain("too large to read");
+    expect(await note("/unknown")).toContain("size is unknown");
+    expect(read).toEqual(["https://app.test/small"]);
   });
 });

@@ -119,15 +119,17 @@ const within = <A>(read: () => Promise<A>, fallback: A, ms: number): Promise<A> 
 
 const NONE: ReadonlyArray<string> = [];
 
-/**
- * The body's size before it is read: its declared length, else what the browser received once it
- * all came (sent compressed, it is the compressed size). Undefined when it never finished.
- */
-const bodySize = async (response: Response): Promise<number | undefined> => {
+/** Bytes as they came over the wire: the declared length, else what arrived once it all came. */
+const sentSize = async (response: Response): Promise<number | undefined> => {
   const declared = Number(safely(() => response.headers()["content-length"], undefined));
   if (Number.isFinite(declared) && declared >= 0) return declared;
   if ((await response.finished()) !== null) return undefined;
   return (await response.request().sizes()).responseBodySize;
+};
+
+const isCompressed = (response: Response) => {
+  const encoding = safely(() => response.headers()["content-encoding"], undefined)?.trim();
+  return encoding !== undefined && encoding !== "" && encoding.toLowerCase() !== "identity";
 };
 
 const leftOutNote = (checked: CheckedBody, contentType: string) =>
@@ -196,6 +198,33 @@ const makeNetworkStudy = (page: Page) => {
   const cookiesFor = (url: string) => {
     const at = url.search(/[?#]/u);
     return cookiesAt(at === -1 ? url : url.slice(0, at));
+  };
+
+  /**
+   * The body's size once read, known before reading it. A compressed body's comes from the page's
+   * own resource timing; when the page can't say (another origin, a frame), it is unknown.
+   */
+  const bodySize = async (response: Response): Promise<number | undefined> => {
+    if (!isCompressed(response)) return sentSize(response);
+    if ((await response.finished()) !== null) return undefined;
+    const decoded = await within(
+      () =>
+        page.evaluate(
+          (name: string) =>
+            Math.max(
+              0,
+              ...performance
+                .getEntriesByName(name)
+                .map(
+                  (entry) => (entry as { readonly decodedBodySize?: number }).decodedBodySize ?? 0,
+                ),
+            ),
+          response.url(),
+        ),
+      0,
+      PAGE_MS,
+    );
+    return typeof decoded === "number" && decoded > 0 ? decoded : undefined;
   };
 
   const forget = () => {
