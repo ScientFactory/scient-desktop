@@ -32,6 +32,10 @@ orchestrator's serial commands make redeeming and sending happen once. Guest
 tokens never enter `SessionStore`, so no RPC, WebSocket, or MCP path can accept
 one. Guest routes also require T3 Connect to still serve the link's hostname;
 the request's Host header is not checked, because a LAN client can forge it.
+Scient also refuses to create a link while Connect's reachability check says
+other devices cannot reach the server
+([guestLinkReachability](../../apps/server/src/scient/guest/guestLinkReachability.ts)),
+since a tunnel hostname alone does not prove the link would open.
 
 ### MCP clients are a separate audience
 

@@ -19,7 +19,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
-        {/* SCIENT-FORK:START — guest links need T3 Connect, which Scient keeps off. */}
+        {/* SCIENT-FORK:START — guests arrive through Scient Connect; builds without it offer no guest links. */}
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : null}
         {/* SCIENT-FORK:END */}
