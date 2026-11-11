@@ -95,6 +95,21 @@ transition, delete both and redeploy; old builds' Connect then stops working. Ac
 per instance: a person who signed in on both has two relay accounts, and computers linked under one
 don't appear under the other.
 
+## Account deletion
+
+The phone app's Connect page in account settings offers **Delete account** (an App Store
+requirement for apps with sign-up). It calls the relay's `DELETE /v1/me`, which unlinks every
+computer (deleting its managed tunnel and DNS record), removes the account's relay rows, unlinks
+T3 Chat when that is on, and finally deletes the Clerk user through the Backend API with the
+secret key of the instance that issued the token. The Clerk user goes last, so a run that fails
+part-way can be retried with the same sign-in; every step tolerates an earlier partial run. Rows
+keyed by a computer's key (its credentials and agent activity) stay while another account still
+links that computer. Logs and traces already exported to Axiom age out with its retention.
+
+No Clerk dashboard setting is needed. Keep Clerk's own "Allow users to delete their accounts"
+off: its button in the profile view would delete the Clerk user but leave the relay's records and
+tunnels behind.
+
 ## Alerts
 
 The relay creates its Axiom monitors and health dashboard only when `RELAY_ALERT_NOTIFIER_ID` is

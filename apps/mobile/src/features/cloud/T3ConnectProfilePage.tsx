@@ -16,6 +16,9 @@ import { Menu } from "../../components/ui/Menu";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { relayEnvironmentDiscovery } from "../../state/relay";
 import { useAtomCommand } from "../../state/use-atom-command";
+// SCIENT-FORK:START account-deletion
+import { DeleteAccountSection } from "./DeleteAccountSection";
+// SCIENT-FORK:END account-deletion
 import {
   deregisterManagedRelayEnvironmentCommand,
   useManagedRelayEnvironments,
@@ -204,6 +207,9 @@ export function T3ConnectProfilePage() {
       <Text className="px-6 pt-6 text-xs leading-normal text-clerk-foreground-muted">
         Connections on this device are managed in Settings.
       </Text>
+      {/* SCIENT-FORK:START account-deletion */}
+      <DeleteAccountSection accountId={environmentsState.accountId} />
+      {/* SCIENT-FORK:END account-deletion */}
     </ScrollView>
   );
 }
