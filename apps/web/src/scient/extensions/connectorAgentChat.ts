@@ -56,3 +56,12 @@ export const fixConnectorPrompt = (name: string, serverName: string, problem: st
 /** Improve one of the user's connectors. */
 export const improveConnectorPrompt = (name: string, serverName: string) =>
   `${AUTHORING} Help me improve my connector ${named(name, serverName)}. Ask me what I want changed if I have not said, then start with scient_connector_copy {"connector":"${serverName}"}.`;
+
+/** Build a connector for a Discover entry Scient can't add as it is. */
+export const makeFromEntryPrompt = (entry: {
+  readonly title: string;
+  readonly registryName: string;
+  readonly repositoryUrl?: string | undefined;
+  readonly reason?: string | undefined;
+}) =>
+  `${AUTHORING} Make a connector for “${entry.title}” (MCP Registry: ${entry.registryName}${entry.repositoryUrl ? `, code: ${entry.repositoryUrl}` : ""}). Scient can't add it as it is${entry.reason ? `: ${entry.reason}` : ""}.`;

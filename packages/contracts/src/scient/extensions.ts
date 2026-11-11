@@ -377,6 +377,13 @@ export const LocalPackage = Schema.Struct({
 });
 export type LocalPackage = typeof LocalPackage.Type;
 
+/** An MCP Bundle (`.mcpb`) an MCP Registry entry publishes by https address and SHA-256. */
+export const LocalBundleDownload = Schema.Struct({
+  url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048), Schema.isPattern(/^https:\/\//)),
+  sha256: TrimmedNonEmptyString.check(Schema.isPattern(/^[a-f0-9]{64}$/)),
+});
+export type LocalBundleDownload = typeof LocalBundleDownload.Type;
+
 /** Where a server set up in another app was found. */
 export const LocalImportSource = Schema.Union([
   Schema.Struct({
@@ -439,6 +446,13 @@ export const ConnectorAddInput = Schema.Struct({
       version: ConnectorNameInput,
       package: LocalPackage,
       environment: LocalEnvironmentListInput,
+    }),
+    /** A registry entry's `localBundle`: downloaded, checked against its hash, unpacked. */
+    Schema.Struct({
+      type: Schema.Literal("registry-bundle"),
+      name: ConnectorNameInput,
+      version: ConnectorNameInput,
+      bundle: LocalBundleDownload,
     }),
   ]),
   displayName: Schema.optional(ConnectorNameInput),
@@ -682,6 +696,8 @@ export const DiscoverEntry = Schema.Struct({
   remotes: Schema.Array(DiscoverRemote),
   /** A registry package Scient can run locally; offered only when no remote is installable. */
   localPackage: Schema.optional(LocalPackage),
+  /** A registry bundle Scient can download and run; offered when nothing above is. */
+  localBundle: Schema.optional(LocalBundleDownload),
   installable: Schema.Boolean,
   /** Why the entry cannot be installed as a connector (for example local packages only). */
   unsupportedReason: Schema.optional(TrimmedNonEmptyString),

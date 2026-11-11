@@ -11,6 +11,7 @@ import {
   type DiscoverPage,
   type DiscoverRemote,
   type ExtensionCategory,
+  LocalBundleDownload,
   LocalPackage,
 } from "@t3tools/contracts";
 import * as Clock from "effect/Clock";
@@ -78,8 +79,6 @@ const DEFAULT_LIMIT = 30;
 const MAX_LIMIT = 100;
 const MAX_QUERY_LENGTH = 200;
 
-const UNSUPPORTED_LOCAL_ONLY =
-  "Runs locally in a form Scient cannot start yet (it runs npm and PyPI packages)";
 export const UNSUPPORTED_REQUIRES_CONFIGURATION =
   "Requires configuration (headers or URL settings) before it can be connected";
 export const UNSUPPORTED_NOT_HTTPS = "Its remote endpoint is not served over https";
@@ -207,8 +206,9 @@ const RegistryPackage = Schema.Struct({
   registryType: Schema.String,
   identifier: Schema.String,
   version: Schema.optional(Schema.String),
+  fileSha256: Schema.optional(Schema.String),
   transport: Schema.optional(Schema.Struct({ type: Schema.String })),
-  runtimeArguments: Schema.optional(Schema.Array(Schema.Unknown)),
+  runtimeArguments: Schema.optional(Schema.Array(RegistryArgument)),
   packageArguments: Schema.optional(Schema.Array(RegistryArgument)),
   environmentVariables: Schema.optional(
     Schema.Array(
@@ -222,56 +222,99 @@ const RegistryPackage = Schema.Struct({
     ),
   ),
 });
+type RegistryPackage = typeof RegistryPackage.Type;
 const decodeRegistryPackage = Schema.decodeUnknownExit(RegistryPackage);
 const isLocalPackage = Schema.is(LocalPackage);
+const isLocalBundle = Schema.is(LocalBundleDownload);
+
+/** Runner options Scient passes itself: `npx -y` installs without asking. */
+const APPLIED_RUNNER_FLAGS: Readonly<Record<string, ReadonlySet<string>>> = {
+  npx: new Set(["-y", "--yes"]),
+  uvx: new Set(),
+};
+const OTHER_REGISTRIES: Readonly<Record<string, string>> = {
+  nuget: ".NET (NuGet)",
+  cargo: "Rust (Cargo)",
+};
+
+type LocalChoice =
+  | { readonly localPackage: LocalPackage }
+  | { readonly localBundle: LocalBundleDownload }
+  | { readonly reason: string };
+
+/** How Scient can run one registry package on this computer, or why it can't. */
+function localChoiceOf(pkg: RegistryPackage): LocalChoice {
+  const transport = pkg.transport?.type ?? "stdio";
+  if (pkg.registryType === "oci") return { reason: "Runs in Docker, which Scient doesn't start" };
+  if (pkg.registryType === "mcpb") {
+    const bundle = { url: pkg.identifier.trim(), sha256: pkg.fileSha256?.trim().toLowerCase() };
+    return isLocalBundle(bundle) && transport === "stdio"
+      ? { localBundle: bundle }
+      : { reason: "Its bundle has no https address and checksum Scient can check" };
+  }
+  const runner =
+    pkg.registryType === "npm" ? "npx" : pkg.registryType === "pypi" ? "uvx" : undefined;
+  if (runner === undefined)
+    return {
+      reason: `Runs from ${OTHER_REGISTRIES[pkg.registryType] ?? pkg.registryType} packages, which Scient doesn't run`,
+    };
+  if (transport !== "stdio")
+    return { reason: `Runs here as a ${transport} server, which Scient doesn't start` };
+  const unknown = (pkg.runtimeArguments ?? [])
+    .map((argument) => nonBlank(argument.name) ?? nonBlank(argument.value) ?? "")
+    .filter((flag) => !APPLIED_RUNNER_FLAGS[runner]!.has(flag));
+  if (unknown.length > 0)
+    return { reason: `Needs runner options Scient doesn't pass (${unknown.join(" ")})` };
+  const args: string[] = [];
+  for (const argument of pkg.packageArguments ?? []) {
+    const value = nonBlank(argument.value) ?? nonBlank(argument.default);
+    if (value === undefined) {
+      if (argument.isRequired === true)
+        return {
+          reason: `Needs a value for ${nonBlank(argument.name) ?? "an argument"} that Scient can't ask for yet`,
+        };
+      continue;
+    }
+    if (argument.type === "named" && argument.name !== undefined) args.push(argument.name);
+    args.push(value);
+  }
+  const candidate = {
+    runner,
+    identifier: pkg.identifier.trim(),
+    version: pkg.version?.trim() ?? "",
+    args,
+    environment: (pkg.environmentVariables ?? []).map((variable) => {
+      const description = nonBlank(variable.description);
+      const fallback = nonBlank(variable.default);
+      return {
+        name: variable.name.trim(),
+        ...(description === undefined ? {} : { description }),
+        required: variable.isRequired === true,
+        secret: variable.isSecret === true,
+        ...(fallback === undefined ? {} : { default: fallback }),
+      };
+    }),
+  };
+  return isLocalPackage(candidate)
+    ? { localPackage: candidate }
+    : { reason: "Its package has a name or version Scient can't run" };
+}
 
 /**
- * The first npm or PyPI stdio package Scient can start through `npx` or `uvx`: arguments must have
- * fixed values or defaults, since the add form asks only for environment variables.
+ * The first package Scient can run here (npm and PyPI through `npx` and `uvx`, or an MCP Bundle),
+ * else why the first one can't run. Arguments need fixed values or defaults: the add form asks only
+ * for environment variables.
  */
-function localPackageOf(packages: ReadonlyArray<unknown>): LocalPackage | undefined {
+function localChoiceFor(packages: ReadonlyArray<unknown>): LocalChoice | undefined {
+  let first: LocalChoice | undefined;
   for (const raw of packages) {
     const decoded = decodeRegistryPackage(raw);
     if (Exit.isFailure(decoded)) continue;
-    const pkg = decoded.value;
-    const runner =
-      pkg.registryType === "npm" ? "npx" : pkg.registryType === "pypi" ? "uvx" : undefined;
-    if (runner === undefined || (pkg.transport !== undefined && pkg.transport.type !== "stdio")) {
-      continue;
-    }
-    if ((pkg.runtimeArguments ?? []).length > 0) continue;
-    const args: string[] = [];
-    let complete = true;
-    for (const argument of pkg.packageArguments ?? []) {
-      const value = nonBlank(argument.value) ?? nonBlank(argument.default);
-      if (value === undefined) {
-        if (argument.isRequired === true) complete = false;
-        continue;
-      }
-      if (argument.type === "named" && argument.name !== undefined) args.push(argument.name);
-      args.push(value);
-    }
-    if (!complete) continue;
-    const candidate = {
-      runner,
-      identifier: pkg.identifier.trim(),
-      version: pkg.version?.trim() ?? "",
-      args,
-      environment: (pkg.environmentVariables ?? []).map((variable) => {
-        const description = nonBlank(variable.description);
-        const fallback = nonBlank(variable.default);
-        return {
-          name: variable.name.trim(),
-          ...(description === undefined ? {} : { description }),
-          required: variable.isRequired === true,
-          secret: variable.isSecret === true,
-          ...(fallback === undefined ? {} : { default: fallback }),
-        };
-      }),
-    };
-    if (isLocalPackage(candidate)) return candidate;
+    const choice = localChoiceOf(decoded.value);
+    if (!("reason" in choice)) return choice;
+    first ??= choice;
   }
-  return undefined;
+  return first;
 }
 
 /** Normalize one active registry server into a Discover entry. */
@@ -281,8 +324,11 @@ function toDiscoverEntry(entry: RegistryServerEntry): Omit<DiscoverEntry, "insta
   const streamable = remotes.filter((remote) => remote.type === "streamable-http");
   const usable = streamable.flatMap((remote) => resolveRemote(remote) ?? []);
   const remoteInstallable = usable.some((remote) => !remote.requiresInput);
-  const localPackage = remoteInstallable ? undefined : localPackageOf(server.packages ?? []);
-  const installable = remoteInstallable || localPackage !== undefined;
+  const local = remoteInstallable ? undefined : localChoiceFor(server.packages ?? []);
+  const localPackage =
+    local !== undefined && "localPackage" in local ? local.localPackage : undefined;
+  const localBundle = local !== undefined && "localBundle" in local ? local.localBundle : undefined;
+  const installable = remoteInstallable || localPackage !== undefined || localBundle !== undefined;
   const unsupportedReason = installable
     ? undefined
     : usable.length > 0
@@ -291,8 +337,8 @@ function toDiscoverEntry(entry: RegistryServerEntry): Omit<DiscoverEntry, "insta
         ? UNSUPPORTED_NOT_HTTPS
         : remotes.length > 0
           ? UNSUPPORTED_TRANSPORT
-          : (server.packages ?? []).length > 0
-            ? UNSUPPORTED_LOCAL_ONLY
+          : local !== undefined && "reason" in local
+            ? local.reason
             : UNSUPPORTED_NO_ENDPOINT;
   const title = nonBlank(server.title);
   const description = nonBlank(server.description);
@@ -308,6 +354,7 @@ function toDiscoverEntry(entry: RegistryServerEntry): Omit<DiscoverEntry, "insta
     ...(repositoryUrl === undefined ? {} : { repositoryUrl }),
     remotes: usable,
     ...(localPackage === undefined ? {} : { localPackage }),
+    ...(localBundle === undefined ? {} : { localBundle }),
     categories: [],
     installable,
     ...(unsupportedReason === undefined ? {} : { unsupportedReason }),

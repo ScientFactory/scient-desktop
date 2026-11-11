@@ -36,6 +36,7 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
+import { HttpClient } from "effect/http";
 
 import { AccountsService } from "../../accounts/AccountsService.ts";
 import {
@@ -619,6 +620,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     accounts,
     projects,
     sessions: signInSessions,
+    http: yield* Effect.serviceOption(HttpClient.HttpClient),
   });
   /** One connector as clients see it; a local one reads its manifest for what it needs. */
   const summarizeWith =
@@ -1471,7 +1473,14 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     input: ConnectorAddInput,
     target: Extract<
       ConnectorAddInput["target"],
-      { readonly type: "local-bundle" | "local-command" | "local-package" | "local-import" }
+      {
+        readonly type:
+          | "local-bundle"
+          | "local-command"
+          | "local-package"
+          | "local-import"
+          | "registry-bundle";
+      }
     >,
   ) {
     if ((yield* store.read).connectors.length >= MAX_CONNECTORS) {
@@ -1516,7 +1525,8 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       target.type === "local-bundle" ||
       target.type === "local-command" ||
       target.type === "local-package" ||
-      target.type === "local-import"
+      target.type === "local-import" ||
+      target.type === "registry-bundle"
     ) {
       return yield* addLocal(input, target);
     }

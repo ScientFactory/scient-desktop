@@ -54,7 +54,11 @@ import {
   LocalConnectorMenuItems,
   mcpServerSummary,
 } from "./ExtensionItems";
-import { fixConnectorPrompt, useConnectorAgentChat } from "./connectorAgentChat";
+import {
+  fixConnectorPrompt,
+  makeFromEntryPrompt,
+  useConnectorAgentChat,
+} from "./connectorAgentChat";
 import { ErrorNote } from "./ExtensionsFeedback";
 import { siteHost } from "./LocalSetupFields";
 import { useSignIn } from "../accounts/useSignIn";
@@ -928,9 +932,10 @@ function ServerDetail({
   readonly entry: DiscoverEntry;
   readonly onAddWithOptions: () => void;
 }) {
-  const { catalog, providers } = useExtensionsEnvironment();
+  const { catalog, providers, environmentId } = useExtensionsEnvironment();
   const codex = providers.find((provider) => provider.driver === "codex" && provider.enabled);
   const actions = useAddEntry(entry);
+  const startChat = useConnectorAgentChat(environmentId);
   const name = entryName(entry);
   const tagline = entryTagline(entry);
   const catalogOnly = isCatalogOnlyEntry(entry);
@@ -951,7 +956,7 @@ function ServerDetail({
               >
                 {actions.busy === "add" ? "Adding…" : "Add"}
               </PrimaryAction>
-              {actions.canAdd ? (
+              {actions.canAdd && entry.localBundle === undefined ? (
                 <MoreMenu label={`More for ${name}`}>
                   <MenuItem disabled={actions.locked} onClick={onAddWithOptions}>
                     Add with options…
@@ -966,10 +971,33 @@ function ServerDetail({
       feedback={
         <>
           {!actions.canAdd ? (
-            <MutedLine>
-              {entry.unsupportedReason ??
-                "Scient can't add this server: it has no remote endpoint to connect to."}
-            </MutedLine>
+            <div className="flex min-w-0 items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <MutedLine>
+                  {entry.unsupportedReason ??
+                    "Scient can't add this server: it has no remote endpoint to connect to."}
+                </MutedLine>
+              </div>
+              {startChat !== undefined && !catalogOnly ? (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    void startChat(
+                      makeFromEntryPrompt({
+                        title: name,
+                        registryName: entry.name,
+                        repositoryUrl: entry.repositoryUrl,
+                        reason: entry.unsupportedReason,
+                      }),
+                      "make",
+                    )
+                  }
+                >
+                  Make with an agent
+                </Button>
+              ) : null}
+            </div>
           ) : null}
           {entry.accountRequired === false ? <MutedLine>No account needed</MutedLine> : null}
           <ActionFeedback feedback={actions.feedback} />

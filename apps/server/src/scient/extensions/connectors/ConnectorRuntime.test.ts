@@ -29,7 +29,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { HttpRouter } from "effect/http";
+import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
 import * as yazl from "yazl";
 
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
@@ -2642,6 +2642,50 @@ describe("local connectors", () => {
         // Its key stays in Accounts for the user.
         expect(accounts.keys.size).toBe(1);
       }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("adds a registry bundle only when its download matches the listed checksum", () =>
+    Effect.gen(function* () {
+      const accounts = fakeKeyAccounts();
+      const config = yield* ServerConfig.ServerConfig;
+      const archive = NodePath.join(config.stateDir, "..", "registry-echo.mcpb");
+      yield* writeBundle(archive);
+      const bytes = yield* Effect.promise(() => NodeFSP.readFile(archive));
+      const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
+      const client = HttpClient.make((request) =>
+        Effect.succeed(
+          HttpClientResponse.fromWeb(
+            request,
+            request.url === "https://example.com/echo.mcpb"
+              ? new Response(bytes)
+              : new Response("missing", { status: 404 }),
+          ),
+        ),
+      );
+      const harness = yield* makeHarness().pipe(
+        Effect.provide(Layer.merge(accounts.layer, Layer.succeed(HttpClient.HttpClient, client))),
+      );
+      const target = (hash: string) =>
+        ({
+          type: "registry-bundle",
+          name: "example/echo",
+          version: "1.2.0",
+          bundle: { url: "https://example.com/echo.mcpb", sha256: hash },
+        }) as const;
+      const refused = yield* Effect.flip(harness.runtime.add({ target: target("0".repeat(64)) }));
+      expect(refused.message).toContain("checksum");
+      expect((yield* harness.runtime.list()).connectors).toEqual([]);
+      const folders = yield* Effect.promise(() =>
+        NodeFSP.readdir(NodePath.join(config.stateDir, "connectors")),
+      );
+      expect(folders.filter((name) => !name.startsWith(".scient-setup"))).toEqual([]);
+
+      const added = yield* harness.runtime.add({ target: target(sha256) });
+      expect(added.connector).toMatchObject({
+        source: { type: "local", registry: { name: "example/echo", version: "1.2.0" } },
+        local: { kind: "bundle", owned: true, missing: ["API key"] },
+      });
+    }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("is added without its key, says what it needs, and runs once the key is linked", () =>

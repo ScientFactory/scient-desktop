@@ -306,8 +306,31 @@ export function useAddEntry(entry: DiscoverEntry) {
     busy: lock.busy,
     locked: lock.locked,
     feedback: lock.feedback,
-    canAdd: entry.installable && (remote !== undefined || entry.localPackage !== undefined),
+    canAdd:
+      entry.installable &&
+      (remote !== undefined || entry.localPackage !== undefined || entry.localBundle !== undefined),
     add: async () => {
+      const bundle = entry.localBundle;
+      if (entry.installable && remote === undefined && bundle !== undefined) {
+        const added = await lock.run("add", () =>
+          add({
+            environmentId,
+            input: {
+              target: { type: "registry-bundle", name: entry.name, version: entry.version, bundle },
+              displayName: entryName(entry),
+              ...(entry.description?.trim()
+                ? { description: entry.description.trim().slice(0, 1000) }
+                : {}),
+            },
+          }),
+        );
+        if (added?._tag === "Success")
+          toastManager.add({
+            type: "success",
+            title: `${added.value.connector.displayName} added`,
+          });
+        return;
+      }
       if (!entry.installable || remote === undefined || lock.locked) return;
       const addEntry = () =>
         add({

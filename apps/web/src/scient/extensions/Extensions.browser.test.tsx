@@ -40,6 +40,7 @@ vi.mock("./connectorAgentChat", () => ({
   MAKE_CONNECTOR_PROMPT: "",
   fixConnectorPrompt: () => "",
   improveConnectorPrompt: () => "",
+  makeFromEntryPrompt: () => "",
 }));
 vi.mock("../accounts/useSignIn", () => ({ useSignIn: () => async () => false }));
 vi.mock("../skills/skillAgentChat", () => ({
@@ -1919,6 +1920,28 @@ describe("Detail pages", () => {
     await userEvent.click(buttonIn(fixture.header(), "Add")!);
     expect(state.commands.add).toHaveBeenCalledOnce();
     expect(state.toast).toHaveBeenCalledWith({ type: "success", title: "Notion added" });
+
+    // A registry bundle is added in one step, by its address and checksum.
+    const bundle = { url: "https://example.com/echo.mcpb", sha256: "a".repeat(64) };
+    state.entries = {
+      "io.github.acme/echo": entry("io.github.acme/echo", {
+        title: "Echo",
+        remotes: [],
+        localBundle: bundle,
+      }),
+    };
+    state.commands.add.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { connector: connector("echo000001", { displayName: "Echo" }), nextStep: "ready" },
+    });
+    await fixture.render(<ServerDetailPage name="io.github.acme/echo" />);
+    await userEvent.click(buttonIn(fixture.header(), "Add")!);
+    expect(state.commands.add).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: expect.objectContaining({
+        target: { type: "registry-bundle", name: "io.github.acme/echo", version: "1.0.0", bundle },
+      }),
+    });
   });
 
   it("shows an added catalog server as its connector", async () => {

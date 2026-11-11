@@ -29,11 +29,13 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import { HttpClient } from "effect/http";
 
 import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
 import type { AccountsService } from "../../accounts/AccountsService.ts";
 import { type ConnectorSessionsShape, needsYouMessage } from "../../accounts/connectorSessions.ts";
 import { latestHistory } from "../../storage/FolderHistory.ts";
+import { downloadBundle } from "./LocalBundleDownload.ts";
 import type { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import {
   parseScientPluginManifest,
@@ -123,7 +125,14 @@ const encodeSetup = Schema.encodeSync(SetupJson);
 type SettingValue = string | number | boolean | ReadonlyArray<string>;
 type LocalTarget = Extract<
   ConnectorAddInput["target"],
-  { readonly type: "local-bundle" | "local-command" | "local-package" | "local-import" }
+  {
+    readonly type:
+      | "local-bundle"
+      | "local-command"
+      | "local-package"
+      | "local-import"
+      | "registry-bundle";
+  }
 >;
 
 const invalid = (message: string) => new ExtensionsError({ reason: "invalid-input", message });
@@ -191,6 +200,8 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
   readonly accounts: Option.Option<AccountsService["Service"]>;
   readonly projects: ProjectStoreV2["Service"];
   readonly sessions: Option.Option<ConnectorSessionsShape>;
+  /** Downloads MCP Registry bundles. */
+  readonly http: Option.Option<HttpClient.HttpClient>;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -599,6 +610,38 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       let imported: LocalLaunchRecord["imported"];
       let registry: { readonly name: string; readonly version: string } | undefined;
       switch (target.type) {
+        case "registry-bundle": {
+          if (Option.isNone(options.http))
+            return yield* unsupported("Scient can't download bundles here.");
+          const http = options.http.value;
+          const download = path.join(root, `.download-${connectorId}.mcpb`);
+          yield* withFiles(
+            fileSystem
+              .makeDirectory(root, { recursive: true })
+              .pipe(
+                Effect.mapError(() =>
+                  unsupported("Scient could not create its connectors folder."),
+                ),
+              ),
+          );
+          directory = yield* Effect.gen(function* () {
+            yield* downloadBundle(target.bundle, download).pipe(
+              Effect.provideService(HttpClient.HttpClient, http),
+            );
+            const read = yield* readBundleManifest(download);
+            const reason = platformUnavailable(read.manifest, platform);
+            if (reason !== undefined) return yield* unsupported(reason);
+            const unpacked = folderFor(read.manifest.display_name ?? read.manifest.name);
+            yield* unpackBundle(download, unpacked);
+            return unpacked;
+          }).pipe(
+            Effect.ensuring(fileSystem.remove(download, { force: true }).pipe(Effect.ignore)),
+          );
+          owned = directory;
+          kind = "bundle";
+          registry = { name: target.name, version: target.version };
+          break;
+        }
         case "local-bundle": {
           const read = yield* readBundleManifest(target.path);
           const reason = platformUnavailable(read.manifest, platform);
