@@ -77,12 +77,10 @@ export function useContinueHere(api: CloudApi) {
     if (inFlight.has(key)) return null;
     inFlight.add(key);
     setRunning(true);
-    try {
-      return await task();
-    } finally {
+    return task().finally(() => {
       inFlight.delete(key);
       setRunning(false);
-    }
+    });
   };
 
   const continueRow = async (row: ThreadIndexRow, here: string): Promise<string | null> => {

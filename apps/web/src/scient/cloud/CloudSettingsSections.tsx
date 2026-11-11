@@ -105,9 +105,8 @@ function CloudCopySection({
       replace(await run());
     } catch (error) {
       setProblem(error instanceof Error ? error.message : "That didn't work. Try again.");
-    } finally {
-      setBusy(null);
     }
+    setBusy(null);
   };
 
   const used =
@@ -218,12 +217,9 @@ function SharedLinkRow({
   const [busy, setBusy] = useState(false);
   const update = async (run: () => Promise<unknown>) => {
     setBusy(true);
-    try {
-      await run();
-      onChanged();
-    } finally {
-      setBusy(false);
-    }
+    await run()
+      .then(onChanged)
+      .finally(() => setBusy(false));
   };
   const facts = [
     accessLabel(share.access),
