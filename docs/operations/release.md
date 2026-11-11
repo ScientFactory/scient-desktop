@@ -31,10 +31,23 @@ the stable scheduler and production gate.
 - Never rerun the full source test suite merely to reproduce evidence already
   green on the exact source SHA. Release jobs verify that exact CI provenance,
   then perform native build, signing, manifest, checksum, and distribution work.
-- Desktop builds cache the Windows dependency store and compiled resource
-  monitor, omit unused Claude SDK platform executables, and package only the
-  target Windows `node-pty` architecture. These optimizations do not relax the
-  exact-source CI, signing, assembly, or publication gates.
+- Desktop builds cache the Windows dependency store, compiled resource
+  monitor and, on macOS, the pinned whisper.cpp and SyncTeX runtimes. They omit
+  unused Claude SDK platform executables and package only the target Windows
+  `node-pty` architecture. These optimizations do not relax the exact-source CI,
+  signing, assembly, or publication gates. The macOS runtime cache is keyed by the
+  pinning scripts and the runner's toolchain, written only by `main`, and the
+  packer verifies each receipt and every file before staging it.
+- Jobs wait only for the inputs they use. Each macOS package builds its own native
+  runtimes, so a release holds two macOS runners, not four. Linux and Windows
+  packages set up while their prerequisites build, then wait for their own
+  target's. The remote server asset starts once every target's SyncTeX runtime
+  and resource monitor exist, and fails if any is missing; Windows payload
+  verification starts once the Windows package exists. Assembly still requires
+  every job to succeed.
+- The macOS updater ZIP uses 7-Zip Deflate level 5 rather than electron-builder's
+  default 7: about 2.5 times faster for under 1% more bytes. Its blockmap and
+  updater manifests are generated from the archive as before.
 - macOS packages run on matching host architectures: Intel uses `macos-26-intel`
   and Apple Silicon uses `macos-26`. Intel's prepared server bytecode is generated
   natively, without Rosetta, under the same cache-generation timeout and checks.
@@ -184,7 +197,11 @@ tag or release already exists.
    `publish_release=true`; this builds and assembles the candidate but does not
    publish it until the protected `production` job is separately approved. Use
    `publish_release=false` only for a non-publishing machinery rehearsal, not as
-   the candidate for a later rebuilt publication. Keep `allow_note_free=false`
+   the candidate for a later rebuilt publication. To try release-workflow changes
+   before they reach `main`, push them to a `release-rehearsal/*` branch and run the
+   workflow there with `rehearsal=true`: it signs, notarizes and assembles a
+   `0.0.<run number>` Stable-shaped candidate from that commit, skips the exact-main
+   CI and release-note checks, and never reaches the publication job. Keep `allow_note_free=false`
    unless Yaacov explicitly accepts a note-free release.
 4. Wait for assembly, then inspect the `scient-release-v<version>` artifact from
    that same pending workflow run. It contains macOS arm64/x64, Linux x64,

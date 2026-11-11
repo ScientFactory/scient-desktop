@@ -260,6 +260,30 @@ native offering and adopted provider work retain their receipt-aware control.
 Preserve upstream's effect ordering and transaction/cancellation machinery.
 The maintained boundaries are in [the separation map](docs/internals/scient-fork-divergence.md#extracted-owners-and-host-mounts).
 
+Scient's switch planning also runs on ordinary sends, so a project-folder move replaces the
+native binding. For providers that negotiate per-thread workspaces in a pooled process,
+`ProviderSwitchService.ts` compares the last bound workspace recorded by
+`ProviderTurnStartService.ts` in the optional `nativeMetadata.cwd`, not the pooled process's
+launch cwd; older records keep the conservative session-cwd fallback. Marked seams in
+`ProviderEventIngestor.ts` and `RunExecutionService.ts` apply
+`scient-provider/RecordedWorkspace.ts`, so the recorded value wins over an adapter's cached copy
+of the same session's row. Detach passes Scient's optional `awaitRelease` (`provider-core`
+`ProviderAdapter.ts`), and a marked block in `Adapters/CodexAdapterV2.ts` then waits up to 5
+seconds for `thread/closed`, including a close still pending from an earlier idle unsubscribe,
+because the next owner may be another app-server process. `ProviderSessionManager.ts` remembers
+threads an idle unload released (`idleUnloadedProviderThreads`) so a later handoff detach still
+joins that release. Preserve these divergences.
+
+The same change pre-adopts two open upstream fixes in their touched hunks:
+[#30647](https://github.com/pingdotgg/t3code/pull/30647)'s detach of the held native thread
+(`ProviderSessionManager.ts`, without its per-thread config fixture churn) and
+[#33767](https://github.com/pingdotgg/t3code/pull/33767)'s Codex unload delay launch argument and
+closing-thread resume retry. When syncing, take upstream's version of those hunks, then reapply
+the marked Scient additions inside them: the `awaitRelease` detach argument and
+`idleUnloadedProviderThreads` fallback in `ProviderSessionManager.ts`, the release wait in
+`CodexAdapterV2.unloadThread`, the `expectedRuntime` release argument, and the linked-environments
+test assertions. See [provider lifecycle](docs/internals/providers.md#registry-and-routing).
+
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
 policy, identity, scientific behavior, release decisions, and every deliberate
@@ -619,6 +643,15 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`44ebb2fe57465d32f2bd07c5eb3d8e871bdf5ed5` is recorded in
+[the 2026-11-11 44ebb2fe57 receipt](docs/internals/t3-upstream-sync-20261111-44ebb2fe57.md).
+Literal merge `18697158fb3c076f62fbe0aee8c9c37c0314d022` has owned base
+`b54217ce65ea261004b3222eec44de843db04f56` and the frozen official target as parents, retaining
+the 61 official commits after `7171fdd771`. T3's timeline viewport rules land in Scient's reader
+scrolling. A restart that Stop already reached is still refused, so nothing starts while a
+provider shuts down. No migrations. Release remains separate.
+
+The previous committed alignment through
 `7171fdd7716b05dc1b4be40c26ac78e8bb35f80c` is recorded in
 [the 2026-11-10 7171fdd771 receipt](docs/internals/t3-upstream-sync-20261110-7171fdd771.md).
 Literal merge `3bce08006815ca295d8e60f2402606ad4d666f0d` has owned base
@@ -628,7 +661,7 @@ runtime. T3's agent sign-in approval runs through Scient Connect, which merged f
 `@pierre/diffs` moves to 1.7.0-beta.3 with Scient's editor additions. No migrations.
 Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `33db45effd176c01a27b3f2976192e77ad82b301` is recorded in
 [the 2026-11-09 33db45effd receipt](docs/internals/t3-upstream-sync-20261109-33db45effd.md).
 Literal merge `dce80a7807a0f16dd1a3acdec885d3c644e48d73` has owned base

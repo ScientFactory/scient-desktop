@@ -45,7 +45,7 @@ export function computeQualificationSuites(paths) {
     "packages/scient-provider-runtime/",
     "packages/shared/src/hostProcess",
   ];
-  // Linux only: pushes to main run all four computers and catch what this misses.
+  // Linux only: the nightly main run covers all four computers and catches what this misses.
   const broadExact = new Set([
     ".github/workflows/ci.yml",
     "pnpm-lock.yaml",

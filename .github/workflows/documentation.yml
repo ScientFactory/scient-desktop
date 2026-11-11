@@ -20,6 +20,9 @@ jobs:
     name: Documentation
     runs-on: ubuntu-24.04
     timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: read
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -27,12 +30,23 @@ jobs:
           fetch-depth: 0
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
 
+      # The merge queue already ran this check on every commit the push lands.
+      - name: Check for queue verification
+        id: queue
+        if: github.event_name == 'push'
+        uses: actions/github-script@v8
+        with:
+          script: |
+            await require('./.github/scripts/queue-verified.cjs').queueVerified({ github, context, core });
+
       - name: Setup Node.js
+        if: steps.queue.outputs.verified != 'true'
         uses: actions/setup-node@v6
         with:
           node-version-file: package.json
 
       - name: Check documentation
+        if: steps.queue.outputs.verified != 'true'
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
           EVENT_NAME: ${{ github.event_name }}
@@ -71,4 +85,5 @@ jobs:
           fi
 
       - name: Test documentation checker
+        if: steps.queue.outputs.verified != 'true'
         run: node --test scripts/check-markdown-links.node-tests.mjs

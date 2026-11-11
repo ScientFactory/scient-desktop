@@ -295,16 +295,30 @@ existing mobile native, Compute and packaging selectors. Their failed self-tests
 block `Check` while unknown outputs still run the native lanes. Rust runs for
 all three crate trees, Rust source files, Cargo manifests/lockfiles, Rust toolchain
 files, and `.cargo` configuration at any depth. Unknown paths and unresolvable
-diffs fail open. Main runs every lane fresh. The unchanged packaging selector
+diffs fail open. A main push that cannot reuse queue qualification, and the nightly run,
+select every lane. The unchanged packaging selector
 selects Windows and remote-server packaging for web/server production source;
 test-only edits skip packaging.
 
-The merge queue can reuse a successful same-repository PR run into main only for the exact
-content and comparison base. Schema-3 receipts record which web/server suites actually
-ran; only their reports must be restored before reuse is confirmed. Missing, stale,
-legacy, or partial evidence falls back to ordinary CI. One reporting job per suite
-covers reused qualification; shard names are not required
-contexts. A successful workflow still needs transfer evidence whenever server tests ran.
+Nothing that already passed on the same content runs again. The merge queue reuses a
+successful same-repository PR run into main only for the exact content and comparison base,
+and a push to main reuses the queue runs that qualified each commit it lands. Receipts
+record which web/server suites actually ran and that Overleaf Windows passed; only those
+reports must be restored, from the attempt whose job passed, before reuse is confirmed.
+Missing, stale, legacy, or partial evidence falls back to ordinary CI, as does a push the
+queue never ran, such as an administrator merge. A push waits up to two minutes for a queue
+run that is still finishing. One reporting job per suite covers reused qualification, and four
+small jobs report the `Test` and `Test Server 1`–`3` names that `release/stable` protection
+requires on the promoted commit; other shard names are not required contexts. A successful workflow still needs transfer evidence
+whenever server tests ran.
+
+A reused push still saves main's Linux and Windows dependency stores when the merged
+lockfile needs a new one, because pull requests restore them. Other main-only work, such
+as the Windows packaging caches and the 10- and 50-file Overleaf benchmark, moves to the
+nightly run: a `schedule` run of CI on main at 02:41 UTC that selects every lane on every
+computer. It catches environment drift and anything an exact gate missed, up to a day after
+the merge. Start one by hand with `gh workflow run ci.yml --repo ScientFactory/scient-desktop
+--ref main`.
 
 Workspace package tests run on three runners. Part 1 keeps the `Test` name that
 `release/stable` requires and runs every package parts 2 and 3 don't name, so a new
@@ -355,16 +369,17 @@ in `.github/scripts/compute-ci-gate.mjs` distinguishes these inputs:
 - Broad inputs run both suites on Linux only: package manifests, the lockfile,
   workspace configuration, root Vite configuration, server configuration and
   settings, `ci.yml`, workspace code and test infrastructure. They are rarely
-  Compute changes but every upstream alignment touches them, and a push to main
-  still runs all four computers, so a platform-only break shows there after merge.
+  Compute changes but every upstream alignment touches them, and the nightly run
+  covers all four computers, so a platform-only break shows there within a day.
 - Unit tests, which run in the ordinary lanes, and the server's RPC fixture
   `ComputeRpcServerTests.ts` run neither, as do unrelated UI and docs changes.
   Mixed changes take the union, so a Compute file beside the lockfile still runs
   every platform; uncertain diffs run everything.
 
 Both suites remain enabled on every platform by default for reusable callers and
-manual dispatch; manual dispatch can also select either suite. Every push to main
-runs both suites on all four computers. No cross-revision success cache or
+manual dispatch; manual dispatch can also select either suite. The nightly run, and any
+main push that cannot reuse queue qualification, runs both suites on all four computers.
+No cross-revision success cache or
 dependency-lock graph is used to skip checks. This uses the existing required
 `Test` check without separate branch-protection settings for conditional jobs.
 The [manual Windows lane](../../.github/workflows/windows-tests.yml) is available for focused

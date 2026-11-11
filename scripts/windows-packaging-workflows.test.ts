@@ -11,7 +11,7 @@ it("requires applicable Windows qualification through the single Check gate", ()
     changes: {
       outputs: {
         windows_changed:
-          "${{ github.event_name == 'push' && 'true' || steps.packaging.outputs.changed }}",
+          "${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.packaging.outputs.changed }}",
       },
     },
     windows_packaging: {

@@ -2090,7 +2090,7 @@ describe("Detail pages", () => {
     await userEvent.keyboard("{Escape}");
     await userEvent.keyboard("{Escape}");
     expect(agentsCard()).toBeNull();
-    expect(document.activeElement).toBe(trigger);
+    await expect.element(page.elementLocator(trigger)).toHaveFocus();
   });
 
   it("explains unsupported agents in the works-with popover", async () => {

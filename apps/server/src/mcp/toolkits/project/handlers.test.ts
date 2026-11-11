@@ -289,7 +289,7 @@ it.effect("refuses name-only projects through the real service while the Scient 
             projectId === createdProjectId ? Option.some(createdProject) : Option.none(),
           ),
       }),
-      Layer.mock(GitWorkflow.GitWorkflowService)({ isRepository: () => Effect.succeed(false) }),
+      Layer.mock(GitWorkflow.GitWorkflowService)({ repositoryRoot: () => Effect.succeed(null) }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
       DocumentText.layer.pipe(Layer.provideMerge(NodeServices.layer)),
       ServerConfig.layerTest(process.cwd(), { prefix: "t3-named-project-" }).pipe(

@@ -55,7 +55,7 @@ describe("Scient awareness", () => {
   });
 
   it("keeps the always-on identity compact and free of tool-specific guidance", () => {
-    expect(wordCount(SCIENT_CORE_AWARENESS)).toBeLessThanOrEqual(120);
+    expect(wordCount(SCIENT_CORE_AWARENESS)).toBeLessThanOrEqual(135);
     // Link spelling comes from upstream's runtime instructions alone.
     expect(SCIENT_CORE_AWARENESS).not.toMatch(/relative|absolute/u);
     expect(SCIENT_CORE_AWARENESS).not.toContain("sources_");

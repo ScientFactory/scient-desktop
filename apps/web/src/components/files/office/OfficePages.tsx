@@ -112,13 +112,6 @@ export function OfficePages(props: {
   }, [mounted, props.pages.length]);
   // SCIENT-FORK:START — a page past those mounted so far mounts at once, then is scrolled to.
   const pending = useRef<{ index: number; y: number } | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the container DOM node to a page once the page it was asked for has mounted
-  useLayoutEffect(() => {
-    const target = pending.current;
-    if (!target || target.index >= mounted) return;
-    pending.current = null;
-    scrollRef?.current?.(target.index, target.y);
-  }, [mounted, scrollRef]);
   const stopPending = () => {
     pending.current = null;
   };
@@ -130,7 +123,7 @@ export function OfficePages(props: {
         const row = rows.current.get(index);
         const page = props.pages[index];
         // SCIENT-FORK:START
-        if (!row && page) {
+        if ((!row || width === 0) && page) {
           pending.current = { index, y };
           setMounted((count) => Math.max(count, index + 1));
           return;
@@ -155,6 +148,15 @@ export function OfficePages(props: {
       },
     [props.pages, width, zoom], // SCIENT-FORK
   );
+  // SCIENT-FORK:START — finish pending jumps after measurement and mounting.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the container DOM node to a page once the page it was asked for has mounted
+  useLayoutEffect(() => {
+    const target = pending.current;
+    if (!target || target.index >= mounted || width === 0) return;
+    pending.current = null;
+    scrollRef?.current?.(target.index, target.y);
+  }, [mounted, width, scrollRef]);
+  // SCIENT-FORK:END
   return (
     <div
       ref={scroller}

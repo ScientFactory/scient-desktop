@@ -3,7 +3,7 @@ import { type ComponentProps } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { userEvent } from "vite-plus/test/browser";
 
-import { assistantCitationHash } from "~/lib/assistantCitationNavigation";
+import { assistantCitationRoute } from "~/lib/assistantCitationNavigation";
 import { computeCitationHash } from "~/scient/compute/computeCitationNavigation";
 import { fileCitationHash } from "~/scient/markdownEditor/fileCitationNavigation";
 
@@ -194,7 +194,12 @@ describe("citation hover content", () => {
       a.textContent?.includes("Go to source"),
     )!;
     expect(source.getAttribute("href")).toBe(
-      "/" + quoted.environmentId + "/" + quoted.threadId + "#" + assistantCitationHash(quoted),
+      "/" +
+        quoted.environmentId +
+        "/" +
+        quoted.threadId +
+        "#" +
+        assistantCitationRoute(quoted, null).hash,
     );
     const event = new MouseEvent("click", { bubbles: true, cancelable: true, button: 0 });
     await act(async () => source.dispatchEvent(event));
@@ -202,7 +207,7 @@ describe("citation hover content", () => {
     expect(mocks.navigate).toHaveBeenCalledWith(
       expect.objectContaining({
         params: { environmentId: quoted.environmentId, threadId: quoted.threadId },
-        hash: assistantCitationHash(quoted),
+        hash: assistantCitationRoute(quoted, null).hash,
         resetScroll: false,
         state: { assistantCitationActivation: expect.any(String) },
       }),

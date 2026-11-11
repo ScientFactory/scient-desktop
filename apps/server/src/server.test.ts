@@ -5359,7 +5359,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
               assert.isUndefined(config.scratchWorkspaceRoot);
 
               const ensure = yield* Effect.flip(client[WS_METHODS.projectsEnsureScratch]({}));
-              assert.include(String(ensure.message), "not available");
+              assert.include(String(ensure.message), "is inside the Git repository");
             }),
           ),
         );

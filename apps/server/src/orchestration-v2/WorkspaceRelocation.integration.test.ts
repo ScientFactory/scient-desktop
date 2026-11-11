@@ -132,6 +132,7 @@ for (const detached of [false, true]) {
           appThreadId: threadId,
           ownerNodeId: null,
           nativeThreadRef,
+          nativeMetadata: { cwd: "/tmp/workspace-before" },
           nativeConversationHeadRef: null,
           status: "idle",
           firstRunOrdinal: null,

@@ -273,25 +273,25 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - name: Save Spectre-mitigated MSVC libraries
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.spectre_cache.outputs.cache-hit != 'true' }}
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.spectre_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ steps.msvc.outputs.spectre }}
           key: ${{ steps.spectre_cache.outputs.cache-primary-key }}
       - name: Save native runtimes
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.native_cache.outputs.cache-hit != 'true' }}
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.native_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: native-runtimes
           key: ${{ steps.native_cache.outputs.cache-primary-key }}
       - name: Save the resource monitor
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.resource_monitor_cache.outputs.cache-hit != 'true' }}
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.resource_monitor_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: native/resource-monitor/target/x86_64-pc-windows-msvc/release/scient-resource-monitor.exe
           key: ${{ steps.resource_monitor_cache.outputs.cache-primary-key }}
       - name: Save Electron downloads
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.electron_cache.outputs.cache-hit != 'true' }}
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.electron_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
