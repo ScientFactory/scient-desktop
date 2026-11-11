@@ -158,6 +158,8 @@ export interface ConnectorRuntimeOptions {
   readonly runTool?: RunTool;
   /** Stands in for the network when a registry bundle is downloaded (tests). */
   readonly bundleFetch?: ConnectorFetch;
+  /** Told when a change reaches a connector's lock, before it waits there (tests). */
+  readonly onConnectorLock?: (connectorId: string) => void;
 }
 
 type Credential =
@@ -633,6 +635,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     },
     isoNow,
     runTool: options.runTool ?? (yield* makeRunTool),
+    ...(options.onConnectorLock === undefined ? {} : { onLock: options.onConnectorLock }),
   });
 
   /** Marks whether signing in again needs the person; the connector page shows Sign in. */
@@ -2497,35 +2500,41 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
       const availability =
         input.availability === undefined ? undefined : yield* checkAvailability(input.availability);
-      let local: ConnectorRecord["local"];
-      if (input.localSetup !== undefined) {
-        const record = yield* requireRecord(input.connectorId);
-        if (record.local === undefined) {
-          return yield* extensionsError("invalid-input", "Only local connectors have setup.");
+      const restarts = input.restart === true || input.localSetup !== undefined;
+      const commit = Effect.gen(function* () {
+        let local: ConnectorRecord["local"];
+        if (input.localSetup !== undefined) {
+          const record = yield* requireRecord(input.connectorId);
+          if (record.local === undefined) {
+            return yield* extensionsError("invalid-input", "Only local connectors have setup.");
+          }
+          local = yield* localConnectors.setup(record, input.localSetup);
         }
-        local = yield* localConnectors.setup(record, input.localSetup);
-      }
-      const restarts = input.restart === true || local !== undefined;
-      yield* updateRecord(input.connectorId, (current, updatedAt) => {
-        const nextLocal = local ?? current.local;
-        return {
-          ...current,
-          ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
-          ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
-          ...(availability === undefined ? {} : { availability }),
-          // A restart asked for after the person signed in starts with the new session.
-          ...(nextLocal === undefined
-            ? {}
-            : {
-                local:
-                  input.restart === true && nextLocal.signInNeedsUser
-                    ? (({ signInNeedsUser: _dropped, ...rest }) => rest)(nextLocal)
-                    : nextLocal,
-              }),
-          ...(restarts ? { lastError: undefined } : {}),
-          updatedAt,
-        };
+        yield* updateRecord(input.connectorId, (current, updatedAt) => {
+          const nextLocal = local ?? current.local;
+          return {
+            ...current,
+            ...(input.displayName === undefined ? {} : { displayName: input.displayName }),
+            ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+            ...(availability === undefined ? {} : { availability }),
+            // A restart asked for after the person signed in starts with the new session.
+            ...(nextLocal === undefined
+              ? {}
+              : {
+                  local:
+                    input.restart === true && nextLocal.signInNeedsUser
+                      ? (({ signInNeedsUser: _dropped, ...rest }) => rest)(nextLocal)
+                      : nextLocal,
+                }),
+            ...(restarts ? { lastError: undefined } : {}),
+            updatedAt,
+          };
+        });
       });
+      // New setup is one more change to the connector's folder record: never inside a save.
+      yield* input.localSetup === undefined
+        ? commit
+        : authoring.exclusive(input.connectorId)(commit);
       // Turned off, set up again or restarted: running copies stop; the next request starts anew.
       if (restarts || input.enabled === false) {
         yield* localHost.stop(

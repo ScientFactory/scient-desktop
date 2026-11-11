@@ -585,6 +585,8 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly bundleFetch?: ConnectorFetch;
     /** Stands in for npm and uv when a copy brings in a package's code. */
     readonly runTool?: RunTool;
+    /** Told when a change reaches a connector's lock. */
+    readonly onConnectorLock?: (connectorId: string) => void;
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -603,6 +605,7 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     ...(options.signInSessions === undefined ? {} : { signInSessions: options.signInSessions }),
     ...(options.bundleFetch === undefined ? {} : { bundleFetch: options.bundleFetch }),
     ...(options.runTool === undefined ? {} : { runTool: options.runTool }),
+    ...(options.onConnectorLock === undefined ? {} : { onConnectorLock: options.onConnectorLock }),
   }).pipe(
     Effect.provideService(
       ConnectorCredentialStore.ConnectorCredentialStore,
@@ -3018,6 +3021,8 @@ const writeConnectorFolder = (
     readonly mode?: string;
     readonly meta?: unknown;
     readonly keyRequired?: boolean;
+    /** Adds a plain, optional "Region" setting. */
+    readonly region?: boolean;
   },
 ) =>
   Effect.promise(async () => {
@@ -3045,6 +3050,7 @@ const writeConnectorFolder = (
             sensitive: true,
             required: options.keyRequired ?? true,
           },
+          ...(options.region === true ? { region: { type: "string", title: "Region" } } : {}),
         },
         ...(options.meta === undefined
           ? {}
@@ -3095,20 +3101,39 @@ createInterface({ input: process.stdin }).on("line", (line) => {
 });
 `;
 
-/** Resolves once `path` exists, watching its folder rather than polling. */
+/** Succeeds once `path` exists, watching its folder rather than polling; the watch ends with it. */
 const appears = (path: string) =>
-  Effect.promise(
-    () =>
-      new Promise<void>((resolve) => {
-        const check = () => {
-          if (!NodeFS.existsSync(path)) return;
-          watcher.close();
-          resolve();
-        };
-        const watcher = NodeFS.watch(NodePath.dirname(path), check);
-        check();
-      }),
-  );
+  Effect.callback<void>((resume) => {
+    const watcher = NodeFS.watch(NodePath.dirname(path), () => {
+      if (NodeFS.existsSync(path)) resume(Effect.void);
+    });
+    if (NodeFS.existsSync(path)) resume(Effect.void);
+    return Effect.sync(() => watcher.close());
+  });
+
+/** Each change that reaches a connector's lock, and a wait for the n-th one to arrive. */
+const lockArrivals = () => {
+  let count = 0;
+  const waiting: Array<{ readonly at: number; readonly arrived: () => void }> = [];
+  return {
+    onConnectorLock: () => {
+      count += 1;
+      for (const waiter of waiting.filter((item) => item.at <= count)) waiter.arrived();
+    },
+    /** Counts from now. */
+    reset: () => {
+      count = 0;
+    },
+    reached: (at: number) =>
+      Effect.promise(
+        () =>
+          new Promise<void>((arrived) => {
+            if (count >= at) arrived();
+            else waiting.push({ at, arrived });
+          }),
+      ),
+  };
+};
 
 /** Accounts stand-ins with one website sign-in per site, so a manifest's site picks its account. */
 const siteSignIns = (sites: Readonly<Record<string, string>>): ConnectorSessionsShape => {
@@ -3583,7 +3608,8 @@ describe("connectors agents make and fix", () => {
 
   it.live("lets a save finish before an Undo of the same connector starts", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness();
+      const locks = lockArrivals();
+      const harness = yield* makeHarness({ onConnectorLock: locks.onConnectorLock });
       const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "agent-made");
       yield* writeConnectorFolder(work, { version: "1.0.0" });
       const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
@@ -3595,12 +3621,15 @@ describe("connectors agents make and fix", () => {
       const gate = NodePath.join(harness.config.stateDir, "..", "gate", "open");
       yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(gate), { recursive: true }));
       yield* writeConnectorFolder(work, { version: "1.2.0", mode: `gate:${gate}` });
+      locks.reset();
       const saving = yield* harness.runtime
         .saveFolder({ folder: work, connector: connectorId }, undefined)
         .pipe(Effect.forkScoped);
       // The save is in its check; an Undo now must wait for it rather than run inside it.
       yield* appears(`${gate}.started`);
       const undoing = yield* harness.runtime.undo({ connectorId }).pipe(Effect.forkScoped);
+      // Receipt: the Undo has reached the connector's lock (or, unlocked, already ran).
+      yield* Effect.raceFirst(locks.reached(2), Fiber.await(undoing));
       yield* Effect.promise(() => NodeFSP.writeFile(gate, ""));
       yield* Fiber.join(saving);
       yield* Fiber.join(undoing);
@@ -3608,6 +3637,41 @@ describe("connectors agents make and fix", () => {
       expect(yield* versionOf(installed)).toBe("1.1.0");
       yield* harness.runtime.undo({ connectorId });
       expect(yield* versionOf(installed)).toBe("1.0.0");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("keeps setup made while a save of the same connector runs", () =>
+    Effect.gen(function* () {
+      const locks = lockArrivals();
+      const harness = yield* makeHarness({ onConnectorLock: locks.onConnectorLock });
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "agent-made");
+      yield* writeConnectorFolder(work, { version: "1.0.0", keyRequired: false, region: true });
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const connectorId = saved.connector.connectorId;
+      const gate = NodePath.join(harness.config.stateDir, "..", "gate", "open");
+      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(gate), { recursive: true }));
+      yield* writeConnectorFolder(work, {
+        version: "1.1.0",
+        keyRequired: false,
+        region: true,
+        mode: `gate:${gate}`,
+      });
+      locks.reset();
+      const saving = yield* harness.runtime
+        .saveFolder({ folder: work, connector: connectorId }, undefined)
+        .pipe(Effect.forkScoped);
+      yield* appears(`${gate}.started`);
+      const setting = yield* harness.runtime
+        .update({ connectorId, localSetup: { settings: { region: "eu" }, keys: {} } })
+        .pipe(Effect.forkScoped);
+      // Receipt: the setup has reached the connector's lock (or, unlocked, already ran).
+      yield* Effect.raceFirst(locks.reached(2), Fiber.await(setting));
+      yield* Effect.promise(() => NodeFSP.writeFile(gate, ""));
+      yield* Fiber.join(saving);
+      yield* Fiber.join(setting);
+      const after = (yield* harness.runtime.list()).connectors[0]!;
+      // regression: setup went in during the save, whose settings from before then replaced it.
+      expect(after.local?.setup.find((item) => item.field.key === "region")?.value).toBe("eu");
     }).pipe(Effect.provide(testLayer)),
   );
 

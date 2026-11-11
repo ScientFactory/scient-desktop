@@ -204,6 +204,8 @@ export interface AuthoringDeps {
   readonly isoNow: Effect.Effect<string>;
   /** Runs npm and uv to bring a package connector's code into a copy. */
   readonly runTool: RunTool;
+  /** Told when a change reaches a connector's lock, before it waits there. */
+  readonly onLock?: (connectorId: string) => void;
 }
 
 /** Script files a copied command runs from outside its folder, for the agent to bring in. */
@@ -233,7 +235,13 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
         lock = Semaphore.makeUnsafe(1);
         locks.set(connectorId, lock);
       }
-      return lock.withPermits(1)(effect);
+      const held = lock.withPermits(1)(effect);
+      return deps.onLock === undefined
+        ? held
+        : Effect.suspend(() => {
+            deps.onLock?.(connectorId);
+            return held;
+          });
     };
   /** The record as it is now, read inside its lock. */
   const recordNow = (connectorId: string) =>
