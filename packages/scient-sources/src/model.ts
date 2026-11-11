@@ -166,10 +166,15 @@ export type ScientSourceAttachmentSummary = typeof ScientSourceAttachmentSummary
 /** Rules in `citationKeys.ts`; decoding stays lenient so one odd key never hides a record. */
 export const ScientSourceCitationKey = NonEmptyString;
 
+/**
+ * A source as the stores hand it out. Project stores keep `formatVersion: 1` records, which name
+ * their project; the personal library keeps `formatVersion: 2` records, which name none. Files are
+ * decoded with the stricter persisted schemas below.
+ */
 export const ScientSourceRecord = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  formatVersion: Schema.Literals([1, 2]),
   sourceId: NonEmptyString,
-  projectId: NonEmptyString,
+  projectId: Schema.optionalKey(NonEmptyString),
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
@@ -201,6 +206,20 @@ export const ScientSourceRecord = Schema.Struct({
   updatedBy: Schema.optionalKey(ScientSourceActor),
 });
 export type ScientSourceRecord = typeof ScientSourceRecord.Type;
+
+/** A record file in a project store. */
+export const ScientSourceRecordV1 = Schema.Struct({
+  ...ScientSourceRecord.fields,
+  formatVersion: Schema.Literal(1),
+  projectId: NonEmptyString,
+});
+
+const { projectId: _projectId, ...libraryRecordFields } = ScientSourceRecord.fields;
+/** A record file in the personal library: the same source with no project. */
+export const ScientLibraryRecordV2 = Schema.Struct({
+  ...libraryRecordFields,
+  formatVersion: Schema.Literal(2),
+});
 
 /**
  * Bounded list projection. Large abstracts, provenance, and external sync
@@ -402,9 +421,10 @@ export type ScientSourceRemovalResult = typeof ScientSourceRemovalResult.Type;
 
 /** A removed source, kept whole with its attachment references until the trash is emptied. */
 export const ScientSourceTrashEntry = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  /** 1 in a project store (names the project), 2 in the library (names none), as its record. */
+  formatVersion: Schema.Literals([1, 2]),
   sourceId: NonEmptyString,
-  projectId: NonEmptyString,
+  projectId: Schema.optionalKey(NonEmptyString),
   removedAt: NonEmptyString,
   removedBy: ScientSourceActor,
   record: ScientSourceRecord,
@@ -495,9 +515,11 @@ export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 export const SCIENT_SOURCE_IMPORT_ITEM_LIMIT = 500;
 
 export const ScientSourceImportOperation = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  /** 1 in a project store (names its project), 2 in the library (names the library). */
+  formatVersion: Schema.Literals([1, 2]),
   operationId: NonEmptyString,
-  projectId: NonEmptyString,
+  projectId: Schema.optionalKey(NonEmptyString),
+  libraryId: Schema.optionalKey(NonEmptyString),
   adapter: Schema.Literals(["zotero", "local-files", "agent", "zotero-web", "file"]),
   actor: Schema.Literals(["user", "agent"]),
   intake: Schema.Literals(["zotero", "local-pdf", "identifier", "file"]),
@@ -509,9 +531,11 @@ export const ScientSourceImportOperation = Schema.Struct({
 export type ScientSourceImportOperation = typeof ScientSourceImportOperation.Type;
 
 export const ScientSourceImportReceipt = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  /** 1 in a project store (names its project), 2 in the library (names the library). */
+  formatVersion: Schema.Literals([1, 2]),
   operationId: NonEmptyString,
-  projectId: NonEmptyString,
+  projectId: Schema.optionalKey(NonEmptyString),
+  libraryId: Schema.optionalKey(NonEmptyString),
   outcome: Schema.Literals(["completed", "cancelled"]),
   finishedAt: NonEmptyString,
   importedSourceIds: Schema.Array(NonEmptyString),

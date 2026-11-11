@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- Collections share the project store's filesystem boundary.
+// @effect-diagnostics nodeBuiltinImport:off -- Collections share the source store's filesystem boundary.
 // @effect-diagnostics globalDate:off -- Portable project files use interoperable ISO timestamps.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -15,14 +15,14 @@ import type { ScientSourceActor, ScientSourceEditableMetadata } from "./model.ts
 import {
   applyScientSourceTagChanges,
   scientSourceTagKey,
+  ScientSourceCollection,
   ScientSourceCollectionsDocument,
+  ScientSourceSavedSearch,
   ScientSourcesBulkReceipt,
   SCIENT_SOURCE_COLLECTION_LIMIT,
   SCIENT_SOURCE_COLLECTION_MEMBER_LIMIT,
   SCIENT_SOURCE_SAVED_SEARCH_LIMIT,
-  type ScientSourceCollection,
   type ScientSourceFilter,
-  type ScientSourceSavedSearch,
   type ScientSourcesBulkFields,
   type ScientSourcesBulkRequestChange,
   type ScientSourcesBulkResult,
@@ -30,6 +30,7 @@ import {
   type ScientSourcesOrganizeAction,
   type ScientSourcesOrganizeResult,
 } from "./organize.ts";
+import type { ScientSourceStoreLocation } from "./libraryRoot.ts";
 import { assertScientProjectDirectory } from "./projectFiles.ts";
 import {
   listScientSourceRecords,
@@ -40,7 +41,9 @@ import {
 } from "./store.ts";
 
 export const SCIENT_SOURCE_COLLECTIONS_FILE = `${SCIENT_SOURCES_DIRECTORY}/collections.json`;
-const SCIENT_SOURCE_BULK_EDITS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/bulk-edits`;
+/** In the library each collection is its own file, so two computers editing two never conflict. */
+const LIBRARY_COLLECTIONS_DIRECTORY = "collections";
+const LIBRARY_SAVED_SEARCHES_FILE = "saved-searches.json";
 const MAX_BULK_RECEIPT_BYTES = 4 * 1024 * 1024;
 const BULK_RECEIPT_LIMIT = 50;
 
@@ -51,9 +54,19 @@ const {
   snapshot,
   readBoundedJson,
   atomicWriteJson,
-  withOperationLock,
+  withStoreLock,
   assertSafeIdentifier,
 } = scientSourceStoreInternals;
+type StorePaths = Awaited<ReturnType<typeof sourceStorePaths>>;
+
+const LibraryCollectionFile = Schema.Struct({
+  ...ScientSourceCollection.fields,
+  formatVersion: Schema.Literal(2),
+});
+const LibrarySavedSearchesFile = Schema.Struct({
+  formatVersion: Schema.Literal(2),
+  savedSearches: Schema.Array(ScientSourceSavedSearch),
+});
 const validateBulkReceipt = Schema.decodeSync(ScientSourcesBulkReceipt);
 
 const validateCollectionsDocument = Schema.decodeSync(ScientSourceCollectionsDocument);
@@ -72,12 +85,100 @@ function newId(prefix: string): string {
   return `${prefix}_${NodeCrypto.randomUUID().replaceAll("-", "")}`;
 }
 
-async function readDocument(root: string): Promise<ScientSourceCollectionsDocument> {
-  const filePath = NodePath.join(root, SCIENT_SOURCE_COLLECTIONS_FILE);
+async function readDocument(paths: StorePaths): Promise<ScientSourceCollectionsDocument> {
+  if (paths.owner.kind === "library") return readLibraryDocument(paths);
+  const filePath = NodePath.join(paths.root, SCIENT_SOURCE_COLLECTIONS_FILE);
   const state = await snapshot(filePath);
   if (state === "missing") return EMPTY_DOCUMENT;
   if (state !== "file") throw new Error("collections.json is not a safe regular file.");
   return readBoundedJson(filePath, MAX_COLLECTIONS_BYTES, ScientSourceCollectionsDocument);
+}
+
+function libraryCollectionPath(paths: StorePaths, collectionId: string): string {
+  assertSafeIdentifier(collectionId, "Collection ID");
+  return NodePath.join(paths.base, LIBRARY_COLLECTIONS_DIRECTORY, `${collectionId}.json`);
+}
+
+/** The library's collection files and saved searches, read as one document. */
+async function readLibraryDocument(paths: StorePaths): Promise<ScientSourceCollectionsDocument> {
+  const directory = NodePath.join(paths.base, LIBRARY_COLLECTIONS_DIRECTORY);
+  const collections: ScientSourceCollection[] = [];
+  const state = await snapshot(directory);
+  if (state !== "missing" && state !== "directory") {
+    throw new Error("The collections folder is not a safe directory.");
+  }
+  if (state === "directory") {
+    for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
+      if (!entry.name.endsWith(".json")) continue;
+      if (!entry.isFile()) throw new Error(`Collection ${entry.name} is not a safe regular file.`);
+      const { formatVersion: _formatVersion, ...collection } = await readBoundedJson(
+        NodePath.join(directory, entry.name),
+        MAX_COLLECTIONS_BYTES,
+        LibraryCollectionFile,
+      );
+      if (`${collection.collectionId}.json` !== entry.name) {
+        throw new Error(`Collection ${entry.name} does not match its file name.`);
+      }
+      collections.push(collection);
+    }
+  }
+  const searchesPath = NodePath.join(paths.base, LIBRARY_SAVED_SEARCHES_FILE);
+  const searchesState = await snapshot(searchesPath);
+  if (searchesState !== "missing" && searchesState !== "file") {
+    throw new Error(`${LIBRARY_SAVED_SEARCHES_FILE} is not a safe regular file.`);
+  }
+  const savedSearches =
+    searchesState === "file"
+      ? (await readBoundedJson(searchesPath, MAX_COLLECTIONS_BYTES, LibrarySavedSearchesFile))
+          .savedSearches
+      : [];
+  return {
+    formatVersion: 1,
+    collections: collections.toSorted(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.collectionId.localeCompare(right.collectionId),
+    ),
+    savedSearches,
+  };
+}
+
+/** Writes only the collection files that changed, then removes the ones no longer kept. */
+async function writeLibraryDocument(
+  paths: StorePaths,
+  previous: ScientSourceCollectionsDocument,
+  next: ScientSourceCollectionsDocument,
+): Promise<void> {
+  const before = new Map(
+    previous.collections.map((collection) => [collection.collectionId, collection]),
+  );
+  for (const collection of next.collections) {
+    if (JSON.stringify(before.get(collection.collectionId)) === JSON.stringify(collection)) continue;
+    await atomicWriteJson(
+      libraryCollectionPath(paths, collection.collectionId),
+      { formatVersion: 2, ...collection },
+      MAX_COLLECTIONS_BYTES,
+    );
+  }
+  if (JSON.stringify(previous.savedSearches) !== JSON.stringify(next.savedSearches)) {
+    await atomicWriteJson(
+      NodePath.join(paths.base, LIBRARY_SAVED_SEARCHES_FILE),
+      { formatVersion: 2, savedSearches: next.savedSearches },
+      MAX_COLLECTIONS_BYTES,
+    );
+  }
+  const kept = new Set(next.collections.map((collection) => collection.collectionId));
+  for (const collectionId of before.keys()) {
+    if (!kept.has(collectionId)) {
+      await NodeFSP.rm(libraryCollectionPath(paths, collectionId), { force: true });
+    }
+  }
+}
+
+function collectionsLabel(paths: StorePaths): string {
+  return paths.owner.kind === "library"
+    ? `${LIBRARY_COLLECTIONS_DIRECTORY}/ or ${LIBRARY_SAVED_SEARCHES_FILE}`
+    : SCIENT_SOURCE_COLLECTIONS_FILE;
 }
 
 function trimDeleted<A extends { readonly deletedAt?: string }>(
@@ -109,26 +210,26 @@ function projectOrganization(
  * show no collections. Writes refuse instead, so nothing overwrites what a person may repair.
  */
 export async function readScientSourcesOrganization(
-  root: string,
+  root: ScientSourceStoreLocation,
   presentSourceIds?: ReadonlySet<string>,
 ): Promise<ScientSourcesOrganization> {
   const paths = await sourceStorePaths(root);
   const present =
     presentSourceIds ??
-    new Set((await listScientSourceRecords(paths.root)).map((record) => record.sourceId));
+    new Set((await listScientSourceRecords(paths.location)).map((record) => record.sourceId));
   try {
-    return projectOrganization(await readDocument(paths.root), present);
+    return projectOrganization(await readDocument(paths), present);
   } catch {
     return {
       collections: [],
       savedSearches: [],
-      issue: `${SCIENT_SOURCE_COLLECTIONS_FILE} could not be read. Collections and saved searches are hidden until it is fixed.`,
+      issue: `${collectionsLabel(paths)} could not be read. Collections and saved searches are hidden until it is fixed.`,
     };
   }
 }
 
 async function mutate<A>(
-  root: string,
+  root: ScientSourceStoreLocation,
   change: (
     document: ScientSourceCollectionsDocument,
     context: { readonly now: string; readonly presentSourceIds: ReadonlySet<string> },
@@ -136,10 +237,10 @@ async function mutate<A>(
   beforeWrite?: (result: A) => Promise<void>,
 ): Promise<A> {
   const paths = await sourceStorePaths(root);
-  return withOperationLock(`${paths.root}:collections-write`, async () => {
-    const document = await readDocument(paths.root);
+  return withStoreLock(paths, "collections-write", async () => {
+    const document = await readDocument(paths);
     const presentSourceIds = new Set(
-      (await listScientSourceRecords(paths.root)).map((record) => record.sourceId),
+      (await listScientSourceRecords(paths.location)).map((record) => record.sourceId),
     );
     const { document: next, result } = change(document, {
       now: new Date().toISOString(),
@@ -153,11 +254,15 @@ async function mutate<A>(
       };
       validateCollectionsDocument(bounded);
       await beforeWrite?.(result);
-      await atomicWriteJson(
-        NodePath.join(paths.root, SCIENT_SOURCE_COLLECTIONS_FILE),
-        bounded,
-        MAX_COLLECTIONS_BYTES,
-      );
+      if (paths.owner.kind === "library") {
+        await writeLibraryDocument(paths, document, bounded);
+      } else {
+        await atomicWriteJson(
+          NodePath.join(paths.root, SCIENT_SOURCE_COLLECTIONS_FILE),
+          bounded,
+          MAX_COLLECTIONS_BYTES,
+        );
+      }
     }
     return result;
   });
@@ -232,7 +337,7 @@ const unchangedMembers = { addedSourceIds: [], removedSourceIds: [], unknownSour
 
 /** Creating a name that already exists returns that collection, so repeating a request is safe. */
 export function createScientSourceCollection(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly name: string;
   readonly sourceIds?: ReadonlyArray<string>;
   readonly actor: ScientSourceActor;
@@ -283,7 +388,7 @@ function findCollection(document: ScientSourceCollectionsDocument, collectionId:
 }
 
 export function renameScientSourceCollection(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly collectionId: string;
   readonly name: string;
   readonly actor: ScientSourceActor;
@@ -315,7 +420,7 @@ export function renameScientSourceCollection(input: {
 
 /** Deleting a collection never touches its sources, and it can be restored. */
 export function deleteScientSourceCollection(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly collectionId: string;
   readonly actor: ScientSourceActor;
 }): Promise<ScientSourceCollectionChange> {
@@ -337,7 +442,7 @@ export function deleteScientSourceCollection(input: {
 }
 
 export function restoreScientSourceCollection(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly collectionId: string;
   readonly actor: ScientSourceActor;
 }): Promise<ScientSourceCollectionChange> {
@@ -362,7 +467,7 @@ export function restoreScientSourceCollection(input: {
 }
 
 export function changeScientSourceCollectionMembers(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly collectionId: string;
   readonly add?: ReadonlyArray<string>;
   readonly remove?: ReadonlyArray<string>;
@@ -422,7 +527,7 @@ export type ScientSourceSavedSearchChange =
 
 /** Saving under a name that exists replaces that search's filter. */
 export function saveScientSourceSearch(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly name: string;
   readonly filter: ScientSourceFilter;
   readonly searchId?: string;
@@ -475,7 +580,7 @@ export function saveScientSourceSearch(input: {
 }
 
 export function deleteScientSourceSearch(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly searchId: string;
   readonly actor: ScientSourceActor;
 }): Promise<ScientSourceSavedSearchChange> {
@@ -523,7 +628,7 @@ function savedSearchSummary(search: ScientSourceSavedSearch) {
 
 /** The single entry point for collection and saved-search changes from HTTP and agent tools. */
 export async function organizeScientSources(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly change: ScientSourcesOrganizeAction;
   readonly actor: ScientSourceActor;
 }): Promise<ScientSourcesOrganizeResult> {
@@ -638,7 +743,7 @@ function sameFields(left: BulkFields, right: BulkFields): boolean {
  * written. `uncertain` means the write failed part way, so it may have landed.
  */
 async function updateBulkFields(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly actor: ScientSourceActor;
   readonly compute: (current: BulkFields) => {
@@ -756,23 +861,36 @@ async function updateBulkFields(input: {
   };
 }
 
-function bulkEditsDirectory(root: string): string {
-  return NodePath.join(root, SCIENT_SOURCE_BULK_EDITS_DIRECTORY);
+function bulkEditsDirectory(paths: StorePaths): string {
+  return NodePath.join(paths.base, "bulk-edits");
 }
 
-function bulkReceiptPath(root: string, batchId: string): string {
-  return NodePath.join(bulkEditsDirectory(root), `${batchId}.json`);
+function bulkReceiptPath(paths: StorePaths, batchId: string): string {
+  return NodePath.join(bulkEditsDirectory(paths), `${batchId}.json`);
+}
+
+/** A project folder is checked for links on the way; the library folder is Scient's own. */
+async function assertBulkEditsDirectory(paths: StorePaths, create: boolean): Promise<void> {
+  const directory = bulkEditsDirectory(paths);
+  if (paths.owner.kind === "project") {
+    await assertScientProjectDirectory(paths.root, directory, create ? { create } : undefined);
+    return;
+  }
+  if (create) await NodeFSP.mkdir(directory, { recursive: true });
+  const state = await snapshot(directory);
+  if (state === "missing") throw Object.assign(new Error("No bulk edits."), { code: "ENOENT" });
+  if (state !== "directory") throw new Error("The bulk edits folder is not a safe directory.");
 }
 
 async function writeBulkReceipt(
-  root: string,
+  paths: StorePaths,
   receipt: ScientSourcesBulkReceipt,
   options: { readonly prune?: boolean } = {},
 ): Promise<void> {
-  const directory = bulkEditsDirectory(root);
-  await assertScientProjectDirectory(root, directory, { create: true });
+  const directory = bulkEditsDirectory(paths);
+  await assertBulkEditsDirectory(paths, true);
   await atomicWriteJson(
-    bulkReceiptPath(root, receipt.batchId),
+    bulkReceiptPath(paths, receipt.batchId),
     validateBulkReceipt(receipt),
     MAX_BULK_RECEIPT_BYTES,
   );
@@ -788,17 +906,17 @@ async function writeBulkReceipt(
 }
 
 async function readBulkReceipt(
-  root: string,
+  paths: StorePaths,
   batchId: string,
 ): Promise<ScientSourcesBulkReceipt | null> {
   assertSafeIdentifier(batchId, "Bulk edit ID");
   try {
-    await assertScientProjectDirectory(root, bulkEditsDirectory(root));
+    await assertBulkEditsDirectory(paths, false);
   } catch (error) {
     if (error instanceof Error && "code" in error && error.code === "ENOENT") return null;
     throw error;
   }
-  const filePath = bulkReceiptPath(root, batchId);
+  const filePath = bulkReceiptPath(paths, batchId);
   if ((await snapshot(filePath)) === "missing") return null;
   const receipt = await readBoundedJson(filePath, MAX_BULK_RECEIPT_BYTES, ScientSourcesBulkReceipt);
   if (receipt.batchId !== batchId) throw new Error("The bulk edit record is damaged.");
@@ -830,7 +948,7 @@ function replaceEntry<A>(entries: A[], entry: A, next?: A): void {
  * What it changed is kept under `undo.batchId` so `{ undoBatchId }` can reverse it.
  */
 export async function bulkUpdateScientSources(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly change: ScientSourcesBulkRequestChange;
   readonly actor: ScientSourceActor;
 }): Promise<ScientSourcesBulkResult> {
@@ -852,7 +970,7 @@ export async function bulkUpdateScientSources(input: {
   const receiptCollections: BulkReceiptCollection[] = [];
   const publish = (options?: { readonly prune?: boolean }) =>
     writeBulkReceipt(
-      paths.root,
+      paths,
       {
         formatVersion: 1,
         batchId,
@@ -899,7 +1017,7 @@ export async function bulkUpdateScientSources(input: {
         continue;
       }
       if (!editsRecords) {
-        const existing = await readScientSourceRecord(paths.root, sourceId);
+        const existing = await readScientSourceRecord(paths.location, sourceId);
         sources.push(
           existing
             ? { sourceId, outcome: "unchanged", revision: existing.revision }
@@ -909,7 +1027,7 @@ export async function bulkUpdateScientSources(input: {
       }
       const intent = { entry: null as BulkReceiptSource | null };
       const updated = await updateBulkFields({
-        root: paths.root,
+        root: paths.location,
         sourceId,
         actor: input.actor,
         compute: (current) => ({
@@ -980,7 +1098,7 @@ export async function bulkUpdateScientSources(input: {
       const intent = { entry: null as BulkReceiptCollection | null };
       try {
         const result = await changeScientSourceCollectionMembers({
-          root: paths.root,
+          root: paths.location,
           ...memberChange,
           actor: input.actor,
           beforeWrite: async (planned) => {
@@ -1033,7 +1151,7 @@ export async function bulkUpdateScientSources(input: {
     }
   } finally {
     if (receiptSources.length === 0 && receiptCollections.length === 0) {
-      await NodeFSP.rm(bulkReceiptPath(paths.root, batchId), { force: true }).catch(
+      await NodeFSP.rm(bulkReceiptPath(paths, batchId), { force: true }).catch(
         () => undefined,
       );
     }
@@ -1088,13 +1206,13 @@ function settledCollection(
  * entry marked when done, so a retry checks what landed and only tries what is left.
  */
 async function undoBulkUpdate(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly batchId: string;
   readonly actor: ScientSourceActor;
 }): Promise<ScientSourcesBulkResult> {
   const paths = await sourceStorePaths(input.root);
-  return withOperationLock(`${paths.root}:bulk-undo`, async () => {
-    const receipt = await readBulkReceipt(paths.root, input.batchId);
+  return withStoreLock(paths, "bulk-undo", async () => {
+    const receipt = await readBulkReceipt(paths, input.batchId);
     if (!receipt || receipt.undoneAt !== undefined) {
       return {
         sources: [],
@@ -1111,7 +1229,7 @@ async function undoBulkUpdate(input: {
     const receiptSources = [...receipt.sources];
     const receiptCollections = [...receipt.collections];
     const save = (undoneAt?: string) =>
-      writeBulkReceipt(paths.root, {
+      writeBulkReceipt(paths, {
         ...receipt,
         sources: receiptSources,
         collections: receiptCollections,
@@ -1153,7 +1271,7 @@ async function undoBulkUpdate(input: {
         sources.push({ sourceId, outcome: "failed", revision: null, message: unsaved });
         continue;
       }
-      const record = await readScientSourceRecord(paths.root, sourceId);
+      const record = await readScientSourceRecord(paths.location, sourceId);
       const settled = record
         ? settledSource(
             entry,
@@ -1173,7 +1291,7 @@ async function undoBulkUpdate(input: {
               conflicts: settled.conflict ? [settled.conflict] : [],
             }
           : await updateBulkFields({
-              root: paths.root,
+              root: paths.location,
               sourceId,
               actor: input.actor,
               compute: (current) => {
@@ -1230,7 +1348,7 @@ async function undoBulkUpdate(input: {
         collections.push({ collectionId, outcome: "failed", message: unsaved });
         continue;
       }
-      const existing = await readDocument(paths.root).then(
+      const existing = await readDocument(paths).then(
         (document) => findCollection(document, collectionId),
         () => undefined,
       );
@@ -1241,7 +1359,7 @@ async function undoBulkUpdate(input: {
       const result = settled
         ? ({ outcome: "unchanged" } as const)
         : await changeScientSourceCollectionMembers({
-            root: paths.root,
+            root: paths.location,
             collectionId,
             add: delta.removedSourceIds,
             remove: delta.addedSourceIds,

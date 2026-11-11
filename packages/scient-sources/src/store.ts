@@ -1,20 +1,32 @@
-// @effect-diagnostics nodeBuiltinImport:off -- The store is Scient's explicit project filesystem boundary.
+// @effect-diagnostics nodeBuiltinImport:off -- The store is Scient's explicit project and library filesystem boundary.
 // @effect-diagnostics globalDate:off -- Portable records and receipts use interoperable ISO timestamps.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import {
-  inspectScientProject,
-  readScientProjectIdentity,
-  type ScientProjectIdentity,
-} from "@scientfactory/project-init";
+import { inspectScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
 import { BibliographyImportReport } from "./bibliography/index.ts";
 import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
+import { withScientLibraryLock } from "./libraryLock.ts";
+import {
+  isScientLibraryLocation,
+  readScientLibraryManifest,
+  scientLibraryLocation,
+  type ScientSourceStoreLocation,
+} from "./libraryRoot.ts";
 import { resolveScientProjectFile } from "./projectFiles.ts";
+import {
+  assertSafeIdentifier,
+  atomicCreateJson,
+  atomicWriteJson,
+  ensureDirectory,
+  isNodeError,
+  readBoundedJson,
+  snapshot,
+} from "./storeFiles.ts";
 import { abstractDocumentFromSections, normalizeScientSourceAbstractDocument } from "./abstract.ts";
 import {
   assignCitationKey,
@@ -32,9 +44,11 @@ import {
   validateScientSourceEditableMetadata,
 } from "./editable.ts";
 import {
+  ScientLibraryRecordV2,
   ScientSourceImportOperation,
   ScientSourceImportReceipt,
-  ScientSourceRecord,
+  ScientSourceRecordV1,
+  type ScientSourceRecord,
   ScientSourceStagedMaterial,
   ScientSourceZoteroSync,
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
@@ -72,10 +86,11 @@ export const SCIENT_SOURCE_HISTORY_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/hist
 export const SCIENT_SOURCE_OPERATIONS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/operations`;
 export const SCIENT_SOURCE_RECEIPTS_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/receipts`;
 const SCIENT_SOURCE_TRASH_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/trash`;
-const SCIENT_SOURCE_ZOTERO_SYNC_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/sync/zotero`;
 /** Kept revisions per source, counting the first one, which is never pruned. */
 export const SCIENT_SOURCE_HISTORY_LIMIT = 50;
 const SCIENT_SOURCE_STAGING_DIRECTORY = `${SCIENT_SOURCES_DIRECTORY}/staging`;
+/** In the library, Zotero merge bases sit at `zotero/`; every other folder keeps its project name. */
+const SCIENT_LIBRARY_ZOTERO_SYNC_DIRECTORY = "zotero";
 
 const MAX_RECORD_BYTES = 2 * 1024 * 1024;
 const MAX_TRASH_ENTRY_BYTES = MAX_RECORD_BYTES + 64 * 1024;
@@ -83,7 +98,6 @@ const MAX_OPERATION_BYTES = 4 * 1024 * 1024;
 const MAX_PDF_BYTES = 512 * 1024 * 1024;
 const COPY_CHUNK_BYTES = 1024 * 1024;
 const MAX_STAGED_MATERIAL_BYTES = 2 * 1024 * 1024;
-const SAFE_IDENTIFIER_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/u;
 const operationLocks = new Map<string, Promise<unknown>>();
 const activeOperationIds = new Map<string, string>();
 const operationRecordSnapshots = new Map<
@@ -93,7 +107,8 @@ const operationRecordSnapshots = new Map<
     readonly records: ReadonlyArray<ScientSourceRecord>;
   }
 >();
-const decodeScientSourceRecordV1 = Schema.decodeUnknownSync(ScientSourceRecord);
+const decodeScientSourceRecordV1 = Schema.decodeUnknownSync(ScientSourceRecordV1);
+const decodeScientLibraryRecordV2 = Schema.decodeUnknownSync(ScientLibraryRecordV2);
 const decodeScientSourceStagedMaterial = Schema.decodeUnknownSync(ScientSourceStagedMaterial);
 const decodeScientSourceTrashEntry = Schema.decodeUnknownSync(ScientSourceTrashEntry);
 const PersistedScientSourceImportOperation = Schema.Struct({
@@ -120,57 +135,6 @@ function duplicateBlocksImport(
   );
 }
 
-function isNodeError(error: unknown, code: string): error is NodeJS.ErrnoException {
-  return error instanceof Error && "code" in error && error.code === code;
-}
-
-function assertSafeIdentifier(value: string, label: string): void {
-  if (!SAFE_IDENTIFIER_PATTERN.test(value)) {
-    throw new Error(`${label} is not a safe portable identifier.`);
-  }
-}
-
-function formatJson(value: unknown): string {
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
-
-function boundedJson(value: unknown, maximumBytes: number, label: string): string {
-  const serialized = formatJson(value);
-  if (Buffer.byteLength(serialized, "utf8") > maximumBytes) {
-    throw new Error(`${label} exceeds the safe size limit.`);
-  }
-  return serialized;
-}
-
-async function snapshot(filePath: string): Promise<"missing" | "file" | "directory" | "unsafe"> {
-  try {
-    const value = await NodeFSP.lstat(filePath);
-    if (value.isSymbolicLink()) return "unsafe";
-    if (value.isFile()) return "file";
-    if (value.isDirectory()) return "directory";
-    return "unsafe";
-  } catch (error) {
-    if (isNodeError(error, "ENOENT")) return "missing";
-    throw error;
-  }
-}
-
-async function readBoundedJson<S extends Schema.ConstraintDecoder<unknown>>(
-  filePath: string,
-  maximumBytes: number,
-  schema: S,
-): Promise<S["Type"]> {
-  const stats = await NodeFSP.lstat(filePath);
-  if (!stats.isFile() || stats.isSymbolicLink()) {
-    throw new Error(`${NodePath.basename(filePath)} is not a safe regular file.`);
-  }
-  if (stats.size > maximumBytes) {
-    throw new Error(`${NodePath.basename(filePath)} exceeds the safe size limit.`);
-  }
-  const value: unknown = JSON.parse(await NodeFSP.readFile(filePath, "utf8"));
-  return Schema.decodeUnknownSync(schema)(value);
-}
-
 /** Central version boundary for durable source records. Add migrations here, never at callers. */
 export function decodePersistedScientSourceRecord(value: unknown): ScientSourceRecord {
   if (!value || typeof value !== "object" || !("formatVersion" in value)) {
@@ -180,6 +144,10 @@ export function decodePersistedScientSourceRecord(value: unknown): ScientSourceR
   switch (version) {
     case 1:
       return decodeScientSourceRecordV1(value);
+    case 2:
+      // Decoding drops unknown keys, so a project link must be refused before it would vanish.
+      if ("projectId" in value) throw new Error("A library source record must not name a project.");
+      return decodeScientLibraryRecordV2(value);
     default:
       throw new Error(`Source record format version ${String(version)} is not supported.`);
   }
@@ -190,74 +158,9 @@ async function readBoundedSourceRecord(filePath: string): Promise<ScientSourceRe
   return decodePersistedScientSourceRecord(value);
 }
 
-async function ensureDirectory(filePath: string): Promise<void> {
-  await NodeFSP.mkdir(filePath, { recursive: true });
-  if ((await snapshot(filePath)) !== "directory") {
-    throw new Error(`${NodePath.basename(filePath)} is not a safe directory.`);
-  }
-}
-
-async function atomicWriteJson(
-  filePath: string,
-  value: unknown,
-  maximumBytes: number,
-): Promise<void> {
-  const serialized = boundedJson(value, maximumBytes, NodePath.basename(filePath));
-  await ensureDirectory(NodePath.dirname(filePath));
-  const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
-  let handle: NodeFSP.FileHandle | null = null;
-  try {
-    handle = await NodeFSP.open(temporaryPath, "wx", 0o600);
-    await handle.writeFile(serialized, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await NodeFSP.rename(temporaryPath, filePath);
-  } finally {
-    await handle?.close();
-    await NodeFSP.rm(temporaryPath, { force: true });
-  }
-}
-
-async function atomicCreateJson(
-  filePath: string,
-  value: unknown,
-  maximumBytes: number,
-): Promise<boolean> {
-  const serialized = boundedJson(value, maximumBytes, NodePath.basename(filePath));
-  await ensureDirectory(NodePath.dirname(filePath));
-  const temporaryPath = `${filePath}.tmp-${NodeCrypto.randomUUID()}`;
-  let handle: NodeFSP.FileHandle | null = null;
-  try {
-    handle = await NodeFSP.open(temporaryPath, "wx", 0o600);
-    await handle.writeFile(serialized, "utf8");
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    try {
-      await NodeFSP.link(temporaryPath, filePath);
-      return true;
-    } catch (error) {
-      if (isNodeError(error, "EEXIST")) return false;
-      if (!isNodeError(error, "EPERM") && !isNodeError(error, "ENOTSUP")) throw error;
-      try {
-        await NodeFSP.copyFile(temporaryPath, filePath, NodeFSP.constants.COPYFILE_EXCL);
-        return true;
-      } catch (copyError) {
-        if (isNodeError(copyError, "EEXIST")) return false;
-        throw copyError;
-      }
-    }
-  } finally {
-    await handle?.close();
-    await NodeFSP.rm(temporaryPath, { force: true });
-  }
-}
-
-const SOURCE_WRITE_LOCK_SUFFIX = ":source-write";
 const recordChangeListeners = new Set<(root: string) => void>();
 
-/** Called after every source write settles, with the canonical project root. */
+/** Called after every project source write settles, with the canonical project root. */
 export function onScientSourceRecordsChanged(listener: (root: string) => void): () => void {
   recordChangeListeners.add(listener);
   return () => recordChangeListeners.delete(listener);
@@ -277,9 +180,28 @@ async function withOperationLock<A>(key: string, run: () => Promise<A>): Promise
   } finally {
     release?.();
     if (operationLocks.get(key) === tail) operationLocks.delete(key);
-    if (key.endsWith(SOURCE_WRITE_LOCK_SUFFIX)) {
-      const root = key.slice(0, -SOURCE_WRITE_LOCK_SUFFIX.length);
-      for (const listener of recordChangeListeners) listener(root);
+  }
+}
+
+/**
+ * The write lock for one kind of store change. In the library it sits inside the cross-process
+ * library lock, taken first so a holder's nested changes never wait on a process-local key that
+ * a waiter for the library lock holds.
+ */
+async function withStoreLock<A>(
+  paths: SourceStorePaths,
+  scope: string,
+  run: () => Promise<A>,
+): Promise<A> {
+  const key = `${paths.root}:${scope}`;
+  if (paths.owner.kind === "library") {
+    return withScientLibraryLock(paths.root, () => withOperationLock(key, run));
+  }
+  try {
+    return await withOperationLock(key, run);
+  } finally {
+    if (scope === "source-write") {
+      for (const listener of recordChangeListeners) listener(paths.root);
     }
   }
 }
@@ -288,9 +210,17 @@ export async function canonicalizeScientSourceRoot(root: string): Promise<string
   return NodeFSP.realpath(root);
 }
 
-async function sourceStorePaths(root: string): Promise<{
+type SourceStoreOwner =
+  | { readonly kind: "project"; readonly projectId: string }
+  | { readonly kind: "library"; readonly libraryId: string };
+
+interface SourceStorePaths {
+  /** The canonical location, to hand to other store functions. */
+  readonly location: ScientSourceStoreLocation;
   readonly root: string;
-  readonly identity: ScientProjectIdentity;
+  /** The folder attachment and staging paths are relative to. */
+  readonly base: string;
+  readonly owner: SourceStoreOwner;
   readonly records: string;
   readonly files: string;
   readonly history: string;
@@ -298,20 +228,88 @@ async function sourceStorePaths(root: string): Promise<{
   readonly receipts: string;
   readonly staging: string;
   readonly trash: string;
-}> {
-  const resolvedRoot = await canonicalizeScientSourceRoot(root);
-  const identity = await readScientProjectIdentity(resolvedRoot);
+  readonly zotero: string;
+}
+
+function storeFolders(base: string, zotero: string) {
   return {
-    root: resolvedRoot,
-    identity,
-    records: NodePath.join(resolvedRoot, SCIENT_SOURCE_RECORDS_DIRECTORY),
-    files: NodePath.join(resolvedRoot, SCIENT_SOURCE_FILES_DIRECTORY),
-    history: NodePath.join(resolvedRoot, SCIENT_SOURCE_HISTORY_DIRECTORY),
-    operations: NodePath.join(resolvedRoot, SCIENT_SOURCE_OPERATIONS_DIRECTORY),
-    receipts: NodePath.join(resolvedRoot, SCIENT_SOURCE_RECEIPTS_DIRECTORY),
-    staging: NodePath.join(resolvedRoot, SCIENT_SOURCE_STAGING_DIRECTORY),
-    trash: NodePath.join(resolvedRoot, SCIENT_SOURCE_TRASH_DIRECTORY),
+    base,
+    records: NodePath.join(base, "records"),
+    files: NodePath.join(base, "files", "sha256"),
+    history: NodePath.join(base, "history"),
+    operations: NodePath.join(base, "operations"),
+    receipts: NodePath.join(base, "receipts"),
+    staging: NodePath.join(base, "staging"),
+    trash: NodePath.join(base, "trash"),
+    zotero: NodePath.join(base, zotero),
   };
+}
+
+async function sourceStorePaths(location: ScientSourceStoreLocation): Promise<SourceStorePaths> {
+  if (isScientLibraryLocation(location)) {
+    const root = await canonicalizeScientSourceRoot(location.root);
+    const { libraryId } = await readScientLibraryManifest(root);
+    return {
+      location: scientLibraryLocation(root),
+      root,
+      owner: { kind: "library", libraryId },
+      ...storeFolders(root, SCIENT_LIBRARY_ZOTERO_SYNC_DIRECTORY),
+    };
+  }
+  const root = await canonicalizeScientSourceRoot(location);
+  const { projectId } = await readScientProjectIdentity(root);
+  return {
+    location: root,
+    root,
+    owner: { kind: "project", projectId },
+    ...storeFolders(
+      NodePath.join(root, SCIENT_SOURCES_DIRECTORY),
+      NodePath.join("sync", "zotero"),
+    ),
+  };
+}
+
+/** The ID new source IDs are derived from: the project's, or the library's. */
+function storeOwnerId(paths: SourceStorePaths): string {
+  return paths.owner.kind === "project" ? paths.owner.projectId : paths.owner.libraryId;
+}
+
+/** Project stores hold format 1 files that name the project; the library holds format 2 files. */
+function storeFormatVersion(paths: SourceStorePaths): 1 | 2 {
+  return paths.owner.kind === "project" ? 1 : 2;
+}
+
+function projectField(paths: SourceStorePaths): { readonly projectId?: string } {
+  return paths.owner.kind === "project" ? { projectId: paths.owner.projectId } : {};
+}
+
+function storeOwnerField(
+  paths: SourceStorePaths,
+): { readonly projectId: string } | { readonly libraryId: string } {
+  return paths.owner.kind === "project"
+    ? { projectId: paths.owner.projectId }
+    : { libraryId: paths.owner.libraryId };
+}
+
+function recordBelongsToStore(paths: SourceStorePaths, record: ScientSourceRecord): boolean {
+  return paths.owner.kind === "project"
+    ? record.formatVersion === 1 && record.projectId === paths.owner.projectId
+    : record.formatVersion === 2 && record.projectId === undefined;
+}
+
+function storeOwnerMessage(paths: SourceStorePaths, subject: string): string {
+  return paths.owner.kind === "project"
+    ? `${subject} belongs to another Scient project.`
+    : `${subject} is not a library file.`;
+}
+
+function operationBelongsToStore(
+  paths: SourceStorePaths,
+  operation: { readonly formatVersion: 1 | 2; readonly projectId?: string; readonly libraryId?: string },
+): boolean {
+  return paths.owner.kind === "project"
+    ? operation.formatVersion === 1 && operation.projectId === paths.owner.projectId
+    : operation.formatVersion === 2 && operation.libraryId === paths.owner.libraryId;
 }
 
 function projectRelativePath(paths: SourceStorePaths, filePath: string): string {
@@ -329,7 +327,6 @@ function issueMessage(error: unknown): string {
       : "The file could not be read.";
 }
 
-type SourceStorePaths = Awaited<ReturnType<typeof sourceStorePaths>>;
 
 function operationCacheKey(paths: SourceStorePaths, operationId: string): string {
   return `${paths.root}\0${operationId}`;
@@ -355,18 +352,18 @@ async function recordsDirectoryFingerprint(paths: SourceStorePaths): Promise<str
   }
 }
 
-function sourceRecordPath(paths: Awaited<ReturnType<typeof sourceStorePaths>>, sourceId: string) {
+function sourceRecordPath(paths: SourceStorePaths, sourceId: string) {
   assertSafeIdentifier(sourceId, "Source ID");
   return NodePath.join(paths.records, `${sourceId}.json`);
 }
 
 async function readSourceRecordFromPaths(
-  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  paths: SourceStorePaths,
   sourceId: string,
 ): Promise<ScientSourceRecord> {
   const record = await readBoundedSourceRecord(sourceRecordPath(paths, sourceId));
-  if (record.projectId !== paths.identity.projectId) {
-    throw new Error("The source record belongs to another Scient project.");
+  if (!recordBelongsToStore(paths, record)) {
+    throw new Error(storeOwnerMessage(paths, "The source record"));
   }
   if (record.sourceId !== sourceId) throw new Error("The source record identity is inconsistent.");
   return record;
@@ -374,7 +371,7 @@ async function readSourceRecordFromPaths(
 
 /** Reads one source without scanning or decoding the rest of the project ledger. */
 export async function readScientSourceRecord(
-  root: string,
+  root: ScientSourceStoreLocation,
   sourceId: string,
 ): Promise<ScientSourceRecord | null> {
   const paths = await sourceStorePaths(root);
@@ -384,7 +381,7 @@ export async function readScientSourceRecord(
 }
 
 function sourceHistoryPath(
-  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  paths: SourceStorePaths,
   sourceId: string,
   revision: number,
 ) {
@@ -393,7 +390,7 @@ function sourceHistoryPath(
 }
 
 async function latestSourceHistoryRevision(
-  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  paths: SourceStorePaths,
   sourceId: string,
 ): Promise<number> {
   const directory = NodePath.dirname(sourceHistoryPath(paths, sourceId, 1));
@@ -412,7 +409,7 @@ async function latestSourceHistoryRevision(
     }
     const record = await readBoundedSourceRecord(NodePath.join(directory, entry.name));
     if (
-      record.projectId !== paths.identity.projectId ||
+      !recordBelongsToStore(paths, record) ||
       record.sourceId !== sourceId ||
       record.revision !== revision
     ) {
@@ -462,7 +459,7 @@ async function pruneSourceHistory(paths: SourceStorePaths, sourceId: string): Pr
 }
 
 export async function updateScientSourceMetadata(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly metadata: ScientSourceEditableMetadata;
@@ -476,7 +473,7 @@ export async function updateScientSourceMetadata(input: {
   const normalized = normalizeScientSourceEditableMetadata(input.metadata);
   const validationIssues = validateScientSourceEditableMetadata(normalized);
 
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const current = await readSourceRecordFromPaths(paths, input.sourceId);
     const currentMetadata = normalizeScientSourceEditableMetadata(
       editableMetadataFromRecord(current),
@@ -497,7 +494,7 @@ export async function updateScientSourceMetadata(input: {
     if (introducedValidationIssues.length > 0) {
       throw new Error(introducedValidationIssues.map((issue) => issue.message).join(" "));
     }
-    const existing = (await listScientSourceRecords(paths.root)).filter(
+    const existing = (await listScientSourceRecordsFromPaths(paths)).filter(
       (record) => record.sourceId !== current.sourceId,
     );
     const duplicate = assessSourceMetadataDuplicate({ source: requested, existing });
@@ -556,9 +553,9 @@ export async function updateScientSourceMetadata(input: {
  * Gives every source written before citation keys existed a generated key, oldest
  * first so earlier sources keep the unsuffixed key. Each assignment is a revision.
  */
-export async function assignMissingScientSourceCitationKeys(root: string): Promise<number> {
+export async function assignMissingScientSourceCitationKeys(root: ScientSourceStoreLocation): Promise<number> {
   const paths = await sourceStorePaths(root);
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const records = await listScientSourceRecordsFromPaths(paths);
     const missing = records
       .filter((record) => !record.citationKey)
@@ -602,7 +599,7 @@ const withoutCheckTime = (value: {
  * already says writes nothing, so repeated checks do not pile up revisions.
  */
 export async function recordScientSourceCheck(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly verification: ScientSourceVerification;
@@ -614,7 +611,7 @@ export async function recordScientSourceCheck(input: {
 }> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const current = await readSourceRecordFromPaths(paths, input.sourceId);
     if (current.revision !== input.expectedRevision) return { outcome: "stale", record: current };
     const { verification: _verification, editorialStatus: _editorial, ...rest } = current;
@@ -644,7 +641,7 @@ function normalizeScientSourceNote(value: string | null): string | null {
 }
 
 export async function updateScientSourceNote(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly note: string | null;
@@ -654,7 +651,7 @@ export async function updateScientSourceNote(input: {
   assertSafeIdentifier(input.sourceId, "Source ID");
   const note = normalizeScientSourceNote(input.note);
 
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const current = await readSourceRecordFromPaths(paths, input.sourceId);
     if ((current.note ?? null) === note) {
       return { outcome: "unchanged", record: current };
@@ -676,7 +673,7 @@ export async function updateScientSourceNote(input: {
 }
 
 export async function removeScientSource(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly actor?: ScientSourceActor;
@@ -684,7 +681,7 @@ export async function removeScientSource(input: {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
 
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const recordPath = sourceRecordPath(paths, input.sourceId);
     if ((await snapshot(recordPath)) === "missing") {
       return {
@@ -709,9 +706,9 @@ export async function removeScientSource(input: {
 
     await preserveSourceRevision(paths, current);
     const entry: ScientSourceTrashEntry = {
-      formatVersion: 1,
+      formatVersion: storeFormatVersion(paths),
       sourceId: current.sourceId,
-      projectId: current.projectId,
+      ...projectField(paths),
       removedAt: new Date().toISOString(),
       removedBy: input.actor ?? "user",
       record: current,
@@ -758,8 +755,12 @@ async function readTrashEntry(
   const entry = decodeScientSourceTrashEntry(
     await readBoundedJson(filePath, MAX_TRASH_ENTRY_BYTES, Schema.Unknown),
   );
-  if (entry.projectId !== paths.identity.projectId || entry.record.projectId !== entry.projectId) {
-    throw new Error("The trashed source belongs to another Scient project.");
+  if (
+    entry.formatVersion !== storeFormatVersion(paths) ||
+    entry.projectId !== projectField(paths).projectId ||
+    !recordBelongsToStore(paths, entry.record)
+  ) {
+    throw new Error(storeOwnerMessage(paths, "The trashed source"));
   }
   if (entry.sourceId !== sourceId || entry.record.sourceId !== sourceId) {
     throw new Error("The trashed source identity is inconsistent.");
@@ -802,12 +803,12 @@ async function scanTrash(paths: SourceStorePaths): Promise<{
 
 /** Whole trashed records, newest removal first, for callers that need more than the summary. */
 export async function readScientSourceTrashEntries(
-  root: string,
+  root: ScientSourceStoreLocation,
 ): Promise<ReadonlyArray<ScientSourceTrashEntry>> {
   return (await scanTrash(await sourceStorePaths(root))).entries;
 }
 
-export async function listScientSourceTrash(root: string): Promise<ScientSourceTrashListing> {
+export async function listScientSourceTrash(root: ScientSourceStoreLocation): Promise<ScientSourceTrashListing> {
   const { entries, issues } = await scanTrash(await sourceStorePaths(root));
   return {
     entries: entries.map(({ record, removedAt, removedBy }) => ({
@@ -826,13 +827,13 @@ export async function listScientSourceTrash(root: string): Promise<ScientSourceT
 
 /** Puts a trashed source back as a new revision credited to whoever restored it. */
 export async function restoreScientSource(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly actor?: ScientSourceActor;
 }): Promise<ScientSourceRestoreResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const empty = { sourceId: input.sourceId, record: null, matchingSourceIds: [] };
     const entry = await readTrashEntry(paths, input.sourceId);
     if (!entry) return { outcome: "not-found", ...empty };
@@ -882,12 +883,12 @@ export async function restoreScientSource(input: {
  * no remaining source or trashed source refers to. Omitting sourceIds empties the whole trash.
  */
 export async function deleteScientSourcesPermanently(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceIds?: ReadonlyArray<string>;
 }): Promise<ScientSourcePermanentDeletionResult> {
   const paths = await sourceStorePaths(input.root);
   for (const sourceId of input.sourceIds ?? []) assertSafeIdentifier(sourceId, "Source ID");
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const { entries } = await scanTrash(paths);
     const selected = input.sourceIds ? new Set(input.sourceIds) : null;
     return deleteTrashEntries(
@@ -908,13 +909,13 @@ export type ScientTrashedSourceDeletionResult =
  * between can never let an old request delete the newer record.
  */
 export async function deleteTrashedScientSource(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
 }): Promise<ScientTrashedSourceDeletionResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const entry = (await scanTrash(paths)).entries.find(
       (candidate) => candidate.sourceId === input.sourceId,
     );
@@ -983,10 +984,14 @@ const UNLISTED_CHANGE_FIELDS = new Set(["fieldProvenance"]);
  */
 function revertPreservedFields(
   current: ScientSourceRecord,
-): Pick<ScientSourceRecord, "sourceId" | "projectId" | "importedAt" | "origin" | "citationKey"> {
+): Pick<
+  ScientSourceRecord,
+  "formatVersion" | "sourceId" | "projectId" | "importedAt" | "origin" | "citationKey"
+> {
   return {
+    formatVersion: current.formatVersion,
     sourceId: current.sourceId,
-    projectId: current.projectId,
+    ...(current.projectId ? { projectId: current.projectId } : {}),
     importedAt: current.importedAt,
     ...(current.origin ? { origin: current.origin } : {}),
     ...(current.citationKey ? { citationKey: current.citationKey } : {}),
@@ -1020,7 +1025,7 @@ async function readKeptRevisions(
       const record = await readBoundedSourceRecord(sourceHistoryPath(paths, sourceId, revision));
       if (
         record.sourceId === sourceId &&
-        record.projectId === paths.identity.projectId &&
+        recordBelongsToStore(paths, record) &&
         record.revision === revision
       ) {
         kept.push(record);
@@ -1034,7 +1039,7 @@ async function readKeptRevisions(
 
 /** The kept revisions of a live source, newest first, including the current one. */
 export async function listScientSourceRevisions(
-  root: string,
+  root: ScientSourceStoreLocation,
   sourceId: string,
 ): Promise<ReadonlyArray<ScientSourceRevisionSummary> | null> {
   const paths = await sourceStorePaths(root);
@@ -1075,7 +1080,7 @@ async function readScientSourceRecordIfPresent(
  * deleted when the trash was emptied are left out and counted.
  */
 export async function revertScientSource(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly toRevision: number;
@@ -1083,7 +1088,7 @@ export async function revertScientSource(input: {
 }): Promise<ScientSourceRevertResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const current = await readSourceRecordFromPaths(paths, input.sourceId);
     const unchanged = { record: current, missingAttachmentCount: 0, matchingSourceIds: [] };
     if (current.revision !== input.expectedRevision) return { outcome: "stale", ...unchanged };
@@ -1100,7 +1105,7 @@ export async function revertScientSource(input: {
     const target = await readBoundedSourceRecord(historyPath);
     if (
       target.sourceId !== current.sourceId ||
-      target.projectId !== current.projectId ||
+      !recordBelongsToStore(paths, target) ||
       target.revision !== input.toRevision
     ) {
       throw new Error("The saved source revision has inconsistent identity.");
@@ -1108,7 +1113,7 @@ export async function revertScientSource(input: {
     const attachments: ScientSourceAttachment[] = [];
     let missingAttachmentCount = 0;
     for (const attachment of target.attachments) {
-      if ((await snapshot(sourceAttachmentAbsolutePath(paths.root, attachment))) === "file") {
+      if ((await snapshot(sourceAttachmentAbsolutePath(paths.location, attachment))) === "file") {
         attachments.push(attachment);
       } else {
         missingAttachmentCount += 1;
@@ -1151,41 +1156,158 @@ export async function revertScientSource(input: {
   });
 }
 
-/** Lists every readable record and reports the others by path instead of failing the whole list. */
-async function scanScientSourceRecords(paths: SourceStorePaths): Promise<{
+interface RecordScan {
   readonly records: ReadonlyArray<ScientSourceRecord>;
   readonly issues: ReadonlyArray<ScientSourceStoreIssue>;
-}> {
-  const recordsState = await snapshot(paths.records);
-  if (recordsState === "missing") return { records: [], issues: [] };
-  if (recordsState !== "directory") throw new Error("The Scient source record store is unsafe.");
-  const entries = await NodeFSP.readdir(paths.records, { withFileTypes: true });
+}
+
+type RecordFileResult =
+  | { readonly record: ScientSourceRecord }
+  | { readonly issue: ScientSourceStoreIssue };
+
+async function readRecordFile(
+  paths: SourceStorePaths,
+  fileName: string,
+): Promise<RecordFileResult> {
+  const filePath = NodePath.join(paths.records, fileName);
+  try {
+    const record = await readBoundedSourceRecord(filePath);
+    if (!recordBelongsToStore(paths, record)) {
+      throw new Error(storeOwnerMessage(paths, "The source record"));
+    }
+    if (`${record.sourceId}.json` !== fileName) {
+      throw new Error("The source record identity does not match its file name.");
+    }
+    return { record };
+  } catch (error) {
+    return { issue: { path: projectRelativePath(paths, filePath), message: issueMessage(error) } };
+  }
+}
+
+function settleScan(results: ReadonlyArray<RecordFileResult>): RecordScan {
   const records: ScientSourceRecord[] = [];
   const issues: ScientSourceStoreIssue[] = [];
-  for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.name.endsWith(".json")) continue;
-    const filePath = NodePath.join(paths.records, entry.name);
-    if (!entry.isFile()) {
-      issues.push({ path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE });
-      continue;
-    }
-    try {
-      const record = await readBoundedSourceRecord(filePath);
-      if (record.projectId !== paths.identity.projectId) {
-        throw new Error("The source record belongs to another Scient project.");
-      }
-      if (`${record.sourceId}.json` !== entry.name) {
-        throw new Error("The source record identity does not match its file name.");
-      }
-      records.push(record);
-    } catch (error) {
-      issues.push({ path: projectRelativePath(paths, filePath), message: issueMessage(error) });
-    }
+  for (const result of results) {
+    if ("record" in result) records.push(result.record);
+    else issues.push(result.issue);
   }
   return {
     records: records.toSorted((left, right) => right.importedAt.localeCompare(left.importedAt)),
     issues,
   };
+}
+
+/** Lists every readable record and reports the others by path instead of failing the whole list. */
+async function scanScientSourceRecords(paths: SourceStorePaths): Promise<RecordScan> {
+  if (paths.owner.kind === "library") return scanLibraryRecords(paths);
+  const recordsState = await snapshot(paths.records);
+  if (recordsState === "missing") return { records: [], issues: [] };
+  if (recordsState !== "directory") throw new Error("The Scient source record store is unsafe.");
+  const entries = await NodeFSP.readdir(paths.records, { withFileTypes: true });
+  const results: RecordFileResult[] = [];
+  for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.name.endsWith(".json")) continue;
+    if (!entry.isFile()) {
+      const filePath = NodePath.join(paths.records, entry.name);
+      results.push({
+        issue: { path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE },
+      });
+      continue;
+    }
+    results.push(await readRecordFile(paths, entry.name));
+  }
+  return settleScan(results);
+}
+
+/**
+ * Timestamps this close to a scan may still change without changing again (coarse clocks on some
+ * volumes), so such files and folders are checked again on the next scan instead of trusted.
+ */
+const RACY_TIMESTAMP_NS = 2_000_000_000n;
+
+interface IndexedRecordFile {
+  readonly stamp: string;
+  readonly settled: boolean;
+  readonly result: RecordFileResult;
+}
+
+interface LibraryRecordIndex extends RecordScan {
+  readonly fingerprint: string;
+  readonly settled: boolean;
+  readonly files: ReadonlyMap<string, IndexedRecordFile>;
+}
+
+/** Derived from the record files and rebuilt from them; the files stay the truth. */
+const libraryRecordIndexes = new Map<string, LibraryRecordIndex>();
+
+const isSettled = (stats: NodeFS.BigIntStats, scanStartedNs: bigint) =>
+  scanStartedNs - stats.mtimeNs > RACY_TIMESTAMP_NS &&
+  scanStartedNs - stats.ctimeNs > RACY_TIMESTAMP_NS;
+
+/**
+ * The library's record list from its in-memory index. Every library write replaces, links or
+ * unlinks a file in `records/`, which changes the folder's timestamps; while those are unchanged
+ * the index answers without touching any record. Otherwise each file is checked by its own
+ * timestamps and only new or changed files are read again.
+ */
+async function scanLibraryRecords(paths: SourceStorePaths): Promise<RecordScan> {
+  const scanStartedNs = BigInt(Date.now()) * 1_000_000n;
+  const folder = await NodeFSP.lstat(paths.records, { bigint: true }).catch((error: unknown) => {
+    if (isNodeError(error, "ENOENT")) return null;
+    throw error;
+  });
+  if (!folder) {
+    libraryRecordIndexes.delete(paths.root);
+    return { records: [], issues: [] };
+  }
+  if (!folder.isDirectory() || folder.isSymbolicLink()) {
+    throw new Error("The Scient source record store is unsafe.");
+  }
+  const fingerprint = [folder.dev, folder.ino, folder.mtimeNs, folder.ctimeNs].join(":");
+  const cached = libraryRecordIndexes.get(paths.root);
+  if (cached?.settled && cached.fingerprint === fingerprint) return cached;
+
+  const entries = await NodeFSP.readdir(paths.records, { withFileTypes: true });
+  const files = new Map<string, IndexedRecordFile>();
+  for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
+    if (!entry.name.endsWith(".json")) continue;
+    const filePath = NodePath.join(paths.records, entry.name);
+    const stats = await NodeFSP.lstat(filePath, { bigint: true }).catch((error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return null;
+      throw error;
+    });
+    if (!stats) continue;
+    if (!stats.isFile()) {
+      files.set(entry.name, {
+        stamp: "unsafe",
+        settled: false,
+        result: {
+          issue: { path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE },
+        },
+      });
+      continue;
+    }
+    const stamp = [stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
+    const previous = cached?.files.get(entry.name);
+    files.set(
+      entry.name,
+      previous?.settled && previous.stamp === stamp
+        ? previous
+        : {
+            stamp,
+            settled: isSettled(stats, scanStartedNs),
+            result: await readRecordFile(paths, entry.name),
+          },
+    );
+  }
+  const index: LibraryRecordIndex = {
+    ...settleScan([...files.values()].map((file) => file.result)),
+    fingerprint,
+    settled: isSettled(folder, scanStartedNs),
+    files,
+  };
+  libraryRecordIndexes.set(paths.root, index);
+  return index;
 }
 
 async function listScientSourceRecordsFromPaths(
@@ -1195,7 +1317,7 @@ async function listScientSourceRecordsFromPaths(
 }
 
 export async function listScientSourceRecords(
-  root: string,
+  root: ScientSourceStoreLocation,
 ): Promise<ReadonlyArray<ScientSourceRecord>> {
   return listScientSourceRecordsFromPaths(await sourceStorePaths(root));
 }
@@ -1235,7 +1357,7 @@ function operationPath(directory: string, operationId: string): string {
 }
 
 export async function readSourceImportOperation(
-  root: string,
+  root: ScientSourceStoreLocation,
   operationId: string,
 ): Promise<ScientSourceImportOperation | null> {
   const paths = await sourceStorePaths(root);
@@ -1243,7 +1365,7 @@ export async function readSourceImportOperation(
 }
 
 async function readSourceImportOperationFromPaths(
-  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  paths: SourceStorePaths,
   operationId: string,
 ): Promise<ScientSourceImportOperation | null> {
   const filePath = operationPath(paths.operations, operationId);
@@ -1262,8 +1384,8 @@ async function readSourceImportOperationFromPaths(
     actor: persisted.actor ?? "user",
     intake: persisted.intake ?? (persisted.adapter === "local-files" ? "local-pdf" : "zotero"),
   };
-  if (operation.projectId !== paths.identity.projectId) {
-    throw new Error("The source import operation belongs to another Scient project.");
+  if (!operationBelongsToStore(paths, operation)) {
+    throw new Error(storeOwnerMessage(paths, "The source import operation"));
   }
   return operation;
 }
@@ -1275,7 +1397,7 @@ async function findActiveOperation(
   if (cachedOperationId) {
     let cached = await readSourceImportOperationFromPaths(paths, cachedOperationId);
     if (cached?.state === "running" && cached.items.every((item) => item.state !== "pending")) {
-      cached = await withOperationLock(`${paths.root}:${cachedOperationId}`, async () => {
+      cached = await withStoreLock(paths, cachedOperationId, async () => {
         const current = await readSourceImportOperationFromPaths(paths, cachedOperationId);
         if (!current) return null;
         return finishOperationIfSettled(paths, current);
@@ -1292,15 +1414,15 @@ async function findActiveOperation(
     const operationId = entry.name.slice(0, -".json".length);
     let operation = await readSourceImportOperationFromPaths(paths, operationId);
     if (!operation) continue;
-    if (operation.projectId !== paths.identity.projectId) {
-      throw new Error(`Source operation ${entry.name} belongs to another Scient project.`);
+    if (!operationBelongsToStore(paths, operation)) {
+      throw new Error(storeOwnerMessage(paths, `Source operation ${entry.name}`));
     }
     if (
       operation.state === "running" &&
       operation.items.every((item) => item.state !== "pending")
     ) {
       const operationId = operation.operationId;
-      operation = await withOperationLock(`${paths.root}:${operationId}`, async () => {
+      operation = await withStoreLock(paths, operationId, async () => {
         const current = await readSourceImportOperationFromPaths(paths, operationId);
         if (!current) throw new Error("The source import operation was not found.");
         return finishOperationIfSettled(paths, current);
@@ -1342,7 +1464,7 @@ export async function inspectScientSources(root: string): Promise<ScientSourcesO
 }
 
 export async function createSourceImportOperation(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operationId: string;
   readonly adapter: "zotero" | "zotero-web" | "local-files" | "file";
   readonly actor?: "user" | "agent";
@@ -1368,7 +1490,7 @@ export async function createSourceImportOperation(input: {
   }
   const normalizedOverrides = uniqueItemKeys.filter((itemKey) => overrides.has(itemKey));
   const paths = await sourceStorePaths(input.root);
-  return withOperationLock(`${paths.root}:active-operation`, async () => {
+  return withStoreLock(paths, "active-operation", async () => {
     const existing = await readSourceImportOperationFromPaths(paths, input.operationId);
     if (existing) {
       const existingKeys = existing.items.map((item) => item.itemKey);
@@ -1396,9 +1518,9 @@ export async function createSourceImportOperation(input: {
     }
     const now = new Date().toISOString();
     const operation: ScientSourceImportOperation = {
-      formatVersion: 1,
+      formatVersion: storeFormatVersion(paths),
       operationId: input.operationId,
-      projectId: paths.identity.projectId,
+      ...storeOwnerField(paths),
       adapter: input.adapter,
       actor: input.actor ?? "user",
       intake: input.intake ?? (input.adapter === "local-files" ? "local-pdf" : "zotero"),
@@ -1424,7 +1546,7 @@ export async function createSourceImportOperation(input: {
 }
 
 async function finishOperationIfSettled(
-  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  paths: SourceStorePaths,
   operation: ScientSourceImportOperation,
 ): Promise<ScientSourceImportOperation> {
   if (operation.state !== "running" || operation.items.some((item) => item.state === "pending")) {
@@ -1436,9 +1558,9 @@ async function finishOperationIfSettled(
     updatedAt: new Date().toISOString(),
   };
   const receipt: ScientSourceImportReceipt = {
-    formatVersion: 1,
+    formatVersion: completed.formatVersion,
     operationId: completed.operationId,
-    projectId: completed.projectId,
+    ...storeOwnerField(paths),
     outcome: "completed",
     finishedAt: completed.updatedAt,
     importedSourceIds: completed.items.flatMap((item) =>
@@ -1467,7 +1589,7 @@ async function finishOperationIfSettled(
 }
 
 export async function updateSourceImportOperationItem(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operationId: string;
   readonly itemKey: string;
   readonly state: "imported" | "skipped" | "failed";
@@ -1476,7 +1598,7 @@ export async function updateSourceImportOperationItem(input: {
   readonly message?: string;
 }): Promise<ScientSourceImportOperation> {
   const paths = await sourceStorePaths(input.root);
-  return withOperationLock(`${paths.root}:${input.operationId}`, async () => {
+  return withStoreLock(paths, input.operationId, async () => {
     const operation = await readSourceImportOperationFromPaths(paths, input.operationId);
     if (!operation) throw new Error("The source import operation was not found.");
     if (operation.state !== "running") return operation;
@@ -1508,7 +1630,7 @@ export async function updateSourceImportOperationItem(input: {
 }
 
 export async function retryFailedSourceImportOperationItems(
-  root: string,
+  root: ScientSourceStoreLocation,
   operationId: string,
   itemKeys: ReadonlyArray<string>,
 ): Promise<ScientSourceImportOperation> {
@@ -1516,7 +1638,7 @@ export async function retryFailedSourceImportOperationItems(
   const keys = [...new Set(itemKeys)];
   if (keys.length === 0) throw new Error("Choose at least one failed source item to retry.");
   for (const key of keys) assertSafeIdentifier(key, "Source item key");
-  return withOperationLock(`${paths.root}:${operationId}`, async () => {
+  return withStoreLock(paths, operationId, async () => {
     const operation = await readSourceImportOperationFromPaths(paths, operationId);
     if (!operation) throw new Error("The source import operation was not found.");
     if (operation.state === "cancelled") {
@@ -1552,11 +1674,11 @@ export async function retryFailedSourceImportOperationItems(
 }
 
 export async function cancelSourceImportOperation(
-  root: string,
+  root: ScientSourceStoreLocation,
   operationId: string,
 ): Promise<ScientSourceImportOperation> {
   const paths = await sourceStorePaths(root);
-  return withOperationLock(`${paths.root}:${operationId}`, async () => {
+  return withStoreLock(paths, operationId, async () => {
     const operation = await readSourceImportOperationFromPaths(paths, operationId);
     if (!operation) throw new Error("The source import operation was not found.");
     if (operation.state !== "running") return operation;
@@ -1567,9 +1689,9 @@ export async function cancelSourceImportOperation(
       updatedAt: now,
     };
     const receipt: ScientSourceImportReceipt = {
-      formatVersion: 1,
+      formatVersion: operation.formatVersion,
       operationId,
-      projectId: operation.projectId,
+      ...storeOwnerField(paths),
       outcome: "cancelled",
       finishedAt: now,
       importedSourceIds: operation.items.flatMap((item) =>
@@ -1709,9 +1831,21 @@ export async function readScientSourcePdfBytes(
  * through no symlink, with the attachment's recorded size and hash.
  */
 export async function readScientSourceAttachmentPdf(
-  root: string,
+  root: ScientSourceStoreLocation,
   attachment: ScientSourceAttachment,
 ): Promise<Uint8Array<ArrayBuffer>> {
+  if (isScientLibraryLocation(root)) {
+    const library = scientLibraryLocation(await NodeFSP.realpath(root.root));
+    const lexicalPath = sourceAttachmentAbsolutePath(library, attachment);
+    // The library holds no links: any symlink on the way changes the real path.
+    if ((await NodeFSP.realpath(lexicalPath)) !== lexicalPath) {
+      throw new Error("The source PDF is reached through a symlink.");
+    }
+    return readScientSourcePdfBytes(lexicalPath, {
+      sha256: attachment.sha256,
+      byteLength: attachment.byteLength,
+    });
+  }
   const canonicalRoot = await NodeFSP.realpath(root);
   const lexicalPath = sourceAttachmentAbsolutePath(canonicalRoot, attachment);
   const requested = NodePath.relative(canonicalRoot, lexicalPath).split(NodePath.sep).join("/");
@@ -1730,7 +1864,7 @@ export async function readScientSourceAttachmentPdf(
 }
 
 function stagedLocalMaterialPaths(
-  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  paths: SourceStorePaths,
   sourceKey: string,
 ) {
   assertSafeIdentifier(sourceKey, "Source key");
@@ -1753,7 +1887,7 @@ function safeUploadedFileName(fileName: string): string {
 }
 
 export async function stageScientSourcePdfUpload(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourcePath: string;
   readonly fileName: string;
 }): Promise<{
@@ -1765,7 +1899,7 @@ export async function stageScientSourcePdfUpload(input: {
   readonly absolutePath: string;
 }> {
   const paths = await sourceStorePaths(input.root);
-  return withOperationLock(`${paths.root}:source-upload`, async () => {
+  return withStoreLock(paths, "source-upload", async () => {
     if (!input.fileName.toLowerCase().endsWith(".pdf")) {
       throw new Error("The selected file is not a PDF.");
     }
@@ -1820,7 +1954,7 @@ export async function stageScientSourcePdfUpload(input: {
 }
 
 export async function writeScientSourceStagedMaterial(
-  root: string,
+  root: ScientSourceStoreLocation,
   material: ScientSourceStagedMaterialType,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
@@ -1845,7 +1979,7 @@ export async function writeScientSourceStagedMaterial(
 }
 
 export async function readScientSourceStagedMaterial(
-  root: string,
+  root: ScientSourceStoreLocation,
   sourceKey: string,
 ): Promise<ScientSourceStagedMaterialType> {
   const paths = await sourceStorePaths(root);
@@ -1862,7 +1996,7 @@ export async function readScientSourceStagedMaterial(
 }
 
 export async function stagedScientSourcePdfAbsolutePath(
-  root: string,
+  root: ScientSourceStoreLocation,
   material: ScientSourceStagedMaterialType,
 ): Promise<string> {
   const paths = await sourceStorePaths(root);
@@ -1879,7 +2013,7 @@ export async function stagedScientSourcePdfAbsolutePath(
 }
 
 export async function removeScientSourceStagedMaterial(
-  root: string,
+  root: ScientSourceStoreLocation,
   sourceKey: string,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
@@ -1906,7 +2040,7 @@ export type ScientSourceStagedFileImport = typeof ScientSourceStagedFileImport.T
 const decodeStagedFileImport = Schema.decodeSync(ScientSourceStagedFileImport);
 
 function stagedFileImportPath(
-  paths: Awaited<ReturnType<typeof sourceStorePaths>>,
+  paths: SourceStorePaths,
   operationId: string,
 ): string {
   assertSafeIdentifier(operationId, "Operation ID");
@@ -1914,7 +2048,7 @@ function stagedFileImportPath(
 }
 
 export async function writeScientSourceStagedFileImport(
-  root: string,
+  root: ScientSourceStoreLocation,
   staged: ScientSourceStagedFileImport,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
@@ -1927,7 +2061,7 @@ export async function writeScientSourceStagedFileImport(
 }
 
 export async function readScientSourceStagedFileImport(
-  root: string,
+  root: ScientSourceStoreLocation,
   operationId: string,
 ): Promise<ScientSourceStagedFileImport | null> {
   const paths = await sourceStorePaths(root);
@@ -1945,7 +2079,7 @@ export async function readScientSourceStagedFileImport(
 }
 
 export async function removeScientSourceStagedFileImport(
-  root: string,
+  root: ScientSourceStoreLocation,
   operationId: string,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
@@ -1953,7 +2087,7 @@ export async function removeScientSourceStagedFileImport(
 }
 
 async function stagePdf(input: {
-  readonly paths: Awaited<ReturnType<typeof sourceStorePaths>>;
+  readonly paths: SourceStorePaths;
   readonly operationId: string;
   readonly sourcePath: string;
   readonly fileName?: string;
@@ -1986,7 +2120,7 @@ async function stagePdf(input: {
       sha256.slice(0, 2),
       `${sha256}.pdf`,
     );
-    const finalPath = NodePath.join(input.paths.root, SCIENT_SOURCES_DIRECTORY, relativePath);
+    const finalPath = NodePath.join(input.paths.base, ...relativePath.split("/"));
     await ensureDirectory(NodePath.dirname(finalPath));
     let created = false;
     try {
@@ -2059,7 +2193,7 @@ export interface ScientSourcePdfAttachmentResult {
 }
 
 export async function attachScientSourcePdf(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly pdfPath: string;
@@ -2069,7 +2203,7 @@ export async function attachScientSourcePdf(input: {
 }): Promise<ScientSourcePdfAttachmentResult> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const current = await readSourceRecordFromPaths(paths, input.sourceId);
     const emptyDuplicate: ScientSourceDuplicateAssessment = {
       kind: "new",
@@ -2114,7 +2248,7 @@ export interface ScientSourcePdfDetachmentResult {
 }
 
 export async function detachScientSourcePdf(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly attachmentId: string;
   readonly expectedRevision: number;
@@ -2123,7 +2257,7 @@ export async function detachScientSourcePdf(input: {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
   assertSafeIdentifier(input.attachmentId, "Attachment ID");
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const recordPath = sourceRecordPath(paths, input.sourceId);
     if ((await snapshot(recordPath)) === "missing") {
       return {
@@ -2177,7 +2311,7 @@ export async function detachScientSourcePdf(input: {
 }
 
 interface ImportScientSourceInput {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly operationId: string;
   readonly candidate: ScientSourceCandidate;
   readonly pdfPath?: string;
@@ -2196,7 +2330,7 @@ async function importScientSourceWithRecordLookup(
 ): Promise<ImportedSourceResult> {
   assertSafeIdentifier(input.operationId, "Operation ID");
   const paths = await sourceStorePaths(input.root);
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const existing =
       lookup === "operation-snapshot"
         ? await operationRecordSnapshot(paths, input.operationId)
@@ -2217,7 +2351,7 @@ async function importScientSourceWithRecordLookup(
           importedAt,
         })
       : null;
-    const sourceId = scientSourceIdFor(paths.identity.projectId, input.candidate.sourceKey);
+    const sourceId = scientSourceIdFor(storeOwnerId(paths), input.candidate.sourceKey);
     const duplicate = assessSourceDuplicate({
       candidate: input.candidate,
       existing,
@@ -2242,9 +2376,9 @@ async function importScientSourceWithRecordLookup(
       abstractDocumentFromSections(input.candidate.abstractSections) ??
       normalizeScientSourceAbstractDocument(input.candidate.abstract);
     const record: ScientSourceRecord = {
-      formatVersion: 1,
+      formatVersion: storeFormatVersion(paths),
       sourceId,
-      projectId: paths.identity.projectId,
+      ...projectField(paths),
       revision,
       citationKey,
       type: input.candidate.type,
@@ -2335,7 +2469,7 @@ export async function importScientSourceOperationItem(
 }
 
 export function sourceAttachmentAbsolutePath(
-  root: string,
+  root: ScientSourceStoreLocation,
   attachment: ScientSourceAttachment,
 ): string {
   if (attachment.relativePath.includes("\\")) {
@@ -2349,7 +2483,9 @@ export function sourceAttachmentAbsolutePath(
   ) {
     throw new Error("The source attachment path is not portable.");
   }
-  const base = NodePath.resolve(root, SCIENT_SOURCES_DIRECTORY);
+  const base = isScientLibraryLocation(root)
+    ? NodePath.resolve(root.root)
+    : NodePath.resolve(root, SCIENT_SOURCES_DIRECTORY);
   const resolved = NodePath.resolve(base, ...normalized.split("/"));
   const relative = NodePath.relative(base, resolved);
   if (
@@ -2364,12 +2500,12 @@ export function sourceAttachmentAbsolutePath(
 
 function zoteroSyncPath(paths: SourceStorePaths, sourceId: string): string {
   assertSafeIdentifier(sourceId, "Source ID");
-  return NodePath.join(paths.root, SCIENT_SOURCE_ZOTERO_SYNC_DIRECTORY, `${sourceId}.json`);
+  return NodePath.join(paths.zotero, `${sourceId}.json`);
 }
 
 /** The Zotero values a source was last synced from, or null before its first sync. */
 export async function readScientSourceZoteroSync(
-  root: string,
+  root: ScientSourceStoreLocation,
   sourceId: string,
 ): Promise<ScientSourceZoteroSyncType | null> {
   const paths = await sourceStorePaths(root);
@@ -2380,7 +2516,7 @@ export async function readScientSourceZoteroSync(
 }
 
 export async function writeScientSourceZoteroSync(
-  root: string,
+  root: ScientSourceStoreLocation,
   state: ScientSourceZoteroSyncType,
 ): Promise<void> {
   const paths = await sourceStorePaths(root);
@@ -2389,7 +2525,7 @@ export async function writeScientSourceZoteroSync(
 
 /** Replaces a source's links to other reference managers, as a new revision. */
 export async function updateScientSourceExternalReferences(input: {
-  readonly root: string;
+  readonly root: ScientSourceStoreLocation;
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly externalReferences: ReadonlyArray<ScientSourceExternalReference>;
@@ -2400,7 +2536,7 @@ export async function updateScientSourceExternalReferences(input: {
 }> {
   const paths = await sourceStorePaths(input.root);
   assertSafeIdentifier(input.sourceId, "Source ID");
-  return withOperationLock(`${paths.root}:source-write`, async () => {
+  return withStoreLock(paths, "source-write", async () => {
     const current = await readSourceRecordFromPaths(paths, input.sourceId);
     if (JSON.stringify(current.externalReferences) === JSON.stringify(input.externalReferences)) {
       return { outcome: "unchanged", record: current };
@@ -2418,9 +2554,10 @@ export async function updateScientSourceExternalReferences(input: {
   });
 }
 
-/** For sibling project-store modules (collections, reviews) that share this store's safety rules. */
+/** For sibling store modules (collections, reviews) that share this store's safety rules. */
 export const scientSourceStoreInternals = {
   sourceStorePaths,
+  withStoreLock,
   snapshot,
   readBoundedJson,
   atomicWriteJson,
