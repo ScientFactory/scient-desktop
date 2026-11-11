@@ -1,7 +1,6 @@
 import {
   getEnvironmentDocumentAnnotations,
   getEnvironmentSourceAnnotations,
-  mutateEnvironmentAnnotation,
 } from "@t3tools/client-runtime/state/scient-annotations";
 import type {
   EnvironmentId,
@@ -12,6 +11,7 @@ import type {
 
 import { runtime } from "../../lib/runtime";
 import { readPreparedConnection } from "../../state/session";
+import { runSourcesCommand, sourcesCommands } from "../sources/sourcesCommands";
 
 function prepared(environmentId: EnvironmentId) {
   const connection = readPreparedConnection(environmentId);
@@ -42,7 +42,5 @@ export async function mutateAnnotation(
   environmentId: EnvironmentId,
   request: ScientAnnotationMutationRequest,
 ) {
-  return runtime.runPromise(
-    mutateEnvironmentAnnotation({ prepared: prepared(environmentId), request }),
-  );
+  return runSourcesCommand(sourcesCommands.annotationsMutate, environmentId, { request });
 }

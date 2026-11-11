@@ -99,6 +99,7 @@ import { SystematicReviewsView } from "./SystematicReviews";
 import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
+import { useCanChangeLibrary } from "./sourcesCommands";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest, UniversityRow } from "../accounts/University";
 import { PaperQueueBand } from "../accounts/PaperRequests";
@@ -274,6 +275,7 @@ export function ScientSourcesPanel(props: {
   readonly onOpenFile?: (path: string, line: number) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const canChange = useCanChangeLibrary(props.environmentId);
   const zoteroSync = useZoteroSync({
     environmentId: props.environmentId,
     root: props.root,
@@ -574,7 +576,7 @@ export function ScientSourcesPanel(props: {
     const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
     const items: ContextMenuItem<SourceContextAction>[] = [
       { id: "view", label: "View source details" },
-      { id: "edit", label: "Edit source details", icon: "pencil" },
+      { id: "edit", label: "Edit source details", icon: "pencil", disabled: !canChange },
       ...(pdf ? ([{ id: "open-pdf", label: "Open PDF" }] as const) : []),
       {
         id: "select",
@@ -584,7 +586,7 @@ export function ScientSourcesPanel(props: {
         id: "remove",
         label: "Move to Trash",
         destructive: true,
-        disabled: sources.busy,
+        disabled: sources.busy || !canChange,
         icon: "trash",
       },
     ];
@@ -712,6 +714,7 @@ export function ScientSourcesPanel(props: {
         preflight={sources.preflight}
         adapter={sources.preflightAdapter ?? "zotero"}
         busy={sources.busy}
+        readOnly={!canChange}
         error={sources.error}
         onDismissError={sources.clearError}
         onBack={sources.resetImport}
@@ -821,7 +824,7 @@ export function ScientSourcesPanel(props: {
                 <Button
                   size="xs"
                   variant="ghost"
-                  disabled={sources.busy || sources.library.total === 0}
+                  disabled={!canChange || sources.busy || sources.library.total === 0}
                   onClick={() => revealImportedSource(sources.importZoteroScope())}
                 >
                   <Download />
@@ -857,7 +860,7 @@ export function ScientSourcesPanel(props: {
             <Button
               size="xs"
               variant="ghost"
-              disabled={sources.busy}
+              disabled={!canChange || sources.busy}
               onClick={() => revealImportedSource(sources.previewImport([...selectedKeys]))}
             >
               <Download />
@@ -1051,6 +1054,7 @@ export function ScientSourcesPanel(props: {
         <SourceDetails
           key={selectedRecord.sourceId}
           record={selectedRecord}
+          readOnly={!canChange}
           diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
           organize={
             <SourceOrganizeSection
@@ -1184,7 +1188,7 @@ export function ScientSourcesPanel(props: {
     <div
       className="flex min-h-0 flex-1 flex-col"
       onDragOver={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
+        if (!canChange || !event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
         setDragActive(true);
@@ -1195,7 +1199,7 @@ export function ScientSourcesPanel(props: {
       onDrop={(event) => {
         event.preventDefault();
         setDragActive(false);
-        if (!event.dataTransfer.files.length) return;
+        if (!canChange || !event.dataTransfer.files.length) return;
         const [dropped] = event.dataTransfer.files;
         if (event.dataTransfer.files.length === 1 && dropped && isReferenceFileName(dropped.name)) {
           importReferenceFile(dropped);
@@ -1249,7 +1253,7 @@ export function ScientSourcesPanel(props: {
                   <Button
                     size="xs"
                     variant="ghost"
-                    disabled={sources.busy || sources.checkingZotero}
+                    disabled={!canChange || sources.busy || sources.checkingZotero}
                     aria-label="Import sources"
                   >
                     {sources.busy || sources.checkingZotero ? (
@@ -1352,7 +1356,7 @@ export function ScientSourcesPanel(props: {
       {bibliography.status ? (
         <ManagedBibliographyNotice
           files={bibliography.status.files}
-          replacing={bibliography.replacing}
+          replacing={bibliography.replacing || !bibliography.canChange}
           onResolve={(name, action) => void bibliography.resolve(name, action)}
         />
       ) : null}
@@ -1394,7 +1398,8 @@ export function ScientSourcesPanel(props: {
           }}
           onCancel={() => void sources.cancelImport()}
           cancelling={sources.cancelling}
-          {...(sources.operation.state !== "cancelled" &&
+          {...(canChange &&
+          sources.operation.state !== "cancelled" &&
           sources.operation.items.some((item) => item.state === "failed")
             ? {
                 onRetryFailed: () => {
@@ -1422,7 +1427,7 @@ export function ScientSourcesPanel(props: {
         <ReferenceFileReport
           fileName={referenceFileImport.file.name}
           report={referenceFileImport.report}
-          busy={sources.busy}
+          busy={sources.busy || !canChange}
           onContinue={() => importReferenceFile(referenceFileImport.file)}
           onDismiss={() => setReferenceFileImport(null)}
         />
@@ -1702,6 +1707,7 @@ function ImportReview(props: {
   readonly preflight: NonNullable<ReturnType<typeof useScientSources>["preflight"]>;
   readonly adapter: "zotero" | "local-files";
   readonly busy: boolean;
+  readonly readOnly: boolean;
   readonly error: string | null;
   readonly onDismissError: () => void;
   readonly onBack: () => void;
@@ -1753,7 +1759,7 @@ function ImportReview(props: {
             <Button
               size="xs"
               variant="ghost"
-              disabled={props.busy}
+              disabled={props.busy || props.readOnly}
               onClick={() => props.onImport(itemKeys, overrideKeys)}
             >
               <Download />
@@ -1779,7 +1785,7 @@ function ImportReview(props: {
           <Button
             size="xs"
             variant="ghost"
-            disabled={props.busy}
+            disabled={props.busy || props.readOnly}
             aria-busy={props.busy}
             onClick={() => props.onImport(itemKeys, overrideKeys)}
           >

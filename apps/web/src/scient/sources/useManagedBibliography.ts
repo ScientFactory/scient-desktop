@@ -10,6 +10,7 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 
 import { syncScientBibliography } from "./client";
 import { publishLibraryVersion } from "./librarySourceRequest";
+import { useCanChangeLibrary } from "./sourcesCommands";
 
 /**
  * The server rewrites the managed files after every Library write; this reads
@@ -34,11 +35,13 @@ export function useManagedBibliography(input: {
   } | null>(null);
   const [replacing, setReplacing] = useState(false);
   const context = `${input.environmentId}\0${input.root}`;
+  const canChange = useCanChangeLibrary(input.environmentId);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- the managed files live on the server; a Library change there is what makes them worth reading again
   useEffect(() => {
     if (libraryVersion === null) return;
     publishLibraryVersion(input.root, libraryVersion);
+    if (!canChange) return;
     let current = true;
     Promise.resolve()
       .then(() => syncScientBibliography(input.environmentId, { root: input.root }))
@@ -51,7 +54,7 @@ export function useManagedBibliography(input: {
     return () => {
       current = false;
     };
-  }, [context, input.environmentId, input.root, libraryVersion]);
+  }, [canChange, context, input.environmentId, input.root, libraryVersion]);
 
   const resolve = useStableCallback(
     async (name: ScientManagedBibliographyFileName, action: "replace" | "import") => {
@@ -72,6 +75,7 @@ export function useManagedBibliography(input: {
   return {
     status: status?.context === context ? status.value : null,
     replacing,
+    canChange,
     resolve,
   };
 }

@@ -25,6 +25,7 @@ const client = vi.hoisted(() => ({
   readSource: vi.fn(),
   mutate: vi.fn(),
 }));
+vi.mock("../sources/sourcesCommands", () => ({ useCanChangeLibrary: () => true }));
 vi.mock("./client", () => ({
   readDocumentAnnotations: client.read,
   readSourceAnnotations: client.readSource,

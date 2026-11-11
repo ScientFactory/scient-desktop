@@ -182,7 +182,9 @@ export function SourcesFilterMenu(props: {
                 ))}
             </MenuRadioGroup>
             <MenuSeparator />
-            <MenuItem onClick={newCollection}>New collection…</MenuItem>
+            <MenuItem disabled={!organize.canChange} onClick={newCollection}>
+              New collection…
+            </MenuItem>
           </MenuSubPopup>
         </MenuSub>
         <MenuSub>
@@ -273,7 +275,7 @@ export function SourcesFilterMenu(props: {
                 ))
             )}
             <MenuSeparator />
-            <MenuItem disabled={!canSave} onClick={saveSearch}>
+            <MenuItem disabled={!canSave || !organize.canChange} onClick={saveSearch}>
               Save this search…
             </MenuItem>
           </MenuSubPopup>

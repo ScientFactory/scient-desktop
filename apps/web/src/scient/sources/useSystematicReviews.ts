@@ -10,6 +10,7 @@ import { useEffect, useState } from "react";
 import { toastManager } from "../../components/ui/toast";
 import { changeSystematicReview, readSystematicReview, readSystematicReviews } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { useCanChangeLibrary } from "./sourcesCommands";
 
 const message = (error: unknown) => scientSourcesErrorMessage(error, import.meta.env.DEV);
 
@@ -51,6 +52,7 @@ export function useSystematicReviews(input: {
   const [detail, setDetail] = useState<ScientSystematicReviewResult["detail"] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const canChange = useCanChangeLibrary(input.environmentId);
 
   const reloadList = () =>
     readSystematicReviews(input.environmentId, { root: input.root })
@@ -116,6 +118,8 @@ export function useSystematicReviews(input: {
     list,
     error,
     pending,
+    /** Changes are off while one is saving or when this connection cannot change the Library. */
+    disabled: pending || !canChange,
     reviewId,
     detail: detail && detail.review.reviewId === reviewId ? detail : null,
     open: (id: string | null) => {

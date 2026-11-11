@@ -17,6 +17,7 @@ import {
 } from "../../components/ui/dialog";
 import { toastManager } from "../../components/ui/toast";
 import { readScientSourceRevisions, revertScientSource } from "./client";
+import { useCanChangeLibrary } from "./sourcesCommands";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import { changedFieldsLabel, revisionLabel } from "./sourceLifecycleLabels";
 
@@ -40,6 +41,7 @@ export function SourceHistoryDialog(props: {
   const [pending, setPending] = useState<number | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const { environmentId, root, sourceId } = props;
+  const canChange = useCanChangeLibrary(environmentId);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the kept revisions from the server once the dialog mounts
   useEffect(() => {
@@ -137,7 +139,7 @@ export function SourceHistoryDialog(props: {
                     <Button
                       size="xs"
                       variant="ghost"
-                      disabled={pending !== null}
+                      disabled={pending !== null || !canChange}
                       onClick={() => void restore(revision.revision)}
                     >
                       {pending === revision.revision ? (

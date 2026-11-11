@@ -21,6 +21,7 @@ import {
   storePdfAnnotations,
   type AnnotatedPdf,
 } from "./annotationState";
+import { useCanChangeLibrary } from "../sources/sourcesCommands";
 import { readSourceAnnotations } from "./client";
 import { quoteInDocument } from "./documentQuoteTargets";
 import { usePdfAnnotations } from "./useDocumentAnnotations";
@@ -119,6 +120,7 @@ function AttachmentAnnotations(props: {
     material: { sha256: attachment.sha256, byteLength: attachment.byteLength },
   };
   const annotations = usePdfAnnotations(pdf);
+  const canChange = useCanChangeLibrary(environmentId);
   if (annotations.length === 0) return null;
 
   const open = (annotation: ScientPdfAnnotation) => {
@@ -203,6 +205,7 @@ function AttachmentAnnotations(props: {
                 size="icon-xs"
                 variant="ghost-muted-row"
                 aria-label="Remove"
+                disabled={!canChange}
                 onClick={() => void removeAnnotation(pdf, annotation)}
               >
                 <Trash2 />

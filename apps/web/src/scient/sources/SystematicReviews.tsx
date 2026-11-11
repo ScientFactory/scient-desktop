@@ -182,7 +182,7 @@ function LogSearchDialog(props: {
           <Button
             type="button"
             size="sm"
-            disabled={!valid || props.reviews.pending}
+            disabled={!valid || props.reviews.disabled}
             onClick={() => void submit()}
           >
             Log search
@@ -265,7 +265,7 @@ function EditReviewDialog(props: {
           <Button
             type="button"
             size="sm"
-            disabled={!title.trim() || props.reviews.pending}
+            disabled={!title.trim() || props.reviews.disabled}
             onClick={() => void submit()}
           >
             Save
@@ -306,6 +306,7 @@ function RecordsTab(props: {
             size="compact"
             variant="ghost-muted"
             className="ms-auto"
+            disabled={props.reviews.disabled}
             onClick={() => setLogging(true)}
           >
             <Plus />
@@ -351,6 +352,7 @@ function RecordsTab(props: {
                   <MenuPopup align="end">
                     <MenuItem
                       variant="destructive"
+                      disabled={props.reviews.disabled}
                       onClick={() =>
                         void props.reviews.change(
                           { action: "remove-search", reviewId, searchId: search.searchId },
@@ -373,7 +375,13 @@ function RecordsTab(props: {
           <Menu>
             <MenuTrigger
               render={
-                <Button type="button" size="compact" variant="ghost-muted" className="ms-auto" />
+                <Button
+                  type="button"
+                  size="compact"
+                  variant="ghost-muted"
+                  className="ms-auto"
+                  disabled={props.reviews.disabled}
+                />
               }
             >
               <Plus />
@@ -436,7 +444,7 @@ function RecordsTab(props: {
                     type="button"
                     size="compact"
                     variant="outline"
-                    disabled={props.reviews.pending}
+                    disabled={props.reviews.disabled}
                     onClick={() =>
                       void props.reviews.change(
                         {
@@ -455,7 +463,7 @@ function RecordsTab(props: {
                     type="button"
                     size="compact"
                     variant="outline"
-                    disabled={props.reviews.pending}
+                    disabled={props.reviews.disabled}
                     onClick={() =>
                       void props.reviews.change(
                         {
@@ -474,7 +482,7 @@ function RecordsTab(props: {
                     type="button"
                     size="compact"
                     variant="ghost-muted"
-                    disabled={props.reviews.pending}
+                    disabled={props.reviews.disabled}
                     onClick={() =>
                       void props.reviews.change(
                         { action: "mark-distinct", reviewId, sourceIds: [first, second] },
@@ -501,7 +509,7 @@ function RecordsTab(props: {
                   type="button"
                   size="compact"
                   variant="ghost-muted"
-                  disabled={props.reviews.pending}
+                  disabled={props.reviews.disabled}
                   onClick={() =>
                     void props.reviews.change(
                       { action: "unmark-duplicate", reviewId, sourceId: entry.sourceId },
@@ -644,10 +652,13 @@ export function SystematicReviewsView(props: {
               <MoreHorizontal />
             </MenuTrigger>
             <MenuPopup align="end">
-              <MenuItem onClick={() => setEditing(true)}>Edit review…</MenuItem>
+              <MenuItem disabled={reviews.disabled} onClick={() => setEditing(true)}>
+                Edit review…
+              </MenuItem>
               <MenuSeparator />
               <MenuItem
                 variant="destructive"
+                disabled={reviews.disabled}
                 onClick={() => void deleteReview(detail.review.reviewId, detail.review.title)}
               >
                 Delete review
@@ -655,7 +666,13 @@ export function SystematicReviewsView(props: {
             </MenuPopup>
           </Menu>
         ) : !openId ? (
-          <Button type="button" size="xs" variant="ghost" onClick={newReview}>
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            disabled={reviews.disabled}
+            onClick={newReview}
+          >
             <Plus />
             New review
           </Button>
@@ -739,7 +756,7 @@ export function SystematicReviewsView(props: {
                     records={records}
                     sourceDetails={props.sourceDetails}
                     loadSource={props.loadSource}
-                    pending={reviews.pending}
+                    pending={reviews.disabled}
                     onOpenSource={props.onOpenSource}
                     onRequestName={setNameRequest}
                     onDecide={(sourceId, decision, reason) =>

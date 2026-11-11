@@ -17,6 +17,8 @@ import { WS_METHODS } from "./rpc.ts";
 // SCIENT-FORK:START — Extensions mutations share the destination settings grant.
 import { SCIENT_EXTENSION_GUARDED_RPC_SCOPES } from "./scient/extensionsPermissions.ts";
 import { SCIENT_SKILL_GUARDED_RPC_SCOPES } from "./scient/skillsPermissions.ts";
+import { SCIENT_SOURCES_GUARDED_HTTP_SCOPES } from "./scient/sourcesPermissions.ts";
+export * from "./scient/sourcesPermissions.ts";
 // SCIENT-FORK:END
 
 /** Incremental client enforcement; the server still authorizes every request. */
@@ -151,6 +153,13 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
 } as const;
 export type ClientGuardedRpcTag = keyof typeof CLIENT_GUARDED_RPC_SCOPES;
 
+// SCIENT-FORK:START — HTTP commands checked like guarded RPCs; the server's RPC table excludes them.
+const CLIENT_GUARDED_HTTP_SCOPES = {
+  ...SCIENT_SOURCES_GUARDED_HTTP_SCOPES,
+} as const;
+export type ClientGuardedHttpTag = keyof typeof CLIENT_GUARDED_HTTP_SCOPES;
+// SCIENT-FORK:END
+
 const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThreadInput);
 const decodeStackedAction = Schema.decodeUnknownSync(GitRunStackedActionInput);
 
@@ -173,6 +182,10 @@ export function clientRpcRequiredScopes(
     )
       return [AuthSourceControlWriteScope, AuthOrchestrationReadScope];
   }
+  // SCIENT-FORK:START — guarded HTTP commands share this check.
+  if (Object.hasOwn(CLIENT_GUARDED_HTTP_SCOPES, method))
+    return [CLIENT_GUARDED_HTTP_SCOPES[method as ClientGuardedHttpTag]];
+  // SCIENT-FORK:END
   return Object.hasOwn(CLIENT_GUARDED_RPC_SCOPES, method)
     ? [CLIENT_GUARDED_RPC_SCOPES[method as ClientGuardedRpcTag]]
     : [];

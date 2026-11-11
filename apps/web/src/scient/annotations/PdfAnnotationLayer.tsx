@@ -25,6 +25,7 @@ import {
   updateAnnotation,
   type AnnotatedPdf,
 } from "./annotationState";
+import { useCanChangeLibrary } from "../sources/sourcesCommands";
 import { quoteInDocument } from "./documentQuoteTargets";
 import { paintPdfAnnotations, type PdfAnnotationPainter } from "./pdfAnnotationPaint";
 import { useDocumentAnnotations } from "./useDocumentAnnotations";
@@ -58,6 +59,7 @@ export function PdfAnnotationLayer(props: {
 }) {
   const { container, ready, runtimeRef } = props;
   const { pdf, annotations, citationKey } = useDocumentAnnotations(props.source);
+  const canChange = useCanChangeLibrary(pdf?.environmentId ?? null);
   const fileName = props.source?.fileName ?? "document.pdf";
   const painterRef = useRef<PdfAnnotationPainter | null>(null);
   const annotationsRef = useRef(annotations);
@@ -94,14 +96,15 @@ export function PdfAnnotationLayer(props: {
     painterRef.current?.update(annotations);
   }, [annotations]);
 
-  const actions: PdfAnnotationActions | null = pdf
-    ? {
-        highlight: (target) => {
-          void createAnnotation(pdf, { anchor: anchorOf(target), highlighted: true, note: "" });
-        },
-        note: (target, bounds) => setOpen({ _tag: "draft", anchor: anchorOf(target), bounds }),
-      }
-    : null;
+  const actions: PdfAnnotationActions | null =
+    pdf && canChange
+      ? {
+          highlight: (target) => {
+            void createAnnotation(pdf, { anchor: anchorOf(target), highlighted: true, note: "" });
+          },
+          note: (target, bounds) => setOpen({ _tag: "draft", anchor: anchorOf(target), bounds }),
+        }
+      : null;
 
   const saved =
     open?._tag === "saved"
@@ -116,6 +119,7 @@ export function PdfAnnotationLayer(props: {
         <AnnotationNotePopover
           key={open._tag === "draft" ? "draft" : open.annotationId}
           pdf={pdf}
+          readOnly={!canChange}
           bounds={open.bounds}
           draft={open._tag === "draft" ? open.anchor : null}
           annotation={saved}
@@ -136,6 +140,7 @@ export function PdfAnnotationLayer(props: {
 
 function AnnotationNotePopover(props: {
   readonly pdf: AnnotatedPdf;
+  readonly readOnly: boolean;
   readonly bounds: DOMRect;
   readonly draft: ScientPdfAnnotationAnchor | null;
   readonly annotation: ScientPdfAnnotation | null;
@@ -146,7 +151,7 @@ function AnnotationNotePopover(props: {
   const [note, setNote] = useState(annotation?.note ?? "");
   const finish = (save: boolean) => {
     onClose();
-    if (!save) return;
+    if (!save || props.readOnly) return;
     const text = note.trim().length === 0 ? "" : note;
     if (draft) {
       if (text) void createAnnotation(pdf, { anchor: draft, highlighted: false, note: text });
@@ -178,6 +183,7 @@ function AnnotationNotePopover(props: {
             placeholder="Add a note"
             rows={2}
             size="sm"
+            readOnly={props.readOnly}
             value={note}
             onChange={(event) => setNote(event.target.value)}
             onKeyDown={(event) => {
@@ -193,6 +199,7 @@ function AnnotationNotePopover(props: {
                 type="button"
                 variant="ghost-destructive"
                 size="compact"
+                disabled={props.readOnly}
                 onClick={() => {
                   onClose();
                   void removeAnnotation(pdf, annotation);

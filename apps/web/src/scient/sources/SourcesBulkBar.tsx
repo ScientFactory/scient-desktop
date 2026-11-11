@@ -107,7 +107,7 @@ export function SourcesBulkBar(props: {
   const tagCoverage = new Map(
     scientSourceTagCounts(selected).map((entry) => [scientSourceTagKey(entry.tag), entry.count]),
   );
-  const busy = organize.pending || removing;
+  const busy = organize.pending || removing || !organize.canChange;
 
   const addTag = () =>
     props.onRequestName({

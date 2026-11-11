@@ -1,7 +1,6 @@
 import {
   checkEnvironmentReferences,
   listEnvironmentReferenceDocuments,
-  resolveEnvironmentReferences,
 } from "@t3tools/client-runtime/state/scient-references";
 import type {
   EnvironmentId,
@@ -11,6 +10,7 @@ import type {
 
 import { runtime } from "../../lib/runtime";
 import { readPreparedConnection } from "../../state/session";
+import { runSourcesCommand, sourcesCommands } from "../sources/sourcesCommands";
 
 function prepared(environmentId: EnvironmentId) {
   const connection = readPreparedConnection(environmentId);
@@ -34,7 +34,5 @@ export function resolveReferences(
   environmentId: EnvironmentId,
   input: ScientReferenceResolveRequest,
 ) {
-  return runtime.runPromise(
-    resolveEnvironmentReferences({ prepared: prepared(environmentId), ...input }),
-  );
+  return runSourcesCommand(sourcesCommands.referencesResolve, environmentId, input);
 }

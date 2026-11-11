@@ -37,6 +37,16 @@ signer for an exact PDF URL. `SourcePdfPreview.tsx` translates that URL into the
 existing `ScientPdfReader` contract. Preview authorization therefore does not
 depend on a chat thread already having been persisted.
 
+Every Library change the client sends (Sources, annotation writes and reference
+check fixes) is a guarded HTTP command (`createEnvironmentHttpCommand` in
+`packages/client-runtime/src/state/scientSourcesCommands.ts`), registered with
+the scope its server route requires in `CLIENT_GUARDED_HTTP_SCOPES`. These tags
+stay out of `CLIENT_GUARDED_RPC_SCOPES` because the server's RPC scope table
+must list exactly its WebSocket methods. The command checks the destination's
+grant when it runs, and the web's `useCanChangeLibrary` reads its
+`permissionAtom`, so a connection that can only read sees the Library with its
+change controls disabled; the server still authorizes each route.
+
 The Sources library, source details, and metadata editor are local states within the
 same Scient-owned panel. A source row opens details even when no attachment is
 present; an explicit PDF action opens a peer source-PDF surface. This keeps

@@ -13,6 +13,7 @@ import { useState } from "react";
 import { toastManager } from "../../components/ui/toast";
 import { bulkUpdateScientSources, organizeScientSources } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
+import { useCanChangeLibrary } from "./sourcesCommands";
 
 /** The panel's narrowing besides the typed query, which the panel keeps itself. */
 type SourcesListFilter = {
@@ -62,6 +63,7 @@ export function useSourcesOrganize(input: {
   readonly refreshOverview: () => Promise<unknown>;
 }) {
   const organization = input.organization ?? EMPTY_SCIENT_SOURCES_ORGANIZATION;
+  const canChange = useCanChangeLibrary(input.environmentId);
   const context = `${input.environmentId}\0${input.root}`;
   const [state, setState] = useState({
     context,
@@ -181,6 +183,7 @@ export function useSourcesOrganize(input: {
   return {
     organization,
     pending,
+    canChange,
     filter: listFilter,
     fullFilter,
     filterActive: !scientSourceFilterIsEmpty(listFilter),

@@ -11,6 +11,7 @@ import { useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Textarea } from "../../components/ui/textarea";
 import { addScientSourcesByIdentifier } from "./client";
+import { useCanChangeLibrary } from "./sourcesCommands";
 import { scientSourcesErrorMessage } from "./errorMessage";
 
 function reason(item: ScientSourceIdentifierAddItem): string {
@@ -52,7 +53,8 @@ export function AddByIdentifier(props: {
   const readable = entries.filter((entry) => entry.identifier !== null).length;
   const unreadable = entries.length - readable;
   const tooMany = entries.length > MAX_SOURCE_IDENTIFIER_BATCH;
-  const canAdd = readable > 0 && !tooMany && !adding;
+  const canChange = useCanChangeLibrary(props.environmentId);
+  const canAdd = canChange && readable > 0 && !tooMany && !adding;
   const hint = tooMany
     ? `Up to ${MAX_SOURCE_IDENTIFIER_BATCH} at a time`
     : readable > 0
