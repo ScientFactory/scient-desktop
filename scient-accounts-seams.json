@@ -547,6 +547,11 @@
       "path": "apps/server/src/scient/sources/researchKeys.ts",
       "anchor": "import { AccountsService } from \"../accounts/AccountsService.ts\";",
       "purpose": "Read the user's OpenAlex, Semantic Scholar, NCBI and Unpaywall keys from Accounts for Sources' registry requests; keys turned off are skipped and values stay redacted."
+    },
+    {
+      "path": "packages/contracts/src/scient/sourcesPermissions.ts",
+      "anchor": "import { PaperQueueRequestInput } from \"./accounts.ts\";",
+      "purpose": "Decode a paper request to decide whether it files or attaches a source, so those requests also need the Library permission; no credential is read."
     }
   ]
 }
