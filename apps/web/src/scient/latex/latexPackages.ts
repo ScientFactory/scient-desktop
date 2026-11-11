@@ -63,6 +63,8 @@ const commandPackages: Readonly<Record<string, readonly string[]>> = {
   url: ["url"],
   // Computer Modern has only fixed sizes; fix-cm makes any `\fontsize` exact.
   fontsize: ["fix-cm"],
+  fontspec: ["fontspec"],
+  IfFontExistsTF: ["fontspec"],
   cref: ["cleveref"],
   Cref: ["cleveref"],
 };

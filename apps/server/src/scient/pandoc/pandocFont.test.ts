@@ -179,6 +179,15 @@ describe("LaTeX font sizes", () => {
     expect(latexBaseFontOf(source)).toEqual({ sizePoints: 11, family: null });
   });
 
+  it("reads the fontsize forms the editor reads", () => {
+    for (const source of [
+      "{\\fontsize{12pt}{15pt}\\selectfont x}",
+      "{\\fontsize { 12 }{ 15 }\\selectfont x}",
+    ]) {
+      expect(rewriteLatexSizeGroups(source)).toContain(carrier("12", "x"));
+    }
+  });
+
   it("does not rewrite inside \\verb or \\lstinline", () => {
     for (const source of [
       "\\verb|{\\large x}| and more",

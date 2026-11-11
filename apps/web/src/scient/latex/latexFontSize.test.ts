@@ -126,6 +126,29 @@ describe("a size over math keeps every space", () => {
   });
 });
 
+describe("fontspec for named fonts under XeLaTeX", () => {
+  it("adds the fontspec package when a guarded font group is written", () => {
+    const base = "% !TEX program = xelatex\n" + document("Plain text.");
+    const projection = projectLatexVisualDocument(base);
+    const paragraph = projection.content.content![0]!;
+    const font = {
+      type: "latexFontFamily",
+      attrs: { engine: "fontspec", family: "Times New Roman" },
+    };
+    const changed = {
+      ...projection.content,
+      content: [
+        {
+          ...paragraph,
+          content: [{ type: "text", text: "Plain text.", marks: [font] }],
+        },
+      ],
+    };
+    const result = applyLatexVisualDocumentChange(base, projection, changed, {});
+    expect(result?.source).toContain("\\usepackage{fontspec}");
+  });
+});
+
 describe("fix-cm for exact sizes", () => {
   it("adds fix-cm once when a size group is first written, and not when a scalable package is loaded", () => {
     const base = document("Plain text.");

@@ -605,6 +605,8 @@ gfmTokenizer.inline.ruler.before("html_inline", "scient_font_span", (state, sile
   const contentStart = state.pos + tag.length;
   const contentEnd = fontSpanEnd(state.src, contentStart, state.posMax);
   if (contentEnd < 0) return false;
+  // Code spans, comments and escapes hide tags from a raw scan: such text stays source.
+  if (/`|<!--|\\</u.test(state.src.slice(contentStart, contentEnd + 1))) return false;
   if (
     hasNestedSpanOfKind(state.src, contentStart, contentEnd, "size" in span ? "size" : "family")
   ) {

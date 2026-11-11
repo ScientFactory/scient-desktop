@@ -35,6 +35,7 @@ import { nextScientMarkdownFootnoteLabel } from "../footnotes";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
 import { catalogueFont, normalizeFontSize } from "@scientfactory/scient-markdown";
 import {
+  canWriteMarkdownDocumentFont,
   readMarkdownDocumentFont,
   writeMarkdownDocumentFont,
   type MarkdownDocumentFont,
@@ -552,7 +553,10 @@ export function documentFontOf(doc: ProseMirrorNode): MarkdownDocumentFont {
 /** Whether the document's front matter can carry font keys (none yet, or YAML). */
 export function documentFontEditable(doc: ProseMirrorNode): boolean {
   const front = leadingFrontMatter(doc);
-  return front === null || front.attrs.sourceKind === "yaml";
+  if (front === null) return true;
+  return (
+    front.attrs.sourceKind === "yaml" && canWriteMarkdownDocumentFont(String(front.attrs.source))
+  );
 }
 
 /** Write the whole-document font keys into the front matter, creating or removing the block. */

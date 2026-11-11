@@ -18,8 +18,6 @@ export interface CatalogueFont {
     readonly pdftex: string | null;
     /** Name for `fontspec` under XeLaTeX or LuaLaTeX. */
     readonly fontspec: string;
-    /** Free font used when the named one is not installed (fontspec fallback). */
-    readonly fallback: string | null;
   };
 }
 
@@ -43,77 +41,62 @@ export const FONT_CATALOGUE: ReadonlyArray<CatalogueFont> = [
   font("Times New Roman", "serif", "Tinos, 'Liberation Serif', Times", true, {
     pdftex: "qtm",
     fontspec: "Times New Roman",
-    fallback: "TeX Gyre Termes",
   }),
   font("Cambria", "serif", "Caladea", false, {
     pdftex: null,
     fontspec: "Cambria",
-    fallback: "Latin Modern Roman",
   }),
   font("Georgia", "serif", "'Gelasio'", false, {
     pdftex: null,
     fontspec: "Georgia",
-    fallback: "Latin Modern Roman",
   }),
   font("Palatino", "serif", "'Palatino Linotype', 'Book Antiqua'", false, {
     pdftex: "qpl",
     fontspec: "Palatino",
-    fallback: "TeX Gyre Pagella",
   }),
   font("Garamond", "serif", "'EB Garamond'", false, {
     pdftex: null,
     fontspec: "Garamond",
-    fallback: "Latin Modern Roman",
   }),
   font("Libertinus Serif", "serif", "'Linux Libertine'", false, {
     pdftex: null,
     fontspec: "Libertinus Serif",
-    fallback: "Latin Modern Roman",
   }),
   font("Latin Modern Roman", "serif", "'CMU Serif'", false, {
     pdftex: "lmr",
     fontspec: "Latin Modern Roman",
-    fallback: null,
   }),
   font("Arial", "sans-serif", "Arimo, 'Liberation Sans', Helvetica", true, {
     pdftex: "qhv",
     fontspec: "Arial",
-    fallback: "TeX Gyre Heros",
   }),
   font("Helvetica", "sans-serif", "'Helvetica Neue', Arimo", false, {
     pdftex: "qhv",
     fontspec: "Helvetica",
-    fallback: "TeX Gyre Heros",
   }),
   font("Calibri", "sans-serif", "Carlito", false, {
     pdftex: null,
     fontspec: "Calibri",
-    fallback: "Latin Modern Sans",
   }),
   font("Latin Modern Sans", "sans-serif", "'CMU Sans Serif'", false, {
     pdftex: "lmss",
     fontspec: "Latin Modern Sans",
-    fallback: null,
   }),
   font("David", "serif", "'David Libre'", true, {
     pdftex: null,
     fontspec: "David",
-    fallback: "Times New Roman",
   }),
   font("Courier New", "monospace", "Cousine, 'Liberation Mono', Courier", false, {
     pdftex: "qcr",
     fontspec: "Courier New",
-    fallback: "TeX Gyre Cursor",
   }),
   font("Consolas", "monospace", "Inconsolata, Menlo", false, {
     pdftex: null,
     fontspec: "Consolas",
-    fallback: "Latin Modern Mono",
   }),
   font("Latin Modern Mono", "monospace", "'CMU Typewriter Text'", false, {
     pdftex: "lmtt",
     fontspec: "Latin Modern Mono",
-    fallback: null,
   }),
 ];
 

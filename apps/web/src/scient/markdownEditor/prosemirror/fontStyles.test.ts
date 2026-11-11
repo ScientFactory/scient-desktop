@@ -71,6 +71,16 @@ describe("Markdown font size and family", () => {
     expect(session.session.draftSource).toBe(source);
   });
 
+  it.each(["x `</span>` y", "x <!-- </span> --> y", "x a\\</span> b y"])(
+    "leaves a span as source when its text hides a closing tag: %s",
+    (inner) => {
+      const source = `<span style="font-size:12pt">${inner}</span>\n`;
+      const session = open(source);
+      expect(markedText(session, "font_size")).toEqual([]);
+      expect(session.session.draftSource).toBe(source);
+    },
+  );
+
   it("lets a size span sit inside a font span", () => {
     const session = open(
       `<span style="font-family:'Arial'">a <span style="font-size:20pt">b</span> c</span>\n`,

@@ -125,7 +125,7 @@ const LATEX_NAMED_SIZES: Readonly<Record<string, readonly [number, number, numbe
   Huge: [24.88, 24.88, 24.88],
 };
 const LATEX_SIZE_COMMAND = new RegExp(
-  String.raw`^\\(?:(${Object.keys(LATEX_NAMED_SIZES).join("|")})|fontsize\{(\d+(?:\.\d+)?)\}\{[^{}]*\}\\selectfont)(?:\{\}|(?![A-Za-z@])\s?)`,
+  String.raw`^\\(?:(${Object.keys(LATEX_NAMED_SIZES).join("|")})|fontsize\s*\{\s*(\d+(?:\.\d+)?)\s*(?:pt)?\s*\}\s*\{[^{}]*\}\s*\\selectfont)(?:\{\}|(?![A-Za-z@])\s?)`,
   "u",
 );
 const LATEX_SIZE_CARRIER = "scient-size-";
