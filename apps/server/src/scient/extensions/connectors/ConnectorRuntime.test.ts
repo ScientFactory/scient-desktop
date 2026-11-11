@@ -2980,6 +2980,38 @@ describe("local connectors", () => {
       expect(accounts.keys.size).toBe(0);
     }).pipe(Effect.provide(testLayer)),
   );
+
+  it.live(
+    "refuses a bundle whose program, installed elsewhere, isn't there, by its real path",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness();
+        const home = NodePath.join(harness.config.stateDir, "..", "home");
+        const folder = NodePath.join(harness.config.stateDir, "..", "stub-bundle");
+        yield* Effect.promise(async () => {
+          await NodeFSP.mkdir(folder, { recursive: true });
+          await NodeFSP.writeFile(
+            NodePath.join(folder, "manifest.json"),
+            JSON.stringify({
+              name: "stub",
+              version: "1.0.0",
+              server: {
+                type: "binary",
+                entry_point: "server/stub",
+                mcp_config: { command: "${HOME}${/}stub-tool", args: ["mcp"] },
+              },
+            }),
+          );
+        });
+        const refused = yield* harness.runtime
+          .add({ target: { type: "local-bundle", path: folder, settings: {}, keys: {} } })
+          .pipe(Effect.provideService(HostProcess.HomeDirectory, home), Effect.flip);
+        // regression: the check ran on the unfilled command: "could not find ${HOME}/stub-tool".
+        expect(refused.message).toBe(
+          `The program ${NodePath.join(home, "stub-tool")} is not on this computer.`,
+        );
+      }).pipe(Effect.provide(testLayer)),
+  );
 });
 
 /** A connector an agent writes: logs a line, then answers `version` with its manifest version. */

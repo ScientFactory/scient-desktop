@@ -199,6 +199,10 @@ const directoryVariables = (directories: BundleDirectories, bundleDir?: string) 
 const fillDirectories = (text: string, variables: Readonly<Record<string, string>>) =>
   text.replace(/\$\{([^}]+)\}/g, (match, name: string) => variables[name] ?? match);
 
+/** Text from a manifest with its directory variables (`${HOME}`, `${__dirname}`, …) filled. */
+export const withDirectories = (text: string, directories: BundleDirectories, bundleDir: string) =>
+  fillDirectories(text, directoryVariables(directories, bundleDir));
+
 const fieldDefault = (
   value: typeof SettingValue.Type | undefined,
   variables: Readonly<Record<string, string>>,

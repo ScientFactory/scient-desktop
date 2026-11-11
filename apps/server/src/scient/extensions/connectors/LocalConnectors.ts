@@ -44,6 +44,7 @@ import {
 import { credentialSet, programCredentials } from "./ConnectorRedaction.ts";
 import type { ConnectorRecord, LocalLaunchRecord } from "./ConnectorStateStore.ts";
 import {
+  type BundleDirectories,
   type BundleManifest,
   bundleFields,
   bundleLaunch,
@@ -57,6 +58,7 @@ import {
   readFolderManifest,
   resolveSettings,
   unpackBundle,
+  withDirectories,
   writeFolderManifest,
 } from "./LocalConnectorBundle.ts";
 import {
@@ -146,14 +148,18 @@ const slug = (name: string) =>
     .replace(/^-+|-+$/g, "")
     .slice(0, 40) || "connector";
 
-/** Command and arguments as written in the manifest, for display and a runtime check. */
+/** The manifest's command and arguments on this computer, for display and a runtime check. */
 const programOf = (
   manifest: BundleManifest,
   directory: string,
+  directories: BundleDirectories,
+  platform: NodeJS.Platform,
 ): Pick<LocalLaunchTemplate, "runtime" | "command" | "args"> => {
   const config = manifest.server.mcp_config;
-  const fill = (text: string) => text.replaceAll("${__dirname}", directory);
+  const override = config?.platform_overrides?.[platform];
+  const fill = (text: string) => withDirectories(text, directories, directory);
   const command =
+    override?.command ??
     config?.command ??
     (manifest.server.type === "uv"
       ? "uv"
@@ -163,7 +169,7 @@ const programOf = (
   return {
     runtime: manifest.server.type === "node" && command === "node" ? "scient-node" : "system",
     command: fill(command),
-    args: (config?.args ?? []).map(fill),
+    args: (override?.args ?? config?.args ?? []).map(fill),
   };
 };
 
@@ -358,7 +364,9 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     const author = manifest.author?.name?.trim();
     return {
       ...base,
-      commandLine: commandLineOf(programOf(manifest, local.directory)),
+      commandLine: commandLineOf(
+        programOf(manifest, local.directory, yield* directories, yield* HostProcess.Platform),
+      ),
       version: manifest.version.trim(),
       ...(author ? { author } : {}),
       setup,
@@ -534,7 +542,12 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       return { kind: "servers", servers: usable.map(importableSummary) } satisfies LocalInspection;
     }
     const { manifest } = yield* readBundleManifest(input.path);
-    const program = programOf(manifest, input.path);
+    const program = programOf(
+      manifest,
+      input.path,
+      yield* directories,
+      yield* HostProcess.Platform,
+    );
     const unavailable =
       platformUnavailable(manifest, yield* HostProcess.Platform) ??
       (program.command.includes("${") || path.isAbsolute(program.command)
@@ -785,10 +798,10 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
         }
       }
       const manifest = yield* readFolderManifest(directory);
-      const program = programOf(manifest, directory);
+      const found = yield* directories;
+      const program = programOf(manifest, directory, found, platform);
       const unavailable = yield* withFiles(programUnavailable(program));
       if (unavailable !== undefined) return yield* unsupported(unavailable);
-      const found = yield* directories;
       const fields = bundleFields(manifest, found);
       // Refused now rather than at first use: a key on the command line is never passed.
       yield* bundleLaunch({
