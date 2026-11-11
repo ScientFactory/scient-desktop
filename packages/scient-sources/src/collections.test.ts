@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Collection tests exercise the real project filesystem boundary.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
@@ -30,8 +32,24 @@ import {
 } from "./store.ts";
 
 const fixtures: string[] = [];
+const originalRename = NodeFS.promises.rename;
+
+/** Fails the next bulk edit receipt write once `when` holds, as a full disk or a lock would. */
+function failNextReceiptWrite(when: () => Promise<boolean>): void {
+  NodeFS.promises.rename = async (from, to) => {
+    if (String(to).includes("bulk-edits") && (await when())) {
+      NodeFS.promises.rename = originalRename;
+      NodeModule.syncBuiltinESMExports();
+      throw new Error("Injected receipt write failure.");
+    }
+    return originalRename(from, to);
+  };
+  NodeModule.syncBuiltinESMExports();
+}
 
 afterEach(async () => {
+  NodeFS.promises.rename = originalRename;
+  NodeModule.syncBuiltinESMExports();
   await Promise.all(
     fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
   );
@@ -488,5 +506,83 @@ describe("Scient source collections", () => {
     expect((await readScientSourceRecord(root, first))?.type).toBe("thesis");
     expect((await readScientSourceRecord(root, second))?.type).toBe("article");
     expect((await undo()).conflicts).toEqual([{ message: "This bulk edit was already undone." }]);
+  });
+
+  it("keeps Undo for a change whose receipt could not be finished", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const first = sourceIds[0] ?? "";
+    const collectionId =
+      (await createScientSourceCollection({ root, name: "Methods", actor: "user" })).collection
+        ?.collectionId ?? "";
+    const tags = async () => (await readScientSourceRecord(root, first))?.tags ?? [];
+    const members = async () =>
+      (await readScientSourcesOrganization(root)).collections[0]?.sourceIds ?? [];
+    const undo = (batchId: string | undefined) =>
+      bulkUpdateScientSources({ root, change: { undoBatchId: batchId ?? "" }, actor: "user" });
+
+    failNextReceiptWrite(async () => (await tags()).includes("Bulk"));
+    const tagged = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addTags: ["Bulk"] },
+      actor: "user",
+    });
+    expect(await tags()).toEqual(["Bulk"]);
+    await undo(tagged.undo?.batchId);
+    expect(await tags()).toEqual([]);
+
+    failNextReceiptWrite(async () => (await members()).includes(first));
+    const added = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addToCollectionIds: [collectionId] },
+      actor: "user",
+    });
+    expect(await members()).toEqual([first]);
+    await undo(added.undo?.batchId);
+    expect(await members()).toEqual([]);
+  });
+
+  it("keeps a later edit when an Undo that landed is retried", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const first = sourceIds[0] ?? "";
+    const collectionId =
+      (await createScientSourceCollection({ root, name: "Methods", actor: "user" })).collection
+        ?.collectionId ?? "";
+    const tags = async () => (await readScientSourceRecord(root, first))?.tags ?? [];
+    const members = async () =>
+      (await readScientSourcesOrganization(root)).collections[0]?.sourceIds ?? [];
+    const undo = (batchId: string | undefined) =>
+      bulkUpdateScientSources({ root, change: { undoBatchId: batchId ?? "" }, actor: "user" });
+
+    const tagged = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addTags: ["Bulk"] },
+      actor: "user",
+    });
+    failNextReceiptWrite(async () => !(await tags()).includes("Bulk"));
+    await undo(tagged.undo?.batchId).catch(() => undefined);
+    const record = await readScientSourceRecord(root, first);
+    if (!record) throw new Error("Expected a source.");
+    await updateScientSourceMetadata({
+      root,
+      sourceId: first,
+      expectedRevision: record.revision,
+      metadata: { ...editableMetadataFromRecord(record), tags: ["Bulk", "Later"] },
+      actor: "user",
+    });
+    const retried = await undo(tagged.undo?.batchId);
+    expect(await tags()).toEqual(["Bulk", "Later"]);
+    expect(retried.conflicts?.map((conflict) => conflict.sourceId)).toEqual([first]);
+
+    const added = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addToCollectionIds: [collectionId] },
+      actor: "user",
+    });
+    failNextReceiptWrite(async () => !(await members()).includes(first));
+    await undo(added.undo?.batchId).catch(() => undefined);
+    await changeScientSourceCollectionMembers({ root, collectionId, add: [first], actor: "user" });
+    const again = await undo(added.undo?.batchId);
+    expect(await members()).toEqual([first]);
+    expect(again.conflicts?.map((conflict) => conflict.collectionId)).toEqual([collectionId]);
   });
 });
