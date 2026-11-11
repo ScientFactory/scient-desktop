@@ -421,12 +421,37 @@ can do all of this too, using the built-in **systematic-review** skill; its
 decisions are marked "by agent" and you can change any of them. Agent screening
 is not an independent second reviewer.
 
+## Choose a citation style
+
+Each project has one citation style. It formats the reference shown for each
+source, the reference you copy, and Markdown exported to Word. To choose it,
+open the Library's **⋯** menu and choose **Citation style…**, or select the
+style name next to **Reference** on a source. Search by journal or style name
+(for example "Nature", "Cell", "IEEE" or "Harvard") and pick a result; the
+project's current style is at the top. **Remove** goes back to having no
+project style.
+
+The search covers the more than 10,000 styles of the
+[Citation Style Language](https://citationstyles.org/) repository, through the
+Zotero Style Repository. Twenty common styles come with Scient and work without
+a network: APA 7, Chicago (author-date and notes), Cite Them Right Harvard,
+IEEE, Nature, Science, Cell, AMA, MLA, ACS, NLM/Vancouver, Elsevier Vancouver,
+BMJ, The Lancet, NEJM, PNAS, PLOS, Elsevier Harvard and Springer author-date.
+When the catalogue cannot be reached, the picker says so and searches those.
+
+The chosen style is saved in the project, under `.scient/citations`, so the
+project formats references the same way offline, for a collaborator and in CI.
+Most journal styles borrow the layout of another style; Scient saves that style
+too. If the style's file goes missing or is damaged, Scient names the style and
+the one it used instead; it never switches style without saying so.
+
 ## Copy a formatted reference
 
-Open a source, choose **Vancouver** or **APA 7**, then choose **Copy
-reference**. Formatting uses the metadata stored in the project and does not
-require Zotero to remain open. The selected style changes only the displayed
-reference, not the saved source.
+Open a source and choose **Copy reference**. The reference is in the project's
+citation style; a project without one uses **Vancouver** or **APA 7**, chosen
+on this computer as before. Formatting uses the metadata stored in the project
+and does not require Zotero to remain open. The style changes only the
+displayed reference, not the saved source.
 
 Incomplete metadata can produce an incomplete citation, so review visible
 warnings before using it in a manuscript. Scient does not silently fill
@@ -469,12 +494,18 @@ larger and no document needs them. The Library keeps every abstract, and
 ### Export to Word with a citation style
 
 Markdown exported to Word formats its citations and bibliography with Pandoc.
-Choose the style in **Settings → Documents → Word → Citation style** (Chicago
-author-date, APA 7 or Vancouver). A document can choose its own with `csl:` in
-its front matter: `apa`, `vancouver`, or the path of a `.csl` file in the
-project. Citations whose keys the document's own references do not define come
-from the Library. Changing the style changes only the exported file, never a
-source.
+The style comes from, in order:
+
+1. the document's own `csl:` in its front matter: `apa`, `vancouver`, or the
+   path of a `.csl` file in the project;
+2. the [project's citation style](#choose-a-citation-style);
+3. **Settings → Documents → Word → Citation style** (Chicago author-date, APA 7
+   or Vancouver).
+
+If the project's style cannot be read, the export's notices name it and the
+style used instead. Citations whose keys the document's own references do not
+define come from the Library. Changing the style changes only the exported
+file, never a source.
 
 ## Check references
 
@@ -529,7 +560,9 @@ write (`[@key]` or `\cite{key}`) after Scient checks each source against its
 registry, and it reports problems such as a DOI that does not resolve, a
 retraction, or a published version of a preprint, without refusing the
 citation. `scient_sources_bibliography` writes or checks the managed
-bibliography files and can import or replace hand edits, as you can.
+bibliography files and can import or replace hand edits, as you can; it also
+sets the project's citation style, which `scient_sources_list` finds by
+journal or style name.
 
 Before an agent adds a source, Scient looks up its DOI at doi.org, its PMID in
 PubMed, its arXiv ID at arXiv or its ISBN in Open Library and Google Books. An
