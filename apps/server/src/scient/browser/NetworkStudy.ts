@@ -220,10 +220,13 @@ const makeNetworkStudy = (page: Page) => {
 
   /**
    * The body's decoded size, before it is read, from the browser's own count: requests with the
-   * same method, address and status, the largest when several match. The page's own numbers are
-   * never used. Undefined when no count is known or one is still loading.
+   * same method, address and status, the largest when several match. Only the main frame's
+   * answers: the count is of the tab's own session, and only requests it saw from their start
+   * are counted. The page's own numbers are never used. Undefined when no count is certain.
    */
   const bodySize = async (response: Response): Promise<number | undefined> => {
+    // A subframe in its own process, or a service worker, is counted elsewhere: never borrow.
+    if (!safely(() => response.frame() === page.mainFrame(), false)) return undefined;
     if ((await response.finished()) !== null) return undefined;
     const url = withoutFragment(response.url());
     const method = response.request().method();
@@ -481,17 +484,20 @@ const makeNetworkStudy = (page: Page) => {
         if (size === undefined || size > READ_BODY_BYTES)
           return {
             ...withHeaders,
-            note:
+            note: shown(
               (size === undefined
                 ? "Scient could not count this body's size in the browser, so it is left out."
                 : `The body is ${Math.ceil(size / (1024 * 1024))} MB, too large to read here.`) +
-              yourself,
+                yourself,
+            ),
           };
         body = await readCounted(response, size);
         if (body === undefined)
           return {
             ...withHeaders,
-            note: `Scient is reading other bodies now, or the browser no longer has this one. Ask again.${yourself}`,
+            note: shown(
+              `Scient is reading other bodies now, or the browser no longer has this one. Ask again.${yourself}`,
+            ),
           };
       }
       if (body === undefined)

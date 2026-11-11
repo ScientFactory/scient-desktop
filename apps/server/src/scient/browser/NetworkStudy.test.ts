@@ -7,8 +7,11 @@ import { networkStudyOf } from "./NetworkStudy.ts";
  * A tab whose profile holds one cookie and whose password field holds what was typed. Asked
  * anything else (say, how large a body is), it under-reports: 1 byte.
  */
+const MAIN_FRAME = { name: "main" };
+
 const fakePage = () =>
   ({
+    mainFrame: () => MAIN_FRAME,
     context: () => ({
       cookies: async () => [{ name: "sid", value: "tab-cookie-77" }],
     }),
@@ -32,39 +35,59 @@ const fakeCdp = () => {
   const handlers = new Map<string, (event: unknown) => void>();
   let next = 0;
   const emit = (name: string, event: unknown) => handlers.get(name)?.(event);
+  const start = (url: string, method = "GET") => {
+    const requestId = `cdp-${++next}`;
+    emit("Network.requestWillBeSent", { requestId, request: { url, method } });
+    return requestId;
+  };
+  const end = (requestId: string, bytes: number, status = 200) => {
+    emit("Network.responseReceived", { requestId, response: { status } });
+    emit("Network.dataReceived", { requestId, dataLength: bytes });
+    emit("Network.loadingFinished", { requestId });
+  };
   return {
     session: {
       on: (name: string, handler: (event: unknown) => void) => handlers.set(name, handler),
       send: async () => ({}),
     } as unknown as CDPSession,
+    emit,
+    start,
+    end,
     /** One request the browser loaded whole, with `bytes` decoded body bytes. */
-    loaded: (url: string, bytes: number, status = 200) => {
-      const requestId = `cdp-${++next}`;
-      emit("Network.requestWillBeSent", { requestId, request: { url, method: "GET" } });
-      emit("Network.responseReceived", { requestId, response: { status } });
-      emit("Network.dataReceived", { requestId, dataLength: bytes });
-      emit("Network.loadingFinished", { requestId });
-    },
+    loaded: (url: string, bytes: number, status = 200) => end(start(url), bytes, status),
   };
 };
 
-/** A JSON answer sent compressed from another site, whose body reads count in `read`. */
-const answer = (url: string, size: number, read: string[]) => {
-  const request = fakeRequest(url);
+/** A JSON answer sent compressed from another site; reads of its body are counted in `read`. */
+const answer = (
+  url: string,
+  read: string[],
+  options: {
+    readonly size?: number;
+    readonly method?: string;
+    readonly frame?: object;
+    readonly body?: () => Promise<Buffer>;
+  } = {},
+) => {
+  const request = { ...fakeRequest(url), method: () => options.method ?? "GET" } as Request;
   const headers = { "content-type": "application/json", "content-encoding": "gzip" };
   return {
     request,
     response: {
       request: () => request,
       url: () => url,
+      frame: () => options.frame ?? MAIN_FRAME,
       headers: () => headers,
       allHeaders: async () => headers,
       status: () => 200,
       finished: async () => null,
-      body: async () => {
-        read.push(url);
-        return Buffer.from(JSON.stringify({ items: "x".repeat(Math.max(0, size - 13)) }));
-      },
+      body:
+        options.body ??
+        (async () => {
+          read.push(url);
+          const size = options.size ?? 2_000;
+          return Buffer.from(JSON.stringify({ items: "x".repeat(Math.max(0, size - 13)) }));
+        }),
     } as unknown as Response,
   };
 };
@@ -130,57 +153,140 @@ describe("the network study", () => {
     }
   });
 
-  it("reads only bodies the browser counted, within what may be read at once", async () => {
+  it("reads a body only when the browser's count for it is certain", async () => {
     const MB = 1024 * 1024;
+    const API = "https://api.other.test";
     const study = networkStudyOf(fakePage());
     const cdp = fakeCdp();
+    // Already under way when counting began: its end is seen, its start was not.
+    cdp.emit("Network.dataReceived", { requestId: "early", dataLength: 1_000 });
+    cdp.emit("Network.loadingFinished", { requestId: "early" });
     await study.watch(cdp.session);
+    const cases: ReadonlyArray<{
+      readonly path: string;
+      readonly browser: () => void;
+      readonly frame?: object;
+      readonly method?: string;
+      readonly shown: boolean;
+    }> = [
+      // The page says 1 byte for everything; the browser counted 64 MB.
+      { path: "/fake-size", browser: () => cdp.loaded(`${API}/fake-size`, 64 * MB), shown: false },
+      // Two loads of one address: the larger count holds, whichever this answer was.
+      {
+        path: "/twice",
+        browser: () => {
+          cdp.loaded(`${API}/twice`, 1_000);
+          cdp.loaded(`${API}/twice`, 64 * MB);
+        },
+        shown: false,
+      },
+      // A subframe in its own process is counted on another session: the main frame's count of
+      // the same address is not borrowed.
+      {
+        path: "/subframe",
+        browser: () => cdp.loaded(`${API}/subframe`, 1_000),
+        frame: { name: "subframe" },
+        shown: false,
+      },
+      // A redirect: the count starts again at the address it ends at.
+      {
+        path: "/moved",
+        browser: () => {
+          const id = cdp.start(`${API}/old`);
+          cdp.emit("Network.requestWillBeSent", {
+            requestId: id,
+            request: { url: `${API}/moved`, method: "GET" },
+          });
+          cdp.end(id, 2_000);
+        },
+        shown: true,
+      },
+      {
+        path: "/failed",
+        browser: () => {
+          const id = cdp.start(`${API}/failed`);
+          cdp.emit("Network.dataReceived", { requestId: id, dataLength: 1_000 });
+          cdp.emit("Network.loadingFailed", { requestId: id });
+        },
+        shown: false,
+      },
+      // From the cache: the browser's status differs from the answer's, so nothing matches.
+      { path: "/cached", browser: () => cdp.loaded(`${API}/cached`, 2_000, 304), shown: false },
+      // blob: and data: addresses, and requests begun before counting, have no count.
+      { path: "/blob", browser: () => undefined, shown: false },
+      { path: "/early", browser: () => undefined, shown: false },
+      // A custom method named like a known secret, uncounted: its note never shows it raw.
+      {
+        path: "/custom",
+        browser: () => undefined,
+        method: "tab-cookie-77",
+        shown: false,
+      },
+      // Counted, small, compressed, from another site: shown.
+      { path: "/works", browser: () => cdp.loaded(`${API}/works`, 2_000), shown: true },
+    ];
     const read: string[] = [];
-    for (let index = 0; index < 13; index += 1) {
-      const url = `https://api.other.test/${index}`;
-      cdp.loaded(url, 2 * MB);
-      const { request, response } = answer(url, 2 * MB, read);
+    for (const item of cases) {
+      item.browser();
+      const { request, response } = answer(`${API}${item.path}`, read, {
+        ...(item.frame === undefined ? {} : { frame: item.frame }),
+        ...(item.method === undefined ? {} : { method: item.method }),
+      });
       study.onRequest(request);
       study.onResponse(response);
     }
-    // Thirteen 2 MB answers at once: only what the 24 MB total holds is read.
-    await vi.waitFor(() => expect(read).toHaveLength(12));
-    expect(read).toHaveLength(12);
+    const listed = await study.list();
+    for (const item of cases) {
+      const detail = await study.detail(listed.find((entry) => entry.url.endsWith(item.path))!.id);
+      expect({ path: item.path, shown: detail?.responseBody !== undefined }).toEqual({
+        path: item.path,
+        shown: item.shown,
+      });
+      // regression: the left-out note carried the request's method as it was.
+      expect(JSON.stringify(detail)).not.toContain("tab-cookie-77");
+      if (!item.shown && item.method === undefined)
+        expect(detail?.note).toContain("preview_evaluate");
+    }
+    expect(read.sort()).toEqual([`${API}/moved`, `${API}/works`]);
   });
 
-  it("sizes a body by the browser's count, never the page's, the largest when ambiguous", async () => {
+  it("keeps reads at once, as they arrive and asked for, within one 24 MB total", async () => {
     const MB = 1024 * 1024;
     const study = networkStudyOf(fakePage());
     const cdp = fakeCdp();
     await study.watch(cdp.session);
-    // The page says 1 byte for everything; the browser counted 64 MB.
-    cdp.loaded("https://api.other.test/bomb", 64 * MB);
-    // Two loads of one address: the larger count holds, whichever this answer was.
-    cdp.loaded("https://api.other.test/twice", 1_000);
-    cdp.loaded("https://api.other.test/twice", 64 * MB);
-    // Counted and small, from another site and compressed: shown.
-    cdp.loaded("https://api.other.test/works", 2_000);
-    const read: string[] = [];
-    const urls = ["bomb", "twice", "unknown", "works"].map(
-      (path) => `https://api.other.test/${path}`,
-    );
-    for (const url of urls) {
-      const { request, response } = answer(url, 2_000, read);
+    const started: string[] = [];
+    const pending: Array<() => void> = [];
+    const slow = (url: string) => () =>
+      new Promise<Buffer>((resolve) => {
+        started.push(url);
+        pending.push(() => resolve(Buffer.from("{}")));
+      });
+    // Twelve 2 MB answers whose reads have begun and not ended: 24 MB being read.
+    for (let index = 0; index < 12; index += 1) {
+      const url = `https://api.other.test/${index}`;
+      cdp.loaded(url, 2 * MB);
+      const { request, response } = answer(url, [], { body: slow(url) });
       study.onRequest(request);
       study.onResponse(response);
     }
-    await vi.waitFor(() => expect(read).toEqual(["https://api.other.test/works"]));
+    await vi.waitFor(() => expect(started).toHaveLength(12));
+    // An agent asks for a 4 MB body meanwhile: it must wait its turn, not read past the total.
+    const url = "https://api.other.test/asked";
+    cdp.loaded(url, 4 * MB);
+    const asked = answer(url, [], {
+      body: async () => {
+        started.push(url);
+        return Buffer.from("{}");
+      },
+    });
+    study.onRequest(asked.request);
+    study.onResponse(asked.response);
     const listed = await study.list();
-    const detail = (path: string) =>
-      study.detail(listed.find((item) => item.url.endsWith(path))!.id);
-    // regression: the size came from the page's own resource timing, which a page can fake.
-    expect((await detail("/bomb"))?.note).toContain("too large to read");
-    expect((await detail("/twice"))?.note).toContain("too large to read");
-    // No count, no read; the agent hears how to read it itself.
-    const unknown = await detail("/unknown");
-    expect(unknown?.note).toContain("could not count");
-    expect(unknown?.note).toContain("preview_evaluate");
-    expect((await detail("/works"))?.responseBody).toContain('"items"');
-    expect(read).toEqual(["https://api.other.test/works"]);
+    const detail = await study.detail(listed.find((entry) => entry.url === url)!.id);
+    // regression: an asked-for read counted only against its own limit.
+    expect(detail?.note).toContain("reading other bodies now");
+    expect(started).not.toContain(url);
+    for (const finish of pending) finish();
   });
 });
