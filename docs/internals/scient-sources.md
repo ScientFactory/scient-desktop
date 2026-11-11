@@ -338,7 +338,9 @@ in its own file registered in the resolver's scheme table
 every three seconds as arXiv asks); an ID missing from the feed does not exist.
 Its record is a `preprint` with publisher `arXiv`, and the published version's
 DOI from `arxiv:doi` joins its identifiers. Version suffixes (`v2`) are not
-part of the identity. An ISBN must have a valid check digit and is stored as
+part of the identity. An old-style ID written with its subject class
+(`math.DG/0211159`) is asked for without it (`math/0211159`): the API returns an
+empty feed for the longer form. An ISBN must have a valid check digit and is stored as
 ISBN-13. Open Library answers first (several ISBNs per request); an entry
 without authors is not accepted, since the openly edited catalogue holds spam
 listings under real ISBNs, and Google Books is asked instead, counting only a
