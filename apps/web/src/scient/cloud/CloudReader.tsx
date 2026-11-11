@@ -13,7 +13,7 @@ import { AppRouteModal, AppRouteModalClose } from "~/components/AppRouteModal";
 import { Button } from "~/components/ui/button";
 import { ScrollArea } from "~/components/ui/scroll-area";
 import { WorkspacePageContainer } from "~/components/WorkspacePageContainer";
-import { isElectron } from "~/env";
+import { isHostedStaticApp } from "~/hostedPairing";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { buildThreadRouteParams } from "~/threadRoutes";
 
@@ -359,7 +359,10 @@ function CloudConversationReader({
     <ReaderFrame
       title={conversation.snapshot.thread.title}
       back
-      actions={row !== null && isElectron ? <ContinueHereButton api={api} row={row} /> : null}
+      actions={
+        // The hosted app has no "this computer"; the desktop app and a computer's own web page do.
+        row !== null && !isHostedStaticApp() ? <ContinueHereButton api={api} row={row} /> : null
+      }
     >
       <CopyFacts conversation={conversation} row={row} source={source} computers={computers} />
       <SnapshotConversationView conversation={conversation} loadBlob={api.blob} />
