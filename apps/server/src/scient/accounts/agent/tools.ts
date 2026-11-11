@@ -368,9 +368,9 @@ const connectorList = metadata(
 const connectorAdd = metadata(
   Tool.make("scient_connector_add", {
     failure: AccountsError,
-    dependencies: connectorDependencies,
+    dependencies: [...connectorDependencies, OrchestratorMcpService, SecretRequests],
     description:
-      "Add a connector as the Extensions page does, on for every project: from = a name from scient_connector_list, an https MCP address, or a .mcpb/.zip file. needs-setup: scient_connector_setup. needs-sign-in: scient_connector_control sign-in.",
+      "Add a connector as the Extensions page does, on for every project: from = a name from scient_connector_list, an https MCP address, or a .mcpb/.zip file. A key or the user's own sign-in app is asked in a private card; never ask for one in chat. needs-setup: scient_connector_setup. needs-sign-in: scient_connector_control sign-in.",
     parameters: Schema.Struct({
       from: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
     }),

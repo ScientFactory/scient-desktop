@@ -47,6 +47,7 @@ import * as AccountsConnectorCredentials from "../../accounts/AccountsConnectorC
 import { AccountVault, makeAccountVault } from "../../accounts/AccountVault.ts";
 import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
 import {
+  type AddAsks,
   addConnector,
   controlConnector,
   listConnectors,
@@ -2522,7 +2523,7 @@ const readEvents = (response: Response) =>
   });
 
 /** Accounts with API-key accounts kept in memory, as local connectors use them. */
-const fakeKeyAccounts = () => {
+const fakeKeyAccounts = (options: { readonly hosted?: boolean } = {}) => {
   const keys = new Map<string, { name: string; value: string; envName?: string }>();
   let next = 0;
   let revision = 0;
@@ -2562,7 +2563,10 @@ const fakeKeyAccounts = () => {
       Effect.suspend(() => {
         const accountId = ref.replace(/^account:/, "").replace(/:token$/, "");
         const key = keys.get(accountId);
-        return key === undefined || consumer.kind !== "local-connector"
+        const allowed =
+          consumer.kind === "local-connector" ||
+          (options.hosted === true && consumer.kind === "connector");
+        return key === undefined || !allowed
           ? Effect.fail(
               new AccountsError({ reason: "not-found", message: "Synthetic key unavailable." }),
             )
@@ -3243,6 +3247,79 @@ describe("connectors agents run", () => {
       );
       expect(local.message).toContain("scient_connector_setup");
     }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live(
+    "adds a hosted connector needing a key or the user's sign-in app, asked in the card",
+    () =>
+      Effect.gen(function* () {
+        const accounts = fakeKeyAccounts({ hosted: true });
+        const harness = yield* makeHarness().pipe(Effect.provide(accounts.layer));
+        const key = "vendor-key-0123456789abcdef";
+        vendor.validTokens.add(key);
+        const hosted = (
+          name: string,
+          path: string,
+          extra: Partial<DiscoverEntry>,
+        ): DiscoverEntry => ({
+          name: `scient.curated/${name}`,
+          version: "1.0.0",
+          title: name,
+          remotes: [
+            { type: "streamable-http", url: `${vendor.base}${path}`, requiresInput: false },
+          ],
+          categories: [],
+          installable: true,
+          ...extra,
+        });
+        const keyed = hosted("Vendor Key", "/secure/mcp", {
+          apiKey: {
+            strategy: "bearer",
+            fieldLabel: "API key",
+            helpUrl: "https://vendor.test/keys",
+          },
+        });
+        const ownApp = hosted("Vendor App", "/noprm/mcp", { oauthClientRequired: true });
+        const discover = Layer.mock(ExtensionsDiscover)({
+          entry: ({ name }) => Effect.succeed(name === keyed.name ? keyed : ownApp),
+        });
+        const agent = <A, E>(effect: Effect.Effect<A, E>) =>
+          effect.pipe(
+            Effect.provideService(ConnectorRuntime, harness.runtime),
+            Effect.provide(discover),
+          );
+        const sites: string[] = [];
+        const asks: AddAsks = {
+          key: (request) =>
+            Effect.sync(() => {
+              sites.push(request.site);
+              const accountId = AccountId.make("acc_vendorkey01");
+              accounts.keys.set(accountId, { name: request.name, value: key });
+              return { secretRef: VaultSecretRef.make(`account:${accountId}:token`) };
+            }),
+          signInApp: () =>
+            Effect.succeed({
+              clientId: "vendor-client-id",
+              clientSecret: "vendor-client-secret-01",
+            }),
+        };
+
+        // regression: entries needing a key or the user's own sign-in app were page-only.
+        const added = yield* agent(addConnector({ from: keyed.name, asks }));
+        expect(added).toMatchObject({ status: "ready", tools: ["search"] });
+        expect(sites).toEqual([new URL(vendor.base).origin]);
+        expect(JSON.stringify(added)).not.toContain(key);
+        const own = yield* agent(addConnector({ from: ownApp.name, asks }));
+        expect(own.status).toBe("needs-sign-in");
+        expect(
+          (yield* harness.runtime.list()).connectors.find(
+            (item) => item.displayName === "Vendor App",
+          )?.auth,
+        ).toMatchObject({ type: "oauth", usesOwnClient: true });
+        // Where no one can answer a card, the agent hears where the user adds it.
+        const unasked = yield* Effect.flip(agent(addConnector({ from: keyed.name })));
+        expect(unasked.message).toContain("private card");
+      }).pipe(Effect.provide(testLayer)),
   );
 
   it.live("tests a hosted connector and opens its sign-in for the user", () =>

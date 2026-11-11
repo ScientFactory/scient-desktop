@@ -12,6 +12,7 @@ import type * as Schema from "effect/Schema";
 
 import { PreviewManager } from "../../../preview/Manager.ts";
 import {
+  type AddAsks,
   addConnector as addFor,
   changeReport,
   controlConnector as controlFor,
@@ -21,6 +22,12 @@ import {
 import { consumeAgentWorkspace } from "../../operations/AgentWorkspaceScope.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { ConnectorRuntime } from "../../extensions/ExtensionsServices.ts";
+import { McpInvocationContext } from "../../../mcp/McpInvocationContext.ts";
+import { OrchestratorMcpService } from "../../../mcp/OrchestratorMcpService.ts";
+import { SecretRequests } from "../../../secrets/SecretRequests.ts";
+import { accountTokenRef } from "../AccountBoundRef.ts";
+import { AccountsService } from "../AccountsService.ts";
+import { askForAccountKey, askInCard } from "./accountAdd.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
 
@@ -93,6 +100,71 @@ export const listConnectors = Effect.fn("AccountsAgent.connectorList")(function*
   return yield* listFor({ query: input.query }).pipe(Effect.mapError(toAccountsError));
 });
 
+/** A key or sign-in app asked in the private card; what went wrong in the user's words. */
+const keptOr = <A>(asked: Effect.Effect<A | { readonly problem: string }, AccountsError, never>) =>
+  asked.pipe(Effect.catch((error) => Effect.succeed({ problem: error.message })));
+
+const cardProblem = (status: string) =>
+  status === "declined" ? "the user did not enter it." : `the card ended (${status}).`;
+
+/** The add's private cards: the key goes to Accounts, a sign-in app to the connector itself. */
+const addAsks = Effect.gen(function* () {
+  const scope = yield* accountSessionScope();
+  const context = yield* Effect.context<
+    AccountsService | McpInvocationContext | OrchestratorMcpService | SecretRequests
+  >();
+  return {
+    key: (request) =>
+      keptOr(
+        Effect.gen(function* () {
+          const asked = yield* askForAccountKey(scope, {
+            name: request.name,
+            reason: request.reason,
+            sites: [request.site],
+            ...(request.header === undefined ? {} : { header: request.header }),
+          });
+          if (asked.status === "saved" || asked.status === "exists")
+            return { secretRef: accountTokenRef(asked.accountId) };
+          return {
+            problem:
+              asked.status === "turned_off"
+                ? "the user turned that key off in Settings → Accounts & secrets."
+                : asked.status === "linked"
+                  ? "its key lives in the user's password manager; they update it there."
+                  : asked.status === "unavailable"
+                    ? asked.message
+                    : cardProblem(asked.status),
+          };
+        }).pipe(Effect.provide(context)),
+      ),
+    signInApp: (request) =>
+      keptOr(
+        Effect.gen(function* () {
+          const notKept = "The sign-in app was not kept. Ask the user to enter it again.";
+          const register =
+            request.redirectUri === undefined
+              ? ""
+              : ` Its redirect address must be ${request.redirectUri}.`;
+          const id = yield* askInCard(scope, {
+            label: `${request.name} client ID`,
+            reason: `${request.name} signs in through the user's own app.${register}`,
+            notKept,
+          });
+          if (id.status !== "saved") return { problem: cardProblem(id.status) };
+          const secret = yield* askInCard(scope, {
+            label: `${request.name} client secret`,
+            reason: `Skip this if the app has no client secret.`,
+            notKept,
+          });
+          return {
+            clientId: id.value,
+            ...(secret.status === "saved" ? { clientSecret: secret.value } : {}),
+          };
+        }).pipe(Effect.provide(context)),
+      ),
+  } satisfies AddAsks;
+});
+
 export const addConnector = Effect.fn("AccountsAgent.connectorAdd")(function* (
   input: Input<"scient_connector_add">,
 ) {
@@ -101,6 +173,7 @@ export const addConnector = Effect.fn("AccountsAgent.connectorAdd")(function* (
     from: input.from,
     workingFolder: Option.getOrUndefined(where)?.folder,
     location: yield* callerLocation,
+    asks: yield* addAsks,
   }).pipe(Effect.mapError(toAccountsError));
 });
 

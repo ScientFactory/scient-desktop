@@ -41,6 +41,39 @@ const existingKey = (accounts: ReadonlyArray<AccountSummary>, input: Input) => {
 };
 
 /**
+ * One value from the user through upstream's private secret card, read once on the server: it
+ * never reaches the agent. Any status but `saved` is the user's answer (declined, timed out…).
+ */
+export const askInCard = Effect.fn("AccountsAgent.askInCard")(function* (
+  scope: AccountSessionScope,
+  card: {
+    readonly label: string;
+    readonly reason: string;
+    readonly placeholder?: string;
+    /** What the agent reads when the value could not be read. */
+    readonly notKept: string;
+  },
+) {
+  if (scope.projectId === undefined) return yield* fail(card.notKept);
+  const asked = yield* (yield* OrchestratorMcpService)
+    .requestSecret(yield* McpInvocationContext, {
+      label: card.label,
+      reason: card.reason,
+      ...(card.placeholder === undefined ? {} : { placeholder: card.placeholder }),
+      clientRequestId: `${ACCOUNT_SECRET_REQUEST_PREFIX}${NodeCrypto.randomUUID()}`,
+    })
+    .pipe(Effect.mapError((error) => fail(error.message)));
+  if (asked.status !== "saved") return { status: asked.status };
+  if (!("secretRef" in asked)) return yield* fail(card.notKept);
+  const value = (yield* (yield* SecretRequests)
+    .consume({ ref: asked.secretRef, projectId: scope.projectId })
+    .pipe(Effect.mapError(() => fail(card.notKept)))).trim();
+  if (value.length === 0 || value.length > MAX_VALUE)
+    return yield* fail(`${card.notKept} It was empty or longer than ${MAX_VALUE} characters.`);
+  return { status: "saved" as const, value };
+});
+
+/**
  * Asks for a key in upstream's private secret card and keeps the answer as an API-key account.
  * The value moves from the card's one-use store into Accounts and never reaches the agent.
  */
@@ -80,23 +113,18 @@ export const askForAccountKey = Effect.fn("AccountsAgent.askForKey")(function* (
   if (replacing && source !== undefined && source.type !== "scient")
     return { status: "linked" as const, accountId: replacing.accountId, name: replacing.name };
 
-  const orchestrator = yield* OrchestratorMcpService;
-  const asked = yield* orchestrator
-    .requestSecret(yield* McpInvocationContext, {
-      label: replacing
-        ? `New key for “${replacing.name}”`
-        : /\b(?:key|token)$/i.test(input.name)
-          ? input.name
-          : `${input.name} API key`,
-      reason: input.reason,
-      ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
-      clientRequestId: `${ACCOUNT_SECRET_REQUEST_PREFIX}${NodeCrypto.randomUUID()}`,
-    })
-    .pipe(Effect.mapError((error) => fail(error.message)));
-  if (asked.status !== "saved") return { status: asked.status };
-  if (!("secretRef" in asked)) return yield* fail("The key could not be read.");
-
   const notKept = "The key was not kept. Ask the user to enter it again.";
+  const asked = yield* askInCard(scope, {
+    label: replacing
+      ? `New key for “${replacing.name}”`
+      : /\b(?:key|token)$/i.test(input.name)
+        ? input.name
+        : `${input.name} API key`,
+    reason: input.reason,
+    ...(input.placeholder === undefined ? {} : { placeholder: input.placeholder }),
+    notKept,
+  });
+  if (asked.status !== "saved") return { status: asked.status };
   // Access may have changed while the card waited.
   const current = yield* accounts.forSession(scope);
   const target = replacing
@@ -104,11 +132,7 @@ export const askForAccountKey = Effect.fn("AccountsAgent.askForKey")(function* (
     : undefined;
   if (!current.agentAccess || (replacing && (!target || target.controls.access === "off")))
     return yield* fail(`${notKept} Its access changed in Settings → Accounts & secrets meanwhile.`);
-  const value = (yield* (yield* SecretRequests)
-    .consume({ ref: asked.secretRef, projectId: scope.projectId })
-    .pipe(Effect.mapError(() => fail(notKept)))).trim();
-  if (value.length === 0 || value.length > MAX_VALUE)
-    return yield* fail(`${notKept} It was empty or longer than ${MAX_VALUE} characters.`);
+  const value = asked.value;
   const secrets = { token: { type: "scient" as const, value } };
   const saved = yield* (
     replacing

@@ -11,6 +11,7 @@ import {
   type ConnectorSummary,
   type DiscoverEntry,
   ExtensionsError,
+  type VaultSecretRef,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -81,10 +82,15 @@ const rowOf = (summary: ConnectorSummary) => {
   };
 };
 
+/** What the private card asks for a hosted entry: its API key, or the user's own sign-in app. */
+type Needs = "key" | "sign-in-app";
+
 /** What `connectors.add` gets for an entry an agent adds, or why the user must add it. */
 const agentAddTarget = (
   entry: DiscoverEntry,
-): { readonly target: ConnectorAddInput["target"] } | { readonly reason: string } => {
+):
+  | { readonly target: ConnectorAddInput["target"]; readonly needs?: Needs }
+  | { readonly reason: string } => {
   if (!entry.installable) return { reason: entry.unsupportedReason ?? "Scient can't run it." };
   const remote = entry.remotes.find(
     (item) => item.type === "streamable-http" && !item.requiresInput,
@@ -93,13 +99,15 @@ const agentAddTarget = (
   if (remote !== undefined) {
     if (remote.url === GITHUB_MCP_URL)
       return { reason: `It connects with the user's GitHub account: ${onPage}` };
-    if (entry.apiKey !== undefined) return { reason: `It needs an API key: ${onPage}` };
-    if (entry.oauthClientRequired === true)
-      return { reason: `It needs the user's own sign-in app: ${onPage}` };
     return {
       target: entry.name.startsWith(CURATED_ONLY_PREFIX)
         ? { type: "url", url: remote.url }
         : { type: "registry", name: entry.name, version: entry.version, url: remote.url },
+      ...(entry.apiKey !== undefined
+        ? { needs: "key" as const }
+        : entry.oauthClientRequired === true
+          ? { needs: "sign-in-app" as const }
+          : {}),
     };
   }
   if (entry.localPackage !== undefined)
@@ -235,6 +243,25 @@ const testedTools = Effect.fn("ConnectorAgentControl.testedTools")(function* (
     : { tools: [], problem: tested.message ?? `Its test ended with ${tested.outcome}.` };
 });
 
+/**
+ * The user's answers in Scient's private card, which never pass through the chat: an API key
+ * (kept in Accounts, returned as its reference), or their own sign-in app's ID and secret.
+ */
+export interface AddAsks {
+  readonly key: (request: {
+    readonly name: string;
+    readonly reason: string;
+    readonly site: string;
+    readonly header?: string;
+  }) => Effect.Effect<{ readonly secretRef: VaultSecretRef } | { readonly problem: string }>;
+  readonly signInApp: (request: {
+    readonly name: string;
+    readonly redirectUri: string | undefined;
+  }) => Effect.Effect<
+    { readonly clientId: string; readonly clientSecret?: string } | { readonly problem: string }
+  >;
+}
+
 const isPath = (from: string) => /\.(mcpb|zip)$/iu.test(from) && !/^https?:\/\//iu.test(from);
 
 /**
@@ -247,6 +274,8 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
   readonly workingFolder?: string | undefined;
   /** The chat's project: the add's own test uses only what that project may use. */
   readonly location?: ConnectorLocation | undefined;
+  /** Asks the user for a hosted connector's key or sign-in app; absent where no one can answer. */
+  readonly asks?: AddAsks | undefined;
 }) {
   const { runtime, discover, observed } = yield* services;
   const from = input.from.trim();
@@ -295,10 +324,14 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
             `Scient can't add ${entry.title ?? entry.name} for you: ${choice.reason}. To build one instead, use the connector-authoring skill.`,
           );
         const description = entry.description?.trim().slice(0, 1_000);
+        const displayName = entry.title ?? entry.name.split("/").pop() ?? entry.name;
         request = {
           target: choice.target,
-          displayName: entry.title ?? entry.name.split("/").pop() ?? entry.name,
+          displayName,
           ...(description ? { description } : {}),
+          ...(choice.needs === undefined
+            ? {}
+            : yield* askedSetup(entry, choice.target, choice.needs, displayName, input.asks)),
         };
       }
       const added = yield* runtime.add({ ...request, changedBy: "agent" });
@@ -316,6 +349,48 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
     }),
     (result) => ({ status: result.status, tools: result.tools.length }),
   );
+});
+
+/** A hosted entry's key or sign-in app, asked in the private card, as the add takes it. */
+const askedSetup = Effect.fn("ConnectorAgentControl.askedSetup")(function* (
+  entry: DiscoverEntry,
+  target: ConnectorAddInput["target"],
+  needs: Needs,
+  name: string,
+  asks: AddAsks | undefined,
+) {
+  const what = needs === "key" ? "an API key" : "the user's own sign-in app (its client ID)";
+  if (asks === undefined || !("url" in target))
+    return yield* invalid(
+      `${name} needs ${what}, which Scient asks for in a private card, and no one can answer one here. The user adds it from its page in Settings → Extensions → Discover.`,
+    );
+  if (needs === "key") {
+    const key = entry.apiKey!;
+    const asked = yield* asks.key({
+      name,
+      reason: `${name} needs it to connect. Where to get it: ${key.helpUrl}`,
+      site: new URL(target.url).origin,
+      ...(key.strategy === "header" && key.headerName !== undefined
+        ? { header: key.headerName }
+        : {}),
+    });
+    if ("problem" in asked) return yield* invalid(`${name} was not added: ${asked.problem}`);
+    return {
+      credential: {
+        type: "bound" as const,
+        secretRef: asked.secretRef,
+        strategy: key.strategy,
+        ...(key.headerName === undefined ? {} : { headerName: key.headerName }),
+      },
+    };
+  }
+  const origin = yield* callbackOrigin;
+  const asked = yield* asks.signInApp({
+    name,
+    redirectUri: origin === undefined ? undefined : `${origin}/oauth/connectors/callback`,
+  });
+  if ("problem" in asked) return yield* invalid(`${name} was not added: ${asked.problem}`);
+  return { oauthClient: asked };
 });
 
 /** Scient's own address, for a sign-in that comes back to it on this computer. */
