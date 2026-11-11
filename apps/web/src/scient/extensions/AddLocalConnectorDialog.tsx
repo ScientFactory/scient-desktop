@@ -13,7 +13,7 @@ import type {
   PersonalSkillSource,
 } from "@t3tools/contracts";
 import { VaultSecretRef } from "@t3tools/contracts";
-import { ChevronDownIcon, PlusIcon, SparklesIcon, XIcon } from "lucide-react";
+import { BotIcon, ChevronDownIcon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useId, useRef, useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
@@ -673,7 +673,7 @@ export function AddLocalConnectorDialog({
                       void startConnectorChat(MAKE_CONNECTOR_PROMPT, "make");
                     }}
                   >
-                    <SparklesIcon aria-hidden />
+                    <BotIcon aria-hidden />
                     Or make a connector with an agent
                   </Button>
                 ) : null}

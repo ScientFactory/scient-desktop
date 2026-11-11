@@ -1,4 +1,4 @@
-import { PlusIcon, SparklesIcon } from "lucide-react";
+import { BotIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 
 import { Button } from "../../components/ui/button";
@@ -83,7 +83,7 @@ export function MakeConnector({ kind }: { readonly kind?: ExtensionKind | undefi
       disabled={!canWrite}
       onClick={() => void startChat(MAKE_CONNECTOR_PROMPT, "make")}
     >
-      <SparklesIcon aria-hidden />
+      <BotIcon aria-hidden />
       Make a connector
     </Button>
   );
