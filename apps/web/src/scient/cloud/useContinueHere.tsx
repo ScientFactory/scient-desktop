@@ -17,7 +17,7 @@ import { useEnvironmentProviders } from "~/state/environments";
 
 import { newChatModelSelection } from "../conversationImport/importDestination.logic";
 import type { CloudApi } from "./cloudApi";
-import { takeOverCloudThread } from "./serverCloud";
+import { readCloudStatus, takeOverCloudThread } from "./serverCloud";
 
 type Candidate = { readonly projectId: ProjectId; readonly title: string };
 
@@ -33,10 +33,10 @@ export function useContinueHere(api: CloudApi) {
   const configs = useServerConfigs();
   const providersByEnvironment = useEnvironmentProviders();
   const clientSettings = useClientSettings();
-  const sticky = useComposerDraftStore((store) => ({
-    modelSelectionByProvider: store.stickyModelSelectionByProvider,
-    activeProvider: store.stickyActiveProvider,
-  }));
+  const stickyModelSelectionByProvider = useComposerDraftStore(
+    (store) => store.stickyModelSelectionByProvider,
+  );
+  const stickyActiveProvider = useComposerDraftStore((store) => store.stickyActiveProvider);
   const [running, setRunning] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
   const [choice, setChoice] = useState<{
@@ -65,7 +65,10 @@ export function useContinueHere(api: CloudApi) {
       settings: mergeEnvironmentSettings(config.settings, clientSettings),
       project,
       carrySelection: null,
-      sticky,
+      sticky: {
+        modelSelectionByProvider: stickyModelSelectionByProvider,
+        activeProvider: stickyActiveProvider,
+      },
     });
   };
 
@@ -86,6 +89,11 @@ export function useContinueHere(api: CloudApi) {
     const environmentId = EnvironmentId.make(here);
     setProblem(null);
     try {
+      const status = await readCloudStatus(environmentId).catch(() => null);
+      if (status !== null && (status.enrolledUserId === null || !status.enabled)) {
+        setProblem("Turn on Cloud copy on this computer first, in Settings > Sharing & access.");
+        return null;
+      }
       const { generation } = await api.lease(row.environmentId, row.threadId, environmentId);
       let projectId: ProjectId | null = null;
       for (;;) {
