@@ -31,13 +31,13 @@ import {
   applyGrokAcpModelSelection,
   appendGrokAcpRules,
   currentGrokModelIdFromSessionSetup,
-  currentGrokReasoningEffortFromSessionSetup,
   normalizeGrokReasoningEffort,
   GROK_DEFAULT_MODEL_SLUG,
   grokApprovalOptions,
   makeGrokAcpRuntime,
   resolveGrokAcpBaseModelId,
 } from "./acpSupport.ts";
+import { grokReasoningOptionsFromModel } from "./status.ts";
 import {
   extractGrokPlanMarkdownFromToolCallData,
   extractXAiAcpBackgroundToolMutation,
@@ -62,9 +62,11 @@ import {
 } from "./xaiAcpExtension.ts";
 import { mergeProviderInstanceEnvironment } from "@t3tools/provider-core/server/instanceEnvironment";
 import { acpPermissionDisposition } from "@t3tools/provider-acp/server/clientPolicy";
-import { sessionModelStateFromInitialize } from "@t3tools/provider-acp/server/runtimeModel";
+import {
+  findModelConfigOption,
+  sessionModelStateFromInitialize,
+} from "@t3tools/provider-acp/server/runtimeModel";
 import * as AcpSessionRuntime from "@t3tools/provider-acp/server/AcpSessionRuntime";
-import { collectSessionConfigOptionValues } from "@t3tools/provider-acp/server/runtimeModel";
 import * as ProviderEventLoggers from "@t3tools/provider-core/server/ProviderEventLoggers";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as ProviderContinuationRequests from "@t3tools/provider-core/server/ProviderContinuationRequests";
@@ -228,6 +230,121 @@ export function grokLaunchRuntimeMode(
     : "approval-required";
 }
 
+/** The capability id the composer stores Grok's reasoning effort under. */
+const GROK_REASONING_EFFORT_OPTION_ID = "reasoningEffort";
+
+// Protocol 1 sends the effort as `session/set_model` metadata on every call: that response
+// carries no config options, so there is no live effort to compare against. Newer protocols
+// write the `thought_level` config option after the model switch. An effort the model does
+// not offer, or that Grok refuses, is skipped with a warning and Grok's default applies.
+const applyGrokSessionModelSelection: NonNullable<AcpAdapterV2Flavor["applyModelSelection"]> =
+  Effect.fn("GrokAdapter.applyModelSelection")(function* ({
+    runtime,
+    startResult,
+    modelSelection,
+  }) {
+    const requestedModelId = resolveGrokAcpBaseModelId(modelSelection.model);
+    const requestedEffort = getModelSelectionStringOptionValue(
+      modelSelection,
+      GROK_REASONING_EFFORT_OPTION_ID,
+    );
+    // SCIENT-FORK:START — a malformed effort token fails before any model write or prompt.
+    if (
+      requestedEffort !== undefined &&
+      normalizeGrokReasoningEffort(requestedEffort) === undefined
+    ) {
+      return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+        "Grok cannot apply an invalid reasoning effort.",
+      );
+    }
+    // SCIENT-FORK:END
+    const skipEffort = (detail: string) =>
+      Effect.logWarning("Grok session skipped the requested reasoning effort", {
+        sessionId: startResult.sessionId,
+        reasoningEffort: requestedEffort,
+        detail,
+      });
+
+    // SCIENT-FORK:START — Grok may advertise protocol 2 yet negotiate the V1 session shape
+    // with no config options; such a session still takes the set_model path.
+    const setModelSession =
+      startResult.initializeResult.protocolVersion === 1 ||
+      ((yield* runtime.getProtocolGeneration) === 1 &&
+        findModelConfigOption(yield* runtime.getConfigOptions) === undefined);
+    if (setModelSession) {
+      // SCIENT-FORK:END
+      const setup = startResult.sessionSetupResult;
+      const currentModelId = currentGrokModelIdFromSessionSetup(setup);
+      // SCIENT-FORK:START — an effort on the Grok alias needs an advertised model to carry it.
+      if (
+        requestedEffort !== undefined &&
+        requestedModelId === GROK_DEFAULT_MODEL_SLUG &&
+        currentModelId === undefined
+      ) {
+        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+          "Grok has not advertised a model for the requested reasoning effort.",
+        );
+      }
+      // SCIENT-FORK:END
+      const targetModelId =
+        requestedModelId === GROK_DEFAULT_MODEL_SLUG ? currentModelId : requestedModelId;
+      const targetModel = setup.models?.availableModels.find(
+        (model) => model.modelId.trim() === targetModelId,
+      );
+      const offeredEfforts =
+        targetModel === undefined
+          ? []
+          : grokReasoningOptionsFromModel(targetModel).options.map((option) => option.value);
+      const effort =
+        requestedEffort !== undefined &&
+        (offeredEfforts.length === 0 || offeredEfforts.includes(requestedEffort))
+          ? requestedEffort
+          : undefined;
+      if (requestedEffort !== undefined && effort === undefined) {
+        yield* skipEffort(`${targetModelId} does not offer it`);
+      }
+      const apply = (requestedReasoningEffort: string | undefined) =>
+        applyGrokAcpModelSelection({
+          runtime,
+          currentModelId,
+          requestedModelId,
+          requestedReasoningEffort,
+          mapError: (cause) => cause,
+        });
+      return yield* effort === undefined
+        ? apply(undefined)
+        : apply(effort).pipe(
+            Effect.catchTags({
+              AcpRequestError: (error) =>
+                skipEffort(error.message).pipe(Effect.andThen(apply(undefined))),
+            }),
+          );
+    }
+
+    const appliedModelId = yield* applyGrokAcpModelSelection({
+      runtime: { setSessionModel: (model) => runtime.setModel(model).pipe(Effect.as({})) },
+      currentModelId: findModelConfigOption(yield* runtime.getConfigOptions)?.currentValue,
+      requestedModelId,
+      mapError: (cause) => cause,
+    });
+    if (requestedEffort === undefined) {
+      return appliedModelId;
+    }
+    // Read after the model switch: the effort choices belong to the new model.
+    const effortOption = (yield* runtime.getConfigOptions).find(
+      (option) => option.type === "select" && option.category === "thought_level",
+    );
+    if (effortOption === undefined) {
+      yield* skipEffort("the session has no reasoning effort option");
+      return appliedModelId;
+    }
+    // setConfigOption rejects a value the option does not offer and skips the current one.
+    yield* runtime
+      .setConfigOption(effortOption.id, requestedEffort)
+      .pipe(Effect.catchTags({ AcpRequestError: (error) => skipEffort(error.message) }));
+    return appliedModelId;
+  });
+
 export function makeGrokAcpAdapterFlavor(
   options: GrokAdapterV2Options,
   homeDirectory: string,
@@ -285,113 +402,8 @@ export function makeGrokAcpAdapterFlavor(
         ? window
         : undefined;
     },
-    applyModelSelection: Effect.fn("GrokAdapter.applyModelSelection")(function* ({
-      runtime,
-      startResult,
-      modelSelection,
-    }) {
-      // `protocolVersion` is the initialize advertisement; the runtime's
-      // negotiated generation is authoritative (Grok may advertise v2 but
-      // negotiate the v1 session shape).
-      const generation = yield* runtime.getProtocolGeneration;
-      const requestedModelId = resolveGrokAcpBaseModelId(modelSelection.model);
-      const requestedReasoningEffort = getModelSelectionStringOptionValue(
-        modelSelection,
-        "reasoningEffort",
-      );
-      if (
-        requestedReasoningEffort !== undefined &&
-        normalizeGrokReasoningEffort(requestedReasoningEffort) === undefined
-      ) {
-        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-          "Grok cannot apply an invalid reasoning effort.",
-        );
-      }
-
-      if (generation === 1) {
-        const currentModelId = currentGrokModelIdFromSessionSetup(startResult.sessionSetupResult);
-        if (
-          requestedReasoningEffort !== undefined &&
-          requestedModelId === GROK_DEFAULT_MODEL_SLUG &&
-          currentModelId === undefined
-        ) {
-          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-            "Grok has not advertised a model for the requested reasoning effort.",
-          );
-        }
-        return yield* applyGrokAcpModelSelection({
-          runtime,
-          currentModelId,
-          currentReasoningEffort: currentGrokReasoningEffortFromSessionSetup(
-            startResult.sessionSetupResult,
-          ),
-          requestedModelId,
-          requestedReasoningEffort,
-          mapError: (cause) => cause,
-        });
-      }
-      if (generation !== 2) {
-        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-          "Grok has not negotiated an ACP wire generation.",
-        );
-      }
-
-      let options = yield* runtime.getConfigOptions;
-      const modelOption = options.find((option) => option.category === "model");
-      if (requestedModelId !== GROK_DEFAULT_MODEL_SLUG) {
-        if (modelOption?.type !== "select") {
-          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-            "Grok does not advertise a model selection option.",
-          );
-        }
-        if (modelOption.currentValue !== requestedModelId) {
-          yield* runtime.setConfigOption(modelOption.id, requestedModelId);
-        }
-        options = yield* runtime.getConfigOptions;
-        const applied = options.find((option) => option.id === modelOption.id)?.currentValue;
-        if (applied !== requestedModelId) {
-          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-            "Grok did not confirm the requested model.",
-          );
-        }
-      }
-
-      if (requestedReasoningEffort !== undefined) {
-        const effort = normalizeGrokReasoningEffort(requestedReasoningEffort);
-        const effortOption = options.find(
-          (option) =>
-            option.category === "thought_level" ||
-            option.id === "reasoningEffort" ||
-            option.id === "reasoning_effort",
-        );
-        if (effort === undefined || effortOption?.type !== "select") {
-          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-            "Grok does not advertise the requested reasoning effort.",
-          );
-        }
-        if (!collectSessionConfigOptionValues(effortOption).includes(effort)) {
-          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-            "Grok does not advertise the requested reasoning effort.",
-          );
-        }
-        if (effortOption.currentValue !== effort) {
-          yield* runtime.setConfigOption(effortOption.id, effort);
-        }
-        const applied = (yield* runtime.getConfigOptions).find(
-          (option) => option.id === effortOption.id,
-        )?.currentValue;
-        if (applied !== effort) {
-          return yield* EffectAcpErrors.AcpRequestError.invalidParams(
-            "Grok did not confirm the requested reasoning effort.",
-          );
-        }
-      }
-
-      const appliedModel = (yield* runtime.getConfigOptions).find(
-        (option) => option.category === "model",
-      )?.currentValue;
-      return typeof appliedModel === "string" ? appliedModel : undefined;
-    }),
+    applyModelSelection: applyGrokSessionModelSelection,
+    ownedModelOptionIds: [GROK_REASONING_EFFORT_OPTION_ID],
     makeRuntime:
       options.makeRuntime ??
       (({ runtimePolicy, scientAwareness, ...input }) => {

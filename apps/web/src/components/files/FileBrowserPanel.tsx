@@ -70,6 +70,8 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 // SCIENT-FORK:START — new documents are listed through useCreateNewDocument
 import { refreshProjectEntriesQuery, subscribeProjectFilesRefresh } from "./projectFilesQueryState";
 // SCIENT-FORK:END
+import { isMacPlatform } from "~/lib/utils";
+import { type PreviewAction, subscribePreviewAction } from "../preview/previewActionBus";
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -89,6 +91,7 @@ interface FileBrowserPanelProps {
   scientToolbarLeading?: ScientToolbarSlot;
   // SCIENT-FORK:END
   workspaceMutationId: string | null;
+  answersPanelFind?: boolean;
 }
 
 // SCIENT-FORK:START — refresh moved into the Files menu (WorkspaceFilesMenu)
@@ -112,6 +115,7 @@ export default function FileBrowserPanel({
   // SCIENT-FORK:START
   scientToolbarLeading,
   // SCIENT-FORK:END
+  answersPanelFind = false,
 }: FileBrowserPanelProps) {
   const panelPath = (relativePath: string) =>
     hostFolder ? joinHostPath(cwd, relativePath) : relativePath;
@@ -394,6 +398,20 @@ export default function FileBrowserPanel({
     model.closeSearch();
     setSearchValue("");
   };
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const focusSearch = () => {
+    searchInputRef.current?.focus();
+    searchInputRef.current?.select();
+  };
+  const onPanelAction = useEffectEvent((action: PreviewAction) => {
+    // Hidden panel tabs stay mounted; only the visible Files tab answers.
+    if (action === "find" && searchInputRef.current?.getClientRects().length) focusSearch();
+  });
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes to the panel find command, which fires while focus is anywhere in the right panel
+  useEffect(() => {
+    if (!answersPanelFind) return;
+    return subscribePreviewAction(onPanelAction);
+  }, [answersPanelFind]);
   const refreshEntries = () => {
     void treeControllerRef.current?.refresh();
     refreshProjectEntriesQuery(environmentId, cwd);
@@ -518,8 +536,17 @@ export default function FileBrowserPanel({
       // Capture dragstart before the tree selects the row so selection sees the drag flag.
       onDragStartCapture={(event) => dragMention.handleDragStart(event.nativeEvent)}
       onDragEnd={() => dragMention.handleDragEnd((path) => model.getItem(path)?.deselect())}
-      // SCIENT-FORK:START — file shortcuts in the tree, ⌥ while dragging to copy, and drops from outside
-      onKeyDown={fileActions.onKeyDown}
+      onKeyDown={(event) => {
+        const isModPressed = isMacPlatform(navigator.platform) ? event.metaKey : event.ctrlKey;
+        if (isModPressed && !event.altKey && !event.shiftKey && event.key.toLowerCase() === "f") {
+          event.preventDefault();
+          focusSearch();
+          return;
+        }
+        // SCIENT-FORK: file shortcuts in the tree.
+        fileActions.onKeyDown(event);
+      }}
+      // SCIENT-FORK:START — ⌥ while dragging to copy, and drops from outside
       onKeyDownCapture={fileActions.onKeyDownCapture}
       onBlur={fileActions.onBlur}
       onDragOverCapture={fileActions.onDragOver}
@@ -536,6 +563,7 @@ export default function FileBrowserPanel({
             refresh and expand-all live in the Files menu. */}
         {scientToolbarLeading}
         <FileSearchField
+          ref={searchInputRef}
           name="project-files-search"
           ariaLabel={`Search ${projectName} files`}
           value={searchValue}

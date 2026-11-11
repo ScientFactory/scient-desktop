@@ -67,6 +67,7 @@ import {
   type EnvironmentId,
   type ModelSelection,
   type PreviewAnnotationPayload,
+  type ScopedThreadRef,
   type ThreadId,
   ProviderInteractionMode,
   RuntimeMode,
@@ -102,6 +103,7 @@ import {
   finalizePromotedDraftThreadByRef,
   markPromotedDraftThreadByRef,
   restoreFailedDraftThread,
+  checkoutPullRequestUrlToLink,
   composerDraftHasUserContent,
   type ComposerImageAttachment,
   type DraftThreadEnvMode,
@@ -271,6 +273,8 @@ export interface ComposerSendInput {
     runtimeMode: RuntimeMode;
     interactionMode: ProviderInteractionMode;
   }) => Promise<AtomCommandResult<void, unknown>>;
+  /** Links a checked-out pull request to its thread; best effort, failures only logged. */
+  readonly linkCheckoutPullRequest: (threadRef: ScopedThreadRef, url: string) => void;
 }
 
 /**
@@ -342,6 +346,7 @@ export function useComposerSend(input: ComposerSendInput) {
     sideChatDisabledReason,
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
+    linkCheckoutPullRequest,
   } = input;
   const {
     queueEditsReady,
@@ -503,6 +508,27 @@ export function useComposerSend(input: ComposerSendInput) {
         return;
       }
 
+      // Capture before queue recovery yields: submitting releases the typing hold,
+      // but a revealed question must not replace this draft's attachment snapshot.
+      const sendCtx = composerRef.current?.getSendContext();
+      // `/side` beats an open question and a plan follow-up, which would send the text to main.
+      const sideChatCommand =
+        sendCtx && !directAnnotation && directPrompt === null && !queueEdit
+          ? parseSideChatCommand(promptAtSend)
+          : null;
+      const answeringQuestion =
+        Boolean(activePendingProgress) && sendCtx?.answeringPendingUserInput !== false;
+      const startsSideChat =
+        onSideChat !== undefined && sideChatCommand !== null && sideChatDisabledReason === null;
+      // An answer responds to the open request rather than starting a turn, so the new-message
+      // guards below (loading, busy, provider) must not swallow it.
+      if (answeringQuestion && !startsSideChat && !directAnnotation) {
+        if (readEnvironmentScope(environmentId, AuthOrchestrationOperateScope) && activeThread) {
+          onAdvanceActivePendingUserInput();
+        }
+        return;
+      }
+
       const notifyDirectAnnotationAttached = () => {
         if (!directAnnotation) return;
         toastManager.add(
@@ -528,17 +554,7 @@ export function useComposerSend(input: ComposerSendInput) {
         notifyDirectAnnotationAttached();
         return;
       }
-      // Capture before queue recovery yields: submitting releases the typing hold,
-      // but a revealed question must not replace this draft's attachment snapshot.
-      const sendCtx = composerRef.current?.getSendContext();
       if (!sendCtx || sendCtx.pendingAttachments) return;
-      // `/side` beats an open question and a plan follow-up, which would send the text to main.
-      const sideChatCommand =
-        !directAnnotation && directPrompt === null && !queueEdit
-          ? parseSideChatCommand(promptAtSend)
-          : null;
-      const answeringQuestion =
-        Boolean(activePendingProgress) && sendCtx.answeringPendingUserInput !== false;
       // Where side chats are unavailable, `/side` text can still be a literal answer.
       if (sideChatDisabledReason !== null && sideChatCommand && !answeringQuestion) {
         toastManager.add(
@@ -1622,6 +1638,15 @@ export function useComposerSend(input: ComposerSendInput) {
                 );
               }
               assertCurrentDraft();
+              // Read the live session, not the render snapshot: the draft is finalized away once
+              // the thread exists.
+              const checkoutPullRequestUrl = isLocalDraftThread
+                ? checkoutPullRequestUrlToLink(
+                    draftId === null
+                      ? null
+                      : useComposerDraftStore.getState().getDraftSession(draftId),
+                  )
+                : null;
               const startPromise = startThreadTurn(preparedPacket);
               // SCIENT-FORK:END
               if (backgroundThreadRef) {
@@ -1654,6 +1679,12 @@ export function useComposerSend(input: ComposerSendInput) {
                 failure = startResult;
               } else {
                 turnStartSucceeded = true;
+                if (checkoutPullRequestUrl) {
+                  linkCheckoutPullRequest(
+                    scopeThreadRef(activeThread.environmentId, threadIdForSend),
+                    checkoutPullRequestUrl,
+                  );
+                }
                 setKeepFullHistory(routeThreadKey, false);
                 if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
                 // SCIENT-FORK:START — an admitted send retires its extracted intent and queue edit, then
@@ -1735,22 +1766,20 @@ export function useComposerSend(input: ComposerSendInput) {
                     clearBackgroundDraftSubmissionByRef(backgroundThreadRef);
                   }
                   if (backgroundDraftOpened) {
-                    toastManager.add(
-                      stackedThreadToast({
-                        type: "success",
-                        title: "Started in background",
-                        timeout: 5_000,
-                        actionProps: {
-                          children: "Open",
-                          onClick: () => {
-                            void navigate({
-                              to: "/$environmentId/$threadId",
-                              params: buildThreadRouteParams(backgroundThreadRef),
-                            });
-                          },
+                    toastManager.add({
+                      type: "success",
+                      title: "Started in background",
+                      timeout: 5_000,
+                      actionProps: {
+                        children: "Open",
+                        onClick: () => {
+                          void navigate({
+                            to: "/$environmentId/$threadId",
+                            params: buildThreadRouteParams(backgroundThreadRef),
+                          });
                         },
-                      }),
-                    );
+                      },
+                    });
                   }
                 } else if (
                   submissionIntent === "background" &&

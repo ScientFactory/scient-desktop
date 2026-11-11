@@ -41,7 +41,7 @@ vi.mock(import("@tanstack/react-router"), async (importOriginal) => ({
   )) as never,
 }));
 
-import { AssistantCitationChip } from "./AssistantCitationChip";
+import { AssistantCitationChip, AssistantCitationEmbed } from "./AssistantCitationChip";
 
 const citation = {
   version: 1 as const,
@@ -105,7 +105,7 @@ describe("citation hover content", () => {
     async (composer) => {
       using _source = setup();
       await using screen = await render(
-        <AssistantCitationChip citation={fileCitation} composer={composer} />,
+        <AssistantCitationChip citation={fileCitation} sentMessage={!composer} />,
       );
       expect(sourceLink(screen.container).hasAttribute("title")).toBe(false);
       const popup = await hoverFile(screen.container);
@@ -138,7 +138,7 @@ describe("citation hover content", () => {
       await using screen = await render(
         <AssistantCitationChip
           citation={quote}
-          composer={composer}
+          sentMessage={!composer}
           {...(composer ? { onRemove } : {})}
         />,
       );
@@ -174,25 +174,22 @@ describe("citation hover content", () => {
       "Lines 12–18 · unsaved at capture",
     );
   });
-  it("shows the assistant quote, its saved comment and its source", async () => {
+  it("shows a sent assistant quote as a card that links to its source", async () => {
     using _source = setup();
     const quoted = {
       ...citation,
       text: "hello\nquoted source",
       comment: "Explain this result",
     };
-    await using screen = await render(<AssistantCitationChip citation={quoted} />);
-    const trigger = screen.container.querySelector<HTMLButtonElement>(
-      'button[aria-label^="Quoted assistant text:"]',
+    await using screen = await render(
+      <AssistantCitationEmbed citation={quoted} leading trailing />,
+    );
+    const source = screen.container.querySelector<HTMLAnchorElement>(
+      'a[aria-label^="Go to quoted response:"]',
     )!;
-    await act(async () => trigger.click());
-    const popup = document.querySelector<HTMLElement>('[data-slot="popover-popup"]')!;
-    expect(popup.querySelector("blockquote")?.textContent).toBe(quoted.text);
-    expect(popup.querySelector("p")?.textContent).toBe("Explain this result");
+    expect(source.textContent).toBe("hello quoted source");
+    expect(screen.container.textContent).toContain("Explain this result");
     expect(document.querySelector('[data-slot="tooltip-popup"]')).toBeNull();
-    const source = [...popup.querySelectorAll("a")].find((a) =>
-      a.textContent?.includes("Go to source"),
-    )!;
     expect(source.getAttribute("href")).toBe(
       "/" +
         quoted.environmentId +
@@ -219,7 +216,7 @@ describe("citation hover content", () => {
     async (composer) => {
       using _source = setup();
       await using screen = await render(
-        <AssistantCitationChip citation={fileCitation} composer={composer} />,
+        <AssistantCitationChip citation={fileCitation} sentMessage={!composer} />,
       );
       expect(document.querySelector('[data-slot="popover-popup"]')).toBeNull();
       const source = sourceLink(screen.container);

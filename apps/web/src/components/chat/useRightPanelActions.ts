@@ -7,7 +7,6 @@ import {
 } from "../files/filePathClipboard";
 import type { ToolCallDiffTarget } from "../../diffPanelStore";
 import type { ThreadPreviewState } from "../../previewStateStore";
-import { resolveExplicitDiffOpenOnActivate } from "../ChatView.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import { type ScopedThreadRef, type RunId } from "@t3tools/contracts";
 import { scopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -19,7 +18,6 @@ import {
 import { useDiffPanelStore } from "../../diffPanelStore";
 import { type ThreadPanelPresentation } from "../../rightPanelLayout";
 import {
-  selectActiveRightPanel,
   selectThreadPanelOpen,
   type RightPanelSurface,
   useRightPanelStore,
@@ -62,7 +60,6 @@ interface RightPanelActionsInput {
   readonly rightPanelMaximized: boolean;
   readonly supportsPullRequests: boolean;
   readonly pullRequestsSurfaceAvailable: boolean;
-  readonly explicitDiffOpenRef: { current: ScopedThreadRef | null };
   readonly onDiffPanelOpen: (() => void) | undefined;
   readonly closeRightPanelSurface: (surface: RightPanelSurface) => void;
 }
@@ -91,7 +88,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     rightPanelMaximized,
     supportsPullRequests,
     pullRequestsSurfaceAvailable,
-    explicitDiffOpenRef,
     onDiffPanelOpen,
   } = input;
 
@@ -104,7 +100,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
     if (!activeThreadRef) return;
     runAfterPendingFileSave("diff", () => {
       if (!diffOpen) {
-        explicitDiffOpenRef.current = activeThreadRef;
         useDiffPanelStore.getState().selectGitScope(activeThreadRef, "unstaged");
         onDiffPanelOpen?.();
       }
@@ -137,7 +132,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const addDiffSurface = () => {
     if (!activeThreadRef || !diffAvailable) return;
     runAfterPendingFileSave("diff", () => {
-      explicitDiffOpenRef.current = activeThreadRef;
       useDiffPanelStore.getState().selectGitScope(activeThreadRef, "unstaged");
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
@@ -219,11 +213,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const activateRightPanelSurface = (surface: RightPanelSurface) => {
     if (!activeThreadRef) return;
     runAfterPendingFileSave(surface.id, () => {
-      explicitDiffOpenRef.current = resolveExplicitDiffOpenOnActivate({
-        surfaceKind: surface.kind,
-        diffOpen,
-        activeThreadRef,
-      });
       useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
       if (surface.kind === "preview" && surface.resourceId) {
         setActivePreviewTab(activeThreadRef, surface.resourceId);
@@ -304,10 +293,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const onOpenTurnDiff = (runId: RunId, filePath?: string) => {
     if (!diffAvailable || !activeThreadRef) return;
     runAfterPendingFileSave("diff", () => {
-      const diffOpen =
-        selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) ===
-        "diff";
-      explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
       useDiffPanelStore.getState().selectTurn(activeThreadRef, runId, filePath);
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();
@@ -318,10 +303,6 @@ export function useRightPanelActions(input: RightPanelActionsInput) {
   const onOpenToolDiffStable = useStableCallback((target: ToolCallDiffTarget) => {
     if (!activeThreadRef) return;
     runAfterPendingFileSave("diff", () => {
-      const diffOpen =
-        selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, activeThreadRef) ===
-        "diff";
-      explicitDiffOpenRef.current = diffOpen ? null : activeThreadRef;
       useDiffPanelStore.getState().selectToolCall(activeThreadRef, target);
       useRightPanelStore.getState().open(activeThreadRef, "diff");
       onDiffPanelOpen?.();

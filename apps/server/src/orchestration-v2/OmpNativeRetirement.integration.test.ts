@@ -104,7 +104,7 @@ it.live.each(
       } else {
         yield* dispatchRestart;
       }
-      const closing = yield* worker.runOnce.pipe(Effect.forkScoped);
+      const closing = yield* worker.runOnce().pipe(Effect.forkScoped);
       yield* Deferred.await(f.closeEntered).pipe(Effect.timeout("10 seconds"));
       if (stopFirst) {
         yield* orchestrator.dispatch({

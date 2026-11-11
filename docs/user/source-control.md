@@ -303,7 +303,9 @@ from GitHub keep their pull requests on GitHub; open those from the GitHub remot
 ## Requirements and troubleshooting
 
 Use **Add Project** in the command palette (`Cmd/Ctrl+K`) to clone a repository. Choose a hosting
-provider or paste a Git URL, then choose where to save it. The project opens right away while the
+provider or paste a Git URL, then choose where to save it. A branch or file page copied from GitHub,
+GitLab, GitCafe, Codeberg or Bitbucket also works: T3 Code clones that repository's default branch.
+On other hosts, paste the repository's clone URL. The project opens right away while the
 clone runs in the background: you can write your first prompt, and sending waits until the files
 are in place. A toast tracks progress and lets you cancel; if the clone fails, retry it from the
 toast or from the banner above the composer. When the host refuses the machine's SSH key, Scient
@@ -348,6 +350,10 @@ instructions to commits and pull requests.
 - [Forgejo CLI](https://codeberg.org/forgejo-contrib/forgejo-cli)
 - [Gitea CLI](https://gitea.com/gitea/tea)
 - [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/)
+
+A link to part of a pull request opens that part: a comment or review is marked in the activity, a
+changed-line link opens the file at those lines, a checks link opens the checks, and a commit link
+opens that commit's changes. On web and desktop, hovering a comment or commit link previews it.
 
 On mobile, **Pull requests** lists reviews across your connected environments. Open a review
 to read its description, activity, commits, and changed files. Line comments stay as drafts

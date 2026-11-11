@@ -608,7 +608,7 @@ it.effect.each(
             providerThreadId: turn.providerThreadId,
             providerTurnId: turn.id,
           });
-          const interrupt = yield* worker.runOnce.pipe(Effect.forkScoped);
+          const interrupt = yield* worker.runOnce().pipe(Effect.forkScoped);
           yield* Deferred.await(session.interruptEntered);
           yield* h.save("phase", {
             phase: "native interrupt entered",

@@ -1,5 +1,9 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { AssistantCitation } from "@t3tools/contracts";
+import {
+  assistantCitationLabel,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 // SCIENT-FORK:START — quotes from Markdown files (scient-file-citation://) share this chip; its
 // labels, copy text and navigation come from the composer-citation owners.
 import {
@@ -36,7 +40,7 @@ import {
 // SCIENT-FORK:END
 import { Link, useNavigate } from "@tanstack/react-router";
 // SCIENT-FORK:START — a composer chip can be removed.
-import { ArrowUpRightIcon, PencilIcon, QuoteIcon, XIcon } from "lucide-react";
+import { PencilIcon, QuoteIcon, XIcon } from "lucide-react";
 // SCIENT-FORK:END
 import {
   useEffect,
@@ -56,30 +60,144 @@ import {
 import { cn } from "~/lib/utils";
 import { useQuietThreadShell } from "~/state/entities";
 import { ContextChip, ContextChipAction, ContextChipLabel } from "../ContextChip";
-import { ContextChipPopover } from "../contextChipParts";
-import { Button } from "../ui/button";
-import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../ui/popover";
-import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { AssistantCitationCommentEditor } from "./AssistantCitationCommentEditor";
 import { resolveAssistantCitationCommentDismissal } from "./assistantCitationCommentDismissal";
 import { observeAssistantCitationCommentSource } from "./AssistantCitationSource";
 import { composerFloatingLayerProps } from "./composerEventScope";
-import { observeResize } from "~/lib/observeResize";
 import { textDirection } from "~/textDirection";
 
+// SCIENT-FORK:START — a document quote (file, PDF, Compute, Office) names and opens its document.
+/** A quote of a document rather than of an assistant response. */
+export function isDocumentCitation(
+  citation: ComposerCitation,
+): citation is Exclude<ComposerCitation, AssistantCitation> {
+  return (
+    isFileCitation(citation) ||
+    isPdfCitation(citation) ||
+    isComputeCitation(citation) ||
+    isOfficeCitation(citation)
+  );
+}
+// SCIENT-FORK:END
+
+// SCIENT-FORK:START — file quotes label, copy and link to their file.
+function useCitationSourceLinkProps(citation: ComposerCitation) {
+  // SCIENT-FORK:END
+  const navigate = useNavigate();
+  const sourceThread = useQuietThreadShell(
+    scopeThreadRef(citation.environmentId, citation.threadId),
+  );
+  return {
+    // SCIENT-FORK:START — file quotes label, copy and link to their file; an assistant quote
+    // takes upstream's route, which opens a side chat quote on its parent thread.
+    ...(isDocumentCitation(citation)
+      ? {
+          to: "/$environmentId/$threadId" as const,
+          params: { environmentId: citation.environmentId, threadId: citation.threadId },
+          hash: isPdfCitation(citation)
+            ? pdfCitationHash(citation)
+            : isComputeCitation(citation)
+              ? computeCitationHash(citation)
+              : isOfficeCitation(citation)
+                ? officeCitationHash(citation)
+                : fileCitationHash(citation),
+          resetScroll: false,
+        }
+      : assistantCitationRoute(citation, sourceThread)),
+    "data-markdown-copy": serializeComposerCitation(citation),
+    // SCIENT-FORK:END
+    onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
+        return;
+      }
+      event.preventDefault();
+      // SCIENT-FORK:START — a file quote opens its file at the quoted lines; a PDF quote its page;
+      // a Compute quote its run or cell.
+      if (isPdfCitation(citation)) {
+        void navigate(pdfCitationNavigation(citation));
+      } else if (isComputeCitation(citation)) {
+        void navigate(computeCitationNavigation(citation));
+      } else if (isOfficeCitation(citation)) {
+        void navigate(officeCitationNavigation(citation));
+      } else if (isFileCitation(citation)) {
+        void navigate(fileCitationNavigation(citation));
+      } else void navigate(assistantCitationNavigation(citation, sourceThread));
+      // SCIENT-FORK:END
+    },
+  };
+}
+
+/**
+ * A quoted response inside a message. Clicking it goes to the source; its comment follows as
+ * text. `leading` and `trailing` say it starts or ends its block, which already has spacing.
+ */
+export function AssistantCitationEmbed({
+  citation,
+  leading,
+  trailing,
+}: {
+  citation: AssistantCitation;
+  leading: boolean;
+  trailing: boolean;
+}) {
+  const wholeResponse = citation.prefix === "" && citation.suffix === "";
+  const flat = (text: string) => text.replace(/\s+/g, " ");
+  const { comment, ...quoted } = citation;
+  const linkProps = useCitationSourceLinkProps(citation);
+  return (
+    // One copy boundary for the card and its comment, so a copied quote carries the comment once.
+    <span
+      data-markdown-copy={linkProps["data-markdown-copy"]}
+      className={cn("block", !leading && "mt-[0.65rem]", !trailing && "mb-[0.65rem]")}
+    >
+      <Link
+        {...linkProps}
+        // A selection inside the card's boundary copies the quote here and the comment as text.
+        data-markdown-copy={serializeAssistantCitation(quoted)}
+        // The quote is findable in its source message; here it is clamped and mostly hidden.
+        data-thread-find-ignore
+        aria-label={`Go to quoted response: ${assistantCitationLabel(quoted)}`}
+        // The message's markdown styles colour and underline links; a quote is neither.
+        className="block min-w-0 rounded-lg bg-black/10 px-2.5 py-1.5 text-start text-sm text-muted-foreground! no-underline! wrap-break-word hover:bg-black/14 focus-visible:outline-2 focus-visible:outline-ring dark:bg-black/35 dark:hover:bg-black/50"
+      >
+        <span className="line-clamp-2" dir={textDirection(citation.text)}>
+          {wholeResponse ? (
+            flat(citation.text)
+          ) : (
+            <>
+              {citation.prefix ? `…${flat(citation.prefix)}` : null}
+              <mark className="rounded-sm bg-foreground/12 px-0.5 text-foreground">
+                {flat(citation.text)}
+              </mark>
+              {citation.suffix ? `${flat(citation.suffix)}…` : null}
+            </>
+          )}
+        </span>
+      </Link>
+      {comment ? (
+        <span className="mt-1.5 block whitespace-pre-wrap" dir={textDirection(comment)}>
+          {comment}
+        </span>
+      ) : null}
+    </span>
+  );
+}
+
+/** The citation chip in the composer, with its comment editor. */
 export function AssistantCitationChip({
   citation,
-  composer = false,
-  // SCIENT-FORK:START — file quotes; a removable composer chip.
+  // SCIENT-FORK:START — file quotes; a removable composer chip; a sent message's document quote.
   onRemove,
+  sentMessage = false,
   // SCIENT-FORK:END
   commentEditor,
 }: {
-  // SCIENT-FORK:START — file quotes; a removable composer chip.
+  // SCIENT-FORK:START — file quotes; a removable composer chip; a sent message's document quote.
   citation: ComposerCitation;
   onRemove?: () => void;
+  sentMessage?: boolean;
   // SCIENT-FORK:END
-  composer?: boolean;
   commentEditor?: {
     open: boolean;
     // SCIENT-FORK:START — the Markdown editor creates a citation from the same popover.
@@ -94,10 +212,7 @@ export function AssistantCitationChip({
     onRestoreFocus?: () => void;
   };
 }) {
-  const navigate = useNavigate();
-  const sourceThread = useQuietThreadShell(
-    scopeThreadRef(citation.environmentId, citation.threadId),
-  );
+  const sourceLinkProps = useCitationSourceLinkProps(citation);
   const commentInputRef = useRef<HTMLTextAreaElement>(null);
   const commentPopupRef = useRef<HTMLDivElement>(null);
   const draftCommentRef = useRef<string | null>(null);
@@ -172,11 +287,7 @@ export function AssistantCitationChip({
     : undefined;
   // SCIENT-FORK:START — file and PDF quotes label, copy and link to their document.
   const label = composerCitationLabel(citation);
-  const documentQuote =
-    isFileCitation(citation) ||
-    isPdfCitation(citation) ||
-    isComputeCitation(citation) ||
-    isOfficeCitation(citation);
+  const documentQuote = isDocumentCitation(citation);
   const sourceName = isFileCitation(citation)
     ? citation.path
     : isPdfCitation(citation)
@@ -187,47 +298,6 @@ export function AssistantCitationChip({
           ? officeCitationPlaceLabel(citation)
           : "assistant text";
   // SCIENT-FORK:END
-  const sourceLinkProps = {
-    // SCIENT-FORK:START — file quotes label, copy and link to their file; an assistant quote
-    // takes upstream's route, which opens a side chat quote on its parent thread.
-    ...(isPdfCitation(citation) ||
-    isComputeCitation(citation) ||
-    isOfficeCitation(citation) ||
-    isFileCitation(citation)
-      ? {
-          to: "/$environmentId/$threadId" as const,
-          params: { environmentId: citation.environmentId, threadId: citation.threadId },
-          hash: isPdfCitation(citation)
-            ? pdfCitationHash(citation)
-            : isComputeCitation(citation)
-              ? computeCitationHash(citation)
-              : isOfficeCitation(citation)
-                ? officeCitationHash(citation)
-                : fileCitationHash(citation),
-          resetScroll: false,
-        }
-      : assistantCitationRoute(citation, sourceThread)),
-    "data-markdown-copy": serializeComposerCitation(citation),
-    // SCIENT-FORK:END
-    onClick: (event: ReactMouseEvent<HTMLAnchorElement>) => {
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        return;
-      }
-      event.preventDefault();
-      // SCIENT-FORK:START — a file quote opens its file at the quoted lines; a PDF quote its page;
-      // a Compute quote its run or cell.
-      if (isPdfCitation(citation)) {
-        void navigate(pdfCitationNavigation(citation));
-      } else if (isComputeCitation(citation)) {
-        void navigate(computeCitationNavigation(citation));
-      } else if (isOfficeCitation(citation)) {
-        void navigate(officeCitationNavigation(citation));
-      } else if (isFileCitation(citation)) {
-        void navigate(fileCitationNavigation(citation));
-      } else void navigate(assistantCitationNavigation(citation, sourceThread));
-      // SCIENT-FORK:END
-    },
-  };
   const composerSourceLink = (
     <Link
       {...sourceLinkProps}
@@ -242,7 +312,7 @@ export function AssistantCitationChip({
       </ContextChipLabel>
     </Link>
   );
-  // SCIENT-FORK:START — in chat, a file quote is a link chip with a hover card, not the popover.
+  // SCIENT-FORK:START — in a sent message, a document quote is a link chip with a hover card.
   const chatSourceLink = (
     <Link
       {...sourceLinkProps}
@@ -253,30 +323,8 @@ export function AssistantCitationChip({
       <ContextChipLabel className="max-w-[16em]">{label}</ContextChipLabel>
     </Link>
   );
-  if (!composer && !documentQuote) {
-    // SCIENT-FORK:END
-    return (
-      <ContextChipPopover
-        kind="citation"
-        icon={<QuoteIcon />}
-        label={label}
-        accessibleLabel={`Quoted assistant text: ${label}`}
-        // SCIENT-FORK:START — the composer-citation owner serializes both kinds.
-        copyMarkdown={serializeComposerCitation(citation)}
-        // SCIENT-FORK:END
-      >
-        <div className="flex max-h-[calc(var(--available-height)_-_1rem_-_2px)] flex-col items-start gap-3 p-1 text-sm">
-          <AssistantCitationQuote citation={citation} />
-          <PopoverClose
-            render={<Button variant="outline" size="sm" render={<Link {...sourceLinkProps} />} />}
-          >
-            <ArrowUpRightIcon aria-hidden="true" />
-            Go to source
-          </PopoverClose>
-        </div>
-      </ContextChipPopover>
-    );
-  }
+  const documentSourceLink = sentMessage ? chatSourceLink : composerSourceLink;
+  // SCIENT-FORK:END
   return (
     <ContextChip
       kind="citation"
@@ -289,25 +337,13 @@ export function AssistantCitationChip({
       data-markdown-copy={serializeComposerCitation(citation)}
     >
       {isFileCitation(citation) ? (
-        <FileCitationHoverCard
-          citation={citation}
-          trigger={composer ? composerSourceLink : chatSourceLink}
-        />
+        <FileCitationHoverCard citation={citation} trigger={documentSourceLink} />
       ) : isPdfCitation(citation) ? (
-        <PdfCitationHoverCard
-          citation={citation}
-          trigger={composer ? composerSourceLink : chatSourceLink}
-        />
+        <PdfCitationHoverCard citation={citation} trigger={documentSourceLink} />
       ) : isComputeCitation(citation) ? (
-        <ComputeCitationHoverCard
-          citation={citation}
-          trigger={composer ? composerSourceLink : chatSourceLink}
-        />
+        <ComputeCitationHoverCard citation={citation} trigger={documentSourceLink} />
       ) : isOfficeCitation(citation) ? (
-        <OfficeCitationHoverCard
-          citation={citation}
-          trigger={composer ? composerSourceLink : chatSourceLink}
-        />
+        <OfficeCitationHoverCard citation={citation} trigger={documentSourceLink} />
       ) : (
         composerSourceLink
       )}
@@ -434,36 +470,5 @@ export function AssistantCitationChip({
       ) : null}
       {/* SCIENT-FORK:END */}
     </ContextChip>
-  );
-}
-
-function AssistantCitationQuote({ citation }: { citation: AssistantCitation }) {
-  const [fade, setFade] = useState({ top: false, bottom: false });
-  const updateFade = (element: HTMLElement) => {
-    const top = element.scrollTop > 1;
-    const bottom = element.scrollHeight - element.clientHeight - element.scrollTop > 1;
-    setFade((current) =>
-      current.top === top && current.bottom === bottom ? current : { top, bottom },
-    );
-  };
-  const observeFade = (element: HTMLDivElement | null) =>
-    element ? observeResize(element, () => updateFade(element)) : undefined;
-  return (
-    <div
-      ref={observeFade}
-      onScroll={(event) => updateFade(event.currentTarget)}
-      className={cn(
-        "max-h-64 min-h-0 space-y-3 self-stretch overflow-y-auto whitespace-pre-wrap wrap-break-word",
-        getVirtualizedScrollFadeClassName(fade),
-      )}
-    >
-      <blockquote
-        className="border-l-2 border-border pl-3 text-muted-foreground"
-        dir={textDirection(citation.text)}
-      >
-        {citation.text}
-      </blockquote>
-      {citation.comment ? <p dir={textDirection(citation.comment)}>{citation.comment}</p> : null}
-    </div>
   );
 }

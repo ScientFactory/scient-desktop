@@ -1,8 +1,6 @@
-import { Check, Copy } from "lucide";
-import { PlayIcon, WrapTextIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, PlayIcon, WrapTextIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
-import { MorphIcon } from "~/components/MorphIcon";
 import { Button } from "~/components/ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useClientSettings } from "~/hooks/useSettings";
@@ -128,7 +126,7 @@ export function CodeBlockActions({
             />
           }
         >
-          <MorphIcon className="size-3" icon={copied ? Check : Copy} />
+          {copied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
         </TooltipTrigger>
         <TooltipPopup side="top">{copyLabel}</TooltipPopup>
       </Tooltip>

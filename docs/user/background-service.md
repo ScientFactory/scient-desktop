@@ -83,11 +83,13 @@ for the same data directory is stopped for the repair and started again
 afterwards, also when the repair fails. Quit the desktop app or a server you
 started by hand first: the repair refuses to touch a database that is in use.
 
-The repair can take several minutes on a large database. It rebuilds the
-database through a temporary copy, so it needs free space of about twice the
-data still in use (the database size minus the reclaimable space): once in the
-system temporary directory (on Linux and macOS, `TMPDIR`, or `/var/tmp` when it
-is not set) and once next to the database for its write-ahead log.
+The repair's time grows with the size of the whole database, not only the
+space it reclaims, and can exceed an hour on a large database or a slow disk;
+`t3 doctor` shows each step as it runs. It rebuilds the database through a
+temporary copy, so it needs free space of about twice the data still in use
+(the database size minus the reclaimable space): once in the system temporary
+directory (on Linux and macOS, `TMPDIR`, or `/var/tmp` when it is not set) and
+once next to the database for its write-ahead log.
 
 If you upgraded from an older version, its original database (`state.sqlite`)
 is kept next to the current one. Scient still reads it to bring in older

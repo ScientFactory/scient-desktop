@@ -39,7 +39,7 @@ describe("code block actions", () => {
   });
 
   // regression: 010d58e874 fix(chat): Stop reaches answers that left the screen; thoughts read quietly when expanded
-  it("draws the copy button as upstream's: muted, with the morphing icon", async () => {
+  it("draws the copy button as upstream's: muted, with lucide's copy icon", async () => {
     await using _fixture = _createFixture();
     _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
     await _setupFixture0(_fixture);
@@ -47,9 +47,8 @@ describe("code block actions", () => {
     await render(_fixture, false);
     const copy = document.querySelector<HTMLElement>('[aria-label="Copy code"]')!;
     expect(copy.dataset.variant).toBe("ghost-muted");
-    // MorphIcon draws its own svg, not lucide-react's classed icon.
-    expect(copy.querySelector("svg")).not.toBeNull();
-    expect(copy.querySelector("svg.lucide")).toBeNull();
+    // Icon morphing is gone upstream; the button draws lucide-react's icon again.
+    expect(copy.querySelector("svg.lucide")).not.toBeNull();
   });
 });
 

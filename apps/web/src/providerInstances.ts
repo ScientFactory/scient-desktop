@@ -250,21 +250,6 @@ export function resolveDefaultProviderModelSelection(
   return model ? { instanceId, model } : null;
 }
 
-/**
- * A saved unavailable provider remains visible with read-only traits; editing a fallback would overwrite it.
- * Only Automatic shows the model a new thread would select.
- */
-export function resolveDefaultModelSettingsSelection(
-  providers: ReadonlyArray<ServerProvider>,
-  stored: ModelSelection | null,
-): { readonly selection: ModelSelection | null; readonly storedUnavailable: boolean } {
-  const resolved = resolveDefaultProviderModelSelection(providers, stored);
-  // No providers reported yet says nothing about the saved one.
-  const storedUnavailable =
-    stored !== null && providers.length > 0 && resolved?.instanceId !== stored.instanceId;
-  return { selection: storedUnavailable ? stored : resolved, storedUnavailable };
-}
-
 export function resolveProjectDefaultProviderModelSelection(
   providers: ReadonlyArray<ServerProvider>,
   settings: ServerSettings,

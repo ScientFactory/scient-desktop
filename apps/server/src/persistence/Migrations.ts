@@ -108,6 +108,9 @@ import Migration0082 from "./Migrations/082_DropOrchestrationEventCorrelationInd
 import Migration0083 from "./Migrations/083_DelegatedRecoveryIndexes.ts";
 // T3's migration 80 lands at the next free ID; Scient already recorded 080-083.
 import Migration0084 from "./Migrations/084_ScheduledTaskThreadMode.ts";
+// T3's migrations 81-82 land at the next free IDs; Scient already recorded 081-084.
+import Migration0085 from "./Migrations/085_ProjectionMessageSearchText.ts";
+import Migration0086 from "./Migrations/086_TurnItemConversationIndex.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — immutable owned migration identities.
 import { validateScientMigrationLedger } from "./scientMigrationLedger.ts";
@@ -218,6 +221,9 @@ export const migrationEntries = [
   [83, "DelegatedRecoveryIndexes", Migration0083],
   // T3's migration 80 follows Scient's immutable migration sequence.
   [84, "ScheduledTaskThreadMode", Migration0084],
+  // T3's migrations 81-82 follow Scient's immutable migration sequence.
+  [85, "ProjectionMessageSearchText", Migration0085],
+  [86, "TurnItemConversationIndex", Migration0086],
   // SCIENT-FORK:END
 ] as const;
 
@@ -231,6 +237,26 @@ const makeMigrationLoader = (throughId?: number) =>
         .map(([id, name, migration]) => [`${id}_${name}`, migration]),
     ),
   );
+
+const latestMigrationId = Math.max(...migrationEntries.map(([id]) => id));
+
+// Mirrors the Migrator, which runs only ids above the highest recorded, plus the V2-preview reconciliation.
+// SCIENT-FORK: Scient's reconcileV2PreviewMigration lifts the same OrchestrationV2 rows at 53/54 to 59.
+export const hasPendingMigrations = Effect.fn("hasPendingMigrations")(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  const tables = yield* sql`
+    SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'effect_sql_migrations'
+  `;
+  if (tables.length === 0) return true;
+  const rows = yield* sql<{ readonly latestId: number | null; readonly previewRows: number }>`
+    SELECT
+      MAX(migration_id) AS latestId,
+      SUM(name = 'OrchestrationV2' AND migration_id IN (53, 54)) AS previewRows
+    FROM effect_sql_migrations
+  `;
+  const row = rows[0];
+  return (row?.latestId ?? 0) < latestMigrationId || (row?.previewRows ?? 0) > 0;
+});
 
 /**
  * Migrator run function - no schema dumping needed

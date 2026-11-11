@@ -99,6 +99,7 @@ function makeExecutorLayer(input: {
           (() => Effect.die("Pending-start interruption is not used in this fixture.")),
         interrupt: input.interrupt ?? (() => Effect.succeed("adapter-stopped" as const)),
         steer: () => Effect.void,
+        applyModelSelection: () => Effect.void,
         interruptAndAwaitTerminal: (request) =>
           record(
             request.replacementProviderSessionId === undefined
@@ -434,7 +435,7 @@ it.effect("requeues a claim when a pre-execution worker check fails", () =>
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(workerLayer),
       Effect.exit,
     );
@@ -504,7 +505,7 @@ it.effect("arms cancellation before the durable pre-execution check", () =>
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(workerLayer),
       Effect.exit,
     );
@@ -570,7 +571,7 @@ it.effect("terminalizes a process-bound claim when success settlement fails", ()
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(workerLayer),
       Effect.exit,
     );
@@ -631,7 +632,7 @@ it.effect("requeues a replay-safe claim when success settlement fails", () =>
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(workerLayer),
       Effect.exit,
     );
@@ -705,7 +706,7 @@ it.effect("keeps a process-bound executor failure retryable when retry settlemen
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(workerLayer),
       Effect.exit,
     );
@@ -776,7 +777,7 @@ it.effect("keeps a max-attempt replay-safe failure terminal when fail settlement
     );
 
     const exit = yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(workerLayer),
       Effect.exit,
     );
@@ -882,13 +883,13 @@ it.effect(
       );
       yield* Effect.gen(function* () {
         const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        assert.isTrue(yield* worker.runOnce);
+        assert.isTrue(yield* worker.runOnce());
         assert.equal(yield* Ref.get(retries), 1);
         assert.equal(yield* Ref.get(failures), 0);
         assert.equal(yield* Ref.get(successes), 0);
         assert.deepEqual(yield* Ref.get(events), []);
         yield* Ref.set(receiptReady, true);
-        assert.isTrue(yield* worker.runOnce);
+        assert.isTrue(yield* worker.runOnce());
         assert.equal(yield* Ref.get(retries), 1);
         assert.equal(yield* Ref.get(failures), 0);
         assert.equal(yield* Ref.get(successes), 1);
@@ -1045,7 +1046,7 @@ it.effect("keeps retrying a file release past the attempt budget while its files
       }),
     );
     yield* EffectWorker.OrchestrationEffectWorkerV2.pipe(
-      Effect.flatMap((worker) => worker.runOnce),
+      Effect.flatMap((worker) => worker.runOnce()),
       Effect.provide(
         EffectWorker.layerWithOptions({ workerId, maxAttempts: 5 }).pipe(
           Layer.provide(Layer.merge(outbox, executor)),

@@ -97,6 +97,10 @@ When you set this field, Scient points Claude Code at that directory with the
 `CLAUDE_CONFIG_DIR` environment variable. It does not change `HOME`, so your system keychain and
 the rest of your environment stay as they are.
 
+File paths in the `--settings` and `--append-system-prompt-file` launch arguments
+can start with `~` for the home directory of the machine running T3 Code. Any
+other relative path is read from the thread's project folder, or its worktree.
+
 Claude Code's verbose mode can stay enabled when you use Claude for text generation, including
 thread titles, branch names, commit messages, and pull request descriptions. On a remote connection,
 Scient uses the Claude configuration on the connected server.

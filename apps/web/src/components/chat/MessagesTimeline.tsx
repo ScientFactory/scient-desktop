@@ -83,15 +83,21 @@ import { LegendList, type LegendListRef } from "@legendapp/list/react";
 import { type PendingApproval, type TimelineEntry } from "../../session-logic";
 import type { CodexArtifactTemplate } from "@t3tools/shared/codexArtifactTemplates";
 import { type ChatFileAttachment, type TurnDiffSummary } from "../../types";
-import { ArrowRightIcon, BotIcon, CircleAlertIcon, MessagesSquareIcon } from "lucide-react";
-import { ChevronDown, ChevronRight } from "lucide";
-import { MorphIcon } from "~/components/MorphIcon";
+import {
+  ArrowRightIcon,
+  BotIcon,
+  CircleAlertIcon,
+  MessagesSquareIcon,
+  ChevronDownIcon,
+  ChevronRightIcon,
+} from "lucide-react";
 import { Skeleton } from "../ui/skeleton";
 import { ExpandedImagePreview } from "./ExpandedImagePreview";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
   readTimelinePosition,
   type RememberedTimelinePosition,
+  resolveDisclosureRevealScrollDelta,
 } from "./timelineScrollAnchoring";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -140,6 +146,7 @@ import {
   LiveWorkEntryTimelineRow,
   WorkGroupToggleTimelineRow,
 } from "./TimelineWorkGroupRows";
+import { ViewedImagesTimelineRow } from "./TimelineWorkEntryRow";
 import { UserMessageRow } from "./TimelineUserMessageRow";
 import {
   AssistantTimelineRow,
@@ -207,6 +214,7 @@ function TimelineListFooter({
 const EMPTY_TIMELINE_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
 
 const EMPTY_RUN_IDS: ReadonlySet<RunId> = new Set();
+const EMPTY_TIMELINE_ENTRIES: ReadonlyArray<TimelineEntry> = [];
 
 const CITED_HISTORY_LOADING: CitedHistory = { _tag: "loading" };
 
@@ -290,7 +298,7 @@ interface MessagesTimelineProps {
     readonly runId: RunId;
   }) => Promise<void>;
   supportsConversationRollback: boolean;
-  threadStartCheckpointReady?: boolean;
+  threadStartCheckpointAvailable?: boolean;
   availableRevertTurnCounts?: ReadonlySet<number> | undefined;
   onRevertToTurnCount: (targetTurnCount: number, messageId: MessageId) => void;
   // SCIENT-FORK:START — Scient fork V2: separators and fork buttons.
@@ -416,7 +424,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   workflowOpening = null,
   onForkFromRun,
   supportsConversationRollback,
-  threadStartCheckpointReady = false,
+  threadStartCheckpointAvailable = false,
   availableRevertTurnCounts,
   onRevertToTurnCount,
   // SCIENT-FORK:START
@@ -620,6 +628,83 @@ const ConversationTimeline = memo(function ConversationTimeline({
     return disclosureAnchorKey === null || row.id === disclosureAnchorKey;
   };
 
+  const disclosureRevealRef = useRef<{
+    key: string;
+    identity: string;
+    entryId: string | undefined;
+    contentKey: string | undefined;
+    ready: boolean;
+  } | null>(null);
+  const disclosureRevealFrameRef = useRef<number | null>(null);
+
+  // Anchoring keeps the toggled row still, so content that expands below it
+  // near the bottom would otherwise land under the composer.
+  const revealExpandedDisclosure = useStableCallback(() => {
+    const pending = disclosureRevealRef.current;
+    if (!pending || pending.identity !== listIdentityKey) return;
+    const state = listRef.current?.getState();
+    const element = listRef.current?.getScrollableNode();
+    const index = state?.indexByKey(pending.key);
+    const row = index === undefined ? undefined : state?.elementAtIndex(index);
+    if (!element || !(row instanceof HTMLElement)) return;
+    const viewport = element.getBoundingClientRect();
+    const entry = pending.entryId
+      ? row.querySelector<HTMLElement>(`[data-work-entry-id="${CSS.escape(pending.entryId)}"]`)
+      : null;
+    const contentIndex = pending.contentKey ? state?.indexByKey(pending.contentKey) : undefined;
+    const content = contentIndex === undefined ? null : state?.elementAtIndex(contentIndex);
+    const bounds = (entry ?? row).getBoundingClientRect();
+    const delta = resolveDisclosureRevealScrollDelta({
+      rowTop: bounds.top,
+      rowBottom: content?.getBoundingClientRect().bottom ?? bounds.bottom,
+      viewportTop: viewport.top,
+      viewportBottom: viewport.bottom,
+      composerOverlayHeight: contentInsetEndAdjustment,
+      anchorOffset: CHAT_TIMELINE_ANCHOR_OFFSET,
+    });
+    // Nested lists can finish measuring before their height reaches the outer scroller.
+    if (pending.ready && element.scrollTop + delta <= element.scrollHeight - element.clientHeight) {
+      disclosureRevealRef.current = null;
+    }
+    if (delta > 0) {
+      // SCIENT-FORK: the timeline reads reduced motion where it scrolls, not from a hook.
+      const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      element.scrollBy({ top: delta, behavior: prefersReducedMotion ? "auto" : "smooth" });
+    }
+  });
+  const scheduleDisclosureReveal = () => {
+    if (disclosureRevealFrameRef.current !== null) {
+      cancelAnimationFrame(disclosureRevealFrameRef.current);
+    }
+    disclosureRevealFrameRef.current = requestAnimationFrame(() => {
+      disclosureRevealFrameRef.current = null;
+      revealExpandedDisclosure();
+    });
+  };
+
+  const preserveDisclosurePosition = (
+    anchorKey: string,
+    reveal?: { readonly entryId?: string | undefined; readonly contentKey?: string | undefined },
+  ) => {
+    const list = listRef.current;
+    disclosureRevealRef.current = null;
+    // SCIENT-FORK:START — Scient's toggle keeps the row's place (above); the reveal follows it.
+    suspendEndScrollMaintenanceForDisclosure(anchorKey);
+    // SCIENT-FORK:END
+    // An anchor ends end-follow until the reader scrolls, so a streaming turn keeps the live end.
+    if (!list || (isWorking && list.getState().isFollowingEnd)) return;
+    if (reveal) {
+      disclosureRevealRef.current = {
+        key: anchorKey,
+        identity: listIdentityKey,
+        entryId: reveal.entryId,
+        contentKey: reveal.contentKey,
+        ready: false,
+      };
+    }
+  };
+
+  // Turn and attempt folds reveal later rows rather than growing their own row.
   const onToggleTurnFold = (runId: RunId) => {
     suspendEndScrollMaintenanceForDisclosure(`turn-fold:${runId}`);
     setExpandedRunIds((existing) => {
@@ -633,7 +718,10 @@ const ConversationTimeline = memo(function ConversationTimeline({
     });
   };
   const onToggleWorkGroup = (groupId: string, anchorKey: string) => {
-    suspendEndScrollMaintenanceForDisclosure(anchorKey);
+    preserveDisclosurePosition(
+      anchorKey,
+      expandedWorkGroupIds.has(groupId) ? undefined : { contentKey: `${groupId}:details` },
+    );
     setExpandedWorkGroupIds((existing) => {
       const next = new Set(existing);
       if (next.has(groupId)) {
@@ -686,6 +774,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
   }, [latestRun, listIdentityKey]);
 
   const preferredToolCallVisibility = useClientSettings((settings) => settings.toolCallVisibility);
+  const screenReaderAnnouncements = useClientSettings(
+    (settings) => settings.screenReaderAnnouncements,
+  );
   const toolCallVisibility =
     findActive && preferredToolCallVisibility === "zen" ? "hideAll" : preferredToolCallVisibility;
   const revealedMessageId = citationRequest?.citation.messageId ?? null;
@@ -807,7 +898,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     contextTransfers,
     subagentWorkflowIds,
     // SCIENT-FORK:END
-    threadStartCheckpointReady,
+    threadStartCheckpointAvailable,
     availableRevertTurnCounts,
     worktreeSetup,
     toolCallVisibility,
@@ -1205,6 +1296,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // then, keep checking every frame.
     const scrollNow = viewport?.scrollTop ?? null;
     if (readerInputRef.current) {
+      // The reader's own scrolling ends a pending expanded-row reveal.
+      disclosureRevealRef.current = null;
       const still =
         !scrollbarHeldRef.current &&
         scrollNow !== null &&
@@ -1334,7 +1427,21 @@ const ConversationTimeline = memo(function ConversationTimeline({
     onToggleTurnFold,
     onToggleAttemptFold,
     onToggleWorkGroup,
-    onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
+    onToggleWorkEntry: (anchorKey, collapsed, entryId) =>
+      preserveDisclosurePosition(anchorKey, collapsed ? undefined : { entryId }),
+    onWorkEntryContentReady: (anchorKey, entryId) => {
+      const pending = disclosureRevealRef.current;
+      if (
+        !pending ||
+        pending.identity !== listIdentityKey ||
+        (pending.contentKey === undefined
+          ? pending.key !== anchorKey || pending.entryId !== entryId
+          : pending.contentKey !== anchorKey)
+      )
+        return;
+      pending.ready = pending.contentKey === undefined;
+      scheduleDisclosureReveal();
+    },
     // SCIENT-FORK:START
     onToggleSpawnRow,
     agentPanelModel: agentPanelModel ?? EMPTY_AGENT_PANEL_MODEL,
@@ -1395,6 +1502,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
       runId={announcedRun?.runId ?? null}
       runStatus={announcedRun?.status ?? null}
       detailBehind={detailBehindShell}
+      level={screenReaderAnnouncements}
+      entries={screenReaderAnnouncements === "status" ? EMPTY_TIMELINE_ENTRIES : timelineEntries}
+      workspaceRoot={workspaceRoot}
     />
   );
   const listHeaderLeadingContent =
@@ -1436,6 +1546,27 @@ const ConversationTimeline = memo(function ConversationTimeline({
   const setTimelineList = useStableCallback((list: LegendListRef | null) => {
     listRef.current = list;
     registerTimeline?.(list?.getScrollableNode() ?? null);
+    // SCIENT-FORK:START — Scient has no timeline viewport model, so the expanded-row reveal
+    // listens to the list's size here and stops on the reader's own scrolling.
+    let contentSizeFrame: number | null = null;
+    const stopListeningToContentSize = list?.getState().listen("totalSize", () => {
+      if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
+      contentSizeFrame = requestAnimationFrame(() => {
+        contentSizeFrame = null;
+        revealExpandedDisclosure();
+      });
+    });
+    return () => {
+      stopListeningToContentSize?.();
+      if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
+      if (disclosureRevealFrameRef.current !== null) {
+        cancelAnimationFrame(disclosureRevealFrameRef.current);
+        disclosureRevealFrameRef.current = null;
+      }
+      listRef.current = null;
+      registerTimeline?.(null);
+    };
+    // SCIENT-FORK:END
   });
 
   useThreadFindPositionReader({
@@ -1747,7 +1878,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   row.kind === "event" ||
                   row.kind === "attempt-fold" ||
                   row.kind === "html-render" ||
-                  row.kind === "mcp-app"
+                  row.kind === "mcp-app" ||
+                  row.kind === "viewed-images"
                 ? "pb-2"
                 : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
@@ -1801,6 +1933,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
       {row.kind === "html-render" ? <HtmlRenderTimelineRow row={row} /> : null}
+      {row.kind === "viewed-images" ? <ViewedImagesTimelineRow row={row} /> : null}
       {row.kind === "mcp-app" ? <McpAppTimelineRow row={row} /> : null}
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
@@ -1971,7 +2104,11 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
             {row.label}
             {error ? ` · ${error}` : ""}
           </span>
-          <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
+          {row.expanded ? (
+            <ChevronDownIcon className="size-3.5" />
+          ) : (
+            <ChevronRightIcon className="size-3.5" />
+          )}
         </button>
         <TimelineRowTimestamp
           createdAt={row.createdAt}
@@ -2001,10 +2138,11 @@ function AttemptFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "at
         aria-busy={loading}
         className="flex w-full cursor-pointer select-none items-center gap-2 rounded-md border border-border/60 bg-muted/20 px-2.5 py-2 text-left transition-colors hover:bg-muted/35 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       >
-        <MorphIcon
-          className="size-3.5 shrink-0 text-muted-foreground"
-          icon={row.expanded ? ChevronDown : ChevronRight}
-        />
+        {row.expanded ? (
+          <ChevronDownIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRightIcon className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
         <span className="text-xs font-medium text-foreground/80">
           {row.label}
           {error ? ` · ${error}` : ""}

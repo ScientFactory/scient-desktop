@@ -14,7 +14,9 @@ import { page, userEvent } from "vite-plus/test/browser";
 import { dismissContextMenu, showContextMenuFallback } from "~/contextMenuFallback";
 import { act, render } from "../../../test/render";
 
+import { isMacPlatform } from "~/lib/utils";
 import FileBrowserPanel from "./FileBrowserPanel";
+import { dispatchPreviewAction } from "../preview/previewActionBus";
 // SCIENT-FORK:START
 import { resetOverleafStoreForTests } from "~/scient/overleaf/overleafStore";
 // SCIENT-FORK:END
@@ -55,7 +57,6 @@ vi.mock("~/fileContextMenu", () => ({
 }));
 vi.mock("~/localApi", () => ({ readLocalApi: () => files.localApi }));
 vi.mock("~/components/ui/toast", () => ({ toastManager: { add: vi.fn() } }));
-vi.mock("~/components/MorphIcon", () => ({ MorphIcon: () => null }));
 // SCIENT-FORK:START — Overleaf links of the workspace, for the Connect dialog and the marks
 const overleaf = vi.hoisted(() => ({ folders: [] as string[] }));
 vi.mock("~/scient/overleaf/client", async (importOriginal) => ({
@@ -459,4 +460,31 @@ describe("Files panel search", () => {
     overleaf.folders = [];
   });
   // SCIENT-FORK:END
+
+  it("mod+f from a tree row, or the panel find command, focuses the file search", async () => {
+    setup();
+    files.directories = { "": [entry("README.md")] };
+    const container = document.createElement("div");
+    // The tree virtualizes its rows, so it needs a real viewport to render any.
+    container.style.cssText = "display: flex; flex-direction: column; width: 320px; height: 480px;";
+    await using _screen = await render(<FileBrowserPanel {...props} answersPanelFind />, {
+      container,
+    });
+    const row = () =>
+      container
+        .querySelector("file-tree-container")
+        ?.shadowRoot?.querySelector<HTMLElement>('[data-item-path="README.md"]') ?? null;
+    await vi.waitFor(() => expect(row()).not.toBeNull());
+    row()!.focus();
+
+    const modifier = isMacPlatform(navigator.platform) ? "Meta" : "Control";
+    await userEvent.keyboard(`{${modifier}>}f{/${modifier}}`);
+
+    const search = page.getByRole("searchbox", { name: "Search Test project files" });
+    await expect.element(search).toHaveFocus();
+
+    (search.element() as HTMLElement).blur();
+    dispatchPreviewAction("find");
+    await expect.element(search).toHaveFocus();
+  });
 });

@@ -2,7 +2,14 @@
  * Each Scratch thread gets its own folder; named projects get a new Git repository.
  * @module ManagedProjectFolders
  */
-import { CommandId, ProjectId, type ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  GitCommandError,
+  type GitManagerServiceError,
+  ProjectId,
+  type ThreadId,
+  VcsProcessSpawnError,
+} from "@t3tools/contracts";
 import { newProjectFolderName } from "@t3tools/shared/path";
 // SCIENT-FORK:START — product admission policy.
 import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
@@ -74,6 +81,14 @@ export class ScratchProjectError extends Schema.TaggedError<ScratchProjectError>
 
 export type ScratchError = ScratchUnavailableError | ScratchFolderError | ScratchProjectError;
 
+// The spawner checks cwd before spawning, so NotFound from spawn itself means a missing executable.
+const isMissingExecutable = (cause: unknown) =>
+  PlatformError.isPlatformError(cause) &&
+  cause.reason._tag === "NotFound" &&
+  cause.reason.method === "spawn";
+
+const isGitCommandError = Schema.is(GitCommandError);
+
 export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFolderError>()(
   "NamedProjectFolderError",
   {
@@ -82,7 +97,9 @@ export class NamedProjectFolderError extends Schema.TaggedError<NamedProjectFold
   },
 ) {
   override get message(): string {
-    return "Failed to create the project folder.";
+    return isGitCommandError(this.cause) && isMissingExecutable(this.cause.cause)
+      ? "Git isn't installed on this machine. Install Git to create a project."
+      : "Failed to create the project folder.";
   }
 }
 

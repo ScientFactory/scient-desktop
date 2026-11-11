@@ -163,6 +163,11 @@ newer release; see [Run a Scient server without the desktop app](./background-se
 4. If a desktop update cannot be checked or downloaded, install the same or a
    newer official release manually; do not remove the existing data directory.
 
+A background service installed by an older release refuses **Update server**
+until you update it once on the host and let that update restart it. If you
+decline the restart, the service can stay down after a crash or reboot until you
+run `scient service restart`.
+
 Only one server can use a Scient data directory at a time. If startup reports
 that another server owns it, stop that server before retrying, or use a separate
 data directory and pair with the running server.
