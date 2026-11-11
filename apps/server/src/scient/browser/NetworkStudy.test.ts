@@ -44,9 +44,14 @@ const fakeRequest = (url: string, headers: Record<string, string> = {}) =>
     failure: () => ({ errorText: `net::ERR_FAILED ${url}` }),
   }) as unknown as Request;
 
-/** The tab's CDP session: the test plays the browser's Network events. */
+type GetBody = () => Promise<{ readonly body: string; readonly base64Encoded: boolean }>;
+
+/** The tab's CDP session: the test plays the browser's Network events and bodies. */
 const fakeCdp = () => {
   const handlers = new Map<string, (event: unknown) => void>();
+  const bodies = new Map<string, GetBody>();
+  /** The request ids whose bodies were read, in order. */
+  const reads: string[] = [];
   let next = 0;
   const emit = (name: string, event: unknown) => handlers.get(name)?.(event);
   const start = (url: string, method = "GET") => {
@@ -58,41 +63,50 @@ const fakeCdp = () => {
     emit("Network.responseReceived", { requestId, response: { status } });
     emit("Network.dataReceived", { requestId, dataLength: bytes });
     emit("Network.loadingFinished", { requestId });
+    return requestId;
   };
   return {
     session: {
       on: (name: string, handler: (event: unknown) => void) => handlers.set(name, handler),
-      send: async () => ({}),
+      send: async (method: string, params?: { readonly requestId?: string }) => {
+        if (method !== "Network.getResponseBody") return {};
+        const id = params?.requestId ?? "";
+        reads.push(id);
+        return (
+          bodies.get(id) ?? (async () => ({ body: '{"items":[1]}', base64Encoded: false }))
+        )();
+      },
     } as unknown as CDPSession,
+    reads,
+    /** What the browser answers when the body of `requestId` is asked for. */
+    body: (requestId: string, get: GetBody) => bodies.set(requestId, get),
     emit,
     start,
     end,
-    /** One request the browser loaded whole, with `bytes` decoded body bytes. */
+    /** One request the browser loaded whole, with `bytes` decoded body bytes; its id. */
     loaded: (url: string, bytes: number, status = 200) => end(start(url), bytes, status),
   };
 };
 
-/** A JSON answer sent compressed from another site; reads of its body are counted in `read`. */
+/** Every body Playwright was asked for: never, as its read may fetch the address again. */
+const playwrightReads: string[] = [];
+
+/** A JSON answer sent compressed from another site. */
 const answer = (
   url: string,
-  read: string[],
   options: {
-    readonly size?: number;
     readonly method?: string;
     readonly frame?: object;
-    readonly body?: () => Promise<Buffer>;
     /** Sent uncompressed. */
     readonly plain?: boolean;
     /** When the browser says the answer has all come. */
     readonly finished?: Promise<null>;
-    readonly headers?: Readonly<Record<string, string>>;
   } = {},
 ) => {
   const request = { ...fakeRequest(url), method: () => options.method ?? "GET" } as Request;
   const headers = {
     "content-type": "application/json",
     ...(options.plain === true ? {} : { "content-encoding": "gzip" }),
-    ...options.headers,
   };
   return {
     request,
@@ -104,13 +118,10 @@ const answer = (
       allHeaders: async () => headers,
       status: () => 200,
       finished: () => options.finished ?? Promise.resolve(null),
-      body:
-        options.body ??
-        (async () => {
-          read.push(url);
-          const size = options.size ?? 2_000;
-          return Buffer.from(JSON.stringify({ items: "x".repeat(Math.max(0, size - 13)) }));
-        }),
+      body: async () => {
+        playwrightReads.push(url);
+        return Buffer.from("{}");
+      },
     } as unknown as Response,
   };
 };
@@ -176,7 +187,7 @@ describe("the network study", () => {
     }
   });
 
-  it("reads a body only when the browser's count for it is certain", async () => {
+  it("reads a body only through its own count, by its request id", async () => {
     const MB = 1024 * 1024;
     const API = "https://api.other.test";
     type Cdp = ReturnType<typeof fakeCdp>;
@@ -184,39 +195,53 @@ describe("the network study", () => {
       readonly path: string;
       /** The answer's own address, when not `${API}${path}`. */
       readonly url?: string;
-      readonly browser: (cdp: Cdp, page: ReturnType<typeof fakePage>) => void;
+      /** The browser's events; the id of the request whose body is read, if one is. */
+      readonly browser: (cdp: Cdp, page: ReturnType<typeof fakePage>) => string | void;
       readonly beforeCounting?: (cdp: Cdp) => void;
-      /** After the answer's size was settled once (by a first detail). */
+      /** After the answer's count was settled once (by a first detail). */
       readonly afterSettled?: (cdp: Cdp) => void;
       /** After the answer arrived, before the browser says it has all come. */
       readonly beforeFinished?: (cdp: Cdp) => void;
-      readonly headers?: Readonly<Record<string, string>>;
-      /** Whether its body is read from the browser; as `shown` unless said. */
-      readonly reads?: boolean;
       readonly frame?: object;
       readonly method?: string;
       readonly plain?: boolean;
-      readonly shown: boolean;
+      /** The body shown, when it is, without whitespace. */
+      readonly shown?: string;
     }> = [
-      // The page says 1 byte for everything; two loads of one address: the larger count holds.
+      // Counted, small, compressed, from another site: read by its own request id.
+      {
+        path: "/works",
+        browser: (cdp) => cdp.loaded(`${API}/works`, 2_000),
+        shown: '{"items":[1]}',
+      },
+      // Two requests for one address: which is this answer's can't be told, so neither is read.
       {
         path: "/twice",
         browser: (cdp) => {
           cdp.loaded(`${API}/twice`, 1_000);
-          cdp.loaded(`${API}/twice`, 64 * MB);
+          cdp.loaded(`${API}/twice`, 1_000);
         },
-        shown: false,
+      },
+      // Five counted bytes that decode to no text (FF FE 00 D8 00 in UTF-16LE): the browser
+      // answers with exactly that, empty, and nothing else is fetched.
+      {
+        path: "/no-text",
+        browser: (cdp) => {
+          const id = cdp.loaded(`${API}/no-text`, 5);
+          cdp.body(id, async () => ({ body: "", base64Encoded: false }));
+          return id;
+        },
+        shown: "",
       },
       // A subframe in its own process is counted on another session: the main frame's count of
       // the same address is not borrowed.
       {
         path: "/subframe",
-        browser: (cdp) => cdp.loaded(`${API}/subframe`, 1_000),
+        browser: (cdp) => void cdp.loaded(`${API}/subframe`, 1_000),
         frame: { name: "subframe" },
-        shown: false,
       },
       // A dedicated worker's answers look like the main frame's but are counted on its own
-      // session: once the page has had one, none of its answers is matched, sent plain or not.
+      // session: once the page has had one, none of its answers is read, sent plain or not.
       {
         path: "/worker",
         browser: (cdp, page) => {
@@ -224,7 +249,6 @@ describe("the network study", () => {
           cdp.loaded(`${API}/worker`, 1_000);
         },
         plain: true,
-        shown: false,
       },
       // A redirect: the count starts again at the address it ends at.
       {
@@ -235,9 +259,9 @@ describe("the network study", () => {
             requestId: id,
             request: { url: `${API}/moved`, method: "GET" },
           });
-          cdp.end(id, 2_000);
+          return cdp.end(id, 2_000);
         },
-        shown: true,
+        shown: '{"items":[1]}',
       },
       {
         path: "/failed",
@@ -246,16 +270,14 @@ describe("the network study", () => {
           cdp.emit("Network.dataReceived", { requestId: id, dataLength: 1_000 });
           cdp.emit("Network.loadingFailed", { requestId: id });
         },
-        shown: false,
       },
       // From the cache: the browser's status differs from the answer's, so nothing matches.
-      { path: "/cached", browser: (cdp) => cdp.loaded(`${API}/cached`, 2_000, 304), shown: false },
+      { path: "/cached", browser: (cdp) => void cdp.loaded(`${API}/cached`, 2_000, 304) },
       // A blob: address the session never loaded. (Playwright reports no data: requests at all.)
       {
         path: "/blob",
         url: "blob:https://api.other.test/7d1e2c64-5a1b-4f7e-9c3d-0b6a8e2f4c11",
         browser: () => undefined,
-        shown: false,
       },
       // Begun before counting: its end arrives after, and is not counted from a missed start.
       {
@@ -270,81 +292,30 @@ describe("the network study", () => {
           cdp.emit("Network.dataReceived", { requestId: "early", dataLength: 1_000 });
           cdp.emit("Network.loadingFinished", { requestId: "early" });
         },
-        shown: false,
       },
       // A custom method named like a known secret, uncounted: its note never shows it raw.
-      { path: "/custom", browser: () => undefined, method: "tab-cookie-77", shown: false },
-      // A large body still loading while many others finish keeps its count: a small later load
-      // of the same address can't stand in for it.
-      {
-        path: "/evicted",
-        browser: (cdp) => {
-          const large = cdp.start(`${API}/evicted`);
-          for (let index = 0; index <= 400; index += 1) cdp.loaded(`${API}/other/${index}`, 10);
-          cdp.loaded(`${API}/evicted`, 1_000);
-          cdp.end(large, 64 * MB);
-        },
-        shown: false,
-      },
-      // An old answer whose own count has since aged out: a newer, small count of the same
+      { path: "/custom", browser: () => undefined, method: "tab-cookie-77" },
+      // An old answer whose own 64 MB count has since aged out: a newer, small count of the same
       // address doesn't stand in for it.
       {
         path: "/aged-out",
-        browser: (cdp) => cdp.loaded(`${API}/aged-out`, 64 * MB),
+        browser: (cdp) => void cdp.loaded(`${API}/aged-out`, 64 * MB),
         afterSettled: (cdp) => {
           for (let index = 0; index <= 400; index += 1) cdp.loaded(`${API}/other/${index}`, 10);
           cdp.loaded(`${API}/aged-out`, 1_000);
         },
-        shown: false,
       },
-      // Its own count ages out between the answer and its end, a newer small one taking its
+      // Its own 64 MB count ages out between the answer and its end, a newer small one taking its
       // place: the count pinned when the answer came still holds.
       {
         path: "/pinned",
-        browser: (cdp) => cdp.start(`${API}/pinned`),
+        browser: (cdp) => void cdp.start(`${API}/pinned`),
         beforeFinished: (cdp) => {
           cdp.end("cdp-1", 64 * MB);
           for (let index = 0; index <= 400; index += 1) cdp.loaded(`${API}/other/${index}`, 10);
           cdp.loaded(`${API}/pinned`, 1_000);
         },
-        shown: false,
       },
-      // HEAD has no body, whatever its length says: shown empty, never read (Playwright would
-      // fetch the address in full).
-      {
-        path: "/head",
-        browser: (cdp) => cdp.end(cdp.start(`${API}/head`, "HEAD"), 10),
-        method: "HEAD",
-        headers: { "content-length": "1234" },
-        shown: true,
-        reads: false,
-      },
-      {
-        path: "/empty",
-        browser: (cdp) => cdp.loaded(`${API}/empty`, 0),
-        shown: true,
-        reads: false,
-      },
-      // A body that may come back as no text while the answer declares a length makes Playwright
-      // fetch the address again in full: an empty answer beside a full one at one address, or a
-      // lone byte-order mark. Left out.
-      {
-        path: "/changing",
-        browser: (cdp) => {
-          cdp.loaded(`${API}/changing`, 1_000);
-          cdp.loaded(`${API}/changing`, 0);
-        },
-        headers: { "content-length": "1000" },
-        shown: false,
-      },
-      {
-        path: "/bom",
-        browser: (cdp) => cdp.loaded(`${API}/bom`, 3),
-        headers: { "content-length": "3" },
-        shown: false,
-      },
-      // Counted, small, compressed, from another site: shown.
-      { path: "/works", browser: (cdp) => cdp.loaded(`${API}/works`, 2_000), shown: true },
     ];
     for (const item of cases) {
       const page = fakePage();
@@ -352,19 +323,16 @@ describe("the network study", () => {
       const cdp = fakeCdp();
       item.beforeCounting?.(cdp);
       await study.watch(cdp.session);
-      item.browser(cdp, page);
-      const read: string[] = [];
+      const own = item.browser(cdp, page);
       const finished = Promise.withResolvers<null>();
-      const { request, response } = answer(item.url ?? `${API}${item.path}`, read, {
+      const { request, response } = answer(item.url ?? `${API}${item.path}`, {
         ...(item.frame === undefined ? {} : { frame: item.frame }),
         ...(item.method === undefined ? {} : { method: item.method }),
         ...(item.plain === undefined ? {} : { plain: item.plain }),
-        ...(item.headers === undefined ? {} : { headers: item.headers }),
         finished: finished.promise,
       });
       study.onRequest(request);
       study.onResponse(response);
-      // regression: the counts were chosen only once the answer had all come.
       item.beforeFinished?.(cdp);
       finished.resolve(null);
       const [listed] = await study.list();
@@ -372,21 +340,22 @@ describe("the network study", () => {
         await study.detail(listed!.id);
         item.afterSettled(cdp);
       }
-      // regression: sizes were matched again at each read, so a newer count could stand in.
       const detail = await study.detail(listed!.id);
-      expect({ path: item.path, shown: detail?.responseBody !== undefined }).toEqual({
+      // Compared without the layout the study gives JSON.
+      expect({ path: item.path, shown: detail?.responseBody?.replace(/\s/gu, "") }).toEqual({
         path: item.path,
         shown: item.shown,
       });
-      expect({ path: item.path, read: read.length > 0 }).toEqual({
+      // regression: Playwright's read could fetch the address again when a body had no text.
+      expect({ path: item.path, read: [...new Set(cdp.reads)] }).toEqual({
         path: item.path,
-        read: item.reads ?? item.shown,
+        read: item.shown === undefined ? [] : [own],
       });
-      // regression: the left-out note carried the request's method as it was.
       expect(JSON.stringify(detail)).not.toContain("tab-cookie-77");
-      if (!item.shown && item.method === undefined)
+      if (item.shown === undefined && item.method === undefined)
         expect(detail?.note).toContain("preview_evaluate");
     }
+    expect(playwrightReads).toEqual([]);
   });
 
   it("reserves 3 × the count for every read at once, as text can grow when decoded", async () => {
@@ -394,40 +363,37 @@ describe("the network study", () => {
     const study = networkStudyOf(fakePage());
     const cdp = fakeCdp();
     await study.watch(cdp.session);
-    const started: string[] = [];
     const pending: Array<() => void> = [];
     // Windows-1252 text: "é" is one counted byte, two once read as UTF-8.
-    const latin = (counted: number) => Buffer.from("é".repeat(counted), "utf8");
-    const slow = (url: string, counted: number) => () =>
-      new Promise<Buffer>((resolve) => {
-        started.push(url);
-        pending.push(() => resolve(latin(counted)));
-      });
+    const latin = (counted: number) => "é".repeat(counted);
     // Twelve answers counted at 640 KB, read as they arrive and not yet done: 12 × 1.875 MB.
     for (let index = 0; index < 12; index += 1) {
       const url = `https://api.other.test/${index}`;
-      cdp.loaded(url, 640 * KB);
-      const { request, response } = answer(url, [], { body: slow(url, 640 * KB) });
+      const id = cdp.loaded(url, 640 * KB);
+      cdp.body(
+        id,
+        () =>
+          new Promise((resolve) =>
+            pending.push(() => resolve({ body: latin(640 * KB), base64Encoded: false })),
+          ),
+      );
+      const { request, response } = answer(url);
       study.onRequest(request);
       study.onResponse(response);
     }
-    await vi.waitFor(() => expect(started).toHaveLength(12));
+    await vi.waitFor(() => expect(cdp.reads).toHaveLength(12));
     // An agent asks for one counted at 600 KB meanwhile: 1.76 MB more would pass 24 MB.
     const url = "https://api.other.test/asked";
-    cdp.loaded(url, 600 * KB);
-    const asked = answer(url, [], {
-      body: async () => {
-        started.push(url);
-        return latin(600 * KB);
-      },
-    });
-    study.onRequest(asked.request);
-    study.onResponse(asked.response);
+    const asked = cdp.loaded(url, 600 * KB);
+    const { request, response } = answer(url);
+    study.onRequest(request);
+    study.onResponse(response);
     const listed = await study.list();
     const detail = await study.detail(listed.find((entry) => entry.url === url)!.id);
     // regression: reads were reserved at the count, and decoding Windows-1252 grows it.
     expect(detail?.note).toContain("reading other bodies now");
-    expect(started).not.toContain(url);
+    expect(cdp.reads).not.toContain(asked);
     for (const finish of pending) finish();
+    expect(playwrightReads).toEqual([]);
   });
 });

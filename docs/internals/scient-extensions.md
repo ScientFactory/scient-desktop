@@ -621,17 +621,23 @@ Best effort: values named like secrets, and unknown token-looking values, are hi
 HTML and XML (with CDATA and `srcset`), multipart, forms, and JSON (and JSON inside JSON strings
 or `data-` attributes, one level deep). A format Scient cannot parse is left out.
 
-Bodies are read from the browser only when their decoded size is known first, from the tab's
-own CDP session (`Network.dataReceived` byte counts per request, final at `loadingFinished`),
-never from the page. Only the main frame's answers are matched: a subframe in its own process
-or a service worker is counted on another session. Playwright reports a dedicated worker's
-answers as the main frame's, and its bytes are counted on the worker's own session: once a page
-has had a dedicated worker, all its bodies are left out. Only requests the session saw from
-their start have a count, and a count still loading is never dropped to make room. Each answer's counts are chosen as it arrives (method, address and status), so none can age out before it is used, and its size is settled once it finishes: the largest of them, kept with the request. Reads use only that size, and without one the body is left out. A HEAD answer or a zero count is shown empty without a read. Playwright fetches the address again, unbounded, when a body comes back as no text while the answer declares a length; only an empty body or a lone byte-order mark (at most 4 bytes) does, so an answer that declares a length and has any count of 4 bytes or less is left out. Text comes back as UTF-8, up to 3 bytes per counted byte, so every read
-reserves and is capped at 3 × its count, within 24 MB at once, the same for bodies read as they
-arrive and for an agent's request. A left-out GET body's note, masked like any other output,
-tells the agent to fetch it in the page with `preview_evaluate`, streaming and stopping at
-1 MiB; other methods are never repeated.
+Bodies are read from the browser only through the tab's own CDP session, never with
+Playwright's `response.body()`, which may fetch the address again in full when a body comes back
+as no text. The session counts each request's decoded bytes (`Network.dataReceived`, final at
+`loadingFinished`); the page's own numbers are never used. Only the main frame's answers are
+matched: a subframe in its own process or a service worker is counted on another session.
+Playwright reports a dedicated worker's answers as the main frame's, and its bytes are counted on
+the worker's own session: once a page has had a dedicated worker, all its bodies are left out.
+Only requests the session saw from their start have a count, and a count still loading is never
+dropped to make room. As an answer arrives, the requests with its method, address and status are
+pinned; exactly one must match, and it is then the answer's own. Its count is settled once the
+answer finishes and kept with the request, and the body is read by that request's id with
+`Network.getResponseBody`, which answers with exactly that body (empty is empty) or an error.
+None, or more than one, and the body is left out. Text comes back as UTF-8, up to 3 bytes per
+counted byte, so every read reserves and is capped at 3 × its count, within 24 MB at once, the
+same for bodies read as they arrive and for an agent's request. A left-out GET body's note,
+masked like any other output, tells the agent to fetch it in the page with `preview_evaluate`,
+streaming and stopping at 1 MiB; other methods are never repeated.
 
 The work is linear. Bodies are cut to their output limit before masking (32 KB shown, 1 MB saved
 to a file), the tokenizers use no recursion, and nesting past the limits leaves the body out with

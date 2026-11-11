@@ -61,8 +61,8 @@ interface Entry {
   status: number | null;
   failed: string | undefined;
   finishedAt: number | undefined;
-  /** Its body's decoded size, resolved once when its answer finished; reads use only this. */
-  size: Promise<number | undefined> | undefined;
+  /** Its own count, settled once when its answer finished; its body is read only through it. */
+  own: Promise<Counted | undefined> | undefined;
   body: Buffer | undefined;
 }
 
@@ -123,6 +123,8 @@ const NONE: ReadonlyArray<string> = [];
 
 /** The browser's own count of one request's decoded body bytes, from the tab's CDP session. */
 interface Counted {
+  /** The CDP request id its body is read by. */
+  readonly id: string;
   readonly url: string;
   readonly method: string;
   status: number | undefined;
@@ -141,8 +143,6 @@ const KEEP_COUNTED = 2 * KEEP;
 const GROWTH = 3;
 /** Most bytes being read from the browser at once, for every reason. */
 const READING_BYTES = 24 * 1024 * 1024;
-/** The most bytes that can decode to no text: a UTF-32 byte-order mark. */
-const MAY_DECODE_TO_NOTHING = 4;
 
 const withoutFragment = (url: string) => {
   const at = url.indexOf("#");
@@ -233,12 +233,15 @@ const makeNetworkStudy = (page: Page) => {
   let hadWorker = safely(() => page.workers().length > 0, true);
   safely(() => page.on("worker", () => (hadWorker = true)), undefined);
 
+  /** The session counting the tab's requests; bodies are read through it, by request id. */
+  let session: CDPSession | undefined;
+
   /**
-   * The decoded size, settled once when the answer finishes: the main frame's requests the session
-   * saw from their start, same method, address and status, the largest count; never the page's.
-   * Called as the answer arrives, so its records are pinned before any can age out.
+   * The answer's own count, settled once it finishes: the one request of the main frame the
+   * session saw from its start with the same method, address and status, chosen as the answer
+   * arrives. None, or more than one, and the body is never read. The page's numbers are never used.
    */
-  const bodySize = (response: Response): Promise<number | undefined> => {
+  const ownCount = (response: Response): Promise<Counted | undefined> => {
     // A subframe in its own process, or a service worker, is counted elsewhere: never borrow.
     if (!safely(() => response.frame() === page.mainFrame(), false) || hadWorker)
       return Promise.resolve(undefined);
@@ -251,40 +254,27 @@ const makeNetworkStudy = (page: Page) => {
         item.method === method &&
         (item.status === undefined || item.status === status),
     );
-    return candidates.length === 0 ? Promise.resolve(undefined) : settledSize(response, candidates);
+    return candidates.length === 1 ? settled(response, candidates[0]!) : Promise.resolve(undefined);
   };
 
-  /** The largest of the pinned counts once the answer and every count are done. */
-  const settledSize = async (response: Response, candidates: ReadonlyArray<Counted>) => {
+  const settled = async (response: Response, own: Counted) => {
     if ((await response.finished()) !== null) return undefined;
-    const settled = await within(
-      () => Promise.all(candidates.map((item) => item.settled)).then(() => true),
-      false,
-      HEADERS_MS,
-    );
-    if (!settled) return undefined;
-    const sizes = candidates
-      .filter((item) => item.outcome === "finished")
-      .map((item) => item.bytes);
-    if (sizes.length === 0) return undefined;
-    // Playwright fetches the address again in full, unbounded, when a body comes back as no text
-    // while the answer declares a length. Only an empty body or a lone byte-order mark (at most
-    // 4 bytes) decodes to no text, so such an answer is never read.
-    const declared = Number(safely(() => response.headers()["content-length"], undefined));
-    if (declared > 0 && sizes.some((size) => size <= MAY_DECODE_TO_NOTHING)) return undefined;
-    return Math.max(...sizes);
+    const done = await within(() => own.settled.then(() => true), false, HEADERS_MS);
+    return done && own.outcome === "finished" ? own : undefined;
   };
 
-  /** Reads a body of `bound` bytes at most, reserved first so reads at once stay bounded. */
-  const readBounded = async (response: Response, bound: number) => {
-    // Asked for an empty body, Playwright fetches the address again in full: never ask.
-    const method = safely(() => response.request().method(), undefined);
-    if (method === undefined) return undefined;
-    if (bound === 0 || method === "HEAD") return Buffer.alloc(0);
-    if (reading + bound > READING_BYTES) return undefined;
+  /**
+   * Reads a counted body by its request id, reserved first so reads at once stay bounded. The
+   * browser answers with exactly that body or an error; Playwright's own read may fetch the
+   * address again in full when a body comes back as no text, so it is never used.
+   */
+  const readOwn = async (own: Counted, bound: number) => {
+    if (session === undefined || reading + bound > READING_BYTES) return undefined;
     reading += bound;
     try {
-      return await response.body();
+      const read = await session.send("Network.getResponseBody", { requestId: own.id });
+      const body = Buffer.from(read.body, read.base64Encoded ? "base64" : "utf8");
+      return body.length <= bound ? body : undefined;
     } catch {
       return undefined;
     } finally {
@@ -351,7 +341,7 @@ const makeNetworkStudy = (page: Page) => {
         status: null,
         failed: undefined,
         finishedAt: undefined,
-        size: undefined,
+        own: undefined,
         body: undefined,
       };
       entries.push(entry);
@@ -369,20 +359,20 @@ const makeNetworkStudy = (page: Page) => {
       ).then((headers) => ({ headers, secrets: secretsInHeaders({}, headers) }));
       entry.status = response.status();
       entry.finishedAt = Date.now();
-      entry.size = safely(() => bodySize(response), Promise.resolve(undefined)).catch(
+      entry.own = safely(() => ownCount(response), Promise.resolve(undefined)).catch(
         () => undefined,
       );
       if (!EAGER_TYPES.has(response.request().resourceType())) return;
       // Only bodies the browser counted are read, within what is kept and being read.
-      void entry.size.then(async (size) => {
+      void entry.own.then(async (own) => {
         const fits = (bytes: number) =>
           bytes <= EAGER_BODY_BYTES &&
           eagerBytes + bytes <= EAGER_TOTAL_BYTES &&
           entries.includes(entry);
-        if (size === undefined || !fits(GROWTH * size)) return;
-        eagerBytes += GROWTH * size;
-        const body = await readBounded(response, GROWTH * size);
-        eagerBytes -= GROWTH * size;
+        if (own === undefined || !fits(GROWTH * own.bytes)) return;
+        eagerBytes += GROWTH * own.bytes;
+        const body = await readOwn(own, GROWTH * own.bytes);
+        eagerBytes -= GROWTH * own.bytes;
         if (body === undefined || !fits(body.length)) return;
         entry.body = body;
         eagerBytes += body.length;
@@ -393,6 +383,7 @@ const makeNetworkStudy = (page: Page) => {
      * opens, before its first request, so every count starts from the request's first byte.
      */
     watch: async (cdp: CDPSession) => {
+      session = cdp;
       const found = (requestId: string) => counted.get(requestId);
       cdp.on("Network.requestWillBeSent", (event) => {
         // A redirect reuses the id: the earlier hop's count ends there.
@@ -400,6 +391,7 @@ const makeNetworkStudy = (page: Page) => {
         const done = Promise.withResolvers<void>();
         counted.delete(event.requestId);
         counted.set(event.requestId, {
+          id: event.requestId,
           url: withoutFragment(event.request.url),
           method: event.request.method,
           status: undefined,
@@ -510,22 +502,22 @@ const makeNetworkStudy = (page: Page) => {
         return { ...withHeaders, note: shown(`The body is ${contentType}, not text.`) };
       let body = entry.body;
       if (body === undefined) {
-        const size =
-          entry.size === undefined
+        const own =
+          entry.own === undefined
             ? undefined
-            : await within(() => entry.size!, undefined, HEADERS_MS);
+            : await within(() => entry.own!, undefined, HEADERS_MS);
         const yourself = readItYourself(request.method());
-        if (size === undefined || GROWTH * size > READ_BODY_BYTES)
+        if (own === undefined || GROWTH * own.bytes > READ_BODY_BYTES)
           return {
             ...withHeaders,
             note: shown(
-              (size === undefined
+              (own === undefined
                 ? "Scient could not count this body's size in the browser, so it is left out."
-                : `The body is ${Math.ceil(size / (1024 * 1024))} MB, too large to read here.`) +
+                : `The body is ${Math.ceil(own.bytes / (1024 * 1024))} MB, too large to read here.`) +
                 yourself,
             ),
           };
-        body = await readBounded(response, GROWTH * size);
+        body = await readOwn(own, GROWTH * own.bytes);
         if (body === undefined)
           return {
             ...withHeaders,
