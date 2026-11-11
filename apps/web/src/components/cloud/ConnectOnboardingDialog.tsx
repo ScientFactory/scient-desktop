@@ -61,7 +61,11 @@ function ConfiguredConnectOnboardingDialog() {
   const { environments, isReady: environmentsReady } = useEnvironments();
   // The empty hosted home already adds account computers after sign-in.
   const homeScreenAddsComputers =
-    isHostedStaticApp() && environmentsReady && environments.length === 0;
+    isHostedStaticApp() &&
+    environmentsReady &&
+    // SCIENT-FORK:START hosted-landing — Scient's landing stays until a computer is open.
+    !environments.some(({ connection }) => connection.phase === "connected");
+  // SCIENT-FORK:END hosted-landing
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primarySessionState = useAtomValue(
     primaryEnvironmentId === null
