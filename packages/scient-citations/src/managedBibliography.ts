@@ -11,8 +11,9 @@ export interface ManagedBibliographyContents {
 }
 
 /**
- * Both managed files, sorted by citation key, with the same entries a Library
- * export writes (notes stay private). Sources without a key are left out.
+ * Both managed files, sorted by citation key, with the entries a Library export
+ * writes minus notes (private) and abstracts (large, and no document needs them).
+ * Sources without a key are left out.
  */
 export function renderManagedBibliography(
   records: ReadonlyArray<ScientSourceRecord>,
@@ -24,7 +25,7 @@ export function renderManagedBibliography(
         left.citationKey.localeCompare(right.citationKey, "en", { sensitivity: "base" }) ||
         left.citationKey.localeCompare(right.citationKey),
     );
-  const options = { includeNotes: false };
+  const options = { includeNotes: false, includeAbstracts: false };
   return {
     bibtex: `${MANAGED_BIBTEX_HEADER}\n${formatBibliography(items, "bibtex", options)}`,
     cslJson: formatBibliography(items, "csl-json", options),

@@ -1,3 +1,4 @@
+import type { ScientSourceIdentifier } from "@scientfactory/scient-sources";
 import type { AccountSummary } from "@t3tools/contracts";
 import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import * as Effect from "effect/Effect";
@@ -16,6 +17,7 @@ const SERVICE_URLS = {
   openAlex: "https://api.openalex.org/",
   semanticScholar: "https://api.semanticscholar.org/",
   ncbi: "https://eutils.ncbi.nlm.nih.gov/",
+  googleBooks: "https://www.googleapis.com/books/",
   unpaywallEmail: "https://api.unpaywall.org/",
 } as const satisfies Record<keyof ResearchKeys, string>;
 
@@ -58,4 +60,18 @@ export const keyedIdentifierLookup = Effect.fn("Sources.keyedIdentifierLookup")(
   const keys = yield* readResearchKeys();
   const resolve: ResolveSourceIdentifier = (identifiers) => lookup(identifiers, keys);
   return resolve;
+});
+
+/** A batch lookup with the user's keys, as identifier adds, citing and the reference check use it. */
+export const keyedBatchLookup = Effect.fn("Sources.keyedBatchLookup")(function* <A>(
+  lookup: (identifiers: ReadonlyArray<ScientSourceIdentifier>, keys?: ResearchKeys) => Promise<A>,
+) {
+  const keys = yield* readResearchKeys();
+  return (identifiers: ReadonlyArray<ScientSourceIdentifier>) => lookup(identifiers, keys);
+});
+
+/** Reads the keys again at each call, for work outside a request: background passes and HTTP routes. */
+export const researchKeysReader = Effect.fn("Sources.researchKeysReader")(function* () {
+  const context = yield* Effect.context<never>();
+  return (): Promise<ResearchKeys> => Effect.runPromiseWith(context)(readResearchKeys());
 });

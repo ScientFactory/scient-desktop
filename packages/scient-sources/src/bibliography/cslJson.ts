@@ -375,7 +375,7 @@ export function cslJsonItem(
         : record.type === "other" && record.customType
           ? record.customType
           : undefined,
-    abstract: record.abstract ?? undefined,
+    abstract: options.includeAbstracts !== false ? (record.abstract ?? undefined) : undefined,
     keyword: record.tags.length > 0 ? record.tags.join(", ") : undefined,
     note: options.includeNotes ? (record.note ?? undefined) : undefined,
   };

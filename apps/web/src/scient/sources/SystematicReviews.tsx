@@ -617,7 +617,7 @@ export function SystematicReviewsView(props: {
     toastManager.add({
       type: "success",
       title: `Deleted review “${title}”`,
-      description: "Its sources stay in Sources.",
+      description: "Its sources stay in the Library.",
       actionProps: {
         children: "Undo",
         onClick: () => {
@@ -634,10 +634,10 @@ export function SystematicReviewsView(props: {
           variant="ghost"
           size="xs"
           onClick={() => (openId ? reviews.open(null) : props.onBack())}
-          aria-label={openId ? "Back to reviews" : "Back to Sources"}
+          aria-label={openId ? "Back to reviews" : "Back to Library"}
         >
           <ChevronLeft />
-          {openId ? "Reviews" : "Sources"}
+          {openId ? "Reviews" : "Library"}
         </Button>
         <h2 className="min-w-0 flex-1 truncate text-sm font-medium">
           {openId ? (openSummary?.title ?? detail?.review.title ?? "") : "Systematic reviews"}

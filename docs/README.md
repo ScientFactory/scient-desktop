@@ -81,7 +81,7 @@ require a cosmetic folder migration.
 - [Interactive charts in chat](./user/charts-in-chat.md)
 - [Scientific computing](./user/scientific-computing.md)
 - [Run a MATLAB file](./user/matlab-run-file.md)
-- [Sources and Zotero import](./user/sources.md)
+- [Library and Zotero import](./user/sources.md)
 - [Run a server without the desktop app](./user/background-service.md)
 - [Outside agents (MCP)](./user/outside-agents.md)
 

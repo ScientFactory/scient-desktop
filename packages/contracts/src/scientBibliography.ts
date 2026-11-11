@@ -13,6 +13,8 @@ export const ScientManagedBibliographyFileStatus = Schema.Struct({
   name: ScientManagedBibliographyFileName,
   state: Schema.Literals(["current", "edited", "unmanaged", "absent"]),
   changes: Schema.NullOr(Schema.Struct({ added: Keys, changed: Keys, removed: Keys })),
+  /** Project files holding earlier text of this file that a write moved aside. */
+  kept: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ScientManagedBibliographyFileStatus = typeof ScientManagedBibliographyFileStatus.Type;
 

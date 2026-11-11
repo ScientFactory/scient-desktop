@@ -44,7 +44,9 @@ import {
   type ScientSourceRecord,
   type ScientSourceVerification,
   type ZoteroConnection,
+  type ZoteroConnectionStatus,
   type ZoteroImportScope,
+  zoteroGroupLibraryId,
 } from "@scientfactory/scient-sources";
 import {
   bulkUpdateScientSources,
@@ -52,6 +54,10 @@ import {
   organizeScientSources,
   readScientSourcesOrganization,
 } from "@scientfactory/scient-sources/collections";
+import {
+  readScientSourceCategories,
+  scientSourceCategorySummaryFor,
+} from "@scientfactory/scient-sources/categories-store";
 import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   changeScientSystematicReview,
@@ -87,6 +93,7 @@ import {
 
 import {
   inspectZotero,
+  listZoteroGroups,
   localOnlyZoteroAccess,
   zoteroTransport,
   type ZoteroAccess,
@@ -110,12 +117,17 @@ import {
   beginBibliographyFileImport,
   discardBibliographyFileImport,
   fileImportVerification,
-  getBibliographyFileImportCandidate,
+  getBibliographyFileImportMaterial,
   readBibliographyFile,
   resolveProjectBibliographyFile,
 } from "./BibliographyFileAdapter.ts";
 import { recordZoteroSync } from "./ZoteroSync.ts";
 import { scheduleSourceFullTextIndexing } from "./SourceFullText.ts";
+import {
+  forgetSourceCategories,
+  scheduleSourceCategorization,
+  seedSourceCategories,
+} from "./SourceCategories.ts";
 
 const operationLanes = new Map<string, Promise<unknown>>();
 
@@ -136,19 +148,26 @@ async function withOperationLane<A>(key: string, run: () => Promise<A>): Promise
   }
 }
 
+/** With `groups`, a ready status lists the group libraries too; a failed listing lists none. */
 export async function inspectZoteroConnection(input: {
   readonly connection?: ZoteroConnection;
   readonly zotero?: ZoteroAccess;
-}) {
-  return inspectZotero(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  readonly groups?: boolean;
+}): Promise<ZoteroConnectionStatus> {
+  const zotero = input.zotero ?? localOnlyZoteroAccess;
+  const status = await inspectZotero(zotero, input.connection);
+  if (!input.groups || status.state !== "ready") return status;
+  const groups = await listZoteroGroups(zotero, status.connection ?? "local").catch(() => []);
+  return { ...status, groups: [...groups] };
 }
 
 export async function listZoteroCollections(input: {
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly zotero?: ZoteroAccess;
 }) {
   return listZoteroCollectionsWith(
-    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection),
+    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection, input.groupId),
   );
 }
 
@@ -158,10 +177,11 @@ export async function listZoteroLibrary(input: {
   readonly start: number;
   readonly limit: number;
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly zotero?: ZoteroAccess;
 }) {
   return listZoteroLibraryWith(
-    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection),
+    await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection, input.groupId),
     input,
   );
 }
@@ -228,9 +248,18 @@ export async function getScientSourcesOverview(root: string) {
         )
       : null;
   void scheduleSourceFullTextIndexing(root);
+  const categories =
+    overview.projectState === "initialized"
+      ? await readScientSourceCategories(root).catch(() => ({}))
+      : {};
+  if (overview.projectState === "initialized") void scheduleSourceCategorization(root);
   return {
     ...overview,
-    records: overview.records.map(scientSourceSummaryFromRecord),
+    records: overview.records.map((record) => {
+      const summary = scientSourceSummaryFromRecord(record);
+      const category = scientSourceCategorySummaryFor(record, categories);
+      return category ? { ...summary, categories: category } : summary;
+    }),
     recordDiagnostics: overview.records.map((record) => ({
       sourceId: record.sourceId,
       diagnostics: sourceMetadataDiagnostics(record),
@@ -454,7 +483,7 @@ export async function addAgentSource(
         input.pdfPath && input.pdfFileName
           ? { ...candidate, pdfFileName: input.pdfFileName }
           : candidate;
-      return importScientSource({
+      const imported = await importScientSource({
         root: input.root,
         operationId: `agent_${NodeCrypto.randomUUID()}`,
         candidate: candidateWithPdfName,
@@ -467,6 +496,11 @@ export async function addAgentSource(
         ...(input.pdfPath ? { pdfPath: input.pdfPath } : {}),
         ...(input.expectedPdf ? { expectedPdf: input.expectedPdf } : {}),
       });
+      if (imported.outcome === "imported" && imported.record) {
+        seedSourceCategories(input.root, imported.record.sourceId, record?.metadata.topics);
+        void scheduleSourceCategorization(input.root);
+      }
+      return imported;
     },
     (result) => (result.outcome === "imported" ? "imported" : "skipped"),
   );
@@ -883,6 +917,9 @@ export async function refreshScientSourceMetadata(input: {
   }
   const refreshed = await applyRefreshedSourceMetadata({ root, record: latest, candidate });
   if (refreshed.outcome !== "refreshed" && refreshed.outcome !== "unchanged") return refreshed;
+  // Study design and topics are looked up again too, off this request.
+  await forgetSourceCategories(root, input.sourceId).catch(() => undefined);
+  void scheduleSourceCategorization(root);
   // A refresh also re-checks the identifier, so retractions and verification stay current.
   const checked = await checkSourceIdentifier({
     root,
@@ -960,10 +997,15 @@ export async function preflightZoteroImport(input: {
   readonly root: string;
   readonly itemKeys: ReadonlyArray<string>;
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly zotero?: ZoteroAccess;
 }) {
   const records = await listScientSourceRecords(input.root);
-  const transport = await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  const transport = await zoteroTransport(
+    input.zotero ?? localOnlyZoteroAccess,
+    input.connection,
+    input.groupId,
+  );
   // Only local PDFs are cheap enough to hash for a duplicate check before import.
   const hasImportedPdf =
     transport.connection === "local" &&
@@ -994,6 +1036,7 @@ export async function beginZoteroImport(input: {
   readonly itemKeys: ReadonlyArray<string>;
   readonly possibleMetadataMatchOverrides: ReadonlyArray<string>;
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly actor?: "user" | "agent";
 }) {
   return createSourceImportOperation({
@@ -1002,6 +1045,7 @@ export async function beginZoteroImport(input: {
     itemKeys: input.itemKeys,
     possibleMetadataMatchOverrides: input.possibleMetadataMatchOverrides,
     adapter: zoteroAdapter(input.connection),
+    ...(input.groupId ? { zoteroGroupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
   });
 }
@@ -1011,24 +1055,30 @@ export async function beginZoteroScopedImport(input: {
   readonly operationId: string;
   readonly scope: ZoteroImportScope;
   readonly connection?: ZoteroConnection;
+  readonly groupId?: string;
   readonly actor?: "user" | "agent";
   readonly zotero?: ZoteroAccess;
 }) {
   const adapter = zoteroAdapter(input.connection);
   const existing = await readSourceImportOperation(input.root, input.operationId);
   if (existing) {
-    if (existing.adapter !== adapter) {
+    if (existing.adapter !== adapter || existing.zoteroGroupId !== input.groupId) {
       throw new Error("This operation ID already belongs to another import adapter.");
     }
     return existing;
   }
-  const transport = await zoteroTransport(input.zotero ?? localOnlyZoteroAccess, input.connection);
+  const transport = await zoteroTransport(
+    input.zotero ?? localOnlyZoteroAccess,
+    input.connection,
+    input.groupId,
+  );
   const itemKeys = await listZoteroScopeItemKeysWith(transport, input.scope);
   return createSourceImportOperation({
     root: input.root,
     operationId: input.operationId,
     adapter,
     itemKeys,
+    ...(input.groupId ? { zoteroGroupId: input.groupId } : {}),
     ...(input.actor ? { actor: input.actor } : {}),
   });
 }
@@ -1062,31 +1112,54 @@ export async function discardLocalPdfSources(input: {
   return { discarded: keys.length };
 }
 
-const zoteroCollectionNames = new Map<string, Promise<ReadonlyMap<string, string>>>();
+/** Where a Zotero collection's items go: a top-level collection, or one level under a parent. */
+interface ZoteroCollectionPlace {
+  readonly name: string;
+  readonly parent?: string;
+  /** A deeper Zotero collection whose items joined `name`, its ancestor one level down. */
+  readonly flattened?: string;
+}
 
-/** Zotero collection keys to Library names, nested ones as "Parent / Child". */
-function zoteroCollectionPaths(
+const zoteroCollectionPlaces = new Map<
+  string,
+  Promise<ReadonlyMap<string, ZoteroCollectionPlace>>
+>();
+
+/** Zotero keeps any depth; the Library keeps one level, so deeper ones join that level. */
+function zoteroCollectionPlacesFor(
   collections: ReadonlyArray<{
     readonly key: string;
     readonly name: string;
     readonly parentCollectionKey: string | null;
   }>,
-): ReadonlyMap<string, string> {
+): ReadonlyMap<string, ZoteroCollectionPlace> {
   const byKey = new Map(collections.map((collection) => [collection.key, collection]));
-  const path = (key: string, seen: ReadonlySet<string> = new Set()): string => {
-    const collection = byKey.get(key);
-    if (!collection) return "";
-    const parent = collection.parentCollectionKey;
-    return parent && byKey.has(parent) && !seen.has(parent)
-      ? `${path(parent, new Set([...seen, key]))} / ${collection.name}`
-      : collection.name;
+  const ancestors = (key: string) => {
+    const chain: string[] = [];
+    let parent = byKey.get(key)?.parentCollectionKey ?? null;
+    while (parent && byKey.has(parent) && !chain.includes(parent) && parent !== key) {
+      chain.unshift(byKey.get(parent)!.name);
+      parent = byKey.get(parent)!.parentCollectionKey;
+    }
+    return chain;
   };
-  return new Map(collections.map((collection) => [collection.key, path(collection.key)]));
+  return new Map(
+    collections.map((collection): [string, ZoteroCollectionPlace] => {
+      const [top, level, ...deeper] = ancestors(collection.key);
+      if (top === undefined) return [collection.key, { name: collection.name }];
+      if (level === undefined) return [collection.key, { name: collection.name, parent: top }];
+      return [
+        collection.key,
+        { name: level, parent: top, flattened: [...deeper, collection.name].join(" / ") },
+      ];
+    }),
+  );
 }
 
 /**
  * An imported item joins a Library collection for each Zotero collection it is in. A
- * collection problem never fails the import; the source is in the Library either way.
+ * collection problem never fails the import; the source is in the Library either way. Returns
+ * a note naming the collections nested too deep to keep, or null.
  */
 async function addToZoteroCollections(input: {
   readonly root: string;
@@ -1094,28 +1167,91 @@ async function addToZoteroCollections(input: {
   readonly transport: ZoteroTransport;
   readonly sourceId: string;
   readonly collectionKeys: ReadonlyArray<string>;
-}) {
-  if (input.collectionKeys.length === 0) return;
+}): Promise<string | null> {
+  if (input.collectionKeys.length === 0) return null;
   const cacheKey = `${input.root}\0${input.operation.operationId}`;
-  let names = zoteroCollectionNames.get(cacheKey);
-  if (!names) {
-    names = listZoteroCollectionsWith(input.transport).then((result) =>
-      zoteroCollectionPaths(result.collections),
+  let places = zoteroCollectionPlaces.get(cacheKey);
+  if (!places) {
+    places = listZoteroCollectionsWith(input.transport).then((result) =>
+      zoteroCollectionPlacesFor(result.collections),
     );
-    if (zoteroCollectionNames.size >= 8) zoteroCollectionNames.clear();
-    zoteroCollectionNames.set(cacheKey, names);
+    if (zoteroCollectionPlaces.size >= 8) zoteroCollectionPlaces.clear();
+    zoteroCollectionPlaces.set(cacheKey, places);
   }
-  const resolved = await names.catch(() => new Map<string, string>());
+  const resolved = await places.catch(() => new Map<string, ZoteroCollectionPlace>());
+  const flattened: string[] = [];
   for (const key of input.collectionKeys) {
-    const name = resolved.get(key);
-    if (!name) continue;
-    await createScientSourceCollection({
+    const place = resolved.get(key);
+    if (!place) continue;
+    const parent = place.parent
+      ? await createScientSourceCollection({
+          root: input.root,
+          name: place.parent,
+          actor: input.operation.actor,
+        }).catch(() => null)
+      : null;
+    if (place.parent && !parent?.collection) continue;
+    const joined = await createScientSourceCollection({
       root: input.root,
-      name,
+      name: place.name,
       sourceIds: [input.sourceId],
+      ...(parent?.collection ? { parentCollectionId: parent.collection.collectionId } : {}),
       actor: input.operation.actor,
-    }).catch(() => undefined);
+    }).catch(() => null);
+    if (joined?.collection && place.flattened) {
+      flattened.push(`“${place.flattened}” joined “${place.parent} / ${place.name}”`);
+    }
   }
+  return flattened.length > 0
+    ? `Zotero collections more than one level deep: ${flattened.join("; ")}.`
+    : null;
+}
+
+/** A reference-file entry, with the PDFs its file names attached like any other PDF. */
+async function importFileOperationItem(input: {
+  readonly root: string;
+  readonly operation: ScientSourceImportOperation;
+  readonly itemKey: string;
+  readonly allowPossibleMetadataMatch: boolean;
+}) {
+  const { candidate, pdfs } = await getBibliographyFileImportMaterial(
+    input.root,
+    input.operation.operationId,
+    input.itemKey,
+  );
+  const [primary, ...extra] = pdfs;
+  const result = await importScientSourceOperationItem({
+    root: input.root,
+    operationId: input.operation.operationId,
+    candidate: primary
+      ? {
+          ...candidate,
+          pdfAvailable: true,
+          pdfFileName: primary.fileName,
+          pdfAttachmentCount: pdfs.length,
+        }
+      : candidate,
+    actor: input.operation.actor,
+    intake: input.operation.intake,
+    verification: fileImportVerification(candidate),
+    ...(primary ? { pdfPath: primary.path } : {}),
+    allowPossibleMetadataMatch: input.allowPossibleMetadataMatch,
+  });
+  let record = result.record;
+  if (result.outcome !== "imported") return result;
+  for (const pdf of extra) {
+    if (!record) break;
+    const attached = await attachScientSourcePdf({
+      root: input.root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      pdfPath: pdf.path,
+      fileName: pdf.fileName,
+      actor: input.operation.actor,
+    });
+    record = attached.record;
+  }
+  return { ...result, record };
 }
 
 async function importZoteroOperationItem(input: {
@@ -1125,11 +1261,26 @@ async function importZoteroOperationItem(input: {
   readonly allowPossibleMetadataMatch: boolean;
   readonly zotero: ZoteroAccess;
 }) {
+  const groupId = input.operation.zoteroGroupId;
   const transport = await zoteroTransport(
     input.zotero,
     input.operation.adapter === "zotero-web" ? "web" : "local",
+    groupId,
   );
-  const { candidate, material, files } = await zoteroImportMaterial(transport, input.itemKey);
+  const imported = await zoteroImportMaterial(transport, input.itemKey);
+  const { material, files } = imported;
+  // A group item's source ID and link must differ from a My Library item with the same key.
+  const candidate = groupId
+    ? {
+        ...imported.candidate,
+        sourceKey: `zotero-group-${groupId}-${input.itemKey}`,
+        externalReferences: imported.candidate.externalReferences.map((reference) =>
+          reference.system === "zotero"
+            ? { ...reference, libraryId: zoteroGroupLibraryId(groupId) }
+            : reference,
+        ),
+      }
+    : imported.candidate;
   try {
     const [primary, ...extra] = files;
     const result = await importScientSourceOperationItem({
@@ -1161,13 +1312,14 @@ async function importZoteroOperationItem(input: {
         material,
         attachmentKeys: files.map((file) => file.attachmentKey),
       });
-      await addToZoteroCollections({
+      const note = await addToZoteroCollections({
         root: input.root,
         operation: input.operation,
         transport,
         sourceId: record.sourceId,
         collectionKeys: material.collectionKeys,
       });
+      return { ...result, record, ...(note ? { note } : {}) };
     }
     return { ...result, record };
   } finally {
@@ -1203,27 +1355,24 @@ export async function advanceSourceImport(
               zotero: input.zotero ?? localOnlyZoteroAccess,
             });
           }
-          const { candidate, pdfPath, expectedPdf } =
-            operation.adapter === "file"
-              ? {
-                  candidate: await getBibliographyFileImportCandidate(
-                    root,
-                    input.operationId,
-                    pending.itemKey,
-                  ),
-                  pdfPath: null,
-                  expectedPdf: undefined,
-                }
-              : await getLocalPdfImportMaterial(root, pending.itemKey);
+          if (operation.adapter === "file") {
+            return importFileOperationItem({
+              root,
+              operation,
+              itemKey: pending.itemKey,
+              allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
+            });
+          }
+          const { candidate, pdfPath, expectedPdf } = await getLocalPdfImportMaterial(
+            root,
+            pending.itemKey,
+          );
           return importScientSourceOperationItem({
             root,
             operationId: input.operationId,
             candidate,
             actor: operation.actor,
             intake: operation.intake,
-            ...(operation.adapter === "file"
-              ? { verification: fileImportVerification(candidate) }
-              : {}),
             ...(pdfPath ? { pdfPath } : {}),
             ...(expectedPdf ? { expectedPdf } : {}),
             allowPossibleMetadataMatch: pending.allowPossibleMetadataMatch ?? false,
@@ -1239,6 +1388,7 @@ export async function advanceSourceImport(
         duplicateKind: result.duplicate.kind,
         ...(result.record ? { sourceId: result.record.sourceId } : {}),
         message: result.duplicate.reason,
+        ...("note" in result && typeof result.note === "string" ? { note: result.note } : {}),
       });
       if (operation.adapter === "local-files") {
         await discardLocalPdfImportMaterial(root, pending.itemKey);

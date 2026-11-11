@@ -211,6 +211,56 @@ describe("Scient source collections", () => {
     );
   });
 
+  it("nests one level deep, with names unique among siblings", async () => {
+    const { root } = await project([]);
+    const create = (name: string, parentCollectionId?: string) =>
+      createScientSourceCollection({
+        root,
+        name,
+        ...(parentCollectionId ? { parentCollectionId } : {}),
+        actor: "user",
+      });
+    const id = (change: Awaited<ReturnType<typeof create>>) => change.collection!.collectionId;
+    const thesis = id(await create("Thesis"));
+    const review = id(await create("Review"));
+    const methods = id(await create("Methods", thesis));
+
+    expect((await create("Methods", review)).outcome).toBe("created");
+    expect((await create("Figures", methods)).outcome).toBe("too-deep");
+    const move = (collectionId: string, parentCollectionId: string | null) =>
+      organizeScientSources({
+        root,
+        change: { action: "move-collection", collectionId, parentCollectionId },
+        actor: "agent",
+      });
+    // A parent cannot become a child, nor can a child take another's name.
+    expect((await move(thesis, review)).outcome).toBe("too-deep");
+    expect((await move(methods, review)).outcome).toBe("name-taken");
+    expect((await move(methods, null)).outcome).toBe("updated");
+
+    // A child whose parent is deleted shows at the top level until the parent is restored.
+    await move(methods, thesis);
+    await deleteScientSourceCollection({ root, collectionId: thesis, actor: "user" });
+    const orphan = (await readScientSourcesOrganization(root)).collections.find(
+      (entry) => entry.collectionId === methods,
+    );
+    expect(orphan?.parentCollectionId).toBeUndefined();
+    await restoreScientSourceCollection({ root, collectionId: thesis, actor: "user" });
+    const restored = (await readScientSourcesOrganization(root)).collections.find(
+      (entry) => entry.collectionId === methods,
+    );
+    expect(restored?.parentCollectionId).toBe(thesis);
+
+    // A deleted child whose parent moved under another collection comes back at the top level.
+    await deleteScientSourceCollection({ root, collectionId: methods, actor: "user" });
+    expect((await move(thesis, review)).outcome).toBe("updated");
+    await restoreScientSourceCollection({ root, collectionId: methods, actor: "user" });
+    const unnested = (await readScientSourcesOrganization(root)).collections.find(
+      (entry) => entry.collectionId === methods,
+    );
+    expect(unnested?.parentCollectionId).toBeUndefined();
+  });
+
   it("adds and removes members and reports an unknown collection", async () => {
     const { root, sourceIds } = await project(["First", "Second"]);
     const [first, second] = sourceIds as [string, string];

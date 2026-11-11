@@ -1,11 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Idempotent Scient source operation IDs use the existing synchronous content fingerprint.
 import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 
 import {
   citationKeyValidationMessage,
   takenCitationKeys,
   compileScientSourceFilter,
   normalizeScientSourceEditableMetadata,
+  scientSourceCategoryBasis,
+  scientSourceCategoryCounts,
   scientSourceTagCounts,
   validateScientSourceEditableMetadata,
   type ScientSourceCandidate,
@@ -13,9 +16,15 @@ import {
   type ScientSourceFilter,
   type ScientSourcesBulkRequestChange,
   type ScientSourcesOrganizeAction,
+  type ScientSourceStudyDesign,
   type ScientSourceType,
 } from "@scientfactory/scient-sources";
 import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
+import {
+  currentScientSourceCategories,
+  readScientSourceCategories,
+  scientSourceCategorySummaryFor,
+} from "@scientfactory/scient-sources/categories-store";
 import { resolveScientSourceInputPdf } from "@scientfactory/scient-sources/store";
 import {
   deleteTrashedScientSource,
@@ -40,7 +49,7 @@ import {
   resolveProjectBibliographyFile,
   writeProjectBibliographyFile,
 } from "../../../scient/sources/BibliographyFileAdapter.ts";
-import { keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
+import { keyedBatchLookup, keyedIdentifierLookup } from "../../../scient/sources/researchKeys.ts";
 import {
   addScientSourcesByIdentifier,
   SourceIdentifierBatchLookup,
@@ -91,7 +100,7 @@ const attempt = <A>(run: () => Promise<A>) =>
     // Store and filesystem errors can contain an absolute project path. MCP
     // results deliberately keep that host-only context out of model-visible
     // output.
-    catch: () => toolError("operation-failed", "The Sources operation could not be completed."),
+    catch: () => toolError("operation-failed", "The Library operation could not be completed."),
   });
 
 // PDF-only adds often share a filename-derived title. Include the content hash
@@ -243,6 +252,8 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly collectionId?: string;
     readonly type?: ScientSourceType;
     readonly hasPdf?: boolean;
+    readonly studyDesign?: ScientSourceStudyDesign;
+    readonly topic?: string;
     readonly savedSearchId?: string;
     readonly inTrash?: boolean;
     readonly offset?: number;
@@ -257,9 +268,14 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
           ]),
         )
       : null;
-    const all = trash
+    const records = trash
       ? [...trash.values()].map((entry) => entry.record)
       : yield* attempt(() => listScientSourceRecords(root));
+    const categories = yield* attempt(() => readScientSourceCategories(root));
+    const all = records.map((record) => {
+      const category = scientSourceCategorySummaryFor(record, categories);
+      return category ? { ...record, categories: category } : record;
+    });
     const narrowsByOrganization =
       input.collectionId !== undefined || input.savedSearchId !== undefined;
     const organization = narrowsByOrganization
@@ -279,6 +295,8 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         ...(input.collectionId ? { collectionId: input.collectionId } : {}),
         ...(input.type ? { type: input.type } : {}),
         ...(input.hasPdf !== undefined ? { hasPdf: input.hasPdf } : {}),
+        ...(input.studyDesign ? { studyDesign: input.studyDesign } : {}),
+        ...(input.topic ? { topic: input.topic } : {}),
       },
     ];
     const predicates = filters.map((filter) => compileScientSourceFilter(filter, organization));
@@ -313,6 +331,12 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
             }
           : {}),
         ...(record.tags.length > 0 ? { tags: record.tags } : {}),
+        ...("categories" in record && record.categories.studyDesign
+          ? { studyDesign: record.categories.studyDesign }
+          : {}),
+        ...("categories" in record && record.categories.topics
+          ? { topics: record.categories.topics.map((topic) => topic.name) }
+          : {}),
       })),
       total: matching.length,
       nextOffset: offset + page.length < matching.length ? offset + page.length : null,
@@ -328,10 +352,25 @@ export const readScientSourceCollectionsForInvocation = Effect.fn(
   const organization = yield* attempt(() =>
     readScientSourcesOrganization(root, new Set(records.map((record) => record.sourceId))),
   );
+  const categories = yield* attempt(() => readScientSourceCategories(root));
+  const counts = scientSourceCategoryCounts(
+    records.map((record) => {
+      const category = scientSourceCategorySummaryFor(record, categories);
+      return category ? { categories: category } : {};
+    }),
+  );
+  const categorizing = records.filter(
+    (record) =>
+      scientSourceCategoryBasis(record.identifiers) !== null &&
+      !currentScientSourceCategories(record, categories),
+  ).length;
   return {
     collections: organization.collections.map((collection) => ({
       collectionId: collection.collectionId,
       name: collection.name,
+      ...(collection.parentCollectionId
+        ? { parentCollectionId: collection.parentCollectionId }
+        : {}),
       sourceCount: collection.sourceIds.length,
     })),
     savedSearches: organization.savedSearches.map(({ searchId, name, filter }) => ({
@@ -340,6 +379,9 @@ export const readScientSourceCollectionsForInvocation = Effect.fn(
       filter,
     })),
     tags: scientSourceTagCounts(records).slice(0, 200),
+    studyDesigns: counts.studyDesigns,
+    topics: counts.topics.slice(0, 200),
+    ...(categorizing > 0 ? { categorizing } : {}),
     ...(organization.issue ? { message: organization.issue } : {}),
   };
 });
@@ -375,6 +417,10 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
     const record = yield* attempt(() => readScientSourceRecord(root, input.sourceId));
     if (!record) return yield* toolError("not-found", "The source was not found in this project.");
     const revisions = yield* attempt(() => listScientSourceRevisions(root, input.sourceId));
+    const categories = currentScientSourceCategories(
+      record,
+      yield* attempt(() => readScientSourceCategories(root)),
+    );
     const maximumAbstractCharacters = 50_000;
     const abstract = record.abstract;
     const abstractTruncated = abstract !== null && abstract.length > maximumAbstractCharacters;
@@ -384,6 +430,18 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       abstractTruncated,
       note: record.note ?? null,
       revisions: revisions ?? [],
+      ...(categories
+        ? {
+            categories: {
+              ...(categories.studyDesign ? { studyDesign: categories.studyDesign } : {}),
+              ...(categories.publicationTypes
+                ? { publicationTypes: categories.publicationTypes }
+                : {}),
+              ...(categories.topics ? { topics: categories.topics } : {}),
+              checkedAt: categories.checkedAt,
+            },
+          }
+        : {}),
       attachments: record.attachments.map(
         ({
           attachmentId,
@@ -568,7 +626,7 @@ const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolki
         validationIssues: [{ field: extra, message }],
       };
     }
-    const resolveIdentifiers = yield* SourceIdentifierBatchLookup;
+    const resolveIdentifiers = yield* keyedBatchLookup(yield* SourceIdentifierBatchLookup);
     const observeImport = yield* makeSourceImportAnalytics("agent");
     const results = yield* attempt(() =>
       addScientSourcesByIdentifier(
@@ -843,7 +901,7 @@ const readScientSourceTextForInvocation = Effect.fn("ScientSourcesToolkit.readTe
         sourceId: input.sourceId,
         ...(input.attachmentId ? { attachmentId: input.attachmentId } : {}),
         fromPage: Math.max(1, input.fromPage ?? 1),
-        maxCharacters: Math.min(60_000, Math.max(1_000, input.maxCharacters ?? 20_000)),
+        maxCharacters: Math.min(30_000, Math.max(1_000, input.maxCharacters ?? 12_000)),
       }),
     );
   },
@@ -906,6 +964,7 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
             operationId: `agent_file_${NodeCrypto.randomUUID()}`,
             fileName: file.fileName,
             text: await readBibliographyFile(file.absolutePath),
+            sourceFolder: NodePath.dirname(file.absolutePath),
             actor: "agent",
             ...(input.format ? { format: input.format } : {}),
           },
@@ -949,6 +1008,13 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
       unreadable: report.unreadable,
       notKept: report.notKept,
       withoutCitationKey: report.withoutCitationKey,
+      pdfsAttached: records
+        .filter((record) => importedIds.includes(record.sourceId))
+        .reduce(
+          (count, record) =>
+            count + record.attachments.filter((attachment) => attachment.kind === "pdf").length,
+          0,
+        ),
     };
   },
 );
@@ -1001,7 +1067,7 @@ const citeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.cite")(fu
   readonly format?: "markdown" | "latex";
 }) {
   const { root } = yield* resolveScientSourcesProject();
-  const resolveIdentifiers = yield* ReferenceIdentifierLookup;
+  const resolveIdentifiers = yield* keyedBatchLookup(yield* ReferenceIdentifierLookup);
   return yield* attempt(() =>
     citeLibrarySources(
       { root, sources: input.sources, format: input.format ?? "markdown" },

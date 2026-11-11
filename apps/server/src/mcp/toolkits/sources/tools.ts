@@ -21,11 +21,14 @@ import {
   ScientSourceZoteroSendResult,
   ZoteroConnection,
   ZoteroConnectionState,
+  ZoteroGroupId,
   ScientSourcesBulkRequestChange,
   ScientSourcesBulkResult,
   ScientSourcesOrganizeAction,
   ScientSourcesOrganizeResult,
   ScientSourceFilter,
+  ScientSourceStudyDesign,
+  ScientSourceTopic,
   ScientReferenceFindingKind,
   ScientReferenceStatus,
 } from "@scientfactory/scient-sources";
@@ -96,6 +99,8 @@ export const ScientSourceAgentSummary = Schema.Struct({
   removedAt: Schema.optionalKey(NonEmptyString),
   removedBy: Schema.optionalKey(ScientSourceActor),
   tags: Schema.optionalKey(Schema.Array(Schema.String)),
+  studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
+  topics: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 export const ScientSourcesListResult = Schema.Struct({
@@ -138,17 +143,28 @@ export const ScientSourceAgentDetail = Schema.Struct({
   updatedAt: Schema.optionalKey(NonEmptyString),
   updatedBy: Schema.optionalKey(ScientSourceActor),
   revisions: Schema.Array(ScientSourceRevisionSummary),
+  /** From PubMed (study design, publication types), arXiv and OpenAlex (topics). */
+  categories: Schema.optionalKey(
+    Schema.Struct({
+      studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
+      publicationTypes: Schema.optionalKey(Schema.Array(Schema.String)),
+      topics: Schema.optionalKey(Schema.Array(ScientSourceTopic)),
+      checkedAt: NonEmptyString,
+    }),
+  ),
 });
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Library (Sources); total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId, type, hasPdf, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
+    "List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
     tags: Schema.optionalKey(ScientSourceFilter.fields.tags),
     collectionId: Schema.optionalKey(NonEmptyString),
     type: Schema.optionalKey(ScientSourceType),
     hasPdf: Schema.optionalKey(Schema.Boolean),
+    studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
+    topic: Schema.optionalKey(NonEmptyString),
     savedSearchId: Schema.optionalKey(NonEmptyString),
     inTrash: Schema.optionalKey(Schema.Boolean),
     offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -426,7 +442,7 @@ export const ScientSourceAddResult = Schema.Struct({
 
 const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
-    "Add sources to this project's Library after the user explicitly asks; list existing Sources first. Repeats add nothing. Several works by DOI, PMID, arXiv ID or ISBN: identifierList (outcome batch, see results). A project PDF: pdfRelativePath (citation fields optional). From PubMed, Semantic Scholar or OpenAlex pass only the identifier (scheme pmid, s2 for a paperId or CorpusId:N, openalex for a W ID). Identifiers are checked at their registry: identifier-not-found and identifier-mismatch (see resolved) add nothing; found metadata replaces your fields (verified); unreachable adds as given (unchecked); no identifier is unverified. editorialStatus flags retractions and corrections: tell the user.",
+    "Add sources to this project's Library after the user explicitly asks; list existing sources first. Repeats add nothing. Several works by DOI, PMID, arXiv ID or ISBN: identifierList (outcome batch, see results). A project PDF: pdfRelativePath (citation fields optional). From PubMed, Semantic Scholar or OpenAlex pass only the identifier (scheme pmid, s2 for a paperId or CorpusId:N, openalex for a W ID). Identifiers are checked at their registry: identifier-not-found and identifier-mismatch (see resolved) add nothing; found metadata replaces your fields (verified); unreachable adds as given (unchecked); no identifier is unverified. editorialStatus flags retractions and corrections: tell the user.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
   failure: ScientSourcesToolError,
@@ -488,7 +504,7 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
 
 const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
   description:
-    "Write references.bib and references.json from the Library and report their state; documents cite by citationKey (Markdown `bibliography: references.bib`, LaTeX `\\bibliography{references}`). A hand-edited file is kept (edited, with keys added, changed or removed); an unmanaged file is never overwritten. importEdited imports its new entries; replaceEdited restores the Library version, only when the user wants that.",
+    "Write references.bib and references.json from the Library and report their state; documents cite by citationKey (Markdown `bibliography: references.bib`, LaTeX `\\bibliography{references}`). A hand-edited file is kept (edited, with keys added, changed or removed); an unmanaged file is never overwritten; kept lists earlier text moved aside (tell the user). importEdited imports its new entries; replaceEdited restores the Library version, only when the user wants that.",
   parameters: Schema.Struct({
     replaceEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
     importEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
@@ -559,8 +575,11 @@ const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
     attachmentId: Schema.optionalKey(NonEmptyString),
     fromPage: Schema.optionalKey(PageNumber),
     maxCharacters: Schema.optionalKey(
-      Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60_000 })),
+      Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 30_000 })),
     ),
+  }).annotate({
+    messageUnexpectedKey:
+      "Unknown parameter. Accepted: sourceId, attachmentId, fromPage, maxCharacters",
   }),
   success: Schema.Struct({
     outcome: Schema.Literals([
@@ -586,6 +605,7 @@ const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
   dependencies,
 })
   .annotate(Tool.Title, "Read source text")
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
@@ -646,6 +666,9 @@ const ZoteroConnectionInput = ZoteroConnection.annotate({
     "local: Zotero on this computer; web: zotero.org with the Accounts key. Omit for whichever is ready, local first.",
 });
 const ZoteroItemKey = Schema.String.check(Schema.isPattern(/^[23456789A-Z]{8}$/u));
+const ZoteroLibraryInput = ZoteroGroupId.annotate({
+  description: "A group's ID from browse groups; omit for My Library.",
+});
 const ZoteroRefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
   Schema.check(Schema.isMaxLength(32)),
 );
@@ -655,6 +678,9 @@ export const ScientSourcesZoteroBrowseResult = Schema.Struct({
   connection: Schema.NullOr(ZoteroConnection),
   canWrite: Schema.Boolean,
   message: NonEmptyString,
+  groups: Schema.Array(
+    Schema.Struct({ id: NonEmptyString, name: NonEmptyString, canWrite: Schema.Boolean }),
+  ),
   collections: Schema.Array(
     Schema.Struct({ key: NonEmptyString, name: NonEmptyString, parentKey: NullableText }),
   ),
@@ -676,9 +702,10 @@ export const ScientSourcesZoteroBrowseResult = Schema.Struct({
 
 const ScientSourcesZoteroBrowseTool = Tool.make("scient_sources_zotero_browse", {
   description:
-    "Browse the user's Zotero library: whether it is reachable, its collections and a page of references (by collection or query). sourceId marks ones already in this Library. If state is not ready, tell the user its message.",
+    "Browse the user's Zotero library: whether it is reachable, its groups and collections and a page of references (by collection or query). sourceId marks ones already in this Library. If state is not ready, tell the user its message.",
   parameters: Schema.Struct({
     connection: Schema.optionalKey(ZoteroConnectionInput),
+    library: Schema.optionalKey(ZoteroLibraryInput),
     collectionKey: Schema.optionalKey(ZoteroItemKey),
     includeSubcollections: Schema.optionalKey(Schema.Boolean),
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
@@ -715,6 +742,8 @@ export const ScientSourcesZoteroImportResult = Schema.Struct({
       ),
       sourceId: NullableText,
       message: NullableText,
+      /** Zotero collections nested deeper than the Library keeps, and where they went. */
+      note: Schema.optionalKey(Schema.String),
     }),
   ).pipe(Schema.check(Schema.isMaxLength(500))),
 });
@@ -724,6 +753,7 @@ const ScientSourcesZoteroImportTool = Tool.make("scient_sources_zotero_import", 
     "Import from the user's Zotero library after the user asks: itemKeys, a collectionKey or all, with notes, tags, PDFs and citation keys. Already imported: skipped (same-origin); possible-metadata-match: skipped unless in possibleMetadataMatchOverrides. At most 500 per call.",
   parameters: Schema.Struct({
     connection: Schema.optionalKey(ZoteroConnectionInput),
+    library: Schema.optionalKey(ZoteroLibraryInput),
     itemKeys: Schema.optionalKey(
       Schema.Array(ZoteroItemKey).pipe(
         Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
@@ -749,7 +779,7 @@ const ScientSourcesZoteroImportTool = Tool.make("scient_sources_zotero_import", 
 
 const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh", {
   description:
-    "Bring Zotero's changes into Sources imported from it (all, or sourceIds); only changed or problem sources are listed. A field edited on both sides stays local and is reported in conflicts: ask the user, then pass it in useZotero or keepLocal.",
+    "Bring Zotero's changes into sources imported from it (all, or sourceIds); only changed or problem sources are listed. A field edited on both sides stays local and is reported in conflicts: ask the user, then pass it in useZotero or keepLocal.",
   parameters: Schema.Struct({
     sourceIds: Schema.optionalKey(
       Schema.Array(NonEmptyString).pipe(
@@ -777,11 +807,12 @@ const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh"
 
 const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
   description:
-    "Send Sources to the user's zotero.org library after the user asks, creating (and linking) or updating each item; needs an Accounts Zotero key with write access. Items changed in Zotero since Scient read them are not overwritten (changed-in-zotero): refresh, then send again.",
+    "Send sources to the user's zotero.org library, or a group with canWrite, after the user asks, creating (and linking) or updating each item; needs an Accounts Zotero key with write access. Items changed in Zotero since Scient read them are not overwritten (changed-in-zotero): refresh, then send again.",
   parameters: Schema.Struct({
     sourceIds: Schema.Array(NonEmptyString).pipe(
       Schema.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
     ),
+    library: Schema.optionalKey(ZoteroLibraryInput),
   }),
   success: ScientSourceZoteroSendResult,
   failure: ScientSourcesToolError,
@@ -795,7 +826,12 @@ const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
   .annotate(ScientOperation, sourceOperation("sources.zotero.send", true));
 export const ScientSourcesCollectionsResult = Schema.Struct({
   collections: Schema.Array(
-    Schema.Struct({ collectionId: NonEmptyString, name: NonEmptyString, sourceCount: Schema.Int }),
+    Schema.Struct({
+      collectionId: NonEmptyString,
+      name: NonEmptyString,
+      parentCollectionId: Schema.optionalKey(NonEmptyString),
+      sourceCount: Schema.Int,
+    }),
   ),
   savedSearches: Schema.Array(
     Schema.Struct({ searchId: NonEmptyString, name: NonEmptyString, filter: ScientSourceFilter }),
@@ -803,12 +839,20 @@ export const ScientSourcesCollectionsResult = Schema.Struct({
   tags: Schema.Array(Schema.Struct({ tag: Schema.String, count: Schema.Int })).pipe(
     Schema.check(Schema.isMaxLength(200)),
   ),
+  studyDesigns: Schema.Array(
+    Schema.Struct({ studyDesign: ScientSourceStudyDesign, count: Schema.Int }),
+  ),
+  topics: Schema.Array(Schema.Struct({ topic: Schema.String, count: Schema.Int })).pipe(
+    Schema.check(Schema.isMaxLength(200)),
+  ),
+  /** Sources whose study design and topics are still being looked up. */
+  categorizing: Schema.optionalKey(Schema.Int),
   message: Schema.optionalKey(Schema.String),
 });
 
 const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
   description:
-    "Read collections (with source counts), saved searches (with filters) and the most used tags.",
+    "Read collections (with source counts and parents), saved searches (with filters) and the most used tags, topics and study designs.",
   parameters: Tool.EmptyParams,
   success: ScientSourcesCollectionsResult,
   failure: ScientSourcesToolError,
@@ -823,7 +867,7 @@ const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
 
 const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
   description:
-    "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.",
+    "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing); parentCollectionId nests one level; move-collection changes it (null: top level). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.",
   parameters: Schema.Struct({ change: ScientSourcesOrganizeAction }),
   success: ScientSourcesOrganizeResult,
   failure: ScientSourcesToolError,
@@ -838,7 +882,7 @@ const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
 
 const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
   description:
-    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections. Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
+    "Apply one change to up to 500 sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections; or {themes: [{name, parent?, sourceIds}]} fills new or existing collections (parent made if missing). Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
   parameters: Schema.Struct({ change: ScientSourcesBulkRequestChange }),
   success: ScientSourcesBulkResult,
   failure: ScientSourcesToolError,
@@ -859,6 +903,7 @@ const FileReportEntry = Schema.Struct({
 });
 const FieldLoss = Schema.Struct({
   field: Schema.String,
+  reason: Schema.optionalKey(Schema.String),
   entryCount: Schema.Int,
   citationKeys: Schema.Array(Schema.String),
 });
@@ -876,6 +921,8 @@ export const ScientSourcesImportFileResult = Schema.Struct({
   unreadable: Schema.Array(FileReportEntry),
   notKept: Schema.Array(FieldLoss),
   withoutCitationKey: Schema.Int,
+  /** PDFs from the file's file, L1/L4 or pdf-urls fields attached to imported sources. */
+  pdfsAttached: Schema.Int,
 });
 
 const ScientSourcesImportFileTool = Tool.make("scient_sources_import_file", {

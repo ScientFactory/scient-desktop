@@ -58,13 +58,27 @@ describe("managed bibliography", () => {
     });
     const rendered = renderManagedBibliography([thesis]);
     const items = [{ record: thesis, citationKey: "ioannidis2005why" }];
-    const options = { includeNotes: false };
+    const options = { includeNotes: false, includeAbstracts: false };
 
     expect(rendered.bibtex).toContain(formatBibliography(items, "bibtex", options));
     expect(rendered.bibtex).toContain("title = {{DNA} \\& {mRNA} in München}");
     expect(rendered.bibtex).toContain("school = {Synthetic University}");
     expect(rendered.cslJson).toBe(formatBibliography(items, "csl-json", options));
     expect(JSON.parse(rendered.cslJson)[0]).toMatchObject({ PMID: "12345" });
+  });
+
+  it("leaves abstracts out of the managed files and keeps them in an explicit export", () => {
+    const source = record({});
+    const rendered = renderManagedBibliography([source]);
+    const items = [{ record: source, citationKey: "ioannidis2005why" }];
+    const exported = { includeNotes: false };
+
+    expect(rendered.bibtex).not.toContain("Long abstract.");
+    expect(rendered.cslJson).not.toContain("Long abstract.");
+    expect(formatBibliography(items, "bibtex", exported)).toContain("abstract = {Long abstract.}");
+    expect(JSON.parse(formatBibliography(items, "csl-json", exported))[0]).toMatchObject({
+      abstract: "Long abstract.",
+    });
   });
 
   it("keys both files by citation key, sorted, and leaves out unkeyed sources", () => {

@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { ScientSourceCategorySummary } from "./categories.ts";
+
 // Agents reading tool schemas gain nothing from the trimmed-string regex; decoding still enforces it.
 const NonEmptyString = Schema.String.check(
   Schema.isTrimmed({ toJsonSchema: () => [{}, true] }),
@@ -226,6 +228,8 @@ export const ScientSourceSummary = Schema.Struct({
   origin: Schema.optional(ScientSourceOrigin),
   verification: Schema.optional(ScientSourceVerification),
   editorialStatus: Schema.optional(ScientSourceEditorialStatus),
+  /** Study design and topics from registries; joined from the categories file, not the record. */
+  categories: Schema.optional(ScientSourceCategorySummary),
 });
 export type ScientSourceSummary = typeof ScientSourceSummary.Type;
 
@@ -485,6 +489,8 @@ export const ScientSourceOperationItem = Schema.Struct({
   duplicateKind: Schema.optionalKey(ScientSourceDuplicateKind),
   sourceId: NullableText,
   message: NullableText,
+  /** Something worth telling about an imported item, such as a flattened Zotero collection. */
+  note: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 
@@ -505,6 +511,8 @@ export const ScientSourceImportOperation = Schema.Struct({
   createdAt: NonEmptyString,
   updatedAt: NonEmptyString,
   items: Schema.Array(ScientSourceOperationItem),
+  /** A Zotero import from a group library; absent for My Library and other adapters. */
+  zoteroGroupId: Schema.optionalKey(Schema.String),
 });
 export type ScientSourceImportOperation = typeof ScientSourceImportOperation.Type;
 
@@ -549,6 +557,28 @@ export type ZoteroConnectionState = typeof ZoteroConnectionState.Type;
 /** Zotero on this computer (local API) or the user's library on zotero.org (key from Accounts). */
 export const ZoteroConnection = Schema.Literals(["local", "web"]);
 export type ZoteroConnection = typeof ZoteroConnection.Type;
+
+/** A zotero.org group's numeric ID; Zotero on this computer uses the same ID for a synced group. */
+export const ZoteroGroupId = Schema.String.check(Schema.isPattern(/^[1-9][0-9]{0,11}$/u));
+export type ZoteroGroupId = typeof ZoteroGroupId.Type;
+
+/**
+ * Group items are linked as `groups/<groupId>` and My Library items by the bare user ID, so a
+ * group and a user that share a number, or items that share a key, never meet.
+ */
+export const zoteroGroupLibraryId = (groupId: string): string => `groups/${groupId}`;
+
+export function zoteroGroupIdOfLibrary(libraryId: string): string | null {
+  return /^groups\/([1-9][0-9]{0,11})$/u.exec(libraryId)?.[1] ?? null;
+}
+
+/** A group library the connection can read; `canWrite` only on zotero.org with a key that can. */
+export const ZoteroGroup = Schema.Struct({
+  groupId: ZoteroGroupId,
+  name: NonEmptyString,
+  canWrite: Schema.Boolean,
+});
+export type ZoteroGroup = typeof ZoteroGroup.Type;
 
 /** Fields a Zotero refresh compares; the citation key never changes from Zotero. */
 export const ScientSourceZoteroRefreshField = Schema.Literals([
@@ -618,6 +648,10 @@ export const ZoteroConnectionStatus = Schema.Struct({
   // Absent on statuses from before zotero.org support, which were always local.
   connection: Schema.optionalKey(ZoteroConnection),
   canWrite: Schema.optionalKey(Schema.Boolean),
+  /** False when a zotero.org key reads groups but not its owner's My Library. */
+  myLibrary: Schema.optionalKey(Schema.Boolean),
+  /** Group libraries besides My Library; listed only when the connection is ready. */
+  groups: Schema.optionalKey(Schema.Array(ZoteroGroup)),
 });
 export type ZoteroConnectionStatus = typeof ZoteroConnectionStatus.Type;
 
