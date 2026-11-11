@@ -1596,6 +1596,7 @@ export async function updateSourceImportOperationItem(input: {
   readonly duplicateKind?: ScientSourceDuplicateKind;
   readonly sourceId?: string;
   readonly message?: string;
+  readonly note?: string;
 }): Promise<ScientSourceImportOperation> {
   const paths = await sourceStorePaths(input.root);
   return withStoreLock(paths, input.operationId, async () => {
@@ -1616,6 +1617,7 @@ export async function updateSourceImportOperationItem(input: {
               ...(input.duplicateKind ? { duplicateKind: input.duplicateKind } : {}),
               sourceId: input.sourceId ?? null,
               message: input.message ?? null,
+              ...(input.note ? { note: input.note } : {}),
             }
           : item,
       ),

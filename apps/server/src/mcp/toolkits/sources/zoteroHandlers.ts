@@ -223,6 +223,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
         sourceId: item.sourceId,
         message:
           item.state === "failed" ? safeZoteroMessage(new Error(item.message ?? "")) : item.message,
+        ...(item.note ? { note: item.note } : {}),
       })),
     };
   },

@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { ScientSourceCategorySummary } from "./categories.ts";
+
 // Agents reading tool schemas gain nothing from the trimmed-string regex; decoding still enforces it.
 const NonEmptyString = Schema.String.check(
   Schema.isTrimmed({ toJsonSchema: () => [{}, true] }),
@@ -245,6 +247,8 @@ export const ScientSourceSummary = Schema.Struct({
   origin: Schema.optional(ScientSourceOrigin),
   verification: Schema.optional(ScientSourceVerification),
   editorialStatus: Schema.optional(ScientSourceEditorialStatus),
+  /** Study design and topics from registries; joined from the categories file, not the record. */
+  categories: Schema.optional(ScientSourceCategorySummary),
 });
 export type ScientSourceSummary = typeof ScientSourceSummary.Type;
 
@@ -505,6 +509,8 @@ export const ScientSourceOperationItem = Schema.Struct({
   duplicateKind: Schema.optionalKey(ScientSourceDuplicateKind),
   sourceId: NullableText,
   message: NullableText,
+  /** Something worth telling about an imported item, such as a flattened Zotero collection. */
+  note: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 

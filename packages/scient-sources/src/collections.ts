@@ -195,10 +195,11 @@ function projectOrganization(
   document: ScientSourceCollectionsDocument,
   presentSourceIds: ReadonlySet<string>,
 ): ScientSourcesOrganization {
+  const live = new Set(liveCollectionIds(document));
   return {
     collections: document.collections
       .filter((collection) => collection.deletedAt === undefined)
-      .map((collection) => collectionSummary(collection, presentSourceIds)),
+      .map((collection) => collectionSummary(collection, presentSourceIds, live)),
     savedSearches: document.savedSearches
       .filter((search) => search.deletedAt === undefined)
       .map(savedSearchSummary),
@@ -268,14 +269,43 @@ async function mutate<A>(
   });
 }
 
+function liveCollectionIds(document: ScientSourceCollectionsDocument): ReadonlyArray<string> {
+  return document.collections
+    .filter((collection) => collection.deletedAt === undefined)
+    .map((collection) => collection.collectionId);
+}
+
+/** Names are unique among siblings: two parents can each have a "Methods". */
 function liveCollectionByName(
   document: ScientSourceCollectionsDocument,
   name: string,
+  parentCollectionId: string | undefined,
 ): ScientSourceCollection | undefined {
   return document.collections.find(
     (collection) =>
-      collection.deletedAt === undefined && nameKey(collection.name) === nameKey(name),
+      collection.deletedAt === undefined &&
+      collection.parentCollectionId === parentCollectionId &&
+      nameKey(collection.name) === nameKey(name),
   );
+}
+
+/** Why a collection cannot sit under this parent, or null when it can. */
+function nestingProblem(
+  document: ScientSourceCollectionsDocument,
+  parentCollectionId: string,
+  childCollectionId: string | null,
+): "not-found" | "too-deep" | null {
+  const parent = findCollection(document, parentCollectionId);
+  if (!parent || parent.deletedAt !== undefined) return "not-found";
+  if (parent.parentCollectionId !== undefined || parentCollectionId === childCollectionId)
+    return "too-deep";
+  const hasChildren =
+    childCollectionId !== null &&
+    document.collections.some(
+      (collection) =>
+        collection.deletedAt === undefined && collection.parentCollectionId === childCollectionId,
+    );
+  return hasChildren ? "too-deep" : null;
 }
 
 function replaceCollection(
@@ -329,7 +359,7 @@ export type ScientSourceCollectionChange =
       readonly unknownSourceIds: ReadonlyArray<string>;
     }
   | {
-      readonly outcome: "not-found" | "name-taken";
+      readonly outcome: "not-found" | "name-taken" | "too-deep";
       readonly collection: ScientSourceCollection | null;
     };
 
@@ -340,47 +370,63 @@ export function createScientSourceCollection(input: {
   readonly root: ScientSourceStoreLocation;
   readonly name: string;
   readonly sourceIds?: ReadonlyArray<string>;
+  readonly parentCollectionId?: string;
   readonly actor: ScientSourceActor;
+  /** The id a new collection gets, chosen by a bulk edit that records it first. */
+  readonly collectionId?: string;
+  readonly beforeWrite?: (change: ScientSourceCollectionChange) => Promise<void>;
 }): Promise<ScientSourceCollectionChange> {
   const name = input.name.trim();
   if (!name) return Promise.reject(new Error("A collection needs a name."));
-  return mutate<ScientSourceCollectionChange>(input.root, (document, { now, presentSourceIds }) => {
-    const existing = liveCollectionByName(document, name);
-    const base: ScientSourceCollection = existing ?? {
-      collectionId: newId("collection"),
-      name,
-      sourceIds: [],
-      createdAt: now,
-      updatedAt: now,
-      updatedBy: input.actor,
-    };
-    const members = addMembers(base, input.sourceIds ?? [], presentSourceIds);
-    const changed = !existing || members.added.length > 0;
-    const collection: ScientSourceCollection = changed
-      ? { ...base, sourceIds: members.sourceIds, updatedAt: now, updatedBy: input.actor }
-      : base;
-    if (
-      !existing &&
-      document.collections.filter((entry) => entry.deletedAt === undefined).length >=
-        SCIENT_SOURCE_COLLECTION_LIMIT
-    ) {
-      throw new Error(`A project can have at most ${SCIENT_SOURCE_COLLECTION_LIMIT} collections.`);
-    }
-    return {
-      document: !changed
-        ? null
-        : existing
-          ? replaceCollection(document, collection)
-          : { ...document, collections: [...document.collections, collection] },
-      result: {
-        outcome: existing ? "existing" : "created",
-        collection,
-        addedSourceIds: members.added,
-        removedSourceIds: [],
-        unknownSourceIds: members.unknown,
-      },
-    };
-  });
+  const parentCollectionId = input.parentCollectionId;
+  return mutate<ScientSourceCollectionChange>(
+    input.root,
+    (document, { now, presentSourceIds }) => {
+      const problem = parentCollectionId
+        ? nestingProblem(document, parentCollectionId, null)
+        : null;
+      if (problem) return { document: null, result: { outcome: problem, collection: null } };
+      const existing = liveCollectionByName(document, name, parentCollectionId);
+      const base: ScientSourceCollection = existing ?? {
+        collectionId: input.collectionId ?? newId("collection"),
+        name,
+        ...(parentCollectionId ? { parentCollectionId } : {}),
+        sourceIds: [],
+        createdAt: now,
+        updatedAt: now,
+        updatedBy: input.actor,
+      };
+      const members = addMembers(base, input.sourceIds ?? [], presentSourceIds);
+      const changed = !existing || members.added.length > 0;
+      const collection: ScientSourceCollection = changed
+        ? { ...base, sourceIds: members.sourceIds, updatedAt: now, updatedBy: input.actor }
+        : base;
+      if (
+        !existing &&
+        document.collections.filter((entry) => entry.deletedAt === undefined).length >=
+          SCIENT_SOURCE_COLLECTION_LIMIT
+      ) {
+        throw new Error(
+          `A project can have at most ${SCIENT_SOURCE_COLLECTION_LIMIT} collections.`,
+        );
+      }
+      return {
+        document: !changed
+          ? null
+          : existing
+            ? replaceCollection(document, collection)
+            : { ...document, collections: [...document.collections, collection] },
+        result: {
+          outcome: existing ? "existing" : "created",
+          collection,
+          addedSourceIds: members.added,
+          removedSourceIds: [],
+          unknownSourceIds: members.unknown,
+        },
+      };
+    },
+    input.beforeWrite,
+  );
 }
 
 function findCollection(document: ScientSourceCollectionsDocument, collectionId: string) {
@@ -406,7 +452,7 @@ export function renameScientSourceCollection(input: {
         result: { outcome: "unchanged", collection: current, ...unchangedMembers },
       };
     }
-    const clash = liveCollectionByName(document, name);
+    const clash = liveCollectionByName(document, name, current.parentCollectionId);
     if (clash && clash.collectionId !== current.collectionId) {
       return { document: null, result: { outcome: "name-taken", collection: clash } };
     }
@@ -414,6 +460,45 @@ export function renameScientSourceCollection(input: {
     return {
       document: replaceCollection(document, collection),
       result: { outcome: "renamed", collection, ...unchangedMembers },
+    };
+  });
+}
+
+/** Puts a collection under a top-level parent, or (null) back at the top level. */
+function moveScientSourceCollection(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly collectionId: string;
+  readonly parentCollectionId: string | null;
+  readonly actor: ScientSourceActor;
+}): Promise<ScientSourceCollectionChange> {
+  const parentCollectionId = input.parentCollectionId ?? undefined;
+  return mutate<ScientSourceCollectionChange>(input.root, (document, { now }) => {
+    const current = findCollection(document, input.collectionId);
+    if (!current || current.deletedAt !== undefined) {
+      return { document: null, result: { outcome: "not-found", collection: null } };
+    }
+    if (current.parentCollectionId === parentCollectionId) {
+      return {
+        document: null,
+        result: { outcome: "unchanged", collection: current, ...unchangedMembers },
+      };
+    }
+    const problem = parentCollectionId
+      ? nestingProblem(document, parentCollectionId, current.collectionId)
+      : null;
+    if (problem) return { document: null, result: { outcome: problem, collection: current } };
+    const clash = liveCollectionByName(document, current.name, parentCollectionId);
+    if (clash) return { document: null, result: { outcome: "name-taken", collection: clash } };
+    const { parentCollectionId: _previous, ...rest } = current;
+    const collection: ScientSourceCollection = {
+      ...rest,
+      ...(parentCollectionId ? { parentCollectionId } : {}),
+      updatedAt: now,
+      updatedBy: input.actor,
+    };
+    return {
+      document: replaceCollection(document, collection),
+      result: { outcome: "updated", collection, ...unchangedMembers },
     };
   });
 }
@@ -455,10 +540,21 @@ export function restoreScientSourceCollection(input: {
         result: { outcome: "unchanged", collection: current, ...unchangedMembers },
       };
     }
-    const clash = liveCollectionByName(document, current.name);
+    // Its parent may have moved under another collection since; nesting stays one level deep.
+    const parent = current.parentCollectionId
+      ? findCollection(document, current.parentCollectionId)
+      : undefined;
+    const keepsParent = parent !== undefined && parent.parentCollectionId === undefined;
+    const parentCollectionId = keepsParent ? current.parentCollectionId : undefined;
+    const clash = liveCollectionByName(document, current.name, parentCollectionId);
     if (clash) return { document: null, result: { outcome: "name-taken", collection: clash } };
-    const { deletedAt: _deletedAt, ...live } = current;
-    const collection = { ...live, updatedAt: now, updatedBy: input.actor };
+    const { deletedAt: _deletedAt, parentCollectionId: _parent, ...live } = current;
+    const collection: ScientSourceCollection = {
+      ...live,
+      ...(parentCollectionId ? { parentCollectionId } : {}),
+      updatedAt: now,
+      updatedBy: input.actor,
+    };
     return {
       document: replaceCollection(document, collection),
       result: { outcome: "restored", collection, ...unchangedMembers },
@@ -606,10 +702,13 @@ export function deleteScientSourceSearch(input: {
 function collectionSummary(
   collection: ScientSourceCollection,
   presentSourceIds: ReadonlySet<string>,
+  liveIds: ReadonlySet<string>,
 ) {
+  const parent = collection.parentCollectionId;
   return {
     collectionId: collection.collectionId,
     name: collection.name,
+    ...(parent && liveIds.has(parent) ? { parentCollectionId: parent } : {}),
     sourceIds: collection.sourceIds.filter((sourceId) => presentSourceIds.has(sourceId)),
     updatedAt: collection.updatedAt,
     updatedBy: collection.updatedBy,
@@ -637,15 +736,19 @@ export async function organizeScientSources(input: {
     const result = await pending;
     if (!result.collection) return { outcome: result.outcome };
     const present = new Set((await listScientSourceRecords(root)).map((record) => record.sourceId));
+    const live = new Set(liveCollectionIds(await readDocument(await sourceStorePaths(root))));
     return "addedSourceIds" in result
       ? {
           outcome: result.outcome,
-          collection: collectionSummary(result.collection, present),
+          collection: collectionSummary(result.collection, present, live),
           addedSourceIds: result.addedSourceIds,
           removedSourceIds: result.removedSourceIds,
           unknownSourceIds: result.unknownSourceIds,
         }
-      : { outcome: result.outcome, collection: collectionSummary(result.collection, present) };
+      : {
+          outcome: result.outcome,
+          collection: collectionSummary(result.collection, present, live),
+        };
   };
   const searchResult = async (pending: Promise<ScientSourceSavedSearchChange>) => {
     const result = await pending;
@@ -660,6 +763,16 @@ export async function organizeScientSources(input: {
           root,
           name: change.name,
           sourceIds: change.sourceIds ?? [],
+          ...(change.parentCollectionId ? { parentCollectionId: change.parentCollectionId } : {}),
+          actor,
+        }),
+      );
+    case "move-collection":
+      return collectionResult(
+        moveScientSourceCollection({
+          root,
+          collectionId: change.collectionId,
+          parentCollectionId: change.parentCollectionId,
           actor,
         }),
       );
@@ -956,14 +1069,15 @@ export async function bulkUpdateScientSources(input: {
     return undoBulkUpdate({ ...input, batchId: input.change.undoBatchId });
   }
   const change = input.change;
+  const edit = "themes" in change ? null : change;
   const paths = await sourceStorePaths(input.root);
   const createdAt = new Date().toISOString();
   const batchId = newBatchId(createdAt);
-  const sourceIds = [...new Set(change.sourceIds)];
+  const sourceIds = edit ? [...new Set(edit.sourceIds)] : [];
   const editsRecords =
-    (change.addTags?.length ?? 0) > 0 ||
-    (change.removeTags?.length ?? 0) > 0 ||
-    change.type !== undefined;
+    (edit?.addTags?.length ?? 0) > 0 ||
+    (edit?.removeTags?.length ?? 0) > 0 ||
+    edit?.type !== undefined;
   const sources: BulkSourceResult[] = [];
   const collections: BulkCollectionResult[] = [];
   const receiptSources: BulkReceiptSource[] = [];
@@ -1034,13 +1148,13 @@ export async function bulkUpdateScientSources(input: {
           next: {
             tags: applyScientSourceTagChanges({
               tags: current.tags,
-              add: change.addTags,
-              remove: change.removeTags,
+              add: edit?.addTags,
+              remove: edit?.removeTags,
             }),
-            type: change.type ?? current.type,
-            customType: change.type
-              ? change.type === "other"
-                ? (change.customType ?? current.customType)
+            type: edit?.type ?? current.type,
+            customType: edit?.type
+              ? edit.type === "other"
+                ? (edit.customType ?? current.customType)
                 : null
               : current.customType,
           },
@@ -1079,21 +1193,18 @@ export async function bulkUpdateScientSources(input: {
       }
       sources.push(message ? { ...updated.entry, message } : updated.entry);
     }
-    const present = sources
-      .filter((entry) => entry.outcome !== "not-found")
-      .map((entry) => entry.sourceId);
-    const memberChanges = [
-      ...(change.addToCollectionIds ?? []).map((collectionId) => ({ collectionId, add: present })),
-      ...(change.removeFromCollectionIds ?? []).map((collectionId) => ({
-        collectionId,
-        remove: present,
-      })),
-    ];
-    for (const memberChange of present.length === 0 ? [] : memberChanges) {
+    const changeMembers = async (
+      memberChange: {
+        readonly collectionId: string;
+        readonly add?: ReadonlyArray<string>;
+        readonly remove?: ReadonlyArray<string>;
+      },
+      label: { readonly name?: string; readonly created?: true } = {},
+    ): Promise<void> => {
       const { collectionId } = memberChange;
       if (unsaved !== null) {
-        collections.push({ collectionId, outcome: "failed", message: unsaved });
-        continue;
+        collections.push({ collectionId, ...label, outcome: "failed", message: unsaved });
+        return;
       }
       const intent = { entry: null as BulkReceiptCollection | null };
       try {
@@ -1122,12 +1233,18 @@ export async function bulkUpdateScientSources(input: {
             );
           },
         });
+        const unknown =
+          "unknownSourceIds" in result && result.unknownSourceIds.length > 0
+            ? `${result.unknownSourceIds.length} of the sources are not in the Library.`
+            : undefined;
         if (result.outcome !== "updated") {
           collections.push({
             collectionId,
+            ...label,
             outcome: result.outcome === "unchanged" ? "unchanged" : "not-found",
+            ...(unknown ? { message: unknown } : {}),
           });
-          continue;
+          return;
         }
         const written = intent.entry;
         const message = written
@@ -1140,14 +1257,129 @@ export async function bulkUpdateScientSources(input: {
               }),
             )
           : undefined;
-        collections.push({ collectionId, outcome: "updated", ...(message ? { message } : {}) });
+        const note = message ?? unknown;
+        collections.push({
+          collectionId,
+          ...label,
+          outcome: "updated",
+          ...(note ? { message: note } : {}),
+        });
       } catch (error) {
         collections.push({
           collectionId,
+          ...label,
           outcome: "failed",
           message: failureMessage(error, "The collection could not be changed."),
         });
       }
+    };
+    /** A live collection by name under the parent, made (and recorded for Undo) when missing. */
+    const ensureCollection = async (
+      name: string,
+      parentCollectionId: string | undefined,
+    ): Promise<{ readonly collectionId: string; readonly created?: true } | string> => {
+      if (unsaved !== null) return unsaved;
+      const collectionId = newId("collection");
+      const intent = { entry: null as BulkReceiptCollection | null };
+      try {
+        const result = await createScientSourceCollection({
+          root: paths.location,
+          name,
+          ...(parentCollectionId ? { parentCollectionId } : {}),
+          collectionId,
+          actor: input.actor,
+          beforeWrite: async (planned) => {
+            if (planned.outcome !== "created" || !planned.collection) return;
+            const entry: BulkReceiptCollection = {
+              collectionId,
+              addedSourceIds: [],
+              removedSourceIds: [],
+              updatedAt: planned.collection.updatedAt,
+              created: true,
+              pending: true,
+            };
+            await writeAhead(
+              () => {
+                receiptCollections.push(entry);
+                intent.entry = entry;
+              },
+              () => {
+                replaceEntry(receiptCollections, entry);
+                intent.entry = null;
+              },
+            );
+          },
+        });
+        if (!result.collection) return "The parent collection could not be used.";
+        const written = intent.entry;
+        if (result.outcome !== "created" || !written) {
+          return { collectionId: result.collection.collectionId };
+        }
+        const { pending: _pending, ...settled } = written;
+        const message = await finish(() => replaceEntry(receiptCollections, written, settled));
+        return message ?? { collectionId, created: true };
+      } catch (error) {
+        return failureMessage(error, "The collection could not be created.");
+      }
+    };
+    if (edit) {
+      const present = sources
+        .filter((entry) => entry.outcome !== "not-found")
+        .map((entry) => entry.sourceId);
+      const memberChanges = [
+        ...(edit.addToCollectionIds ?? []).map((collectionId) => ({ collectionId, add: present })),
+        ...(edit.removeFromCollectionIds ?? []).map((collectionId) => ({
+          collectionId,
+          remove: present,
+        })),
+      ];
+      for (const memberChange of present.length === 0 ? [] : memberChanges) {
+        await changeMembers(memberChange);
+      }
+    }
+    const parents = new Map<string, Awaited<ReturnType<typeof ensureCollection>>>();
+    for (const theme of "themes" in change ? change.themes : []) {
+      let parentCollectionId: string | undefined;
+      if (theme.parent) {
+        const key = nameKey(theme.parent);
+        const known = parents.get(key);
+        const parent = known ?? (await ensureCollection(theme.parent, undefined));
+        if (!known) {
+          parents.set(key, parent);
+          if (typeof parent !== "string" && parent.created) {
+            collections.push({
+              collectionId: parent.collectionId,
+              name: theme.parent,
+              created: true,
+              outcome: "updated",
+            });
+          }
+        }
+        if (typeof parent === "string") {
+          collections.push({
+            collectionId: newId("collection"),
+            name: theme.name,
+            outcome: "failed",
+            message: parent,
+          });
+          continue;
+        }
+        parentCollectionId = parent.collectionId;
+      }
+      const target = await ensureCollection(theme.name, parentCollectionId);
+      if (typeof target === "string") {
+        collections.push({
+          collectionId: newId("collection"),
+          name: theme.name,
+          outcome: "failed",
+          message: target,
+        });
+        continue;
+      }
+      await changeMembers(
+        { collectionId: target.collectionId, add: theme.sourceIds },
+        { name: theme.name, ...(target.created ? { created: true as const } : {}) },
+      );
     }
   } finally {
     if (receiptSources.length === 0 && receiptCollections.length === 0) {
@@ -1348,10 +1580,50 @@ async function undoBulkUpdate(input: {
         collections.push({ collectionId, outcome: "failed", message: unsaved });
         continue;
       }
-      const existing = await readDocument(paths).then(
-        (document) => findCollection(document, collectionId),
-        () => undefined,
-      );
+      const document = await readDocument(paths).catch(() => null);
+      const existing = document ? findCollection(document, collectionId) : undefined;
+      if (delta.created) {
+        // Runs after the entries that filled it, as entries are undone newest first.
+        const live = existing !== undefined && existing.deletedAt === undefined;
+        const inUse =
+          live &&
+          (existing.sourceIds.length > 0 ||
+            document!.collections.some(
+              (collection) =>
+                collection.deletedAt === undefined &&
+                collection.parentCollectionId === collectionId,
+            ));
+        const removed =
+          live && !inUse
+            ? await deleteScientSourceCollection({
+                root: paths.location,
+                collectionId,
+                actor: input.actor,
+              }).then(
+                () => null,
+                (error: unknown) => failureMessage(error, "The collection could not be deleted."),
+              )
+            : null;
+        if (removed) {
+          collections.push({ collectionId, outcome: "failed", message: removed });
+          continue;
+        }
+        if (inUse) {
+          conflicts.push({
+            collectionId,
+            message: "Sources or collections were added to it since, so it was kept.",
+          });
+        }
+        const unrecorded = await markDone((undoneAt) => {
+          receiptCollections[index] = { ...(receiptCollections[index] ?? delta), undoneAt };
+        });
+        collections.push(
+          unrecorded
+            ? { collectionId, outcome: "failed", message: unrecorded }
+            : { collectionId, outcome: live && !inUse ? "updated" : "unchanged" },
+        );
+        continue;
+      }
       const settled =
         existing && existing.deletedAt === undefined
           ? settledCollection(delta, existing.updatedAt)

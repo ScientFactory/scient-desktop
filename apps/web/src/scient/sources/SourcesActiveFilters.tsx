@@ -3,7 +3,7 @@ import { MoreHorizontal, X } from "lucide-react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
-import { SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
+import { SCIENT_SOURCE_STUDY_DESIGN_LABELS, SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
 import type { SourcesNameRequest } from "./SourcesNameDialog";
 import type { SourcesOrganize } from "./useSourcesOrganize";
 
@@ -50,6 +50,20 @@ export function SourcesActiveFilters(props: {
       },
     });
   };
+  const newSubcollection = () => {
+    if (!collection) return;
+    props.onRequestName({
+      title: `New collection in “${collection.name}”`,
+      label: "Collection name",
+      initialName: "",
+      action: "Create",
+      onSubmit: async (name) => {
+        const created = await organize.createCollection(name, [], collection.collectionId);
+        if (created) organize.showCollection(created.collectionId);
+        return created !== null;
+      },
+    });
+  };
   const saveSearch = () =>
     props.onRequestName({
       title: savedSearch ? "Update saved search" : "Save search",
@@ -74,6 +88,13 @@ export function SourcesActiveFilters(props: {
           onRemove={() => without("type")}
         />
       ) : null}
+      {filter.studyDesign ? (
+        <FilterChip
+          label={SCIENT_SOURCE_STUDY_DESIGN_LABELS[filter.studyDesign]}
+          onRemove={() => without("studyDesign")}
+        />
+      ) : null}
+      {filter.topic ? <FilterChip label={filter.topic} onRemove={() => without("topic")} /> : null}
       {filter.hasPdf !== undefined ? (
         <FilterChip
           label={filter.hasPdf ? "With PDF" : "Without PDF"}
@@ -102,6 +123,11 @@ export function SourcesActiveFilters(props: {
               <MenuItem disabled={!organize.canChange} onClick={renameCollection}>
                 Rename collection…
               </MenuItem>
+              {collection.parentCollectionId ? null : (
+                <MenuItem disabled={!organize.canChange} onClick={newSubcollection}>
+                  New subcollection…
+                </MenuItem>
+              )}
               <MenuItem
                 variant="destructive"
                 disabled={!organize.canChange}

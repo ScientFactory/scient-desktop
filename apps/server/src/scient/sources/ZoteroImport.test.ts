@@ -124,7 +124,7 @@ describe("Zotero import", () => {
     expect(keys).toEqual(["fromBetterBibTeX", "pinned2026"]);
   });
 
-  it("puts imported items in Library collections named after their Zotero collections", async () => {
+  it("keeps one level of Zotero's collections and reports deeper ones it flattened", async () => {
     const root = await project();
     const zotero = fakeZoteroAccess(
       fakeZoteroTransport({
@@ -135,7 +135,7 @@ describe("Zotero import", () => {
               item: zoteroItem("ABCD2345", {
                 title: "Filed twice",
                 abstractNote: "A.",
-                collections: ["THES2345", "CHAP2345"],
+                collections: ["THES2345", "FIGS2345"],
               }),
               children: [],
             },
@@ -144,6 +144,7 @@ describe("Zotero import", () => {
         collections: [
           { key: "THES2345", name: "Thesis" },
           { key: "CHAP2345", name: "Chapter 2", parent: "THES2345" },
+          { key: "FIGS2345", name: "Figures", parent: "CHAP2345" },
         ],
       }),
     );
@@ -154,16 +155,22 @@ describe("Zotero import", () => {
       scope: { kind: "library" },
       zotero,
     });
-    await advanceSourceImport({ root, operationId: "filed", zotero });
+    const operation = await advanceSourceImport({ root, operationId: "filed", zotero });
 
     const [record] = await listScientSourceRecords(root);
     const organization = await readScientSourcesOrganization(root);
+    const thesis = organization.collections.find((collection) => collection.name === "Thesis");
     expect(
-      organization.collections.map((collection) => [collection.name, collection.sourceIds]),
+      organization.collections.map((collection) => [
+        collection.name,
+        collection.parentCollectionId ?? null,
+        collection.sourceIds,
+      ]),
     ).toEqual([
-      ["Thesis", [record?.sourceId]],
-      ["Thesis / Chapter 2", [record?.sourceId]],
+      ["Thesis", null, [record?.sourceId]],
+      ["Chapter 2", thesis?.collectionId, [record?.sourceId]],
     ]);
+    expect(operation.items[0]?.note).toContain("“Figures” joined “Thesis / Chapter 2”");
   });
 
   it("imports metadata when Zotero has no copy of the PDF file", async () => {

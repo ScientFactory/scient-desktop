@@ -1,6 +1,11 @@
 import * as Schema from "effect/Schema";
 
 import {
+  ScientSourceStudyDesign,
+  scientSourceTopicKey,
+  type ScientSourceCategorySummary,
+} from "./categories.ts";
+import {
   ScientSourceActor,
   ScientSourceType,
   type ScientSourceCreator,
@@ -25,12 +30,17 @@ export const ScientSourceFilter = Schema.Struct({
   collectionId: Schema.optionalKey(NonEmptyString),
   type: Schema.optionalKey(ScientSourceType),
   hasPdf: Schema.optionalKey(Schema.Boolean),
+  studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
+  /** An arXiv category or OpenAlex topic name, case-insensitive. */
+  topic: Schema.optionalKey(Tag),
 });
 export type ScientSourceFilter = typeof ScientSourceFilter.Type;
 
 export const ScientSourceCollection = Schema.Struct({
   collectionId: NonEmptyString,
   name: Name,
+  /** One level only: a parent never has a parent itself. */
+  parentCollectionId: Schema.optionalKey(NonEmptyString),
   // Ids stay when a source is removed, so restoring it from the trash restores membership too.
   sourceIds: Schema.Array(NonEmptyString).pipe(
     Schema.check(Schema.isMaxLength(SCIENT_SOURCE_COLLECTION_MEMBER_LIMIT)),
@@ -63,6 +73,8 @@ export type ScientSourceCollectionsDocument = typeof ScientSourceCollectionsDocu
 export const ScientSourceCollectionSummary = Schema.Struct({
   collectionId: NonEmptyString,
   name: Name,
+  /** Absent for a top-level collection, and for one whose parent was deleted. */
+  parentCollectionId: Schema.optionalKey(NonEmptyString),
   sourceIds: Schema.Array(NonEmptyString),
   updatedAt: NonEmptyString,
   updatedBy: ScientSourceActor,
@@ -98,6 +110,12 @@ export const ScientSourcesOrganizeAction = Schema.Union([
     action: Schema.Literal("create-collection"),
     name: Name,
     sourceIds: Schema.optionalKey(SourceIds),
+    parentCollectionId: Schema.optionalKey(NonEmptyString),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("move-collection"),
+    collectionId: NonEmptyString,
+    parentCollectionId: Schema.NullOr(NonEmptyString),
   }),
   Schema.Struct({
     action: Schema.Literal("rename-collection"),
@@ -137,6 +155,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "restored",
     "not-found",
     "name-taken",
+    "too-deep",
   ]),
   collection: Schema.optionalKey(ScientSourceCollectionSummary),
   savedSearch: Schema.optionalKey(ScientSourceSavedSearchSummary),
@@ -158,12 +177,25 @@ export const ScientSourcesBulkChange = Schema.Struct({
 });
 export type ScientSourcesBulkChange = typeof ScientSourcesBulkChange.Type;
 
+/** Creates collections (one level under `parent`, made when missing) and fills them, as one edit. */
+export const ScientSourcesBulkThemes = Schema.Struct({
+  themes: Schema.Array(
+    Schema.Struct({
+      name: Name,
+      parent: Schema.optionalKey(Name),
+      sourceIds: SourceIds,
+    }),
+  ).pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(50))),
+});
+export type ScientSourcesBulkThemes = typeof ScientSourcesBulkThemes.Type;
+
 /** Reverses one earlier bulk edit by the `undo.batchId` its result returned. */
 export const ScientSourcesBulkUndo = Schema.Struct({ undoBatchId: NonEmptyString });
 export type ScientSourcesBulkUndo = typeof ScientSourcesBulkUndo.Type;
 
 export const ScientSourcesBulkRequestChange = Schema.Union([
   ScientSourcesBulkChange,
+  ScientSourcesBulkThemes,
   ScientSourcesBulkUndo,
 ]);
 export type ScientSourcesBulkRequestChange = typeof ScientSourcesBulkRequestChange.Type;
@@ -202,6 +234,8 @@ export const ScientSourcesBulkReceipt = Schema.Struct({
       addedSourceIds: Schema.Array(NonEmptyString),
       removedSourceIds: Schema.Array(NonEmptyString),
       updatedAt: Schema.optionalKey(NonEmptyString),
+      // The edit made this collection; Undo deletes it once it is empty again.
+      created: Schema.optionalKey(Schema.Literal(true)),
       pending: Schema.optionalKey(Schema.Literal(true)),
       restoring: Schema.optionalKey(Schema.Struct({ updatedAt: NonEmptyString })),
       undoneAt: Schema.optionalKey(NonEmptyString),
@@ -226,6 +260,8 @@ export const ScientSourcesBulkResult = Schema.Struct({
     Schema.Struct({
       collectionId: NonEmptyString,
       outcome: Schema.Literals(["updated", "unchanged", "not-found", "failed"]),
+      name: Schema.optionalKey(Schema.String),
+      created: Schema.optionalKey(Schema.Literal(true)),
       message: Schema.optionalKey(Schema.String),
     }),
   ),
@@ -260,6 +296,7 @@ export interface ScientSourceFilterable {
   readonly containerTitle: string | null;
   readonly tags?: ReadonlyArray<string> | undefined;
   readonly attachments: ReadonlyArray<{ readonly kind: string }>;
+  readonly categories?: ScientSourceCategorySummary | undefined;
   readonly externalReferences?:
     | ReadonlyArray<{
         readonly system: string;
@@ -315,7 +352,25 @@ export function scientSourceFilterIsEmpty(filter: ScientSourceFilter): boolean {
     (filter.tags?.length ?? 0) === 0 &&
     filter.collectionId === undefined &&
     filter.type === undefined &&
-    filter.hasPdf === undefined
+    filter.hasPdf === undefined &&
+    filter.studyDesign === undefined &&
+    filter.topic === undefined
+  );
+}
+
+/** A collection's sources with those of its subcollections. */
+export function scientSourceCollectionMemberIds(
+  organization: Pick<ScientSourcesOrganization, "collections">,
+  collectionId: string,
+): ReadonlySet<string> {
+  return new Set(
+    organization.collections
+      .filter(
+        (collection) =>
+          collection.collectionId === collectionId ||
+          collection.parentCollectionId === collectionId,
+      )
+      .flatMap((collection) => collection.sourceIds),
   );
 }
 
@@ -327,15 +382,21 @@ export function compileScientSourceFilter(
   const members =
     filter.collectionId === undefined
       ? null
-      : new Set(
-          organization.collections.find(
-            (collection) => collection.collectionId === filter.collectionId,
-          )?.sourceIds ?? [],
-        );
+      : scientSourceCollectionMemberIds(organization, filter.collectionId);
+  const topicKey = filter.topic === undefined ? null : scientSourceTopicKey(filter.topic);
   const text = filter.text?.trim() ?? "";
   return (source, searchText) => {
     if (members && !members.has(source.sourceId)) return false;
     if (filter.type !== undefined && source.type !== filter.type) return false;
+    if (filter.studyDesign !== undefined && source.categories?.studyDesign !== filter.studyDesign)
+      return false;
+    if (
+      topicKey !== null &&
+      !(source.categories?.topics ?? []).some(
+        (topic) => scientSourceTopicKey(topic.name) === topicKey,
+      )
+    )
+      return false;
     if (filter.hasPdf !== undefined) {
       const hasPdf = source.attachments.some((attachment) => attachment.kind === "pdf");
       if (hasPdf !== filter.hasPdf) return false;

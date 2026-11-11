@@ -26,6 +26,8 @@ import {
   ScientSourcesOrganizeAction,
   ScientSourcesOrganizeResult,
   ScientSourceFilter,
+  ScientSourceStudyDesign,
+  ScientSourceTopic,
   ScientReferenceFindingKind,
   ScientReferenceStatus,
 } from "@scientfactory/scient-sources";
@@ -96,6 +98,8 @@ export const ScientSourceAgentSummary = Schema.Struct({
   removedAt: Schema.optionalKey(NonEmptyString),
   removedBy: Schema.optionalKey(ScientSourceActor),
   tags: Schema.optionalKey(Schema.Array(Schema.String)),
+  studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
+  topics: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 export const ScientSourcesListResult = Schema.Struct({
@@ -138,17 +142,28 @@ export const ScientSourceAgentDetail = Schema.Struct({
   updatedAt: Schema.optionalKey(NonEmptyString),
   updatedBy: Schema.optionalKey(ScientSourceActor),
   revisions: Schema.Array(ScientSourceRevisionSummary),
+  /** From PubMed (study design, publication types), arXiv and OpenAlex (topics). */
+  categories: Schema.optionalKey(
+    Schema.Struct({
+      studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
+      publicationTypes: Schema.optionalKey(Schema.Array(Schema.String)),
+      topics: Schema.optionalKey(Schema.Array(ScientSourceTopic)),
+      checkedAt: NonEmptyString,
+    }),
+  ),
 });
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Library (Sources); total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId, type, hasPdf, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
+    "List a page of this project's Library (Sources); total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
     tags: Schema.optionalKey(ScientSourceFilter.fields.tags),
     collectionId: Schema.optionalKey(NonEmptyString),
     type: Schema.optionalKey(ScientSourceType),
     hasPdf: Schema.optionalKey(Schema.Boolean),
+    studyDesign: Schema.optionalKey(ScientSourceStudyDesign),
+    topic: Schema.optionalKey(NonEmptyString),
     savedSearchId: Schema.optionalKey(NonEmptyString),
     inTrash: Schema.optionalKey(Schema.Boolean),
     offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -715,6 +730,8 @@ export const ScientSourcesZoteroImportResult = Schema.Struct({
       ),
       sourceId: NullableText,
       message: NullableText,
+      /** Zotero collections nested deeper than the Library keeps, and where they went. */
+      note: Schema.optionalKey(Schema.String),
     }),
   ).pipe(Schema.check(Schema.isMaxLength(500))),
 });
@@ -795,7 +812,12 @@ const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
   .annotate(ScientOperation, sourceOperation("sources.zotero.send", true));
 export const ScientSourcesCollectionsResult = Schema.Struct({
   collections: Schema.Array(
-    Schema.Struct({ collectionId: NonEmptyString, name: NonEmptyString, sourceCount: Schema.Int }),
+    Schema.Struct({
+      collectionId: NonEmptyString,
+      name: NonEmptyString,
+      parentCollectionId: Schema.optionalKey(NonEmptyString),
+      sourceCount: Schema.Int,
+    }),
   ),
   savedSearches: Schema.Array(
     Schema.Struct({ searchId: NonEmptyString, name: NonEmptyString, filter: ScientSourceFilter }),
@@ -803,12 +825,20 @@ export const ScientSourcesCollectionsResult = Schema.Struct({
   tags: Schema.Array(Schema.Struct({ tag: Schema.String, count: Schema.Int })).pipe(
     Schema.check(Schema.isMaxLength(200)),
   ),
+  studyDesigns: Schema.Array(
+    Schema.Struct({ studyDesign: ScientSourceStudyDesign, count: Schema.Int }),
+  ),
+  topics: Schema.Array(Schema.Struct({ topic: Schema.String, count: Schema.Int })).pipe(
+    Schema.check(Schema.isMaxLength(200)),
+  ),
+  /** Sources whose study design and topics are still being looked up. */
+  categorizing: Schema.optionalKey(Schema.Int),
   message: Schema.optionalKey(Schema.String),
 });
 
 const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
   description:
-    "Read collections (with source counts), saved searches (with filters) and the most used tags.",
+    "Read collections (with source counts and parents), saved searches (with filters) and the most used tags, topics and study designs.",
   parameters: Tool.EmptyParams,
   success: ScientSourcesCollectionsResult,
   failure: ScientSourcesToolError,
@@ -823,7 +853,7 @@ const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
 
 const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
   description:
-    "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.",
+    "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing); parentCollectionId nests one level; move-collection changes it (null: top level). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.",
   parameters: Schema.Struct({ change: ScientSourcesOrganizeAction }),
   success: ScientSourcesOrganizeResult,
   failure: ScientSourcesToolError,
@@ -838,7 +868,7 @@ const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
 
 const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
   description:
-    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections. Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
+    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections; or {themes: [{name, parent?, sourceIds}]} fills new or existing collections (parent made if missing). Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
   parameters: Schema.Struct({ change: ScientSourcesBulkRequestChange }),
   success: ScientSourcesBulkResult,
   failure: ScientSourcesToolError,
