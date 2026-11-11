@@ -9,7 +9,13 @@ import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { advanceSourceImport, beginZoteroScopedImport } from "./ScientSourcesCoordinator.ts";
-import { fakeZoteroAccess, fakeZoteroTransport, zoteroItem } from "./Zotero.testkit.ts";
+import {
+  fakeZoteroAccess,
+  fakeZoteroAccessWithGroup,
+  fakeZoteroTransport,
+  zoteroGroupItem,
+  zoteroItem,
+} from "./Zotero.testkit.ts";
 import type { ZoteroWebHttp } from "./ZoteroWebAdapter.ts";
 
 const roots: string[] = [];
@@ -250,6 +256,51 @@ describe("Zotero import", () => {
     expect(paths).toContain("/users/475425/items/ABCD2345");
     expect((await listScientSourceRecords(root))[0]?.externalReferences[0]?.libraryId).toBe(
       "475425",
+    );
+  });
+
+  it("keeps a group item apart from a My Library item with the same key", async () => {
+    const root = await project();
+    const entry = (item: ReturnType<typeof zoteroItem>) => ({ item, children: [] });
+    const zotero = fakeZoteroAccessWithGroup(
+      fakeZoteroTransport({
+        items: new Map([
+          ["ABCD2345", entry(zoteroItem("ABCD2345", { title: "Mine", abstractNote: "A." }))],
+        ]),
+      }),
+      "4321",
+      fakeZoteroTransport({
+        items: new Map([
+          [
+            "ABCD2345",
+            entry(zoteroGroupItem("ABCD2345", { title: "The lab's", abstractNote: "A." }, "4321")),
+          ],
+        ]),
+      }),
+    );
+
+    for (const [operationId, groupId] of [
+      ["mine", undefined],
+      ["lab", "4321"],
+    ] as const) {
+      await beginZoteroScopedImport({
+        root,
+        operationId,
+        scope: { kind: "library" },
+        ...(groupId ? { groupId } : {}),
+        zotero,
+      });
+      await advanceSourceImport({ root, operationId, zotero });
+    }
+
+    const records = await listScientSourceRecords(root);
+    expect(
+      new Map(records.map((record) => [record.title, record.externalReferences[0]?.libraryId])),
+    ).toEqual(
+      new Map([
+        ["Mine", "0"],
+        ["The lab's", "groups/4321"],
+      ]),
     );
   });
 });

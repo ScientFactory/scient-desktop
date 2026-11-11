@@ -1,7 +1,8 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { inspectZotero } from "./ZoteroConnections.ts";
+import { inspectZotero, listZoteroGroups } from "./ZoteroConnections.ts";
 import type { ZoteroResponse } from "./ZoteroLibraryReader.ts";
+import { betterBibTexLibraryId, localZoteroGroupsFrom } from "./ZoteroLocalAdapter.ts";
 import {
   inspectZoteroWebKey,
   makeZoteroWebLibrary,
@@ -16,6 +17,7 @@ const account = {
   canRead: true,
   canWrite: true,
   canReadFiles: true,
+  groupAccess: {},
 };
 
 function recordedHttp(answer: (request: ZoteroWebRequest) => ZoteroResponse) {
@@ -72,6 +74,50 @@ describe("Zotero web adapter", () => {
 
     expect(requests[0]?.url.href).toBe("https://api.zotero.org/users/475425/items/top?limit=1");
     expect(requests[0]?.method).toBe("GET");
+  });
+
+  it("lists the groups the key can read, writable only where the group lets the user edit", async () => {
+    const { http, requests } = recordedHttp((request) =>
+      request.url.pathname === "/keys/current"
+        ? ok({
+            userID: 475425,
+            access: {
+              user: { library: true },
+              groups: { all: { library: true, write: true }, "33": { library: false } },
+            },
+          })
+        : ok(
+            [
+              { id: 11, data: { name: "Lab", libraryEditing: "members" } },
+              { id: 22, data: { name: "Admins only", libraryEditing: "admins", owner: 9 } },
+              { id: 33, data: { name: "Hidden from the key" } },
+            ],
+            { "total-results": "3" },
+          ),
+    );
+
+    const groups = await listZoteroGroups({ webKey: async () => KEY, http }, "web", {
+      fresh: true,
+    });
+
+    expect(groups).toEqual([
+      { groupId: "11", name: "Lab", canWrite: true },
+      { groupId: "22", name: "Admins only", canWrite: false },
+    ]);
+    expect(requests[1]?.url.pathname).toBe("/users/475425/groups");
+    const library = makeZoteroWebLibrary({ apiKey: KEY, account, groupId: "11", http });
+    await library.transport.get("/items/top");
+    expect(requests[2]?.url.href).toBe("https://api.zotero.org/groups/11/items/top");
+  });
+
+  it("reads the groups Zotero on this computer syncs and their Better BibTeX library", () => {
+    const body = JSON.stringify({ data: [{ id: 11, data: { name: "Lab" } }, { id: 0 }] });
+
+    expect(localZoteroGroupsFrom(body)).toEqual([{ groupId: "11", name: "Lab", canWrite: false }]);
+    const libraries = (names: string[]) =>
+      JSON.stringify({ result: names.map((name, index) => ({ id: index + 1, name })) });
+    expect(betterBibTexLibraryId(libraries(["My Library", "Lab"]), "Lab")).toBe(2);
+    expect(betterBibTexLibraryId(libraries(["Lab", "Lab"]), "Lab")).toBeNull();
   });
 
   it("creates items with a write token and returns their keys in order", async () => {

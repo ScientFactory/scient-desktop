@@ -21,6 +21,7 @@ import {
   ScientSourceZoteroSendResult,
   ZoteroConnection,
   ZoteroConnectionState,
+  ZoteroGroupId,
   ScientSourcesBulkRequestChange,
   ScientSourcesBulkResult,
   ScientSourcesOrganizeAction,
@@ -661,6 +662,9 @@ const ZoteroConnectionInput = ZoteroConnection.annotate({
     "local: Zotero on this computer; web: zotero.org with the Accounts key. Omit for whichever is ready, local first.",
 });
 const ZoteroItemKey = Schema.String.check(Schema.isPattern(/^[23456789A-Z]{8}$/u));
+const ZoteroLibraryInput = ZoteroGroupId.annotate({
+  description: "A group's ID from browse groups; omit for My Library.",
+});
 const ZoteroRefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
   Schema.check(Schema.isMaxLength(32)),
 );
@@ -670,6 +674,9 @@ export const ScientSourcesZoteroBrowseResult = Schema.Struct({
   connection: Schema.NullOr(ZoteroConnection),
   canWrite: Schema.Boolean,
   message: NonEmptyString,
+  groups: Schema.Array(
+    Schema.Struct({ id: NonEmptyString, name: NonEmptyString, canWrite: Schema.Boolean }),
+  ),
   collections: Schema.Array(
     Schema.Struct({ key: NonEmptyString, name: NonEmptyString, parentKey: NullableText }),
   ),
@@ -691,9 +698,10 @@ export const ScientSourcesZoteroBrowseResult = Schema.Struct({
 
 const ScientSourcesZoteroBrowseTool = Tool.make("scient_sources_zotero_browse", {
   description:
-    "Browse the user's Zotero library: whether it is reachable, its collections and a page of references (by collection or query). sourceId marks ones already in this Library. If state is not ready, tell the user its message.",
+    "Browse the user's Zotero library: whether it is reachable, its groups and collections and a page of references (by collection or query). sourceId marks ones already in this Library. If state is not ready, tell the user its message.",
   parameters: Schema.Struct({
     connection: Schema.optionalKey(ZoteroConnectionInput),
+    library: Schema.optionalKey(ZoteroLibraryInput),
     collectionKey: Schema.optionalKey(ZoteroItemKey),
     includeSubcollections: Schema.optionalKey(Schema.Boolean),
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
@@ -741,6 +749,7 @@ const ScientSourcesZoteroImportTool = Tool.make("scient_sources_zotero_import", 
     "Import from the user's Zotero library after the user asks: itemKeys, a collectionKey or all, with notes, tags, PDFs and citation keys. Already imported: skipped (same-origin); possible-metadata-match: skipped unless in possibleMetadataMatchOverrides. At most 500 per call.",
   parameters: Schema.Struct({
     connection: Schema.optionalKey(ZoteroConnectionInput),
+    library: Schema.optionalKey(ZoteroLibraryInput),
     itemKeys: Schema.optionalKey(
       Schema.Array(ZoteroItemKey).pipe(
         Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
@@ -794,11 +803,12 @@ const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh"
 
 const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
   description:
-    "Send Sources to the user's zotero.org library after the user asks, creating (and linking) or updating each item; needs an Accounts Zotero key with write access. Items changed in Zotero since Scient read them are not overwritten (changed-in-zotero): refresh, then send again.",
+    "Send Sources to the user's zotero.org library, or a group with canWrite, after the user asks, creating (and linking) or updating each item; needs an Accounts Zotero key with write access. Items changed in Zotero since Scient read them are not overwritten (changed-in-zotero): refresh, then send again.",
   parameters: Schema.Struct({
     sourceIds: Schema.Array(NonEmptyString).pipe(
       Schema.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
     ),
+    library: Schema.optionalKey(ZoteroLibraryInput),
   }),
   success: ScientSourceZoteroSendResult,
   failure: ScientSourcesToolError,

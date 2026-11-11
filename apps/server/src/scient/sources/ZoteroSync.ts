@@ -10,6 +10,7 @@ import {
   type ScientSourceZoteroRefreshResult,
   type ScientSourceZoteroSendItem,
   type ZoteroConnection,
+  zoteroGroupIdOfLibrary,
 } from "@scientfactory/scient-sources";
 import {
   attachScientSourcePdf,
@@ -24,6 +25,7 @@ import {
 
 import {
   inspectZotero,
+  listZoteroGroups,
   zoteroTransport,
   zoteroWebLibrary,
   type ZoteroAccess,
@@ -84,14 +86,14 @@ export async function recordZoteroSync(input: {
 }
 
 /** The connection to use: the one asked for, else whichever is ready now. */
-async function readyZoteroTransport(
+async function readyZoteroConnection(
   access: ZoteroAccess,
   connection?: ZoteroConnection,
-): Promise<ZoteroTransport> {
-  if (connection) return zoteroTransport(access, connection);
+): Promise<ZoteroConnection> {
+  if (connection) return connection;
   const status = await inspectZotero(access);
   if (status.state !== "ready") throw new Error(status.message);
-  return zoteroTransport(access, status.connection ?? "local");
+  return status.connection ?? "local";
 }
 
 /** Zotero's own explanations are shown; anything else may hold a local path, so it is not. */
@@ -300,7 +302,19 @@ export async function refreshZoteroSources(input: {
   if (records.length > MAX_REFRESH_SOURCES) {
     throw new Error(`Refresh at most ${MAX_REFRESH_SOURCES} sources at a time.`);
   }
-  const transport = await readyZoteroTransport(input.zotero, input.connection);
+  const connection = await readyZoteroConnection(input.zotero, input.connection);
+  // Each source is read again from the library it came from: My Library or its group.
+  const transports = new Map<string, Promise<ZoteroTransport>>();
+  const transportFor = (record: ScientSourceRecord) => {
+    const reference = zoteroReference(record);
+    const groupId = reference ? zoteroGroupIdOfLibrary(reference.libraryId) : null;
+    let transport = transports.get(groupId ?? "");
+    if (!transport) {
+      transport = zoteroTransport(input.zotero, connection, groupId ?? undefined);
+      transports.set(groupId ?? "", transport);
+    }
+    return transport;
+  };
   const items: ScientSourceZoteroRefreshItem[] = [];
   for (const record of records) {
     try {
@@ -308,7 +322,7 @@ export async function refreshZoteroSources(input: {
         await refreshOne({
           root: input.root,
           record,
-          transport,
+          transport: await transportFor(record),
           actor: input.actor,
           choices: input.choices ?? {},
         }),
@@ -325,7 +339,7 @@ export async function refreshZoteroSources(input: {
       });
     }
   }
-  return { connection: transport.connection, items };
+  return { connection, items };
 }
 
 const CHANGED_IN_ZOTERO =
@@ -367,11 +381,12 @@ async function syncAfterSend(input: {
     actor: input.actor,
   });
   const previous = await readScientSourceZoteroSync(input.root, input.record.sourceId);
+  const same = previous?.itemKey === fresh.itemKey && previous.libraryId === fresh.libraryId;
   await recordZoteroSync({
     root: input.root,
     record: updated.record,
     material,
-    attachmentKeys: previous?.itemKey === input.itemKey ? previous.attachmentKeys : [],
+    attachmentKeys: same ? previous.attachmentKeys : [],
   });
 }
 
@@ -383,7 +398,10 @@ async function sendOne(input: {
 }): Promise<ScientSourceZoteroSendItem> {
   const { record, library } = input;
   const summary = { sourceId: record.sourceId, title: record.title };
-  const reference = zoteroReference(record);
+  const linked = zoteroReference(record);
+  // A link to another library is not this library's item, even with the same key.
+  const reference =
+    linked && zoteroGroupIdOfLibrary(linked.libraryId) === library.groupId ? linked : undefined;
   const current = reference ? await readWebItem(library, reference.itemKey) : null;
   if (reference && current) {
     const base = await readScientSourceZoteroSync(input.root, record.sourceId);
@@ -442,17 +460,28 @@ async function sendOne(input: {
 }
 
 /**
- * One-way: creates or updates each source's item in the user's zotero.org library. An item
- * changed in Zotero since Scient last read it is left alone and reported.
+ * One-way: creates or updates each source's item in the user's zotero.org library, or in a
+ * group the key may write to. A source linked to another library gets a new item here and is
+ * linked to it. An item changed in Zotero since Scient last read it is left alone and reported.
  */
 export async function sendSourcesToZotero(input: {
   readonly root: string;
   readonly sourceIds: ReadonlyArray<string>;
+  readonly groupId?: string;
   readonly actor: ScientSourceActor;
   readonly zotero: ZoteroAccess;
 }): Promise<{ readonly items: ReadonlyArray<ScientSourceZoteroSendItem> }> {
-  const library = await zoteroWebLibrary(input.zotero, { fresh: true });
-  if (!library.account.canWrite) {
+  const { groupId } = input;
+  if (groupId) {
+    const groups = await listZoteroGroups(input.zotero, "web", { fresh: true });
+    if (!groups.find((group) => group.groupId === groupId)?.canWrite) {
+      throw new Error(
+        "The Zotero key in Accounts cannot write to this group. It needs write access to the group, and the group must let you edit its library.",
+      );
+    }
+  }
+  const library = await zoteroWebLibrary(input.zotero, groupId ? { groupId } : { fresh: true });
+  if (!groupId && !library.account.canWrite) {
     throw new Error(
       "The Zotero key in Accounts can only read. Create a zotero.org key that can write, then save it in Accounts.",
     );

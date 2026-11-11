@@ -25,6 +25,7 @@ import {
   MoreVertical,
   RefreshCw,
   Search,
+  Users,
   X,
 } from "lucide-react";
 import {
@@ -43,7 +44,7 @@ import { useManagedBibliography } from "./useManagedBibliography";
 import { useLibrarySourceRequest } from "./librarySourceRequest";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import {
   Select,
@@ -539,6 +540,9 @@ export function ScientSourcesPanel(props: {
   const selectedZoteroCollection = selectedZoteroCollectionKey
     ? sources.zoteroCollections.find((collection) => collection.key === selectedZoteroCollectionKey)
     : null;
+  const zoteroLibraryName =
+    sources.zoteroGroups.find((group) => group.groupId === sources.zoteroGroupId)?.name ??
+    "My Library";
 
   const moveToTrash = async (record: {
     readonly sourceId: string;
@@ -745,8 +749,16 @@ export function ScientSourcesPanel(props: {
             <MenuTrigger
               render={
                 <Button variant="ghost" size="xs" className="max-w-48">
-                  {sources.zoteroScope.kind === "library" ? <Library /> : <Folder />}
-                  <span className="truncate">{selectedZoteroCollection?.name ?? "My Library"}</span>
+                  {sources.zoteroScope.kind === "collection" ? (
+                    <Folder />
+                  ) : sources.zoteroGroupId ? (
+                    <Users />
+                  ) : (
+                    <Library />
+                  )}
+                  <span className="truncate">
+                    {selectedZoteroCollection?.name ?? zoteroLibraryName}
+                  </span>
                 </Button>
               }
             />
@@ -755,12 +767,33 @@ export function ScientSourcesPanel(props: {
                 onClick={() => {
                   setQuery("");
                   setSelectedKeys(new Set());
-                  void sources.selectZoteroScope({ kind: "library" });
+                  void (sources.zoteroGroupId
+                    ? sources.selectZoteroLibrary(null)
+                    : sources.selectZoteroScope({ kind: "library" }));
                 }}
               >
                 <Library />
                 My Library
               </MenuItem>
+              {sources.zoteroGroups.map((group) => (
+                <MenuItem
+                  key={group.groupId}
+                  title={group.name}
+                  onClick={() => {
+                    setQuery("");
+                    setSelectedKeys(new Set());
+                    void (sources.zoteroGroupId === group.groupId
+                      ? sources.selectZoteroScope({ kind: "library" })
+                      : sources.selectZoteroLibrary(group.groupId));
+                  }}
+                >
+                  <Users />
+                  <span className="min-w-0 truncate">{group.name}</span>
+                </MenuItem>
+              ))}
+              {sources.zoteroGroups.length > 0 && zoteroCollectionChoices.length > 0 ? (
+                <MenuSeparator />
+              ) : null}
               {zoteroCollectionChoices.map((collection) => (
                 <MenuItem
                   key={collection.key}
@@ -835,7 +868,7 @@ export function ScientSourcesPanel(props: {
             <TooltipPopup side="bottom">
               {sources.zoteroScope.kind === "collection"
                 ? `Import ${sources.library.total} references in this collection`
-                : `Import all ${sources.library.total} references in My Library`}
+                : `Import all ${sources.library.total} references in ${zoteroLibraryName}`}
             </TooltipPopup>
           </Tooltip>
         </div>
@@ -1115,7 +1148,11 @@ export function ScientSourcesPanel(props: {
             });
           }}
           onRemove={() => moveToTrash(selectedRecord)}
-          onSendToZotero={() => void zoteroSync.sendToZotero(selectedRecord.sourceId)}
+          onSendToZotero={(groupId) =>
+            void zoteroSync.sendToZotero(selectedRecord.sourceId, groupId)
+          }
+          zoteroWritableGroups={zoteroSync.writableGroups}
+          onSourceActionsOpen={zoteroSync.loadWritableGroups}
           onOpenHistory={() => setHistorySourceId(selectedRecord.sourceId)}
           onGetPdf={async () => {
             const doi = selectedRecord.identifiers.find(

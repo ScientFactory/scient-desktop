@@ -269,7 +269,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         )
         .handle("zoteroStatus", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
-            inspectZoteroConnection({ ...args.payload, zotero }),
+            inspectZoteroConnection({ ...args.payload, zotero, groups: true }),
           ),
         )
         .handle("zoteroLibrary", (args) =>

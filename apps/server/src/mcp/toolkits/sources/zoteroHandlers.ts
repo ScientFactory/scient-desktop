@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Agent Zotero import operation IDs use the system CSPRNG.
 import * as NodeCrypto from "node:crypto";
 
-import type {
-  ScientSourceZoteroRefreshField,
-  ZoteroConnection,
-  ZoteroImportScope,
+import {
+  zoteroGroupIdOfLibrary,
+  zoteroGroupLibraryId,
+  type ScientSourceZoteroRefreshField,
+  type ZoteroConnection,
+  type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import * as Effect from "effect/Effect";
@@ -19,7 +21,11 @@ import {
   listZoteroLibrary,
 } from "../../../scient/sources/ScientSourcesCoordinator.ts";
 import { zoteroKeyLookup } from "../../../scient/sources/ZoteroAccountKey.ts";
-import { ZoteroTransports, type ZoteroAccess } from "../../../scient/sources/ZoteroConnections.ts";
+import {
+  listZoteroGroups,
+  ZoteroTransports,
+  type ZoteroAccess,
+} from "../../../scient/sources/ZoteroConnections.ts";
 import {
   refreshZoteroSources,
   safeZoteroMessage,
@@ -63,6 +69,7 @@ const readyConnection = Effect.fn("ScientSourcesToolkit.zoteroReady")(function* 
 export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroBrowse")(
   function* (input: {
     readonly connection?: ZoteroConnection;
+    readonly library?: string;
     readonly collectionKey?: string;
     readonly includeSubcollections?: boolean;
     readonly query?: string;
@@ -82,6 +89,7 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
         connection: status.connection ?? null,
         canWrite: false,
         message: status.message,
+        groups: [],
         collections: [],
         items: [],
         total: 0,
@@ -96,32 +104,47 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
           includeSubcollections: input.includeSubcollections ?? false,
         }
       : { kind: "library" };
-    const [collections, page, records] = yield* zoteroAttempt(() =>
+    const library = input.library ? { groupId: input.library } : {};
+    const [groups, collections, page, records] = yield* zoteroAttempt(() =>
       Promise.all([
-        listZoteroCollections({ connection, zotero }),
+        listZoteroGroups(zotero, connection).catch(() => []),
+        listZoteroCollections({ connection, ...library, zotero }),
         listZoteroLibrary({
           scope,
           query: input.query ?? "",
           start: input.start ?? 0,
           limit: Math.min(50, Math.max(1, input.limit ?? 25)),
           connection,
+          ...library,
           zotero,
         }),
         listScientSourceRecords(root),
       ]),
     );
+    // Item keys repeat across libraries, so a key counts as imported only from its own one.
+    const libraryOf = (libraryId: string) =>
+      zoteroGroupIdOfLibrary(libraryId) ? libraryId : "user";
     const imported = new Map(
       records.flatMap((record) =>
         record.externalReferences
           .filter((reference) => reference.system === "zotero")
-          .map((reference) => [reference.itemKey, record.sourceId] as const),
+          .map(
+            (reference) =>
+              [`${libraryOf(reference.libraryId)}\0${reference.itemKey}`, record.sourceId] as const,
+          ),
       ),
     );
+    const browsed = input.library ? zoteroGroupLibraryId(input.library) : "user";
     return {
       state: status.state,
       connection,
       canWrite: status.canWrite ?? false,
       message: status.message,
+      groups: groups.map((group) => ({
+        id: group.groupId,
+        name: group.name,
+        canWrite: group.canWrite,
+      })),
       collections: collections.collections.slice(0, MAX_COLLECTIONS_SHOWN).map((collection) => ({
         key: collection.key,
         name: collection.name,
@@ -137,7 +160,7 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
           issuedYear: item.issuedYear,
           doi: item.identifiers.find((identifier) => identifier.scheme === "doi")?.value ?? null,
           pdfCount: item.pdfAttachmentCount,
-          sourceId: imported.get(item.sourceKey) ?? null,
+          sourceId: imported.get(`${browsed}\0${item.sourceKey}`) ?? null,
         };
       }),
       total: page.total,
@@ -149,6 +172,7 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
 export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroImport")(
   function* (input: {
     readonly connection?: ZoteroConnection;
+    readonly library?: string;
     readonly itemKeys?: ReadonlyArray<string>;
     readonly collectionKey?: string;
     readonly includeSubcollections?: boolean;
@@ -170,6 +194,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
     const connection = yield* readyConnection(zotero, input.connection);
     const operationId = `agent_zotero_${NodeCrypto.randomUUID()}`;
     const itemKeys = input.itemKeys;
+    const library = input.library ? { groupId: input.library } : {};
     yield* zoteroAttempt(() =>
       itemKeys
         ? beginZoteroImport({
@@ -180,6 +205,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
               (key) => itemKeys.includes(key),
             ),
             connection,
+            ...library,
             actor: "agent",
           })
         : beginZoteroScopedImport({
@@ -193,6 +219,7 @@ export const importZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroI
                 }
               : { kind: "library" },
             connection,
+            ...library,
             actor: "agent",
             zotero,
           }),
@@ -262,10 +289,16 @@ export const refreshZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zotero
 );
 
 export const sendToZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroSend")(
-  function* (input: { readonly sourceIds: ReadonlyArray<string> }) {
+  function* (input: { readonly sourceIds: ReadonlyArray<string>; readonly library?: string }) {
     const { root, zotero } = yield* agentZotero();
     return yield* zoteroAttempt(() =>
-      sendSourcesToZotero({ root, sourceIds: input.sourceIds, actor: "agent", zotero }),
+      sendSourcesToZotero({
+        root,
+        sourceIds: input.sourceIds,
+        ...(input.library ? { groupId: input.library } : {}),
+        actor: "agent",
+        zotero,
+      }),
     );
   },
 );

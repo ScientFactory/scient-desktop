@@ -3,6 +3,7 @@ import type {
   ScientSourceZoteroRefreshField,
   ScientSourceZoteroRefreshResult,
   ZoteroConnection,
+  ZoteroGroup,
 } from "@t3tools/contracts";
 import { LoaderCircle } from "lucide-react";
 import { useRef, useState } from "react";
@@ -61,8 +62,25 @@ export function useZoteroSync(input: {
 }) {
   const [refresh, setRefresh] = useState<RefreshState | null>(null);
   const [resolving, setResolving] = useState<string | null>(null);
+  const [writableGroups, setWritableGroups] = useState<ReadonlyArray<ZoteroGroup>>([]);
+  const groupsRequested = useRef(false);
   // A refresh still running when the dialog closes must not reopen it.
   const run = useRef(0);
+
+  /** Once per panel: the zotero.org groups the key can write to, for Send to Zotero. */
+  const loadWritableGroups = () => {
+    if (groupsRequested.current) return;
+    groupsRequested.current = true;
+    void readZoteroStatus(input.environmentId, "web")
+      .then((status) =>
+        setWritableGroups(
+          status.state === "ready" ? (status.groups ?? []).filter((group) => group.canWrite) : [],
+        ),
+      )
+      .catch(() => {
+        groupsRequested.current = false;
+      });
+  };
 
   const startRefresh = async () => {
     const current = ++run.current;
@@ -131,17 +149,21 @@ export function useZoteroSync(input: {
     );
   };
 
-  const sendToZotero = async (sourceId: string) => {
+  const sendToZotero = async (sourceId: string, groupId: string | null = null) => {
     try {
       const status = await readZoteroStatus(input.environmentId, "web");
-      if (status.state !== "ready" || !status.canWrite) {
+      const group = groupId ? status.groups?.find((entry) => entry.groupId === groupId) : null;
+      const canWrite = groupId ? group?.canWrite === true : status.canWrite === true;
+      if (status.state !== "ready" || !canWrite) {
         toastManager.add({
           type: "warning",
           title: "Not sent to Zotero",
           description:
-            status.state === "ready"
-              ? "The Zotero key in Accounts can only read. Save a zotero.org key that can write."
-              : status.message,
+            status.state !== "ready"
+              ? status.message
+              : groupId
+                ? "The Zotero key in Accounts cannot write to this group."
+                : "The Zotero key in Accounts can only read. Save a zotero.org key that can write.",
         });
         return;
       }
@@ -149,6 +171,7 @@ export function useZoteroSync(input: {
         await sendSourcesToZotero(input.environmentId, {
           root: input.root,
           sourceIds: [sourceId],
+          ...(groupId ? { groupId } : {}),
         })
       ).items;
       if (item?.outcome === "created" || item?.outcome === "updated") await input.onChanged();
@@ -188,6 +211,8 @@ export function useZoteroSync(input: {
       setRefresh(null);
     },
     sendToZotero,
+    writableGroups,
+    loadWritableGroups,
   };
 }
 

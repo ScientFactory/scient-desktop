@@ -1,14 +1,24 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Cached zotero.org key checks are keyed by a digest, never the key, and expire by wall clock.
 import * as NodeCrypto from "node:crypto";
 
-import type { ZoteroConnection, ZoteroConnectionStatus } from "@scientfactory/scient-sources";
+import type {
+  ZoteroConnection,
+  ZoteroConnectionStatus,
+  ZoteroGroup,
+} from "@scientfactory/scient-sources";
 import * as Context from "effect/Context";
 
 import type { ZoteroKeyLookup } from "./ZoteroAccountKey.ts";
 import type { ZoteroTransport } from "./ZoteroLibraryReader.ts";
-import { inspectZoteroConnection, localZoteroTransport } from "./ZoteroLocalAdapter.ts";
+import {
+  inspectZoteroConnection,
+  listLocalZoteroGroups,
+  localZoteroTransport,
+  localZoteroTransportFor,
+} from "./ZoteroLocalAdapter.ts";
 import {
   inspectZoteroWebKey,
+  listZoteroWebGroups,
   makeZoteroWebLibrary,
   nodeZoteroWebHttp,
   zoteroWebStatus,
@@ -26,6 +36,10 @@ export interface ZoteroAccess {
   readonly http?: ZoteroWebHttp;
   readonly inspectLocal?: () => Promise<ZoteroConnectionStatus>;
   readonly local?: ZoteroTransport;
+  readonly localGroups?: {
+    readonly list: () => Promise<ReadonlyArray<ZoteroGroup>>;
+    readonly transport: (groupId: string) => ZoteroTransport;
+  };
 }
 
 export const localOnlyZoteroAccess: ZoteroAccess = { webKey: async () => null };
@@ -92,26 +106,53 @@ export async function inspectZotero(
   return web?.state === "ready" ? web : local;
 }
 
-/** `fresh` checks the key's permissions again, as a write must. */
-export async function zoteroWebLibrary(
-  access: ZoteroAccess,
-  options: { readonly fresh?: boolean } = {},
-): Promise<ZoteroWebLibrary> {
+async function readyWebKey(access: ZoteroAccess, fresh?: boolean) {
   const apiKey = await access.webKey();
   if (!apiKey) throw new Error(ZOTERO_KEY_MISSING_MESSAGE);
   const http = access.http ?? nodeZoteroWebHttp;
-  const result = await checkWebKey(apiKey, http, options.fresh);
+  const result = await checkWebKey(apiKey, http, fresh);
   if (result.state === "unreachable") throw new Error("Scient could not reach zotero.org.");
   if (result.state === "rejected" || !result.account.canRead) {
     throw new Error("zotero.org refused the Zotero key in Accounts.");
   }
-  return makeZoteroWebLibrary({ apiKey, account: result.account, http });
+  return { apiKey, http, account: result.account };
+}
+
+/**
+ * My Library on zotero.org, or a group the key can read. `fresh` checks the key's permissions
+ * again, as a write must.
+ */
+export async function zoteroWebLibrary(
+  access: ZoteroAccess,
+  options: { readonly fresh?: boolean; readonly groupId?: string } = {},
+): Promise<ZoteroWebLibrary> {
+  const { apiKey, http, account } = await readyWebKey(access, options.fresh);
+  const groupId = options.groupId;
+  if (groupId && !(account.groupAccess[groupId] ?? account.groupAccess.all)?.read) {
+    throw new Error("The Zotero key in Accounts cannot read this group.");
+  }
+  return makeZoteroWebLibrary({ apiKey, account, http, ...(groupId ? { groupId } : {}) });
+}
+
+/** The group libraries a connection can read, besides My Library. */
+export async function listZoteroGroups(
+  access: ZoteroAccess,
+  connection: ZoteroConnection = "local",
+  options: { readonly fresh?: boolean } = {},
+): Promise<ReadonlyArray<ZoteroGroup>> {
+  if (connection === "local") return (access.localGroups?.list ?? listLocalZoteroGroups)();
+  const { apiKey, http, account } = await readyWebKey(access, options.fresh);
+  return listZoteroWebGroups({ apiKey, account, http });
 }
 
 export async function zoteroTransport(
   access: ZoteroAccess,
   connection: ZoteroConnection = "local",
+  groupId?: string,
 ): Promise<ZoteroTransport> {
-  if (connection === "local") return access.local ?? localZoteroTransport;
-  return (await zoteroWebLibrary(access)).transport;
+  if (connection === "local") {
+    if (!groupId) return access.local ?? localZoteroTransport;
+    return access.localGroups?.transport(groupId) ?? localZoteroTransportFor(groupId);
+  }
+  return (await zoteroWebLibrary(access, groupId ? { groupId } : {})).transport;
 }
