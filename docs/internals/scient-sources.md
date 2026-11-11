@@ -648,7 +648,10 @@ the CSL root, its identity, every element closed in order, and every macro a
 layout names defined. citeproc-js reports neither fault itself: it renders
 markup that Pandoc rejects, and prints nothing for an undefined macro. The
 check reads the text, so it covers branches for every source type, and it does
-not print a sample, because a valid style may print nothing for some types.
+not print a sample, because a valid style may print nothing for some types. It
+sets comments aside and reads attributes as XML does (either quote, spaces
+around `=`, character references), so a macro name matches its definition
+however each is written.
 
 The web keeps one copy of the project's style per project
 (`useProjectCitationStyle`). It reads the style when a reference or the picker

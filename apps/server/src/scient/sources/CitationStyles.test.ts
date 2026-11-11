@@ -189,6 +189,20 @@ describe("setProjectCitationStyle", () => {
       style: { _tag: "none" },
       error: "The citation style nature-brackets is not a valid CSL style.",
     });
+    const recordedStyles = recordedRequest();
+    const dependent = await setProjectCitationStyle(
+      { root: other, styleId: "scientific-reports", actor: "user" },
+      {
+        request: async (url, ...rest) =>
+          url.href.endsWith("/nature-brackets")
+            ? { status: 200, body: brackets, url }
+            : recordedStyles(url, ...rest),
+        cacheRoot: null,
+      },
+    );
+    expect(dependent.error).toBe(
+      "Scientific Reports uses nature-brackets, which is not a valid independent CSL style.",
+    );
     expect(NodeFS.existsSync(NodePath.join(other, ".scient", "citations"))).toBe(false);
   });
   it("reports an unknown style and keeps the project's style", async () => {

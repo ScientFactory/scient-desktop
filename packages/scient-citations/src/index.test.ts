@@ -160,8 +160,8 @@ describe("formatSourceReference", () => {
 describe("readCslStyle", () => {
   const nature = bundledCslStyleXml("nature")!;
   const head = nature.slice(0, nature.indexOf("</info>") + "</info>".length);
-  const style = (layout: string) =>
-    `${head}<macro name="title"><text variable="title"/></macro><citation><layout>${layout}</layout></citation><bibliography><layout>${layout}</layout></bibliography></style>`;
+  const style = (layout: string, sort = "") =>
+    `${head}<macro name="title"><text variable="title"/></macro><macro name = 'a&amp;b'><text variable="title"/></macro><citation>${sort}<layout>${layout}</layout></citation><bibliography><layout>${layout}</layout></bibliography></style>`;
   const forBooks = (text: string) =>
     `<choose><if type="book">${text}</if><else><text macro="title"/></else></choose>`;
 
@@ -172,13 +172,40 @@ describe("readCslStyle", () => {
     expect(
       readCslStyle(style('<choose><if type="book"><text macro="title"/></if></choose>')),
     ).not.toBeNull();
+    // The style repository holds styles that end in a comment.
+    expect(
+      readCslStyle(
+        `${head}<citation><layout><text variable="title"/></layout></citation></style>\n<!-- end -->\n`,
+      ),
+    ).not.toBeNull();
   });
 
+  // regression: review B4-3, macro names were compared as written, not as XML reads them
+  it("reads a macro name as XML does, and a dependent style written with spaces", () => {
+    expect(readCslStyle(style('<text prefix=">" macro="a&#38;b"/>'))).not.toBeNull();
+    const spaced = PLOS_ONE.replace('default-locale="en-US"', "default-locale = 'en-GB'").replace(
+      'rel="independent-parent"',
+      "rel = 'independent-parent'",
+    );
+    expect(readCslStyle(spaced)).toMatchObject({ parentId: "plos", defaultLocale: "en-GB" });
+    const parent = bundledCslStyleXml("plos")!.replace(
+      'default-locale="en-US"',
+      "default-locale = 'en-US'",
+    );
+    expect(readCslStyle(renderableCslStyle(spaced, parent))?.defaultLocale).toBe("en-GB");
+  });
+
+  const title = '<text variable="title"/>';
   it.each([
-    ["names an undefined macro in a branch", forBooks('<text macro="missing"/>')],
-    ["has markup that does not close", forBooks('<text variable="title">')],
-  ])("rejects a style that %s", (_name, layout) => {
-    expect(readCslStyle(style(forBooks('<text variable="title"/>')))).not.toBeNull();
-    expect(readCslStyle(style(layout))).toBeNull();
+    ["names an undefined macro in a branch", forBooks('<text macro="missing"/>'), ""],
+    ["names one after a > and around a spaced =", '<text prefix=">" macro = "missing"/>', ""],
+    ["sorts by an undefined macro", title, "<sort><key macro\n= 'missing'/></sort>"],
+    ["has markup that does not close", forBooks('<text variable="title">'), ""],
+    ["has an attribute without quotes", "<text variable=title/>", ""],
+  ])("rejects a style that %s", (_name, layout, sort) => {
+    expect(
+      readCslStyle(style(forBooks(title), "<sort><key macro='title'/></sort>")),
+    ).not.toBeNull();
+    expect(readCslStyle(style(layout, sort))).toBeNull();
   });
 });

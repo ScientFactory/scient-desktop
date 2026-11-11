@@ -10,6 +10,8 @@ export interface CslStyleInfo {
   readonly defaultLocale: string | null;
 }
 
+const CSL_NAMESPACE = "http://purl.org/net/xbiblio/csl";
+
 const XML_ENTITIES: Record<string, string> = {
   amp: "&",
   lt: "<",
@@ -18,14 +20,16 @@ const XML_ENTITIES: Record<string, string> = {
   apos: "'",
 };
 
+function decodeXmlEntities(text: string): string {
+  return text.replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/giu, (entity, decimal, hex, name) => {
+    if (name) return XML_ENTITIES[name] ?? entity;
+    const codePoint = decimal ? Number(decimal) : Number.parseInt(hex, 16);
+    return codePoint <= 0x10ffff ? String.fromCodePoint(codePoint) : entity;
+  });
+}
+
 function decodeXmlText(text: string): string {
-  return text
-    .replace(/&(?:#(\d+)|#x([0-9a-f]+)|([a-z]+));/giu, (entity, decimal, hex, name) => {
-      if (decimal) return String.fromCodePoint(Number(decimal));
-      if (hex) return String.fromCodePoint(Number.parseInt(hex, 16));
-      return XML_ENTITIES[name] ?? entity;
-    })
-    .trim();
+  return decodeXmlEntities(text).trim();
 }
 
 /** The last path segment of a style URL such as `http://www.zotero.org/styles/nature`. */
@@ -41,35 +45,56 @@ function styleStartTag(xml: string): string | null {
 }
 
 const XML_ASIDE = /<!--[\s\S]*?-->|<\?[\s\S]*?\?>|<!\[CDATA\[[\s\S]*?\]\]>/gu;
-const XML_TAG = /<(\/?)([A-Za-z_][\w:.-]*)(?:\s(?:"[^"]*"|'[^']*'|[^>"'])*?)?(\/?)>/gu;
+const XML_ATTRIBUTES = String.raw`(?:\s(?:"[^"]*"|'[^']*'|[^>"'])*?)?`;
+const XML_TAG = new RegExp(String.raw`<(\/?)([A-Za-z_][\w:.-]*)(${XML_ATTRIBUTES})(\/?)>`, "gu");
+const XML_LINK = new RegExp(String.raw`<link\b(${XML_ATTRIBUTES})\/?>`, "gu");
+const XML_ATTRIBUTE = /\s([^\s=<>"'/]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/gu;
 
-const MACRO_DEFINITION = /<macro\b[^>]*?\bname=(?:"([^"]*)"|'([^']*)')/gu;
-const MACRO_REFERENCE = /<(?:text|key)\b[^>]*?\bmacro=(?:"([^"]*)"|'([^']*)')/gu;
+/**
+ * A tag's attributes with their values decoded, or null when the text is not XML attributes.
+ * Names are compared as XML reads them, so `macro = "a&#38;b"` names the macro `a&amp;b`.
+ */
+function readAttributes(text: string): Map<string, string> | null {
+  const attributes = new Map<string, string>();
+  let repeated = false;
+  const rest = text.replace(
+    XML_ATTRIBUTE,
+    (_attribute, name: string, double?: string, single?: string) => {
+      repeated ||= attributes.has(name);
+      attributes.set(name, decodeXmlEntities((double ?? single ?? "").replace(/[\t\n\r]/gu, " ")));
+      return "";
+    },
+  );
+  return repeated || rest.trim() !== "" ? null : attributes;
+}
 
 /**
  * Whether every element closes in order and every macro a layout names is defined, in every
  * branch. citeproc-js accepts a style that fails either: it renders markup Pandoc rejects, and
  * prints nothing for an undefined macro.
  */
-function isCompleteMarkup(xml: string): boolean {
-  const markup = xml.replace(XML_ASIDE, "");
+function isCompleteMarkup(markup: string): boolean {
   const open: string[] = [];
-  let inOrder = true;
+  const defined = new Set<string>();
+  const named: string[] = [];
+  let wellFormed = true;
   const text = markup.replace(
     XML_TAG,
-    (_tag, closing: string, name: string, selfClosing: string) => {
-      if (closing) inOrder &&= open.pop() === name;
-      else if (!selfClosing) open.push(name);
+    (_tag, closing: string, name: string, attributeText: string, selfClosing: string) => {
+      const attributes = readAttributes(attributeText);
+      if (attributes === null) wellFormed = false;
+      else if (closing) wellFormed &&= !selfClosing && attributes.size === 0 && open.pop() === name;
+      else {
+        if (!selfClosing) open.push(name);
+        const macro = attributes.get(name === "macro" ? "name" : "macro");
+        if (macro !== undefined && name === "macro") defined.add(macro);
+        else if (macro !== undefined && (name === "text" || name === "key")) named.push(macro);
+      }
       return "";
     },
   );
-  if (!inOrder || open.length > 0 || text.includes("<")) return false;
-  const defined = new Set(
-    Array.from(markup.matchAll(MACRO_DEFINITION), (match) => match[1] ?? match[2]),
-  );
-  return Array.from(markup.matchAll(MACRO_REFERENCE)).every((match) =>
-    defined.has(match[1] ?? match[2]),
-  );
+  if (!wellFormed || open.length > 0 || text.includes("<")) return false;
+  return named.every((macro) => defined.has(macro));
 }
 
 /**
@@ -77,30 +102,34 @@ function isCompleteMarkup(xml: string): boolean {
  * independent style must define its citation layout, a dependent one must name its parent.
  */
 export function readCslStyle(xml: string): CslStyleInfo | null {
-  const start = styleStartTag(xml);
-  if (start === null || !start.includes('xmlns="http://purl.org/net/xbiblio/csl"')) return null;
-  if (!/<\/style>\s*$/u.test(xml) || !isCompleteMarkup(xml)) return null;
-  const info = /<info>([\s\S]*?)<\/info>/u.exec(xml)?.[1];
+  const markup = xml.replace(XML_ASIDE, "");
+  const start = styleStartTag(markup);
+  const attributes = start === null ? null : readAttributes(start.slice("<style".length, -1));
+  if (attributes?.get("xmlns") !== CSL_NAMESPACE) return null;
+  if (!/<\/style>\s*$/u.test(markup) || !isCompleteMarkup(markup)) return null;
+  const info = /<info>([\s\S]*?)<\/info>/u.exec(markup)?.[1];
   if (info === undefined) return null;
   const title = /<title>([\s\S]*?)<\/title>/u.exec(info)?.[1];
   const idUrl = /<id>([\s\S]*?)<\/id>/u.exec(info)?.[1];
   const id = idUrl === undefined ? null : cslStyleIdFromUrl(decodeXmlText(idUrl));
   if (title === undefined || id === null) return null;
-  const parentLink = /<link\b[^>]*\brel="independent-parent"[^>]*>/u.exec(info)?.[0];
-  const parentHref = parentLink ? /\bhref="([^"]+)"/u.exec(parentLink)?.[1] : undefined;
-  const parentId = parentHref === undefined ? null : cslStyleIdFromUrl(decodeXmlText(parentHref));
-  if (parentLink !== undefined && parentId === null) return null;
-  if (parentId === null && !/<citation\b/u.test(xml)) return null;
+  const parentLink = Array.from(info.matchAll(XML_LINK), (link) => readAttributes(link[1]!)).find(
+    (link) => link?.get("rel") === "independent-parent",
+  );
+  const parentId = parentLink ? cslStyleIdFromUrl(parentLink.get("href") ?? "") : null;
+  if (parentLink && parentId === null) return null;
+  if (parentId === null && !/<citation\b/u.test(markup)) return null;
   const titleShort = /<title-short>([\s\S]*?)<\/title-short>/u.exec(info)?.[1];
   return {
     id,
     title: decodeXmlText(title),
     titleShort: titleShort === undefined ? null : decodeXmlText(titleShort),
     parentId,
-    defaultLocale:
-      LOCALE_PATTERN.exec(/\bdefault-locale="([^"]+)"/u.exec(start)?.[1] ?? "")?.[0] ?? null,
+    defaultLocale: LOCALE_PATTERN.exec(attributes.get("default-locale") ?? "")?.[0] ?? null,
   };
 }
+
+const DEFAULT_LOCALE_ATTRIBUTE = /\bdefault-locale\s*=\s*(?:"[^"]*"|'[^']*')/u;
 
 /**
  * The style both engines render: the parent's layout with the dependent style's locale, which
@@ -111,8 +140,8 @@ export function renderableCslStyle(style: string, parent: string | null): string
   const locale = readCslStyle(style)?.defaultLocale ?? null;
   const start = styleStartTag(parent);
   if (locale === null || start === null) return parent;
-  const localized = /\bdefault-locale="[^"]*"/u.test(start)
-    ? start.replace(/\bdefault-locale="[^"]*"/u, `default-locale="${locale}"`)
+  const localized = DEFAULT_LOCALE_ATTRIBUTE.test(start)
+    ? start.replace(DEFAULT_LOCALE_ATTRIBUTE, `default-locale="${locale}"`)
     : start.replace(/^<style\b/u, `<style default-locale="${locale}"`);
   return parent.replace(start, () => localized);
 }
