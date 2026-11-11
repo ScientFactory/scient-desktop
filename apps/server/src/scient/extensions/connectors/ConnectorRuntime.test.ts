@@ -3316,6 +3316,27 @@ describe("connectors agents run", () => {
             (item) => item.displayName === "Vendor App",
           )?.auth,
         ).toMatchObject({ type: "oauth", usesOwnClient: true });
+        // A key the service turns down is named as the one entered, and where to fix it.
+        const first = (yield* harness.runtime.list()).connectors.find(
+          (item) => item.displayName === "Vendor Key",
+        )!;
+        yield* harness.runtime.remove({ connectorId: first.connectorId });
+        const wrongKey: AddAsks = {
+          ...asks,
+          key: () =>
+            Effect.sync(() => {
+              const accountId = AccountId.make("acc_vendorkey02");
+              accounts.keys.set(accountId, {
+                name: "Vendor Key",
+                value: "wrong-key-0123456789abc",
+              });
+              return { secretRef: VaultSecretRef.make(`account:${accountId}:token`) };
+            }),
+        };
+        const refused = yield* Effect.flip(
+          agent(addConnector({ from: keyed.name, asks: wrongKey })),
+        );
+        expect(refused.message).toContain("turned down the API key the user entered");
         // Where no one can answer a card, the agent hears where the user adds it.
         const unasked = yield* Effect.flip(agent(addConnector({ from: keyed.name })));
         expect(unasked.message).toContain("private card");

@@ -334,7 +334,17 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
             : yield* askedSetup(entry, choice.target, choice.needs, displayName, input.asks)),
         };
       }
-      const added = yield* runtime.add({ ...request, changedBy: "agent" });
+      const added = yield* runtime
+        .add({ ...request, changedBy: "agent" })
+        .pipe(
+          Effect.mapError((error) =>
+            error.reason === "sign-in-failed" && request.credential?.type === "bound"
+              ? invalid(
+                  `${request.displayName ?? "The service"} turned down the API key the user entered in the private card. It is kept in Settings → Accounts & secrets; ask the user to check or replace it there, then add again. Never ask for the key in chat.`,
+                )
+              : error,
+          ),
+        );
       const summary = added.connector;
       if (agentStatusOf(summary) !== "ready") return changeReport("Added", summary, []);
       const tested = yield* testedTools(summary, input.location);
