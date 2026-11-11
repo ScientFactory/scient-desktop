@@ -3444,7 +3444,9 @@ describe("connectors agents run", () => {
         ),
       );
       expect(signIn).toMatchObject({ status: "needs-sign-in" });
-      expect(signIn.message).toContain("Opened Vendor's sign-in");
+      expect(signIn.message).toContain("Opened Vendor's sign-in as the user's own tab");
+      // regression: the agent looked for the tab with its preview tools, which can't see it.
+      expect(signIn.message).toContain("your preview tools don't see the user's tabs");
       expect(signIn).not.toHaveProperty("signInUrl");
       expect(new URL(opened[0]!).searchParams.get("redirect_uri")).toBe(
         "http://127.0.0.1:4777/oauth/connectors/callback",

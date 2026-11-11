@@ -516,7 +516,7 @@ export const controlConnector = Effect.fn("ConnectorAgentControl.control")(funct
           return (yield* open(url))
             ? result(
                 summary,
-                `Opened ${name}'s sign-in in this chat's browser. The user finishes it there; Scient keeps the sign-in. Then scient_connector_check {"connector":"${server}"} lists its tools.`,
+                `Opened ${name}'s sign-in as the user's own tab in this chat's browser, in its default profile; your preview tools don't see the user's tabs, by design. Tell the user it is open: they finish it there, logging in to ${name} first if it asks, and Scient keeps the sign-in. Then scient_connector_check {"connector":"${server}"} lists its tools.`,
               )
             : result(
                 summary,

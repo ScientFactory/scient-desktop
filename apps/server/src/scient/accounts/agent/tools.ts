@@ -390,7 +390,7 @@ const connectorControl = metadata(
     failure: AccountsError,
     dependencies: common.dependencies,
     description:
-      "Turn a connector on or off, restart a local one, or sign in: a hosted connector's sign-in opens in this chat's browser for the user to finish. Removing stays the user's.",
+      "Turn a connector on or off, restart a local one, or sign in: a hosted connector's sign-in opens in this chat's browser as the user's own tab, which your preview tools don't see, for them to finish. Removing stays the user's.",
     parameters: Schema.Struct({
       connector: TrimmedNonEmptyString.check(Schema.isMaxLength(120)).annotate({
         description: "Its MCP server name.",

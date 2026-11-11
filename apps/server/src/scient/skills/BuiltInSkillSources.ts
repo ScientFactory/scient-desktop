@@ -467,7 +467,8 @@ This skill grants no tools or permissions.
    with \`calls\` it makes them too.
 2. **A hosted connector** (it runs online) has no code to fix. \`needs-sign-in\`:
    \`scient_connector_control {connector, action: "sign-in"}\` opens its sign-in in this chat's
-   browser for the user to finish; then check again. \`off\`: \`action: "on"\`. Other errors are
+   browser as the user's own tab, for them to finish (your preview tools don't see it; tell
+   them it is open); then check again. \`off\`: \`action: "on"\`. Other errors are
    the service's: tell the user what it said.
 3. **A local connector**: \`needs-setup\` is \`scient_connector_setup\`. A one-off failure may need
    only \`scient_connector_control {connector, action: "restart"}\`. Otherwise copy and fix it:
