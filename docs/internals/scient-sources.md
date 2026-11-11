@@ -1495,6 +1495,30 @@ ambiguous instead of choosing one.
 OpenAlex full text is not used: its content downloads need a key and are paid
 per file.
 
+### Answering from the Library
+
+The Library awareness block (`buildScientLibraryAwareness` in
+`apps/server/src/provider/ScientAwareness.ts`, sent with `sources:read` in a
+verified project) carries four standing rules for literature questions: answer
+from the papers' full text (`scient_sources_search`,
+`scient_sources_read_text`), not memory; give the paper and page for each
+claim; check quotes with `scient_sources_quote_check`; say when the Library
+does not answer, and say when the web was then used. They are the rules the N7
+evaluation measured (`reviews/sources-roadmap-20261110/ask-my-library` in the
+workspace): with them, 19 of 19 paper questions got a correct page per claim
+against 4 of 19 without, and the quote checker ran in 26 of 30 runs against 0.
+Every driver composition builds its text through `buildScientAwareness`, so no
+provider carries its own copy. They cost 299 bytes in the canonical tool names
+(`scientAwarenessAllCapabilitiesBytes` 4,940 to 5,239), more where the provider
+prefixes tool names.
+
+The Library menu's **Ask the Library** puts the same rules, as the tested
+sentence (`ASK_LIBRARY_PROMPT` in `apps/web/src/scient/sources/askLibrary.ts`),
+at the start of the open thread's draft through the composer handle's
+`insertTextAtStart`. It never sends, keeps the draft that was there, and does
+nothing to a draft that already starts with the sentence. Agents need no
+equivalent: for them the rules are standing.
+
 The attachment-preview endpoint returns the attachment's content-addressed
 hash and size; the Sources PDF reader carries them as the descriptor's
 `material`, so quotes from Library PDFs record proven bytes. A Library search
