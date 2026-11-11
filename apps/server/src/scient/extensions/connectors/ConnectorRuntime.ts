@@ -2532,7 +2532,9 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       }
     }),
     remove: Effect.fn("ConnectorRuntime.remove")(function* (input) {
-      yield* removeRecord(yield* requireRecord(input.connectorId));
+      yield* authoring.exclusive(input.connectorId)(
+        Effect.flatMap(requireRecord(input.connectorId), (record) => removeRecord(record)),
+      );
     }),
     copyForAgent: Effect.fn("ConnectorRuntime.copyForAgent")(function* (input) {
       const { variant: _variant, ...copied } = yield* observed("connectors.agent.copy")(

@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as yazl from "yazl";
 
 import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
@@ -220,6 +221,26 @@ const outsidePrograms = async (manifest: BundleManifest, folder: string) => {
 export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
   const { local, host, logs } = deps;
 
+  /** One change at a time to a connector's folder and record: save, Undo, remove, copy, export. */
+  const locks = new Map<string, Semaphore.Semaphore>();
+  const exclusive =
+    (connectorId: string) =>
+    <A, E, R>(effect: Effect.Effect<A, E, R>) => {
+      let lock = locks.get(connectorId);
+      if (lock === undefined) {
+        lock = Semaphore.makeUnsafe(1);
+        locks.set(connectorId, lock);
+      }
+      return lock.withPermits(1)(effect);
+    };
+  /** The record as it is now, read inside its lock. */
+  const recordNow = (connectorId: string) =>
+    Effect.flatMap(deps.records, (records) =>
+      Effect.fromNullishOr(records.find((record) => record.connectorId === connectorId)).pipe(
+        Effect.mapError(() => notFound("That connector no longer exists.")),
+      ),
+    );
+
   const findConnector = Effect.fn("LocalConnectorAuthoring.find")(function* (name: string) {
     const wanted = name.trim().toLowerCase();
     const named = (yield* deps.records).filter(
@@ -263,8 +284,17 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
   }) {
     if (input.connector === undefined && input.name === undefined)
       return yield* invalid("Give connector (to fix one) or name (to make one).");
-    const record =
-      input.connector === undefined ? undefined : yield* findConnector(input.connector);
+    const found = input.connector === undefined ? undefined : yield* findConnector(input.connector);
+    if (found === undefined) return yield* copyInto(input, undefined);
+    return yield* exclusive(found.connectorId)(
+      Effect.flatMap(recordNow(found.connectorId), (record) => copyInto(input, record)),
+    );
+  });
+
+  const copyInto = Effect.fn("LocalConnectorAuthoring.copyInto")(function* (
+    input: { readonly workingFolder: string; readonly name?: string | undefined },
+    record: ConnectorRecord | undefined,
+  ) {
     const displayName = (record?.displayName ?? input.name ?? "").trim() || "Connector";
     // Never over someone's files: an earlier copy of this connector is replaced, else the
     // first free name (`name`, `name-2`, …) is used.
@@ -578,10 +608,22 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     input: { readonly folder: string; readonly connector?: string | undefined },
     location: { readonly projectId: ProjectId; readonly worktreePath: string | null } | undefined,
   ) {
-    const existing =
-      input.connector === undefined ? undefined : yield* findConnector(input.connector);
+    const found = input.connector === undefined ? undefined : yield* findConnector(input.connector);
+    if (found === undefined) return yield* saveAs(input.folder, location, undefined);
+    return yield* exclusive(found.connectorId)(
+      Effect.flatMap(recordNow(found.connectorId), (record) =>
+        saveAs(input.folder, location, record),
+      ),
+    );
+  });
+
+  const saveAs = Effect.fn("LocalConnectorAuthoring.saveAs")(function* (
+    folderGiven: string,
+    location: { readonly projectId: ProjectId; readonly worktreePath: string | null } | undefined,
+    existing: ConnectorRecord | undefined,
+  ) {
     const checked = yield* runCheck(
-      { folder: input.folder, connector: input.connector },
+      { folder: folderGiven, connector: existing?.connectorId },
       location,
       true,
     );
@@ -590,7 +632,7 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
         `Not saved: the check failed. ${checked.error ?? ""}${checked.log ? `\nIts error output:\n${checked.log}` : ""}`.trim(),
       );
     }
-    const folder = NodePath.resolve(input.folder);
+    const folder = NodePath.resolve(folderGiven);
     const stamp = yield* historyStamp;
     const source = { copyFrom: folder, skip: SKIPPED };
     if (existing !== undefined) {
@@ -717,13 +759,15 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
    * Undoes the last change to a connector's folder: a new connector goes, a replaced folder comes
    * back (settings and keys stay as they are now), and a removed connector returns.
    */
-  const undo = Effect.fn("LocalConnectorAuthoring.undo")(function* (connectorId: string) {
+  const undo = (connectorId: string) => exclusive(connectorId)(undoNow(connectorId));
+
+  const undoNow = Effect.fn("LocalConnectorAuthoring.undo")(function* (connectorId: string) {
     const latest = yield* Effect.promise(() => latestHistory(local.historyRoot, connectorId));
     if (latest === undefined) return yield* notFound("There is no earlier version to go back to.");
     const before =
       latest.meta === undefined ? undefined : decodeRecord(new TextDecoder().decode(latest.meta));
     const previous = before?._tag === "Success" ? before.value : undefined;
-    const current = (yield* deps.records).find((record) => record.connectorId === connectorId);
+    const now = (yield* deps.records).find((record) => record.connectorId === connectorId);
     const restore = (folderOf: string) =>
       Effect.tryPromise({
         try: () =>
@@ -736,42 +780,47 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
         catch: () => unsupported("Scient could not bring the earlier version back."),
       });
     if (latest.kind === "removed") {
-      if (current !== undefined || previous?.local === undefined)
+      if (now !== undefined || previous?.local === undefined)
         return yield* invalid("That connector is already here.");
       yield* restore(previous.local.directory);
       deps.revive(connectorId);
       yield* deps.add({ ...previous, updatedAt: yield* deps.isoNow });
       return { kind: latest.kind };
     }
-    if (current?.local === undefined) return yield* notFound("That connector no longer exists.");
-    yield* restore(current.local.directory);
-    yield* host.stop(connectorId, `${current.displayName} went back to its earlier version.`);
+    if (now?.local === undefined) return yield* notFound("That connector no longer exists.");
+    yield* restore(now.local.directory);
+    yield* host.stop(connectorId, `${now.displayName} went back to its earlier version.`);
     if (latest.kind === "created" && previous === undefined) {
-      yield* deps.drop(current);
+      yield* deps.drop(now);
       return { kind: latest.kind };
     }
-    const earlier = previous?.local ?? current.local;
-    yield* deps.update(connectorId, (record, updatedAt) => {
-      const now = record.local!;
-      const { changedBy: _changedBy, forkedFrom: _forkedFrom, ...rest } = now;
-      return {
-        ...record,
-        local: {
-          ...rest,
-          kind: earlier.kind,
-          directory: earlier.directory,
-          owned: earlier.owned,
-          changedBy: "you",
-          ...(earlier.forkedFrom === undefined ? {} : { forkedFrom: earlier.forkedFrom }),
-        },
-        lastError: undefined,
-        updatedAt,
-      };
-    });
+    const earlier = previous?.local ?? now.local;
+    const { changedBy: _changedBy, forkedFrom: _forkedFrom, signIn: _signIn, ...rest } = now.local;
+    // The sign-in follows the restored manifest: the earlier link, or one that fits its site.
+    const back = {
+      ...rest,
+      kind: earlier.kind,
+      directory: earlier.directory,
+      owned: earlier.owned,
+      changedBy: "you" as const,
+      ...(earlier.forkedFrom === undefined ? {} : { forkedFrom: earlier.forkedFrom }),
+      ...(earlier.signIn === undefined ? {} : { signIn: earlier.signIn }),
+    };
+    const restored = yield* local.relink(back).pipe(Effect.orElseSucceed(() => back));
+    if (restored.signIn !== now.local.signIn && Option.isSome(deps.sessions))
+      yield* deps.sessions.value.remove(connectorId);
+    yield* deps.update(connectorId, (record, updatedAt) => ({
+      ...record,
+      local: { ...restored, settings: record.local!.settings, keys: record.local!.keys },
+      lastError: undefined,
+      updatedAt,
+    }));
     return { kind: latest.kind };
   });
 
-  const exportBundle = Effect.fn("LocalConnectorAuthoring.export")(function* (connectorId: string) {
+  const exportBundle = (connectorId: string) => exclusive(connectorId)(exportNow(connectorId));
+
+  const exportNow = Effect.fn("LocalConnectorAuthoring.export")(function* (connectorId: string) {
     const record = (yield* deps.records).find((item) => item.connectorId === connectorId);
     if (record?.local === undefined) return yield* notFound("That connector no longer exists.");
     const bytes = yield* Effect.tryPromise({
@@ -784,7 +833,7 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     return { fileName: `${slug(record.displayName)}.mcpb`, base64: bytes.toString("base64") };
   });
 
-  return { copy, check, save, undo, keepRemoved, exportBundle };
+  return { copy, check, save, undo, keepRemoved, exportBundle, exclusive };
 };
 
 export type LocalConnectorAuthoring = ReturnType<typeof makeLocalConnectorAuthoring>;

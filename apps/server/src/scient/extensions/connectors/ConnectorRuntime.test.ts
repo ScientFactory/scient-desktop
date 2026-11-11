@@ -2970,12 +2970,21 @@ describe("local connectors", () => {
 
 /** A connector an agent writes: logs a line, then answers `version` with its manifest version. */
 const AGENT_SERVER = `
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, watch, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { createInterface } from "node:readline";
 const manifest = JSON.parse(readFileSync(new URL("./manifest.json", import.meta.url), "utf8"));
 process.stderr.write("starting " + manifest.version + "\\n");
 if (process.env.MODE === "broken") { process.stderr.write("cannot find module ./lib.mjs\\n"); process.exit(1); }
-const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+// MODE "gate:<file>": answers its first message only once <file> exists.
+const gate = process.env.MODE?.startsWith("gate:") ? process.env.MODE.slice(5) : undefined;
+const opened = gate === undefined ? Promise.resolve() : new Promise((resolve) => {
+  const check = () => { if (existsSync(gate)) { watcher.close(); resolve(); } };
+  const watcher = watch(dirname(gate), check);
+  writeFileSync(gate + ".started", "");
+  check();
+});
+const send = (message) => opened.then(() => process.stdout.write(JSON.stringify(message) + "\\n"));
 createInterface({ input: process.stdin }).on("line", (line) => {
   const message = JSON.parse(line);
   if (message.method === "initialize")
@@ -3033,6 +3042,48 @@ const writeConnectorFolder = (
     );
     await NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), AGENT_SERVER);
   });
+
+/** Resolves once `path` exists, watching its folder rather than polling. */
+const appears = (path: string) =>
+  Effect.promise(
+    () =>
+      new Promise<void>((resolve) => {
+        const check = () => {
+          if (!NodeFS.existsSync(path)) return;
+          watcher.close();
+          resolve();
+        };
+        const watcher = NodeFS.watch(NodePath.dirname(path), check);
+        check();
+      }),
+  );
+
+/** Accounts stand-ins with one website sign-in per site, so a manifest's site picks its account. */
+const siteSignIns = (sites: Readonly<Record<string, string>>): ConnectorSessionsShape => {
+  const accounts = Object.entries(sites).map(
+    ([site, accountId]) =>
+      ({
+        accountId,
+        name: accountId,
+        details: { kind: "website", sites: [site] },
+      }) as unknown as AccountSummary,
+  );
+  const ready = Effect.succeed({ environment: {}, hide: [] });
+  return {
+    accountsFor: (site) =>
+      Effect.succeed(
+        accounts.filter((account) =>
+          (account.details as { readonly sites: ReadonlyArray<string> }).sites.includes(site),
+        ),
+      ),
+    account: (accountId) =>
+      Effect.succeed(accounts.find((account) => account.accountId === accountId)),
+    prepare: () => ready,
+    signInAgain: () => ready,
+    allowed: () => Effect.succeed(true),
+    remove: () => Effect.void,
+  };
+};
 
 const versionOf = (folder: string) =>
   Effect.promise(
@@ -3263,6 +3314,63 @@ describe("connectors agents make and fix", () => {
           ),
         ),
       ).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("lets a save finish before an Undo of the same connector starts", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "agent-made");
+      yield* writeConnectorFolder(work, { version: "1.0.0" });
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const connectorId = saved.connector.connectorId;
+      const installed = saved.connector.local!.directory;
+      yield* writeConnectorFolder(work, { version: "1.1.0" });
+      yield* harness.runtime.saveFolder({ folder: work, connector: connectorId }, undefined);
+
+      const gate = NodePath.join(harness.config.stateDir, "..", "gate", "open");
+      yield* Effect.promise(() => NodeFSP.mkdir(NodePath.dirname(gate), { recursive: true }));
+      yield* writeConnectorFolder(work, { version: "1.2.0", mode: `gate:${gate}` });
+      const saving = yield* harness.runtime
+        .saveFolder({ folder: work, connector: connectorId }, undefined)
+        .pipe(Effect.forkScoped);
+      // The save is in its check; an Undo now must wait for it rather than run inside it.
+      yield* appears(`${gate}.started`);
+      const undoing = yield* harness.runtime.undo({ connectorId }).pipe(Effect.forkScoped);
+      yield* Effect.promise(() => NodeFSP.writeFile(gate, ""));
+      yield* Fiber.join(saving);
+      yield* Fiber.join(undoing);
+      // regression: Undo ran during the save, which then wrote over what it restored.
+      expect(yield* versionOf(installed)).toBe("1.1.0");
+      yield* harness.runtime.undo({ connectorId });
+      expect(yield* versionOf(installed)).toBe("1.0.0");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("brings back the earlier site's sign-in when Undo restores its manifest", () =>
+    Effect.gen(function* () {
+      const [siteA, siteB] = ["https://a.example.edu", "https://b.example.edu"];
+      const harness = yield* makeHarness({
+        signInSessions: siteSignIns({ [siteA]: "acc_site_a", [siteB]: "acc_site_b" }),
+      });
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "portal");
+      const write = (version: string, site: string) =>
+        writeConnectorFolder(work, { version, keyRequired: false, meta: { signIn: { site } } });
+      yield* write("1.0.0", siteA);
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const connectorId = saved.connector.connectorId;
+      expect(saved.connector.local?.signIn).toMatchObject({ site: siteA, accountId: "acc_site_a" });
+      yield* write("1.1.0", siteB);
+      const moved = yield* harness.runtime.saveFolder(
+        { folder: work, connector: connectorId },
+        undefined,
+      );
+      expect(moved.connector.local?.signIn).toMatchObject({ site: siteB, accountId: "acc_site_b" });
+
+      yield* harness.runtime.undo({ connectorId });
+      const undone = (yield* harness.runtime.list()).connectors[0]!;
+      // regression: Undo restored site A's manifest but kept site B's sign-in.
+      expect(undone.local?.signIn).toMatchObject({ site: siteA, accountId: "acc_site_a" });
     }).pipe(Effect.provide(testLayer)),
   );
 
