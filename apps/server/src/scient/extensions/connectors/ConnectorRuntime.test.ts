@@ -3337,6 +3337,8 @@ describe("connectors agents run", () => {
           agent(addConnector({ from: keyed.name, asks: wrongKey })),
         );
         expect(refused.message).toContain("turned down the API key the user entered");
+        // regression: it said only "Settings", so the agent could not have the key replaced.
+        expect(refused.message).toContain('scient_account_add {"accountId":"acc_vendorkey02"');
         // Where no one can answer a card, the agent hears where the user adds it.
         const unasked = yield* Effect.flip(agent(addConnector({ from: keyed.name })));
         expect(unasked.message).toContain("private card");

@@ -339,9 +339,7 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
         .pipe(
           Effect.mapError((error) =>
             error.reason === "sign-in-failed" && request.credential?.type === "bound"
-              ? invalid(
-                  `${request.displayName ?? "The service"} turned down the API key the user entered in the private card. It is kept in Settings → Accounts & secrets; ask the user to check or replace it there, then add again. Never ask for the key in chat.`,
-                )
+              ? rejectedKey(request.displayName ?? "The service", request.credential.secretRef)
               : error,
           ),
         );
@@ -360,6 +358,18 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
     (result) => ({ status: result.status, tools: result.tools.length }),
   );
 });
+
+/** A key the user entered that the service turned down, and how the agent has it replaced. */
+const rejectedKey = (name: string, secretRef: string) => {
+  const accountId = /^account:(.+):token$/u.exec(secretRef)?.[1];
+  const replace =
+    accountId === undefined
+      ? "Ask the user to replace it in Settings → Accounts & secrets"
+      : `scient_accounts_list shows it; scient_account_add {"accountId":"${accountId}","name":"${name}","reason":"${name} turned down the last key."} asks the user for a new one in the private card`;
+  return invalid(
+    `${name} turned down the API key the user entered in the private card; it is kept in Accounts. ${replace}, then call scient_connector_add again. Never ask for the key in chat.`,
+  );
+};
 
 /** A hosted entry's key or sign-in app, asked in the private card, as the add takes it. */
 const askedSetup = Effect.fn("ConnectorAgentControl.askedSetup")(function* (
