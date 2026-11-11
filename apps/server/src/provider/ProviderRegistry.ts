@@ -126,6 +126,8 @@ export interface ProviderRegistryShape {
   readonly refreshWorkspaceSnapshot: (input: {
     readonly instanceId: ProviderInstanceId;
     readonly cwd: string;
+    /** Directory the driver scans; the snapshot stays keyed by `cwd`. Defaults to `cwd`. */
+    readonly scanCwd?: string;
     readonly fresh?: boolean;
     // SCIENT-FORK:START — explicit full-inventory reads await native listing publication.
     readonly awaitNativeInventory?: boolean;
@@ -1366,6 +1368,7 @@ export const layer = Layer.effect(
     const refreshWorkspaceSnapshot = Effect.fn("refreshWorkspaceSnapshot")(function* (input: {
       readonly instanceId: ProviderInstanceId;
       readonly cwd: string;
+      readonly scanCwd?: string;
       readonly fresh?: boolean;
       // SCIENT-FORK:START — explicit full-inventory reads await native listing publication.
       readonly awaitNativeInventory?: boolean;
@@ -1441,7 +1444,7 @@ export const layer = Layer.effect(
             )
           : Effect.void;
         return yield* refreshMachineSnapshot.pipe(
-          Effect.andThen(snapshotForCwd(input.cwd)),
+          Effect.andThen(snapshotForCwd(input.scanCwd ?? input.cwd)),
           // Scans fail on error; returned inventory remains valid even when provider health reports an error.
           Effect.flatMap((scopedSnapshot) =>
             instanceRegistry.getInstance(input.instanceId).pipe(

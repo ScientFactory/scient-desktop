@@ -12082,12 +12082,14 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
                     yield* queryOwnership.withPermits(1)(
                       Effect.gen(function* () {
                         yield* checkStartOwnership(startGeneration);
+                        // A query that ended or began stopping before the claim fails the start.
                         if (
                           (yield* Ref.get(queryContext)) !== querySession ||
-                          querySession.streamExited
+                          querySession.streamExited ||
+                          querySession.stopping
                         )
                           return yield* refuseQueryOwnership(
-                            "Claude native query exited before start publication.",
+                            "Claude provider query ended before the turn could start.",
                           );
                         querySession.publishedRoot = {
                           generation: startGeneration,

@@ -995,8 +995,12 @@ export const layer: Layer.Layer<
         text: message.text,
         records: message.context?.records ?? [],
       });
-      // Codex and Claude parse /goal from the prompt, so it goes verbatim and history waits a turn.
-      const goalDriver = session.driver === "codex" || session.driver === "claudeAgent";
+      // Native goal commands go verbatim; handoff history waits a turn.
+      const goalDriver =
+        session.driver === "codex" ||
+        session.driver === "claudeAgent" ||
+        (session.driver === "opencode" &&
+          session.providerSession.capabilities.turns.supportsNativeGoals === true);
       const goalCommand = goalDriver && parseGoalCommand(message) !== null;
       // The provider turn marks cancellation work delivered; restart continuations use their own text or resume natively.
       const noteContinuation = isRestartNoteContinuation(
@@ -1712,6 +1716,12 @@ export const layer: Layer.Layer<
       // SCIENT-FORK:END
       const runningProviderThread: OrchestrationV2ProviderThread = {
         ...loadedProviderThread,
+        // SCIENT-FORK:START — retain binding authority across later project/worktree relocation.
+        nativeMetadata: {
+          ...loadedProviderThread.nativeMetadata,
+          cwd: resolvedRuntimePolicy.cwd ?? session.providerSession.cwd,
+        },
+        // SCIENT-FORK:END
         contextUsage: handoffUsage,
         id: providerThread.id,
         driver: session.driver,
@@ -1835,6 +1845,10 @@ export const layer: Layer.Layer<
         runId: run.id,
         activeAttemptId: attempt.id,
         expectedStatus: "starting",
+        // SCIENT-FORK:START — candidate upstream fix: `run` was read before the provider turn
+        // opened; a completion acknowledged since then keeps its cleared delivery.
+        keepCurrentDelegatedCompletion: true,
+        // SCIENT-FORK:END
         events,
       });
       if (!runningWrite.committed) {

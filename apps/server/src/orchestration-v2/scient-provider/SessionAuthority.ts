@@ -39,11 +39,14 @@ type PolicySource = {
   readonly nativeThread: PolicyRecords["providerThreads"][number];
 };
 
-const ACTIVE_RUN_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set([
+/** The runs a caller's policy can come from; its read loads only these, not the thread's history. */
+export const POLICY_RUN_STATUSES = [
   "starting",
   "running",
   "waiting",
-]);
+] as const satisfies ReadonlyArray<OrchestrationV2Run["status"]>;
+
+const ACTIVE_RUN_STATUSES: ReadonlySet<OrchestrationV2Run["status"]> = new Set(POLICY_RUN_STATUSES);
 
 const hasCapturedModes = (run: PolicyRecords["runs"][number]): run is PolicyRun =>
   run.runtimeMode !== undefined && run.interactionMode !== undefined;

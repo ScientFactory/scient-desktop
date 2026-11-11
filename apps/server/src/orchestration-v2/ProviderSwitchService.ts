@@ -141,9 +141,15 @@ export const layer: Layer.Layer<
                   sessionCapabilities: negotiatedCapabilities ?? currentInstance.value.capabilities,
                 })
               : undefined;
-          // SCIENT-FORK:START — native canonical paths do not change workspace authority.
+          // SCIENT-FORK:START — pooled processes do not own their threads' workspaces.
+          const perThreadWorkspace =
+            negotiatedCapabilities?.sessions.supportsMultipleProviderThreadsPerSession === true &&
+            negotiatedCapabilities.sessions.supportsPerThreadWorkspace === true;
           const currentWorkspace =
-            currentSession?.cwd ?? projection.thread.worktreePath ?? "<unresolved-workspace>";
+            (perThreadWorkspace ? currentProviderThread?.nativeMetadata?.cwd : undefined) ??
+            currentSession?.cwd ??
+            projection.thread.worktreePath ??
+            "<unresolved-workspace>";
           let targetWorkspace = targetPolicy.cwd ?? currentSession?.cwd ?? "<unresolved-workspace>";
           if (currentWorkspace !== targetWorkspace) {
             const sameWorkspace = yield* Effect.all([

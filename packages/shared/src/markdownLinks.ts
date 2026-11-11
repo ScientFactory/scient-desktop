@@ -19,18 +19,18 @@ const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 // `Résumé & results.md`) but no separators, controls or position/scheme colons. The final
 // segment is optional so a folder link may end in `/`. A bare name with no slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\/)+(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*(?::\d+){0,2})?$/u;
+  /^(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\/)+(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*(?::\d+(?::\d+|-\d+)?)?)?$/u;
 
 // No `@` here: `me@example.com` is an address, not a file.
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[^\s/\\:@\p{Cc}]+(?: +[^\s/\\:@\p{Cc}]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
+  /^[^\s/\\:@\p{Cc}]+(?: +[^\s/\\:@\p{Cc}]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+(?::\d+|-\d+)?)?$/u;
 // SCIENT-FORK:END
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
-const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
 
-const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 const INLINE_CODE_RELATIVE_PATH_CHARACTER_PATTERN = /^[A-Za-z0-9._:/-]+$/;
@@ -259,7 +259,8 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const labelPosition = splitFilePathPosition(label.trim());
   if (
     (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
-    (labelPosition.column !== undefined && labelPosition.column !== destination.column)
+    (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
+    (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
   ) {
     return false;
   }

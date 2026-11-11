@@ -298,7 +298,6 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.analysisPromoteRun]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeInspectRuntimes]: AuthOrchestrationReadScope,
   [WS_METHODS.computeRuntimeInventory]: AuthOrchestrationReadScope,
-  [WS_METHODS.computeActiveWork]: AuthOrchestrationReadScope,
   [WS_METHODS.computeVerifyRuntime]: AuthOrchestrationOperateScope,
   [WS_METHODS.computeManagedRuntimeStatus]: AuthOrchestrationReadScope,
   [WS_METHODS.computeManageRuntime]: AuthOrchestrationOperateScope,
@@ -364,6 +363,7 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsOpenWith]: AuthOrchestrationOperateScope,
   // SCIENT-FORK:END
   [WS_METHODS.subscribeComputeSessions]: AuthOrchestrationReadScope,
+  [WS_METHODS.subscribeComputeActiveWork]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeAnalysisRuns]: AuthOrchestrationReadScope,
   [WS_METHODS.subscribeDocumentBindingChanges]: AuthFilesystemReadScope,
   [WS_METHODS.vcsRefreshStatus]: AuthOrchestrationReadScope,
@@ -465,7 +465,8 @@ const requiredScopesForRpcCall = (
     return [
       resource._tag === "workspace-file" ||
       resource._tag === "media-file" ||
-      resource._tag === "draft-workspace-file"
+      resource._tag === "draft-workspace-file" ||
+      (resource._tag === "native-app-icon" && resource.app._tag === "app-path")
         ? AuthFilesystemReadScope
         : AuthOrchestrationReadScope,
     ];

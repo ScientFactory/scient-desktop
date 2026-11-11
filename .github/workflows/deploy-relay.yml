@@ -45,6 +45,9 @@ jobs:
       RELAY_WARNING_NOTIFIER_ID: ${{ vars.RELAY_WARNING_NOTIFIER_ID }}
       CLERK_PUBLISHABLE_KEY: ${{ vars.CLERK_PUBLISHABLE_KEY }}
       CLERK_JWT_AUDIENCE: ${{ vars.CLERK_JWT_AUDIENCE }}
+      # SCIENT-FORK:START clerk-legacy-instance — the Clerk instance builds up to v0.6.28 use.
+      CLERK_LEGACY_PUBLISHABLE_KEY: ${{ vars.CLERK_LEGACY_PUBLISHABLE_KEY }}
+      # SCIENT-FORK:END clerk-legacy-instance
       APNS_ENVIRONMENT: ${{ vars.APNS_ENVIRONMENT }}
       APNS_TEAM_ID: ${{ vars.APNS_TEAM_ID }}
       APNS_KEY_ID: ${{ vars.APNS_KEY_ID }}
@@ -68,9 +71,10 @@ jobs:
         with:
           node-version-file: package.json
           cache: true
-          run-install: |
-            args:
-              - --filter=t3code-relay...
+          # SCIENT-FORK:START — a full install: `vp run` loads every package's config, and
+          # Scient's server config imports workspace packages a relay-only install lacks.
+          run-install: true
+          # SCIENT-FORK:END
 
       - name: Deploy production relay stage
         run: vp run --filter t3code-relay deploy --stage prod --yes --no-input
@@ -83,6 +87,9 @@ jobs:
           PLANETSCALE_API_TOKEN: ${{ secrets.PLANETSCALE_API_TOKEN }}
           AXIOM_TOKEN: ${{ secrets.AXIOM_TOKEN }}
           CLERK_SECRET_KEY: ${{ secrets.CLERK_SECRET_KEY }}
+          # SCIENT-FORK:START clerk-legacy-instance
+          CLERK_LEGACY_SECRET_KEY: ${{ secrets.CLERK_LEGACY_SECRET_KEY }}
+          # SCIENT-FORK:END clerk-legacy-instance
           APNS_PRIVATE_KEY: ${{ secrets.APNS_PRIVATE_KEY }}
           FCM_SERVICE_ACCOUNT: ${{ secrets.FCM_SERVICE_ACCOUNT }}
           T3CHAT_LINK_SECRET: ${{ secrets.T3CHAT_LINK_SECRET }}
