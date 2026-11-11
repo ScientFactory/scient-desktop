@@ -72,32 +72,10 @@ const ENGINE_GUARD_PACKAGES: ReadonlySet<string> = new Set(["iftex", "ifxetex", 
  */
 const ENGINE_CONDITIONAL_PATTERN = /\\if(?:pdftex|xetex|luatex|tutex)\b/iu;
 
+/** `token` arrives lowercased. */
 function requiredEngineForToken(token: string): LatexRequiredEngine | null {
-  const normalized = token.toLowerCase();
-  if (normalized === "xelatex" || normalized === "xetex") return "xelatex";
-  if (normalized === "lualatex" || normalized === "luatex") return "lualatex";
-  return null;
-}
-
-function engineDisplayName(requiredEngine: LatexRequiredEngine): string {
-  return requiredEngine === "xelatex" ? "XeLaTeX" : "LuaLaTeX";
-}
-
-function magicCommentVerdict(text: string): LatexEngineUnsupported | null {
-  for (const rawLine of text.split(/\r?\n/u)) {
-    const match = MAGIC_COMMENT_PATTERN.exec(rawLine);
-    const token = match?.[1];
-    if (token === undefined) continue;
-    const requiredEngine = requiredEngineForToken(token);
-    if (requiredEngine === null) continue;
-    const evidence = rawLine.trim();
-    return {
-      supported: false,
-      requiredEngine,
-      evidence,
-      message: `This document's engine-selection comment asks for ${engineDisplayName(requiredEngine)}, which cannot be compiled by pdfLaTeX (found: ${evidence}).`,
-    };
-  }
+  if (token === "xelatex" || token === "xetex") return "xelatex";
+  if (token === "lualatex" || token === "luatex") return "lualatex";
   return null;
 }
 
@@ -134,19 +112,6 @@ function packageLoadVerdict(text: string): LatexEngineUnsupported | null {
     };
   }
   return null;
-}
-
-/**
- * Check all authored engine directives before package inference. Engine guards suppress only the
- * weaker package verdict, never an explicit incompatible declaration.
- */
-export function evaluateLatexEngineGate(input: LatexEngineGateInput): LatexEngineVerdict {
-  const texts = [input.rootText, ...(input.includedTexts ?? [])];
-  for (const text of texts) {
-    const verdict = magicCommentVerdict(text);
-    if (verdict !== null) return verdict;
-  }
-  return evaluatePdfLatexPackages(texts);
 }
 
 function evaluatePdfLatexPackages(texts: readonly string[]): LatexEngineVerdict {
