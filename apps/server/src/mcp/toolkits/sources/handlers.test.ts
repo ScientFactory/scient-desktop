@@ -49,6 +49,7 @@ import {
   exportScientSourcesForInvocation,
   importScientSourcesFileForInvocation,
   resolveScientSourcesProject,
+  syncScientBibliographyForInvocation,
   updateScientSourceNoteForInvocation,
   updateScientSourceForInvocation,
 } from "./handlers.ts";
@@ -376,6 +377,39 @@ describe("Scient Sources MCP handlers", () => {
       );
       expect(secondPage.records).toHaveLength(5);
       expect(secondPage.nextOffset).toBeNull();
+    }),
+  );
+
+  it.effect("sets the project's citation style with the bibliography tool and lists it back", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-citation-style-"));
+      const projectId = ProjectId.make("project-citation-style");
+      const threadId = ThreadId.make("thread-citation-style");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+
+      const set = yield* provideContext(
+        syncScientBibliographyForInvocation({ citationStyle: "nature" }),
+        context,
+      );
+      expect(set.citationStyle).toEqual({
+        id: "nature",
+        title: "Nature",
+        parentId: null,
+        state: "ready",
+      });
+      const listed = yield* provideContext(
+        listScientSourcesForInvocation({ citationStyles: "" }),
+        context,
+      );
+      if (!("citationStyles" in listed)) throw new Error("expected citation styles");
+      expect(listed.citationStyle).toEqual(set.citationStyle);
+      expect(listed.citationStyles.some((style) => style.id === "nature")).toBe(true);
     }),
   );
 
