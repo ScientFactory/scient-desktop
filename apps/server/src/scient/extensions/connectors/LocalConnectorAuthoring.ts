@@ -144,7 +144,9 @@ const zipFolder = (folder: string) =>
           const bytes = await NodeFSP.readFile(path);
           total += bytes.length;
           if (total > MAX_EXPORT_BYTES) throw new Error("too-large");
-          zip.addBuffer(bytes, name, { mode: 0o100644 });
+          // Programs stay runnable once unpacked; Windows has no such bit to keep.
+          const executable = ((await NodeFSP.stat(path)).mode & 0o111) !== 0;
+          zip.addBuffer(bytes, name, { mode: executable ? 0o100755 : 0o100644 });
         }
       }
     };

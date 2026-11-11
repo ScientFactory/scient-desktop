@@ -70,6 +70,7 @@ import * as ConnectorProxyRoute from "./ConnectorProxyRoute.ts";
 import { makeConnectorRuntime, MAX_IN_FLIGHT_PER_CONNECTOR } from "./ConnectorRuntime.ts";
 import { CONNECTOR_STATE_FILE } from "./ConnectorStateStore.ts";
 import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SourceControlCredentialError } from "@t3tools/source-control-core/server/driver";
 
 /**
@@ -3314,6 +3315,44 @@ describe("connectors agents make and fix", () => {
           ),
         ),
       ).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("exports a connector whose program still runs once unpacked", () =>
+    Effect.gen(function* () {
+      // Windows runs no file by its mode bits, so there is nothing to keep there.
+      if ((yield* HostProcess.Platform) === "win32") return;
+      const harness = yield* makeHarness();
+      const work = NodePath.join(harness.config.stateDir, "..", "chat", "connectors", "runner");
+      yield* writeConnectorFolder(work, { version: "1.0.0", keyRequired: false });
+      yield* Effect.promise(async () => {
+        const manifest = JSON.parse(
+          await NodeFSP.readFile(NodePath.join(work, "manifest.json"), "utf8"),
+        );
+        manifest.server = {
+          type: "binary",
+          entry_point: "run",
+          mcp_config: { command: "${__dirname}/run", args: [] },
+        };
+        await NodeFSP.writeFile(NodePath.join(work, "manifest.json"), JSON.stringify(manifest));
+        await NodeFSP.writeFile(NodePath.join(work, "run"), `#!/usr/bin/env node\n${AGENT_SERVER}`);
+        await NodeFSP.chmod(NodePath.join(work, "run"), 0o755);
+      });
+      const saved = yield* harness.runtime.saveFolder({ folder: work }, undefined);
+      const exported = yield* harness.runtime.exportLocal({
+        connectorId: saved.connector.connectorId,
+      });
+      const bundle = NodePath.join(harness.config.stateDir, "..", "shared.mcpb");
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(bundle, Buffer.from(exported.base64, "base64")),
+      );
+      const added = yield* harness.runtime.add({
+        target: { type: "local-bundle", path: bundle, settings: {}, keys: {} },
+      });
+      // regression: every file was exported 0644, so the unpacked program could not start.
+      expect(
+        yield* harness.runtime.test({ connectorId: added.connector.connectorId }),
+      ).toMatchObject({ outcome: "ok", tools: [{ name: "version" }] });
     }).pipe(Effect.provide(testLayer)),
   );
 
