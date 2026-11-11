@@ -75,6 +75,7 @@ import { GitHubSourceControlCredential } from "./GitHubSourceControlCredential.t
 import * as ConnectorProxyRoute from "./ConnectorProxyRoute.ts";
 import { makeConnectorRuntime, MAX_IN_FLIGHT_PER_CONNECTOR } from "./ConnectorRuntime.ts";
 import { CONNECTOR_STATE_FILE } from "./ConnectorStateStore.ts";
+import type { RunTool } from "./PackageSource.ts";
 import type { ConnectorSessionsShape } from "../../accounts/connectorSessions.ts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { SourceControlCredentialError } from "@t3tools/source-control-core/server/driver";
@@ -581,6 +582,8 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly signInSessions?: ConnectorSessionsShape;
     /** Stands in for the network when a registry bundle is downloaded. */
     readonly bundleFetch?: ConnectorFetch;
+    /** Stands in for npm and uv when a copy brings in a package's code. */
+    readonly runTool?: RunTool;
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -598,6 +601,7 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     stateDir: config.stateDir,
     ...(options.signInSessions === undefined ? {} : { signInSessions: options.signInSessions }),
     ...(options.bundleFetch === undefined ? {} : { bundleFetch: options.bundleFetch }),
+    ...(options.runTool === undefined ? {} : { runTool: options.runTool }),
   }).pipe(
     Effect.provideService(
       ConnectorCredentialStore.ConnectorCredentialStore,
@@ -3046,6 +3050,47 @@ const writeConnectorFolder = (
     await NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), AGENT_SERVER);
   });
 
+/** Plays npm: installs a tiny MCP server package whose code needs a dependency beside it. */
+const FAKE_NPM: RunTool = (_tool, args) =>
+  Effect.promise(async () => {
+    const modules = NodePath.join(args[args.indexOf("--prefix") + 1]!, "node_modules");
+    const files: Record<string, string> = {
+      "@acme/mcp/package.json": JSON.stringify({
+        name: "@acme/mcp",
+        version: "1.0.0",
+        type: "module",
+        bin: { mcp: "./bin/server.js" },
+      }),
+      "@acme/mcp/lib/tools.js": "export const description = 'Search mail';\n",
+      "@acme/mcp/bin/server.js": PACKAGE_SERVER,
+      "dep/package.json": JSON.stringify({ name: "dep", type: "module", main: "index.js" }),
+      "dep/index.js": "export const hi = () => 'dep says hi';\n",
+    };
+    for (const [path, text] of Object.entries(files)) {
+      await NodeFSP.mkdir(NodePath.dirname(NodePath.join(modules, path)), { recursive: true });
+      await NodeFSP.writeFile(NodePath.join(modules, path), text);
+    }
+  });
+
+const PACKAGE_SERVER = `
+import { createInterface } from "node:readline";
+import { hi } from "dep";
+import { description } from "../lib/tools.js";
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
+      capabilities: { tools: {} }, serverInfo: { name: "acme", version: "1.0.0" } } });
+  else if (message.method === "tools/list")
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [
+      { name: "search", description, inputSchema: { type: "object" } }] } });
+  else if (message.method === "tools/call")
+    send({ jsonrpc: "2.0", id: message.id, result: { content: [{ type: "text", text: hi() }] } });
+  else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
+});
+`;
+
 /** Resolves once `path` exists, watching its folder rather than polling. */
 const appears = (path: string) =>
   Effect.promise(
@@ -3316,6 +3361,62 @@ describe("connectors agents make and fix", () => {
           ),
         ),
       ).toBe(false);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("copies a package connector with its code, which starts, saves and exports", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ runTool: FAKE_NPM });
+      const added = yield* harness.runtime.add({
+        target: {
+          type: "local-package",
+          name: "io.example/acme",
+          version: "1.0.0",
+          package: {
+            runner: "npx",
+            identifier: "@acme/mcp",
+            version: "1.0.0",
+            args: [],
+            environment: [],
+          },
+          environment: [],
+        },
+      });
+      const connectorId = added.connector.connectorId;
+      const chat = NodePath.join(harness.config.stateDir, "..", "chat");
+      const copied = yield* harness.runtime.copyForAgent({
+        workingFolder: chat,
+        connector: connectorId,
+      });
+      expect(copied).toMatchObject({
+        source: expect.stringContaining("@acme/mcp 1.0.0 is in package/"),
+      });
+      // The agent's edit, in the package's own code.
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(copied.folder, "package", "lib", "tools.js"),
+          "export const description = 'Search mail, edited';\n",
+        ),
+      );
+      // regression: package copies were checked only for their files, never started.
+      const checked = yield* harness.runtime.checkFolder(
+        { folder: copied.folder, connector: connectorId, calls: [{ tool: "search" }] },
+        undefined,
+      );
+      expect(checked).toMatchObject({
+        ok: true,
+        tools: [{ name: "search", description: "Search mail, edited" }],
+        calls: [{ tool: "search", isError: false, text: "dep says hi" }],
+      });
+      const saved = yield* harness.runtime.saveFolder(
+        { folder: copied.folder, connector: connectorId },
+        undefined,
+      );
+      expect(saved.tools).toEqual(["search"]);
+      const exported = yield* harness.runtime.exportLocal({ connectorId });
+      const zip = Buffer.from(exported.base64, "base64").toString("latin1");
+      expect(zip).toContain("package/lib/tools.js");
+      expect(zip).toContain("node_modules/dep/index.js");
     }).pipe(Effect.provide(testLayer)),
   );
 

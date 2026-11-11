@@ -5,11 +5,34 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 
 import { generatedManifest } from "./LocalConnectorBundle.ts";
 import { bringInPackage, makeRunTool, packageOf, type RunTool } from "./PackageSource.ts";
+
+/** Folders under this path sit on another drive: a rename across it fails as on Windows `D:`. */
+const drives = vi.hoisted(() => ({ other: undefined as string | undefined }));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const real = await importOriginal<typeof import("node:fs/promises")>();
+  const driveOf = (path: string) =>
+    drives.other !== undefined && path.startsWith(drives.other) ? "other" : "system";
+  return {
+    ...real,
+    rename: async (from: string, to: string) => {
+      if (driveOf(from) !== driveOf(to))
+        throw Object.assign(new Error(`EXDEV: cross-device link not permitted, rename '${from}'`), {
+          code: "EXDEV",
+        });
+      return real.rename(from, to);
+    },
+  };
+});
+
+const setup = () => {
+  drives.other = undefined;
+};
 
 const scratch = Effect.acquireRelease(
   Effect.promise(() => NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-package-"))),
@@ -23,15 +46,9 @@ const write = async (root: string, files: Record<string, string>) => {
   }
 };
 
-const exists = (path: string) =>
-  NodeFSP.lstat(path).then(
-    () => true,
-    () => false,
-  );
-
-const generated = (command: string, args: ReadonlyArray<string>) =>
+const generated = (command: string, args: ReadonlyArray<string>, name = "acme") =>
   generatedManifest({
-    name: "acme",
+    name,
     displayName: "Acme",
     version: "2.3.3",
     command,
@@ -41,84 +58,107 @@ const generated = (command: string, args: ReadonlyArray<string>) =>
   });
 
 /** Plays npm and uv: writes what each would install into the folder it was given. */
-const fakeTools: RunTool = (tool, args) =>
-  Effect.promise(async () => {
-    const at = (flag: string) => args[args.indexOf(flag) + 1]!;
-    if (tool === "npm") {
-      const modules = NodePath.join(at("--prefix"), "node_modules");
-      await write(modules, {
-        "@acme/mcp/package.json": JSON.stringify({
-          name: "@acme/mcp",
-          bin: { mcp: "./bin/server.js" },
-        }),
-        "@acme/mcp/bin/server.js": "import '../lib/tools.js';",
-        "@acme/mcp/lib/tools.js": "export const description = 'Search mail';",
-        "@acme/helper/index.js": "",
-        "dep/index.js": "",
+const fakeTools =
+  (asked: Array<ReadonlyArray<string>> = []): RunTool =>
+  (tool, args) =>
+    Effect.promise(async () => {
+      asked.push(args);
+      const at = (flag: string) => args[args.indexOf(flag) + 1]!;
+      if (tool === "npm") {
+        await write(NodePath.join(at("--prefix"), "node_modules"), {
+          "@acme/mcp/package.json": JSON.stringify({
+            name: "@acme/mcp",
+            version: "2.4.0",
+            bin: { mcp: "./bin/server.js" },
+          }),
+          "@acme/mcp/bin/server.js": "",
+          "dep/index.js": "",
+        });
+        return;
+      }
+      await write(at("--target"), {
+        "acme_mcp/cli.py": "class app:\n    def main():\n        return 0\n",
+        "acme_mcp-1.4.0.dist-info/METADATA": [
+          "Name: acme-mcp",
+          "Version: 1.4.0",
+          "Requires-Python: >=3.11",
+          "Requires-Dist: httpx>=0.27",
+          'Requires-Dist: tomli; python_version < "3.11"',
+          'Requires-Dist: rich; extra == "cli"',
+          'Requires-Dist: click>=8; python_version >= "3.9" and extra == "CLI"',
+          'Requires-Dist: pytest; extra == "test"',
+        ].join("\n"),
+        "acme_mcp-1.4.0.dist-info/entry_points.txt":
+          "[console_scripts]\nacme-mcp = acme_mcp.cli:app.main\n",
+        "bin/acme-mcp": "#!/usr/bin/env python",
       });
-      await NodeFSP.mkdir(NodePath.join(modules, ".bin"));
-      await NodeFSP.symlink("../@acme/mcp/bin/server.js", NodePath.join(modules, ".bin", "mcp"));
-      return;
-    }
-    await write(at("--target"), {
-      "acme_mcp/__init__.py": "def main():\n    return 0\n",
-      "acme_mcp-1.0.dist-info/METADATA": [
-        "Name: acme-mcp",
-        "Requires-Python: >=3.11",
-        "Requires-Dist: httpx>=0.27",
-        'Requires-Dist: tomli; python_version < "3.11"',
-        'Requires-Dist: pytest; extra == "test"',
-      ].join("\n"),
-      "acme_mcp-1.0.dist-info/entry_points.txt": "[console_scripts]\nacme-mcp = acme_mcp:main\n",
-      "bin/acme-mcp": "#!/usr/bin/env python",
     });
-  });
 
 describe("package connector code", () => {
-  it.effect("brings an npm package's code in and runs it from the folder", () =>
+  it("reads every runner form a connector names, or says why it can't", () => {
+    const of = (command: string, ...args: ReadonlyArray<string>) =>
+      packageOf(generated(command, args));
+    expect(of("npx", "--yes", "@acme/mcp@2.3.3", "--read-only")).toEqual({
+      runner: "npx",
+      identifier: "@acme/mcp",
+      version: "2.3.3",
+      extras: [],
+      rest: ["--read-only"],
+    });
+    // regression: only `npx -y pkg@ver` and `uvx pkg==ver` were read; the rest copied no code.
+    expect(of("C:\\nodejs\\npx.cmd", "-y", "@acme/mcp")).toMatchObject({
+      identifier: "@acme/mcp",
+      version: undefined,
+    });
+    expect(of("/opt/uv/bin/uvx.exe", "acme-mcp[cli,extra]==1.0")).toMatchObject({
+      runner: "uvx",
+      identifier: "acme-mcp",
+      version: "1.0",
+      extras: ["cli", "extra"],
+    });
+    expect(of("uvx", "--from", "git+https://example.com/acme", "acme")).toMatchObject({
+      problem: expect.stringContaining("no other uvx options"),
+    });
+    expect(of("uvx", "acme>=1")).toMatchObject({
+      problem: expect.stringContaining("name==1.2.3"),
+    });
+    expect(of("node", "server.js")).toBeUndefined();
+  });
+
+  it.effect("moves npm's files in on the folder's own drive", () =>
     Effect.gen(function* () {
-      const folder = yield* scratch;
-      const manifest = generated("npx", ["-y", "@acme/mcp@2.3.3", "--read-only"]);
-      const pkg = packageOf(manifest)!;
-      expect(pkg).toEqual({
-        runner: "npx",
-        identifier: "@acme/mcp",
-        version: "2.3.3",
-        rest: ["--read-only"],
-      });
-      const source = yield* bringInPackage(folder, manifest, pkg, fakeTools);
-      expect(source).toContain("package/");
-      const written = JSON.parse(
-        yield* Effect.promise(() =>
-          NodeFSP.readFile(NodePath.join(folder, "manifest.json"), "utf8"),
-        ),
-      );
-      expect(written.server).toEqual({
-        type: "node",
-        entry_point: "package/bin/server.js",
-        mcp_config: {
-          command: "node",
-          args: ["${__dirname}/package/bin/server.js", "--read-only"],
-          env: { TOKEN: "${user_config.TOKEN}" },
-        },
-      });
-      expect(written.user_config).toEqual(manifest.user_config);
-      const has = (path: string) => Effect.promise(() => exists(NodePath.join(folder, path)));
-      expect(yield* has("package/lib/tools.js")).toBe(true);
-      expect(yield* has("node_modules/@acme/helper/index.js")).toBe(true);
-      expect(yield* has("node_modules/dep/index.js")).toBe(true);
-      // The package itself lives only in package/, and npm's links into it are gone.
-      expect(yield* has("node_modules/@acme/mcp")).toBe(false);
-      expect(yield* has("node_modules/.bin")).toBe(false);
-    }),
+      setup();
+      const chat = yield* scratch;
+      drives.other = chat;
+      const folder = NodePath.join(chat, "connectors", "acme");
+      yield* Effect.promise(() => NodeFSP.mkdir(folder, { recursive: true }));
+      const manifest = generated("npx", ["-y", "@acme/mcp"]);
+      const pkg = packageOf(manifest);
+      if (pkg === undefined || "problem" in pkg) throw new Error("not a package");
+      // regression: npm wrote under the system temp folder, and moving across drives failed.
+      const source = yield* bringInPackage(folder, manifest, pkg, fakeTools());
+      // An unpinned package is brought in at the exact version npm chose.
+      expect(source).toContain("@acme/mcp 2.4.0");
+      expect(
+        yield* Effect.promise(() => NodeFSP.readdir(NodePath.join(folder, "package"))),
+      ).toEqual(["bin", "package.json"]);
+      expect(yield* Effect.promise(() => NodeFSP.readdir(NodePath.dirname(folder)))).toEqual([
+        "acme",
+      ]);
+    }).pipe(Effect.scoped),
   );
 
-  it.effect("brings a PyPI package's code in, with its dependencies for uv", () =>
+  it.effect("brings a PyPI package in with its extras' dependencies and dotted entry", () =>
     Effect.gen(function* () {
-      const folder = yield* scratch;
-      const manifest = generated("uvx", ["acme-mcp==1.0"]);
-      const source = yield* bringInPackage(folder, manifest, packageOf(manifest)!, fakeTools);
-      expect(source).toContain("pyproject.toml");
+      setup();
+      const folder = NodePath.join(yield* scratch, "acme");
+      const manifest = generated("uvx", ["acme-mcp[cli]"], "Acme MCP!");
+      const pkg = packageOf(manifest);
+      if (pkg === undefined || "problem" in pkg) throw new Error("not a package");
+      const asked: Array<ReadonlyArray<string>> = [];
+      const source = yield* bringInPackage(folder, manifest, pkg, fakeTools(asked));
+      expect(asked[0]).toContain("acme-mcp[cli]");
+      expect(source).toContain("acme-mcp 1.4.0");
       const read = (path: string) =>
         Effect.promise(() => NodeFSP.readFile(NodePath.join(folder, path), "utf8"));
       expect(JSON.parse(yield* read("manifest.json")).server.mcp_config).toEqual({
@@ -127,16 +167,18 @@ describe("package connector code", () => {
         env: { TOKEN: "${user_config.TOKEN}" },
       });
       const project = yield* read("pyproject.toml");
+      // regression: the name came as given, and extras' dependencies were dropped.
+      expect(project).toContain('name = "acme-mcp-connector"');
       expect(project).toContain('requires-python = ">=3.11"');
       expect(project).toContain(
-        'dependencies = ["httpx>=0.27", "tomli; python_version < \\"3.11\\""]',
+        'dependencies = ["httpx>=0.27", "tomli; python_version < \\"3.11\\"", "rich", "click>=8; python_version >= \\"3.9\\""]',
       );
-      expect(yield* read("server.py")).toContain("from acme_mcp import main");
-      expect(yield* read("package/acme_mcp/__init__.py")).toContain("def main");
-      expect(yield* Effect.promise(() => exists(NodePath.join(folder, "package", "bin")))).toBe(
-        false,
-      );
-    }),
+      // regression: `mod:obj.main` became `from mod import obj.main`.
+      const server = yield* read("server.py");
+      expect(server).toContain('importlib.import_module("acme_mcp.cli")');
+      expect(server).toContain('for name in "app.main".split("."):');
+      expect(yield* read("package/acme_mcp/cli.py")).toContain("def main");
+    }).pipe(Effect.scoped),
   );
 
   it.effect("says plainly when npm is not on this computer", () =>

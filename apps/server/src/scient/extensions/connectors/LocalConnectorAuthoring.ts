@@ -365,7 +365,9 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     const copied = yield* readFolderManifest(target).pipe(Effect.option);
     const pkg = Option.isNone(copied) ? undefined : packageOf(copied.value);
     let source: string | undefined;
-    if (pkg !== undefined && Option.isSome(copied))
+    if (pkg !== undefined && "problem" in pkg)
+      source = `Its code is not here: ${pkg.problem} Fix what the manifest runs, or bring the code in yourself.`;
+    else if (pkg !== undefined && Option.isSome(copied))
       source = yield* bringInPackage(target, copied.value, pkg, deps.runTool).pipe(
         Effect.catch((error) =>
           Effect.succeed(
