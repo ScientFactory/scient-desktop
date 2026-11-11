@@ -12,11 +12,6 @@ otherwise leave a required context permanently pending. The lightweight
 - existence of changed Markdown files' local link targets; and
 - the local-link checker's own Node test suite.
 
-On a push to `main`, the Documentation and upstream provenance workflows skip their checks when
-every commit the push lands already passed the same workflow in the merge queue
-([`queue-verified.cjs`](../../.github/scripts/queue-verified.cjs)); a push the queue never ran
-is checked in full.
-
 External links and in-document anchors are outside this fast check. When no Markdown file changes,
 the workflow still reports whitespace and checker-test results without inventing documentation
 work. The full product suite also runs for documentation-only changes so every protected context
