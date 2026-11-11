@@ -120,7 +120,7 @@ function CloudCopySection({
     <SettingsSection id="cloud-copy" title="Cloud copy">
       <SettingsRow
         title="Copy conversations to Scient Cloud"
-        description="Read this computer's conversations at app.scientfactory.com and on your other computers, even while it's off. Files stay here. Copies are stored encrypted with a key unique to your account."
+        description="Read this computer's conversations at app.scientfactory.com and on your other computers, even while it's off. Project files are not copied. Copies are encrypted with a key unique to your account."
         status={problem ?? (status.enabled ? statusLine(status) : undefined)}
         control={
           userId === null && !status.enabled ? (
@@ -227,7 +227,7 @@ function SharedLinkRow({
     share.currentVersion !== null && share.versions.length > 1
       ? `version ${share.currentVersion}`
       : null,
-    link === null ? "link only on the computer that shared it" : null,
+    link === null ? "the full link can be copied only where it was created" : null,
   ].filter((fact): fact is string => fact !== null);
   return (
     <SettingsRow

@@ -385,9 +385,7 @@ function ShareLinkDialog({
               </label>
               <label className="flex items-center justify-between gap-3">
                 <span>
-                  {lockedEncryption
-                    ? "Encrypted (a link keeps its encryption)"
-                    : "Encrypt (the key stays in the link)"}
+                  {lockedEncryption ? "Encrypted shared copy" : "Encrypt this shared copy"}
                 </span>
                 <Switch
                   checked={encrypted}
@@ -405,12 +403,13 @@ function ShareLinkDialog({
                 </label>
               ) : null}
             </div>
-            {!encrypted ? (
-              <p className="text-xs text-muted-foreground">
-                Without encryption, Scient Cloud can read the copy, and links show a preview with
-                the conversation's title.
-              </p>
-            ) : null}
+            <p className="text-xs text-muted-foreground">
+              Anyone with the complete link can open it, if "Who can open it" allows them.{" "}
+              {encrypted
+                ? "The key that unlocks it is part of the link, so Scient Cloud keeps only a copy it can't read."
+                : "Without encryption, Scient Cloud can read the copy, and the link shows a preview with the conversation's title."}
+              {lockedEncryption ? " A link keeps the encryption it was created with." : null}
+            </p>
 
             {build.status === "ready" ? (
               <RedactionList
@@ -485,10 +484,12 @@ function ShareLinkDialog({
               onClick={() => void doPublish()}
             >
               {publish.status === "publishing"
-                ? "Publishing…"
+                ? existing
+                  ? "Updating link…"
+                  : "Creating link…"
                 : existing
                   ? "Update link"
-                  : "Publish"}
+                  : "Create link"}
             </Button>
           ) : null}
         </DialogFooter>
@@ -513,8 +514,8 @@ function RedactionList({
   if (build.redactions.length === 0 && build.kept.length === 0 && excludedCount === 0) {
     return (
       <p className="text-xs text-muted-foreground">
-        Nothing needed blanking. Saved passwords, tokens, email addresses and home folders are
-        checked before anything is shared.
+        Nothing needed hiding. Saved passwords, tokens, email addresses and home folders are checked
+        before anything is shared.
       </p>
     );
   }
@@ -522,7 +523,7 @@ function RedactionList({
     <div className="flex flex-col gap-1 text-sm">
       {build.redactions.length > 0 ? (
         <p className="text-xs text-muted-foreground">
-          Blanked before sharing (marked in the preview):
+          Hidden from the shared copy (marked in the preview):
         </p>
       ) : null}
       <ul className="flex flex-col gap-0.5">
@@ -534,17 +535,17 @@ function RedactionList({
               <span className="text-muted-foreground"> → {redaction.replacement}</span>
             </span>
             <Button size="xs" variant="ghost-muted" onClick={() => onShow(redaction.id)}>
-              Show it
+              Include in link
             </Button>
           </li>
         ))}
         {build.kept.map((redaction) => (
           <li key={redaction.id} className="flex items-center gap-2">
             <span className="min-w-0 flex-1 truncate text-muted-foreground">
-              {redaction.label}: shown as written
+              {redaction.label}: included in the link as written
             </span>
             <Button size="xs" variant="ghost-muted" onClick={() => onBlank(redaction.id)}>
-              Blank it
+              Hide from link
             </Button>
           </li>
         ))}

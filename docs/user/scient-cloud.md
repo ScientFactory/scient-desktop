@@ -44,19 +44,19 @@ reply and says so.
 Choose **Share link…** in a conversation's menu. Before anything is published you see exactly what
 the link will show:
 
-- **Private details are blanked for you.** Passwords and keys saved in Accounts, API keys and other
+- **Private details are hidden from the shared copy for you.** Passwords and keys saved in Accounts, API keys and other
   token-like text become `[redacted]`, email addresses become `[email]`, and your home folder
-  becomes `~`. Each finding is listed; **Show it** puts one back. A text attachment that contains
+  becomes `~`. Each finding is listed; **Include in link** puts one back and **Hide from link** hides it again. A text attachment that contains
   private details is left out unless you keep it.
 - **Leave out** removes a message from the link.
 - **The agent's reasoning** is left out unless you turn it on.
 - **Who can open it:** anyone with the link, only people you name (they sign in with that email), or
   only you. You can also set an expiry date.
 - **Encryption** is on by default: the link ends with `#` and a key, and that part never reaches
-  Scient's servers, so only people with the full link can read it. An unencrypted link can show a
+  Scient's servers. Anyone with the complete link can open it, if **Who can open it** allows them. An unencrypted link can show a
   title preview when pasted into chat apps, and you can let search engines list it.
 
-**Publish** gives you the link to copy. The link shows a copy frozen at that moment. To share new
+**Create link** gives you the link to copy. The link shows a copy frozen at that moment. To share new
 messages, choose **Share link…** again (or **Update** in Settings > Sharing & access > Shared links)
 and **Update link**; people with the link see the new version at the same address. **Stop sharing**
 deletes the shared copy at once.
