@@ -3159,6 +3159,8 @@ describe("connectors agents run", () => {
 
       const added = yield* agent(addConnector({ from: echo.name }));
       expect(added).toMatchObject({ status: "needs-setup", missing: ["API key"], tools: [] });
+      // regression: what an agent added was shown as the user's change.
+      expect((yield* harness.runtime.list()).connectors[0]?.local?.changedBy).toBe("agent");
       expect(added.message).toContain("scient_connector_setup");
       installed = (yield* harness.runtime.list()).connectors[0]!.connectorId;
       expect((yield* agent(addConnector({ from: echo.name }))).message).toContain("already added");

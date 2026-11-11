@@ -1440,7 +1440,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
 
   /** The folder and keys first, then the record; a failed commit removes what was made. */
   const addLocal = Effect.fn("ConnectorRuntime.addLocal")(function* (
-    input: ConnectorAddInput,
+    input: Parameters<ConnectorRuntimeShape["add"]>[0],
     target: Extract<
       ConnectorAddInput["target"],
       {
@@ -1480,7 +1480,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       availability: { type: "all-projects" },
       createdAt,
       updatedAt: createdAt,
-      local: prepared.local,
+      local: { ...prepared.local, changedBy: input.changedBy ?? "you" },
     }).pipe(Effect.tapError(() => prepared.cleanup));
     yield* publishChange;
     return {

@@ -135,7 +135,10 @@ export interface ConnectorRuntimeShape {
   }>;
   /** Emits after every committed change to connectors (availability included). */
   readonly changes: Stream.Stream<ExtensionsChangedEvent>;
-  readonly add: (input: ConnectorAddInput) => Effect.Effect<ConnectorAddResult, ExtensionsError>;
+  /** `changedBy`: who added a local connector, shown on its page; the page's own add is "you". */
+  readonly add: (
+    input: ConnectorAddInput & { readonly changedBy?: "you" | "agent" },
+  ) => Effect.Effect<ConnectorAddResult, ExtensionsError>;
   /** Connector definitions contributed by an installed Scient plugin bundle. Never signs in. */
   readonly addFromPlugin: (input: {
     readonly pluginId: string;

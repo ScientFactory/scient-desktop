@@ -301,7 +301,7 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
           ...(description ? { description } : {}),
         };
       }
-      const added = yield* runtime.add(request);
+      const added = yield* runtime.add({ ...request, changedBy: "agent" });
       const summary = added.connector;
       if (agentStatusOf(summary) !== "ready") return changeReport("Added", summary, []);
       const tested = yield* testedTools(summary, input.location);
