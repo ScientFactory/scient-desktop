@@ -359,7 +359,7 @@ export const make = Effect.gen(function* () {
       case "quota_exceeded":
         paused = {
           reason: "storage-full",
-          message: "Cloud copy paused: your cloud storage is full.",
+          message: "Sync paused: your cloud storage is full.",
           until: now + STORAGE_FULL_RECHECK_MS,
         };
         return;
@@ -367,7 +367,7 @@ export const make = Effect.gen(function* () {
       case "forbidden":
         paused = {
           reason: "not-enrolled",
-          message: "Cloud copy paused: this computer is no longer linked to your account.",
+          message: "Sync paused: this computer is no longer linked to your account.",
           until: Number.POSITIVE_INFINITY,
         };
         return;

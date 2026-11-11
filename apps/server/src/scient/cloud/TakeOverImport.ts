@@ -199,7 +199,7 @@ const make = Effect.gen(function* () {
     if (userId === null) {
       return yield* new ScientCloudError({
         reason: "not-enrolled",
-        message: "Turn on Cloud copy on this computer first.",
+        message: "Turn on sync on this computer first.",
       });
     }
     const previous = yield* previousImport(request);

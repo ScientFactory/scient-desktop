@@ -59,7 +59,7 @@ export function conversationImportNotice(
       document
         ? "The original document is attached to this conversation."
         : takenOver
-          ? "Copied from that computer's cloud copy; files stay where they are. New messages go here now, and the conversation there stays as it was."
+          ? "Continued from that computer; files stay where they are. The conversation there stays as it was."
           : markdown
             ? "Text copied from a Scient Markdown export, which anyone can edit."
             : "Copied from a Scient conversation file, which anyone can edit.",

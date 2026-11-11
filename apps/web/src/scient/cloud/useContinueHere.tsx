@@ -22,8 +22,7 @@ import { readCloudStatus, takeOverCloudThread, turnOnCloudCopy } from "./serverC
 type Candidate = { readonly projectId: ProjectId; readonly title: string };
 
 /** Why continuing asks for Cloud copy on this computer, beside the button that turns it on. */
-export const CLOUD_COPY_NEEDED =
-  "Continuing needs Cloud copy on this computer too: it copies this computer's conversations (not project files), so the conversation can move between your computers.";
+export const CLOUD_COPY_NEEDED = "Continuing needs sync on this computer too.";
 
 /** Conversations being continued here right now: a repeat click never takes a second lease. */
 const inFlight = new Set<string>();

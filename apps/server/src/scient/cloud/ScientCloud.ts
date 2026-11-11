@@ -126,8 +126,7 @@ const make = Effect.gen(function* () {
           error.code === "unauthorized" || error.code === "forbidden"
             ? new ScientCloudError({
                 reason: "not-enrolled",
-                message:
-                  "Scient Cloud does not know this computer yet. Try turning Cloud copy on again.",
+                message: "Scient Cloud does not know this computer yet. Try turning sync on again.",
               })
             : fromApi(error),
         ),

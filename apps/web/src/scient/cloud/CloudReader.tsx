@@ -83,7 +83,7 @@ function SignedIn({
   if (!hasCloudAccount()) {
     return (
       <ReaderFrame title={title} back={back}>
-        <Notice>Cloud copies need Scient Connect, which this build doesn't include.</Notice>
+        <Notice>Sync needs Scient Connect, which this build doesn't include.</Notice>
       </ReaderFrame>
     );
   }
@@ -117,7 +117,7 @@ function SignedInAccount({
             </Button>
           }
         >
-          Sign in to read the conversations your computers copied to Scient Cloud.
+          Sign in to read the conversations your computers synced.
         </Notice>
       </ReaderFrame>
     );
@@ -223,8 +223,8 @@ function CloudConversationsList({ api }: { api: CloudApi }) {
     body =
       visible.length === 0 ? (
         <Notice>
-          Nothing copied yet. Turn on Cloud copy in Settings → Sharing & access on a computer, and
-          its conversations show up here.
+          Nothing synced yet. Turn on Sync conversations in Settings → Sharing & access on a
+          computer, and its conversations show up here.
         </Notice>
       ) : (
         <div className="flex flex-col gap-8">
@@ -387,10 +387,7 @@ function CloudConversationReader({
       <CopyFacts conversation={conversation} row={row} source={source} computers={computers} />
       {continuable === null ? null : (
         <div className="-mt-4 mb-6 flex flex-col items-start gap-2 text-xs text-muted-foreground">
-          <p>
-            Continuing on this computer starts a new conversation here from this copy. New messages
-            then go here, and the conversation on {source} stays as it was.
-          </p>
+          <p>Continues here as a new conversation. The one on {source} stays as it was.</p>
           {continueHere.problem ? (
             <p className="text-destructive-foreground">{continueHere.problem}</p>
           ) : continueHere.needsCloudCopy ? (
@@ -417,7 +414,7 @@ function CopyFacts({
 }) {
   const facts = [
     `From ${source}`,
-    `copied ${formatWhen(conversation.snapshot.captured.capturedAt)}`,
+    `synced ${formatWhen(conversation.snapshot.captured.capturedAt)}`,
     row?.branch ? `branch ${row.branch}` : null,
   ].filter((fact): fact is string => fact !== null);
   return (
@@ -463,7 +460,7 @@ function ContinueHereButton({
       {continueHere.running
         ? "Continuing…"
         : continueHere.needsCloudCopy
-          ? "Turn on Cloud copy and continue"
+          ? "Turn on sync and continue"
           : "Continue on this computer"}
     </Button>
   );

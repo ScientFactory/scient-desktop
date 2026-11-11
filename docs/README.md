@@ -68,7 +68,7 @@ require a cosmetic folder migration.
 - [Product usage data](./user/telemetry.md)
 - [Remote access](./user/remote-access.md)
 - [Scient Connect troubleshooting](./user/scient-connect-troubleshooting.md)
-- [Cloud copies and share links](./user/scient-cloud.md)
+- [Sync and share links](./user/scient-cloud.md)
 - [Keeping app and server in sync](./user/updating.md)
 - [Source control integrations](./user/source-control.md)
 - [File previews](./user/file-previews.md)

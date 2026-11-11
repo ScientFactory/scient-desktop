@@ -1,5 +1,6 @@
 import { shareLink, type ShareAccess, type ShareRecord } from "@scientfactory/scient-cloud/api";
 import { EnvironmentId, ThreadId, type ScientCloudStatus } from "@t3tools/contracts";
+import { Link } from "@tanstack/react-router";
 import { useState } from "react";
 
 import { SettingsRow, SettingsSection } from "~/components/settings/settingsLayout";
@@ -16,6 +17,7 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { useThreadShells } from "~/state/entities";
 
 import { shareLinkOrigin, type CloudApi } from "./cloudApi";
+import { InfoTip } from "./InfoTip";
 import { deleteCloudCopies, turnOffCloudCopy, turnOnCloudCopy } from "./serverCloud";
 import { openShareLinkDialog } from "./shareDialogState";
 import { readShareKey } from "./shareKeys";
@@ -72,13 +74,13 @@ function statusLine(status: ScientCloudStatus): string {
     case "not-enrolled":
       return "Waiting to be linked to your account.";
     case "copying":
-      return `Copying ${status.pendingThreads} conversation${status.pendingThreads === 1 ? "" : "s"}…`;
+      return `Syncing ${status.pendingThreads} conversation${status.pendingThreads === 1 ? "" : "s"}…`;
     case "retrying":
       return "Scient Cloud can't be reached right now. Trying again soon.";
     default:
       return status.lastCopiedAt === null
-        ? "Nothing copied yet."
-        : `Last copied ${formatWhen(status.lastCopiedAt)} · ${status.copiedThreads} conversation${status.copiedThreads === 1 ? "" : "s"}`;
+        ? "Nothing synced yet."
+        : `Last synced ${formatWhen(status.lastCopiedAt)} · ${status.copiedThreads} conversation${status.copiedThreads === 1 ? "" : "s"}`;
   }
 }
 
@@ -117,11 +119,29 @@ function CloudCopySection({
         : null;
 
   return (
-    <SettingsSection id="cloud-copy" title="Cloud copy">
+    <SettingsSection id="cloud-copy" title="Sync">
       <SettingsRow
-        title="Copy conversations to Scient Cloud"
-        description="Read this computer's conversations at app.scientfactory.com and on your other computers, even while it's off. Project files are not copied. Copies are encrypted with a key unique to your account."
-        status={problem ?? (status.enabled ? statusLine(status) : undefined)}
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            Sync conversations
+            <InfoTip label="About sync">
+              Encrypted with a key unique to your account. Scient's service holds the key so the web
+              app can open them. Turning this off keeps what's synced; delete it below.
+            </InfoTip>
+          </span>
+        }
+        description="Read them at app.scientfactory.com or on your other computers. Project files stay here."
+        status={
+          problem ??
+          (status.enabled ? (
+            <span className="inline-flex flex-wrap items-center gap-x-2">
+              {statusLine(status)}
+              <Link to="/cloud" className="text-foreground underline underline-offset-2">
+                Open
+              </Link>
+            </span>
+          ) : undefined)
+        }
         control={
           userId === null && !status.enabled ? (
             <Button size="sm" variant="outline" onClick={onSignIn}>
@@ -131,7 +151,7 @@ function CloudCopySection({
             <Switch
               checked={status.enabled}
               disabled={busy !== null}
-              aria-label="Copy conversations to Scient Cloud"
+              aria-label="Sync conversations"
               onCheckedChange={(checked) =>
                 act("switch", () =>
                   checked
@@ -145,8 +165,8 @@ function CloudCopySection({
       />
       {status.enrolledUserId !== null || status.copiedBytes > 0 ? (
         <SettingsRow
-          title="Cloud copies"
-          description={used ?? "This computer's copies in Scient Cloud."}
+          title="Synced conversations"
+          description={used ?? "This computer's conversations in Scient Cloud."}
           control={
             <Button
               size="sm"
@@ -154,7 +174,7 @@ function CloudCopySection({
               disabled={busy !== null}
               onClick={() => act("delete", () => deleteCloudCopies(environmentId))}
             >
-              {busy === "delete" ? "Deleting…" : "Delete cloud copies"}
+              {busy === "delete" ? "Deleting…" : "Delete from Scient Cloud"}
             </Button>
           }
         />

@@ -122,7 +122,7 @@ function TakeBackButton({
                   row.continuedFrom?.env === environmentId && row.continuedFrom.thread === threadId,
               );
               if (continuation !== undefined) return continuation;
-              setProblem("The other computer hasn't copied it yet. Try again in a minute.");
+              setProblem("The other computer hasn't synced it yet. Try again in a minute.");
               return null;
             },
             environmentId,
@@ -138,7 +138,7 @@ function TakeBackButton({
         {continueHere.running
           ? "Taking it back…"
           : continueHere.needsCloudCopy
-            ? "Turn on Cloud copy and take it back"
+            ? "Turn on sync and take it back"
             : "Take it back"}
       </Button>
     </div>
