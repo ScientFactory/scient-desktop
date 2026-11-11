@@ -69,17 +69,11 @@ export const ScientAnnotatedPdfView = Schema.Struct({
 });
 
 const PdfChoice = {
-  sourceId: Schema.optionalKey(
-    NonEmptyString.annotate({ description: "A Source whose PDF to use; see scient_sources_list." }),
-  ),
+  sourceId: Schema.optionalKey(NonEmptyString),
   attachmentId: Schema.optionalKey(
-    NonEmptyString.annotate({
-      description: "Which of the Source's PDFs, when it has more than one.",
-    }),
+    NonEmptyString.annotate({ description: "When the Source has several PDFs." }),
   ),
-  pdfRelativePath: Schema.optionalKey(
-    RelativePdfPath.annotate({ description: "A project-relative path to any PDF." }),
-  ),
+  pdfRelativePath: Schema.optionalKey(RelativePdfPath),
 };
 
 const MutationOutcome = Schema.Literals([
@@ -110,17 +104,11 @@ export const ScientAnnotationMutationAgentResult = Schema.Struct({
 
 const ScientAnnotationsReadTool = Tool.make("scient_annotations_read", {
   description:
-    "Read the highlights and notes people and agents made on PDFs in this project, grouped by PDF, with the quoted text, pages and any Source the PDF belongs to (with its citation key). " +
-    "Give a sourceId or pdfRelativePath for one PDF, or neither for the whole project; query searches quotes and notes. Use this before quoting or summarising what the user marked. " +
-    "To quote a passage in a document, cite it with its Source's key: [@key, p. N] in Markdown or \\cite[p.~N]{key} in LaTeX.",
+    "Read highlights and notes on this project's PDFs, grouped by PDF, with quotes, pages and owning Source (and citation key). One PDF by sourceId or pdfRelativePath, or the whole project; query searches quotes and notes. Use it before quoting or summarising what the user marked; cite as [@key, p. N] or \\cite[p.~N]{key}.",
   parameters: Schema.Struct({
     ...PdfChoice,
     query: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(500))),
-    includeRemoved: Schema.optionalKey(
-      Schema.Boolean.annotate({
-        description: "Also list removed annotations, which can be restored.",
-      }),
-    ),
+    includeRemoved: Schema.optionalKey(Schema.Boolean),
     offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
     limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
   }),
@@ -148,9 +136,7 @@ const ScientAnnotationsReadTool = Tool.make("scient_annotations_read", {
 
 const ScientAnnotationsAddTool = Tool.make("scient_annotations_add", {
   description:
-    "Highlight a passage of a PDF, optionally with a note, when the user asks. Give a sourceId or pdfRelativePath and the passage's exact words as quote; spacing, case and line-end hyphens may differ. " +
-    "quote-ambiguous lists the pages where it occurs: call again with page. quote-not-found means those words are not in the PDF's text (a scanned PDF has none). " +
-    "The user sees the highlight in the PDF, credited to you; adding the same passage again changes nothing.",
+    "Highlight a PDF passage, optionally with a note, when the user asks. Pass sourceId or pdfRelativePath and its exact words as quote (spacing, case, line-end hyphens may differ). quote-ambiguous lists pages: call again with page. quote-not-found: not in the PDF's text (scans have none). Credited to you; repeating changes nothing.",
   parameters: Schema.Struct({
     ...PdfChoice,
     quote: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(8_000)),
@@ -158,7 +144,7 @@ const ScientAnnotationsAddTool = Tool.make("scient_annotations_add", {
     note: Schema.optionalKey(ScientAnnotationNote),
     highlight: Schema.optionalKey(
       Schema.Boolean.annotate({
-        description: "Defaults to true. False keeps only the note on the passage.",
+        description: "Default true; false keeps only the note.",
       }),
     ),
   }),
@@ -190,8 +176,7 @@ const ScientAnnotationsAddTool = Tool.make("scient_annotations_add", {
 
 const ScientAnnotationsUpdateTool = Tool.make("scient_annotations_update", {
   description:
-    "Change the note or highlight of one annotation when the user asks. Read it first and pass its current revision; if stale, read again and redo the change. " +
-    "An annotation needs a highlight or a note; to drop both, remove it. Earlier versions stay restorable.",
+    "Change one annotation's note or highlight when the user asks. Pass its current revision; if stale, re-read and redo. It keeps a highlight or a note; to drop both, remove it. Earlier versions stay restorable.",
   parameters: Schema.Struct({
     annotationId: NonEmptyString,
     expectedRevision: Revision,
@@ -211,7 +196,7 @@ const ScientAnnotationsUpdateTool = Tool.make("scient_annotations_update", {
 
 const ScientAnnotationsRemoveTool = Tool.make("scient_annotations_remove", {
   description:
-    "Remove one highlight or note when the user asks. Pass its current revision. It can be brought back with scient_annotations_restore.",
+    "Remove one highlight or note when the user asks; pass its current revision. scient_annotations_restore brings it back.",
   parameters: Schema.Struct({ annotationId: NonEmptyString, expectedRevision: Revision }),
   success: ScientAnnotationMutationAgentResult,
   failure: ScientAnnotationsToolError,
@@ -226,7 +211,7 @@ const ScientAnnotationsRemoveTool = Tool.make("scient_annotations_remove", {
 
 const ScientAnnotationsRestoreTool = Tool.make("scient_annotations_restore", {
   description:
-    "Bring back a removed annotation, or with toRevision return its note and highlight to an earlier revision (listed in earlierRevisions). Pass its current revision.",
+    "Bring back a removed annotation, or with toRevision return its note and highlight to an earlier revision (earlierRevisions). Pass its current revision.",
   parameters: Schema.Struct({
     annotationId: NonEmptyString,
     expectedRevision: Revision,

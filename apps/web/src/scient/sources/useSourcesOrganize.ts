@@ -25,12 +25,13 @@ const message = (error: unknown) => scientSourcesErrorMessage(error, import.meta
 function bulkResultSummary(result: ScientSourcesBulkResult): string | null {
   const failed = result.sources.filter((entry) => entry.outcome === "failed");
   const missing = result.sources.filter((entry) => entry.outcome === "not-found");
-  if (failed.length === 0 && missing.length === 0) return null;
+  const note = [...result.sources, ...result.collections].find((entry) => entry.message)?.message;
+  if (failed.length === 0 && missing.length === 0 && !note) return null;
   const parts = [
     failed.length > 0 ? `${failed.length} could not be changed` : null,
     missing.length > 0 ? `${missing.length} no longer in Sources` : null,
   ].filter(Boolean);
-  return `${parts.join(", ")}.${failed[0]?.message ? ` ${failed[0].message}` : ""}`;
+  return [parts.length > 0 ? `${parts.join(", ")}.` : null, note].filter(Boolean).join(" ");
 }
 
 // Outside the hook: the React Compiler does not compile try/finally.
@@ -120,8 +121,30 @@ export function useSourcesOrganize(input: {
         }),
       "Changes were not undone",
     );
-    const conflicts = result?.conflicts ?? [];
-    if (!result || conflicts.length === 0) return;
+    if (!result) return;
+    const failed = [...result.sources, ...result.collections].filter(
+      (entry) => entry.outcome === "failed",
+    );
+    if (failed.length > 0) {
+      const id = toastManager.add({
+        type: "warning",
+        title: "Some changes were not undone",
+        description:
+          failed.length === 1
+            ? "1 change could not be undone."
+            : `${failed.length} changes could not be undone.`,
+        actionProps: {
+          children: "Try again",
+          onClick: () => {
+            toastManager.close(id);
+            void undoBulk(batchId);
+          },
+        },
+      });
+      return;
+    }
+    const conflicts = result.conflicts ?? [];
+    if (conflicts.length === 0) return;
     const undidNothing = result.sources.length === 0 && result.collections.length === 0;
     toastManager.add({
       type: "warning",

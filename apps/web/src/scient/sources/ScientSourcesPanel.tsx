@@ -13,10 +13,8 @@ import {
   BookOpen,
   CheckCircle2,
   ChevronLeft,
-  ClipboardList,
   Download,
   ExternalLink,
-  FileDown,
   FileUp,
   FileText,
   Folder,
@@ -65,7 +63,6 @@ import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SourceAnnotations } from "../annotations/SourceAnnotations";
-import { ReferenceCheckButton } from "../references/ReferenceCheckButton";
 import { AddByIdentifier } from "./AddByIdentifier";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
@@ -90,7 +87,7 @@ import {
 import { SourceHistoryDialog } from "./SourceHistory";
 import { sourceTrustLabel } from "./sourceLifecycleLabels";
 import { SourceStoreNotice } from "./SourceStoreNotice";
-import { announceSourceMovedToTrash, SourceTrashButton } from "./SourceTrash";
+import { announceSourceMovedToTrash } from "./SourceTrash";
 import { useScientSources } from "./useScientSources";
 import { SourceOrganizeSection } from "./SourceOrganizeSection";
 import { SourcesActiveFilters } from "./SourcesActiveFilters";
@@ -101,7 +98,7 @@ import { useSourcesOrganize } from "./useSourcesOrganize";
 import { SystematicReviewsView } from "./SystematicReviews";
 import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
-import { SourcesExportMenu } from "./SourcesExportMenu";
+import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
 import { useCanChangeLibrary } from "./sourcesCommands";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest, UniversityRow } from "../accounts/University";
@@ -1248,65 +1245,8 @@ export function ScientSourcesPanel(props: {
       <PanelHeader
         title="Sources"
         action={
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
-            <ScientTooltip content="Systematic reviews">
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label="Systematic reviews"
-                onClick={() => setShowingReviews(true)}
-              >
-                <ClipboardList />
-              </Button>
-            </ScientTooltip>
-            <ReferenceCheckButton
-              environmentId={props.environmentId}
-              root={props.root}
-              onOpenSource={setSelectedSourceId}
-              {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
-            />
-            {sources.overview.trashedCount ? (
-              <SourceTrashButton
-                environmentId={props.environmentId}
-                root={props.root}
-                count={sources.overview.trashedCount}
-                onChanged={sources.refreshOverview}
-              />
-            ) : null}
-            {missingPdfs.length > 0 ? (
-              <ScientTooltip
-                content={
-                  missingPdfs.length === 1
-                    ? "Get the missing PDF"
-                    : `Get ${missingPdfs.length} missing PDFs`
-                }
-              >
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Get missing PDFs"
-                  onClick={() => void requestPapers({ root: props.root, papers: missingPdfs })}
-                >
-                  <FileDown />
-                </Button>
-              </ScientTooltip>
-            ) : null}
-            <SourcesExportMenu
-              environmentId={props.environmentId}
-              root={props.root}
-              totalCount={sources.overview?.records.length ?? 0}
-              scope={
-                organize.selection.size > 0
-                  ? { kind: "selected", sourceIds: [...organize.selection] }
-                  : sourceQuery.trim() || organize.filterActive
-                    ? {
-                        kind: "shown",
-                        sourceIds: filteredSourceRecords.map((record) => record.sourceId),
-                      }
-                    : null
-              }
-            />
             <Menu>
               <MenuTrigger
                 render={
@@ -1321,7 +1261,7 @@ export function ScientSourcesPanel(props: {
                     ) : (
                       <Download />
                     )}
-                    Import sources
+                    <span className="@max-[20rem]:hidden">Import sources</span>
                   </Button>
                 }
               />
@@ -1357,6 +1297,28 @@ export function ScientSourcesPanel(props: {
                 </MenuItem>
               </MenuPopup>
             </Menu>
+            <SourcesHeaderMenu
+              environmentId={props.environmentId}
+              root={props.root}
+              totalCount={sources.overview?.records.length ?? 0}
+              exportScope={
+                organize.selection.size > 0
+                  ? { kind: "selected", sourceIds: [...organize.selection] }
+                  : sourceQuery.trim() || organize.filterActive
+                    ? {
+                        kind: "shown",
+                        sourceIds: filteredSourceRecords.map((record) => record.sourceId),
+                      }
+                    : null
+              }
+              trashedCount={sources.overview.trashedCount ?? 0}
+              onTrashChanged={sources.refreshOverview}
+              missingPdfCount={missingPdfs.length}
+              onGetMissingPdfs={() => void requestPapers({ root: props.root, papers: missingPdfs })}
+              onOpenReviews={() => setShowingReviews(true)}
+              onOpenSource={setSelectedSourceId}
+              {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
+            />
           </div>
         }
       />
@@ -1934,7 +1896,7 @@ function PanelHeader(props: {
   readonly onBack?: () => void;
 }) {
   return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-border px-3 py-2.5">
+    <div className="@container flex shrink-0 items-center gap-3 border-b border-border px-3 py-2.5">
       {props.onBack ? (
         <Button variant="ghost" size="icon-sm" onClick={props.onBack} aria-label="Go back">
           <ChevronLeft />
@@ -1943,7 +1905,7 @@ function PanelHeader(props: {
         <Library className="size-4 shrink-0" />
       )}
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{props.title}</div>
+        <div className="truncate text-sm font-medium">{props.title}</div>
         {props.description ? (
           <div className="truncate text-xs text-muted-foreground">{props.description}</div>
         ) : null}

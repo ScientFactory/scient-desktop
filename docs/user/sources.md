@@ -155,8 +155,8 @@ registries.
 
 ## Export the Library
 
-Choose **Export** (the arrow next to **Import sources**) and a format: BibTeX,
-RIS, CSL-JSON or EndNote XML. When sources are selected, only they are
+Choose **More Library actions** (the **⋯** button next to **Import sources**),
+then **Export** and a format: BibTeX, RIS, CSL-JSON or EndNote XML. When sources are selected, only they are
 exported; otherwise, when a search or filter narrows the list, only the shown
 sources are. Each source is written under its citation key.
 Project notes stay private unless you turn on **Include notes**. Exported
@@ -188,8 +188,8 @@ conflicting exact identifiers and asks before accepting a possible duplicate
 as a separate source.
 
 Use **Move to Trash** from the source actions to remove a source. Choose
-**Undo** in the message that appears to put it straight back, or open the
-trash button at the top of the Library later to restore it. Its PDFs stay in
+**Undo** in the message that appears to put it straight back, or choose
+**Trash** in the **⋯** menu at the top of the Library later to restore it. Its PDFs stay in
 the project while it is in the trash. **Empty trash** deletes the sources in
 it for good, with their saved versions and any PDF no other source uses.
 Removing a source never changes Zotero.
@@ -294,15 +294,16 @@ type changes are saved as a new version of each source, so they appear in its
 history and can be restored like any other edit. **Undo** in the message that
 appears reverses the whole change: each source gets back its type, the tags
 that were added or removed, and its collections. A change someone made to a
-source since then is kept, and the message says what was kept. The latest 50
-bulk changes can be undone.
+source since then is kept, and the message says what was kept. If part of an
+Undo fails, the message says so and **Try again** finishes the rest. The latest
+50 bulk changes can be undone.
 
 Collections and saved searches are kept in `.scient/sources/collections.json`
 with the rest of the project's Library.
 
 ## Run a systematic review
 
-Choose **Systematic reviews** (the clipboard button at the top of the Library)
+Choose **Systematic reviews** (in the **⋯** menu at the top of the Library)
 to plan and record a systematic, scoping or rapid review. Each review keeps its
 searches, duplicate decisions and screening decisions in the project, in
 `.scient/sources/reviews/`, and draws its PRISMA 2020 flow from them. The
@@ -395,7 +396,7 @@ source.
 
 ## Check references
 
-Choose **Check references** in the Library header, or in the menu of a Markdown
+Choose **Check references** in the Library's **⋯** menu, or in the menu of a Markdown
 or LaTeX document. Scient checks the Library, or the chosen `.md`, `.tex` or
 `.bib` file together with the bibliography files it names and the Library
 sources its citation keys name. Each DOI, PMID, arXiv ID and ISBN is looked up
