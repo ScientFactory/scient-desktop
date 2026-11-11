@@ -164,6 +164,7 @@ describe("readCslStyle", () => {
     `${head}<macro name="title"><text variable="title"/></macro><macro name = 'a&amp;b'><text variable="title"/></macro><citation>${sort}<layout>${layout}</layout></citation><bibliography><layout>${layout}</layout></bibliography></style>`;
   const forBooks = (text: string) =>
     `<choose><if type="book">${text}</if><else><text macro="title"/></else></choose>`;
+  const title = '<text variable="title"/>';
 
   it("reads every bundled style, and a style that prints only some source types", () => {
     expect(
@@ -172,40 +173,55 @@ describe("readCslStyle", () => {
     expect(
       readCslStyle(style('<choose><if type="book"><text macro="title"/></if></choose>')),
     ).not.toBeNull();
+    expect(
+      readCslStyle(style(forBooks(title), "<sort><key macro='title'/></sort>")),
+    ).not.toBeNull();
     // The style repository holds styles that end in a comment.
     expect(
-      readCslStyle(
-        `${head}<citation><layout><text variable="title"/></layout></citation></style>\n<!-- end -->\n`,
-      ),
+      readCslStyle(`${head}<citation><layout>${title}</layout></citation></style>\n<!-- end -->\n`),
     ).not.toBeNull();
   });
 
-  // regression: review B4-3, macro names were compared as written, not as XML reads them
-  it("reads a macro name as XML does, and a dependent style written with spaces", () => {
+  // regression: review B4-3, names and values were compared as written, not as XML reads them
+  it("reads names and values as XML does", () => {
     expect(readCslStyle(style('<text prefix=">" macro="a&#38;b"/>'))).not.toBeNull();
+    const written = style(title)
+      .replace("<style ", '<style xmlns:x="urn:example:>" ')
+      .replace(/<title>[^<]*<\/title>/u, "<title> A<![CDATA[<B>]]>&amp;C </title>");
+    expect(readCslStyle(written)).toMatchObject({ id: "nature", title: "A<B>&C" });
+  });
+
+  // regression: review B4-4, the locale went to a style tag inside a comment
+  it("gives a parent the locale of a dependent style, however either is written", () => {
     const spaced = PLOS_ONE.replace('default-locale="en-US"', "default-locale = 'en-GB'").replace(
       'rel="independent-parent"',
       "rel = 'independent-parent'",
     );
     expect(readCslStyle(spaced)).toMatchObject({ parentId: "plos", defaultLocale: "en-GB" });
-    const parent = bundledCslStyleXml("plos")!.replace(
-      'default-locale="en-US"',
-      "default-locale = 'en-US'",
-    );
-    expect(readCslStyle(renderableCslStyle(spaced, parent))?.defaultLocale).toBe("en-GB");
+    const comment = "<!-- <style default-locale='fr-FR'> -->";
+    const parent = bundledCslStyleXml("plos")!
+      .replace("<style ", `${comment}<style `)
+      .replace('default-locale="en-US"', "default-locale = 'en-US'");
+    const rendered = renderableCslStyle(spaced, parent);
+    expect(rendered).toContain(comment);
+    expect(readCslStyle(rendered)?.defaultLocale).toBe("en-GB");
   });
 
-  const title = '<text variable="title"/>';
+  const prefixed = '<cs:text xmlns:cs="http://purl.org/net/xbiblio/csl" macro="missing"/>';
+  const root = head.slice(head.indexOf("<style"), head.indexOf("<info>"));
   it.each([
-    ["names an undefined macro in a branch", forBooks('<text macro="missing"/>'), ""],
-    ["names one after a > and around a spaced =", '<text prefix=">" macro = "missing"/>', ""],
-    ["sorts by an undefined macro", title, "<sort><key macro\n= 'missing'/></sort>"],
-    ["has markup that does not close", forBooks('<text variable="title">'), ""],
-    ["has an attribute without quotes", "<text variable=title/>", ""],
-  ])("rejects a style that %s", (_name, layout, sort) => {
-    expect(
-      readCslStyle(style(forBooks(title), "<sort><key macro='title'/></sort>")),
-    ).not.toBeNull();
-    expect(readCslStyle(style(layout, sort))).toBeNull();
+    ["names an undefined macro in a branch", style(forBooks('<text macro="missing"/>'))],
+    ["names one after a > and a spaced =", style('<text prefix=">" macro = "missing"/>')],
+    ["names one in a prefixed element", style(prefixed)],
+    ["sorts by an undefined macro", style(title, "<sort><key macro\n= 'missing'/></sort>")],
+    ["has markup that does not close", style(forBooks('<text variable="title">'))],
+    ["has an attribute without quotes", style("<text variable=title/>")],
+    ["has character data after its root", `${style(title)}<![CDATA[more]]>`],
+    [
+      "has its identity outside its root",
+      `${head.slice(head.indexOf("<info>"))}${root}<citation><layout>${title}</layout></citation></style>`,
+    ],
+  ])("rejects a style that %s", (_name, xml) => {
+    expect(readCslStyle(xml)).toBeNull();
   });
 });

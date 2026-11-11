@@ -644,14 +644,16 @@ broken file; callers report `unavailable` and never substitute another style
 silently.
 
 A style is usable when `readCslStyle` accepts it, on save and on every read:
-the CSL root, its identity, every element closed in order, and every macro a
-layout names defined. citeproc-js reports neither fault itself: it renders
-markup that Pandoc rejects, and prints nothing for an undefined macro. The
-check reads the text, so it covers branches for every source type, and it does
-not print a sample, because a valid style may print nothing for some types. It
-sets comments aside and reads attributes as XML does (either quote, spaces
-around `=`, character references), so a macro name matches its definition
-however each is written.
+one CSL root, the identity in that root's `info`, every element closed in
+order, and every macro a layout names defined. citeproc-js reports neither
+fault itself: it renders markup that Pandoc rejects, and prints nothing for an
+undefined macro. The check reads the text, so it covers branches for every
+source type, and it does not print a sample, because a valid style may print
+nothing for some types. It is one pass that reads the text as XML does:
+comments skipped, CDATA kept as text, attributes in either quote with spaces
+around `=` and character references decoded. A macro name therefore matches
+its definition however each is written, and `renderableCslStyle` writes the
+dependent style's locale at the root that pass found.
 
 The web keeps one copy of the project's style per project
 (`useProjectCitationStyle`). It reads the style when a reference or the picker
