@@ -7,6 +7,7 @@ import {
   DOCUMENT_FONT_SIZES,
   MARKDOWN_FONT_SPAN_CLOSE,
   type MarkdownFontSpan,
+  FONT_CATALOGUE,
   catalogueFont,
   normalizeFontSize,
   parseMarkdownFontSpanOpen,
@@ -147,11 +148,39 @@ function latexClassSize(source: string): 10 | 11 | 12 {
   return option === "11pt" ? 11 : option === "12pt" ? 12 : 10;
 }
 
-/** The size in points of a matched size command: a `\fontsize` number or a named class size. */
-function latexCommandPoints(command: RegExpExecArray, classSize: 10 | 11 | 12): number | null {
-  const named = command[1];
-  if (named !== undefined) return LATEX_NAMED_SIZES[named]?.[classSize - 10] ?? null;
-  return normalizeFontSize(Number(command[2]));
+const LATEX_FONT_CARRIER = "scient-font-";
+const LATEX_FONT_CODE = /^\\fontfamily\{([a-z0-9]+)\}\\selectfont(?:\{\}|(?![A-Za-z@])\s?)/u;
+const LATEX_FONT_NAME =
+  /^\\IfFontExistsTF\{([^{}]+)\}\{\\fontspec\{\1\}\}\{\\fontspec\{[^{}]+\}\}(?:\{\}|\s?)/u;
+
+/** The carrier colour name and length of a size or font declaration at the start of `rest`. */
+function latexDeclaration(
+  rest: string,
+  classSize: 10 | 11 | 12,
+): { readonly carrier: string; readonly length: number } | null {
+  const command = LATEX_SIZE_COMMAND.exec(rest);
+  if (command !== null) {
+    const named = command[1];
+    const points =
+      named === undefined
+        ? normalizeFontSize(Number(command[2]))
+        : (LATEX_NAMED_SIZES[named]?.[classSize - 10] ?? null);
+    return points === null
+      ? null
+      : {
+          carrier: `${LATEX_SIZE_CARRIER}${String(points).replace(".", "p")}`,
+          length: command[0].length,
+        };
+  }
+  const code = LATEX_FONT_CODE.exec(rest);
+  const named = code === null ? LATEX_FONT_NAME.exec(rest) : null;
+  const index = FONT_CATALOGUE.findIndex((font) =>
+    code === null ? font.latex.fontspec === named?.[1] : font.latex.pdftex === code[1],
+  );
+  const match = code ?? named;
+  return match === null || index < 0
+    ? null
+    : { carrier: `${LATEX_FONT_CARRIER}${index}`, length: match[0].length };
 }
 
 const isEscaped = (text: string, index: number): boolean => {
@@ -216,14 +245,12 @@ function rewriteSizeGroups(
     if (char === "$" && !isEscaped(text, index)) inMath = !inMath;
     const standalone = index === 0 || !LATEX_ARGUMENT_BEFORE.test(text[index - 1] ?? "");
     if (char === "{" && standalone && !inMath && !isEscaped(text, index)) {
-      const command = LATEX_SIZE_COMMAND.exec(text.slice(index + 1));
-      const end = command === null ? -1 : braceEnd(text, index);
-      const points = command === null ? null : latexCommandPoints(command, classSize);
-      if (command !== null && points !== null && end >= 0) {
+      const declaration = latexDeclaration(text.slice(index + 1), classSize);
+      const end = declaration === null ? -1 : braceEnd(text, index);
+      if (declaration !== null && end >= 0) {
         counter.found = true;
-        const body = text.slice(index + 1 + command[0].length, end);
-        const carrier = `${LATEX_SIZE_CARRIER}${String(points).replace(".", "p")}`;
-        out += `\\ScientSize{${carrier}}{${rewriteSizeGroups(body, counter, classSize)}}`;
+        const body = text.slice(index + 1 + declaration.length, end);
+        out += `\\ScientSize{${declaration.carrier}}{${rewriteSizeGroups(body, counter, classSize)}}`;
         index = end;
         continue;
       }
@@ -267,6 +294,11 @@ function latexSpanFont(attributes: unknown): WordLocalFont | null {
       ? new RegExp(`^color:\\s*${LATEX_SIZE_CARRIER}(\\d+(?:p\\d+)?)$`, "u").exec(style)?.[1]
       : undefined;
     if (carried !== undefined) return { size: Number(carried.replace("p", ".")) };
+    const font = Predicate.isString(style)
+      ? new RegExp(`^color:\\s*${LATEX_FONT_CARRIER}(\\d+)$`, "u").exec(style)?.[1]
+      : undefined;
+    const family = font === undefined ? undefined : FONT_CATALOGUE[Number(font)]?.name;
+    if (family !== undefined) return { family };
   }
   return null;
 }

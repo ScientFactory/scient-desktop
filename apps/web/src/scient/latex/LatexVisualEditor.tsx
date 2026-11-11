@@ -1,9 +1,15 @@
 import type { PagedTableLayout } from "./latexPagedGeometry";
 import { resolvedLatexFontSize } from "./latexVisualLayout";
 import { latexSelectionClipboard } from "./latexClipboard";
+import { catalogueFont } from "@scientfactory/scient-markdown";
 import { FontControls } from "../writing/FontControls";
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
-import { setLatexFontFamily, setLatexFontSize } from "./latexFontCommands";
+import {
+  latexFontAvailable,
+  latexFontEngine,
+  setLatexFontFamily,
+  setLatexFontSize,
+} from "./latexFontCommands";
 import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
 import { mathColorSource } from "./mathColorSyntax";
 import { LatexStructuredSelection } from "./latexStructuredSelection";
@@ -5600,6 +5606,28 @@ const LatexFontSize = Mark.create({
   },
 });
 
+/** A named font from the catalogue; `engine` is the form it is written in (see latexTextFormatting). */
+const LatexFontFamily = Mark.create({
+  name: "latexFontFamily",
+  addAttributes() {
+    return { family: { default: "" }, engine: { default: "pdftex" } };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-latex-font-family]" }];
+  },
+  renderHTML({ mark }) {
+    const font = catalogueFont(String(mark.attrs.family));
+    return [
+      "span",
+      {
+        "data-latex-font-family": String(mark.attrs.family),
+        ...(font ? { style: `font-family:${font.css}` } : {}),
+      },
+      0,
+    ];
+  },
+});
+
 const LatexColor = Mark.create({
   name: "latexColor",
   priority: 1100,
@@ -5650,6 +5678,7 @@ const LatexMonospace = Code.extend({ excludes: "" });
 const inlineFieldExtensions = [
   ...LatexTextMarks,
   LatexFontSize,
+  LatexFontFamily,
   LatexColor,
   LatexColor.extend({
     name: "latexBackground",
@@ -5685,6 +5714,7 @@ const baseExtensions = [
   }),
   ...LatexTextMarks,
   LatexFontSize,
+  LatexFontFamily,
   LatexColor,
   LatexColor.extend({
     name: "latexBackground",
@@ -9680,6 +9710,7 @@ function LatexVisualEditorReady(
       ))}
     </>
   );
+  const fontEngine = latexFontEngine(mathSetupSource);
   const writingTextContents = {
     paragraphStyle: writingStyleItems,
     formatting: writingFormattingItems,
@@ -9688,7 +9719,9 @@ function LatexVisualEditorReady(
         family={editingPresentation.fontFamily}
         size={editingPresentation.fontSize}
         disabled={readOnly || !editor || !formattingAvailable || mathActive}
-        onFamily={(family) => setLatexFontFamily(editingTarget, family)}
+        isAvailable={(name) => latexFontAvailable(fontEngine, name)}
+        unavailableNote="Needs XeLaTeX or LuaLaTeX"
+        onFamily={(family) => setLatexFontFamily(editingTarget, family, fontEngine)}
         onSize={(size) => setLatexFontSize(editingTarget, size)}
       />
     ),

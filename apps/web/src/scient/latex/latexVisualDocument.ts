@@ -88,7 +88,7 @@ import {
 } from "./latexLiteral";
 import {
   LATEX_INLINE_MARKS,
-  latexFontSizeGroupSource,
+  latexFontGroupSource,
   latexMarkKey,
   latexMarkNode,
   latexTextDeclarationAt,
@@ -4845,27 +4845,27 @@ function serializeInline(nodes: readonly JSONContent[] | undefined): string {
     }
     return result;
   }
-  // One size group covers a whole run of equal size, with its math and other marks inside.
-  const sizeType = "latexFontSize";
-  if (nodes?.some((node) => node.marks?.some((mark) => mark.type === sizeType))) {
+  // One group covers a whole run of equal size (or font), with its math and other marks inside.
+  const groupType = ["latexFontSize", "latexFontFamily"].find((type) =>
+    nodes?.some((node) => node.marks?.some((mark) => mark.type === type)),
+  );
+  if (groupType && nodes) {
     let result = "";
     for (let at = 0; at < nodes.length;) {
-      const size = nodes[at]!.marks?.find((mark) => mark.type === sizeType);
-      const signature = JSON.stringify(size);
+      const group = nodes[at]!.marks?.find((mark) => mark.type === groupType);
+      const signature = JSON.stringify(group);
       let end = at + 1;
       while (
         end < nodes.length &&
-        JSON.stringify(nodes[end]!.marks?.find((mark) => mark.type === sizeType)) === signature
+        JSON.stringify(nodes[end]!.marks?.find((mark) => mark.type === groupType)) === signature
       )
         end++;
       const content = nodes.slice(at, end).map((node) => ({
         ...node,
-        marks: (node.marks ?? []).filter((mark) => mark.type !== sizeType),
+        marks: (node.marks ?? []).filter((mark) => mark.type !== groupType),
       }));
       const inner = serializeInline(content);
-      result += size
-        ? latexFontSizeGroupSource(Number(size.attrs?.points), Number(size.attrs?.leading), inner)
-        : inner;
+      result += group ? latexFontGroupSource(group, inner) : inner;
       at = end;
     }
     return result;

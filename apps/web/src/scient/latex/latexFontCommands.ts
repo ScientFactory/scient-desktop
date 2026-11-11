@@ -1,6 +1,8 @@
 import type { Editor } from "@tiptap/core";
 import { latexVisualFontMetrics } from "./latexVisualLayout";
 import { normalizeFontSize } from "../writing/fontChoices";
+import { declaredLatexCompiler } from "./latexCompiler";
+import { latexFontFamilyDeclaration, type LatexFontEngine } from "./latexTextFormatting";
 
 const NAMED_SIZES = [
   "tiny",
@@ -28,11 +30,14 @@ export function latexFontState(
 ): { readonly size: number | null; readonly family: string | null } {
   if (!editor) return { size: null, family: null };
   const numeric = editor.getAttributes("latexFontSize").points;
-  if (typeof numeric === "number") return { size: numeric, family: null };
+  const writtenFamily = editor.getAttributes("latexFontFamily").family;
+  const markFamily =
+    typeof writtenFamily === "string" && writtenFamily !== "" ? writtenFamily : null;
+  if (typeof numeric === "number") return { size: numeric, family: markFamily };
   const named = NAMED_SIZES.find((name) => editor.isActive(`latexSize_${name}`));
   return {
     size: named === undefined ? null : latexVisualFontMetrics(baseFontPt)[named][0],
-    family: null,
+    family: markFamily,
   };
 }
 
@@ -50,7 +55,38 @@ export function setLatexFontSize(editor: Editor | null, points: number | null): 
   return chain.run();
 }
 
-/** Named fonts are not yet written by the Visual editor. */
-export function setLatexFontFamily(_editor: Editor | null, _family: string | null): boolean {
-  return false;
+/**
+ * The form named fonts are written in: guarded `\fontspec` names when the document is compiled
+ * with XeLaTeX, LuaLaTeX or Tectonic or loads `fontspec`, font family codes otherwise (pdfLaTeX).
+ */
+export function latexFontEngine(setupSource: string): LatexFontEngine {
+  const declared = declaredLatexCompiler(setupSource);
+  if (declared === "xelatex" || declared === "lualatex" || declared === "tectonic")
+    return "fontspec";
+  return /^[^%\n]*\\usepackage(?:\[[^\]]*\])?\{[^}]*\bfontspec\b[^}]*\}/mu.test(setupSource)
+    ? "fontspec"
+    : "pdftex";
+}
+
+/** Whether the document's engine can write this font by name. */
+export function latexFontAvailable(engine: LatexFontEngine, family: string): boolean {
+  return latexFontFamilyDeclaration(engine, family) !== null;
+}
+
+/** A font replaces the previous one, as in LaTeX; null returns to the document default. */
+export function setLatexFontFamily(
+  editor: Editor | null,
+  family: string | null,
+  engine: LatexFontEngine,
+): boolean {
+  if (!editor) return false;
+  if (family !== null && !latexFontAvailable(engine, family)) return false;
+  let chain = editor
+    .chain()
+    .focus()
+    .unsetMark("latexFontFamily")
+    .unsetMark("latexRoman")
+    .unsetMark("latexSans");
+  if (family !== null) chain = chain.setMark("latexFontFamily", { family, engine });
+  return chain.run();
 }

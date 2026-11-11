@@ -1,6 +1,7 @@
 /**
  * Word font handling that needs no Pandoc: the LaTeX size-group rewrite and the base font reads.
  */
+import { FONT_CATALOGUE } from "@scientfactory/scient-markdown";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -172,5 +173,15 @@ describe("LaTeX font sizes", () => {
     const source =
       "%\\documentclass[12pt]{article}\n% \\renewcommand{\\familydefault}{\\ttdefault}";
     expect(latexBaseFontOf(source)).toEqual({ sizePoints: 11, family: null });
+  });
+
+  it("rewrites a font family group in both written forms", () => {
+    const index = FONT_CATALOGUE.findIndex((font) => font.name === "Times New Roman");
+    const code = rewriteLatexSizeGroups("{\\fontfamily{qtm}\\selectfont serif}");
+    expect(code).toContain(`\\ScientSize{scient-font-${index}}{serif}`);
+    const named = rewriteLatexSizeGroups(
+      "{\\IfFontExistsTF{Times New Roman}{\\fontspec{Times New Roman}}{\\fontspec{Latin Modern Roman}} serif}",
+    );
+    expect(named).toContain(`\\ScientSize{scient-font-${index}}{serif}`);
   });
 });

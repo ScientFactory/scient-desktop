@@ -61,6 +61,8 @@ const commandPackages: Readonly<Record<string, readonly string[]>> = {
   hypertarget: ["hyperref"],
   autoref: ["hyperref"],
   url: ["url"],
+  // Computer Modern has only fixed sizes; fix-cm makes any `\fontsize` exact.
+  fontsize: ["fix-cm"],
   cref: ["cleveref"],
   Cref: ["cleveref"],
 };
@@ -74,6 +76,13 @@ const providedPackages: Readonly<Record<string, readonly string[]>> = {
   xcolor: ["color"],
   hyperref: ["url"],
   algorithm: ["float"],
+  // Scalable font packages already give every size.
+  lmodern: ["fix-cm"],
+  fontspec: ["fix-cm"],
+  newtxtext: ["fix-cm"],
+  newpxtext: ["fix-cm"],
+  tgtermes: ["fix-cm"],
+  tgpagella: ["fix-cm"],
 };
 
 /** Existing commands do not turn an unrelated prose edit into a package edit. */

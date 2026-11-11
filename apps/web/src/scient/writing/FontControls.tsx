@@ -25,6 +25,9 @@ export function FontControls(props: {
   readonly family: string | null;
   readonly size: number | null;
   readonly disabled: boolean;
+  /** Fonts the document cannot use are listed but disabled, with `unavailableNote` as the reason. */
+  readonly isAvailable?: (name: string) => boolean;
+  readonly unavailableNote?: string;
   readonly onFamily: (family: string | null) => void;
   readonly onSize: (size: number | null) => void;
 }) {
@@ -69,7 +72,10 @@ export function FontControls(props: {
                   label={font.name}
                   css={font.css}
                   selected={props.family === font.name}
-                  disabled={props.disabled}
+                  disabled={props.disabled || props.isAvailable?.(font.name) === false}
+                  note={
+                    props.isAvailable?.(font.name) === false ? props.unavailableNote : undefined
+                  }
                   onSelect={() => props.onFamily(font.name)}
                 />
               ))}
@@ -132,6 +138,7 @@ export function FontControls(props: {
 function FontOption(props: {
   readonly label: string;
   readonly css?: string;
+  readonly note?: string | undefined;
   readonly selected: boolean;
   readonly disabled: boolean;
   readonly onSelect: () => void;
@@ -148,6 +155,9 @@ function FontOption(props: {
     >
       <span>{props.label}</span>
       {props.selected && <span className="font-sans text-xs text-muted-foreground">current</span>}
+      {props.note !== undefined && (
+        <span className="font-sans text-xs text-muted-foreground">{props.note}</span>
+      )}
     </button>
   );
 }

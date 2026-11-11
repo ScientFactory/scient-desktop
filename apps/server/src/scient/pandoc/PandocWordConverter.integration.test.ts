@@ -759,6 +759,22 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
       }),
     );
 
+    it.live("keeps a LaTeX font family group as a Word character style", () =>
+      Effect.gen(function* () {
+        const { document } = yield* exportLatex(
+          "latex-font-family",
+          [
+            "\\documentclass{article}",
+            "\\begin{document}",
+            "A {\\fontfamily{qtm}\\selectfont serif} text.",
+            "\\end{document}",
+          ].join("\n"),
+        );
+        const run = /<w:r>(?:(?!<\/w:r>)[\s\S])*?serif/u.exec(document)?.[0] ?? "";
+        expect(run).toContain("ScientTimesNewRoman");
+      }),
+    );
+
     it.live("takes the base font from the LaTeX class option and \\familydefault", () =>
       Effect.gen(function* () {
         const { styles } = yield* exportLatex(
