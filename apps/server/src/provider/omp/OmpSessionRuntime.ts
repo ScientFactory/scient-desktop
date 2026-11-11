@@ -975,7 +975,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     });
   });
 
-  const applyEvent = Effect.fn("OmpSessionRuntime.applyEvent")(function* (event: OmpRpcEvent) {
+  const applyEvent = Effect.fnUntraced(function* (event: OmpRpcEvent) {
     eventSequence += 1;
     const sequence = eventSequence;
     if (event.type === "agent_start") {
@@ -1495,9 +1495,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     });
   });
 
-  const applyNotification = Effect.fn("OmpSessionRuntime.applyNotification")(function* (
-    notification: OmpRpcNotification,
-  ) {
+  const applyNotification = Effect.fnUntraced(function* (notification: OmpRpcNotification) {
     const onNativeNotification = input.onNativeNotification;
     if (onNativeNotification) {
       yield* onNativeNotification(notification).pipe(Effect.ignore);
@@ -1505,9 +1503,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     yield* interpretNotification(notification);
   });
 
-  const interpretNotification = Effect.fn("OmpSessionRuntime.interpretNotification")(function* (
-    notification: OmpRpcNotification,
-  ) {
+  const interpretNotification = Effect.fnUntraced(function* (notification: OmpRpcNotification) {
     if (notification._tag === "ProtocolFailure") {
       protocolFailed = true;
       yield* publish({ type: "error", message: notification.detail });
@@ -1570,7 +1566,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
     yield* confirmIdle;
   });
 
-  const consume = Effect.fn("OmpSessionRuntime.consume")(function* (item: InboxItem) {
+  // These run once per OMP frame; the turn-level steps above carry the spans.
+  const consume = Effect.fnUntraced(function* (item: InboxItem) {
     if (item.type === "begin" && item.turnId && item.admission) {
       paused = false;
       pauseSettled = undefined;
