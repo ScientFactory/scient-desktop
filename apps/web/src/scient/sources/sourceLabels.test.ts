@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { agentVerificationLabel, newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
+import {
+  agentVerificationLabel,
+  newlyObservedSourceIds,
+  sourceAddedLabel,
+  sourcePinLabel,
+} from "./sourceLabels";
 
 describe("sourceAddedLabel", () => {
   it("prioritizes the transient just-added state", () => {
@@ -82,5 +87,17 @@ describe("newlyObservedSourceIds", () => {
         recentCutoff,
       ),
     ).toEqual(["new-user"]);
+  });
+});
+
+describe("sourcePinLabel", () => {
+  it("marks pins only in the Library view, and a pin this library lacks in either view", () => {
+    expect(sourcePinLabel({ pinned: true }, "library")).toBe(" · In this project");
+    expect(sourcePinLabel({ pinned: false }, "library")).toBe("");
+    expect(sourcePinLabel({ pinned: true }, "project")).toBe("");
+    expect(sourcePinLabel({}, undefined)).toBe("");
+    expect(sourcePinLabel({ pinned: true, fromSnapshot: true }, "project")).toBe(
+      " · Not in this Library",
+    );
   });
 });

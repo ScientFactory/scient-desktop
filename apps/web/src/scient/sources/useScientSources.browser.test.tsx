@@ -72,6 +72,7 @@ interface HookProbe {
   previewImport: (itemKeys: ReadonlyArray<string>) => Promise<unknown>;
   importReferenceFile: ReturnType<typeof useScientSources>["importReferenceFile"];
   operation: ReturnType<typeof useScientSources>["operation"];
+  selectScope: ReturnType<typeof useScientSources>["selectScope"];
 }
 
 async function withMountedHook(
@@ -181,6 +182,63 @@ describe("useScientSources mounted behavior", () => {
       });
       expect(probe.current.operation?.state).toBe("completed");
       expect(probe.current.busy).toBe(false);
+    });
+  });
+
+  it("lists the Library view on request and imports from it without pinning here", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    const scoped = (listed: "project" | "library", sourceIds: ReadonlyArray<string>) => ({
+      ...overviewWith(sourceIds),
+      scopes: { listed, project: 1, library: 2 },
+    });
+    mocks.readScientSources.mockImplementation(
+      async (_environment: EnvironmentId, _root: string, scope?: "library") =>
+        scope === "library"
+          ? scoped("library", ["pinned", "other"])
+          : scoped("project", ["pinned"]),
+    );
+    mocks.importScientSourcesFile.mockResolvedValue({
+      operation: null,
+      report: {
+        format: "bibtex" as const,
+        entryCount: 0,
+        importCount: 0,
+        alreadyInLibrary: 0,
+        remaining: 0,
+        unreadableCount: 0,
+        unreadable: [],
+        notKept: [],
+        withoutCitationKey: 0,
+      },
+    });
+
+    await withMountedHook(_fixture, async (probe) => {
+      expect(mocks.readScientSources).toHaveBeenLastCalledWith(
+        environmentId,
+        "/project",
+        undefined,
+      );
+      await act(async () => {
+        await probe.current.importReferenceFile(new File([""], "here.bib"));
+      });
+      expect(mocks.importScientSourcesFile.mock.calls[0]?.[1]).not.toHaveProperty("pin");
+
+      await act(async () => {
+        await probe.current.selectScope("library");
+      });
+      expect(mocks.readScientSources).toHaveBeenLastCalledWith(
+        environmentId,
+        "/project",
+        "library",
+      );
+      expect(probe.current.overview?.scopes?.listed).toBe("library");
+      expect(probe.current.overview?.records).toHaveLength(2);
+      await act(async () => {
+        await probe.current.importReferenceFile(new File([""], "library.bib"));
+      });
+      expect(mocks.importScientSourcesFile.mock.calls[1]?.[1]).toMatchObject({ pin: false });
     });
   });
 
