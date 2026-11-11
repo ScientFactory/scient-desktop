@@ -2496,7 +2496,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                   providerInstanceId: input.modelSelection.instanceId,
                   endpoint: "http://127.0.0.1:43123/mcp",
                   authorizationHeader: token,
-                  capabilities: new Set(["preview", "skills:read", "sources:read"]),
+                  capabilities: new Set([
+                    "orchestration",
+                    "preview",
+                    "skills:read",
+                    "sources:read",
+                  ]),
                   agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
                   connectors: [],
                 })
@@ -2539,6 +2544,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.notInclude(bootstrap.value.awareness, "inherited awareness");
         assert.equal(bootstrap.value.awareness.includes("preview_status"), granted);
         assert.equal(bootstrap.value.awareness.includes("scient_skill_load"), granted);
+        assert.include(bootstrap.value.awareness, "<runtime_info>");
+        // Without the rules an OMP parent waited on its delegates instead of ending its turn.
+        assert.equal(
+          bootstrap.value.awareness.includes("Follow a running delegate's `next`"),
+          granted,
+        );
         assert.isFalse(NodeFS.existsSync(bootstrap.path));
         // A session without connectors keeps the bootstrap's original shape.
         assert.isUndefined(bootstrap.value.connectors);
@@ -3708,6 +3719,120 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           );
         }),
       ),
+  );
+
+  it.effect("fills a native subagent's thread with its saved steps, once each", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"] }],
+          initial: { provider: "test", id: "selected" },
+        });
+        peer.state.pendingAsyncWork = true;
+        let sessionDir: string | undefined;
+        const h = yield* harness(false, {
+          target: scientAgentTarget,
+          makeProcess: (options) => {
+            sessionDir = options.sessionDir;
+            return peer.makeProcess(options);
+          },
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        if (!sessionDir) return yield* Effect.die("Missing session directory");
+        const transcript = h.path.join(sessionDir, "parent", "Check.jsonl");
+        NodeFS.mkdirSync(h.path.dirname(transcript), { recursive: true });
+        const record = (id: string, message: unknown) =>
+          `${JSON.stringify({ type: "message", id, parentId: null, message })}\n`;
+        const call = { type: "toolCall", id: "call-1", name: "eval", arguments: { code: "2+2" } };
+        NodeFS.writeFileSync(
+          transcript,
+          record("a1", { role: "user", content: [{ type: "text", text: "Assignment" }] }) +
+            record("a2", { role: "assistant", content: [call] }),
+        );
+        yield* peer.emit([
+          {
+            type: "subagent_lifecycle",
+            payload: {
+              id: "check",
+              status: "started",
+              description: "Check",
+              sessionFile: transcript,
+            },
+          },
+        ]);
+        const spawned = yield* h.takeUntil((event) => event.type === "subagent.updated");
+        if (spawned.type !== "subagent.updated") return yield* Effect.die("Missing child");
+        const childThreadId = spawned.subagent.childThreadId;
+        const running = yield* h.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+        );
+        if (running.type !== "turn_item.updated" || running.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Missing running step");
+        assert.equal(running.turnItem.threadId, childThreadId);
+        assert.equal(running.turnItem.status, "running");
+        assert.deepEqual(running.turnItem.input, { code: "2+2" });
+        // The answer is in both the saved conversation and the ending frame.
+        NodeFS.appendFileSync(
+          transcript,
+          record("a3", {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "eval",
+            content: [{ type: "text", text: "4" }],
+          }) +
+            record("a4", {
+              role: "assistant",
+              content: [{ type: "text", text: "Two plus two is 4." }],
+            }),
+        );
+        // Work settles before the last read of the saved steps.
+        yield* peer.emit([
+          {
+            type: "subagent_lifecycle",
+            payload: { id: "check", status: "completed", output: "Two plus two is 4." },
+          },
+          { type: "session_settled" },
+        ]);
+        yield* TestClock.adjust("3 seconds");
+        const settled = yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.status === "completed",
+        );
+        if (settled.type !== "turn_item.updated" || settled.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Missing finished step");
+        assert.equal(settled.turnItem.id, running.turnItem.id);
+        assert.equal(settled.turnItem.output, "4");
+        yield* TestClock.adjust("3 seconds");
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === childThreadId &&
+            event.turnItem.type === "assistant_message",
+        );
+        const childItems = h.recorded.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.threadId === childThreadId
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          // In display order: the answer follows the steps it came from.
+          [...new Set(childItems.map((item) => item.id))]
+            .map((id) => childItems.findLast((candidate) => candidate.id === id)!)
+            .toSorted((left, right) => left.ordinal - right.ordinal)
+            .map((item) => [
+              item.type,
+              item.type === "assistant_message" ? item.text : item.status,
+            ]),
+          [
+            ["dynamic_tool", "completed"],
+            ["assistant_message", "Two plus two is 4."],
+          ],
+        );
+      }),
+    ),
   );
 
   it.effect(

@@ -141,6 +141,27 @@ describe("Scient's Oh My Pi extension", () => {
     );
   });
 
+  it("lets a tool call outlast Scient's longest wait while the handshake stays short", async () => {
+    stubMcp({ content: [{ type: "text", text: "settled" }] });
+    const extension = await loadExtension(
+      (bootstrapPath) => ompScientExtensionSource(ompTarget, bootstrapPath),
+      SESSION,
+    );
+    const timeouts = vi.spyOn(AbortSignal, "timeout");
+    try {
+      const host = makeApi();
+      await (
+        await extension.importFresh()
+      )(host.api);
+      expect(timeouts.mock.calls.map(([ms]) => ms)).toEqual([180_000, 180_000, 180_000]);
+      // regression: a thread wait over 3 minutes failed with "The operation timed out."
+      await host.tools.get("scient_fixture")!.execute("wait", { timeoutMs: 3_600_000 });
+      expect(timeouts.mock.calls.at(-1)?.[0]).toBeGreaterThan(60 * 60 * 1_000);
+    } finally {
+      timeouts.mockRestore();
+    }
+  });
+
   it("gives a subagent's re-run the same tools over the one connection", async () => {
     const requests = stubMcp({ content: [{ type: "text", text: "child" }] });
     const extension = await loadExtension(

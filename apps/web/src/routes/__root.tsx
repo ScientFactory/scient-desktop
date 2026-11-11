@@ -84,6 +84,10 @@ import { readProject } from "../state/entities";
 import { getDesktopSnapShotBridge } from "../lib/desktopSnapShot";
 import { shouldResumeSnapShotSetupOnStartup } from "../lib/snapShotSetupResume";
 
+// SCIENT-FORK:START hosted-landing
+import { useHostedLandingActive } from "~/scient/hosted/hostedLandingActive";
+// SCIENT-FORK:END hosted-landing
+
 export const Route = createRootRoute({
   beforeLoad: async ({ location }) => {
     // Guest links open on the owner's tunnel host in a browser with no T3 session, and must
@@ -167,6 +171,12 @@ function RootRouteBranch() {
   const hostedPromptLinkLanding = useHostedPromptLinkLanding(
     authGateState.status === "hosted-static",
   );
+  // SCIENT-FORK:START hosted-landing
+  const hostedLandingActive = useHostedLandingActive(
+    authGateState.status === "hosted-static",
+    pathname,
+  );
+  // SCIENT-FORK:END hosted-landing
 
   if (pathname === GUEST_PAGE_PATH) return <Outlet />;
 
@@ -226,7 +236,9 @@ function RootRouteBranch() {
   const appShell = (
     <CommandPalette>
       {/* Setup starts with an empty workspace, so the Welcome page has no thread list. */}
-      <AppSidebarLayout showSidebar={!isWelcome}>
+      {/* SCIENT-FORK:START hosted-landing — the hosted landing is a page of its own. */}
+      <AppSidebarLayout showSidebar={!isWelcome && !hostedLandingActive}>
+        {/* SCIENT-FORK:END hosted-landing */}
         <Outlet />
       </AppSidebarLayout>
     </CommandPalette>
