@@ -16,7 +16,9 @@ import {
 } from "./RetiredThreadAttachmentCleanup.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import { refreshLegacyV1Snapshot } from "./refreshLegacyV1Snapshot.ts";
+// SCIENT-FORK:START — interrupted-repair recovery.
 import * as DatabaseMaintenance from "./DatabaseMaintenance.ts";
+// SCIENT-FORK:END
 import * as ServerConfig from "../config.ts";
 
 const WAL_SIZE_LIMIT_BYTES = 128 * 1024 * 1024;
@@ -101,8 +103,9 @@ export const layerConfig = Layer.unwrap(
       Layer.effectDiscard(
         Effect.gen(function* () {
           const sql = yield* SqlClient.SqlClient;
-          // A repair that stopped after VACUUM left search pointing at renumbered rows.
+          // SCIENT-FORK:START — a repair that stopped after VACUUM left search pointing at renumbered rows.
           yield* DatabaseMaintenance.recoverInterruptedRepair(dbPath);
+          // SCIENT-FORK:END
           yield* refreshLegacyV1Snapshot(dbPath).pipe(
             Effect.timed,
             Effect.tap(([duration, recoveredThreadCount]) =>

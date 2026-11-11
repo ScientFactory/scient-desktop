@@ -16,7 +16,9 @@ import { isSqlError } from "effect/sql/SqlError";
 
 import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import { rebuildMessageSearch } from "../orchestration-v2/messageSearchIndex.ts";
+// SCIENT-FORK:START — the repair keeps the server lock until it finishes.
 import { holdServerOwnershipForMaintenance } from "../serverOwnership.ts";
+// SCIENT-FORK:END
 
 export class DatabaseMissingError extends Schema.TaggedError<DatabaseMissingError>()(
   "DatabaseMissingError",
@@ -192,6 +194,7 @@ const make = Effect.gen(function* () {
         yield* lockExclusively(databasePath);
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
         const summary = yield* maintenance.pruneEventStore();
+        // SCIENT-FORK:START — recheck space under the lock; a marker covers a stop after VACUUM.
         // Space was checked when the repair was requested; check again now that nothing else
         // writes, before the copy that needs it.
         const storage = yield* readStorage;
@@ -211,12 +214,15 @@ const make = Effect.gen(function* () {
         // VACUUM commits but before the rebuild, the marker makes the next start rebuild it.
         const marker = searchRebuildMarker(path, databasePath);
         yield* fs.writeFileString(marker, "");
+        // SCIENT-FORK:END
         // VACUUM is required to enable incremental auto_vacuum on existing databases.
         yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
         yield* sql`VACUUM`;
         yield* rebuildMessageSearch(sql);
         yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
+        // SCIENT-FORK:START — search is rebuilt and checkpointed.
         yield* fs.remove(marker, { force: true });
+        // SCIENT-FORK:END
         return summary;
       }).pipe(
         Effect.provide(
@@ -285,6 +291,7 @@ const make = Effect.gen(function* () {
 
 export const layer = Layer.effect(DatabaseMaintenance, make);
 
+// SCIENT-FORK:START — durable repair phases: interrupted-repair recovery and restart gating.
 /** Present while a repair has renumbered rows but not yet rebuilt message search. */
 export const searchRebuildMarker = (path: Path.Path, databasePath: string) =>
   path.join(path.dirname(databasePath), "search-rebuild-required");
@@ -389,6 +396,7 @@ export const runRequestedReclaim = Effect.fn("DatabaseMaintenance.runRequestedRe
   },
   Effect.catchCause((cause) => Effect.logWarning("Database space reclamation failed", { cause })),
 );
+// SCIENT-FORK:END
 
 // SQLite's search order for its temporary files (unixTempFileDir in os_unix.c).
 const sqliteTempDirectory = Effect.gen(function* () {

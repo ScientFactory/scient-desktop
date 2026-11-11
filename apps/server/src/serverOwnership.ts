@@ -186,6 +186,7 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
  * data and must never be unlinked: the OS releases it when the process exits,
  * even on SIGKILL, so a crashed owner never blocks the next start.
  */
+// SCIENT-FORK:START — maintenance keeps the server lock (see runRequestedReclaim).
 /** Holds the server lock while maintenance repairs a stopped server's database, so a server
  * started meanwhile reports "already running" instead of opening it mid-repair. */
 export const holdServerOwnershipForMaintenance = (statePath: string) => {
@@ -212,6 +213,7 @@ export const holdServerOwnershipForMaintenance = (statePath: string) => {
     (db) => Effect.sync(() => db.close()),
   );
 };
+// SCIENT-FORK:END
 
 export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(function* (
   statePath: string,
