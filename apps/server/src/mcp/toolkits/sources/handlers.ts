@@ -683,6 +683,13 @@ export const bulkUpdateScientSourcesForInvocation = Effect.fn("ScientSourcesTool
     const result = yield* attempt(() =>
       bulkUpdateSources({ root: store.store, change, actor: "agent" }),
     );
+    // A type change, or the undo of one, changes what pin and review snapshots hold.
+    if ("type" in change || "undoBatchId" in change) {
+      yield* afterLibraryChange(
+        store,
+        result.sources.flatMap((entry) => (entry.outcome === "updated" ? [entry.sourceId] : [])),
+      );
+    }
     // Store messages for a failed source may name host paths; keep them out of model output.
     return {
       ...result,

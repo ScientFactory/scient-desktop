@@ -147,8 +147,8 @@ than scattering version checks through adapters and UI code.
 The personal library is the same store over a library root instead of a
 project root. It is code only until the switch (build step 5e): no request,
 agent tool or UI routes to it, and the project store above stays the only
-active backend. The move of existing projects and the routes and agent tools
-over pins and reviews come in later steps.
+active backend. The agent tools can already run on it behind a code constant
+(below); the move of existing projects and the HTTP routes come in later steps.
 
 The library lives under the server's resolved state directory for the launch
 mode, `scientLibraryRootFor(stateDir)` = `<stateDir>/scient/library/`, so dev
@@ -498,6 +498,63 @@ without the author's library can still list, screen and count:
   Only shards whose bytes change are written. After a crash while sharding,
   readers merge both layouts (shard entries win) and the next write removes
   the single file.
+
+### Agent tools on the library (built, switched off)
+
+`apps/server/src/scient/sources/SourcesBackend.ts` holds the backend constant,
+`"project"` until the switch. It is not a setting or an environment variable;
+tests select `"library"` through the `ScientSourcesBackend` reference, whose
+default is the constant. `resolveScientSourcesStoreFor` gives every Sources
+call its store: the project root, or the project root plus
+`scientLibraryLocation(scientLibraryRootFor(stateDir))`. The project still
+comes only from the thread's workspace binding (`resolveScientSourcesProject`),
+so tools take no project argument. The same reference picks the advertised
+tool list (`ScientSourcesToolkit` or `ScientSourcesLibraryToolkit`); both
+share operations and handlers.
+
+- Write authority is the invocation's `sources:write`. With it a call creates
+  the library once, resolves pins and review records in `write` mode
+  (recording the instance map, hydrating unresolved pins) and may write.
+  Without it nothing is written anywhere: unresolved pins come from their
+  `work` snapshot, review records from the review's snapshot.
+- Any tool that takes a source ID accepts a library ID or a project source ID
+  of this project; both resolve through aliases and the instance map.
+- `scient_sources_list` lists this project's pins under their project keys
+  (`fromSnapshot` marks a pin this library lacks); `scope: "library"` lists the
+  whole library with `pinned` per record. `scient_sources_search` searches the
+  whole library and marks pinned hits with their project key.
+- Intake (`scient_sources_add`, identifier lists, `scient_sources_save_page`)
+  adds to the library and pins the source here. Review searches log existing
+  library IDs and pin nothing. Reference-file import, `importEdited` and the
+  Zotero tools still run only on project stores and refuse in library mode.
+- `scient_sources_cite` pins each source first and cites it by its project
+  key, never the record's preferred key; the managed files are written from
+  the pins first, so pins this library lacks are hydrated before the check.
+- `scient_sources_note_update` edits the personal note on the library record;
+  the project note is set with the `organize` action `pin`. `organize` also
+  has `unpin` (by project key), `merge` (through `mergeScientLibrarySources`;
+  the result lists each `mergeId`) and `undo-merge`. Collections and saved
+  searches are the library's.
+- A new `citationKey` on a source pinned here renames this project's pin
+  (`renameScientProjectPinKey`) and this project's documents; the record's
+  preferred key is left as is. For a source not pinned here it changes the
+  preferred key only.
+- Edits, removals and merges report `alsoPinnedIn`: the other registered
+  checkouts on this computer whose pins resolve to the record. Their pins are
+  read only; a checkout whose folder is gone is skipped.
+- After a metadata edit, revert, merge or undo, the same call refreshes this
+  project's pin snapshots, the snapshots of its reviews that name the record,
+  and its managed files; each writes only when bytes change. Other projects
+  refresh the next time a call with write authority opens them. With one
+  10,000-record review this costs about 0.5 s per edit, also when nothing
+  changes.
+- In library mode the managed `references.bib` and `references.json` come from
+  `listScientProjectPinnedWorks`, with the same state machine and kept copies;
+  the last-written copies live in `.scient/library/bibliography/`.
+- Systematic review tools call the library review functions with the same
+  mode; review records keep the project source ID the review stores, are
+  labelled "From this review's snapshot" or "Details missing" when this
+  library lacks them, and never carry the personal note.
 
 ## Source truth and provenance
 
