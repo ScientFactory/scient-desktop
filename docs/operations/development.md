@@ -301,13 +301,13 @@ selects Windows and remote-server packaging for web/server production source;
 test-only edits skip packaging.
 
 Nothing that already passed on the same content runs again. The merge queue reuses a
-successful same-repository PR run into main only for the exact content and comparison base,
+same-repository PR run whose `Check` passed into main only for the exact content and comparison
+base, even while that run's advisory jobs still run or after one of them failed,
 and a push to main reuses the queue runs that qualified each commit it lands. Receipts
 record which web/server suites actually ran and that Overleaf Windows passed; only those
 reports must be restored, from the attempt whose job passed, before reuse is confirmed.
 Missing, stale, legacy, or partial evidence falls back to ordinary CI, as does a push the
-queue never ran, such as an administrator merge. A push waits up to two minutes for a queue
-run that is still finishing. One reporting job per suite covers reused qualification, and four
+queue never ran, such as an administrator merge. One reporting job per suite covers reused qualification, and four
 small jobs report the `Test` and `Test Server 1`–`3` names that `release/stable` protection
 requires on the promoted commit; other shard names are not required contexts. A successful workflow still needs transfer evidence
 whenever server tests ran.

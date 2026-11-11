@@ -941,12 +941,11 @@ jobs:
             !/.repos/
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
-      # Restoring setup-vp's 1.5 GB macOS cache took longer than installing without it.
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: false
+          cache: true
           run-install: false
       - name: Install
         run: vp install

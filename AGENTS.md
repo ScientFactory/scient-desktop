@@ -257,6 +257,12 @@ profile.
   correction to a queued PR, remove it from the queue and disable auto-merge;
   review the new head before requesting delivery again. Return the PR/CI links
   rather than monitoring unless the user asks.
+- For an already merge-authorized, reviewed PR with required checks green and no
+  conflicts, queue its current head; do not merge main into it only to obtain
+  CI reuse. A fresh queue run takes about as long as the PR run that update
+  would cost, and several such PRs can be queued together. Merge main first for
+  a conflict, for dependent work, or when the change is sensitive to what landed
+  since.
 - When the queue removes an authorized PR for `failed_checks` on an unchanged
   head, and the failure matches an open entry in
   [`docs/operations/ci-flakes.md`](docs/operations/ci-flakes.md), re-add it once

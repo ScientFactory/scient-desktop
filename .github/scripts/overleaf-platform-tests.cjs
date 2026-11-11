@@ -88,6 +88,23 @@ function platformFiles() {
   return files;
 }
 
+// Enough of each failure to carry a command's own error output, as hdiutil's reason.
+const FAILURE_LINES = 20;
+
+/** Each failed test with the start of its failure message, from a Vitest JSON report. */
+function failures(report) {
+  const lines = [];
+  for (const result of report.testResults ?? [])
+    for (const assertion of result.assertionResults ?? []) {
+      if (assertion.status === "passed") continue;
+      const message = (assertion.failureMessages ?? []).join("\n").trim().split("\n");
+      lines.push(`FAILED ${result.name} > ${assertion.fullName ?? assertion.title}`);
+      if (message[0] === "") lines.push(`  ${assertion.status}`);
+      else lines.push(...message.slice(0, FAILURE_LINES).map((line) => `  ${line}`));
+    }
+  return lines;
+}
+
 function run() {
   const root = path.resolve(__dirname, "../..");
   const cwd = path.join(root, "apps/server");
@@ -109,17 +126,8 @@ function run() {
       });
     } catch (error) {
       // The JSON report is the only record of which tests failed; surface it before cleanup.
-      if (fs.existsSync(output)) {
-        const report = JSON.parse(fs.readFileSync(output, "utf8"));
-        for (const result of report.testResults ?? [])
-          for (const assertion of result.assertionResults ?? [])
-            if (assertion.status !== "passed")
-              console.error(
-                `FAILED ${result.name} > ${assertion.fullName ?? assertion.title}: ${
-                  (assertion.failureMessages ?? []).join("\n").split("\n")[0] ?? assertion.status
-                }`,
-              );
-      }
+      if (fs.existsSync(output))
+        console.error(failures(JSON.parse(fs.readFileSync(output, "utf8"))).join("\n"));
       throw error;
     }
     const report = JSON.parse(fs.readFileSync(output, "utf8"));
@@ -150,7 +158,7 @@ function buildForJob(directory) {
   console.log(lines.join("\n"));
 }
 
-module.exports = { FILES, validateReport };
+module.exports = { FILES, failures, validateReport };
 if (require.main === module) {
   const build = process.argv.find((argument) => /^--build-helpers(=|$)/u.test(argument));
   if (build) buildForJob(build.replace(/^--build-helpers=?/u, ""));

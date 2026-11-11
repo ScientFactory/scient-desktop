@@ -22,7 +22,6 @@ async function onDisk(format: string, body: (folder: string) => Promise<void>) {
   try {
     NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
       "create",
-      "-quiet",
       "-size",
       "40m",
       "-fs",
@@ -34,7 +33,6 @@ async function onDisk(format: string, body: (folder: string) => Promise<void>) {
     await NodeFSP.mkdir(mounted);
     NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
       "attach",
-      "-quiet",
       "-nobrowse",
       "-mountpoint",
       mounted,
@@ -45,7 +43,7 @@ async function onDisk(format: string, body: (folder: string) => Promise<void>) {
       await NodeFSP.mkdir(folder);
       await body(folder);
     } finally {
-      NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", "-quiet", mounted]);
+      NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", mounted]);
     }
   } finally {
     await NodeFSP.rm(root, { recursive: true, force: true });

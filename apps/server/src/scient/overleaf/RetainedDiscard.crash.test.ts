@@ -468,7 +468,6 @@ describe.skipIf(!canPublish || !diskImages)("a discard beside a mounted volume",
           volume = NodePath.join(kept.copy, "volume");
         NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
           "create",
-          "-quiet",
           "-size",
           "8m",
           "-fs",
@@ -480,7 +479,6 @@ describe.skipIf(!canPublish || !diskImages)("a discard beside a mounted volume",
         await NodeFSP.mkdir(volume);
         NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
           "attach",
-          "-quiet",
           "-nobrowse",
           "-mountpoint",
           volume,
@@ -499,7 +497,7 @@ describe.skipIf(!canPublish || !diskImages)("a discard beside a mounted volume",
             "later\n",
           );
         } finally {
-          NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", "-quiet", volume]);
+          NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", volume]);
         }
       }),
   );
