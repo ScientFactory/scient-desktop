@@ -58,6 +58,21 @@ describe("reference file import summary", () => {
     });
   });
 
+  it("counts a linked-file field once across its reasons", () => {
+    const linked = (reason: string, entryCount: number) => ({
+      field: "file",
+      reason,
+      entryCount,
+      citationKeys: ["a"],
+    });
+    expect(
+      summarizeReferenceFileReport("a.bib", {
+        ...report,
+        notKept: [linked("not found", 2), linked("not a PDF", 1)],
+      })?.lines,
+    ).toEqual(["Fields not kept: file (3)."]);
+  });
+
   it.each([
     ["refs.BIB", true],
     ["export.ris", true],

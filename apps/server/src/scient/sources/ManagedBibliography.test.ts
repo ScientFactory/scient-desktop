@@ -1,13 +1,10 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Managed bibliography tests exercise real project files.
-import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
-import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import {
-  importScientSource,
   readScientSourceRecord,
   SCIENT_SOURCE_RECORDS_DIRECTORY,
 } from "@scientfactory/scient-sources/store";
@@ -15,6 +12,13 @@ import { scientProjectFilePublicationHooks } from "@scientfactory/scient-sources
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { syncManagedBibliography } from "./ManagedBibliography.ts";
+import {
+  addSource,
+  nodeError,
+  overrideFileSystem,
+  readProjectFile,
+  sourceCandidate,
+} from "./ManagedBibliography.testkit.ts";
 import { syncManagedBibliographyWithImports } from "./ScientSourcesCoordinator.ts";
 
 const fixtures: string[] = [];
@@ -32,44 +36,8 @@ async function project(): Promise<string> {
   return root;
 }
 
-function candidate(sourceKey: string, title: string): ScientSourceCandidate {
-  return {
-    sourceKey,
-    type: "article",
-    customType: null,
-    title,
-    creators: [
-      { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
-    ],
-    issuedRaw: "1843",
-    issuedYear: 1843,
-    identifiers: [],
-    abstract: null,
-    containerTitle: null,
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
-    language: null,
-    url: null,
-    tags: [],
-    externalReferences: [],
-    fieldProvenance: [],
-    pdfAvailable: false,
-    pdfFileName: null,
-    pdfAttachmentCount: 0,
-  };
-}
-
-async function add(root: string, sourceKey: string, title: string) {
-  await importScientSource({
-    root,
-    operationId: NodeCrypto.randomUUID(),
-    candidate: candidate(sourceKey, title),
-  });
-}
-
-const read = (root: string, name: string) => NodeFSP.readFile(NodePath.join(root, name), "utf8");
+const add = addSource;
+const read = readProjectFile;
 
 describe("managed bibliography", () => {
   it("writes nothing for a project without a Library", async () => {
@@ -120,6 +88,137 @@ describe("managed bibliography", () => {
     const replaced = await read(root, "references.bib");
     expect(replaced).not.toContain("mine2020");
     expect(replaced).toContain("lovelace1843sketch");
+  });
+
+  it("reports where a failed write kept the earlier text, until that copy is removed", async () => {
+    const root = await project();
+    await add(root, "A", "Notes on the analytical engine");
+    await syncManagedBibliography(root);
+    const earlier = await read(root, "references.bib");
+    const bibPath = NodePath.join(await NodeFSP.realpath(root), "references.bib");
+    await add(root, "B", "Sketch of the engine");
+    const failed = await (async () => {
+      using _diskFull = overrideFileSystem((original) => ({
+        link: async (source, destination) => {
+          if (destination === bibPath) throw nodeError("ENOSPC");
+          return original.link(source, destination);
+        },
+      }));
+      return await syncManagedBibliography(root);
+    })();
+
+    const kept = failed.files[0]?.kept ?? [];
+    expect(failed.files[0]).toMatchObject({
+      name: "references.bib",
+      state: "edited",
+      changes: null,
+    });
+    expect(kept).toEqual([expect.stringMatching(/^references\.bib\.kept-[0-9a-f]{8}$/u)]);
+    expect(await read(root, kept[0] ?? "")).toBe(earlier);
+
+    const recovered = await syncManagedBibliography(root);
+    expect(recovered.files[0]).toMatchObject({ state: "current", kept });
+    await NodeFSP.rm(NodePath.join(root, kept[0] ?? ""));
+    expect((await syncManagedBibliography(root)).files[0]).toEqual({
+      name: "references.bib",
+      state: "current",
+      changes: null,
+    });
+  });
+
+  it("writes by exclusive copy where hard links are missing, and removes a copy that fails part way", async () => {
+    const root = await project();
+    const bibPath = NodePath.join(await NodeFSP.realpath(root), "references.bib");
+    await add(root, "A", "Notes on the analytical engine");
+    let failingWrites = 1;
+    using _noHardLinks = overrideFileSystem((original) => ({
+      // What Windows reports for a hard link on a FAT or exFAT volume; the Library's own store keeps its links.
+      link: async (source, destination) => {
+        if (NodePath.dirname(String(destination)) === NodePath.dirname(bibPath)) {
+          throw nodeError("EISDIR");
+        }
+        return original.link(source, destination);
+      },
+      open: async (path, flags, mode) => {
+        const handle = await original.open(path, flags, mode);
+        if (path !== bibPath || flags !== "wx" || failingWrites-- <= 0) return handle;
+        return new Proxy(handle, {
+          get: (target, key) => {
+            if (key === "writeFile") {
+              return async (data: Uint8Array) => {
+                await target.write(data.subarray(0, 8));
+                throw nodeError("ENOSPC");
+              };
+            }
+            const value: unknown = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+    }));
+    const strays = async () =>
+      (await NodeFSP.readdir(root)).filter((name) => name.includes("references."));
+
+    await expect(syncManagedBibliography(root)).rejects.toThrow("synthetic ENOSPC");
+    expect(await strays()).toEqual([]);
+
+    const written = await syncManagedBibliography(root);
+    expect(written.files.map((file) => file.state)).toEqual(["current", "current"]);
+    await add(root, "B", "Sketch of the engine");
+    expect((await syncManagedBibliography(root)).files[0]?.state).toBe("current");
+    expect(await read(root, "references.bib")).toContain("@article{lovelace1843sketch,");
+    expect(await strays()).toEqual(["references.bib", "references.json"]);
+  });
+
+  it("leaves another writer's file in place when a copy that fails part way is removed", async () => {
+    const root = await project();
+    const bibPath = NodePath.join(await NodeFSP.realpath(root), "references.bib");
+    const theirs = "@misc{theirs2020,\n  title = {Theirs},\n}\n";
+    await add(root, "A", "Notes on the analytical engine");
+    let failingWrites = 1;
+    let otherWriterArmed = false;
+    using _noHardLinks = overrideFileSystem((original) => ({
+      link: async (source, destination) => {
+        if (NodePath.dirname(String(destination)) === NodePath.dirname(bibPath)) {
+          throw nodeError("EPERM");
+        }
+        return original.link(source, destination);
+      },
+      open: async (path, flags, mode) => {
+        const handle = await original.open(path, flags, mode);
+        if (path !== bibPath || flags !== "wx" || failingWrites-- <= 0) return handle;
+        return new Proxy(handle, {
+          get: (target, key) => {
+            if (key === "writeFile") {
+              return async (data: Uint8Array) => {
+                await target.write(data.subarray(0, 8));
+                otherWriterArmed = true;
+                throw nodeError("ENOSPC");
+              };
+            }
+            const value: unknown = Reflect.get(target, key);
+            return typeof value === "function" ? value.bind(target) : value;
+          },
+        });
+      },
+      // Another writer replaces the managed name right after cleanup checks which file it holds.
+      lstat: (async (...args: Parameters<typeof NodeFSP.lstat>) => {
+        const stats = await original.lstat(...args);
+        if (otherWriterArmed) {
+          otherWriterArmed = false;
+          const other = `${bibPath}.other`;
+          await NodeFSP.writeFile(other, theirs);
+          await NodeFSP.rename(other, bibPath);
+        }
+        return stats;
+      }) as typeof NodeFSP.lstat,
+    }));
+
+    await expect(syncManagedBibliography(root)).rejects.toThrow("synthetic ENOSPC");
+    expect(await read(root, "references.bib")).toBe(theirs);
+    expect((await NodeFSP.readdir(root)).filter((name) => name.includes("references."))).toEqual([
+      "references.bib",
+    ]);
   });
 
   it("imports entries added by hand and keeps a file with changed entries", async () => {
@@ -226,7 +325,7 @@ describe("managed bibliography", () => {
         pdfFileName: _b,
         pdfAttachmentCount: _c,
         ...rest
-      } = candidate(sourceId, "Notes");
+      } = sourceCandidate(sourceId, "Notes");
       await NodeFSP.writeFile(
         NodePath.join(recordsDirectory, `${sourceId}.json`),
         JSON.stringify({

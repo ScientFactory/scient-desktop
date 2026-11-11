@@ -774,11 +774,13 @@ export const importEnvironmentScientSourcesFile = Effect.fn(
   readonly operationId: string;
   readonly file: Blob;
   readonly fileName: string;
+  readonly sourcePath?: string;
 }) {
   const payload = new FormData();
   payload.append("root", input.root);
   payload.append("operationId", input.operationId);
   payload.append("file", input.file, input.fileName);
+  if (input.sourcePath) payload.append("sourcePath", input.sourcePath);
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
   return yield* executeAuthenticatedEnvironmentHttpRequest({

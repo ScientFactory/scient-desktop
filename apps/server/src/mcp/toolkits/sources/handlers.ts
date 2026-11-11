@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Idempotent Scient source operation IDs use the existing synchronous content fingerprint.
 import * as NodeCrypto from "node:crypto";
+import * as NodePath from "node:path";
 
 import {
   citationKeyValidationMessage,
@@ -906,6 +907,7 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
             operationId: `agent_file_${NodeCrypto.randomUUID()}`,
             fileName: file.fileName,
             text: await readBibliographyFile(file.absolutePath),
+            sourceFolder: NodePath.dirname(file.absolutePath),
             actor: "agent",
             ...(input.format ? { format: input.format } : {}),
           },
@@ -949,6 +951,13 @@ export const importScientSourcesFileForInvocation = Effect.fn("ScientSourcesTool
       unreadable: report.unreadable,
       notKept: report.notKept,
       withoutCitationKey: report.withoutCitationKey,
+      pdfsAttached: records
+        .filter((record) => importedIds.includes(record.sourceId))
+        .reduce(
+          (count, record) =>
+            count + record.attachments.filter((attachment) => attachment.kind === "pdf").length,
+          0,
+        ),
     };
   },
 );

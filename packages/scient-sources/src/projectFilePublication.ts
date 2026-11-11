@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Project files are published with native no-clobber links.
 import * as NodeCrypto from "node:crypto";
+import type * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
@@ -23,6 +24,60 @@ function isNodeError(error: unknown, code: string): boolean {
   return error instanceof Error && "code" in error && error.code === code;
 }
 
+/** Hard links are missing on the volume: EPERM or ENOTSUP, and EISDIR from Windows on FAT and exFAT. */
+function linkUnsupported(error: unknown): boolean {
+  return ["EPERM", "ENOTSUP", "EOPNOTSUPP", "ENOSYS", "EISDIR"].some((code) =>
+    isNodeError(error, code),
+  );
+}
+
+/**
+ * Creates `target` exclusively and writes `source` into it. A write that fails part way
+ * removes the file it created, never one another writer put at the name since.
+ */
+async function copyNoClobber(source: string, target: string): Promise<boolean> {
+  const [contents, stats] = await Promise.all([NodeFSP.readFile(source), NodeFSP.stat(source)]);
+  let handle: NodeFSP.FileHandle;
+  try {
+    handle = await NodeFSP.open(target, "wx", stats.mode & 0o777);
+  } catch (error) {
+    if (isNodeError(error, "EEXIST")) return false;
+    throw error;
+  }
+  const created = await handle.stat({ bigint: true }).catch(() => null);
+  try {
+    await handle.writeFile(contents);
+    await handle.close();
+    return true;
+  } catch (error) {
+    await handle.close().catch(() => undefined);
+    if (created) await removeCreatedFile(target, created).catch(() => undefined);
+    throw error;
+  }
+}
+
+/**
+ * Checking identity at the shared name and then removing it races another writer, so the file
+ * is first moved to a private name. One that is not this writer's goes back, or is kept beside it.
+ */
+async function removeCreatedFile(target: string, created: NodeFS.BigIntStats): Promise<void> {
+  const directory = NodePath.dirname(target);
+  const name = NodePath.basename(target);
+  const id = NodeCrypto.randomUUID();
+  const moved = NodePath.join(directory, `.${name}.${id}.partial`);
+  await NodeFSP.rename(target, moved);
+  const current = await NodeFSP.lstat(moved, { bigint: true });
+  if (current.ino === created.ino && current.dev === created.dev) {
+    await NodeFSP.rm(moved, { force: true });
+    return;
+  }
+  if (await copyNoClobber(moved, target).catch(() => false)) {
+    await NodeFSP.rm(moved, { force: true });
+    return;
+  }
+  await NodeFSP.rename(moved, NodePath.join(directory, `${name}.kept-${id.slice(0, 8)}`));
+}
+
 /** Creates `target` from `source` and never replaces a file already there. */
 async function linkNoClobber(source: string, target: string): Promise<boolean> {
   try {
@@ -31,14 +86,8 @@ async function linkNoClobber(source: string, target: string): Promise<boolean> {
   } catch (error) {
     if (isNodeError(error, "EEXIST")) return false;
     // Volumes without hard links (FAT, some network shares) still refuse to clobber here.
-    if (!isNodeError(error, "EPERM") && !isNodeError(error, "ENOTSUP")) throw error;
-    try {
-      await NodeFSP.copyFile(source, target, NodeFSP.constants.COPYFILE_EXCL);
-      return true;
-    } catch (copyError) {
-      if (isNodeError(copyError, "EEXIST")) return false;
-      throw copyError;
-    }
+    if (!linkUnsupported(error)) throw error;
+    return copyNoClobber(source, target);
   }
 }
 

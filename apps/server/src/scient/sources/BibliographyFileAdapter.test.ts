@@ -18,6 +18,7 @@ import {
   exportBibliography,
   readBibliographyFile,
   resolveProjectBibliographyFile,
+  verifiedUploadFolder,
   writeProjectBibliographyFile,
 } from "./BibliographyFileAdapter.ts";
 import { cancelSourceImport, importBibliographyFile } from "./ScientSourcesCoordinator.ts";
@@ -199,6 +200,69 @@ describe("reference file import", () => {
     await expect(
       resolveProjectBibliographyFile(root, `${SCIENT_SOURCES_DIRECTORY}/x.json`),
     ).rejects.toThrow("outside .scient");
+  });
+
+  it("attaches linked PDFs inside the project or the file's folder and reports the rest", async () => {
+    const root = await project();
+    const exportFolder = await project();
+    const elsewhere = await project();
+    const pdf = (marker: string) => Buffer.from(`%PDF-1.4\n% ${marker}\n%%EOF\n`);
+    await NodeFSP.mkdir(NodePath.join(root, "papers"));
+    await NodeFSP.mkdir(NodePath.join(exportFolder, "files"));
+    const inProject = NodePath.join(root, "papers", "in-project.pdf");
+    await NodeFSP.writeFile(inProject, pdf("project"));
+    await NodeFSP.writeFile(NodePath.join(exportFolder, "files", "near.pdf"), pdf("near"));
+    await NodeFSP.writeFile(NodePath.join(exportFolder, "files", "page.pdf"), "<html></html>");
+    const far = NodePath.join(elsewhere, "far.pdf");
+    await NodeFSP.writeFile(far, pdf("far"));
+    const escaped = (path: string) => path.replaceAll("\\", "\\\\").replaceAll(":", "\\:");
+    const text = [
+      `@article{both, title={Both}, file={:files/near.pdf:PDF;:${escaped(inProject)}:PDF}}`,
+      `@article{far, title={Far}, file={${escaped(far)}}}`,
+      `@article{missing, title={Missing}, file={files/missing.pdf}}`,
+      `@article{page, title={Page}, file={files/page.pdf}}`,
+    ].join("\n");
+
+    const { report } = await importBibliographyFile({
+      root,
+      operationId: "file_import_linked",
+      fileName: "library.bib",
+      text,
+      sourceFolder: exportFolder,
+      actor: "agent",
+    });
+
+    expect(report.linkedPdfCount).toBe(2);
+    expect(
+      report.notKept.map(({ field, reason, citationKeys }) => ({ field, reason, citationKeys })),
+    ).toEqual(
+      expect.arrayContaining([
+        {
+          field: "file",
+          reason: "outside the project and the reference file's folder",
+          citationKeys: ["far"],
+        },
+        { field: "file", reason: "not found", citationKeys: ["missing"] },
+        { field: "file", reason: "not a PDF", citationKeys: ["page"] },
+      ]),
+    );
+    const records = await listScientSourceRecords(root);
+    const pdfs = (key: string) =>
+      records
+        .find((record) => record.citationKey === key)
+        ?.attachments.filter((attachment) => attachment.kind === "pdf").length;
+    expect([pdfs("both"), pdfs("far"), pdfs("missing"), pdfs("page")]).toEqual([2, 0, 0, 0]);
+  });
+
+  it("uses an upload's folder only when the named file holds the uploaded bytes", async () => {
+    const folder = await project();
+    const original = NodePath.join(folder, "library.bib");
+    const upload = NodePath.join(folder, "upload.tmp");
+    await NodeFSP.writeFile(original, "@article{a, title={A}}");
+    await NodeFSP.writeFile(upload, "@article{a, title={A}}");
+    expect(await verifiedUploadFolder(original, upload)).toBe(folder);
+    await NodeFSP.writeFile(upload, "@article{b, title={B}}");
+    expect(await verifiedUploadFolder(original, upload)).toBeUndefined();
   });
 
   it("does not pass filesystem paths through error messages", async () => {

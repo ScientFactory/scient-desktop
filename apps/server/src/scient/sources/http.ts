@@ -59,6 +59,7 @@ import {
   beginBibliographyFileImport,
   exportBibliography,
   readBibliographyFile,
+  verifiedUploadFolder,
 } from "./BibliographyFileAdapter.ts";
 import { startManagedBibliographySync } from "./ManagedBibliography.ts";
 
@@ -312,6 +313,9 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
               operationId: args.payload.operationId,
               fileName: args.payload.file.name,
               text: await readBibliographyFile(args.payload.file.path),
+              ...(await verifiedUploadFolder(args.payload.sourcePath, args.payload.file.path).then(
+                (sourceFolder) => (sourceFolder ? { sourceFolder } : {}),
+              )),
               actor: "user",
             }),
           ),

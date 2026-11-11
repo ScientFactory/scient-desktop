@@ -33,8 +33,9 @@ export function ReferenceFileReport(props: {
               </div>
             ))}
             {props.report.notKept.map((field) => (
-              <div key={field.field} className="break-words">
-                {field.field}: {field.citationKeys.join(", ")}
+              <div key={`${field.field}\0${field.reason ?? ""}`} className="break-words">
+                {field.field}
+                {field.reason ? ` (${field.reason})` : ""}: {field.citationKeys.join(", ")}
                 {field.entryCount > field.citationKeys.length
                   ? ` and ${(field.entryCount - field.citationKeys.length).toLocaleString()} more`
                   : ""}

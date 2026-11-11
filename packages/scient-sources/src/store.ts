@@ -2025,6 +2025,8 @@ export async function removeScientSourceStagedMaterial(
 }
 
 const MAX_STAGED_FILE_IMPORT_BYTES = 64 * 1024 * 1024;
+/** Linked PDFs attached to one entry of a reference file. */
+export const SCIENT_SOURCE_LINKED_PDF_LIMIT = 20;
 
 /** Candidates read from one reference file, held until their import operation settles. */
 const ScientSourceStagedFileImport = Schema.Struct({
@@ -2034,6 +2036,15 @@ const ScientSourceStagedFileImport = Schema.Struct({
   report: BibliographyImportReport,
   candidates: Schema.Array(ScientSourceCandidate).pipe(
     Schema.check(Schema.isMaxLength(SCIENT_SOURCE_IMPORT_ITEM_LIMIT)),
+  ),
+  /** PDFs the file names for a staged entry, by source key: real paths checked at staging. */
+  pdfs: Schema.optionalKey(
+    Schema.Record(
+      Schema.String,
+      Schema.Array(Schema.Struct({ path: Schema.String, fileName: Schema.String })).pipe(
+        Schema.check(Schema.isMaxLength(SCIENT_SOURCE_LINKED_PDF_LIMIT)),
+      ),
+    ),
   ),
 });
 export type ScientSourceStagedFileImport = typeof ScientSourceStagedFileImport.Type;

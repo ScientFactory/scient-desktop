@@ -41,6 +41,7 @@ import type {
 } from "@t3tools/contracts";
 
 import { runtime } from "../../lib/runtime";
+import { readPrimaryEnvironmentId } from "../../state/environments";
 import { readPreparedConnection } from "../../state/session";
 import { runSourcesCommand, sourcesCommands } from "./sourcesCommands";
 
@@ -355,11 +356,17 @@ export function importScientSourcesFile(
   environmentId: EnvironmentId,
   input: { readonly root: string; readonly operationId: string; readonly file: File },
 ) {
+  // A path on this computer means nothing to another computer's server.
+  const sourcePath =
+    environmentId === readPrimaryEnvironmentId()
+      ? window.desktopBridge?.getPathForFile(input.file)
+      : null;
   return runSourcesCommand(sourcesCommands.fileImport, environmentId, {
     root: input.root,
     operationId: input.operationId,
     file: input.file,
     fileName: input.file.name,
+    ...(sourcePath ? { sourcePath } : {}),
   });
 }
 

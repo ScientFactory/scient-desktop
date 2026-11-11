@@ -488,7 +488,7 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
 
 const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
   description:
-    "Write references.bib and references.json from the Library and report their state; documents cite by citationKey (Markdown `bibliography: references.bib`, LaTeX `\\bibliography{references}`). A hand-edited file is kept (edited, with keys added, changed or removed); an unmanaged file is never overwritten. importEdited imports its new entries; replaceEdited restores the Library version, only when the user wants that.",
+    "Write references.bib and references.json from the Library and report their state; documents cite by citationKey (Markdown `bibliography: references.bib`, LaTeX `\\bibliography{references}`). A hand-edited file is kept (edited, with keys added, changed or removed); an unmanaged file is never overwritten; kept lists earlier text moved aside (tell the user). importEdited imports its new entries; replaceEdited restores the Library version, only when the user wants that.",
   parameters: Schema.Struct({
     replaceEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
     importEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
@@ -859,6 +859,7 @@ const FileReportEntry = Schema.Struct({
 });
 const FieldLoss = Schema.Struct({
   field: Schema.String,
+  reason: Schema.optionalKey(Schema.String),
   entryCount: Schema.Int,
   citationKeys: Schema.Array(Schema.String),
 });
@@ -876,6 +877,8 @@ export const ScientSourcesImportFileResult = Schema.Struct({
   unreadable: Schema.Array(FileReportEntry),
   notKept: Schema.Array(FieldLoss),
   withoutCitationKey: Schema.Int,
+  /** PDFs from the file's file, L1/L4 or pdf-urls fields attached to imported sources. */
+  pdfsAttached: Schema.Int,
 });
 
 const ScientSourcesImportFileTool = Tool.make("scient_sources_import_file", {
