@@ -7,7 +7,8 @@ const { validateResult } = require("./thread-transfer-report.cjs");
 
 const WORKFLOW = ".github/workflows/ci.yml";
 const { jobFailures } = require("./ci-check.cjs");
-const { MAX_QUEUE_SEGMENTS } = require("./queue-verified.cjs");
+// The main ruleset lands at most this many queue entries in one push (max_entries_to_merge).
+const MAX_QUEUE_SEGMENTS = 6;
 const SCHEMA = 4;
 const RECEIPT_KEYS = [
   "schemaVersion",
@@ -198,9 +199,17 @@ function matchesRun(run, current, who, event, headSha) {
     run.head_sha === headSha &&
     (event !== "merge_group" || run.head_branch?.startsWith("gh-readonly-queue/main/")) &&
     positive(run.id) &&
-    positive(run.run_attempt) &&
-    run.status === "completed" &&
-    run.conclusion === "success"
+    positive(run.run_attempt)
+  );
+}
+
+// Qualification is the run's gates, not its overall result: advisory jobs (ci-check.cjs
+// ADVISORY) can still be running, or have failed, after `Check` passed. A cancelled, timed-out
+// or not-yet-started run never qualifies, whatever its earlier jobs did.
+function qualifyingState(run) {
+  return (
+    run.status === "in_progress" ||
+    (run.status === "completed" && (run.conclusion === "success" || run.conclusion === "failure"))
   );
 }
 
@@ -223,7 +232,10 @@ function checkReceipt(receipt, expected) {
   );
 }
 
-/** The newest successful run of this workflow for one head, with its qualification receipt. */
+/**
+ * The newest run of this workflow for one head, when its `Check` and qualification receipt
+ * passed, with that receipt. An older run behind a newer unqualified one is never used.
+ */
 async function qualifiedRun({ github, repo, current, who, event, headSha, env, archiveReader }) {
   const api = github.rest.actions;
   const { data } = await api.listWorkflowRuns({
@@ -231,13 +243,12 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
     workflow_id: current.workflow_id,
     event,
     head_sha: headSha,
-    status: "success",
     per_page: 20,
   });
   const run = data.workflow_runs.find((candidate) =>
     matchesRun(candidate, current, who, event, headSha),
   );
-  assert(run, `No successful exact-content ${event} run`);
+  assert(run && qualifyingState(run), `No qualified exact-content ${event} run`);
   const artifacts = await github.paginate(api.listWorkflowRunArtifacts, {
     ...repo,
     run_id: run.id,
@@ -304,6 +315,9 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
     assert(Buffer.byteLength(raw) <= limit, "Artifact member is too large");
     return JSON.parse(raw.toString());
   };
+  // The receipt is written only when every qualifying job passed; `Check` then also requires the
+  // native gates and transfer evidence.
+  attemptOf("Check");
   const prefix = event === "merge_group" ? "queue" : "pr";
   const receiptAttempt = attemptOf("Qualification receipt");
   const receipt = await download(
@@ -321,35 +335,14 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
   return { run, receipt, receiptAttempt, download, reportAttempt };
 }
 
-// The queue merges once its required checks pass, so the push can start while that run is
-// still finishing. Wait briefly for it rather than rerunning everything.
-const SETTLE_TRIES = 8;
-const SETTLE_DELAY_MS = 15_000;
-async function settled(probe) {
-  const { github, repo, current, who, sleep } = probe;
-  for (let tries = 1; ; tries++) {
-    const { data } = await github.rest.actions.listWorkflowRuns({
-      ...repo,
-      workflow_id: current.workflow_id,
-      event: "merge_group",
-      head_sha: who.headSha,
-      per_page: 20,
-    });
-    const pending = data.workflow_runs.some(
-      (run) => run.head_sha === who.headSha && run.status !== "completed",
-    );
-    if (!pending || tries >= SETTLE_TRIES) return;
-    await sleep(SETTLE_DELAY_MS);
-  }
-}
-
 /**
  * A main push lands one or more queue entries. Each entry's queue run must have qualified that
  * exact commit from its first parent, back to the commit main held before the push.
  */
 async function pushSegments(probe) {
+  // The queue merges only after `Check`, which follows the receipt, so each entry's evidence
+  // already exists when its push runs.
   const { github, repo, who, before } = probe;
-  await settled(probe);
   const segments = [];
   for (let head = who.headSha; head !== before;) {
     assert(segments.length < MAX_QUEUE_SEGMENTS, "Push is not covered by queue qualification");
@@ -425,14 +418,7 @@ async function queueSegments(probe) {
 }
 
 /** Any missing evidence selects ordinary CI. Downloaded data is never executed. */
-async function restore({
-  github,
-  context,
-  core,
-  env = process.env,
-  archiveReader = readArchive,
-  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
-}) {
+async function restore({ github, context, core, env = process.env, archiveReader = readArchive }) {
   core.setOutput("candidate", "false");
   const push = context.eventName === "push" && context.ref === "refs/heads/main";
   if (!push && context.eventName !== "merge_group") return;
@@ -459,7 +445,7 @@ async function restore({
         positive(current.workflow_id),
       "Current workflow identity differs",
     );
-    const probe = { github, repo, current, who, context, before, env, archiveReader, sleep };
+    const probe = { github, repo, current, who, context, before, env, archiveReader };
     const segments = push ? await pushSegments(probe) : await queueSegments(probe);
     // The newest segment tested the final content; its reports describe this run's tree.
     const [source] = segments;
@@ -493,6 +479,7 @@ async function restore({
       const { data: latest } = await api.getWorkflowRun({ ...repo, run_id: run.id });
       assert(
         matchesRun(latest, current, who, run.event, run.head_sha) &&
+          qualifyingState(latest) &&
           latest.run_attempt === run.run_attempt,
         "Source run changed during reuse",
       );
