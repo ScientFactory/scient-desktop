@@ -301,9 +301,12 @@ const reachOf = (store: ScientSourcesStore, sourceId: string) =>
     ? attempt(() => alsoPinnedIn(store, sourceId))
     : Effect.succeed<{ readonly alsoPinnedIn?: number }>({});
 
+// The edit has landed; a snapshot that fails to refresh is refreshed on the next write call.
 const afterLibraryChange = (store: ScientSourcesStore, sourceIds: ReadonlyArray<string>) =>
   store.kind === "library"
-    ? attempt(() => refreshProjectAfterLibraryChange(store, sourceIds, "agent"))
+    ? Effect.promise(() =>
+        refreshProjectAfterLibraryChange(store, sourceIds, "agent").catch(() => undefined),
+      )
     : Effect.void;
 
 /** Intake from a project pins what it added, so the person sees it here. */
