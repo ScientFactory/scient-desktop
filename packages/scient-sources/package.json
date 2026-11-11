@@ -87,7 +87,8 @@
   },
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "measure:library-move": "node scripts/measureLibraryMove.ts"
   },
   "dependencies": {
     "@scientfactory/project-init": "workspace:*",

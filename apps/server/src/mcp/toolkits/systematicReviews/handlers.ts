@@ -20,10 +20,18 @@ import {
   readScientLibraryReview,
   type ScientLibraryReviewRecord,
 } from "@scientfactory/scient-sources/library-reviews";
+import {
+  changeLibraryReviewConflict,
+  libraryReviewConflicts,
+} from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import type { ScientSourcesLibraryStore } from "../../../scient/sources/SourcesBackend.ts";
 import { resolveScientSourcesStore } from "../sources/handlers.ts";
 import { ScientSourcesToolError } from "../sources/tools.ts";
-import { ScientSystematicReviewsToolkit } from "./tools.ts";
+import {
+  ScientSystematicReviewsLibraryToolkit,
+  ScientSystematicReviewsToolkit,
+  type ScientSystematicReviewLibraryAction,
+} from "./tools.ts";
 
 const MAX_ABSTRACT_CHARACTERS = 4_000;
 
@@ -80,8 +88,12 @@ const libraryReviewView = Effect.fn("ScientSystematicReviewsToolkit.libraryView"
   const input = { ...reviewAccess(store), projectRoot: store.root, reviewId };
   const detail = yield* attempt(() => readScientLibraryReview(input));
   const records = detail ? yield* attempt(() => listScientLibraryReviewRecords(input)) : null;
+  const conflicts = detail
+    ? yield* attempt(() => libraryReviewConflicts(store, { reviewId }))
+    : null;
   return {
     detail,
+    conflicts,
     present: new Set(
       (records ?? []).flatMap((entry) => (entry.removed ? [] : [entry.projectSourceId])),
     ),
@@ -102,6 +114,7 @@ const projectReviewView = Effect.fn("ScientSystematicReviewsToolkit.projectView"
   const byId = new Map(records.map((record) => [record.sourceId, record]));
   return {
     detail,
+    conflicts: null,
     present: new Set(byId.keys()),
     record: (sourceId: string) => reviewRecord(sourceId, byId.get(sourceId)),
   };
@@ -178,6 +191,10 @@ export const readSystematicReviewsForInvocation = Effect.fn("ScientSystematicRev
               })),
             }
           : {}),
+        ...(view.conflicts && view.conflicts.versions.length > 0
+          ? { conflicts: view.conflicts.versions }
+          : {}),
+        ...(view.conflicts?.combineReport ? { combineReport: view.conflicts.combineReport } : {}),
       },
     };
   },
@@ -206,3 +223,41 @@ export const ScientSystematicReviewsToolkitHandlersLive = ScientSystematicReview
   scient_sources_systematic_reviews: readSystematicReviewsForInvocation,
   scient_sources_systematic_review_update: updateSystematicReviewForInvocation,
 });
+
+/** Library mode's update: the same changes, plus the pick between a review's versions. */
+export const updateLibrarySystematicReviewForInvocation = Effect.fn(
+  "ScientSystematicReviewsToolkit.updateLibrary",
+)(function* (input: { readonly change: ScientSystematicReviewLibraryAction }) {
+  const { change } = input;
+  if (change.action !== "resolve-conflict" && change.action !== "dismiss-combine-report") {
+    return yield* updateSystematicReviewForInvocation({ change });
+  }
+  const store = yield* resolveScientSourcesStore();
+  if (store.kind !== "library") {
+    return yield* new ScientSourcesToolError({
+      code: "not-found",
+      message:
+        "This project's sources are not in the Library yet, so its reviews have one version.",
+    });
+  }
+  const result = yield* attempt(() =>
+    changeLibraryReviewConflict(
+      store,
+      {
+        reviewId: change.reviewId,
+        change:
+          change.action === "dismiss-combine-report"
+            ? { action: "dismiss-report" }
+            : { action: "resolve", conflictId: change.conflictId, pick: change.pick },
+      },
+      "agent",
+    ),
+  );
+  return { ...result, reviewId: change.reviewId };
+});
+
+export const ScientSystematicReviewsLibraryToolkitHandlersLive =
+  ScientSystematicReviewsLibraryToolkit.toLayer({
+    scient_sources_systematic_reviews: readSystematicReviewsForInvocation,
+    scient_sources_systematic_review_update: updateLibrarySystematicReviewForInvocation,
+  });

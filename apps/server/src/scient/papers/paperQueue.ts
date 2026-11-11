@@ -207,7 +207,7 @@ const attach = Effect.fn("Papers.attach")(function* (
 ) {
   const path = yield* Path.Path;
   // A request to file a paper was allowed to change the Library when it was made.
-  const library = yield* resolveScientLibraryStoreAt(root, "write").pipe(
+  const library = yield* resolveScientLibraryStoreAt(root, "write", "until-done").pipe(
     Effect.mapError(
       () =>
         new AccountsError({
@@ -251,7 +251,7 @@ const intoLibrary = Effect.fn("Papers.intoLibrary")(function* (
     message: "The Library could not be updated.",
   };
   // A request to add a paper was allowed to change the Library when it was made.
-  const library = yield* resolveScientLibraryStoreAt(root, "write").pipe(
+  const library = yield* resolveScientLibraryStoreAt(root, "write", "until-done").pipe(
     Effect.mapError(() => failed),
   );
   return yield* Effect.tryPromise({

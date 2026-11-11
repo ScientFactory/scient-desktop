@@ -30,7 +30,11 @@ import {
   mergeScientLibrarySources,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
-import { moveScientProjectBackIntoProject } from "@scientfactory/scient-sources/library-move";
+import { dismissScientLibraryMoveSummary } from "@scientfactory/scient-sources/library-move";
+import {
+  scientLibraryLocation,
+  scientLibraryRootFor,
+} from "@scientfactory/scient-sources/library-root";
 import {
   pinScientLibrarySource,
   renameScientProjectPinKey,
@@ -52,10 +56,14 @@ import {
 } from "@scientfactory/scient-sources/store";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
+
+import { ServerConfig } from "../../../config.ts";
 import { AgentInvocationContext } from "../../../scient/operations/AgentInvocationContext.ts";
 import { consumeAgentWorkspace } from "../../../scient/operations/AgentWorkspaceScope.ts";
 import {
   resolveScientSourcesStoreFor,
+  ScientSourcesBackend,
   type ScientSourcesLibraryStore,
   type ScientSourcesStore,
 } from "../../../scient/sources/SourcesBackend.ts";
@@ -119,6 +127,12 @@ import {
   scanCitationKeyRenameDocuments,
 } from "../../../scient/sources/LibraryCitation.ts";
 import { syncPinnedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
+import {
+  moveProjectBackIntoProject,
+  readLibraryMoveStatus,
+  scientLibraryMoveNotice,
+} from "../../../scient/sources/LibraryMove.ts";
+import { moveBackResult } from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import { ReferenceIdentifierLookup } from "../../../scient/references/ReferenceCheck.ts";
 import {
   checkSourceQuotes,
@@ -287,9 +301,29 @@ export const resolveScientSourcesStore = Effect.fn("ScientSourcesToolkit.resolve
       project,
       invocation.capabilities.has("sources:write") ? "write" : "read",
       "agent",
+    ).pipe(
+      // The move goes on; the message names its progress so the agent can say so and retry.
+      Effect.catchTags({
+        ScientLibraryMoveBusyError: (busy) =>
+          Effect.fail(
+            new ScientSourcesToolError({ code: "operation-failed", message: busy.message }),
+          ),
+      }),
     );
   },
 );
+
+/** Library backend only: the project's move while it has something to say. Reads only. */
+const libraryMoveNotice = Effect.fn("ScientSourcesToolkit.moveNotice")(function* (root: string) {
+  if ((yield* ScientSourcesBackend) !== "library") return null;
+  const config = yield* Effect.serviceOption(ServerConfig);
+  if (Option.isNone(config)) return null;
+  const status = yield* readLibraryMoveStatus({
+    root,
+    library: scientLibraryLocation(scientLibraryRootFor(config.value.stateDir)),
+  });
+  return scientLibraryMoveNotice(status);
+});
 
 /** A library ID, or a project source ID of this project resolved to one; v1 keeps the ID. */
 const sourceIdIn = (store: ScientSourcesStore, sourceId: string) =>
@@ -434,6 +468,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     const offset = Math.max(0, input.offset ?? 0);
     const limit = Math.min(50, Math.max(1, input.limit ?? 25));
     const page = matching.slice(offset, offset + limit);
+    const move = yield* libraryMoveNotice(store.root);
     const pinOf = (sourceId: string) => (pins ? pins.get(sourceId) : undefined);
     const citationKeyOf = (record: (typeof page)[number]) =>
       pinOf(record.sourceId)?.citationKey ?? record.citationKey;
@@ -473,6 +508,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         ...(fromSnapshot.has(record.sourceId) ? { fromSnapshot: true } : {}),
       })),
       total: matching.length,
+      ...(move ? { move } : {}),
       nextOffset: offset + page.length < matching.length ? offset + page.length : null,
     };
   },
@@ -545,7 +581,8 @@ const isLibraryOrganizeChange = (
   change.action === "unpin" ||
   change.action === "merge" ||
   change.action === "undo-merge" ||
-  change.action === "move-back";
+  change.action === "move-back" ||
+  change.action === "dismiss-move-summary";
 
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
 export const organizeLibrarySourcesForInvocation = Effect.fn(
@@ -671,18 +708,18 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
         unrevertedFields: undone.unrevertedFields,
       };
     }
-    case "move-back": {
-      const moved = yield* attempt(() =>
-        moveScientProjectBackIntoProject({
-          library: store.library,
-          projectRoot: store.root,
-          actor: "agent",
-        }),
+    case "move-back":
+      return moveBackResult(
+        yield* attempt(() =>
+          moveProjectBackIntoProject({ root: store.root, library: store.library, actor: "agent" }),
+        ),
       );
-      return moved.outcome === "moved-back"
-        ? { outcome: moved.outcome, restoredSources: moved.restoredSources }
-        : { outcome: moved.outcome };
-    }
+    case "dismiss-move-summary":
+      return {
+        outcome: yield* attempt(() =>
+          dismissScientLibraryMoveSummary({ library: store.library, projectRoot: store.root }),
+        ),
+      };
   }
 });
 

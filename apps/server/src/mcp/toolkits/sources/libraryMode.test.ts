@@ -43,11 +43,17 @@ import {
   verifiableSourceIdentifier,
 } from "../../../scient/sources/SourceIdentifierResolver.ts";
 import {
+  changeLibraryReviewConflict,
+  libraryReview,
+  libraryReviewConflicts,
+} from "../../../scient/sources/LibrarySourcesRoutes.ts";
+import {
   ScientSourcesBackend,
   type ScientSourcesBackendKind,
 } from "../../../scient/sources/SourcesBackend.ts";
 import {
   readSystematicReviewsForInvocation,
+  updateLibrarySystematicReviewForInvocation,
   updateSystematicReviewForInvocation,
 } from "../systematicReviews/handlers.ts";
 import {
@@ -58,6 +64,7 @@ import {
   listScientSourcesForInvocation,
   organizeLibrarySourcesForInvocation,
   readScientSourceTextForInvocation,
+  resolveScientSourcesStore,
   searchScientSourcesForInvocation,
   syncScientBibliographyForInvocation,
   updateScientSourceForInvocation,
@@ -761,6 +768,163 @@ describe("Sources tools on the library backend", () => {
           label: "From this review's snapshot",
         }),
       ]);
+    }),
+  );
+
+  it.effect("the list carries the move's summary until an agent dismisses it", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      yield* Effect.promise(async () => {
+        await importScientSource({
+          root: fixture.root,
+          operationId: NodeCrypto.randomUUID(),
+          candidate: candidate("v1"),
+        });
+        const bulk = NodePath.join(fixture.root, ".scient/sources/bulk-edits");
+        await NodeFSP.mkdir(bulk, { recursive: true });
+        await NodeFSP.writeFile(NodePath.join(bulk, "batch_1.json"), "{}\n");
+      });
+      const readOnly = yield* run(listScientSourcesForInvocation({}), fixture, { write: false });
+      expect(readOnly.move?.state).toBe("waiting");
+
+      const moved = yield* run(listScientSourcesForInvocation({}), fixture);
+      expect(moved.move).toEqual({
+        state: "done",
+        message: "Undo for bulk edits made before the move was not kept.",
+      });
+      expect(
+        yield* run(
+          organizeLibrarySourcesForInvocation({ change: { action: "dismiss-move-summary" } }),
+          fixture,
+        ),
+      ).toEqual({ outcome: "dismissed" });
+      expect(yield* run(listScientSourcesForInvocation({}), fixture)).not.toHaveProperty("move");
+    }),
+  );
+
+  it.effect("a review's other version: listed, then kept, used or combined with a report", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const [first, second] = yield* Effect.promise(() =>
+        Promise.all([libraryRecord(fixture, "first"), libraryRecord(fixture, "second")]),
+      );
+      const change = (
+        action: Parameters<typeof updateSystematicReviewForInvocation>[0]["change"],
+      ) => run(updateSystematicReviewForInvocation({ change: action }), fixture);
+      const reviewId = (yield* change({ action: "create-review", title: "Sepsis review" }))
+        .reviewId!;
+      yield* change({
+        action: "log-search",
+        reviewId,
+        database: "PubMed",
+        query: "sepsis",
+        searchedOn: "2026-11-11",
+        sourceIds: [first.sourceId, second.sourceId],
+      });
+      yield* change({
+        action: "screen",
+        reviewId,
+        stage: "title-abstract",
+        decisions: [{ sourceId: first.sourceId, decision: "include" }],
+      });
+      const reviews = NodePath.join(fixture.root, ".scient/library/reviews");
+      const reviewPath = NodePath.join(reviews, `${reviewId}.json`);
+      // What a join writes for a copy of this project that decided otherwise.
+      const plant = (edit: (review: Record<string, unknown>) => Record<string, unknown>) =>
+        Effect.promise(async () => {
+          const review = JSON.parse(await NodeFSP.readFile(reviewPath, "utf8"));
+          const bytes = `${JSON.stringify(edit(review), null, 2)}\n`;
+          const conflictId = NodeCrypto.createHash("sha256")
+            .update(bytes)
+            .digest("hex")
+            .slice(0, 12);
+          const folder = NodePath.join(fixture.root, ".scient/library/conflicts/reviews", reviewId);
+          await NodeFSP.mkdir(folder, { recursive: true });
+          await NodeFSP.writeFile(NodePath.join(folder, `${conflictId}.json`), bytes);
+          await NodeFSP.copyFile(
+            NodePath.join(reviews, `${reviewId}.works.json`),
+            NodePath.join(folder, `${conflictId}.works.json`),
+          );
+          return conflictId;
+        });
+      const excludedElsewhere = (review: Record<string, unknown>) => ({
+        ...review,
+        updatedAt: "2026-11-11T12:00:00.000Z",
+        screening: [
+          ...(review["screening"] as unknown[]),
+          {
+            sourceId: first.sourceId,
+            stage: "title-abstract",
+            decision: "exclude",
+            decidedAt: "2026-11-11T12:00:00.000Z",
+            decidedBy: "user",
+          },
+        ],
+      });
+      const store = yield* run(resolveScientSourcesStore(), fixture);
+      if (store.kind !== "library") throw new Error("Expected the library backend.");
+
+      const combined = yield* plant(excludedElsewhere);
+      expect(
+        (yield* Effect.promise(() => libraryReview(store, { reviewId }))).conflictVersions,
+      ).toBe(1);
+      expect(
+        yield* Effect.promise(() => libraryReviewConflicts(store, { reviewId })),
+      ).toMatchObject({
+        current: { conflictId: null, decisions: 1 },
+        versions: [{ conflictId: combined, decisions: 1, updatedAt: "2026-11-11T12:00:00.000Z" }],
+        combineReport: null,
+      });
+      const read = () => run(readSystematicReviewsForInvocation({ reviewId }), fixture);
+      expect((yield* read()).review?.conflicts).toEqual([
+        expect.objectContaining({ conflictId: combined }),
+      ]);
+      const resolved = yield* run(
+        updateLibrarySystematicReviewForInvocation({
+          change: { action: "resolve-conflict", reviewId, conflictId: combined, pick: "combine" },
+        }),
+        fixture,
+      );
+      expect(resolved).toMatchObject({
+        outcome: "resolved",
+        combineReport: { reopened: [{ sourceId: first.sourceId, stage: "title-abstract" }] },
+      });
+      const afterCombine = (yield* read()).review;
+      expect(afterCombine?.conflicts).toBeUndefined();
+      expect(afterCombine?.combineReport?.reopened).toHaveLength(1);
+      expect(
+        yield* run(
+          updateLibrarySystematicReviewForInvocation({
+            change: { action: "dismiss-combine-report", reviewId },
+          }),
+          fixture,
+        ),
+      ).toMatchObject({ outcome: "dismissed" });
+      expect((yield* read()).review?.combineReport).toBeUndefined();
+
+      const inForce = yield* Effect.promise(() => NodeFSP.readFile(reviewPath, "utf8"));
+      const kept = yield* plant(excludedElsewhere);
+      expect(
+        yield* Effect.promise(() =>
+          changeLibraryReviewConflict(store, {
+            reviewId,
+            change: { action: "resolve", conflictId: kept, pick: "keep" },
+          }),
+        ),
+      ).toEqual({ outcome: "resolved" });
+      expect(yield* Effect.promise(() => NodeFSP.readFile(reviewPath, "utf8"))).toBe(inForce);
+
+      const other = yield* plant((review) => ({ ...review, title: "Sepsis review, other copy" }));
+      yield* Effect.promise(() =>
+        changeLibraryReviewConflict(store, {
+          reviewId,
+          change: { action: "resolve", conflictId: other, pick: "use-other" },
+        }),
+      );
+      expect((yield* read()).review?.title).toBe("Sepsis review, other copy");
+      expect(
+        (yield* Effect.promise(() => libraryReviewConflicts(store, { reviewId }))).versions,
+      ).toEqual([]);
     }),
   );
 });

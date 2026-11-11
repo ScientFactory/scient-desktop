@@ -154,7 +154,18 @@ export async function withScientLibraryLock<A>(
   options: ScientLibraryLockOptions = {},
 ): Promise<A> {
   const root = await NodeFSP.realpath(libraryRoot);
-  const lockPath = NodePath.join(root, SCIENT_LIBRARY_LOCK_FILE);
+  return withScientFileLock(NodePath.join(root, SCIENT_LIBRARY_LOCK_FILE), run, options);
+}
+
+/**
+ * The same cross-process lock on another file, such as one checkout's move into the library.
+ * `lockPath` must be canonical, and nothing else may open that file.
+ */
+export async function withScientFileLock<A>(
+  lockPath: string,
+  run: () => Promise<A>,
+  options: ScientLibraryLockOptions = {},
+): Promise<A> {
   const held = heldLocks.getStore();
   if (held?.has(lockPath)) return run();
 

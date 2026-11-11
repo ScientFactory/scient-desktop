@@ -19,7 +19,7 @@ import {
   recordScientProjectSourceMappings,
   resolveScientProjectSources,
 } from "./libraryInstanceMap.ts";
-import { withScientLibraryLock } from "./libraryLock.ts";
+import { withScientFileLock, withScientLibraryLock } from "./libraryLock.ts";
 import { markScientLibrarySourcesDistinct, mergeScientLibraryDuplicates } from "./libraryMerge.ts";
 import {
   decodeScientReviewSnapshotText,
@@ -70,6 +70,14 @@ import { ScientSystematicReview } from "./systematicReview.ts";
 
 const MIGRATIONS_DIRECTORY = "migrations";
 const JOURNAL_FILE = "journal.json";
+/** Which run's summary the person dismissed; this instance's, never the project's. */
+const SUMMARY_FILE = "summary.json";
+/** Held for a whole run, so two processes never move one checkout at once. */
+const MOVE_LOCK_FILE = "move.lock";
+/** Another process's move can take long; its callers bound their own wait. */
+const MOVE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000;
+/** Records, trash entries and annotation files written in one hold of the library lock. */
+const LIBRARY_BATCH = 200;
 const PROJECT_LIBRARY_DIRECTORY = ".scient/library";
 const PROJECT_STAGING_DIRECTORY = ".scient/library/.staging";
 const PROJECT_ANNOTATIONS_DIRECTORY = ".scient/annotations/v1";
@@ -157,12 +165,16 @@ export const ScientLibraryMoveJournal = Schema.Struct({
   reviewConflicts: Schema.Array(NonEmptyString),
   divergedSources: Count,
   gitTracked: Schema.Boolean,
+  /** The v1 store had bulk-edit Undo history, which the move does not carry over. */
+  bulkEditUndo: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientLibraryMoveJournal = typeof ScientLibraryMoveJournal.Type;
 
 /** Test-only faults, so each crash point and the Windows-only paths run on every platform. */
 export interface ScientLibraryMoveFaults {
   readonly crashAt?:
+    /** Step 2: the first batch of records is in the library and the library lock released. */
+    | "after-first-batch"
     | "after-library-copy"
     | "after-verify"
     | "after-stage"
@@ -179,6 +191,24 @@ export interface ScientLibraryMoveFaults {
   readonly interruptPinsCopy?: boolean;
   /** A file another program holds open, which Windows refuses to delete. */
   readonly undeletable?: (projectRelativePath: string) => boolean;
+  /** Records per hold of the library lock (default 200). */
+  readonly batchSize?: number;
+  /** Runs before each PDF or full-text copy, with the library lock released. */
+  readonly beforeFileCopy?: () => Promise<void>;
+}
+
+/** Where a move or a move back is; `done` of `total` counts the phase's own items. */
+export interface ScientLibraryMoveProgress {
+  readonly phase:
+    | "sources"
+    | "files"
+    | "verifying"
+    | "merging"
+    | "switching"
+    | "cleaning-up"
+    | "restoring";
+  readonly done: number;
+  readonly total: number;
 }
 
 // @effect-diagnostics-next-line extendsNativeError:off - The source stores are Promise-based; callers catch native errors.
@@ -215,6 +245,11 @@ interface MoveContext {
   readonly actor: ScientSourceActor;
   readonly faults: ScientLibraryMoveFaults;
   readonly gitTracked: () => Promise<boolean>;
+  readonly progress: (
+    phase: ScientLibraryMoveProgress["phase"],
+    done: number,
+    total: number,
+  ) => void;
 }
 
 const decodeJournal = Schema.decodeUnknownSync(ScientLibraryMoveJournal);
@@ -232,6 +267,23 @@ const absolute = (base: string, relative: string) => NodePath.join(base, ...rela
 
 function crash(ctx: MoveContext, point: NonNullable<ScientLibraryMoveFaults["crashAt"]>): void {
   if (ctx.faults.crashAt === point) throw new ScientLibraryMoveCrash(point);
+}
+
+/**
+ * One bounded hold of the library lock. The move holds it only for record, index, collection,
+ * alias, pin and annotation writes; PDF and full-text copies are content-addressed exclusive
+ * creates and run between holds, so other library writers interleave with a long move.
+ */
+const locked = <A>(ctx: MoveContext, run: () => Promise<A>) =>
+  withScientLibraryLock(ctx.libraryRoot, run);
+
+function batches<A>(ctx: MoveContext, items: ReadonlyArray<A>): A[][] {
+  const size = Math.max(1, ctx.faults.batchSize ?? LIBRARY_BATCH);
+  const chunks: A[][] = [];
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size));
+  }
+  return chunks;
 }
 
 /** Sorted keys at every level, so equal content compares equal whatever order wrote it. */
@@ -904,6 +956,7 @@ const TEXT_FILE = /^text\/sha256\/([0-9a-f]{2})\/([0-9a-f]{64})\.json$/u;
 const libraryTextPath = (ctx: MoveContext, match: RegExpExecArray) =>
   NodePath.join(libraryFiles(ctx).text, match[1]!, `${match[2]!}.json`);
 const ZOTERO_FILE = /^sync\/zotero\/([^/]+)\.json$/u;
+const BULK_EDIT_FILE = /^bulk-edits\/[^/]+\.json$/u;
 
 type JsonObject = Record<string, unknown>;
 const isObject = (value: unknown): value is JsonObject =>
@@ -978,56 +1031,92 @@ async function readJsonFile(filePath: string): Promise<unknown> {
 async function copyAnnotations(ctx: MoveContext, pdfs: ReadonlySet<string>): Promise<string[]> {
   const merged: string[] = [];
   const projectAnnotations = absolute(ctx.root, PROJECT_ANNOTATIONS_DIRECTORY);
-  for (const name of await listFiles(projectAnnotations)) {
+  const names = (await listFiles(projectAnnotations)).filter((name) => {
     const sha256 = /^([0-9a-f]{64})\.json$/u.exec(name)?.[1];
-    if (!sha256 || !pdfs.has(sha256)) continue;
-    const incoming = annotationFile(
-      await readJsonFile(NodePath.join(projectAnnotations, name)),
-      sha256,
-    );
-    if (!incoming) continue;
-    const destination = NodePath.join(libraryFiles(ctx).annotations, name);
-    const current = await readJsonFile(destination);
-    if (current === undefined) {
-      if (!(await createJson(ctx, destination, incoming))) {
-        const raced = annotationFile(await readJsonFile(destination), sha256);
-        if (!raced) throw new Error("A library annotation file cannot be read.");
-        await atomicWriteJson(destination, mergeAnnotationFiles(raced, incoming), MAX_JSON_BYTES);
+    return sha256 !== undefined && pdfs.has(sha256);
+  });
+  for (const batch of batches(ctx, names)) {
+    await locked(ctx, async () => {
+      for (const name of batch) {
+        const sha256 = await copyAnnotation(ctx, projectAnnotations, name);
+        if (sha256) merged.push(sha256);
       }
-    } else {
-      const library = annotationFile(current, sha256);
-      if (!library) throw new Error("A library annotation file cannot be read.");
-      if (!annotationsCovered(library, incoming)) {
-        await atomicWriteJson(destination, mergeAnnotationFiles(library, incoming), MAX_JSON_BYTES);
-      }
-    }
-    merged.push(sha256);
+    });
   }
   return merged;
 }
 
-/** Step 2. Every write is an exclusive create, or the identity check's apply-newer revision. */
+/** Joins one project annotation file into the library's; null when it does not decode. */
+async function copyAnnotation(
+  ctx: MoveContext,
+  projectAnnotations: string,
+  name: string,
+): Promise<string | null> {
+  const sha256 = name.slice(0, 64);
+  const incoming = annotationFile(
+    await readJsonFile(NodePath.join(projectAnnotations, name)),
+    sha256,
+  );
+  if (!incoming) return null;
+  const destination = NodePath.join(libraryFiles(ctx).annotations, name);
+  const current = await readJsonFile(destination);
+  if (current === undefined) {
+    if (!(await createJson(ctx, destination, incoming))) {
+      const raced = annotationFile(await readJsonFile(destination), sha256);
+      if (!raced) throw new Error("A library annotation file cannot be read.");
+      await atomicWriteJson(destination, mergeAnnotationFiles(raced, incoming), MAX_JSON_BYTES);
+    }
+  } else {
+    const library = annotationFile(current, sha256);
+    if (!library) throw new Error("A library annotation file cannot be read.");
+    if (!annotationsCovered(library, incoming)) {
+      await atomicWriteJson(destination, mergeAnnotationFiles(library, incoming), MAX_JSON_BYTES);
+    }
+  }
+  return sha256;
+}
+
+/**
+ * Step 2. Every write is an exclusive create, or the identity check's apply-newer revision.
+ * Records, trash, merge bases and annotations go in bounded holds of the library lock; PDFs and
+ * full text are copied between holds. A rerun after a crash between holds finds its copies.
+ */
 async function copyIntoLibrary(
   ctx: MoveContext,
   v1: V1Store,
   journal: ScientLibraryMoveJournal,
 ): Promise<ScientLibraryMoveJournal> {
   const files = libraryFiles(ctx);
-  const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
   const sources: MovedSource[] = [];
-  for (const record of v1.records) sources.push(await settleRecord(ctx, record, aliases));
+  ctx.progress("sources", 0, v1.records.length);
+  for (const [index, batch] of batches(ctx, v1.records).entries()) {
+    await locked(ctx, async () => {
+      // Read again each hold: another writer may have merged records in between.
+      const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
+      for (const record of batch) sources.push(await settleRecord(ctx, record, aliases));
+    });
+    ctx.progress("sources", sources.length, v1.records.length);
+    if (index === 0) crash(ctx, "after-first-batch");
+  }
   const mapped = new Map(sources.map((source) => [source.projectSourceId, source.sourceId]));
-  for (const entry of v1.trash) {
-    if (mapped.has(entry.sourceId) || (await readLibraryRecord(ctx, entry.sourceId))) continue;
-    const { projectId: _project, ...rest } = entry;
-    await createJson(ctx, NodePath.join(files.trash, `${entry.sourceId}.json`), {
-      ...rest,
-      formatVersion: 2,
-      record: toLibraryRecord(entry.record),
+  for (const batch of batches(ctx, v1.trash)) {
+    await locked(ctx, async () => {
+      for (const entry of batch) {
+        if (mapped.has(entry.sourceId) || (await readLibraryRecord(ctx, entry.sourceId))) continue;
+        const { projectId: _project, ...rest } = entry;
+        await createJson(ctx, NodePath.join(files.trash, `${entry.sourceId}.json`), {
+          ...rest,
+          formatVersion: 2,
+          record: toLibraryRecord(entry.record),
+        });
+      }
     });
   }
   const pdfs = new Set<string>();
-  for (const file of v1.files) {
+  const copies = v1.files.filter((file) => PDF_FILE.test(file) || TEXT_FILE.test(file));
+  ctx.progress("files", 0, copies.length);
+  for (const [index, file] of copies.entries()) {
+    await ctx.faults.beforeFileCopy?.();
     const source = absolute(v1Base(ctx), file);
     const pdf = PDF_FILE.exec(file);
     if (pdf) {
@@ -1038,33 +1127,47 @@ async function copyIntoLibrary(
         pdf[2]!,
       );
       if (outcome !== "damaged") pdfs.add(pdf[2]!);
-      continue;
+    } else {
+      // Full text is named by its PDF's hash, not its own: other text there stays in force, and
+      // step 3 backs up this checkout's text.
+      await copyByHash(ctx, source, libraryTextPath(ctx, TEXT_FILE.exec(file)!), null);
     }
-    // Full text is named by its PDF's hash, not its own: other text there stays in force, and
-    // step 3 backs up this checkout's text.
-    const text = TEXT_FILE.exec(file);
-    if (text) {
-      await copyByHash(ctx, source, libraryTextPath(ctx, text), null);
-      continue;
-    }
-    // A merge base names its record; a diverged copy under a new ID starts without one.
+    ctx.progress("files", index + 1, copies.length);
+  }
+  // A merge base names its record; a diverged copy under a new ID starts without one.
+  const bases = v1.files.flatMap((file) => {
     const zotero = ZOTERO_FILE.exec(file);
-    if (zotero && mapped.get(zotero[1]!) === zotero[1]) {
-      await copyByHash(ctx, source, NodePath.join(files.zotero, `${zotero[1]!}.json`), null);
-    }
+    return zotero && mapped.get(zotero[1]!) === zotero[1] ? [{ file, sourceId: zotero[1]! }] : [];
+  });
+  for (const batch of batches(ctx, bases)) {
+    await locked(ctx, async () => {
+      for (const { file, sourceId } of batch) {
+        await copyByHash(
+          ctx,
+          absolute(v1Base(ctx), file),
+          NodePath.join(files.zotero, `${sourceId}.json`),
+          null,
+        );
+      }
+    });
   }
   const annotations = await copyAnnotations(ctx, pdfs);
-  await recordScientProjectSourceMappings({
-    library: ctx.library,
-    instanceId: ctx.instanceId,
-    mappings: sources.filter((source) => source.identity !== "removed"),
-  });
+  await locked(ctx, () =>
+    recordScientProjectSourceMappings({
+      library: ctx.library,
+      instanceId: ctx.instanceId,
+      mappings: sources.filter((source) => source.identity !== "removed"),
+    }),
+  );
+  const bulkEditUndo =
+    journal.bulkEditUndo === true || v1.files.some((file) => BULK_EDIT_FILE.test(file));
   return {
     ...journal,
     sources,
     pdfs: [...pdfs].toSorted(),
     annotations: annotations.toSorted(),
     divergedSources: sources.filter((source) => source.identity === "diverged").length,
+    ...(bulkEditUndo ? { bulkEditUndo } : {}),
   };
 }
 
@@ -1092,9 +1195,11 @@ async function verifyAndBackUp(
   journal: ScientLibraryMoveJournal,
 ): Promise<void> {
   const files = libraryFiles(ctx);
-  for (const sha256 of journal.pdfs) {
+  ctx.progress("verifying", 0, journal.pdfs.length);
+  for (const [index, sha256] of journal.pdfs.entries()) {
     const copied = await hashFile(NodePath.join(files.files, sha256.slice(0, 2), `${sha256}.pdf`));
     if (copied !== sha256) throw new Error("A PDF copied into the library does not verify.");
+    ctx.progress("verifying", index + 1, journal.pdfs.length);
   }
   const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
   for (const source of journal.sources) {
@@ -1617,24 +1722,28 @@ async function publishArtifact(
   return (await hashFile(destination)) === artifact.stagedSha256 ? "published" : "stale";
 }
 
-/** Publishes every artifact as its plan says, `pins.json` last; a stale one restages the plan. */
+/**
+ * Publishes every artifact as its plan says, `pins.json` last; a stale one restages the plan
+ * from the v1 store as it is then. Runs in one hold of the library lock.
+ */
 async function switchOver(
   ctx: MoveContext,
-  v1: V1Store,
   journal: ScientLibraryMoveJournal,
 ): Promise<ScientLibraryMoveJournal> {
   let current = journal;
+  ctx.progress("switching", 0, current.artifacts.length);
   for (let attempt = 0; attempt < PUBLISH_ATTEMPTS; attempt += 1) {
     const ordered = [
       ...current.artifacts.filter((artifact) => artifact.kind !== "pins"),
       ...current.artifacts.filter((artifact) => artifact.kind === "pins"),
     ];
     let stale = false;
-    for (const artifact of ordered) {
+    for (const [index, artifact] of ordered.entries()) {
       if ((await publishArtifact(ctx, current, artifact)) === "stale") {
         stale = true;
         break;
       }
+      ctx.progress("switching", index + 1, ordered.length);
       if (artifact.kind === "pins") crash(ctx, "after-pins-published");
     }
     if (!stale) {
@@ -1645,7 +1754,7 @@ async function switchOver(
       });
       return committed;
     }
-    current = await writeJournal(ctx, await stage(ctx, v1, current));
+    current = await writeJournal(ctx, await stage(ctx, await readV1Store(ctx), current));
   }
   throw new Error("The project's files kept changing during the move. Try again.");
 }
@@ -1721,7 +1830,9 @@ async function cleanUp(
   const left = [...new Set([...current.cleanup, ...current.retry])];
   const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
   const retry: string[] = [];
+  ctx.progress("cleaning-up", 0, left.length);
   for (const [index, relative] of left.entries()) {
+    if (index > 0) ctx.progress("cleaning-up", index, left.length);
     if (index === Math.floor(left.length / 2)) crash(ctx, "mid-cleanup");
     if (!(await counterpartVerifies(ctx, current, aliases, relative))) {
       retry.push(relative);
@@ -1754,7 +1865,10 @@ async function importStillRunning(root: string): Promise<boolean> {
   return Date.now() - Date.parse(operation.updatedAt) < RUNNING_IMPORT_MS;
 }
 
-/** Steps 1–7 from wherever the journal left off. */
+/**
+ * Steps 1–7 from wherever the journal left off. The library lock is taken per step and per
+ * batch, never for the whole run: the move lock keeps other movers of this checkout out.
+ */
 async function runFrom(
   ctx: MoveContext,
   journal: ScientLibraryMoveJournal,
@@ -1772,14 +1886,20 @@ async function runFrom(
     crash(ctx, "after-library-copy");
     await verifyAndBackUp(ctx, v1, current);
     crash(ctx, "after-verify");
-    current = await writeJournal(ctx, await mergeAndOrganize(ctx, v1, current));
-    current = await stage(ctx, v1, current);
-    crash(ctx, "after-stage");
-    current = await writeJournal(ctx, { ...current, state: "prepared" });
-    crash(ctx, "after-prepared");
-  }
-  if (current.state === "prepared") {
-    current = await switchOver(ctx, await readV1Store(ctx), current);
+    ctx.progress("merging", 0, 1);
+    const merged = await locked(ctx, () => mergeAndOrganize(ctx, v1, current));
+    current = await writeJournal(ctx, merged);
+    ctx.progress("merging", 1, 1);
+    current = await locked(ctx, async () => {
+      const staged = await stage(ctx, v1, current);
+      crash(ctx, "after-stage");
+      const prepared = await writeJournal(ctx, { ...staged, state: "prepared" });
+      crash(ctx, "after-prepared");
+      return switchOver(ctx, prepared);
+    });
+  } else if (current.state === "prepared") {
+    const prepared = current;
+    current = await locked(ctx, () => switchOver(ctx, prepared));
   }
   if (current.state === "committed" || current.state === "cleanup") {
     current = await cleanUp(ctx, current);
@@ -1832,6 +1952,8 @@ export interface ScientLibraryMoveInput {
   /** `git ls-files .scient/sources` through the server's git driver; untracked when absent. */
   readonly gitTracked?: () => Promise<boolean>;
   readonly faults?: ScientLibraryMoveFaults;
+  /** Called as each phase advances; nothing about progress is written to the journal. */
+  readonly onProgress?: (progress: ScientLibraryMoveProgress) => void;
 }
 
 function withProjectLocks<A>(root: string, run: () => Promise<A>): Promise<A> {
@@ -1839,6 +1961,18 @@ function withProjectLocks<A>(root: string, run: () => Promise<A>): Promise<A> {
   return lock(`${root}:library-move`, () =>
     lock(`${root}:reviews-write`, () => lock(`${root}:pins-write`, run)),
   );
+}
+
+/**
+ * This checkout's move lock, across processes, for a whole move or move back. Taken before any
+ * hold of the library lock and never inside one, so two locks never wait on each other.
+ */
+async function withMoveLock<A>(ctx: MoveContext, run: () => Promise<A>): Promise<A> {
+  const directory = migrationDirectory(ctx);
+  await ensureDirectory(directory);
+  return withScientFileLock(NodePath.join(await NodeFSP.realpath(directory), MOVE_LOCK_FILE), run, {
+    timeoutMs: MOVE_LOCK_TIMEOUT_MS,
+  });
 }
 
 async function moveContext(
@@ -1872,6 +2006,7 @@ async function moveContext(
     actor: input.actor,
     faults: input.faults ?? {},
     gitTracked: input.gitTracked ?? (async () => false),
+    progress: (phase, done, total) => input.onProgress?.({ phase, done, total }),
   };
 }
 
@@ -1886,9 +2021,14 @@ export async function runScientLibraryMove(
 ): Promise<ScientLibraryMoveResult> {
   const ctx = await moveContext(input, true);
   if (!ctx) throw new Error("The project could not be registered with the library.");
-  return withProjectLocks(ctx.root, () =>
-    withScientLibraryLock(ctx.libraryRoot, () => recover(ctx)),
-  );
+  // Nothing to move and nothing begun: no lock, and no migration folder for this checkout.
+  if (
+    !(await exists(NodePath.join(migrationDirectory(ctx), JOURNAL_FILE))) &&
+    !(await v1StorePresent(ctx.root))
+  ) {
+    return { outcome: "not-needed", journal: null };
+  }
+  return withProjectLocks(ctx.root, () => withMoveLock(ctx, () => recover(ctx)));
 }
 
 /** Whether this checkout's Sources live in the library now. Reads only; registers nothing. */
@@ -2023,11 +2163,12 @@ export async function moveScientProjectBackIntoProject(input: {
   readonly projectRoot: string;
   readonly actor: ScientSourceActor;
   readonly faults?: ScientLibraryMoveFaults;
+  readonly onProgress?: (progress: ScientLibraryMoveProgress) => void;
 }): Promise<ScientLibraryMoveBackResult> {
   const ctx = await moveContext(input, false);
   if (!ctx) return { outcome: "not-moved" };
   return withProjectLocks(ctx.root, () =>
-    withScientLibraryLock(ctx.libraryRoot, async () => {
+    withMoveLock(ctx, async () => {
       let journal = await readJournalAt(migrationDirectory(ctx));
       if (!journal || journal.state === "moved-back") return { outcome: "not-moved" };
       if (journal.state !== "restoring") {
@@ -2058,6 +2199,47 @@ async function buildRestoredStore(
   journal: ScientLibraryMoveJournal,
   base: string,
 ): Promise<MovedBack> {
+  const built = await locked(ctx, () => buildRestoredRecords(ctx, journal, base));
+  // PDFs come back between holds of the library lock; a rerun finds the ones it copied.
+  let restoredPdfs = 0;
+  ctx.progress("files", 0, built.pdfs.length);
+  for (const [index, sha256] of built.pdfs.entries()) {
+    await ctx.faults.beforeFileCopy?.();
+    const name = NodePath.posix.join("files", "sha256", sha256.slice(0, 2), `${sha256}.pdf`);
+    const outcome = await copyByHash(
+      ctx,
+      absolute(ctx.libraryRoot, name),
+      absolute(base, name),
+      sha256,
+    ).catch((error: unknown) => {
+      // A missing library PDF, or a restored v1 file with other bytes, leaves the store as it was.
+      if (isNodeError(error, "ENOENT") || error instanceof DamagedPdfCopy) {
+        return "damaged" as const;
+      }
+      throw error;
+    });
+    // A rerun finds the PDF it copied before; both count, so the number survives a resume.
+    if (outcome === "copied" || outcome === "present") restoredPdfs += 1;
+    ctx.progress("files", index + 1, built.pdfs.length);
+  }
+  return {
+    outcome: "moved-back",
+    restoredSources: built.restoredSources,
+    restoredPdfs,
+    skippedPins: built.skippedPins,
+  };
+}
+
+/** The records, reviews and managed-file copies of the restored store, and the PDFs it names. */
+async function buildRestoredRecords(
+  ctx: MoveContext,
+  journal: ScientLibraryMoveJournal,
+  base: string,
+): Promise<{
+  readonly restoredSources: number;
+  readonly skippedPins: number;
+  readonly pdfs: ReadonlyArray<string>;
+}> {
   await restoreSourceBackups(ctx, journal, base);
   crash(ctx, "after-restore-backups");
   const pinsText = await readRegularFile(absolute(ctx.root, PINS_PATH));
@@ -2072,9 +2254,11 @@ async function buildRestoredStore(
   const recordsDirectory = absolute(base, "records");
   const historyDirectory = absolute(base, "history");
   let restoredSources = 0;
-  let restoredPdfs = 0;
   let skippedPins = 0;
+  const pdfs = new Set<string>();
+  ctx.progress("restoring", 0, pins.length);
   for (const [index, pin] of pins.entries()) {
+    if (index > 0) ctx.progress("restoring", index, pins.length);
     const resolution = resolutions[index]!;
     const backup = await readProjectRecord(ctx, base, pin.sourceId);
     const library =
@@ -2131,29 +2315,10 @@ async function buildRestoredStore(
     }
     restoredSources += 1;
     for (const attachment of next.attachments) {
-      if (!SHA256.test(attachment.sha256)) continue;
-      const name = NodePath.posix.join(
-        "files",
-        "sha256",
-        attachment.sha256.slice(0, 2),
-        `${attachment.sha256}.pdf`,
-      );
-      const outcome = await copyByHash(
-        ctx,
-        absolute(ctx.libraryRoot, name),
-        absolute(base, name),
-        attachment.sha256,
-      ).catch((error: unknown) => {
-        // A missing library PDF, or a restored v1 file with other bytes, leaves the store as it was.
-        if (isNodeError(error, "ENOENT") || error instanceof DamagedPdfCopy) {
-          return "damaged" as const;
-        }
-        throw error;
-      });
-      // A rerun finds the PDF it copied before; both count, so the number survives a resume.
-      if (outcome === "copied" || outcome === "present") restoredPdfs += 1;
+      if (SHA256.test(attachment.sha256)) pdfs.add(attachment.sha256);
     }
   }
+  ctx.progress("restoring", pins.length, pins.length);
   // Reviews and managed-file copies changed after the move win over the backup.
   const reviews = absolute(ctx.root, `${PROJECT_LIBRARY_DIRECTORY}/reviews`);
   for (const file of await listFiles(reviews)) {
@@ -2167,7 +2332,7 @@ async function buildRestoredStore(
     );
     if (bytes) await replaceAtomically(absolute(base, `bibliography/${name}`), bytes);
   }
-  return { outcome: "moved-back", restoredSources, restoredPdfs, skippedPins };
+  return { restoredSources, skippedPins, pdfs: [...pdfs] };
 }
 
 /** One rename from the staging folder. False when `.scient/sources` holds something again. */
@@ -2216,13 +2381,17 @@ async function restoreIntoProject(
   const staging = absolute(ctx.root, PROJECT_RESTORE_DIRECTORY);
   const base = restoreBase(ctx);
   const saved = absolute(backupDirectory(ctx, journal.run), "moved-back/result.json");
-  let result: MovedBack;
   // No staging folder and no store: nothing was published, whatever removed the folder.
   if (!(await exists(base)) && !(await v1StorePresent(ctx.root))) await ensureDirectory(base);
-  if (await exists(base)) {
-    const built = (await v1StorePresent(ctx.root))
-      ? null
-      : await buildRestoredStore(ctx, journal, base);
+  if (!(await exists(base))) {
+    return locked(ctx, async () =>
+      finishRestore(ctx, journal, staging, await readMovedBackResult(saved)),
+    );
+  }
+  const built = (await v1StorePresent(ctx.root))
+    ? null
+    : await buildRestoredStore(ctx, journal, base);
+  return locked(ctx, async () => {
     if (built) await replaceAtomically(saved, Buffer.from(formatJson(built), "utf8"));
     if (!built || !(await publishRestoredStore(ctx, base))) {
       // The journal first: a `restoring` journal without the staging folder reads as published.
@@ -2230,10 +2399,17 @@ async function restoreIntoProject(
       await NodeFSP.rm(staging, { recursive: true, force: true });
       return { result: null, journal: done };
     }
-    result = built;
-  } else {
-    result = await readMovedBackResult(saved);
-  }
+    return finishRestore(ctx, journal, staging, built);
+  });
+}
+
+/** After the rename: highlights back, `pins.json` to the backup and gone, journal `moved-back`. */
+async function finishRestore(
+  ctx: MoveContext,
+  journal: ScientLibraryMoveJournal,
+  staging: string,
+  result: MovedBack,
+): Promise<{ readonly result: MovedBack; readonly journal: ScientLibraryMoveJournal }> {
   await NodeFSP.rm(staging, { recursive: true, force: true });
   await restoreAnnotationBackups(ctx, journal);
   const pins = await readRegularFile(absolute(ctx.root, PINS_PATH));
@@ -2244,6 +2420,7 @@ async function restoreIntoProject(
   crash(ctx, "before-moved-back");
   return { result, journal: await writeJournal(ctx, { ...journal, state: "moved-back" }) };
 }
+
 /** The Library's status lines after a move, for 5e to show. Empty when there is nothing to say. */
 export function scientLibraryMoveStatusLines(journal: ScientLibraryMoveJournal | null): string[] {
   if (!journal || journal.state === "moved-back" || journal.state === "restoring") return [];
@@ -2261,7 +2438,95 @@ export function scientLibraryMoveStatusLines(journal: ScientLibraryMoveJournal |
       "The Library moved out of this project. Commit the change to stop storing PDFs in git.",
     );
   }
+  if (journal.bulkEditUndo) lines.push("Undo for bulk edits made before the move was not kept.");
   return lines;
+}
+
+/** What the files say about this checkout's move; a running move is only known in memory. */
+export type ScientLibraryMoveDiskStatus =
+  | { readonly state: "nothing-to-move" }
+  /** A v1 store not moved yet, or a move interrupted before it committed; a write resumes it. */
+  | { readonly state: "waiting" }
+  /** Moved. `lines` is the summary, empty once dismissed or when there is nothing to say. */
+  | { readonly state: "done"; readonly lines: ReadonlyArray<string> }
+  /** Moved, with v1 files left to delete (a PDF open in another program); retried later. */
+  | {
+      readonly state: "cleanup-pending";
+      readonly filesLeft: number;
+      readonly lines: ReadonlyArray<string>;
+    }
+  /** A move back that stopped before it finished; the next write finishes it. */
+  | { readonly state: "restoring" }
+  | {
+      readonly state: "moved-back";
+      readonly restoredSources: number;
+      readonly restoredPdfs: number;
+    };
+
+async function summaryDismissedFor(ctx: MoveContext, run: number): Promise<boolean> {
+  const saved = await readJsonFile(NodePath.join(migrationDirectory(ctx), SUMMARY_FILE));
+  return isObject(saved) && saved["dismissedRun"] === run;
+}
+
+/** Reads only: the journal, the v1 store's presence and this instance's dismissal. */
+export async function readScientLibraryMoveStatus(input: {
+  readonly library: ScientLibraryLocation | null;
+  readonly projectRoot: string;
+}): Promise<ScientLibraryMoveDiskStatus> {
+  const { v1Present, journal } = await readScientLibraryMoveState(input);
+  if (!journal) return v1Present ? { state: "waiting" } : { state: "nothing-to-move" };
+  const ctx = (await moveContext(
+    { library: input.library!, projectRoot: input.projectRoot, actor: "user" },
+    false,
+  ))!;
+  const lines = async () =>
+    (await summaryDismissedFor(ctx, journal.run)) ? [] : scientLibraryMoveStatusLines(journal);
+  switch (journal.state) {
+    case "copying":
+    case "prepared":
+      return { state: "waiting" };
+    case "committed":
+    case "cleanup":
+      return {
+        state: "cleanup-pending",
+        filesLeft: new Set([...journal.cleanup, ...journal.retry]).size,
+        lines: await lines(),
+      };
+    case "done":
+      // An older Scient wrote `.scient/sources` again; the next write moves the new files in.
+      return v1Present ? { state: "waiting" } : { state: "done", lines: await lines() };
+    case "restoring":
+      return { state: "restoring" };
+    case "moved-back": {
+      const saved = await readMovedBackResult(
+        absolute(backupDirectory(ctx, journal.run), "moved-back/result.json"),
+      );
+      return {
+        state: "moved-back",
+        restoredSources: saved.restoredSources,
+        restoredPdfs: saved.restoredPdfs,
+      };
+    }
+  }
+}
+
+/** Hides the summary of this checkout's latest move, until a later run has one of its own. */
+export async function dismissScientLibraryMoveSummary(input: {
+  readonly library: ScientLibraryLocation;
+  readonly projectRoot: string;
+}): Promise<"dismissed" | "nothing-to-dismiss"> {
+  const ctx = await moveContext({ ...input, actor: "user" }, false);
+  const journal = ctx ? await readJournalAt(migrationDirectory(ctx)) : null;
+  if (!ctx || !journal || !["committed", "cleanup", "done"].includes(journal.state)) {
+    return "nothing-to-dismiss";
+  }
+  if (await summaryDismissedFor(ctx, journal.run)) return "dismissed";
+  await atomicWriteJson(
+    NodePath.join(migrationDirectory(ctx), SUMMARY_FILE),
+    { formatVersion: 1, dismissedRun: journal.run, dismissedAt: now() },
+    MAX_JOURNAL_BYTES,
+  );
+  return "dismissed";
 }
 
 export const scientLibraryMoveInternals = {

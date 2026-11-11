@@ -8,6 +8,7 @@ import { initializeScientProject } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
 import { readLibraryAliasesAt } from "./libraryAliases.ts";
+import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   listScientReviewConflicts,
   resolveScientReviewConflict,
@@ -23,6 +24,7 @@ import {
   ScientLibraryMoveCrash,
   type ScientLibraryMoveFaults,
   type ScientLibraryMoveJournal,
+  type ScientLibraryMoveProgress,
 } from "./libraryMove.ts";
 import {
   ensureScientLibrary,
@@ -1108,5 +1110,107 @@ describe("move back into this project", () => {
     // The ordinary move then joins what the older Scient wrote.
     expect((await move(library, project)).outcome).toBe("moved");
     expect((await readScientProjectPins(project)).length).toBe(3);
+  });
+});
+
+/** A file-copy hook that holds the first copy until `release` is called. */
+function pauseAtFirstFileCopy() {
+  let paused!: () => void;
+  let release!: () => void;
+  const reached = new Promise<void>((resolve) => {
+    paused = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let first = true;
+  const beforeFileCopy = async () => {
+    if (!first) return;
+    first = false;
+    paused();
+    await gate;
+  };
+  return { reached, release, beforeFileCopy };
+}
+
+describe("the library lock during a move", () => {
+  it("another library writer completes while the move copies files", async () => {
+    const { library, project, a, b, reviewId } = await seededMove();
+    // A record that only the library holds, edited mid-move by another writer.
+    const outside = await importScientSource({
+      root: library,
+      operationId: `op_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
+      candidate: candidate("outside", { title: "In the library already" }),
+      actor: "user",
+      intake: "file",
+    });
+    const pause = pauseAtFirstFileCopy();
+    const progress: ScientLibraryMoveProgress[] = [];
+    const moving = runScientLibraryMove({
+      library,
+      projectRoot: project,
+      actor: "user",
+      faults: { beforeFileCopy: pause.beforeFileCopy },
+      onProgress: (entry) => progress.push(entry),
+    });
+    await pause.reached;
+    expect(progress.at(-1)).toMatchObject({ phase: "files", done: 0 });
+    // Free right now, not after the move: a try that does not wait at all gets the lock.
+    expect(await withScientLibraryLock(library.root, async () => "held", { timeoutMs: 0 })).toBe(
+      "held",
+    );
+    await editTitle(library, outside.record!.sourceId, "Edited during the move");
+    pause.release();
+    expect((await moving).outcome).toBe("moved");
+    await expectDone(library, project, {
+      sourceIds: [a.sourceId, b.sourceId],
+      reviewIds: [reviewId],
+    });
+    expect((await readScientSourceRecord(library, outside.record!.sourceId))?.title).toBe(
+      "Edited during the move",
+    );
+  });
+
+  it("crash-after-first-batch: an edit made in the gap is kept, and the rerun finishes", async () => {
+    const { library, project, a, b, reviewId } = await seededMove();
+    const journal = await crashAt(library, project, {
+      crashAt: "after-first-batch",
+      batchSize: 1,
+    });
+    expect(journal.state).toBe("copying");
+    const first = [a.sourceId, b.sourceId].toSorted()[0]!;
+    expect(await readScientSourceRecord(library, first)).not.toBeNull();
+    // Between holds of the library lock, another writer edits the record the move just copied.
+    await editTitle(library, first, "Edited between batches");
+    await move(library, project, { batchSize: 1 });
+    await expectDone(library, project, {
+      sourceIds: [a.sourceId, b.sourceId],
+      reviewIds: [reviewId],
+    });
+    expect((await readScientSourceRecord(library, first))?.title).toBe("Edited between batches");
+    expect((await listScientSourceRecords(library)).length).toBe(2);
+  });
+
+  it("the move back copies its PDFs with the library lock free", async () => {
+    const { library, project, sha256 } = await seededMove();
+    await move(library, project);
+    const pause = pauseAtFirstFileCopy();
+    const movingBack = moveScientProjectBackIntoProject({
+      library,
+      projectRoot: project,
+      actor: "user",
+      faults: { beforeFileCopy: pause.beforeFileCopy },
+    });
+    await pause.reached;
+    expect(await withScientLibraryLock(library.root, async () => "held", { timeoutMs: 0 })).toBe(
+      "held",
+    );
+    pause.release();
+    expect(await movingBack).toMatchObject({ outcome: "moved-back", restoredPdfs: 1 });
+    expect(
+      await exists(
+        NodePath.join(project, ".scient/sources/files/sha256", sha256.slice(0, 2), `${sha256}.pdf`),
+      ),
+    ).toBe(true);
   });
 });

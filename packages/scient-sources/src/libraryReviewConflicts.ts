@@ -26,11 +26,13 @@ import {
   isNodeError,
 } from "./storeFiles.ts";
 import {
+  ScientReviewCombineReport,
   scientReviewDecisions,
   ScientSystematicReview,
   type ScientReviewScreening,
   type ScientReviewSearch,
   type ScientReviewStage,
+  type ScientReviewVersionSummary,
 } from "./systematicReview.ts";
 
 const REVIEWS_DIRECTORY = ".scient/library/reviews";
@@ -41,6 +43,15 @@ const STAGES: ReadonlyArray<ScientReviewStage> = ["title-abstract", "full-text"]
 const decodeReview = Schema.decodeUnknownSync(ScientSystematicReview);
 const validateReview = Schema.decodeSync(ScientSystematicReview);
 const CONFLICT_FILE = /^([0-9a-f]{12})\.json$/u;
+/** Combine's report, beside the review's conflict files; the conflict listing never offers it. */
+const COMBINE_REPORT_FILE = "combined.json";
+const decodeCombineReportFile = Schema.decodeUnknownSync(
+  Schema.Struct({
+    formatVersion: Schema.Literal(1),
+    combinedAt: Schema.String,
+    report: ScientReviewCombineReport,
+  }),
+);
 
 /** The note on the entry that reopens a record two copies decided differently. */
 export const SCIENT_REVIEW_COMBINED_NOTE = "Decided differently in two copies";
@@ -113,20 +124,7 @@ function unionBy<A>(items: ReadonlyArray<A>, key: (item: A) => string): A[] {
   return [...seen.values()];
 }
 
-export interface ScientReviewCombineReport {
-  /** Pairs one version marks duplicate and the other distinct; left undecided. */
-  readonly undecidedPairs: ReadonlyArray<readonly [string, string]>;
-  /** Searches in both versions whose details differ; the existing details are kept. */
-  readonly differingSearches: ReadonlyArray<{
-    readonly searchId: string;
-    readonly incoming: Omit<ScientReviewSearch, "sourceIds">;
-  }>;
-  /** Records reopened because the two versions' latest decisions differ. */
-  readonly reopened: ReadonlyArray<{
-    readonly sourceId: string;
-    readonly stage: ScientReviewStage;
-  }>;
-}
+export type { ScientReviewCombineReport } from "./systematicReview.ts";
 
 const searchDetails = ({ sourceIds: _ids, ...details }: ScientReviewSearch) => details;
 
@@ -377,7 +375,98 @@ export async function resolveScientReviewConflict(input: {
     }
     await NodeFSP.rm(conflictReviewPath, { force: true });
     await NodeFSP.rm(conflictSnapshotPath, { force: true });
+    const worthKeeping =
+      report !== null &&
+      report.undecidedPairs.length + report.differingSearches.length + report.reopened.length > 0;
+    if (worthKeeping) {
+      await atomicWriteJson(
+        NodePath.join(folder, COMBINE_REPORT_FILE),
+        { formatVersion: 1, combinedAt: new Date().toISOString(), report },
+        MAX_REVIEW_BYTES,
+      );
+    }
     await NodeFSP.rmdir(folder).catch(() => undefined);
     return { outcome: "resolved", report };
+  });
+}
+
+function versionSummary(
+  conflictId: string | null,
+  review: ScientSystematicReview,
+): ScientReviewVersionSummary {
+  const decisions = STAGES.flatMap((stage) => [...scientReviewDecisions(review, stage).values()]);
+  const lastDecidedAt = review.screening.reduce<string | null>(
+    (latest, entry) => (latest === null || entry.decidedAt > latest ? entry.decidedAt : latest),
+    null,
+  );
+  return {
+    conflictId,
+    title: review.title,
+    updatedAt: review.updatedAt,
+    updatedBy: review.updatedBy,
+    searches: review.searches.length,
+    records: new Set([
+      ...review.searches.flatMap((search) => search.sourceIds),
+      ...review.otherSourceIds,
+    ]).size,
+    decisions: decisions.length,
+    lastDecidedAt,
+  };
+}
+
+/** The version in force and each other version, for the picker. Reads only. */
+export async function readScientReviewVersions(input: {
+  readonly projectRoot: string;
+  readonly reviewId: string;
+}): Promise<{
+  readonly current: ScientReviewVersionSummary | null;
+  readonly versions: ReadonlyArray<ScientReviewVersionSummary>;
+}> {
+  const root = await projectRootFor(input.projectRoot);
+  const conflicts = await listScientReviewConflicts(input);
+  if (conflicts.length === 0) return { current: null, versions: [] };
+  const text = await readText(reviewFile(root, input.reviewId));
+  let current: ScientSystematicReview | null = null;
+  try {
+    current = text ? decodeReview(JSON.parse(text)) : null;
+  } catch {
+    current = null;
+  }
+  return {
+    current: current ? versionSummary(null, current) : null,
+    versions: conflicts.map((conflict) => versionSummary(conflict.conflictId, conflict.review)),
+  };
+}
+
+/** Combine's report for a review, until someone dismisses it. */
+export async function readScientReviewCombineReport(input: {
+  readonly projectRoot: string;
+  readonly reviewId: string;
+}): Promise<(ScientReviewCombineReport & { readonly combinedAt: string }) | null> {
+  const root = await projectRootFor(input.projectRoot);
+  const text = await readText(
+    NodePath.join(conflictFolder(root, input.reviewId), COMBINE_REPORT_FILE),
+  );
+  if (!text) return null;
+  try {
+    const saved = decodeCombineReportFile(JSON.parse(text));
+    return { ...saved.report, combinedAt: saved.combinedAt };
+  } catch {
+    return null;
+  }
+}
+
+export async function dismissScientReviewCombineReport(input: {
+  readonly projectRoot: string;
+  readonly reviewId: string;
+}): Promise<"dismissed" | "nothing-to-dismiss"> {
+  const root = await projectRootFor(input.projectRoot);
+  const folder = conflictFolder(root, input.reviewId);
+  return scientSourceStoreInternals.withOperationLock(`${root}:reviews-write`, async () => {
+    const filePath = NodePath.join(folder, COMBINE_REPORT_FILE);
+    if ((await readText(filePath)) === null) return "nothing-to-dismiss";
+    await NodeFSP.rm(filePath, { force: true });
+    await NodeFSP.rmdir(folder).catch(() => undefined);
+    return "dismissed";
   });
 }

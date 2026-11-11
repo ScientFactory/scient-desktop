@@ -10,11 +10,14 @@ import {
   ScientSourcesBackend,
   type ScientSourcesBackendKind,
 } from "../../../scient/sources/SourcesBackend.ts";
-import { ScientSourcesToolkitRegistrationLive } from "../../McpHttpServer.ts";
+import {
+  ScientSourcesToolkitRegistrationLive,
+  ScientSystematicReviewsToolkitRegistrationLive,
+} from "../../McpHttpServer.ts";
 
 const utf8Bytes = (text: string) => Buffer.byteLength(text, "utf8");
 
-/** The Sources tools as the budget test measures the whole list: what the model sees. */
+/** The Sources and review tools as the budget test measures the whole list: what the model sees. */
 const sourcesToolBytes = (backend: ScientSourcesBackendKind) =>
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
@@ -31,7 +34,10 @@ const sourcesToolBytes = (backend: ScientSourcesBackendKind) =>
     );
   }).pipe(
     Effect.provide(
-      ScientSourcesToolkitRegistrationLive.pipe(
+      Layer.mergeAll(
+        ScientSourcesToolkitRegistrationLive,
+        ScientSystematicReviewsToolkitRegistrationLive,
+      ).pipe(
         Layer.provide(Layer.succeed(WorkspaceBindingResolver, workspaceResolverForTest(new Map()))),
         Layer.provide(Layer.succeed(ScientSourcesBackend, backend)),
         Layer.provideMerge(McpServer.McpServer.layer),
@@ -48,6 +54,6 @@ it.effect("measures the tool list the library backend advertises", () =>
     expect({
       mcpToolListJsonBytes: budget.mcpToolListJsonBytes,
       libraryMcpToolListJsonBytes: budget.mcpToolListJsonBytes - project + library,
-    }).toEqual({ mcpToolListJsonBytes: 110_523, libraryMcpToolListJsonBytes: 111_496 });
+    }).toEqual({ mcpToolListJsonBytes: 110_523, libraryMcpToolListJsonBytes: 111_936 });
   }),
 );

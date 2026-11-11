@@ -135,7 +135,13 @@ export const askedForLibrary = Effect.fn("Papers.askedForLibrary")(function* (
   if (sourceId === undefined) return { asked: { ...paper, library: true } };
   // Library mode: a library ID, or this project's source ID resolved to its library record.
   const library = yield* resolveScientLibraryStoreAt(root, "write").pipe(
-    Effect.mapError(() => unavailable("The Library could not be read.")),
+    Effect.mapError((error) =>
+      unavailable(
+        error._tag === "ScientLibraryMoveBusyError"
+          ? error.message
+          : "The Library could not be read.",
+      ),
+    ),
   );
   const record = yield* Effect.tryPromise({
     try: async () => {

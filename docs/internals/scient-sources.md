@@ -687,8 +687,12 @@ deletes v1 files; a `pins.json` on its own never does.
 
 **Steps.**
 
-1. Locks: this project's move, reviews and pins locks, then the library lock,
-   held for the whole run. Abandoned staging is dropped.
+1. Locks: this project's move, reviews and pins locks, then this checkout's
+   move lock (`migrations/<instanceId>/move.lock`, the library lock's SQLite
+   file lock on another file), held for the whole run so no other process
+   moves the same checkout. The library lock itself is taken only in bounded
+   holds (see "Lock holds" below). Abandoned staging is dropped. A project with
+   no journal and no v1 store returns before any lock and writes nothing.
 2. Copy: records rewritten to format 2 (no `projectId`; the note goes to the
    pin), their history, trash entries, Zotero merge bases, PDFs and full text
    by hash, and annotation files for library PDFs, joined by annotation ID
@@ -763,8 +767,13 @@ pairs, screening and retrieval. A pair marked duplicate in one version and
 distinct in the other is dropped from both lists and reported as undecided. A
 source whose latest decision differs between the two gets a `cleared` entry
 with the note "Decided differently in two copies". The snapshot covering the
-whole membership is published and read back before the review. Nothing calls
-these yet; 5e adds the conflict line and the agent action.
+whole membership is published and read back before the review. A combine that
+leaves something to decide stores its report as `combined.json` in the
+review's conflict folder (the conflict listing never offers it) until someone
+dismisses it (`dismissScientReviewCombineReport`). `readScientReviewVersions`
+summarizes the version in force and each other version for the picker: title,
+who changed it last and when, searches, records, decisions in force and the
+latest decision's date.
 
 **Git.** `libraryMoveGitTracked` runs `git ls-files -z -- .scient/sources`
 through `GitVcsDriver` before the first cleanup. Tracked files are deleted from
@@ -793,6 +802,81 @@ Scient wrote them, so the staging folder is dropped, the journal returns to
 the store is published, and nothing under `.scient/sources` is written again:
 changes made there since are kept. Until the move back finishes, the project
 counts as moved.
+
+#### Lock holds, progress and one move per project (5e-1)
+
+**Lock holds.** No single hold of the library lock grows with the number of
+PDFs, so other library writers interleave with a long move:
+
+| Hold                                                           | What runs in it                                                                                                 |
+| -------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- |
+| Each batch of 200 records                                      | `settleRecord` (records, history, the identity check, diverged imports); aliases are read again per batch       |
+| Each batch of 200 trash entries, merge bases, annotation files | exclusive creates; annotation joins                                                                             |
+| One                                                            | the instance map write                                                                                          |
+| One                                                            | `mergeScientLibraryDuplicates`, collections and saved searches                                                  |
+| One                                                            | stage, `prepared`, switch, `committed`                                                                          |
+| Move back: one, then one                                       | the records, reviews and bibliography of the rebuilt store; then publish, highlights, `pins.json`, `moved-back` |
+
+Between holds, with only the move lock: PDF and full-text copies (both
+directions), verification and backups, and the whole cleanup. A crash between
+holds leaves `copying`, which reruns from step 1; the crash point
+`after-first-batch` and the test for an edit made in that gap cover it.
+
+**Progress.** `runScientLibraryMove` and the move back take `onProgress`
+(`{ phase, done, total }`, phases `sources`, `files`, `verifying`, `merging`,
+`switching`, `cleaning-up`, `restoring`; each counts its own items). Nothing
+about progress is written to the journal.
+
+**Measured** with `packages/scient-sources/scripts/measureLibraryMove.ts`
+(`pnpm run measure:library-move` in that package, Node 26; 5,000 records,
+1,250 PDFs with text, one review, five collections; the longest time another
+writer waited for the lock): before, 67.5 s total and 67.5 s held; after,
+63.4 s total and 1.6 s longest wait (Apple M5 Pro, 18 cores, macOS 26, shared
+with other work).
+
+**One move per project in the server** (`LibraryMove.ts`). A process-wide map,
+keyed by the project folder's real path, holds the running move or move back
+and its latest progress, plus the last failure's reason. A write's lazy move,
+the background pass and the move back all join a run that is going instead of
+starting another. A write waits up to `ScientLibraryMoveWait` (20 s); past it
+the call fails with `ScientLibraryMoveBusyError`, "This project's sources are
+still moving into your Library (1,240 of 5,000). Try again shortly.", and the
+move goes on. Agent tools return that message; routes fail with the reason
+`scient_sources_library_moving`. The background pass and the papers queue
+worker wait until the move ends. The move back runs in its own request, as
+before, but is registered in the same map.
+
+**Status** (`readLibraryMoveStatus`, route `moveStatus`,
+`POST /api/scient/sources/move/status` `{ root }`, read scope; a project
+server answers `nothing-to-move`). `ScientSourcesMoveStatus` by `state`:
+`nothing-to-move`; `waiting` (a v1 store not moved, or a move interrupted
+before it committed); `moving` with `progress`; `done` with `lines`;
+`cleanup-pending` with `filesLeft` and `lines`; `restoring` with `progress`
+(null when a move back stopped); `moved-back` with `restoredSources` and
+`restoredPdfs`; `failed` with `reason`. A running move and a failure come from
+memory, the rest from the journal (`readScientLibraryMoveStatus`). `lines` is
+`scientLibraryMoveStatusLines`: the merge line, the git line, and "Undo for
+bulk edits made before the move was not kept." when the v1 store had
+`bulk-edits/` (the journal's `bulkEditUndo`). The organize action
+`dismiss-move-summary` hides the lines of the latest run;
+`migrations/<instanceId>/summary.json` records the dismissed run, so a later
+run has a summary of its own. Agents see the same state as `move` in
+`scient_sources_list` results (library mode, while it says something) and
+dismiss it with `scient_sources_organize`.
+
+**Review conflicts on the wire.** `systematicReview` carries
+`conflictVersions` (when above zero) and `combineReport`.
+`systematicReviewConflicts` (read) returns `{ current, versions,
+combineReport }`. `systematicReviewConflict` (operate) takes
+`{ root, reviewId, change }`, with `change` `{ action: "resolve", conflictId,
+pick }` or `{ action: "dismiss-report" }`. In library mode
+`scient_sources_systematic_reviews` lists `conflicts` and `combineReport` on a
+review, and `scient_sources_systematic_review_update` takes `resolve-conflict`
+and `dismiss-combine-report`. The library tool list is 111,936 bytes; the
+project list is unchanged.
+
+**The v1 record-change listener** (`startManagedBibliographySync`) skips a
+root that is the personal library (`library.json` and no project file).
 
 ## Source truth and provenance
 

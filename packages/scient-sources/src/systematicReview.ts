@@ -34,6 +34,36 @@ export const ScientReviewSearch = Schema.Struct({
 });
 export type ScientReviewSearch = typeof ScientReviewSearch.Type;
 
+const { sourceIds: _searchSourceIds, ...searchDetailFields } = ScientReviewSearch.fields;
+
+/** What Combine left for a person: kept beside the review's conflict files until dismissed. */
+export const ScientReviewCombineReport = Schema.Struct({
+  /** Pairs one version marks duplicate and the other distinct; left undecided. */
+  undecidedPairs: Schema.Array(Schema.Tuple([NonEmptyString, NonEmptyString])),
+  /** Searches in both versions whose details differ; the existing details are kept. */
+  differingSearches: Schema.Array(
+    Schema.Struct({ searchId: NonEmptyString, incoming: Schema.Struct(searchDetailFields) }),
+  ),
+  /** Records reopened because the two versions' latest decisions differ. */
+  reopened: Schema.Array(Schema.Struct({ sourceId: NonEmptyString, stage: ScientReviewStage })),
+});
+export type ScientReviewCombineReport = typeof ScientReviewCombineReport.Type;
+
+/** One version of a review, enough to choose between two: who changed it last, and its decisions. */
+export const ScientReviewVersionSummary = Schema.Struct({
+  /** Null for the version in force; otherwise the ID to resolve with. */
+  conflictId: Schema.NullOr(NonEmptyString),
+  title: Schema.String,
+  updatedAt: NonEmptyString,
+  updatedBy: ScientSourceActor,
+  searches: Count,
+  records: Count,
+  /** Decisions in force, both stages together, and when the latest was made. */
+  decisions: Count,
+  lastDecidedAt: Schema.NullOr(NonEmptyString),
+});
+export type ScientReviewVersionSummary = typeof ScientReviewVersionSummary.Type;
+
 export const ScientReviewScreening = Schema.Struct({
   sourceId: NonEmptyString,
   stage: ScientReviewStage,

@@ -113,6 +113,20 @@ export const ScientSourcesListResult = Schema.Struct({
   records: Schema.Array(ScientSourceAgentSummary).pipe(Schema.check(Schema.isMaxLength(50))),
   total: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   nextOffset: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Library mode: the move of this project into the Library, while there is something to say. */
+  move: Schema.optionalKey(
+    Schema.Struct({
+      state: Schema.Literals([
+        "waiting",
+        "moving",
+        "done",
+        "cleanup-pending",
+        "restoring",
+        "failed",
+      ]),
+      message: Schema.String,
+    }),
+  ),
 });
 
 export const ScientSourceAgentDetail = Schema.Struct({
@@ -978,6 +992,7 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   }),
   Schema.Struct({ action: Schema.Literal("undo-merge"), mergeId: NonEmptyString }),
   Schema.Struct({ action: Schema.Literal("move-back") }),
+  Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -997,6 +1012,8 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     "moved-back",
     "not-moved",
     "project-store-present",
+    "dismissed",
+    "nothing-to-dismiss",
   ]),
   pin: Schema.optionalKey(
     Schema.Struct({
@@ -1025,7 +1042,7 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; pinning again returns the pin, with the new note); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); move-back returns this project's sources from the Library into the project.`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; pinning again returns the pin, with the new note); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list.`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );

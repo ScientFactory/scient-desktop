@@ -87,6 +87,8 @@ export const resolveScientSourcesStoreFor = Effect.fn("ScientSourcesBackend.reso
   project: ScientSourcesProject,
   access: ScientSourcesAccess,
   actor: ScientSourceActor = "user",
+  /** Background work waits for a running move; a request waits its bound (`ScientLibraryMoveWait`). */
+  wait: "bounded" | "until-done" = "bounded",
 ) {
   const backend = yield* ScientSourcesBackend;
   if (backend === "project") return projectStore(project);
@@ -101,7 +103,7 @@ export const resolveScientSourcesStoreFor = Effect.fn("ScientSourcesBackend.reso
   if (access === "write") {
     yield* Effect.promise(() => ensureScientLibrary(root));
     exists = true;
-    const outcome = yield* moveProjectIntoLibrary({ root: project.root, library, actor });
+    const outcome = yield* moveProjectIntoLibrary({ root: project.root, library, actor, wait });
     if (outcome === "moved-back" || outcome === "waiting-import") return projectStore(project);
     if (outcome === "failed" && (yield* projectNotMoved(project.root, library))) {
       return projectStore(project);
@@ -132,14 +134,18 @@ class ScientLibraryProjectError extends Schema.TaggedError<ScientLibraryProjectE
  * the papers queue. Under the project backend it is null and reads nothing.
  */
 export const resolveScientLibraryStoreAt = Effect.fn("ScientSourcesBackend.resolveLibraryAt")(
-  function* (root: string, access: ScientSourcesAccess) {
+  function* (
+    root: string,
+    access: ScientSourcesAccess,
+    wait: "bounded" | "until-done" = "bounded",
+  ) {
     if ((yield* ScientSourcesBackend) === "project") return null;
     const { projectId } = yield* Effect.tryPromise({
       try: () => readScientProjectIdentity(root),
       catch: () =>
         new ScientLibraryProjectError({ message: "This folder is not a Scient project." }),
     });
-    const store = yield* resolveScientSourcesStoreFor({ projectId, root }, access);
+    const store = yield* resolveScientSourcesStoreFor({ projectId, root }, access, "user", wait);
     return store.kind === "library" ? store : null;
   },
 );

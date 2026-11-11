@@ -19,6 +19,8 @@ import {
   ScientSourceWebPage,
   ScientSourcesBulkRequestChange,
   ScientSourcesBulkResult,
+  ScientReviewCombineReport,
+  ScientReviewVersionSummary,
   ScientSystematicReviewAction,
   ScientSystematicReviewChangeResult,
   ScientSystematicReviewDetail,
@@ -53,6 +55,7 @@ import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 
 const NonEmptyString = Schema.Trimmed.check(Schema.isNonEmpty());
 const BoundedPageSize = Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 }));
+const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 /** This project's pinned sources, or the whole personal library; only a library server reads it. */
 export const ScientSourcesScope = Schema.Literals(["project", "library"]);
@@ -286,6 +289,8 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("undo-merge"), mergeId: NonEmptyString }),
   /** The move's Undo: the project's Sources go back into `.scient/sources`. */
   Schema.Struct({ action: Schema.Literal("move-back") }),
+  /** Hides the move's summary lines in this checkout's status, until a later run. */
+  Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -314,6 +319,8 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "moved-back",
     "not-moved",
     "project-store-present",
+    "dismissed",
+    "nothing-to-dismiss",
   ]),
   pin: Schema.optionalKey(
     Schema.Struct({
@@ -363,10 +370,23 @@ export const ScientSystematicReviewRecord = Schema.Struct({
 });
 export type ScientSystematicReviewRecord = typeof ScientSystematicReviewRecord.Type;
 
+/** Combine's report on a review, kept until someone dismisses it. */
+export const ScientSystematicReviewCombineReport = Schema.Struct({
+  ...ScientReviewCombineReport.fields,
+  combinedAt: NonEmptyString,
+});
+export type ScientSystematicReviewCombineReport = typeof ScientSystematicReviewCombineReport.Type;
+
 export const ScientSystematicReviewResult = Schema.Struct({
   detail: Schema.NullOr(ScientSystematicReviewDetail),
   /** A library server's review records; a project server leaves them to the overview. */
   records: Schema.optionalKey(Schema.Array(ScientSystematicReviewRecord)),
+  /**
+   * Library server, present when above zero: other versions of this review that a copy of the
+   * project brought ("This review has another version"); `systematicReviewConflicts` lists them.
+   */
+  conflictVersions: Schema.optionalKey(Count),
+  combineReport: Schema.optionalKey(ScientSystematicReviewCombineReport),
 });
 export type ScientSystematicReviewResult = typeof ScientSystematicReviewResult.Type;
 
@@ -375,6 +395,93 @@ export const ScientSystematicReviewChangeRequest = Schema.Struct({
   change: ScientSystematicReviewAction,
 });
 export type ScientSystematicReviewChangeRequest = typeof ScientSystematicReviewChangeRequest.Type;
+
+/** The picker for a review with other versions: the one in force, then each other version. */
+export const ScientSystematicReviewConflictsResult = Schema.Struct({
+  current: Schema.NullOr(ScientReviewVersionSummary),
+  versions: Schema.Array(ScientReviewVersionSummary),
+  combineReport: Schema.NullOr(ScientSystematicReviewCombineReport),
+});
+export type ScientSystematicReviewConflictsResult =
+  typeof ScientSystematicReviewConflictsResult.Type;
+
+/** Keep this version, use the other or combine; or dismiss Combine's report. */
+export const ScientSystematicReviewConflictChange = Schema.Union([
+  Schema.Struct({
+    action: Schema.Literal("resolve"),
+    conflictId: NonEmptyString,
+    pick: Schema.Literals(["keep", "use-other", "combine"]),
+  }),
+  Schema.Struct({ action: Schema.Literal("dismiss-report") }),
+]);
+export type ScientSystematicReviewConflictChange = typeof ScientSystematicReviewConflictChange.Type;
+
+export const ScientSystematicReviewConflictRequest = Schema.Struct({
+  root: NonEmptyString,
+  reviewId: NonEmptyString,
+  change: ScientSystematicReviewConflictChange,
+});
+export type ScientSystematicReviewConflictRequest =
+  typeof ScientSystematicReviewConflictRequest.Type;
+
+export const ScientSystematicReviewConflictResult = Schema.Struct({
+  outcome: Schema.Literals(["resolved", "not-found", "dismissed", "nothing-to-dismiss"]),
+  /** After a combine that left something to decide; also kept on the review until dismissed. */
+  combineReport: Schema.optionalKey(ScientSystematicReviewCombineReport),
+});
+export type ScientSystematicReviewConflictResult = typeof ScientSystematicReviewConflictResult.Type;
+
+export const ScientSourcesMoveStatusRequest = Schema.Struct({ root: NonEmptyString });
+export type ScientSourcesMoveStatusRequest = typeof ScientSourcesMoveStatusRequest.Type;
+
+/** Where a move or a move back is; `done` of `total` counts the phase's own items. */
+export const ScientSourcesMoveProgress = Schema.Struct({
+  phase: Schema.Literals([
+    "sources",
+    "files",
+    "verifying",
+    "merging",
+    "switching",
+    "cleaning-up",
+    "restoring",
+  ]),
+  done: Count,
+  total: Count,
+});
+export type ScientSourcesMoveProgress = typeof ScientSourcesMoveProgress.Type;
+
+/**
+ * The one-time move of this project into the personal library. A project server always answers
+ * `nothing-to-move`. `lines` is the summary, empty once dismissed (`dismiss-move-summary`).
+ */
+export const ScientSourcesMoveStatus = Schema.Union([
+  Schema.Struct({ state: Schema.Literal("nothing-to-move") }),
+  /** A v1 store not moved yet, or a move interrupted before it committed; a write moves it. */
+  Schema.Struct({ state: Schema.Literal("waiting") }),
+  Schema.Struct({
+    state: Schema.Literal("moving"),
+    progress: Schema.NullOr(ScientSourcesMoveProgress),
+  }),
+  Schema.Struct({ state: Schema.Literal("done"), lines: Schema.Array(Schema.String) }),
+  /** Moved, with old files left that could not be removed yet (open in another program). */
+  Schema.Struct({
+    state: Schema.Literal("cleanup-pending"),
+    filesLeft: Count,
+    lines: Schema.Array(Schema.String),
+  }),
+  /** A move back running (with progress) or interrupted (null; the next write finishes it). */
+  Schema.Struct({
+    state: Schema.Literal("restoring"),
+    progress: Schema.NullOr(ScientSourcesMoveProgress),
+  }),
+  Schema.Struct({
+    state: Schema.Literal("moved-back"),
+    restoredSources: Count,
+    restoredPdfs: Count,
+  }),
+  Schema.Struct({ state: Schema.Literal("failed"), reason: Schema.String }),
+]);
+export type ScientSourcesMoveStatus = typeof ScientSourcesMoveStatus.Type;
 
 export const ScientSourcesBulkUpdateRequest = Schema.Struct({
   root: NonEmptyString,

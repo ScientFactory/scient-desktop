@@ -15,6 +15,7 @@ export const SCIENT_SOURCES_HTTP_COMMANDS = {
   remove: "scientSources.remove",
   organize: "scientSources.organize",
   systematicReviewChange: "scientSources.systematicReviewChange",
+  systematicReviewConflict: "scientSources.systematicReviewConflict",
   bulkUpdate: "scientSources.bulkUpdate",
   addByIdentifier: "scientSources.addByIdentifier",
   restore: "scientSources.restore",

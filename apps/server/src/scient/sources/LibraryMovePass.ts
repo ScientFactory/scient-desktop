@@ -51,6 +51,7 @@ export const runLibraryMovePass = Effect.fn("ScientLibraryMove.pass")(function* 
       root,
       library: scientLibraryLocation(libraryRoot),
       actor: "user",
+      wait: "until-done",
     });
     outcomes.set(root, outcome);
     yield* Effect.yieldNow;

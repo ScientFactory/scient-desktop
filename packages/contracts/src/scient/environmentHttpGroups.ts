@@ -71,6 +71,9 @@ import {
   ScientSourcesBulkUpdateRequest,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewChangeResult,
+  ScientSystematicReviewConflictRequest,
+  ScientSystematicReviewConflictResult,
+  ScientSystematicReviewConflictsResult,
   ScientSystematicReviewList,
   ScientSystematicReviewRequest,
   ScientSystematicReviewResult,
@@ -88,6 +91,8 @@ import {
   ScientSourcesDiscardStagedResult,
   ScientSourcesLocalPdfUploadRequest,
   ScientSourcesLocalPdfUploadResult,
+  ScientSourcesMoveStatus,
+  ScientSourcesMoveStatusRequest,
   ScientSourcesOverviewResult,
   ScientSourcesOverviewRequest,
   ScientSourcesPreflightRequest,
@@ -219,6 +224,8 @@ export const SCIENT_ENVIRONMENT_INTERNAL_ERROR_REASONS = [
   "scient_project_inspection_failed",
   "scient_project_initialization_failed",
   "scient_sources_operation_failed",
+  /** A write waited its bound for the project's move into the library; the move goes on. */
+  "scient_sources_library_moving",
   "scient_latex_build_failed",
   "scient_latex_navigation_failed",
   "scient_latex_toolchain_failed",
@@ -419,6 +426,34 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientSystematicReviewChangeRequest,
         success: ScientSystematicReviewChangeResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("systematicReviewConflicts", "/api/scient/sources/reviews/conflicts", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSystematicReviewRequest,
+        success: ScientSystematicReviewConflictsResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post(
+        "systematicReviewConflict",
+        "/api/scient/sources/reviews/conflicts/change",
+        {
+          headers: OptionalBearerHeaders,
+          payload: ScientSystematicReviewConflictRequest,
+          success: ScientSystematicReviewConflictResult,
+          error: EnvironmentHttpCommonError,
+        },
+      ).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("moveStatus", "/api/scient/sources/move/status", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesMoveStatusRequest,
+        success: ScientSourcesMoveStatus,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     )

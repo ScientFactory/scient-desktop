@@ -1,7 +1,9 @@
 import {
   ScientPrismaCounts,
+  ScientReviewCombineReport,
   ScientReviewDecision,
   ScientReviewStage,
+  ScientReviewVersionSummary,
   ScientSourceActor,
   ScientSystematicReviewAction,
   ScientSystematicReviewChangeResult,
@@ -18,6 +20,9 @@ import { ScientSourcesToolError } from "../sources/tools.ts";
 const dependencies = [AgentInvocationContext.AgentInvocationContext, WorkspaceBindingResolver];
 const Id = Schema.String.check(Schema.isNonEmpty());
 const NullableText = Schema.NullOr(Schema.String);
+
+/** Combine's report on a review, until someone dismisses it. */
+const CombineReport = Schema.Struct({ ...ScientReviewCombineReport.fields, combinedAt: Id });
 
 const ReviewRecord = Schema.Struct({
   sourceId: Id,
@@ -67,6 +72,9 @@ export const ScientSystematicReviewsReadResult = Schema.Struct({
           }),
         ).pipe(Schema.check(Schema.isMaxLength(1_000))),
       ),
+      /** Library mode: other versions of this review from a copy of the project, to pick from. */
+      conflicts: Schema.optionalKey(Schema.Array(ScientReviewVersionSummary)),
+      combineReport: Schema.optionalKey(CombineReport),
     }),
   ),
   issues: Schema.optionalKey(Schema.Array(Schema.String)),
@@ -96,26 +104,73 @@ const ScientSystematicReviewsTool = Tool.make("scient_sources_systematic_reviews
     requiredCapabilities: ["sources:read"],
   });
 
-const ScientSystematicReviewUpdateTool = Tool.make("scient_sources_systematic_review_update", {
-  description:
-    "Change a systematic review when the user asks. create-review with a title in use returns that review. Records are Library sources: add them first, then log-search with sourceIds or collectionId (database, exact query, searchedOn, resultCount); the same database, query and date replaces that search. add-sources adds records found otherwise. mark-duplicate removes a duplicate (keep duplicateOf); mark-distinct dismisses a pair. screen: include, exclude or maybe at title-abstract, then full-text for those included (exclusions there need a reason). record-retrieval: sought, retrieved or not-retrieved (not assessed); a full-text decision implies retrieved. Decisions are credited to the agent; the latest counts; clear-decision reopens. skippedSourceIds were not applied.",
-  parameters: Schema.Struct({ change: ScientSystematicReviewAction }),
-  success: ScientSystematicReviewChangeResult,
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Update a systematic review")
-  .annotate(Tool.Readonly, false)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, {
-    id: "sources.systematic_review.update",
-    scope: "workspace",
-    requiredCapabilities: ["sources:read", "sources:write"],
-  });
+const UPDATE_DESCRIPTION =
+  "Change a systematic review when the user asks. create-review with a title in use returns that review. Records are Library sources: add them first, then log-search with sourceIds or collectionId (database, exact query, searchedOn, resultCount); the same database, query and date replaces that search. add-sources adds records found otherwise. mark-duplicate removes a duplicate (keep duplicateOf); mark-distinct dismisses a pair. screen: include, exclude or maybe at title-abstract, then full-text for those included (exclusions there need a reason). record-retrieval: sought, retrieved or not-retrieved (not assessed); a full-text decision implies retrieved. Decisions are credited to the agent; the latest counts; clear-decision reopens. skippedSourceIds were not applied.";
+
+/** Library mode: the pick between a review's versions from copies of the project. */
+export const ScientSystematicReviewLibraryAction = Schema.Union([
+  ...ScientSystematicReviewAction.members,
+  Schema.Struct({
+    action: Schema.Literal("resolve-conflict"),
+    reviewId: Id,
+    conflictId: Id,
+    pick: Schema.Literals(["keep", "use-other", "combine"]),
+  }),
+  Schema.Struct({ action: Schema.Literal("dismiss-combine-report"), reviewId: Id }),
+]);
+export type ScientSystematicReviewLibraryAction = typeof ScientSystematicReviewLibraryAction.Type;
+
+const ScientSystematicReviewLibraryChangeResult = Schema.Struct({
+  ...ScientSystematicReviewChangeResult.fields,
+  outcome: Schema.Literals([
+    ...ScientSystematicReviewChangeResult.fields.outcome.literals,
+    "resolved",
+    "dismissed",
+    "nothing-to-dismiss",
+  ]),
+  combineReport: Schema.optionalKey(CombineReport),
+});
+
+const reviewUpdateTool = <A extends Schema.Top, R extends Schema.Top>(
+  description: string,
+  change: A,
+  success: R,
+) =>
+  Tool.make("scient_sources_systematic_review_update", {
+    description,
+    parameters: Schema.Struct({ change }),
+    success,
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Update a systematic review")
+    .annotate(Tool.Readonly, false)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, {
+      id: "sources.systematic_review.update",
+      scope: "workspace",
+      requiredCapabilities: ["sources:read", "sources:write"],
+    });
+
+const ScientSystematicReviewUpdateTool = reviewUpdateTool(
+  UPDATE_DESCRIPTION,
+  ScientSystematicReviewAction,
+  ScientSystematicReviewChangeResult,
+);
 
 export const ScientSystematicReviewsToolkit = Toolkit.make(
   ScientSystematicReviewsTool,
   ScientSystematicReviewUpdateTool,
+);
+
+/** The same tools, with the pick between a review's versions from copies of the project. */
+export const ScientSystematicReviewsLibraryToolkit = Toolkit.make(
+  ScientSystematicReviewsTool,
+  reviewUpdateTool(
+    `${UPDATE_DESCRIPTION} A review with conflicts has versions from a copy of this project: resolve-conflict with a conflictId and the user's pick (keep, use-other or combine); dismiss-combine-report clears combineReport.`,
+    ScientSystematicReviewLibraryAction,
+    ScientSystematicReviewLibraryChangeResult,
+  ),
 );

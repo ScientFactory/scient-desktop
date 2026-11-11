@@ -344,6 +344,19 @@ export async function syncPinnedBibliography(input: {
 
 const scheduled = new Map<string, { again: boolean }>();
 
+/** The personal library is no project; library-mode callers sync their projects' files. */
+const isPersonalLibraryRoot = (root: string) =>
+  Promise.all([
+    NodeFSP.lstat(NodePath.join(root, "library.json")).then(
+      (stats) => stats.isFile(),
+      () => false,
+    ),
+    NodeFSP.lstat(NodePath.join(root, ".scient", "project.json")).then(
+      () => true,
+      () => false,
+    ),
+  ]).then(([library, project]) => library && !project);
+
 /** Coalesces bursts of Library writes into at most one follow-up sync per project. */
 function scheduleManagedBibliographySync(root: string): void {
   if (backfilling.has(root)) return;
@@ -356,6 +369,7 @@ function scheduleManagedBibliographySync(root: string): void {
   scheduled.set(root, entry);
   void (async () => {
     try {
+      if (await isPersonalLibraryRoot(root)) return;
       while (entry.again) {
         entry.again = false;
         await syncManagedBibliography(root).catch(() => undefined);

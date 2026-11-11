@@ -3,6 +3,10 @@ import {
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
 } from "@t3tools/contracts";
+import {
+  scientLibraryLocation,
+  scientLibraryRootFor,
+} from "@scientfactory/scient-sources/library-root";
 import * as Effect from "effect/Effect";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as Path from "effect/Path";
@@ -72,6 +76,8 @@ import {
   bulkUpdateLibrarySources,
   isLibraryOrganizeAction,
   changeLibraryReview,
+  changeLibraryReviewConflict,
+  libraryReviewConflicts,
   deleteLibrarySourcesPermanently,
   exportLibrarySources,
   libraryAttachmentMaterial,
@@ -94,7 +100,12 @@ import {
   updateLibraryProjectNote,
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
-import { resolveScientLibraryStoreAt, type ScientSourcesLibraryStore } from "./SourcesBackend.ts";
+import { readLibraryMoveStatus } from "./LibraryMove.ts";
+import {
+  resolveScientLibraryStoreAt,
+  ScientSourcesBackend,
+  type ScientSourcesLibraryStore,
+} from "./SourcesBackend.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
   "ScientSourcesOperationError",
@@ -131,7 +142,15 @@ const libraryFor = (root: string, scope: Scope) =>
     root,
     scope === AuthOrchestrationOperateScope ? "write" : "read",
   ).pipe(
-    Effect.catch((cause) => failEnvironmentInternal("scient_sources_operation_failed", cause)),
+    Effect.catch((cause) =>
+      failEnvironmentInternal(
+        // Retryable: the move goes on, and `moveStatus` reports its progress.
+        cause._tag === "ScientLibraryMoveBusyError"
+          ? "scient_sources_library_moving"
+          : "scient_sources_operation_failed",
+        cause,
+      ),
+    ),
   );
 
 /** Like `handle`, with the store resolved the way agent tools resolve it. */
@@ -385,6 +404,45 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
             library ? libraryReview(library, args.payload) : getSystematicReview(args.payload),
           ),
+        )
+        .handle("systematicReviewConflicts", (args) =>
+          route(
+            args.endpoint.name,
+            AuthOrchestrationReadScope,
+            args.payload.root,
+            async (library) =>
+              library
+                ? libraryReviewConflicts(library, args.payload)
+                : { current: null, versions: [], combineReport: null },
+          ),
+        )
+        .handle("systematicReviewConflict", (args) =>
+          route(
+            args.endpoint.name,
+            AuthOrchestrationOperateScope,
+            args.payload.root,
+            async (library) => {
+              if (!library) {
+                throw new Error("Versions of a review from copies of a project need the Library.");
+              }
+              return changeLibraryReviewConflict(library, args.payload);
+            },
+          ),
+        )
+        .handle("moveStatus", (args) =>
+          Effect.gen(function* () {
+            yield* annotateEnvironmentRequest(args.endpoint.name);
+            yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+            if ((yield* ScientSourcesBackend) === "project") {
+              return { state: "nothing-to-move" } as const;
+            }
+            const config = yield* ServerConfig.ServerConfig;
+            // Reads only: a library that was never created stays uncreated.
+            return yield* readLibraryMoveStatus({
+              root: args.payload.root,
+              library: scientLibraryLocation(scientLibraryRootFor(config.stateDir)),
+            });
+          }),
         )
         .handle("systematicReviewChange", (args) =>
           route(args.endpoint.name, AuthOrchestrationOperateScope, args.payload.root, (library) =>

@@ -2,6 +2,12 @@ import * as DocumentText from "./provider/DocumentText.ts";
 // SCIENT-FORK:START — Scient Accounts: isolate account storage and key handling in server tests.
 import * as AccountsTestkit from "./scient/accounts/Accounts.testkit.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Select the Sources backend through its reference.
+import {
+  ScientSourcesBackend,
+  type ScientSourcesBackendKind,
+} from "./scient/sources/SourcesBackend.ts";
+// SCIENT-FORK:END
 // @effect-diagnostics nodeBuiltinImport:off - HTTP router integration uses native transport boundaries.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
@@ -594,6 +600,9 @@ const makeBrowserOtlpPayload = (spanName: string) =>
 
 const buildAppUnderTest = (options?: {
   onPairingChangesSubscribed?: Effect.Effect<void>;
+  // SCIENT-FORK:START — Select the Sources backend through its reference.
+  scientSourcesBackend?: ScientSourcesBackendKind;
+  // SCIENT-FORK:END
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   transformThreadManagementV2?: (
     threads: ThreadManagementV2.ThreadManagementService["Service"],
@@ -1475,7 +1484,15 @@ const buildAppUnderTest = (options?: {
         Layer.provide(layerConfig),
       );
 
-    const services = yield* Layer.build(appLayer);
+    // SCIENT-FORK:START — Select the Sources backend through its reference.
+    const backendLayer =
+      options?.scientSourcesBackend === undefined
+        ? appLayer
+        : appLayer.pipe(
+            Layer.provide(Layer.succeed(ScientSourcesBackend, options.scientSourcesBackend)),
+          );
+    const services = yield* Layer.build(backendLayer);
+    // SCIENT-FORK:END
     return {
       ...config,
       auth: Context.get(services, EnvironmentAuth.EnvironmentAuth),
@@ -5247,6 +5264,25 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
           code: "insufficient_scope",
           requiredScope: "orchestration:operate",
         });
+      }).pipe(Effect.provide(NodeHttpServerTest)),
+    );
+
+    it.effect("answers a library-mode Sources route through the server's own layers", () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({ scientSourcesBackend: "library" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-move-status-" });
+        yield* fileSystem.makeDirectory(`${root}/.scient/sources/records`, { recursive: true });
+        yield* fileSystem.writeFileString(`${root}/.scient/sources/records/v1.json`, "{}\n");
+        const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: "orchestration:read",
+        });
+        const response = yield* HttpClient.post("/api/scient/sources/move/status", {
+          headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+          body: yield* HttpBody.json({ root }),
+        });
+        // A project server answers nothing-to-move; the library reads the server's state folder.
+        assert.deepEqual(yield* response.json, { state: "waiting" });
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
     // SCIENT-FORK:END

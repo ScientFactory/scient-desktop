@@ -113,8 +113,14 @@ import { ScientSourcesLibraryToolkit, ScientSourcesToolkit } from "./toolkits/so
 import { ScientSourcesBackend } from "../scient/sources/SourcesBackend.ts";
 import { ScientReferencesToolkitHandlersLive } from "./toolkits/references/handlers.ts";
 import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
-import { ScientSystematicReviewsToolkitHandlersLive } from "./toolkits/systematicReviews/handlers.ts";
-import { ScientSystematicReviewsToolkit } from "./toolkits/systematicReviews/tools.ts";
+import {
+  ScientSystematicReviewsLibraryToolkitHandlersLive,
+  ScientSystematicReviewsToolkitHandlersLive,
+} from "./toolkits/systematicReviews/handlers.ts";
+import {
+  ScientSystematicReviewsLibraryToolkit,
+  ScientSystematicReviewsToolkit,
+} from "./toolkits/systematicReviews/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
@@ -1460,9 +1466,18 @@ const ScientReferencesToolkitRegistrationLive = registerScientToolkit(ScientRefe
   Layer.provide(ScientReferencesToolkitHandlersLive),
 );
 
-const ScientSystematicReviewsToolkitRegistrationLive = registerScientToolkit(
-  ScientSystematicReviewsToolkit,
-).pipe(Layer.provide(ScientSystematicReviewsToolkitHandlersLive));
+/** Library mode adds the pick between a review's versions to the same two tools. */
+export const ScientSystematicReviewsToolkitRegistrationLive = Layer.unwrap(
+  Effect.gen(function* () {
+    return (yield* ScientSourcesBackend) === "library"
+      ? registerScientToolkit(ScientSystematicReviewsLibraryToolkit).pipe(
+          Layer.provide(ScientSystematicReviewsLibraryToolkitHandlersLive),
+        )
+      : registerScientToolkit(ScientSystematicReviewsToolkit).pipe(
+          Layer.provide(ScientSystematicReviewsToolkitHandlersLive),
+        );
+  }),
+);
 
 // SCIENT-FORK:START — PDF annotation agent tools.
 export const ScientAnnotationsToolkitRegistrationLive = registerScientToolkit(

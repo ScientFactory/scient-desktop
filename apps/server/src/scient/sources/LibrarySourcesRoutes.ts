@@ -19,7 +19,13 @@ import {
   mergeScientLibrarySources,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
-import { moveScientProjectBackIntoProject } from "@scientfactory/scient-sources/library-move";
+import { dismissScientLibraryMoveSummary } from "@scientfactory/scient-sources/library-move";
+import {
+  dismissScientReviewCombineReport,
+  readScientReviewCombineReport,
+  readScientReviewVersions,
+  resolveScientReviewConflict,
+} from "@scientfactory/scient-sources/library-review-conflicts";
 import {
   changeScientLibraryReview,
   listScientLibraryReviewRecords,
@@ -51,12 +57,15 @@ import {
 import type {
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesScope,
+  ScientSystematicReviewConflictChange,
   ScientSystematicReviewRecord,
+  ScientSystematicReviewResult,
 } from "@t3tools/contracts";
 
 import { exportBibliography } from "./BibliographyFileAdapter.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
+import { moveProjectBackIntoProject } from "./LibraryMove.ts";
 import {
   alsoPinnedIn,
   listProjectPinnedWorks,
@@ -482,7 +491,8 @@ export const isLibraryOrganizeAction = (
   change.action === "unpin" ||
   change.action === "merge" ||
   change.action === "undo-merge" ||
-  change.action === "move-back";
+  change.action === "move-back" ||
+  change.action === "dismiss-move-summary";
 
 const pinSummary = (pin: ScientProjectPin) => ({
   citationKey: pin.citationKey,
@@ -555,18 +565,28 @@ export async function organizeLibrarySources(
         unrevertedFields: undone.unrevertedFields,
       };
     }
-    case "move-back": {
-      const moved = await moveScientProjectBackIntoProject({
-        library: store.library,
-        projectRoot: store.root,
-        actor: ACTOR,
-      });
-      return moved.outcome === "moved-back"
-        ? { outcome: moved.outcome, restoredSources: moved.restoredSources }
-        : { outcome: moved.outcome };
-    }
+    case "move-back":
+      return moveBackResult(
+        await moveProjectBackIntoProject({
+          root: store.root,
+          library: store.library,
+          actor: ACTOR,
+        }),
+      );
+    case "dismiss-move-summary":
+      return {
+        outcome: await dismissScientLibraryMoveSummary({
+          library: store.library,
+          projectRoot: store.root,
+        }),
+      };
   }
 }
+
+export const moveBackResult = (moved: Awaited<ReturnType<typeof moveProjectBackIntoProject>>) =>
+  moved.outcome === "moved-back"
+    ? { outcome: moved.outcome, restoredSources: moved.restoredSources }
+    : { outcome: moved.outcome };
 
 async function mergeLibrarySources(
   store: Store,
@@ -647,15 +667,57 @@ const reviewRecordSummary = (entry: ScientLibraryReviewRecord): ScientSystematic
 });
 
 /** The review and its records under the IDs it stores; records removed here are left out. */
-export async function libraryReview(store: Store, input: { readonly reviewId: string }) {
+export async function libraryReview(
+  store: Store,
+  input: { readonly reviewId: string },
+): Promise<ScientSystematicReviewResult> {
   const access = { ...reviewAccess(store), projectRoot: store.root, reviewId: input.reviewId };
   const detail = await readScientLibraryReview(access);
   if (!detail) return { detail: null };
   const records = (await listScientLibraryReviewRecords(access)) ?? [];
+  const { versions, combineReport } = await libraryReviewConflicts(store, input);
   return {
     detail,
     records: records.filter((entry) => !entry.removed).map(reviewRecordSummary),
+    ...(versions.length > 0 ? { conflictVersions: versions.length } : {}),
+    ...(combineReport ? { combineReport } : {}),
   };
+}
+
+/**
+ * The review's other versions from copies of this project, for the picker, and Combine's report
+ * until it is dismissed. Reads the project folder only.
+ */
+export async function libraryReviewConflicts(store: Store, input: { readonly reviewId: string }) {
+  const at = { projectRoot: store.root, reviewId: input.reviewId };
+  const [versions, combineReport] = await Promise.all([
+    readScientReviewVersions(at),
+    readScientReviewCombineReport(at),
+  ]);
+  return { ...versions, combineReport };
+}
+
+/** The pick between two versions of a review, or dismissing Combine's report. */
+export async function changeLibraryReviewConflict(
+  store: Store,
+  input: { readonly reviewId: string; readonly change: ScientSystematicReviewConflictChange },
+  actor: ScientSourceActor = ACTOR,
+) {
+  const at = { projectRoot: store.root, reviewId: input.reviewId };
+  const { change } = input;
+  if (change.action === "dismiss-report") {
+    return { outcome: await dismissScientReviewCombineReport(at) };
+  }
+  const resolved = await resolveScientReviewConflict({
+    ...at,
+    library: store.library,
+    conflictId: change.conflictId,
+    pick: change.pick,
+    actor,
+  });
+  if (resolved.outcome === "not-found") return { outcome: "not-found" as const };
+  const combineReport = resolved.report ? await readScientReviewCombineReport(at) : null;
+  return { outcome: "resolved" as const, ...(combineReport ? { combineReport } : {}) };
 }
 
 export async function changeLibraryReview(
