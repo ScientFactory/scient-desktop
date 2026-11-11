@@ -491,24 +491,40 @@ function clearMarkdownFormatting(): Command {
   };
 }
 
+/** The word around a caret (letters, digits, underscore) inside its text block, or null. */
+function wordAroundCaret(state: EditorState): { from: number; to: number } | null {
+  const { $from } = state.selection;
+  if (!$from.parent.isTextblock) return null;
+  const text = $from.parent.textBetween(0, $from.parent.content.size, undefined, "\ufffc");
+  const isWord = (char: string | undefined) => char !== undefined && /[\p{L}\p{N}_]/u.test(char);
+  let start = $from.parentOffset;
+  let end = start;
+  while (isWord(text[start - 1])) start -= 1;
+  while (isWord(text[end])) end += 1;
+  return start === end ? null : { from: $from.start() + start, to: $from.start() + end };
+}
+
 /**
- * Set one font mark on the selection (or the typing marks at a caret); `null` removes it.
- * Every selected range gets it, so a selection across table cells reaches all of them.
+ * Set one font mark on the selection; `null` removes it. At a caret it applies to the word
+ * around it (as Word does), or, between words, to the typing marks. Every selected range gets
+ * it, so a selection across table cells reaches all of them.
  */
 function setMarkdownFontMark(markName: string, attrs: Attrs | null): Command {
   return (state, dispatch) => {
     if (!dispatch) return true;
     const type = requiredMarkType(markName);
     const { empty, $from } = state.selection;
-    if (empty) {
+    const word = empty ? wordAroundCaret(state) : null;
+    if (empty && word === null) {
       const kept = (state.storedMarks ?? $from.marks()).filter((mark) => mark.type !== type);
       dispatch(state.tr.setStoredMarks(attrs ? type.create(attrs).addToSet(kept) : kept));
       return true;
     }
     let transaction = state.tr;
-    for (const range of state.selection.ranges) {
-      const from = range.$from.pos;
-      const to = range.$to.pos;
+    const ranges = word
+      ? [word]
+      : state.selection.ranges.map((range) => ({ from: range.$from.pos, to: range.$to.pos }));
+    for (const { from, to } of ranges) {
       transaction = transaction.removeMark(from, to, type);
       if (!attrs) continue;
       // Like toggleMark: the written span cannot keep whitespace at its ends.

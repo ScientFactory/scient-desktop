@@ -112,6 +112,23 @@ describe("Markdown font size and family", () => {
     expect(session.session.draftSource).toBe("one two three\n");
   });
 
+  it("applies a size to the word around a caret, and removes it the same way", () => {
+    const session = open("one two three\n");
+    select(session, 5, 5);
+    run(session, "font-size-14");
+    expect(session.session.draftSource).toBe('one <span style="font-size:14pt">two</span> three\n');
+    run(session, "font-size-default");
+    expect(session.session.draftSource).toBe("one two three\n");
+  });
+
+  it("keeps a caret between words as typing marks and leaves the text unchanged", () => {
+    const session = open("one  two\n");
+    select(session, 4, 4);
+    run(session, "font-size-14");
+    expect(session.session.draftSource).toBe("one  two\n");
+    expect(session.state.storedMarks?.map((mark) => mark.type.name)).toEqual(["font_size"]);
+  });
+
   it("leaves whitespace at the ends of the selection outside the span", () => {
     const session = open("one two three\n");
     select(session, 3, 8);

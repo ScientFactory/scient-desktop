@@ -1,4 +1,4 @@
-import type { Editor } from "@tiptap/core";
+import type { ChainedCommands, Editor } from "@tiptap/core";
 import { latexVisualFontMetrics } from "./latexVisualLayout";
 import { normalizeFontSize } from "../writing/fontChoices";
 import { declaredLatexCompiler } from "./latexCompiler";
@@ -41,18 +41,44 @@ export function latexFontState(
   };
 }
 
+/**
+ * Runs a font change on the selection; at a caret it covers the word around it, as in Word,
+ * and the caret stays where it was. Between words the change stays with the typing marks.
+ */
+function runFontChange(
+  editor: Editor,
+  change: (chain: ChainedCommands) => ChainedCommands,
+): boolean {
+  const { selection } = editor.state;
+  const { $from } = selection;
+  let start = $from.parentOffset;
+  let end = start;
+  if (selection.empty && $from.parent.isTextblock) {
+    const text = $from.parent.textBetween(0, $from.parent.content.size, undefined, "\ufffc");
+    const isWord = (char: string | undefined) => char !== undefined && /[\p{L}\p{N}_]/u.test(char);
+    while (isWord(text[start - 1])) start -= 1;
+    while (isWord(text[end])) end += 1;
+  }
+  const chain = editor.chain().focus();
+  if (start === end) return change(chain).run();
+  const base = $from.start();
+  return change(chain.setTextSelection({ from: base + start, to: base + end }))
+    .setTextSelection(selection.from)
+    .run();
+}
+
 /** A size replaces the previous one, as in LaTeX; null returns to the document default. */
 export function setLatexFontSize(editor: Editor | null, points: number | null): boolean {
   if (!editor) return false;
   const size = points === null ? null : normalizeFontSize(points);
   if (points !== null && size === null) return false;
-  let chain = editor.chain().focus().unsetMark("latexFontSize");
-  for (const name of NAMED_SIZES) chain = chain.unsetMark(`latexSize_${name}`);
-  if (size !== null) {
+  return runFontChange(editor, (first) => {
+    let chain = first.unsetMark("latexFontSize");
+    for (const name of NAMED_SIZES) chain = chain.unsetMark(`latexSize_${name}`);
+    if (size === null) return chain;
     const leading = Math.round(size * LEADING_RATIO * 100) / 100;
-    chain = chain.setMark("latexFontSize", { points: size, leading });
-  }
-  return chain.run();
+    return chain.setMark("latexFontSize", { points: size, leading });
+  });
 }
 
 /**
@@ -81,12 +107,8 @@ export function setLatexFontFamily(
 ): boolean {
   if (!editor) return false;
   if (family !== null && !latexFontAvailable(engine, family)) return false;
-  let chain = editor
-    .chain()
-    .focus()
-    .unsetMark("latexFontFamily")
-    .unsetMark("latexRoman")
-    .unsetMark("latexSans");
-  if (family !== null) chain = chain.setMark("latexFontFamily", { family, engine });
-  return chain.run();
+  return runFontChange(editor, (first) => {
+    const chain = first.unsetMark("latexFontFamily").unsetMark("latexRoman").unsetMark("latexSans");
+    return family === null ? chain : chain.setMark("latexFontFamily", { family, engine });
+  });
 }

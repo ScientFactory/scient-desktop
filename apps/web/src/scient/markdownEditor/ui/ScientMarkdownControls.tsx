@@ -350,6 +350,55 @@ function FormattingMenuItems({
   );
 }
 
+/** The shared Font / Size panel wired to the Markdown editor; used by the Text menu and the selection toolbar. */
+function MarkdownFontControls({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  return (
+    <FontControls
+      family={snapshot.fontFamily}
+      size={snapshot.fontSize}
+      disabled={!snapshot.editable}
+      onFamily={(family) => controller.execute(`font-family-${family ?? "default"}`)}
+      onSize={(size) =>
+        controller.execute(size === null ? "font-size-default" : `font-size-${size}`)
+      }
+    />
+  );
+}
+
+/** Selection toolbar button showing the current size; opens the same panel as Text > Font / Size. */
+function FontSizeButton({
+  controller,
+  snapshot,
+}: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <button
+            type="button"
+            className={cn(dockButtonClass(false), "px-2 text-xs tabular-nums")}
+            aria-label="Font and size"
+          >
+            {snapshot.fontSize ?? "Aa"}
+          </button>
+        }
+      />
+      <PopoverPopup side="bottom" padding="none" data-keybinding-capture="">
+        <MarkdownFontControls controller={controller} snapshot={snapshot} />
+      </PopoverPopup>
+    </Popover>
+  );
+}
+
 function markdownTextContents(
   controller: ScientMarkdownEditorView,
   snapshot: ScientMarkdownEditorSnapshot,
@@ -357,17 +406,7 @@ function markdownTextContents(
   return {
     paragraphStyle: <StyleMenuItems controller={controller} snapshot={snapshot} />,
     formatting: <FormattingMenuItems controller={controller} snapshot={snapshot} />,
-    font: (
-      <FontControls
-        family={snapshot.fontFamily}
-        size={snapshot.fontSize}
-        disabled={!snapshot.editable}
-        onFamily={(family) => controller.execute(`font-family-${family ?? "default"}`)}
-        onSize={(size) =>
-          controller.execute(size === null ? "font-size-default" : `font-size-${size}`)
-        }
-      />
-    ),
+    font: <MarkdownFontControls controller={controller} snapshot={snapshot} />,
     direction: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
     directionLabel: snapshot.inTable ? "Table direction" : "Direction",
   };
@@ -1176,6 +1215,7 @@ function SelectionToolbar({
         active={active.has("code")}
         shortcut="inlineCode"
       />
+      <FontSizeButton controller={controller} snapshot={snapshot} />
       <LinkEditorTrigger
         controller={controller}
         active={active.has("link")}
