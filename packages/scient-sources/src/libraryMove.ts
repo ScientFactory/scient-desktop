@@ -2193,34 +2193,62 @@ export async function moveScientProjectBackIntoProject(input: {
 
 type MovedBack = Extract<ScientLibraryMoveBackResult, { readonly outcome: "moved-back" }>;
 
-/** The v1 store in the staging folder: backups, then later library changes to pinned records. */
+/**
+ * The v1 store in the staging folder: backups, then later library changes to pinned records.
+ * Returns the PDFs now whole in the staging folder.
+ */
 async function buildRestoredStore(
   ctx: MoveContext,
   journal: ScientLibraryMoveJournal,
   base: string,
-): Promise<MovedBack> {
-  const built = await locked(ctx, () => buildRestoredRecords(ctx, journal, base));
+): Promise<ReadonlySet<string>> {
+  const built = await locked(ctx, async () => {
+    await restoreSourceBackups(ctx, journal, base);
+    crash(ctx, "after-restore-backups");
+    return writeRestoredRecords(ctx, base);
+  });
   // PDFs come back between holds of the library lock; a rerun finds the ones it copied.
-  let restoredPdfs = 0;
+  const restored = new Set<string>();
   ctx.progress("files", 0, built.pdfs.length);
   for (const [index, sha256] of built.pdfs.entries()) {
     await ctx.faults.beforeFileCopy?.();
-    const name = NodePath.posix.join("files", "sha256", sha256.slice(0, 2), `${sha256}.pdf`);
-    const outcome = await copyByHash(
-      ctx,
-      absolute(ctx.libraryRoot, name),
-      absolute(base, name),
-      sha256,
-    ).catch((error: unknown) => {
-      // A missing library PDF, or a restored v1 file with other bytes, leaves the store as it was.
-      if (isNodeError(error, "ENOENT") || error instanceof DamagedPdfCopy) {
-        return "damaged" as const;
-      }
-      throw error;
-    });
-    // A rerun finds the PDF it copied before; both count, so the number survives a resume.
-    if (outcome === "copied" || outcome === "present") restoredPdfs += 1;
+    if (await restorePdf(ctx, base, sha256)) restored.add(sha256);
     ctx.progress("files", index + 1, built.pdfs.length);
+  }
+  return restored;
+}
+
+/** True when the staging folder holds the PDF: copied now, or by the run this one resumes. */
+async function restorePdf(ctx: MoveContext, base: string, sha256: string): Promise<boolean> {
+  const name = NodePath.posix.join("files", "sha256", sha256.slice(0, 2), `${sha256}.pdf`);
+  const outcome = await copyByHash(
+    ctx,
+    absolute(ctx.libraryRoot, name),
+    absolute(base, name),
+    sha256,
+  ).catch((error: unknown) => {
+    // A missing library PDF, or a restored v1 file with other bytes, leaves the store as it was.
+    if (isNodeError(error, "ENOENT") || error instanceof DamagedPdfCopy) {
+      return "damaged" as const;
+    }
+    throw error;
+  });
+  return outcome === "copied" || outcome === "present";
+}
+
+/**
+ * Under the hold that publishes: the library lock was free while the PDFs came back, so
+ * records changed since are written again, and a PDF attached since is copied here.
+ */
+async function refreshRestoredStore(
+  ctx: MoveContext,
+  base: string,
+  restored: ReadonlySet<string>,
+): Promise<MovedBack> {
+  const built = await writeRestoredRecords({ ...ctx, progress: () => undefined }, base);
+  let restoredPdfs = 0;
+  for (const sha256 of built.pdfs) {
+    if (restored.has(sha256) || (await restorePdf(ctx, base, sha256))) restoredPdfs += 1;
   }
   return {
     outcome: "moved-back",
@@ -2231,17 +2259,14 @@ async function buildRestoredStore(
 }
 
 /** The records, reviews and managed-file copies of the restored store, and the PDFs it names. */
-async function buildRestoredRecords(
+async function writeRestoredRecords(
   ctx: MoveContext,
-  journal: ScientLibraryMoveJournal,
   base: string,
 ): Promise<{
   readonly restoredSources: number;
   readonly skippedPins: number;
   readonly pdfs: ReadonlyArray<string>;
 }> {
-  await restoreSourceBackups(ctx, journal, base);
-  crash(ctx, "after-restore-backups");
   const pinsText = await readRegularFile(absolute(ctx.root, PINS_PATH));
   const pins = pinsText ? decodeScientProjectPinsText(pinsText.toString("utf8")) : [];
   const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
@@ -2388,10 +2413,11 @@ async function restoreIntoProject(
       finishRestore(ctx, journal, staging, await readMovedBackResult(saved)),
     );
   }
-  const built = (await v1StorePresent(ctx.root))
+  const restored = (await v1StorePresent(ctx.root))
     ? null
     : await buildRestoredStore(ctx, journal, base);
   return locked(ctx, async () => {
+    const built = restored ? await refreshRestoredStore(ctx, base, restored) : null;
     if (built) await replaceAtomically(saved, Buffer.from(formatJson(built), "utf8"));
     if (!built || !(await publishRestoredStore(ctx, base))) {
       // The journal first: a `restoring` journal without the staging folder reads as published.

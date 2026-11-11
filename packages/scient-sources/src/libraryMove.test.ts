@@ -1191,6 +1191,39 @@ describe("the library lock during a move", () => {
     expect((await listScientSourceRecords(library)).length).toBe(2);
   });
 
+  it("the move back restores a library edit and a PDF added while its PDFs were copied", async () => {
+    const { base, library, project, b, sha256 } = await seededMove();
+    await move(library, project);
+    const pause = pauseAtFirstFileCopy();
+    const movingBack = moveScientProjectBackIntoProject({
+      library,
+      projectRoot: project,
+      actor: "user",
+      faults: { beforeFileCopy: pause.beforeFileCopy },
+    });
+    await pause.reached;
+    const edited = await editTitle(library, b.sourceId, "Edited while the PDFs came back");
+    const pdf = NodePath.join(base, "added-in-the-gap.pdf");
+    await NodeFSP.writeFile(pdf, "%PDF-1.7\nadded in the gap\n", "utf8");
+    const attached = await attachScientSourcePdf({
+      root: library,
+      sourceId: b.sourceId,
+      expectedRevision: edited.record.revision,
+      pdfPath: pdf,
+    });
+    pause.release();
+    expect(await movingBack).toMatchObject({ outcome: "moved-back", restoredPdfs: 2 });
+    const restored = await readScientSourceRecord(project, b.sourceId);
+    expect(restored?.title).toBe("Edited while the PDFs came back");
+    for (const hash of [sha256, attached.record.attachments[0]!.sha256]) {
+      expect(
+        await exists(
+          NodePath.join(project, ".scient/sources/files/sha256", hash.slice(0, 2), `${hash}.pdf`),
+        ),
+      ).toBe(true);
+    }
+  });
+
   it("the move back copies its PDFs with the library lock free", async () => {
     const { library, project, sha256 } = await seededMove();
     await move(library, project);
