@@ -264,6 +264,8 @@ const makeNetworkStudy = (page: Page) => {
     const sizes = candidates
       .filter((item) => item.outcome === "finished")
       .map((item) => item.bytes);
+    // An empty answer read as another's size makes Playwright fetch the address again in full.
+    if (sizes.includes(0) && sizes.some((size) => size > 0)) return undefined;
     return sizes.length > 0 ? Math.max(...sizes) : undefined;
   };
 

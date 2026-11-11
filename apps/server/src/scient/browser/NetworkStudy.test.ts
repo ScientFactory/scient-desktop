@@ -325,6 +325,16 @@ describe("the network study", () => {
         shown: true,
         reads: false,
       },
+      // An empty answer and a full one at one address: the empty one may be this answer, and
+      // reading it would make Playwright fetch the address again in full. Left out.
+      {
+        path: "/changing",
+        browser: (cdp) => {
+          cdp.loaded(`${API}/changing`, 1_000);
+          cdp.loaded(`${API}/changing`, 0);
+        },
+        shown: false,
+      },
       // Counted, small, compressed, from another site: shown.
       { path: "/works", browser: (cdp) => cdp.loaded(`${API}/works`, 2_000), shown: true },
     ];
