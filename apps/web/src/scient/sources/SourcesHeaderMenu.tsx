@@ -4,6 +4,7 @@ import {
   FileDown,
   ListChecks,
   LoaderCircle,
+  MessageCircleQuestionIcon,
   MoreHorizontal,
   Trash2,
 } from "lucide-react";
@@ -18,7 +19,10 @@ import {
   MenuSeparator,
   MenuTrigger,
 } from "../../components/ui/menu";
+import { toastManager } from "../../components/ui/toast";
+import { useComposerHandleContext } from "../../composerHandleContext";
 import { ReferenceCheckDialog } from "../references/ReferenceCheckDialog";
+import { askLibraryInsertion } from "./askLibrary";
 import { SourceTrashPopover } from "./SourceTrash";
 import {
   SourcesExportSubmenu,
@@ -48,6 +52,32 @@ export function SourcesHeaderMenu(props: {
     root: props.root,
     scope: props.exportScope,
   });
+  const composer = useComposerHandleContext();
+  // Set when Ask put the caret in the composer, so closing the menu leaves it there.
+  const composerFocused = useRef(false);
+  const askLibrary = () => {
+    const handle = composer?.current;
+    const draft = handle?.getSendContext();
+    if (handle && draft && !draft.answeringPendingUserInput) {
+      const insertion = askLibraryInsertion(draft.prompt);
+      if (insertion === null) {
+        handle.focusAtEnd();
+        composerFocused.current = true;
+        return;
+      }
+      if (handle.insertTextAtStart?.(insertion)) {
+        composerFocused.current = true;
+        return;
+      }
+    }
+    toastManager.add({
+      type: "error",
+      title: "Couldn't add to the chat",
+      description: draft?.answeringPendingUserInput
+        ? "Answer the agent's question first, then try again."
+        : "The chat isn't ready for text right now.",
+    });
+  };
   return (
     <>
       <Menu>
@@ -63,7 +93,26 @@ export function SourcesHeaderMenu(props: {
         >
           {exporter.exporting ? <LoaderCircle className="animate-spin" /> : <MoreHorizontal />}
         </MenuTrigger>
-        <MenuPopup align="end" side="bottom" className="min-w-48">
+        <MenuPopup
+          align="end"
+          side="bottom"
+          className="min-w-48"
+          finalFocus={() => {
+            const keepComposerFocus = composerFocused.current;
+            composerFocused.current = false;
+            return !keepComposerFocus;
+          }}
+        >
+          {props.totalCount > 0 ? (
+            <MenuItem
+              disabled={composer === null}
+              {...(composer === null ? { title: "Open a chat to ask the Library." } : {})}
+              onClick={askLibrary}
+            >
+              <MessageCircleQuestionIcon />
+              Ask the Library
+            </MenuItem>
+          ) : null}
           {props.missingPdfCount > 0 ? (
             <MenuItem onClick={props.onGetMissingPdfs}>
               <FileDown />
