@@ -94,7 +94,6 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   // Scient-owned stateful scientific compute methods
   computeInspectRuntimes: "compute.inspectRuntimes",
   computeRuntimeInventory: "compute.runtimeInventory",
-  computeActiveWork: "compute.activeWork",
   computeVerifyRuntime: "compute.verifyRuntime",
   computeManagedRuntimeStatus: "compute.managedRuntimeStatus",
   computeManageRuntime: "compute.manageRuntime",
@@ -119,6 +118,7 @@ export const SCIENT_SCIENTIFIC_WS_METHODS = {
   notebookEdit: "notebook.edit",
   notebookRecordRun: "notebook.recordRun",
   subscribeComputeSessions: "subscribe.computeSessions",
+  subscribeComputeActiveWork: "subscribe.computeActiveWork",
 
   // Scient-owned data file viewer
   dataReadFileTable: "data.readFileTable",
@@ -219,11 +219,16 @@ const WsComputeRuntimeInventoryRpc = Rpc.make(
   },
 );
 
-const WsComputeActiveWorkRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeActiveWork, {
-  payload: Schema.Struct({}),
-  success: ComputeActiveWork,
-  error: ComputeRpcError,
-});
+/** The runs quitting would stop: the current count, then each change. */
+const WsSubscribeComputeActiveWorkRpc = Rpc.make(
+  SCIENT_SCIENTIFIC_WS_METHODS.subscribeComputeActiveWork,
+  {
+    payload: Schema.Struct({}),
+    success: ComputeActiveWork,
+    error: ComputeRpcError,
+    stream: true,
+  },
+);
 
 const WsComputeVerifyRuntimeRpc = Rpc.make(SCIENT_SCIENTIFIC_WS_METHODS.computeVerifyRuntime, {
   payload: ComputeVerifyRuntimeInput,
@@ -408,7 +413,7 @@ export const WsScientificRpcGroup = RpcGroup.make(
   WsSubscribeAnalysisRunsRpc,
   WsComputeInspectRuntimesRpc,
   WsComputeRuntimeInventoryRpc,
-  WsComputeActiveWorkRpc,
+  WsSubscribeComputeActiveWorkRpc,
   WsComputeVerifyRuntimeRpc,
   WsComputeManagedRuntimeStatusRpc,
   WsComputeManageRuntimeRpc,
