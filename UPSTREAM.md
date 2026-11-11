@@ -2089,7 +2089,7 @@ Marked blocks in T3-owned files, to offer upstream and then drop:
 - `GitVcsDriverCore.ts` (`prepareCommitContext`): drafting a commit message stages into a
   temporary object directory, reading the repository's own objects and every alternate it lists
   directly, so a draft without a commit leaves no objects in the repository. Tested in
-  `GitVcsDriverCore.scient.test.ts`.
+  `GitVcsDriverCore.scient.test.ts`. Offered as pingdotgg/t3code#34595 (issue #34594).
 - `CodexAdapterV2.ts`: the app-server gets a 2 s force-kill deadline. Tested in
   `CodexAdapterV2.scient.test.ts`, which waits for the stand-in's `ready` line before stopping it.
   Merged in T3 as pingdotgg/t3code#34461 (issue #34458); the test's wait offered as
