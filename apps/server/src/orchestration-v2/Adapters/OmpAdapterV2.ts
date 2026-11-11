@@ -59,10 +59,10 @@ import {
 import type { ServerConfig } from "../../config.ts";
 import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
 import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
+import { buildOmpScientGuidance } from "../../provider/omp/OmpScientGuidance.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
@@ -325,9 +325,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           bootstrap: {
             endpoint: mcp?.endpoint ?? null,
             authorization: mcp?.authorizationHeader ?? null,
-            awareness: buildScientAwareness(
-              mcp?.capabilities === undefined ? undefined : toMcpCapabilities(mcp.capabilities),
-            ),
+            awareness: buildOmpScientGuidance({
+              target,
+              capabilities:
+                mcp?.capabilities === undefined ? undefined : toMcpCapabilities(mcp.capabilities),
+            }),
             ...(mcp === undefined || mcp.connectors.length === 0
               ? {}
               : {

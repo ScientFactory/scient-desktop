@@ -2496,7 +2496,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                   providerInstanceId: input.modelSelection.instanceId,
                   endpoint: "http://127.0.0.1:43123/mcp",
                   authorizationHeader: token,
-                  capabilities: new Set(["preview", "skills:read", "sources:read"]),
+                  capabilities: new Set([
+                    "orchestration",
+                    "preview",
+                    "skills:read",
+                    "sources:read",
+                  ]),
                   agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
                   connectors: [],
                 })
@@ -2539,6 +2544,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.notInclude(bootstrap.value.awareness, "inherited awareness");
         assert.equal(bootstrap.value.awareness.includes("preview_status"), granted);
         assert.equal(bootstrap.value.awareness.includes("scient_skill_load"), granted);
+        assert.include(bootstrap.value.awareness, "<runtime_info>");
+        // Without the rules an OMP parent waited on its delegates instead of ending its turn.
+        assert.equal(
+          bootstrap.value.awareness.includes("Follow a running delegate's `next`"),
+          granted,
+        );
         assert.isFalse(NodeFS.existsSync(bootstrap.path));
         // A session without connectors keeps the bootstrap's original shape.
         assert.isUndefined(bootstrap.value.connectors);

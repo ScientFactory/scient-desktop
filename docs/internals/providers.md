@@ -876,8 +876,15 @@ the agent's cancellation closes expired dialogs. Plain confirms offer Yes/No onl
   The extension proxies Scient's MCP tools with
   `loadMode: "essential"`, because OMP presents extension tools as `discoverable` by default and
   keeps those out of the top-level tool list. Tool calls go through Scient's MCP server, which
-  authorizes each one against the session token; `stopSession` revokes it. The adapter declares
+  authorizes each one against the session token; `stopSession` revokes it. A tool call may run for
+  65 minutes, above the hour a thread wait can block, as Claude's and Codex's limits allow; the
+  handshake keeps a 3-minute limit. The adapter declares
   `mcpSessionInjection`, and `SCIENT_SKILL_DELIVERY.omp` is `mcp`.
+- The appended system-prompt element (`provider/omp/OmpScientGuidance.ts`) carries what Claude's
+  session carries: the awareness, Scient's runtime and pull-request linking instructions, and, with
+  the `orchestration` grant, the shared orchestration rules plus a note that OMP's native `task`
+  serves only the models it offers (the current model unless `task.perCallModel` adds a `model`
+  argument), so another model is a `delegate_task`.
 - OMP's RPC host tools (`set_host_tools`) are not used. An unexpected host-tool call is rejected
   with an explicit warning rather than being silently dropped. Full access is the only runtime
   mode. `Adapters/OmpAdapterV2.ts` maps the shared native session runtime into V2;
