@@ -12,6 +12,7 @@ import { readLibraryAliasesAt, resolveScientLibraryAlias } from "./libraryAliase
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   listScientLibraryInstances,
+  readScientLibraryManifest,
   registerScientLibraryInstance,
   type ScientLibraryLocation,
 } from "./libraryRoot.ts";
@@ -23,7 +24,12 @@ import {
   type ScientSourceIdentifier,
   type ScientSourceRecord,
 } from "./model.ts";
-import { importScientSource, listScientSourceRecords } from "./store.ts";
+import {
+  importScientSource,
+  listScientSourceRecords,
+  readScientSourceTrashEntries,
+  scientSourceIdFor,
+} from "./store.ts";
 import { assertSafeIdentifier, atomicWriteJson, readBoundedJson, snapshot } from "./storeFiles.ts";
 
 const SCIENT_LIBRARY_PROJECTS_DIRECTORY = "projects";
@@ -179,6 +185,10 @@ function matchWork(
   return null;
 }
 
+function hydrationSourceKey(projectSourceId: string): string {
+  return `project-source:${projectSourceId}`;
+}
+
 function hydrationCandidate(
   request: ScientProjectSourceRequest & { readonly work: ScientProjectSourceWork },
   citationKey: string | undefined,
@@ -194,7 +204,7 @@ function hydrationCandidate(
     ] as const
   ).filter(([, present]) => present);
   return {
-    sourceKey: `project-source:${request.projectSourceId}`,
+    sourceKey: hydrationSourceKey(request.projectSourceId),
     ...(citationKey ? { citationKey } : {}),
     type: scientSourceTypeFromSnapshot(work.type),
     customType: null,
@@ -249,8 +259,8 @@ async function resolveAt(
   const instanceId = await projectInstanceId(library, input.projectRoot, input.mode);
   const map = instanceId ? await readInstanceMap(root, instanceId) : new Map();
   const aliases = await readLibraryAliasesAt(root);
-  const records = await listScientSourceRecords(library);
-  const live = new Map(records.map((record) => [record.sourceId, record]));
+  const records = [...(await listScientSourceRecords(library))];
+  const live = new Set(records.map((record) => record.sourceId));
   const liveTarget = (sourceId: string) => {
     const target = resolveScientLibraryAlias(aliases, sourceId);
     return live.has(target) ? target : null;
@@ -263,10 +273,37 @@ async function resolveAt(
     mapChanged = true;
   };
 
+  // The map can be lost, or a crash can precede its write; the trash still says what was removed.
+  let trash:
+    | Promise<{ readonly libraryId: string; readonly removed: ScientSourceRecord[] }>
+    | undefined;
+  const wasRemoved = async ({ projectSourceId, work }: ScientProjectSourceRequest) => {
+    trash ??= Promise.all([
+      readScientLibraryManifest(root),
+      readScientSourceTrashEntries(library),
+    ]).then(([{ libraryId }, entries]) => ({
+      libraryId,
+      // A merge moves the losing record to the trash; that is not a removal while the winner lives.
+      removed: entries
+        .filter((entry) => !entry.mergedInto || liveTarget(entry.sourceId) === null)
+        .map((entry) => entry.record),
+    }));
+    const { libraryId, removed } = await trash;
+    const ids = new Set([
+      projectSourceId,
+      resolveScientLibraryAlias(aliases, projectSourceId),
+      scientSourceIdFor(libraryId, hydrationSourceKey(projectSourceId)),
+    ]);
+    return (
+      removed.some((record) => ids.has(record.sourceId)) ||
+      (work !== null && matchWork(work, removed) !== null)
+    );
+  };
+
   const results: ScientProjectSourceResolution[] = [];
   for (const request of input.sources) {
     const { projectSourceId } = request;
-    const mapped = map.get(projectSourceId);
+    const mapped = recorded.get(projectSourceId);
     const mappedTarget = mapped ? liveTarget(mapped.sourceId) : null;
     if (mappedTarget) {
       results.push({
@@ -299,7 +336,7 @@ async function resolveAt(
       });
       continue;
     }
-    if (mapped) {
+    if (mapped || (await wasRemoved(request))) {
       results.push({ kind: "unresolved", projectSourceId, reason: "removed", candidateIds: [] });
       continue;
     }
@@ -321,6 +358,11 @@ async function resolveAt(
           ? hydrated.duplicate.matchingSourceIds[0]
           : undefined);
       if (sourceId) {
+        // Later sources in this call must match the new record instead of hydrating a twin.
+        if (hydrated.record) {
+          records.push(hydrated.record);
+          live.add(sourceId);
+        }
         record(projectSourceId, sourceId, "hydrated");
         results.push({ kind: "resolved", projectSourceId, sourceId, by: "hydrated" });
         continue;

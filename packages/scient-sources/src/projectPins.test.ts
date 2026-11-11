@@ -24,7 +24,9 @@ import {
 import {
   importScientSource,
   listScientSourceRecords,
+  listScientSourceTrash,
   readScientSourceRecord,
+  removeScientSource,
   updateScientSourceMetadata,
 } from "./store.ts";
 
@@ -391,5 +393,91 @@ describe("project pins", () => {
     expect(
       await listScientProjectPinnedWorks({ projectRoot, library: collaborator.library }),
     ).toMatchObject([{ from: "library", record: { sourceId: hydrated[0]?.sourceId } }]);
+  });
+
+  it("never re-creates a removed work, even when the instance map is lost", async () => {
+    const base = await fixture();
+    const { root, library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const work = {
+      type: "article",
+      title: "Removed study",
+      creators: [ada],
+      issuedYear: 2020,
+      identifiers: [],
+      containerTitle: null,
+    };
+    const resolve = () =>
+      resolveScientProjectSources({
+        library,
+        projectRoot,
+        mode: "write",
+        sources: [{ projectSourceId: "source_elsewhere", work }],
+        hydrate: { actor: "agent" },
+      });
+    const [first] = await resolve();
+    if (first?.kind !== "resolved") throw new Error("Expected the pin to hydrate.");
+    const hydrated = await readScientSourceRecord(library, first.sourceId);
+    if (!hydrated) throw new Error("Expected the hydrated record.");
+    // The user edits it, so only its ID still ties it to the pin.
+    await updateScientSourceMetadata({
+      root: library,
+      sourceId: hydrated.sourceId,
+      expectedRevision: hydrated.revision,
+      metadata: {
+        ...editableMetadataFromRecord(hydrated),
+        title: "Renamed",
+        issuedRaw: "1999",
+        issuedYear: 1999,
+      },
+    });
+    const removed = await removeScientSource({
+      root: library,
+      sourceId: hydrated.sourceId,
+      expectedRevision: hydrated.revision + 1,
+    });
+    expect(removed.outcome).toBe("removed");
+    await NodeFSP.rm(NodePath.join(root, "projects"), { recursive: true });
+
+    expect(await resolve()).toEqual([
+      {
+        kind: "unresolved",
+        projectSourceId: "source_elsewhere",
+        reason: "removed",
+        candidateIds: [],
+      },
+    ]);
+    expect(await listScientSourceRecords(library)).toHaveLength(0);
+    expect((await listScientSourceTrash(library)).entries).toHaveLength(1);
+  });
+
+  it("hydrates one record for two project sources of the same work", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const work = {
+      type: "article",
+      title: "Twice pinned",
+      creators: [ada],
+      issuedYear: 2020,
+      identifiers: [],
+      containerTitle: null,
+    };
+    const resolutions = await resolveScientProjectSources({
+      library,
+      projectRoot,
+      mode: "write",
+      sources: [
+        { projectSourceId: "source_one", work },
+        { projectSourceId: "source_two", work },
+      ],
+      hydrate: { actor: "agent" },
+    });
+    const records = await listScientSourceRecords(library);
+    expect(records).toHaveLength(1);
+    expect(resolutions).toMatchObject([
+      { kind: "resolved", sourceId: records[0]?.sourceId, by: "hydrated" },
+      { kind: "resolved", sourceId: records[0]?.sourceId, by: "metadata" },
+    ]);
   });
 });
