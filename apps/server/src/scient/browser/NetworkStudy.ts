@@ -234,12 +234,12 @@ const makeNetworkStudy = (page: Page) => {
   /**
    * The decoded size, settled once when the answer finishes: the main frame's requests the session
    * saw from their start, same method, address and status, the largest count; never the page's.
+   * Called as the answer arrives, so its records are pinned before any can age out.
    */
-  const bodySize = async (response: Response): Promise<number | undefined> => {
+  const bodySize = (response: Response): Promise<number | undefined> => {
     // A subframe in its own process, or a service worker, is counted elsewhere: never borrow.
-    if (!safely(() => response.frame() === page.mainFrame(), false)) return undefined;
-    if (hadWorker) return undefined;
-    if ((await response.finished()) !== null) return undefined;
+    if (!safely(() => response.frame() === page.mainFrame(), false) || hadWorker)
+      return Promise.resolve(undefined);
     const url = withoutFragment(response.url());
     const method = response.request().method();
     const status = response.status();
@@ -249,7 +249,12 @@ const makeNetworkStudy = (page: Page) => {
         item.method === method &&
         (item.status === undefined || item.status === status),
     );
-    if (candidates.length === 0) return undefined;
+    return candidates.length === 0 ? Promise.resolve(undefined) : settledSize(response, candidates);
+  };
+
+  /** The largest of the pinned counts once the answer and every count are done. */
+  const settledSize = async (response: Response, candidates: ReadonlyArray<Counted>) => {
+    if ((await response.finished()) !== null) return undefined;
     const settled = await within(
       () => Promise.all(candidates.map((item) => item.settled)).then(() => true),
       false,
@@ -264,6 +269,10 @@ const makeNetworkStudy = (page: Page) => {
 
   /** Reads a body of `bound` bytes at most, reserved first so reads at once stay bounded. */
   const readBounded = async (response: Response, bound: number) => {
+    // Asked for an empty body, Playwright fetches the address again in full: never ask.
+    const method = safely(() => response.request().method(), undefined);
+    if (method === undefined) return undefined;
+    if (bound === 0 || method === "HEAD") return Buffer.alloc(0);
     if (reading + bound > READING_BYTES) return undefined;
     reading += bound;
     try {
@@ -352,7 +361,9 @@ const makeNetworkStudy = (page: Page) => {
       ).then((headers) => ({ headers, secrets: secretsInHeaders({}, headers) }));
       entry.status = response.status();
       entry.finishedAt = Date.now();
-      entry.size = bodySize(response).catch(() => undefined);
+      entry.size = safely(() => bodySize(response), Promise.resolve(undefined)).catch(
+        () => undefined,
+      );
       if (!EAGER_TYPES.has(response.request().resourceType())) return;
       // Only bodies the browser counted are read, within what is kept and being read.
       void entry.size.then(async (size) => {

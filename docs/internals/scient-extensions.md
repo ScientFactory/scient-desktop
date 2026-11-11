@@ -627,10 +627,7 @@ never from the page. Only the main frame's answers are matched: a subframe in it
 or a service worker is counted on another session. Playwright reports a dedicated worker's
 answers as the main frame's, and its bytes are counted on the worker's own session: once a page
 has had a dedicated worker, all its bodies are left out. Only requests the session saw from
-their start have a count, and a count still loading is never dropped to make room. Each answer's
-size is settled once, when it finishes: matched by method, address and status, the largest count
-when several match, and kept with the request; reads use only that size, and without one the
-body is left out. Text comes back as UTF-8, up to 3 bytes per counted byte, so every read
+their start have a count, and a count still loading is never dropped to make room. Each answer's counts are chosen as it arrives (method, address and status), so none can age out before it is used, and its size is settled once it finishes: the largest of them, kept with the request. Reads use only that size, and without one the body is left out. A HEAD answer or a zero count is shown empty without a read. Text comes back as UTF-8, up to 3 bytes per counted byte, so every read
 reserves and is capped at 3 × its count, within 24 MB at once, the same for bodies read as they
 arrive and for an agent's request. A left-out GET body's note, masked like any other output,
 tells the agent to fetch it in the page with `preview_evaluate`, streaming and stopping at

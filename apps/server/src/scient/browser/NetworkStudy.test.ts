@@ -83,12 +83,16 @@ const answer = (
     readonly body?: () => Promise<Buffer>;
     /** Sent uncompressed. */
     readonly plain?: boolean;
+    /** When the browser says the answer has all come. */
+    readonly finished?: Promise<null>;
+    readonly headers?: Readonly<Record<string, string>>;
   } = {},
 ) => {
   const request = { ...fakeRequest(url), method: () => options.method ?? "GET" } as Request;
   const headers = {
     "content-type": "application/json",
     ...(options.plain === true ? {} : { "content-encoding": "gzip" }),
+    ...options.headers,
   };
   return {
     request,
@@ -99,7 +103,7 @@ const answer = (
       headers: () => headers,
       allHeaders: async () => headers,
       status: () => 200,
-      finished: async () => null,
+      finished: () => options.finished ?? Promise.resolve(null),
       body:
         options.body ??
         (async () => {
@@ -184,6 +188,11 @@ describe("the network study", () => {
       readonly beforeCounting?: (cdp: Cdp) => void;
       /** After the answer's size was settled once (by a first detail). */
       readonly afterSettled?: (cdp: Cdp) => void;
+      /** After the answer arrived, before the browser says it has all come. */
+      readonly beforeFinished?: (cdp: Cdp) => void;
+      readonly headers?: Readonly<Record<string, string>>;
+      /** Whether its body is read from the browser; as `shown` unless said. */
+      readonly reads?: boolean;
       readonly frame?: object;
       readonly method?: string;
       readonly plain?: boolean;
@@ -288,6 +297,34 @@ describe("the network study", () => {
         },
         shown: false,
       },
+      // Its own count ages out between the answer and its end, a newer small one taking its
+      // place: the count pinned when the answer came still holds.
+      {
+        path: "/pinned",
+        browser: (cdp) => cdp.start(`${API}/pinned`),
+        beforeFinished: (cdp) => {
+          cdp.end("cdp-1", 64 * MB);
+          for (let index = 0; index <= 400; index += 1) cdp.loaded(`${API}/other/${index}`, 10);
+          cdp.loaded(`${API}/pinned`, 1_000);
+        },
+        shown: false,
+      },
+      // HEAD has no body, whatever its length says: shown empty, never read (Playwright would
+      // fetch the address in full).
+      {
+        path: "/head",
+        browser: (cdp) => cdp.end(cdp.start(`${API}/head`, "HEAD"), 10),
+        method: "HEAD",
+        headers: { "content-length": "1234" },
+        shown: true,
+        reads: false,
+      },
+      {
+        path: "/empty",
+        browser: (cdp) => cdp.loaded(`${API}/empty`, 0),
+        shown: true,
+        reads: false,
+      },
       // Counted, small, compressed, from another site: shown.
       { path: "/works", browser: (cdp) => cdp.loaded(`${API}/works`, 2_000), shown: true },
     ];
@@ -299,13 +336,19 @@ describe("the network study", () => {
       await study.watch(cdp.session);
       item.browser(cdp, page);
       const read: string[] = [];
+      const finished = Promise.withResolvers<null>();
       const { request, response } = answer(item.url ?? `${API}${item.path}`, read, {
         ...(item.frame === undefined ? {} : { frame: item.frame }),
         ...(item.method === undefined ? {} : { method: item.method }),
         ...(item.plain === undefined ? {} : { plain: item.plain }),
+        ...(item.headers === undefined ? {} : { headers: item.headers }),
+        finished: finished.promise,
       });
       study.onRequest(request);
       study.onResponse(response);
+      // regression: the counts were chosen only once the answer had all come.
+      item.beforeFinished?.(cdp);
+      finished.resolve(null);
       const [listed] = await study.list();
       if (item.afterSettled !== undefined) {
         await study.detail(listed!.id);
@@ -319,7 +362,7 @@ describe("the network study", () => {
       });
       expect({ path: item.path, read: read.length > 0 }).toEqual({
         path: item.path,
-        read: item.shown,
+        read: item.reads ?? item.shown,
       });
       // regression: the left-out note carried the request's method as it was.
       expect(JSON.stringify(detail)).not.toContain("tab-cookie-77");
