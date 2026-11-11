@@ -3,8 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   applyMarkdownSourcePatches,
   createMarkdownSourceLedger,
-  replaceMarkdownSourceBlocks,
+  type MarkdownSourceLedger,
 } from "./sourceLedger.ts";
+
+/** The ledger's pieces in order; the editor relies on them reproducing the source exactly. */
+const rebuild = (ledger: MarkdownSourceLedger) =>
+  ledger.prefix + ledger.blocks.map((block) => block.source + block.trailing).join("");
 
 const SCIENTIFIC_FIXTURE = [
   "---\r",
@@ -103,12 +107,12 @@ describe("createMarkdownSourceLedger", () => {
     (source) => {
       const ledger = createMarkdownSourceLedger(source);
 
-      expect(replaceMarkdownSourceBlocks(ledger, [])).toBe(source);
+      expect(rebuild(ledger)).toBe(source);
       expect(ledger.prefix.startsWith("\uFEFF")).toBe(true);
     },
   );
 
-  it("preserves the BOM and CRLF trivia when replacing the first heading", () => {
+  it("keeps the BOM and CRLF trivia apart from the first heading", () => {
     const source = "\uFEFF# Title\r\n\r\nBody\r\n";
     const ledger = createMarkdownSourceLedger(source);
     const heading = ledger.blocks[0]!;
@@ -119,9 +123,6 @@ describe("createMarkdownSourceLedger", () => {
     expect(heading.textSpans).toEqual([
       { textStart: 0, textEnd: 5, sourceStart: 3, sourceEnd: 8, direct: true },
     ]);
-    expect(replaceMarkdownSourceBlocks(ledger, [{ id: heading.id, markdown: "# Updated" }])).toBe(
-      "\uFEFF# Updated\r\n\r\nBody\r\n",
-    );
     const body = ledger.blocks[1]!;
     const span = body.textSpans[0]!;
     expect(
@@ -161,7 +162,7 @@ describe("createMarkdownSourceLedger", () => {
       sourceEnd: 9,
       direct: true,
     });
-    expect(replaceMarkdownSourceBlocks(ledger, [])).toBe(source);
+    expect(rebuild(ledger)).toBe(source);
     expect(applyMarkdownSourcePatches(source, [{ start: 4, end: 9, replacement: "Updated" }])).toBe(
       "\uFEFF\uFEFF# Updated\r\n\r\nBody\r\n",
     );
@@ -180,7 +181,7 @@ describe("createMarkdownSourceLedger", () => {
       "math",
       "html",
     ]);
-    expect(replaceMarkdownSourceBlocks(ledger, [])).toBe(SCIENTIFIC_FIXTURE);
+    expect(rebuild(ledger)).toBe(SCIENTIFIC_FIXTURE);
     expect(ledger.blocks.find((block) => block.kind === "list")?.logicalText).toBe(
       "parentnested item",
     );
@@ -216,47 +217,12 @@ describe("createMarkdownSourceLedger", () => {
     ]);
   });
 
-  it("preserves every outside byte when replacing one block", () => {
-    const source = "# Title\n\nParagraph with  two spaces.\n\n- one\n  - two\n";
-    const ledger = createMarkdownSourceLedger(source);
-    const paragraph = ledger.blocks.find((block) => block.kind === "paragraph");
-    expect(paragraph).toBeDefined();
-
-    const next = replaceMarkdownSourceBlocks(ledger, [
-      { id: paragraph!.id, markdown: "Changed paragraph." },
-    ]);
-
-    expect(next).toBe("# Title\n\nChanged paragraph.\n\n- one\n  - two\n");
-    expect(next.slice(0, paragraph!.start)).toBe(source.slice(0, paragraph!.start));
-    expect(next.endsWith("\n\n- one\n  - two\n")).toBe(true);
-  });
-
-  it("keeps trivia when a block is deleted", () => {
-    const ledger = createMarkdownSourceLedger("One\n\nTwo\n");
-    expect(
-      replaceMarkdownSourceBlocks(ledger, [{ id: ledger.blocks[0]!.id, markdown: null }]),
-    ).toBe("\n\nTwo\n");
-  });
-
   it("retains whitespace-only documents as prefix source", () => {
     const source = " \t\r\n\r\n";
     const ledger = createMarkdownSourceLedger(source);
     expect(ledger.blocks).toEqual([]);
     expect(ledger.prefix).toBe(source);
-    expect(replaceMarkdownSourceBlocks(ledger, [])).toBe(source);
-  });
-
-  it("rejects unknown and duplicate block replacements", () => {
-    const ledger = createMarkdownSourceLedger("Text\n");
-    expect(() => replaceMarkdownSourceBlocks(ledger, [{ id: "missing", markdown: "x" }])).toThrow(
-      "Unknown Markdown source block",
-    );
-    expect(() =>
-      replaceMarkdownSourceBlocks(ledger, [
-        { id: ledger.blocks[0]!.id, markdown: "x" },
-        { id: ledger.blocks[0]!.id, markdown: "y" },
-      ]),
-    ).toThrow("Duplicate replacement");
+    expect(rebuild(ledger)).toBe(source);
   });
 
   // 500 parses can outlast the default 5 s on a busy CI runner.
@@ -264,7 +230,7 @@ describe("createMarkdownSourceLedger", () => {
     for (let seed = 1; seed <= 500; seed += 1) {
       const source = fuzzMarkdown(seed);
       const ledger = createMarkdownSourceLedger(source);
-      expect(replaceMarkdownSourceBlocks(ledger, [])).toBe(source);
+      expect(rebuild(ledger)).toBe(source);
       expect(
         ledger.prefix + ledger.blocks.map((block) => block.source + block.trailing).join(""),
       ).toBe(source);
