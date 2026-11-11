@@ -199,8 +199,11 @@ The reasoning column shows the model’s supported levels directly; other agent 
 below them when available.
 
 On desktop and web, model choices show the company below the model name. Long names wrap
-so their distinguishing suffix stays readable. The picker has one bottom footer: **Fork to
-continue in a new chat** on the left when available, and speed and permission controls on the right.
+so their distinguishing suffix stays readable. The picker keeps one bottom toolbar: **Fork to
+switch** on the left when available, with speed and permission controls on the right. Speed
+uses a compact menu when there are more than two tiers or an extra option such as Ultracode.
+Narrow windows put model options under **More** while keeping permissions visible. Fork's
+tooltip explains that it continues in a new chat.
 
 For providers that support custom models, **Settings → Providers → Models** lets you give an
 unlisted model a display name and define its options. Only options supported by the integration
