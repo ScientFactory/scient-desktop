@@ -4,7 +4,6 @@ import { beforeAll, describe, expect, it } from "vite-plus/test";
 import { BUNDLED_CSL_STYLES, bundledCslStyleXml } from "./catalog.ts";
 import {
   SCIENT_REFERENCE_STYLES,
-  cslStyleRenders,
   formatSourceReference,
   readCslStyle,
   renderableCslStyle,
@@ -157,31 +156,29 @@ describe("formatSourceReference", () => {
   });
 });
 
-describe("a style that cannot be used", () => {
+// regression: review B4-1, a file with the shape of a CSL style counted as usable whatever it held
+describe("readCslStyle", () => {
   const nature = bundledCslStyleXml("nature")!;
   const head = nature.slice(0, nature.indexOf("</info>") + "</info>".length);
   const style = (layout: string) =>
-    `${head}<citation><layout>${layout}</layout></citation><bibliography><layout>${layout}</layout></bibliography></style>`;
+    `${head}<macro name="title"><text variable="title"/></macro><citation><layout>${layout}</layout></citation><bibliography><layout>${layout}</layout></bibliography></style>`;
+  const forBooks = (text: string) =>
+    `<choose><if type="book">${text}</if><else><text macro="title"/></else></choose>`;
 
-  it("is none of the bundled styles, nor a style with citations and no reference list", () => {
-    const unusable = BUNDLED_CSL_STYLES.filter((entry) => {
-      const xml = bundledCslStyleXml(entry.id)!;
-      return readCslStyle(xml) === null || !cslStyleRenders(xml);
-    });
-    expect(unusable).toEqual([]);
-    const citationsOnly = `${head}<citation><layout><text variable="title"/></layout></citation></style>`;
-    expect(readCslStyle(citationsOnly)).not.toBeNull();
-    expect(cslStyleRenders(citationsOnly)).toBe(true);
+  it("reads every bundled style, and a style that prints only some source types", () => {
+    expect(
+      BUNDLED_CSL_STYLES.filter((entry) => !readCslStyle(bundledCslStyleXml(entry.id)!)),
+    ).toEqual([]);
+    expect(
+      readCslStyle(style('<choose><if type="book"><text macro="title"/></if></choose>')),
+    ).not.toBeNull();
   });
 
-  // regression: review B4-1, a file with the shape of a CSL style that prints nothing counted as usable
-  it("is one with an undefined macro, which prints nothing", () => {
-    expect(cslStyleRenders(style('<text variable="title"/>'))).toBe(true);
-    expect(cslStyleRenders(style('<text macro="missing"/>'))).toBe(false);
-  });
-
-  it("is one whose markup does not close, which Pandoc rejects", () => {
-    expect(readCslStyle(style('<text variable="title"/>'))).not.toBeNull();
-    expect(readCslStyle(style('<text variable="title">'))).toBeNull();
+  it.each([
+    ["names an undefined macro in a branch", forBooks('<text macro="missing"/>')],
+    ["has markup that does not close", forBooks('<text variable="title">')],
+  ])("rejects a style that %s", (_name, layout) => {
+    expect(readCslStyle(style(forBooks('<text variable="title"/>')))).not.toBeNull();
+    expect(readCslStyle(style(layout))).toBeNull();
   });
 });

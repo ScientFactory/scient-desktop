@@ -643,13 +643,12 @@ both engines render, or `unavailable` with a message naming the missing or
 broken file; callers report `unavailable` and never substitute another style
 silently.
 
-A style is usable when it passes two checks, on save and on every read.
-`readCslStyle` requires the CSL root, its identity and every element closed in
-order, because citeproc-js renders markup that Pandoc rejects. `cslStyleRenders`
-then prints a sample article with citeproc-js (the reference-list entry, or the
-citation for a style without a reference list) and requires output: citeproc-js
-builds a style with an undefined macro without an error and prints nothing. The
-result is remembered per style text.
+A style is usable when `readCslStyle` accepts it, on save and on every read:
+the CSL root, its identity, every element closed in order, and every macro a
+layout names defined. citeproc-js reports neither fault itself: it renders
+markup that Pandoc rejects, and prints nothing for an undefined macro. The
+check reads the text, so it covers branches for every source type, and it does
+not print a sample, because a valid style may print nothing for some types.
 
 The web keeps one copy of the project's style per project
 (`useProjectCitationStyle`). It reads the style when a reference or the picker

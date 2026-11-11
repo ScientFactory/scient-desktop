@@ -3,7 +3,7 @@ import { cslJsonItem, type CslJsonItem } from "@scientfactory/scient-sources/bib
 
 import { renderCslBibliographyEntry, type CslStyleSource } from "./cslEngine.ts";
 
-export { bundledCslStyle, cslStyleRenders, type CslStyleSource } from "./cslEngine.ts";
+export { bundledCslStyle, type CslStyleSource } from "./cslEngine.ts";
 export { readCslStyle, renderableCslStyle, type CslStyleInfo } from "./cslStyle.ts";
 
 export { SCIENT_REFERENCE_STYLES } from "./styles.ts";

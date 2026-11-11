@@ -13,7 +13,6 @@ interface CslEngine {
   setOutputFormat(format: "text"): void;
   updateItems(ids: ReadonlyArray<string>): void;
   makeBibliography(): readonly [unknown, ReadonlyArray<string>] | false;
-  makeCitationCluster(items: ReadonlyArray<CslItem>): string;
 }
 
 interface CslEngineConstructor {
@@ -55,17 +54,17 @@ function retrieveLocale(language: string): string {
   return locales[language] ?? bundledLocales["en-US"];
 }
 
-function createEngine(style: string, retrieveItem: (id: string) => CslItem | null): CslEngine {
-  const engine = new Citeproc.Engine({ retrieveLocale, retrieveItem }, style, "en-US");
-  engine.setOutputFormat("text");
-  return engine;
-}
-
 function createRenderer(style: string): BibliographyEntryRenderer {
   let current: CslItem | null = null;
-  const engine = createEngine(style, (id) =>
-    current !== null && id === current.id ? current : null,
+  const engine = new Citeproc.Engine(
+    {
+      retrieveLocale,
+      retrieveItem: (id) => (current !== null && id === current.id ? current : null),
+    },
+    style,
+    "en-US",
   );
+  engine.setOutputFormat("text");
 
   const render = (item: CslItem) => {
     current = item;
@@ -82,48 +81,6 @@ function createRenderer(style: string): BibliographyEntryRenderer {
     }
   };
   return Object.assign(render, { seen: new Set<string>() });
-}
-
-const SAMPLE_ITEM = {
-  id: "scient-style-check",
-  type: "article-journal",
-  title: "A sample article",
-  author: [{ family: "Rivera", given: "Ana" }],
-  issued: { "date-parts": [[2020, 3, 1]] },
-  "container-title": "Journal of Samples",
-  volume: "4",
-  page: "10-20",
-};
-const MAX_STYLE_CHECKS = 8;
-const styleChecks = new Map<string, boolean>();
-
-/**
- * Whether the style prints a sample article: its reference-list entry, or its citation when
- * the style has no reference list. citeproc builds a style with an undefined macro or broken
- * markup without an error and prints nothing, so only the output tells.
- */
-export function cslStyleRenders(xml: string): boolean {
-  const known = styleChecks.get(xml);
-  if (known !== undefined) return known;
-  let renders = false;
-  try {
-    const engine = createEngine(xml, (id) => (id === SAMPLE_ITEM.id ? SAMPLE_ITEM : null));
-    engine.updateItems([SAMPLE_ITEM.id]);
-    const bibliography = /<bibliography\b/u.test(xml) ? engine.makeBibliography() : null;
-    const printed =
-      bibliography === null
-        ? engine.makeCitationCluster([{ id: SAMPLE_ITEM.id }])
-        : bibliography
-          ? (bibliography[1][0] ?? "")
-          : "";
-    renders = printed.trim() !== "" && !printed.includes("CSL STYLE ERROR");
-  } catch {
-    renders = false;
-  }
-  const oldest = styleChecks.keys().next().value;
-  if (styleChecks.size >= MAX_STYLE_CHECKS && oldest !== undefined) styleChecks.delete(oldest);
-  styleChecks.set(xml, renders);
-  return renders;
 }
 
 /** The bundled CSL style XML, for Pandoc's `--csl`. */

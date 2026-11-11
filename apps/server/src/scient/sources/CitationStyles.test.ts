@@ -159,8 +159,8 @@ describe("setProjectCitationStyle", () => {
     });
   });
 
-  // regression: review B4-1, a style file that prints nothing was handed to both engines
-  it("names a style that formats nothing, and does not save one", async () => {
+  // regression: review B4-1, a style file naming an undefined macro was handed to both engines
+  it("names a style with an undefined macro, and does not save one", async () => {
     const root = await project();
     const deps = { request: recordedRequest(), cacheRoot: null };
     await setProjectCitationStyle({ root, styleId: "nature", actor: "user" }, deps);
@@ -176,7 +176,7 @@ describe("setProjectCitationStyle", () => {
       id: "nature",
       title: "Nature",
       message:
-        "Nature could not be used: .scient/citations/styles/nature.csl does not format a reference.",
+        "Nature could not be used: .scient/citations/styles/nature.csl is not a complete CSL style.",
     });
 
     const other = await project();
@@ -187,7 +187,7 @@ describe("setProjectCitationStyle", () => {
     );
     expect(set).toEqual({
       style: { _tag: "none" },
-      error: "Nature (brackets, no superscript) does not format a reference, so it was not saved.",
+      error: "The citation style nature-brackets is not a valid CSL style.",
     });
     expect(NodeFS.existsSync(NodePath.join(other, ".scient", "citations"))).toBe(false);
   });
