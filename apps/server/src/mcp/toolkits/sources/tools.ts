@@ -46,7 +46,7 @@ const NullableText = Schema.NullOr(Schema.String);
 const dependencies = [AgentInvocationContext.AgentInvocationContext, WorkspaceBindingResolver];
 const AllowPossibleMetadataMatch = Schema.Boolean.annotate({
   description:
-    "Set true only after deciding that a reported possible metadata match is a different source. It cannot override an exact duplicate.",
+    "True only after deciding a reported possible metadata match is a different source; never overrides an exact duplicate.",
 });
 
 const ScientSourceAgentAttachment = Schema.Struct({
@@ -142,11 +142,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Library (Sources): the papers, books and other references it cites; total is its size. " +
-    "Use this before literature, citation or source-dependent work and before searching the web; do not scan or edit .scient/sources files directly. " +
-    "query matches citation key, title, authors, year, journal, identifiers and tags. Narrow with tags (all must match), collectionId, type or hasPdf, " +
-    "or run a saved search with savedSearchId (other filters then narrow it further); scient_sources_collections lists collections, saved searches and tags. " +
-    "inTrash lists removed sources instead, newest removal first; restore one with scient_sources_restore.",
+    "List a page of this project's Library (Sources); total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId, type, hasPdf, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
     tags: Schema.optionalKey(ScientSourceFilter.fields.tags),
@@ -171,7 +167,7 @@ const ScientSourcesListTool = Tool.make("scient_sources_list", {
 
 const ScientSourceGetTool = Tool.make("scient_sources_get", {
   description:
-    "Read one of this project's Sources by source ID: its metadata, revision, provenance, attachments and kept revisions (newest first, with who saved each and which fields it changed). An abstract over 50,000 characters is cut, and abstractTruncated says so.",
+    "Read one Source: metadata, revision, provenance, attachments and kept revisions (newest first, with who saved each and what changed). Abstracts over 50,000 characters are cut (abstractTruncated).",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
   success: ScientSourceAgentDetail,
   failure: ScientSourcesToolError,
@@ -193,7 +189,7 @@ export const ScientSourceNoteUpdateResult = Schema.Struct({
 
 const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update", {
   description:
-    "Add, replace or clear (null) the project note on one Source. Read the source first and pass its current revision. If stale, read it again and redo the change on what you read. Bold and italic may use Markdown markers.",
+    "Add, replace or clear (null) one Source's project note. Pass its current revision; if stale, re-read and redo. Markdown bold and italic work.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -212,12 +208,7 @@ const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update", {
 
 const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
   description:
-    "Replace one Source's metadata and tags after the user explicitly asks. metadata is the complete new record, not a patch: " +
-    "read the source first, keep every field you are not changing, and pass its current revision. " +
-    "If the read says abstractTruncated, do not replace from it; tell the user. If stale, read it again and redo the change on what you read. " +
-    "Changed fields are recorded as set by the agent; attachments stay as they are. Changing identifiers clears the source's identifier check. " +
-    "A new citationKey is a deliberate rename: project Markdown and LaTeX citations follow it, and citationKeyRenamedIn lists the files changed. " +
-    "citationKeyRenameSkipped lists documents the rename could not reach; tell the user, since their citations still use the old key.",
+    "Replace one Source's metadata and tags after the user explicitly asks. metadata is the full record, not a patch: keep the fields you are not changing. Pass its current revision; if stale, re-read and redo. Never replace from a read with abstractTruncated; tell the user. Credited to the agent; attachments are kept; changed identifiers clear the identifier check. A new citationKey is renamed in project documents (citationKeyRenamedIn); tell the user about citationKeyRenameSkipped files.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -257,10 +248,7 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
 
 const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   description:
-    "Remove one Source from this project after the user explicitly asks. It moves to the project trash with its PDFs (restorable: scient_sources_restore). " +
-    "Read the source first and pass its current revision. If stale, read it again and redo the change on what you read. " +
-    "permanent deletes a source that is already in the trash, with its saved revisions and any PDF nothing else uses; only when the user asks for that, since it cannot be undone. " +
-    "Pass the revision shown by scient_sources_list with inTrash.",
+    "Move one Source and its PDFs to the trash after the user explicitly asks (scient_sources_restore undoes it). Pass its current revision; if stale, re-read and redo. permanent deletes a trashed source with its revisions and unused PDFs, irreversibly: only when the user asks for that (revision from scient_sources_list inTrash).",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -284,8 +272,7 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
 
 const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
   description:
-    "Put a removed Source back from the project trash, with its PDFs, as a new revision credited to you. " +
-    "exists means a source with this ID is already in the Library; duplicate means another source now has its identifier (see matchingSourceIds).",
+    "Put a removed Source back from the trash, with its PDFs, as a new revision credited to you. exists: the ID is already in the Library; duplicate: another source has its identifier (matchingSourceIds).",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
   success: Schema.Struct({
     outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
@@ -305,9 +292,7 @@ const ScientSourceRestoreTool = Tool.make("scient_sources_restore", {
 
 const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
   description:
-    "Make an earlier revision of a Source current again, as a new revision credited to you. Read the source first: pass its current revision as expectedRevision " +
-    "and a kept revision from its revisions list as toRevision. Metadata, note, tags, identifiers and attachments return to that revision; " +
-    "missingAttachmentCount counts PDFs whose files were deleted when the trash was emptied. If stale, read it again.",
+    "Make a kept earlier revision of a Source (toRevision) current again, as a new revision credited to you; expectedRevision is its current revision (if stale, re-read). Metadata, note, tags, identifiers and attachments return; missingAttachmentCount counts PDFs deleted with the trash.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -332,10 +317,7 @@ const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
 
 const ScientSourceCheckTool = Tool.make("scient_sources_check", {
   description:
-    "Check one Source's DOI or PMID against its registry again, for example before citing it. Records the result on the source " +
-    "(credited to you; nothing is written when nothing changed) and never changes its metadata. registry: found, not-found, " +
-    "mismatch (the identifier now names a work with a different title), unavailable (registry unreachable; the earlier result stays) " +
-    "or none (no DOI or PMID). editorialStatus reports retractions, withdrawals, expressions of concern and corrections.",
+    "Recheck one Source's DOI or PMID at its registry, for example before citing. Records the result (credited to you, when changed); never changes metadata. registry: found, not-found, mismatch (now names another title), unavailable (earlier result kept) or none. editorialStatus reports retractions, withdrawals, concerns and corrections.",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
   success: Schema.Struct({
     outcome: Schema.Literals(["updated", "unchanged", "stale"]),
@@ -384,7 +366,7 @@ export const ScientSourceAddInput = Schema.Struct({
   pdfRelativePath: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096)))),
   enrich: Schema.optionalKey(
     Schema.Boolean.annotate({
-      description: "Fill a missing abstract by looking up the source's DOI or PMID.",
+      description: "Fill a missing abstract from the DOI or PMID.",
     }),
   ),
   allowPossibleMetadataMatch: Schema.optionalKey(AllowPossibleMetadataMatch),
@@ -393,8 +375,7 @@ export const ScientSourceAddInput = Schema.Struct({
       .pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(MAX_SOURCE_IDENTIFIER_BATCH)))
       .annotate({
         description:
-          "Add several works at once: one DOI, PMID, arXiv ID or ISBN per entry, bare, prefixed or as a link (identifiers from search or connector results go here). " +
-          "Each entry becomes its own source from its registry's metadata; give no citation fields or PDF with it. See results.",
+          "One DOI, PMID, arXiv ID or ISBN per entry (bare, prefixed or a link); give no citation fields or PDF with it.",
       }),
   ),
 });
@@ -445,16 +426,7 @@ export const ScientSourceAddResult = Schema.Struct({
 
 const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
-    "Add a source, or several by identifier, to this project's Library after the user explicitly asks. List existing Sources first. " +
-    "To add works you know by DOI, PMID, arXiv ID or ISBN, pass identifierList (up to 50, mixed); outcome is batch and results says what happened to each. " +
-    "For a PDF in the project, pass its relative path as pdfRelativePath; Scient reads metadata from it, " +
-    "so citation fields are optional. A DOI, PMID, arXiv ID or ISBN is checked against its registry first: " +
-    "identifier-not-found means the identifier does not exist and identifier-mismatch means it names a different work (see resolved); nothing is added in either case. " +
-    "A found identifier's registry metadata replaces the citation fields you gave (verification verified). " +
-    "If the registry cannot be reached the source is added as given (unchecked); without one of these identifiers it is unverified. " +
-    "editorialStatus reports a retraction, withdrawal, expression of concern or correction; tell the user before relying on such a work. " +
-    "The user sees that you added it. Repeating the same request adds nothing. " +
-    "From a PubMed, Semantic Scholar or OpenAlex result, pass only its identifier (scheme pmid, s2 for a paperId or CorpusId:N, or openalex for a W work ID) without citation fields: Scient fetches the record and checks it at the DOI's registry.",
+    "Add sources to this project's Library after the user explicitly asks; list existing Sources first. Repeats add nothing. Several works by DOI, PMID, arXiv ID or ISBN: identifierList (outcome batch, see results). A project PDF: pdfRelativePath (citation fields optional). From PubMed, Semantic Scholar or OpenAlex pass only the identifier (scheme pmid, s2 for a paperId or CorpusId:N, openalex for a W ID). Identifiers are checked at their registry: identifier-not-found and identifier-mismatch (see resolved) add nothing; found metadata replaces your fields (verified); unreachable adds as given (unchecked); no identifier is unverified. editorialStatus flags retractions and corrections: tell the user.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
   failure: ScientSourcesToolError,
@@ -469,8 +441,7 @@ const ScientSourceAddTool = Tool.make("scient_sources_add", {
 
 const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
   description:
-    "Attach a project-relative PDF to a Source after the user explicitly asks. Read the source first " +
-    "and pass its current revision. If stale, read it again and redo the change on what you read.",
+    "Attach a project PDF to a Source after the user explicitly asks. Pass its current revision; if stale, re-read and redo.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -493,9 +464,7 @@ const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
 
 const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   description:
-    "Remove one PDF attachment from a Source, keeping its metadata, after the user explicitly asks. " +
-    "Read the source first and pass its current revision. If stale, read it again and redo the change on what you read. " +
-    "The file stays in the project until the trash is emptied, so scient_sources_revert can bring it back.",
+    "Detach one PDF from a Source after the user explicitly asks. Pass its current revision; if stale, re-read and redo. The file stays until the trash is emptied (scient_sources_revert brings it back).",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     attachmentId: NonEmptyString,
@@ -519,12 +488,7 @@ const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
 
 const ScientSourcesBibliographyTool = Tool.make("scient_sources_bibliography", {
   description:
-    "Write this project's references.bib and references.json from the Library and report their state. " +
-    "Documents cite sources by citationKey from these files (Markdown front matter `bibliography: references.bib`, LaTeX `\\bibliography{references}`). " +
-    "A file edited by hand is kept and reported as edited, with the keys added, changed or removed; " +
-    "unmanaged means a file Scient did not write is in the way, and Scient never writes over it. " +
-    "To keep hand edits, pass importEdited to import their new entries into the Library (changed entries stay as the Library has them). " +
-    "Pass replaceEdited only when the user wants the Library version back.",
+    "Write references.bib and references.json from the Library and report their state; documents cite by citationKey (Markdown `bibliography: references.bib`, LaTeX `\\bibliography{references}`). A hand-edited file is kept (edited, with keys added, changed or removed); an unmanaged file is never overwritten. importEdited imports its new entries; replaceEdited restores the Library version, only when the user wants that.",
   parameters: Schema.Struct({
     replaceEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
     importEdited: Schema.optionalKey(Schema.Array(ScientManagedBibliographyFileName)),
@@ -554,9 +518,7 @@ export const ScientSourcesFullTextStatus = Schema.Struct({
 
 const ScientSourcesSearchTool = Tool.make("scient_sources_search", {
   description:
-    "Search the full text of this project's Source PDFs. Returns ranked passages with source, PDF and page; " +
-    'quote a "phrase" to require it. If status.pending is above zero, text is still being read; search again shortly. ' +
-    "Read around a hit with scient_sources_read_text, and check a quote with scient_sources_quote_check before giving it.",
+    'Search the full text of Source PDFs: ranked passages with source, PDF and page; quote a "phrase" to require it. status.pending above zero: text is still being read. Read around a hit with scient_sources_read_text; check quotes with scient_sources_quote_check.',
   parameters: Schema.Struct({
     query: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500))),
     sourceIds: Schema.optionalKey(
@@ -591,8 +553,7 @@ const ScientSourcesSearchTool = Tool.make("scient_sources_search", {
 
 const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
   description:
-    "Read the text of one Source's PDF, page by page, from fromPage. Continue at nextPage until it is null. " +
-    "choose-pdf lists the PDFs when a source has several; pass one as attachmentId. no-text means the PDF has no text layer (often a scan).",
+    "Read one Source PDF's text by page from fromPage; continue at nextPage until null. choose-pdf: pass one listed PDF as attachmentId. no-text: no text layer (often a scan).",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     attachmentId: Schema.optionalKey(NonEmptyString),
@@ -633,10 +594,7 @@ const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
 
 const ScientSourceQuoteCheckTool = Tool.make("scient_sources_quote_check", {
   description:
-    "Check quotes against the stored text of this project's Source PDFs before you give them. " +
-    "exact matched character for character; normalized matched once spacing, ligatures, quote marks, dashes and line-break hyphens are evened out; " +
-    "both return the stored text and its page location, so quote that text. ambiguous means the quote appears more than once; lengthen it. " +
-    "not-found returns the closest passages. Without sourceId the whole Library is checked.",
+    "Check quotes against the stored text of Source PDFs before giving them. exact, or normalized (spacing, ligatures, quote marks, dashes, hyphenation evened out), returns the stored text and page: quote that. ambiguous: it occurs more than once; lengthen it. not-found returns the closest passages. No sourceId: the whole Library.",
   parameters: Schema.Struct({
     quotes: Schema.Array(
       Schema.Struct({
@@ -685,7 +643,7 @@ const ScientSourceQuoteCheckTool = Tool.make("scient_sources_quote_check", {
 
 const ZoteroConnectionInput = ZoteroConnection.annotate({
   description:
-    "local is Zotero on this computer; web is the user's library on zotero.org with the Zotero key in Accounts. Omit to use whichever is ready, local first.",
+    "local: Zotero on this computer; web: zotero.org with the Accounts key. Omit for whichever is ready, local first.",
 });
 const ZoteroItemKey = Schema.String.check(Schema.isPattern(/^[23456789A-Z]{8}$/u));
 const ZoteroRefreshFields = Schema.Array(ScientSourceZoteroRefreshField).pipe(
@@ -718,9 +676,7 @@ export const ScientSourcesZoteroBrowseResult = Schema.Struct({
 
 const ScientSourcesZoteroBrowseTool = Tool.make("scient_sources_zotero_browse", {
   description:
-    "Look at the user's Zotero library: whether it can be reached, its collections, and a page of references, " +
-    "optionally in one collection or matching a search. sourceId is set for references already in this project's Library. " +
-    "If state is not ready, tell the user the message; do not guess.",
+    "Browse the user's Zotero library: whether it is reachable, its collections and a page of references (by collection or query). sourceId marks ones already in this Library. If state is not ready, tell the user its message.",
   parameters: Schema.Struct({
     connection: Schema.optionalKey(ZoteroConnectionInput),
     collectionKey: Schema.optionalKey(ZoteroItemKey),
@@ -765,10 +721,7 @@ export const ScientSourcesZoteroImportResult = Schema.Struct({
 
 const ScientSourcesZoteroImportTool = Tool.make("scient_sources_zotero_import", {
   description:
-    "Import references from the user's Zotero library into this project's Library after the user asks: chosen itemKeys, " +
-    "one collection, or the whole library (all). Notes, tags, PDFs and citation keys come along. " +
-    "References already imported are skipped as same-origin; a possible-metadata-match is skipped unless its itemKey is in possibleMetadataMatchOverrides. " +
-    "At most 500 references per call.",
+    "Import from the user's Zotero library after the user asks: itemKeys, a collectionKey or all, with notes, tags, PDFs and citation keys. Already imported: skipped (same-origin); possible-metadata-match: skipped unless in possibleMetadataMatchOverrides. At most 500 per call.",
   parameters: Schema.Struct({
     connection: Schema.optionalKey(ZoteroConnectionInput),
     itemKeys: Schema.optionalKey(
@@ -796,9 +749,7 @@ const ScientSourcesZoteroImportTool = Tool.make("scient_sources_zotero_import", 
 
 const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh", {
   description:
-    "Bring Zotero's changes into Sources imported from Zotero (all of them, or sourceIds). A field edited here that Zotero " +
-    "also changed is kept and reported in conflicts; ask the user, then pass the field in useZotero to take Zotero's value " +
-    "or keepLocal to keep this one and stop the report. Only changed or problem sources are listed.",
+    "Bring Zotero's changes into Sources imported from it (all, or sourceIds); only changed or problem sources are listed. A field edited on both sides stays local and is reported in conflicts: ask the user, then pass it in useZotero or keepLocal.",
   parameters: Schema.Struct({
     sourceIds: Schema.optionalKey(
       Schema.Array(NonEmptyString).pipe(
@@ -826,9 +777,7 @@ const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh"
 
 const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
   description:
-    "Send Sources to the user's zotero.org library after the user asks: creates each item (linking the source to it) or " +
-    "updates fields that differ. Needs a Zotero key with write access in Accounts. An item changed in Zotero since Scient " +
-    "read it is not overwritten (changed-in-zotero): refresh first, then send again.",
+    "Send Sources to the user's zotero.org library after the user asks, creating (and linking) or updating each item; needs an Accounts Zotero key with write access. Items changed in Zotero since Scient read them are not overwritten (changed-in-zotero): refresh, then send again.",
   parameters: Schema.Struct({
     sourceIds: Schema.Array(NonEmptyString).pipe(
       Schema.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
@@ -859,8 +808,7 @@ export const ScientSourcesCollectionsResult = Schema.Struct({
 
 const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
   description:
-    "Read how this project's Sources are organized: collections with their source counts, saved searches with their filters, and the most used tags. " +
-    "List a collection's sources with scient_sources_list collectionId.",
+    "Read collections (with source counts), saved searches (with filters) and the most used tags.",
   parameters: Tool.EmptyParams,
   success: ScientSourcesCollectionsResult,
   failure: ScientSourcesToolError,
@@ -875,10 +823,7 @@ const ScientSourcesCollectionsTool = Tool.make("scient_sources_collections", {
 
 const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
   description:
-    "Change collections or saved searches after the user asks. A source can be in several collections; collections never change source records. " +
-    "create-collection with an existing name returns that collection (existing) and adds the given sources. " +
-    "delete-collection keeps its sources and can be undone with restore-collection. save-search with an existing name replaces its filter. " +
-    "unknownSourceIds lists ids that are not in the Library and were not added.",
+    "Change collections or saved searches after the user asks. A source can be in several collections; membership never changes source records. create-collection with an existing name reuses it (existing). delete-collection keeps its sources (restore-collection undoes it). save-search with an existing name replaces its filter. unknownSourceIds were not added.",
   parameters: Schema.Struct({ change: ScientSourcesOrganizeAction }),
   success: ScientSourcesOrganizeResult,
   failure: ScientSourcesToolError,
@@ -893,11 +838,7 @@ const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
 
 const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
   description:
-    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive, existing spelling kept), set the type " +
-    "(customType is required for other), and add to or remove from collections. Tag and type changes make a new revision per source, credited to the agent. " +
-    "Each source is reported (updated, unchanged, not-found, failed with a message); one failure does not stop the rest. " +
-    "Undo the whole edit with change {undoBatchId: undo.batchId}: original values and memberships come back, later edits are kept and listed in conflicts. If some failed, call it again with the same undoBatchId; finished parts are skipped. " +
-    "To remove many sources, call scient_sources_remove for each.",
+    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections. Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
   parameters: Schema.Struct({ change: ScientSourcesBulkRequestChange }),
   success: ScientSourcesBulkResult,
   failure: ScientSourcesToolError,
@@ -939,16 +880,11 @@ export const ScientSourcesImportFileResult = Schema.Struct({
 
 const ScientSourcesImportFileTool = Tool.make("scient_sources_import_file", {
   description:
-    "Import the references in a project file into the Library after the user asks: BibTeX or BibLaTeX (.bib), RIS (.ris), " +
-    "CSL-JSON (.json) or EndNote XML (.xml), as exported by Zotero, Mendeley, EndNote, JabRef or Google Scholar. " +
-    "Each entry keeps its citation key, identifiers, tags and notes. Entries already in the Library are skipped. " +
-    "Identifiers are stored as given (verification unchecked). Up to 500 new entries are imported per call; " +
-    "if remaining is above 0, call again with the same file to continue. " +
-    "Tell the user about unreadable entries and notKept fields, which did not arrive in the Library.",
+    "Import a project reference file into the Library after the user asks: .bib (BibTeX, BibLaTeX), .ris, CSL-JSON .json or EndNote .xml. Keeps citation keys, identifiers, tags and notes; skips entries already present; identifiers stay unchecked. Up to 500 new entries per call: while remaining is above 0, call again. Tell the user about unreadable entries and notKept fields.",
   parameters: Schema.Struct({
     relativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
     format: Schema.optionalKey(
-      FileFormat.annotate({ description: "Only when the file's extension does not say it." }),
+      FileFormat.annotate({ description: "Only when the extension does not say." }),
     ),
   }),
   success: ScientSourcesImportFileResult,
@@ -964,9 +900,7 @@ const ScientSourcesImportFileTool = Tool.make("scient_sources_import_file", {
 
 const ScientSourcesExportTool = Tool.make("scient_sources_export", {
   description:
-    "Write this project's Library, or the given sources, to a project file in BibTeX (.bib), RIS (.ris), " +
-    "CSL-JSON (.json) or EndNote XML (.xml), each source under its citation key. Project notes are left out unless includeNotes. " +
-    "An existing file is replaced only with overwrite. notKept names details the format has no place for (for example an arXiv ID in EndNote XML next to a PMID); tell the user.",
+    "Write the Library, or sourceIds, to a project file (.bib, .ris, CSL-JSON .json or EndNote .xml) under citation keys. Notes only with includeNotes; an existing file only with overwrite. Tell the user about notKept details.",
   parameters: Schema.Struct({
     relativePath: Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096))),
     format: FileFormat,
@@ -995,10 +929,7 @@ const ScientSourcesExportTool = Tool.make("scient_sources_export", {
 
 const ScientSourceSavePageTool = Tool.make("scient_sources_save_page", {
   description:
-    "Save a web page to this project's Library after the user asks, keeping a passage from it in the source's note. " +
-    "Pass the page's meta tags (citation_*, dc.*, prism.*, og:*) as read from the page, for example with preview_evaluate. " +
-    "A DOI, PMID or arXiv ID the page states is checked against its registry and its metadata is used when the page's citation title agrees; otherwise the page is saved as a web page. " +
-    "Saving the same page again adds only a new passage. For a PDF, use scient_paper_get or scient_sources_add with pdfRelativePath.",
+    "Save a web page to the Library after the user asks, keeping a passage in its note. Pass the page's meta tags (citation_*, dc.*, prism.*, og:*), for example via preview_evaluate. A stated DOI, PMID or arXiv ID is checked and its metadata used when the title agrees; otherwise it is saved as a web page. Saving again adds only the new passage. PDFs: scient_paper_get or scient_sources_add.",
   parameters: Schema.Struct({
     url: Schema.String.pipe(Schema.check(Schema.isMinLength(1), Schema.isMaxLength(4_096))),
     title: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(2_000)))),
@@ -1035,11 +966,7 @@ const ScientSourceSavePageTool = Tool.make("scient_sources_save_page", {
 
 const ScientSourcesCiteTool = Tool.make("scient_sources_cite", {
   description:
-    "Cite Library sources in a document. Pass source IDs or citation keys; get the citation to write " +
-    "([@a; @b] for Markdown, \\cite{a,b} for LaTeX) after each source is checked against its registry " +
-    "(identifier resolves to the same work, no retraction or notice). Problems are reported, never blocking: " +
-    "tell the user about them. The keys resolve from references.bib, which this keeps current; a document needs " +
-    "`bibliography: references.bib` (Markdown front matter) or \\bibliography{references} (LaTeX) to compile them.",
+    "Get the citation for Library sources (IDs or citation keys): [@a; @b] in Markdown, \\cite{a,b} in LaTeX. Each is checked first (identifier resolves to the same work, no retraction or notice); problems never block, but tell the user. Keys resolve from references.bib, kept current here; the document must name it.",
   parameters: Schema.Struct({
     sources: Schema.Array(NonEmptyString).pipe(
       Schema.check(Schema.isMinLength(1), Schema.isMaxLength(20)),

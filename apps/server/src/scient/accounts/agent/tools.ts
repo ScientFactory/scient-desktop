@@ -318,7 +318,7 @@ const paperDependencies = [
 ];
 const AddToLibrary = Schema.Boolean.annotate({
   description:
-    "True when the paper is for the user's Library: the PDF goes on the Source with its DOI, and a missing Source is added from the registry record and marked as added by you.",
+    "For the user's Library: file the PDF on the Source with its DOI, adding a missing Source from its registry record, credited to you.",
 });
 const LibrarySourceId = TrimmedNonEmptyString.annotate({
   description: "Attach the PDF to this Library source instead of finding one by DOI.",
@@ -328,7 +328,7 @@ const paperGet = metadata(
     failure: AccountsError,
     dependencies: paperDependencies,
     description:
-      "The first step to fetch any paper's PDF: give its DOI or link (for a title, find one first), and Scient saves it in the project from a free legal copy or the user's university access in the browser, preferring the published version. Returns its path, or why it can't arrive yet. When the paper is for the user's Library, set addToLibrary: Scient files the PDF on the paper's Source, adding the Source from its registry record when missing. For more than a few papers use scient_papers_queue.",
+      "The first step to fetch any paper's PDF: give its DOI or link (for a title, find one first), and Scient saves it in the project from a free legal copy or the user's university access in the browser, preferring the published version. Returns its path, or why it can't arrive yet. For the user's Library set addToLibrary. For more than a few papers use scient_papers_queue.",
     parameters: Schema.Struct({
       doi: Schema.optional(Schema.String.check(Schema.isMaxLength(300))),
       url: Schema.optional(Schema.String.check(Schema.isMaxLength(2048))),
