@@ -259,7 +259,6 @@ const RPC_AGGREGATES = {
   [WS_METHODS.analysisPromoteRun]: "analysis",
   [WS_METHODS.computeInspectRuntimes]: "compute",
   [WS_METHODS.computeRuntimeInventory]: "compute",
-  [WS_METHODS.computeActiveWork]: "compute",
   [WS_METHODS.computeVerifyRuntime]: "compute",
   [WS_METHODS.computeManagedRuntimeStatus]: "compute",
   [WS_METHODS.computeManageRuntime]: "compute",
@@ -285,6 +284,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.notebookEdit]: "filesystem",
   [WS_METHODS.notebookRecordRun]: "filesystem",
   [WS_METHODS.subscribeComputeSessions]: "subscribe",
+  [WS_METHODS.subscribeComputeActiveWork]: "subscribe",
   [WS_METHODS.skillsList]: "skills",
   [WS_METHODS.skillsReadDocument]: "skills",
   // SCIENT-FORK:START — external skill document reads.

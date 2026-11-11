@@ -7,6 +7,7 @@
  */
 import { WS_METHODS, WsRepositoryRpcGroup, WsScientificRpcGroup } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Stream from "effect/Stream";
 
 import type { ScientRpcHandlerSubset, ScientRpcObservers } from "../ScientRpcObservers.ts";
 import type { makeComputeConsoleNotebook } from "../compute/ComputeConsoleNotebook.ts";
@@ -16,6 +17,8 @@ import type { makeComputeOutputSave } from "../compute/ComputeOutputSave.ts";
 import type { ComputeRpcGateway } from "../compute/ComputeRpcGateway.ts";
 import type * as DataTables from "../data/DataTables.ts";
 import type * as AnalysisService from "./AnalysisService.ts";
+
+const ACTIVE_WORK_CHECK_INTERVAL = "1 second";
 
 export const makeScientificRpcHandlers = ({
   observeRpcEffect,
@@ -77,11 +80,19 @@ export const makeScientificRpcHandlers = ({
       observeRpcEffect(WS_METHODS.computeInspectRuntimes, computeGateway.inspectRuntimes(input), {
         "rpc.aggregate": "compute",
       }),
-    [WS_METHODS.computeActiveWork]: () =>
-      observeRpcEffect(
-        WS_METHODS.computeActiveWork,
-        Effect.all([computeGateway.activeWork, analysis.activeRunCount]).pipe(
-          Effect.map(([sessions, files]) => ({ count: sessions + files })),
+    // Counting reads memory only, so it checks here each second and sends only changes.
+    [WS_METHODS.subscribeComputeActiveWork]: () =>
+      observeRpcStreamEffect(
+        WS_METHODS.subscribeComputeActiveWork,
+        Effect.succeed(
+          Stream.tick(ACTIVE_WORK_CHECK_INTERVAL).pipe(
+            Stream.mapEffect(() =>
+              Effect.all([computeGateway.activeWork, analysis.activeRunCount]),
+            ),
+            Stream.map(([sessions, files]) => sessions + files),
+            Stream.changes,
+            Stream.map((count) => ({ count })),
+          ),
         ),
         { "rpc.aggregate": "compute" },
       ),
