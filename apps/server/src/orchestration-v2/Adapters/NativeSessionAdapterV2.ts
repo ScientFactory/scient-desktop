@@ -633,8 +633,9 @@ export function makeNativeSessionAdapterV2(
             status: "failed" | "cancelled" | "interrupted",
             now: DateTime.Utc,
             clearWake: boolean = true,
-            // SCIENT-FORK: false when work settled normally and step reads still finish on their own.
-            settleSubagentSteps: boolean = true,
+            // SCIENT-FORK: whose saved steps settle now. "all" when their reads end with the
+            // session; "stopped" on Stop, whose reads go on; "none" when work settled normally.
+            settleSubagentSteps: "all" | "stopped" | "none" = "all",
           ) {
             backgroundPending = false;
             if (clearWake) {
@@ -642,8 +643,10 @@ export function makeNativeSessionAdapterV2(
               wake.length = 0;
               wakeOffered = false;
             }
+            const stopped: string[] = [];
             for (const [key, task] of subagents) {
               if (task.status !== "running") continue;
+              stopped.push(key);
               const settled = { ...task, status, completedAt: now, updatedAt: now };
               subagents.set(key, settled);
               yield* emit({ type: "subagent.updated", driver, subagent: settled });
@@ -661,8 +664,13 @@ export function makeNativeSessionAdapterV2(
               }
             }
             // SCIENT-FORK: steps whose last read will not come stop running.
-            if (settleSubagentSteps)
-              for (const key of subagentChildren.keys()) yield* finishSubagentSteps(key, now);
+            const settled =
+              settleSubagentSteps === "all"
+                ? [...subagentChildren.keys()]
+                : settleSubagentSteps === "stopped"
+                  ? stopped
+                  : [];
+            for (const key of settled) yield* finishSubagentSteps(key, now);
             yield* publishBackgroundRoster(now);
           },
         );
@@ -945,7 +953,8 @@ export function makeNativeSessionAdapterV2(
                       yield* DateTime.now,
                       options.eventQueueLimits && active ? () => Effect.void : emit,
                     );
-                  } else yield* stopBackgroundTasks("cancelled", yield* DateTime.now, false, false);
+                  } else
+                    yield* stopBackgroundTasks("cancelled", yield* DateTime.now, false, "none");
                   return;
                 }
                 // SCIENT-FORK: a subagent's own steps fill its child thread and never wake the agent.
@@ -2078,7 +2087,7 @@ export function makeNativeSessionAdapterV2(
                 yield* native.interrupt;
                 yield* eventPermit.withPermit(
                   Effect.gen(function* () {
-                    yield* stopBackgroundTasks("interrupted", yield* DateTime.now);
+                    yield* stopBackgroundTasks("interrupted", yield* DateTime.now, true, "stopped");
                     if (native.interruptBreaksSession === true) {
                       thread = { ...thread!, status: "closed", updatedAt: yield* DateTime.now };
                       yield* emit({
