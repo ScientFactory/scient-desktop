@@ -587,7 +587,8 @@ connectors alike through the calls the Extensions page makes:
 connector, hosted ones too, with the chat's project, so a sign-in or key scoped to another
 project counts as missing. Both checks pass every returned field (tool names, descriptions,
 parameter schemas, call results, errors, logs) through `ConnectorRedaction.redactText` with the
-program's keys and session cookies, in any encoding, before anything is cut.
+program's keys (however short) and session cookies, in any encoding; a cut never shows part of
+a credential, because the word it splits is left out.
 
 **History.** `FolderHistory`, shared with personal skills, swaps a folder in one step, with
 rollback, and keeps 10 entries per connector, fewer when they pass 100 MB together (the newest
@@ -596,7 +597,8 @@ always stays, never with a gap), in
 the record so it can come back). `extensions.connectors.undo` restores the newest entry.
 Undoing a connector's creation is not offered, because Remove keeps a copy and has its own Undo.
 Undo links the sign-in again for the manifest it restores. Save, Undo, remove, copy and export
-of one connector take a per-connector lock, so they never interleave.
+of one connector, and setup through `connectors.update`, take a per-connector lock, so they
+never interleave.
 Summaries carry `changedBy`, `updatedAt`, `forkedFrom` and whether Undo is possible.
 `extensions.connectors.export` returns a local connector as `.mcpb`.
 
