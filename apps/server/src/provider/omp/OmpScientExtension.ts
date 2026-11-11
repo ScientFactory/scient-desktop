@@ -23,6 +23,9 @@ export interface OmpScientExtensionBootstrap {
   readonly connectors?: ReadonlyArray<OmpScientExtensionConnector>;
 }
 
+/** Scient's waits block for up to an hour; stay above that, as Claude's and Codex's limits do. */
+const OMP_SCIENT_TOOL_CALL_TIMEOUT_MS = 65 * 60 * 1_000;
+
 /**
  * OMP tools need essential load mode, and before_agent_start replaces the entire string-array
  * prompt. Share MCP connections across subagent reruns. Connector aliases must avoid native
@@ -42,7 +45,9 @@ const scientConnect = async (endpoint, authorization, label, connectSignal) => {
   let protocolVersion = "2025-06-18";
   const request = async (method, params, signal, notification = false) => {
     const id = ++nextId;
-    const timeout = AbortSignal.timeout(180_000);
+    const timeout = AbortSignal.timeout(
+      method === "tools/call" ? ${OMP_SCIENT_TOOL_CALL_TIMEOUT_MS} : 180_000,
+    );
     const response = await fetch(endpoint, {
       method: "POST",
       redirect: "error",

@@ -543,7 +543,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           >
             {props.effortColumn ? (
               <DockedPickerContext value={{ modelLabel: triggerTitle }}>
-                <div className="flex max-h-(--available-height) flex-col">
+                <div className="flex max-h-(--available-height) w-[min(28rem,calc(100vw-2rem))] flex-col">
                   {/* One fixed height, so a model with more options never resizes the popup. Short
                       windows shrink it and keep the footer. */}
                   <div className="flex h-72 min-h-0 max-sm:h-auto max-sm:flex-col">
@@ -570,7 +570,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                   {props.footer || props.onContinueInNewChat ? (
                     <div
                       data-model-picker-footer
-                      className="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-2.5 py-1.75"
+                      className="@container/model-picker-footer flex shrink-0 items-center gap-2 border-t border-border/70 bg-muted/40 px-2.5 py-1.75"
                     >
                       {props.onContinueInNewChat ? (
                         <ModelPickerNewChatFooter

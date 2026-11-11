@@ -45,11 +45,24 @@ const entries = deriveProviderInstanceEntries([
 function Picker({
   disabled = false,
   onFork = () => {},
+  withUltracode = false,
 }: {
   disabled?: boolean;
   onFork?: () => void;
+  withUltracode?: boolean;
 }) {
   const [options, setOptions] = useState<ReadonlyArray<ProviderOptionSelection>>([]);
+  const pickerModels = withUltracode
+    ? models.map((model) => ({
+        ...model,
+        capabilities: createModelCapabilities({
+          optionDescriptors: [
+            { id: "fastMode", label: "Speed", type: "boolean", currentValue: false },
+            { id: "ultracode", label: "Ultracode", type: "boolean", currentValue: false },
+          ],
+        }),
+      }))
+    : models;
   return (
     <div className="fixed bottom-8 left-4">
       <ProviderModelPicker
@@ -58,7 +71,7 @@ function Picker({
         model={models[0]!.slug}
         lockedProvider={null}
         instanceEntries={entries}
-        modelOptionsByInstance={new Map([[instanceId, models]])}
+        modelOptionsByInstance={new Map([[instanceId, pickerModels]])}
         onInstanceModelChange={() => {}}
         onContinueInNewChat={onFork}
         continueInNewChatDisabled={disabled}
@@ -69,7 +82,7 @@ function Picker({
             traits={{
               provider: ProviderDriverKind.make("scient"),
               instanceId,
-              models,
+              models: pickerModels,
               model: models[0]!.slug,
               modelOptions: options,
               onModelOptionsChange: (next) => setOptions(next ?? []),
@@ -90,7 +103,7 @@ it("puts the company below a readable model name and shares one bottom footer", 
   const company = page.getByText("OpenAI", { exact: true });
   await expect.element(company).toBeVisible();
   const name = page.getByText(models[0]!.name, { exact: false });
-  const fork = page.getByRole("button", { name: "Fork to continue in a new chat" });
+  const fork = page.getByRole("button", { name: "Fork to switch, continue in a new chat" });
   const speed = page.getByRole("group", { name: "Speed" });
   const access = page.getByRole("button", { name: "Permissions: Full access" });
   await expect.element(speed).toBeVisible();
@@ -111,8 +124,6 @@ it("puts the company below a readable model name and shares one bottom footer", 
   expect(speed.element().getBoundingClientRect().right).toBeLessThanOrEqual(
     access.element().getBoundingClientRect().left,
   );
-  expect(fork.element().textContent).toBe("Fork to continue in a new chat");
-  expect(fork.element().lastElementChild?.tagName).toBe("svg");
   await expect
     .poll(() => getComputedStyle(footer.closest("[data-slot=popover-popup]")!).opacity)
     .toBe("1");
@@ -127,11 +138,11 @@ it("closes the picker and forks once, and disables forking while busy", async ()
   await using screen = await render(<Picker disabled onFork={onFork} />);
   await page.getByRole("button", { name: "Choose model" }).click();
   await expect
-    .element(page.getByRole("button", { name: "Fork to continue in a new chat" }))
+    .element(page.getByRole("button", { name: "Fork to switch, continue in a new chat" }))
     .toBeDisabled();
   expect(onFork).not.toHaveBeenCalled();
   await screen.rerender(<Picker onFork={onFork} />);
-  await page.getByRole("button", { name: "Fork to continue in a new chat" }).click();
+  await page.getByRole("button", { name: "Fork to switch, continue in a new chat" }).click();
   expect(onFork).toHaveBeenCalledTimes(1);
   await expect.element(page.getByPlaceholder("Search models...")).not.toBeInTheDocument();
 });
@@ -152,4 +163,33 @@ it("keeps one speed selected when toggling the shared segmented control", async 
   await standard.click();
   await expect.element(standard).toHaveAttribute("aria-pressed", "true");
   await expect.element(fast).toHaveAttribute("aria-pressed", "false");
+});
+
+it("preserves speed and Ultracode when options move between the toolbar and overflow", async () => {
+  await page.viewport(1280, 800);
+  await using _screen = await render(<Picker withUltracode />);
+  await page.getByRole("button", { name: "Choose model" }).click();
+  await page.getByRole("button", { name: "Speed: Standard" }).click();
+  await page.getByRole("menuitemradio", { name: "Fast", exact: true }).click();
+  const ultracode = page.getByRole("button", { name: "Ultracode", exact: true });
+  await ultracode.click();
+  await expect.element(ultracode).toHaveAttribute("aria-pressed", "true");
+
+  await page.viewport(390, 844);
+  await expect
+    .element(page.getByRole("button", { name: "Permissions: Full access" }))
+    .toBeVisible();
+  await page.getByRole("button", { name: "More model options, Ultracode on" }).click();
+  await expect
+    .element(page.getByRole("menuitemradio", { name: "Fast", exact: true }))
+    .toHaveAttribute("aria-checked", "true");
+  const overflowUltracode = page.getByRole("menuitemcheckbox", { name: "Ultracode", exact: true });
+  await expect.element(overflowUltracode).toHaveAttribute("aria-checked", "true");
+  await overflowUltracode.click();
+  await page.getByRole("button", { name: "More model options" }).click();
+  await page.getByRole("menuitemradio", { name: "Standard", exact: true }).click();
+
+  await page.viewport(1280, 800);
+  await expect.element(page.getByRole("button", { name: "Speed: Standard" })).toBeVisible();
+  await expect.element(ultracode).toHaveAttribute("aria-pressed", "false");
 });

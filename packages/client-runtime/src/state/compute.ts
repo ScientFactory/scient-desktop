@@ -475,10 +475,9 @@ export function createComputeEnvironmentAtoms<R, E>(
       tag: WS_METHODS.computeListSessions,
       staleTimeMs: 0,
     }),
-    activeWork: createEnvironmentRpcQueryAtomFamily(runtime, {
+    activeWork: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:compute:active-work",
-      tag: WS_METHODS.computeActiveWork,
-      staleTimeMs: 0,
+      tag: WS_METHODS.subscribeComputeActiveWork,
     }),
     session: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:compute:session",
