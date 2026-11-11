@@ -23,6 +23,7 @@ import { consumeAgentWorkspace } from "../../operations/AgentWorkspaceScope.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import { ConnectorRuntime } from "../../extensions/ExtensionsServices.ts";
 import { previewInvoker } from "./broker.ts";
+import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
 
 type Input<K extends keyof typeof ScientAccountsToolkit.tools> = Schema.Schema.Type<
@@ -67,6 +68,14 @@ const workspace = consumeAgentWorkspace().pipe(
   ),
 );
 
+/** The chat's project, so an agent's test uses only the sign-ins and keys that project may use. */
+const callerLocation = Effect.gen(function* () {
+  const where = yield* workspace.pipe(Effect.option);
+  if (Option.isSome(where)) return where.value.location;
+  const { projectId } = yield* accountSessionScope();
+  return projectId === undefined ? undefined : { projectId, worktreePath: null };
+});
+
 const folderIn = (base: string, folder: string) =>
   NodePath.isAbsolute(folder) ? NodePath.normalize(folder) : NodePath.resolve(base, folder);
 
@@ -93,6 +102,7 @@ export const addConnector = Effect.fn("AccountsAgent.connectorAdd")(function* (
   return yield* addFor({
     from: input.from,
     workingFolder: Option.getOrUndefined(where)?.folder,
+    location: yield* callerLocation,
   }).pipe(Effect.mapError(toAccountsError));
 });
 
@@ -134,7 +144,9 @@ export const checkConnector = Effect.fn("AccountsAgent.connectorCheck")(function
         reason: "invalid-input",
         message: "calls and signIn need a folder: scient_connector_copy makes one.",
       });
-    return yield* testConnector(input.connector).pipe(Effect.mapError(toAccountsError));
+    return yield* testConnector(input.connector, yield* callerLocation).pipe(
+      Effect.mapError(toAccountsError),
+    );
   }
   const folder = input.folder;
   const where = yield* workspace;

@@ -19,7 +19,11 @@ import * as ServerConfig from "../../config.ts";
 import { AnalyticsService } from "../../telemetry/AnalyticsService.ts";
 import { agentStatusOf, oneLine, type AgentConnectorStatus } from "./connectors/agentStatus.ts";
 import { observeFeature } from "./connectors/observedFeature.ts";
-import { ConnectorRuntime, ExtensionsDiscover } from "./ExtensionsServices.ts";
+import {
+  type ConnectorLocation,
+  ConnectorRuntime,
+  ExtensionsDiscover,
+} from "./ExtensionsServices.ts";
 
 const MAX_FOUND = 10;
 const CURATED_ONLY_PREFIX = "scient.curated/";
@@ -199,9 +203,10 @@ const nextStep = (summary: ConnectorSummary, status: AgentConnectorStatus) => {
 
 const testedTools = Effect.fn("ConnectorAgentControl.testedTools")(function* (
   summary: ConnectorSummary,
+  location: ConnectorLocation | undefined,
 ) {
   const { runtime } = yield* services;
-  const tested = yield* runtime.test({ connectorId: summary.connectorId });
+  const tested = yield* runtime.test({ connectorId: summary.connectorId, location });
   return tested.outcome === "ok"
     ? { tools: tested.tools.map((tool) => tool.name) }
     : { tools: [], problem: tested.message ?? `Its test ended with ${tested.outcome}.` };
@@ -217,6 +222,8 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
   readonly from: string;
   /** Where a relative bundle path is read from: the chat's folder. */
   readonly workingFolder?: string | undefined;
+  /** The chat's project: the add's own test uses only what that project may use. */
+  readonly location?: ConnectorLocation | undefined;
 }) {
   const { runtime, discover, observed } = yield* services;
   const from = input.from.trim();
@@ -276,7 +283,7 @@ export const addConnector = Effect.fn("ConnectorAgentControl.add")(function* (in
       let status = agentStatusOf(summary);
       let tools: ReadonlyArray<string> = [];
       if (added.nextStep === "ready" && status === "ready") {
-        const tested = yield* testedTools(summary);
+        const tested = yield* testedTools(summary, input.location);
         tools = tested.tools;
         if (tested.problem !== undefined) {
           summary = findSummary((yield* runtime.list()).connectors, summary.connectorId) ?? summary;
@@ -420,12 +427,15 @@ export const controlConnector = Effect.fn("ConnectorAgentControl.control")(funct
 });
 
 /** The installed connector's own test: it starts (or is reached), and lists its tools. */
-export const testConnector = Effect.fn("ConnectorAgentControl.test")(function* (name: string) {
+export const testConnector = Effect.fn("ConnectorAgentControl.test")(function* (
+  name: string,
+  location: ConnectorLocation | undefined,
+) {
   const { runtime, observed } = yield* services;
   return yield* observed("connectors.agent.check", { variant: "installed" })(
     Effect.gen(function* () {
       const summary = yield* requireSummary(name);
-      const tested = yield* runtime.test({ connectorId: summary.connectorId });
+      const tested = yield* runtime.test({ connectorId: summary.connectorId, location });
       const missing = rowOf(summary).missing ?? [];
       const why =
         tested.outcome === "needs-auth"

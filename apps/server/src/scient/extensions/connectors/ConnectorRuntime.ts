@@ -1982,6 +1982,12 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       if (local !== undefined && local.missing.length > 0) {
         return result("needs-setup", `Needs ${local.missing.join(", ")}.`);
       }
+      // What the caller's project may use: a sign-in or key scoped elsewhere is missing here.
+      const ready = yield* localConnectors
+        .start(record, record.serverName, input.location, { checking: true })
+        .pipe(Effect.result);
+      if (ready._tag === "Success" && ready.success.missing.length > 0)
+        return result("needs-setup", `Needs ${ready.success.missing.join(", ")}.`);
     }
     const fetch = makeConnectorFetch({
       policy: policyOf(record),
@@ -2008,7 +2014,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
               body: typeof body === "string" ? new TextEncoder().encode(body) : undefined,
               signal: init?.signal ?? new AbortController().signal,
             },
-            undefined,
+            input.location,
           ),
         );
         applied.push(...outcome.secrets);

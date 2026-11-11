@@ -3159,7 +3159,7 @@ describe("connectors agents run", () => {
           Effect.provideService(ServerConfig.ServerConfig, { ...config, port: 4777 }),
         );
 
-      const checked = yield* agent(testConnector(server));
+      const checked = yield* agent(testConnector(server, undefined));
       expect(checked).toMatchObject({ ok: false, tools: [] });
       expect(checked.error).toContain('"action":"sign-in"');
 
@@ -3505,6 +3505,26 @@ describe("connectors agents make and fix", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live("tests a connector for an agent with only the sign-ins its project may use", () =>
+    Effect.gen(function* () {
+      const cookie = "portal-session-0123456789abcdef";
+      const portal = yield* signedInPortal([cookie], [cookie], LEAKY_SESSION_SERVER);
+      portal.state.project = PROJECT;
+      const agent = <A, E>(effect: Effect.Effect<A, E>) =>
+        effect.pipe(Effect.provideService(ConnectorRuntime, portal.harness.runtime));
+      const server = (yield* portal.harness.runtime.list()).connectors[0]!.serverName;
+      // regression: an agent's test ran without its project, so Accounts' scope was skipped.
+      const elsewhere = yield* agent(
+        testConnector(server, { projectId: OTHER_PROJECT, worktreePath: null }),
+      );
+      expect(elsewhere.ok).toBe(false);
+      expect(elsewhere.error).toContain("not available in this project");
+      expect(
+        yield* agent(testConnector(server, { projectId: PROJECT, worktreePath: null })),
+      ).toMatchObject({ ok: true });
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("stops a signed-in connector and drops its session when the sign-in is revoked", () =>
     Effect.gen(function* () {
       const portal = yield* signedInPortal(["portal-session-0123456789abcdef"]);
@@ -3533,9 +3553,13 @@ const signedInPortal = Effect.fn("signedInPortal")(function* (
   const state = {
     cookies: [...cookies],
     revoked: false,
+    /** The one project the sign-in is limited to, as Accounts' scope would. */
+    project: undefined as string | undefined,
     removed: [] as string[],
     signIns: 0,
   };
+  const outOfScope = (projectId: string | undefined) =>
+    state.project !== undefined && projectId !== undefined && projectId !== state.project;
   const files = yield* Effect.promise(() =>
     NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-portal-session-")),
   );
@@ -3555,17 +3579,22 @@ const signedInPortal = Effect.fn("signedInPortal")(function* (
   const signInSessions: ConnectorSessionsShape = {
     accountsFor: () => Effect.succeed([account]),
     account: () => Effect.succeed(state.revoked ? undefined : account),
-    prepare: () =>
+    prepare: (target) =>
       state.revoked
         ? Effect.fail({ reason: "needs-user", message: "Portal is turned off." })
-        : write,
+        : outOfScope(target.projectId)
+          ? Effect.fail({
+              reason: "needs-user",
+              message: "Portal is not available in this project.",
+            })
+          : write,
     signInAgain: () =>
       Effect.suspend(() => {
         state.signIns += 1;
         state.cookies = [...renewed];
         return write;
       }),
-    allowed: () => Effect.succeed(!state.revoked),
+    allowed: (target) => Effect.succeed(!state.revoked && !outOfScope(target.projectId)),
     remove: (connectorId) => Effect.sync(() => void state.removed.push(connectorId)),
   };
   const harness = yield* makeHarness({ signInSessions });
