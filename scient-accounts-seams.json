@@ -557,6 +557,11 @@
       "path": "apps/server/src/scient/skills/BuiltInSkillSources.ts",
       "anchor": "scient_account_add",
       "purpose": "The connector-authoring skill tells agents to add a missing sign-in through Accounts."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/ConnectorAgentControl.ts",
+      "anchor": "scient_account_sign_in",
+      "purpose": "Send an agent signing in a local connector to the user's linked Accounts sign-in."
     }
   ]
 }
