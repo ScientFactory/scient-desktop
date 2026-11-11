@@ -536,7 +536,8 @@ it.live(
             );
             const sourceItem = source.turnItems.find(
               (item) =>
-                item.type === "assistant_message" && item.nativeItemRef?.nativeId === nativeItemId,
+                item.type === "assistant_message" &&
+                item.nativeItemRef?.nativeId === `generated-image-message:${nativeItemId}`,
             );
 
             assert.ok(sourceItem?.type === "assistant_message");
@@ -671,7 +672,8 @@ it.live(
             );
             const answer = completed.turnItems.find(
               (item) =>
-                item.type === "assistant_message" && item.nativeItemRef?.nativeId === nativeItemId,
+                item.type === "assistant_message" &&
+                item.nativeItemRef?.nativeId === `generated-image-message:${nativeItemId}`,
             );
             assert.ok(answer?.type === "assistant_message");
             assert.equal(answer.status, "completed");

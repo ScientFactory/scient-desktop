@@ -10,6 +10,7 @@ import {
 } from "react";
 import type { LegendListRef } from "@legendapp/list/react";
 import type { MessageId, RunId } from "@t3tools/contracts";
+import { readHtmlRenderContentHeight } from "@t3tools/shared/htmlRender";
 import { resolveWorkGroupScrollAnchor } from "@t3tools/client-runtime/work-log/scroll-anchor";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 import type { AssistantCitationRequest } from "./AssistantCitationSource";
@@ -34,6 +35,40 @@ export interface ReadingHistoryPage {
   readonly loading: boolean;
   readonly cursor?: string | null;
   readonly onLoadEarlier: () => void;
+}
+
+/**
+ * Calls `onResize` when an HTML preview the reader is using (the focused frame in `viewport`)
+ * changes its content height, as an accordion inside it does. A click inside a frame never
+ * reaches the timeline, so this resize is the only sign the reader toggled something there.
+ * Runs before the preview's own listener resizes its row.
+ */
+export function watchFocusedFrameResizes(
+  viewport: HTMLElement,
+  onResize: (frame: HTMLIFrameElement) => void,
+): () => void {
+  const ownerWindow = viewport.ownerDocument.defaultView;
+  if (!ownerWindow) return () => {};
+  const frameHeights = new WeakMap<HTMLIFrameElement, number>();
+  const handleMessage = (event: MessageEvent) => {
+    const height = readHtmlRenderContentHeight(event.data);
+    if (height === undefined) return;
+    const frame = [...viewport.querySelectorAll("iframe")].find(
+      (candidate) => candidate.contentWindow === event.source,
+    );
+    if (!frame) return;
+    const previous = frameHeights.get(frame);
+    frameHeights.set(frame, height);
+    if (
+      previous !== undefined &&
+      previous !== height &&
+      viewport.ownerDocument.activeElement === frame
+    ) {
+      onResize(frame);
+    }
+  };
+  ownerWindow.addEventListener("message", handleMessage, true);
+  return () => ownerWindow.removeEventListener("message", handleMessage, true);
 }
 
 /**
@@ -98,6 +133,17 @@ export function useReaderScrollInput({
         input();
     };
     const ownerDocument = viewport.ownerDocument;
+    // A toggle inside a focused HTML preview settles like a click in the timeline, and its row
+    // holds its place, so the opened accordion cannot pull the reader to the end.
+    const stopWatchingFrames = watchFocusedFrameResizes(viewport, (frame) => {
+      settle();
+      const rowId = frame.closest<HTMLElement>("[data-timeline-row-id]")?.dataset.timelineRowId;
+      const list = listRef.current;
+      if (rowId && list) {
+        list.cancelScroll();
+        list.anchorVisibleContent({ key: rowId });
+      }
+    });
     viewport.addEventListener("click", settle, { capture: true });
     viewport.addEventListener("keydown", settle, { capture: true });
     viewport.addEventListener("wheel", input, { capture: true, passive: true });
@@ -109,6 +155,7 @@ export function useReaderScrollInput({
     ownerDocument.addEventListener("mouseup", released);
     return () => {
       if (timer !== null) clearTimeout(timer);
+      stopWatchingFrames();
       viewport.removeEventListener("click", settle, { capture: true });
       viewport.removeEventListener("keydown", settle, { capture: true });
       viewport.removeEventListener("wheel", input, { capture: true });

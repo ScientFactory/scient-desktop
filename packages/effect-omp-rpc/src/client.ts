@@ -354,7 +354,8 @@ type DecodedEvent =
       readonly event: OmpRpcEvent | undefined;
     };
 
-const decodeOmpEvent = Effect.fn("client.decodeOmpEvent")(function* (value: unknown) {
+// Once per OMP frame, so untraced.
+const decodeOmpEvent = Effect.fnUntraced(function* (value: unknown) {
   if (!isRecord(value) || typeof value.type !== "string") {
     return yield* violation("RPC event omitted its type.");
   }

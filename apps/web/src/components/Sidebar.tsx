@@ -10,7 +10,6 @@ import {
   readBrowserProfileMenu,
 } from "../scient/accounts/threadProfileMenu";
 // SCIENT-FORK:END
-import { ThreadContextDragGhost } from "./chat/ThreadContextDragGhost";
 import {
   dropThreadContext,
   endThreadContextDrag,
@@ -1921,8 +1920,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     }
     restoreDragScroll();
     const threads = contextDragThreads();
-    const title =
-      threadByKeyRef.current.get(contextDragKeyRef.current ?? "")?.title.trim() || "Thread";
+    const threadRef = parseScopedThreadKey(contextDragKeyRef.current ?? "");
+    const title = (threadRef && readThreadShell(threadRef)?.title.trim()) || "Thread";
     moveThreadContextDragGhost(point, { title, count: threads.length });
     return true;
   };
@@ -3314,7 +3313,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   // SCIENT-FORK:END
   return (
     <>
-      <ThreadContextDragGhost />
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         ref={sidebarContentRef}

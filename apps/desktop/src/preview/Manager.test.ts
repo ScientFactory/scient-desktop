@@ -3174,6 +3174,7 @@ describe("PreviewManager", () => {
           getURL: () => "https://example.com/report.pdf",
           getTitle: () => "Report",
           getUserAgent: () => "Electron",
+          isLoadingMainFrame: () => false,
           on: vi.fn(),
           off: vi.fn(),
         } as unknown as Electron.WebContents;

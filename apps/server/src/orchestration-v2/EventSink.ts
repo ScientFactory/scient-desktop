@@ -32,6 +32,7 @@ const isProviderTextSnapshotError = Schema.is(ProviderTextSnapshotError);
 import {
   CommandId,
   type OrchestrationV2Run,
+  OrchestrationV2DelegatedCompletionCohort,
   OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderThread,
   OrchestrationV2StoredEvent,
@@ -69,6 +70,12 @@ import * as ProjectStore from "./ProjectStore.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 import { applyLegacyHistoryRepairGuards } from "./legacy/LegacyHistoryRepairGuards.ts";
 import { legacyQueueImportReusesMessageIdentity } from "./legacy/LegacyQueueImportIdentity.ts";
+
+// SCIENT-FORK:START — candidate upstream fix: decodes a run's stored completion cohort.
+const decodeDelegatedCompletionCohort = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(OrchestrationV2DelegatedCompletionCohort),
+);
+// SCIENT-FORK:END
 
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
@@ -199,6 +206,11 @@ export interface EventSinkV2Shape {
     readonly runId: RunId;
     readonly activeAttemptId: RunAttemptId;
     readonly expectedStatus: OrchestrationV2Run["status"];
+    // SCIENT-FORK:START — candidate upstream fix: a run snapshot taken before a completion
+    // acknowledgement must not write the acknowledged cohort's old delivery back.
+    /** The guarded run's `run.updated` events keep its stored `delegatedCompletion`. */
+    readonly keepCurrentDelegatedCompletion?: boolean;
+    // SCIENT-FORK:END
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects?: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
   }) => Effect.Effect<
@@ -592,6 +604,36 @@ const layerBase: Layer.Layer<
       return committed;
     });
 
+    // SCIENT-FORK:START — candidate upstream fix: the guarded run's stored completion cohort wins
+    // over the caller's snapshot, which may predate an acknowledgement that cleared its delivery.
+    const withCurrentDelegatedCompletion = Effect.fn(
+      "orchestrationV2.EventSink.withCurrentDelegatedCompletion",
+    )(function* (
+      input: Pick<
+        Parameters<EventSinkV2Shape["writeIfRunCurrent"]>[0],
+        "threadId" | "runId" | "events"
+      >,
+    ) {
+      const rows = yield* sql<{ readonly delegated_completion: string | null }>`
+        SELECT json_extract(payload_json, '$.delegatedCompletion') AS delegated_completion
+        FROM orchestration_v2_projection_runs
+        WHERE run_id = ${input.runId}
+          AND thread_id = ${input.threadId}
+        LIMIT 1
+      `;
+      const stored = rows[0]?.delegated_completion ?? null;
+      const current = stored === null ? undefined : yield* decodeDelegatedCompletionCohort(stored);
+      return input.events.map((event) => {
+        if (event.type !== "run.updated" || event.payload.id !== input.runId) return event;
+        const { delegatedCompletion: _snapshot, ...payload } = event.payload;
+        return {
+          ...event,
+          payload: current === undefined ? payload : { ...payload, delegatedCompletion: current },
+        };
+      });
+    });
+    // SCIENT-FORK:END
+
     const writeIfRunCurrentEffect = Effect.fn("orchestrationV2.EventSink.writeIfRunCurrent")(
       function* (input: Parameters<EventSinkV2Shape["writeIfRunCurrent"]>[0]) {
         yield* Effect.annotateCurrentSpan({
@@ -654,10 +696,17 @@ const layerBase: Layer.Layer<
               };
             }
             // SCIENT-FORK:END
+            // SCIENT-FORK:START — candidate upstream fix: read the cohort in this transaction,
+            // so an acknowledgement that landed after the caller's snapshot is kept.
+            const events =
+              input.keepCurrentDelegatedCompletion === true
+                ? yield* withCurrentDelegatedCompletion(input)
+                : input.events;
+            // SCIENT-FORK:END
             const normalized = yield* normalizeEvents(
               input.guardPendingUserInputCancellations === true
-                ? yield* guardUserInputCancellations(input.events)
-                : input.events,
+                ? yield* guardUserInputCancellations(events)
+                : events,
             );
             const storedEvents = yield* eventStore.append({
               ...(input.commandId === undefined ? {} : { commandId: input.commandId }),

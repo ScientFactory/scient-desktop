@@ -1,12 +1,9 @@
 import { useEffect } from "react";
 
-import { useStableCallback } from "~/hooks/useStableCallback";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { computeEnvironment } from "~/state/compute";
 import { usePrimaryEnvironmentId } from "~/state/environments";
-import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
-
-const REPORT_EVERY_MS = 1000;
+import { useEnvironmentQuery } from "~/state/query";
 
 /** Keeps the desktop app told how many runs quitting would stop, so Quit can ask first. */
 export function ComputeQuitGuardReport() {
@@ -18,21 +15,13 @@ export function ComputeQuitGuardReport() {
 
 function RunningWorkReport() {
   const environmentId = usePrimaryEnvironmentId();
-  const readActiveWork = useAtomQueryRunner(computeEnvironment.activeWork, {
-    reportFailure: false,
-    reportDefect: false,
-    refresh: true,
-  });
-  const report = useStableCallback(async () => {
-    if (environmentId === null) return;
-    const work = await readActiveWork({ environmentId, input: {} });
-    if (work._tag === "Success") void window.desktopBridge?.setRunningWork?.(work.value.count);
-  });
+  const work = useEnvironmentQuery(
+    environmentId === null ? null : computeEnvironment.activeWork({ environmentId, input: {} }),
+  );
+  const count = work.data?.count;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- mirrors the server's running work to the desktop main process, which owns Quit
   useEffect(() => {
-    void report();
-    const timer = setInterval(() => void report(), REPORT_EVERY_MS);
-    return () => clearInterval(timer);
-  }, [report]);
+    if (count !== undefined) void window.desktopBridge?.setRunningWork?.(count);
+  }, [count]);
   return null;
 }

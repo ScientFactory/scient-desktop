@@ -2941,6 +2941,7 @@ export const layerWsRpc = (
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,
                   cwd: input.cwd,
+                  scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
                   fresh: input.fresh === true,
                   // SCIENT-FORK:START — full inventory replies include completed native listings.
                   awaitNativeInventory: input.workspaceSnapshotsOnDemand === false,

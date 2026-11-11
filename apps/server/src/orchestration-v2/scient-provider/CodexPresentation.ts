@@ -205,7 +205,12 @@ export const emitCodexGeneratedImage = Effect.fn("CodexPresentation.emitCodexGen
       imported._tag === "Success"
         ? ""
         : "Codex generated an image, but Scient could not attach it. The image may still be available in Codex's generated images.";
-    const artifacts = yield* buildAgentMessageArtifacts(context, { id: image.id, text }, true);
+    // The image call's own native id belongs to its tool row; the image message must not replace it.
+    const artifacts = yield* buildAgentMessageArtifacts(
+      context,
+      { id: `generated-image-message:${image.id}`, text },
+      true,
+    );
     yield* emitProviderEvent({
       type: "node.updated",
       driver: CODEX_PROVIDER,
