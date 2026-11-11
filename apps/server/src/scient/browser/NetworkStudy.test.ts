@@ -81,10 +81,15 @@ const answer = (
     readonly method?: string;
     readonly frame?: object;
     readonly body?: () => Promise<Buffer>;
+    /** Sent uncompressed. */
+    readonly plain?: boolean;
   } = {},
 ) => {
   const request = { ...fakeRequest(url), method: () => options.method ?? "GET" } as Request;
-  const headers = { "content-type": "application/json", "content-encoding": "gzip" };
+  const headers = {
+    "content-type": "application/json",
+    ...(options.plain === true ? {} : { "content-encoding": "gzip" }),
+  };
   return {
     request,
     response: {
@@ -173,19 +178,16 @@ describe("the network study", () => {
     type Cdp = ReturnType<typeof fakeCdp>;
     const cases: ReadonlyArray<{
       readonly path: string;
+      /** The answer's own address, when not `${API}${path}`. */
+      readonly url?: string;
       readonly browser: (cdp: Cdp, page: ReturnType<typeof fakePage>) => void;
       readonly beforeCounting?: (cdp: Cdp) => void;
       readonly frame?: object;
       readonly method?: string;
+      readonly plain?: boolean;
       readonly shown: boolean;
     }> = [
-      // The page says 1 byte for everything; the browser counted 64 MB.
-      {
-        path: "/fake-size",
-        browser: (cdp) => cdp.loaded(`${API}/fake-size`, 64 * MB),
-        shown: false,
-      },
-      // Two loads of one address: the larger count holds, whichever this answer was.
+      // The page says 1 byte for everything; two loads of one address: the larger count holds.
       {
         path: "/twice",
         browser: (cdp) => {
@@ -203,13 +205,14 @@ describe("the network study", () => {
         shown: false,
       },
       // A dedicated worker's answers look like the main frame's but are counted on its own
-      // session: once the page has had one, its compressed answers are never matched.
+      // session: once the page has had one, none of its answers is matched, sent plain or not.
       {
         path: "/worker",
         browser: (cdp, page) => {
           page.startWorker();
           cdp.loaded(`${API}/worker`, 1_000);
         },
+        plain: true,
         shown: false,
       },
       // A redirect: the count starts again at the address it ends at.
@@ -236,20 +239,42 @@ describe("the network study", () => {
       },
       // From the cache: the browser's status differs from the answer's, so nothing matches.
       { path: "/cached", browser: (cdp) => cdp.loaded(`${API}/cached`, 2_000, 304), shown: false },
-      // blob: and data: addresses have no count.
-      { path: "/blob", browser: () => undefined, shown: false },
-      // Already under way when counting began: its end is seen, its start was not.
+      // A blob: address the session never loaded. (Playwright reports no data: requests at all.)
+      {
+        path: "/blob",
+        url: "blob:https://api.other.test/7d1e2c64-5a1b-4f7e-9c3d-0b6a8e2f4c11",
+        browser: () => undefined,
+        shown: false,
+      },
+      // Begun before counting: its end arrives after, and is not counted from a missed start.
       {
         path: "/early",
-        beforeCounting: (cdp) => {
+        beforeCounting: (cdp) =>
+          cdp.emit("Network.requestWillBeSent", {
+            requestId: "early",
+            request: { url: `${API}/early`, method: "GET" },
+          }),
+        browser: (cdp) => {
+          cdp.emit("Network.responseReceived", { requestId: "early", response: { status: 200 } });
           cdp.emit("Network.dataReceived", { requestId: "early", dataLength: 1_000 });
           cdp.emit("Network.loadingFinished", { requestId: "early" });
         },
-        browser: () => undefined,
         shown: false,
       },
       // A custom method named like a known secret, uncounted: its note never shows it raw.
       { path: "/custom", browser: () => undefined, method: "tab-cookie-77", shown: false },
+      // A large body still loading while many others finish keeps its count: a small later load
+      // of the same address can't stand in for it.
+      {
+        path: "/evicted",
+        browser: (cdp) => {
+          const large = cdp.start(`${API}/evicted`);
+          for (let index = 0; index <= 400; index += 1) cdp.loaded(`${API}/other/${index}`, 10);
+          cdp.loaded(`${API}/evicted`, 1_000);
+          cdp.end(large, 64 * MB);
+        },
+        shown: false,
+      },
       // Counted, small, compressed, from another site: shown.
       { path: "/works", browser: (cdp) => cdp.loaded(`${API}/works`, 2_000), shown: true },
     ];
@@ -261,9 +286,10 @@ describe("the network study", () => {
       await study.watch(cdp.session);
       item.browser(cdp, page);
       const read: string[] = [];
-      const { request, response } = answer(`${API}${item.path}`, read, {
+      const { request, response } = answer(item.url ?? `${API}${item.path}`, read, {
         ...(item.frame === undefined ? {} : { frame: item.frame }),
         ...(item.method === undefined ? {} : { method: item.method }),
+        ...(item.plain === undefined ? {} : { plain: item.plain }),
       });
       study.onRequest(request);
       study.onResponse(response);

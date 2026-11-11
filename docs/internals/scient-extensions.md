@@ -626,8 +626,8 @@ own CDP session (`Network.dataReceived` byte counts per request, final at `loadi
 never from the page. Only the main frame's answers are matched: a subframe in its own process
 or a service worker is counted on another session. Playwright reports a dedicated worker's
 answers as the main frame's, and its bytes are counted on the worker's own session: once a page
-has had a dedicated worker, its compressed answers are left out (uncompressed ones keep the rule
-above). Only requests the session saw from
+has had a dedicated worker, all its bodies are left out. A count still loading is never dropped
+to make room, and a matched count that is gone by the time it would be used is not trusted. Only requests the session saw from
 their start have a count. A response is matched by method, address and status, the largest
 count when several match; with no count the body is left out. Bytes are reserved before reading,
 so reads at once stay within 24 MB, the same for bodies read as they arrive and for an agent's

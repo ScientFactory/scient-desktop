@@ -121,6 +121,7 @@ const NONE: ReadonlyArray<string> = [];
 
 /** The browser's own count of one request's decoded body bytes, from the tab's CDP session. */
 interface Counted {
+  readonly id: string;
   readonly url: string;
   readonly method: string;
   status: number | undefined;
@@ -134,11 +135,6 @@ interface Counted {
 const KEEP_COUNTED = 2 * KEEP;
 /** Most bytes being read from the browser at once, for every reason. */
 const READING_BYTES = 24 * 1024 * 1024;
-
-const isCompressed = (response: Response) => {
-  const encoding = safely(() => response.headers()["content-encoding"], undefined)?.trim();
-  return encoding !== undefined && encoding !== "" && encoding.toLowerCase() !== "identity";
-};
 
 const withoutFragment = (url: string) => {
   const at = url.indexOf("#");
@@ -224,8 +220,7 @@ const makeNetworkStudy = (page: Page) => {
   let reading = 0;
   /**
    * A dedicated worker's answers report the main frame but are counted on its own session, so
-   * once the page has had one, its compressed answers (whose size can't be told otherwise) are
-   * never matched. Kept for the page's life.
+   * once the page has had one, no answer of the page is matched. Kept for the page's life.
    */
   let hadWorker = safely(() => page.workers().length > 0, true);
   safely(() => page.on("worker", () => (hadWorker = true)), undefined);
@@ -239,7 +234,7 @@ const makeNetworkStudy = (page: Page) => {
   const bodySize = async (response: Response): Promise<number | undefined> => {
     // A subframe in its own process, or a service worker, is counted elsewhere: never borrow.
     if (!safely(() => response.frame() === page.mainFrame(), false)) return undefined;
-    if (hadWorker && isCompressed(response)) return undefined;
+    if (hadWorker) return undefined;
     if ((await response.finished()) !== null) return undefined;
     const url = withoutFragment(response.url());
     const method = response.request().method();
@@ -256,10 +251,12 @@ const makeNetworkStudy = (page: Page) => {
       false,
       HEADERS_MS,
     );
+    // A matched count that is gone (aged out, or replaced by a redirect) is not trusted.
+    if (!settled || candidates.some((item) => counted.get(item.id) !== item)) return undefined;
     const sizes = candidates
       .filter((item) => item.outcome === "finished")
       .map((item) => item.bytes);
-    return settled && sizes.length > 0 ? Math.max(...sizes) : undefined;
+    return sizes.length > 0 ? Math.max(...sizes) : undefined;
   };
 
   /** Reads a body whose size is known, counted before reading so reads at once stay bounded. */
@@ -382,6 +379,7 @@ const makeNetworkStudy = (page: Page) => {
         const done = Promise.withResolvers<void>();
         counted.delete(event.requestId);
         counted.set(event.requestId, {
+          id: event.requestId,
           url: withoutFragment(event.request.url),
           method: event.request.method,
           status: undefined,
@@ -390,10 +388,10 @@ const makeNetworkStudy = (page: Page) => {
           settled: done.promise,
           settle: done.resolve,
         });
-        for (const id of counted.keys()) {
+        // Only finished counts age out: a body still loading always keeps its count.
+        for (const [id, item] of counted) {
           if (counted.size <= KEEP_COUNTED) break;
-          counted.get(id)?.settle();
-          counted.delete(id);
+          if (item.outcome !== "loading") counted.delete(id);
         }
       });
       cdp.on("Network.responseReceived", (event) => {
