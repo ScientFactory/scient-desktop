@@ -2,7 +2,9 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -158,6 +160,65 @@ it.layer(layerTest)("branch change totals", (it) => {
       const status = yield* read;
       assert.strictEqual(listings, 3);
       assert.deepStrictEqual(status.branchChanges, { baseRef: null, insertions: 2, deletions: 0 });
+    }),
+  );
+
+  // A slow listing would otherwise be repeated by every read that a file change starts meanwhile.
+  it.effect("share one listing between overlapping status reads", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const outer = yield* GitVcsDriver.GitVcsDriver;
+      const git = (cwd: string, args: ReadonlyArray<string>) =>
+        outer.execute({ operation: "GitVcsDriver.test.git", cwd, args, timeoutMs: 10_000 });
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "git-untracked-shared-" });
+      yield* git(cwd, ["init", "--quiet", "--initial-branch=main"]);
+      yield* git(cwd, ["config", "user.email", "test@test.com"]);
+      yield* git(cwd, ["config", "user.name", "Test"]);
+      yield* fs.writeFileString(path.join(cwd, "README.md"), "# test\n");
+      yield* git(cwd, ["add", "."]);
+      yield* git(cwd, ["commit", "--quiet", "-m", "initial"]);
+      yield* fs.writeFileString(path.join(cwd, "notes.txt"), "one\ntwo\n");
+
+      const firstListing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const secondReadAtListing = yield* Deferred.make<void>();
+      let listings = 0;
+      let branchChecks = 0;
+      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const spawner = ChildProcessSpawner.make((command) =>
+        Effect.gen(function* () {
+          if (isUntrackedListing(command) && ++listings === 1) {
+            yield* Deferred.succeed(firstListing, undefined);
+            yield* Deferred.await(release);
+          }
+          const handle = yield* delegate.spawn(command);
+          // A read's branch check is its last Git command before the listing.
+          const args = ChildProcess.isStandardCommand(command) ? command.args.map(String) : [];
+          if (!args.includes("refs/heads/main") || ++branchChecks !== 2) return handle;
+          return ChildProcessSpawner.makeHandle({
+            ...handle,
+            exitCode: handle.exitCode.pipe(
+              Effect.tap(() => Deferred.succeed(secondReadAtListing, undefined)),
+            ),
+          });
+        }),
+      );
+      const driver = yield* makeGitVcsDriverCore().pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provide(layerServerConfig),
+      );
+      const read = driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
+
+      const first = yield* Effect.forkChild(read);
+      yield* Deferred.await(firstListing);
+      const second = yield* Effect.forkChild(read);
+      yield* Deferred.await(secondReadAtListing);
+      yield* Deferred.succeed(release, undefined);
+      const totals = { baseRef: null, insertions: 2, deletions: 0 };
+      assert.deepStrictEqual((yield* Fiber.join(first)).branchChanges, totals);
+      assert.deepStrictEqual((yield* Fiber.join(second)).branchChanges, totals);
+      assert.strictEqual(listings, 1, "the second read used the listing already running");
     }),
   );
 
