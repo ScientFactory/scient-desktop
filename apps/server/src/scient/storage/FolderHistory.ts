@@ -10,6 +10,8 @@ import * as NodePath from "node:path";
 
 /** Saved versions kept per folder for Undo. */
 const HISTORY_KEEP = 10;
+/** Fewer are kept for large folders (a connector with its packages): the newest always stays. */
+const HISTORY_BYTES = 100 * 1024 * 1024;
 const ENTRY = /^(.+)-(created|replaced|removed)(\.meta)?$/u;
 
 export type HistoryKind = "created" | "replaced" | "removed";
@@ -93,11 +95,30 @@ export async function latestHistory(
   return last === undefined ? undefined : readEntry(folder, last);
 }
 
-async function pruneHistory(historyRoot: string, key: string): Promise<void> {
+/** Bytes of files under `path`, links not followed. */
+async function sizeOf(path: string): Promise<number> {
+  const info = await NodeFSP.lstat(path).catch(() => undefined);
+  if (info === undefined || !info.isDirectory()) return info?.isFile() ? info.size : 0;
+  let total = 0;
+  for (const name of await NodeFSP.readdir(path)) total += await sizeOf(NodePath.join(path, name));
+  return total;
+}
+
+/** Keeps the newest versions within the count and size; Undo walks back, so never with a gap. */
+async function pruneHistory(historyRoot: string, key: string, maxBytes: number): Promise<void> {
   const folder = NodePath.join(historyRoot, key);
   const names = await entryNames(folder);
-  for (const old of names.slice(0, Math.max(0, names.length - HISTORY_KEEP))) {
-    const path = NodePath.join(folder, old);
+  let kept = 0;
+  let bytes = 0;
+  for (const name of names.toReversed()) {
+    const path = NodePath.join(folder, name);
+    const size = kept < HISTORY_KEEP ? await sizeOf(path) : 0;
+    if (kept < HISTORY_KEEP && (kept === 0 || bytes + size <= maxBytes)) {
+      kept += 1;
+      bytes += size;
+      continue;
+    }
+    kept = HISTORY_KEEP;
     await NodeFSP.rm(path, { recursive: true, force: true });
     await NodeFSP.rm(`${path}.meta`, { force: true });
   }
@@ -166,6 +187,8 @@ export async function writeFolder(input: {
   /** Sortable time of the change, naming its history entry. */
   readonly stamp: string;
   readonly meta?: Uint8Array;
+  /** Total size of the kept versions; the default suits every caller. */
+  readonly historyBytes?: number;
 }): Promise<{ readonly created: boolean }> {
   const key = input.key ?? input.name;
   await NodeFSP.mkdir(input.root, { recursive: true });
@@ -191,7 +214,7 @@ export async function writeFolder(input: {
       await NodeFSP.rm(`${entry}.meta`, { force: true });
       throw error;
     }
-    await pruneHistory(input.historyRoot, key);
+    await pruneHistory(input.historyRoot, key, input.historyBytes ?? HISTORY_BYTES);
     return { created };
   } finally {
     await NodeFSP.rm(staging, { recursive: true, force: true });
@@ -224,7 +247,7 @@ export async function removeFolder(input: {
     meta: input.meta,
     ...(input.keepInPlace ? { keepInPlace: true } : {}),
   });
-  await pruneHistory(input.historyRoot, key);
+  await pruneHistory(input.historyRoot, key, HISTORY_BYTES);
 }
 
 /**

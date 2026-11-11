@@ -111,6 +111,26 @@ describe("FolderHistory", () => {
     expect(new TextDecoder().decode(latest?.meta)).toBe("11");
   });
 
+  it("keeps fewer versions of a large folder, newest first and with no gap", async () => {
+    const where = await scratch();
+    const write = (index: number, size: number) =>
+      writeFolder({
+        ...where,
+        name: "item",
+        source: { files: { "big.bin": new Uint8Array(size) } },
+        stamp: `s${index}`,
+        meta: bytes(String(index)),
+        historyBytes: 1_000,
+      });
+    await write(0, 10);
+    for (let index = 1; index <= 4; index++) await write(index, 400);
+    // regression: ten versions were kept whatever their size. The two newest fit; all older go.
+    const kept = (await NodeFSP.readdir(NodePath.join(where.historyRoot, "item"))).filter(
+      (name) => !name.endsWith(".meta"),
+    );
+    expect(kept).toEqual(["s3-replaced", "s4-replaced"]);
+  });
+
   it("refuses a file outside the folder and leaves nothing behind", async () => {
     const where = await scratch();
     await expect(
