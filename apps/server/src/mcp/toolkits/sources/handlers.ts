@@ -662,6 +662,8 @@ export const organizeLibrarySourcesForInvocation = Effect.fn(
   }
   const store = yield* resolveScientSourcesStore();
   if (store.kind !== "library") {
+    // Served from its own folder: not moved yet or already moved back, so nothing to move back.
+    if (change.action === "move-back") return { outcome: "not-moved" as const };
     return yield* toolError("operation-failed", "Pins and merges need the personal Library.");
   }
   return yield* changeLibraryPinsOrMerges(store, change);

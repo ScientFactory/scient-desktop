@@ -768,8 +768,10 @@ export async function changeLibraryReviewConflict(
     conflictId: change.conflictId,
     pick: change.pick,
     actor,
+    ...(change.currentUpdatedAt ? { expectedUpdatedAt: change.currentUpdatedAt } : {}),
   });
   if (resolved.outcome === "not-found") return { outcome: "not-found" as const };
+  if (resolved.outcome === "version-changed") return { outcome: "version-changed" as const };
   const combineReport = resolved.report ? await readScientReviewCombineReport(at) : null;
   return { outcome: "resolved" as const, ...(combineReport ? { combineReport } : {}) };
 }

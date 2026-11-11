@@ -461,6 +461,8 @@ export const ScientSystematicReviewConflictChange = Schema.Union([
     action: Schema.Literal("resolve"),
     conflictId: NonEmptyString,
     pick: Schema.Literals(["keep", "use-other", "combine"]),
+    /** `updatedAt` of the version in force the picker showed; another one answers `version-changed`. */
+    currentUpdatedAt: Schema.optionalKey(NonEmptyString),
   }),
   Schema.Struct({ action: Schema.Literal("dismiss-report") }),
 ]);
@@ -475,7 +477,13 @@ export type ScientSystematicReviewConflictRequest =
   typeof ScientSystematicReviewConflictRequest.Type;
 
 export const ScientSystematicReviewConflictResult = Schema.Struct({
-  outcome: Schema.Literals(["resolved", "not-found", "dismissed", "nothing-to-dismiss"]),
+  outcome: Schema.Literals([
+    "resolved",
+    "not-found",
+    "version-changed",
+    "dismissed",
+    "nothing-to-dismiss",
+  ]),
   /** After a combine that left something to decide; also kept on the review until dismissed. */
   combineReport: Schema.optionalKey(ScientSystematicReviewCombineReport),
 });

@@ -2,7 +2,7 @@ import type {
   ScientSystematicReviewCombineReport,
   ScientSystematicReviewConflictsResult,
 } from "@t3tools/contracts";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { Button } from "../../components/ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../../components/ui/collapsible";
@@ -14,6 +14,7 @@ import {
   DialogPopup,
   DialogTitle,
 } from "../../components/ui/dialog";
+import { toastManager } from "../../components/ui/toast";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import type { SystematicReviews } from "./useSystematicReviews";
 
@@ -61,22 +62,13 @@ function VersionSummary(props: { readonly heading: string; readonly version: Ver
 
 /** Both versions of a review side by side, with the choice between them. */
 function ReviewVersionsDialog(props: {
-  readonly reviews: SystematicReviews;
-  readonly reviewId: string;
   readonly versions: ScientSystematicReviewConflictsResult | null;
   readonly error: string | null;
-  readonly onPicked: () => void;
+  readonly disabled: boolean;
+  readonly onChoose: (conflictId: string, pick: Pick) => void;
   readonly onClose: () => void;
 }) {
-  const choose = async (conflictId: string, pick: Pick) => {
-    const changed = await props.reviews.changeConflict(
-      props.reviewId,
-      { action: "resolve", conflictId, pick },
-      "The version was not chosen",
-    );
-    if (changed) props.onPicked();
-  };
-  const disabled = props.reviews.conflictsDisabled;
+  const { disabled, onChoose: choose } = props;
   return (
     <Dialog open onOpenChange={(open) => (!open ? props.onClose() : undefined)}>
       <DialogPopup className="max-w-2xl">
@@ -103,7 +95,7 @@ function ReviewVersionsDialog(props: {
                       size="compact"
                       variant="outline"
                       disabled={disabled}
-                      onClick={() => void choose(version.conflictId!, "keep")}
+                      onClick={() => choose(version.conflictId!, "keep")}
                     >
                       Keep this version
                     </Button>
@@ -111,7 +103,7 @@ function ReviewVersionsDialog(props: {
                       size="compact"
                       variant="outline"
                       disabled={disabled}
-                      onClick={() => void choose(version.conflictId!, "use-other")}
+                      onClick={() => choose(version.conflictId!, "use-other")}
                     >
                       Use the other
                     </Button>
@@ -119,7 +111,7 @@ function ReviewVersionsDialog(props: {
                       size="compact"
                       variant="outline"
                       disabled={disabled}
-                      onClick={() => void choose(version.conflictId!, "combine")}
+                      onClick={() => choose(version.conflictId!, "combine")}
                     >
                       Combine
                     </Button>
@@ -146,15 +138,50 @@ export function ReviewVersionsLine(props: {
   const [open, setOpen] = useState(false);
   const [versions, setVersions] = useState<ScientSystematicReviewConflictsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A choice is offered only on versions read after the last opening and the last choice.
+  const [reading, setReading] = useState(false);
+  const [choosing, setChoosing] = useState(false);
+  const latestRead = useRef(0);
   const load = async () => {
+    latestRead.current += 1;
+    const read = latestRead.current;
+    setReading(true);
     const next = await props.reviews.readConflicts(props.reviewId).catch((cause: unknown) => {
-      setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+      if (read === latestRead.current) {
+        setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
+      }
       return null;
     });
+    if (read !== latestRead.current) return;
+    setReading(false);
     if (!next) return;
     setError(null);
     setVersions(next);
     if (next.versions.length === 0) setOpen(false);
+  };
+  const choose = async (conflictId: string, pick: Pick) => {
+    setChoosing(true);
+    const current = versions?.current;
+    const changed = await props.reviews.changeConflict(
+      props.reviewId,
+      {
+        action: "resolve",
+        conflictId,
+        pick,
+        ...(current ? { currentUpdatedAt: current.updatedAt } : {}),
+      },
+      "The version was not chosen",
+    );
+    if (changed && changed.outcome !== "resolved") {
+      toastManager.add({
+        type: "warning",
+        title: "The version was not chosen",
+        description:
+          "This review changed somewhere else after these versions were read. Look at them again.",
+      });
+    }
+    await load();
+    setChoosing(false);
   };
   return (
     <>
@@ -163,6 +190,8 @@ export function ReviewVersionsLine(props: {
         className="block w-full cursor-pointer text-left text-sm text-muted-foreground outline-none hover:underline focus-visible:underline"
         onClick={() => {
           setOpen(true);
+          setVersions(null);
+          setError(null);
           void load();
         }}
       >
@@ -170,11 +199,10 @@ export function ReviewVersionsLine(props: {
       </button>
       {open ? (
         <ReviewVersionsDialog
-          reviews={props.reviews}
-          reviewId={props.reviewId}
           versions={versions}
           error={error}
-          onPicked={() => void load()}
+          disabled={props.reviews.conflictsDisabled || reading || choosing}
+          onChoose={(conflictId, pick) => void choose(conflictId, pick)}
           onClose={() => setOpen(false)}
         />
       ) : null}

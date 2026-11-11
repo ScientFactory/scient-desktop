@@ -136,11 +136,36 @@ describe("versions of a review from a copy of the project", () => {
       expect(mocks.changeSystematicReviewConflict).toHaveBeenCalledWith(environmentId, {
         root: "/project",
         reviewId: "review_1",
-        change: { action: "resolve", conflictId: "conflict_a", pick: "use-other" },
+        change: {
+          action: "resolve",
+          conflictId: "conflict_a",
+          pick: "use-other",
+          currentUpdatedAt: "2026-11-01T00:00:00.000Z",
+        },
       }),
     );
     await expect.element(screen.getByText(versionsLine)).not.toBeInTheDocument();
     expect(mocks.readSystematicReview).toHaveBeenCalledTimes(2);
+  });
+
+  it("offers no choice on versions read before the picker was opened again", async () => {
+    setup(true);
+    await using screen = await render(view(), { router: false });
+    await userEvent.click(screen.getByRole("button", { name: versionsLine }));
+    await expect.element(page.getByRole("button", { name: "Keep this version" })).toBeEnabled();
+    await userEvent.keyboard("{Escape}");
+    await expect.element(page.getByText("Versions of this review")).not.toBeInTheDocument();
+
+    const read = Promise.withResolvers<ScientSystematicReviewConflictsResult>();
+    mocks.readSystematicReviewConflicts.mockReturnValueOnce(read.promise);
+    await userEvent.click(screen.getByRole("button", { name: versionsLine }));
+    await expect.element(page.getByText("Versions of this review")).toBeVisible();
+    await expect
+      .element(page.getByRole("button", { name: "Keep this version" }))
+      .not.toBeInTheDocument();
+
+    read.resolve(versions);
+    await expect.element(page.getByRole("button", { name: "Keep this version" })).toBeEnabled();
   });
 
   it("shows the versions without the choices to a session that cannot change the Library", async () => {

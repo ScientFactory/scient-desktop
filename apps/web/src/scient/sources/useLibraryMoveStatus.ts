@@ -14,6 +14,7 @@ import { onLibraryWriteSettled } from "./libraryWrites";
 import { sourcesCommands, useCanRunSourcesCommand } from "./sourcesCommands";
 
 const ASK_AGAIN_MS = 1_000;
+const ASK_AFTER_FAILURE_MS = 5_000;
 
 const message = (error: unknown) => scientSourcesErrorMessage(error, import.meta.env.DEV);
 
@@ -28,7 +29,8 @@ async function settle<A>(work: () => Promise<A>, settled: () => void): Promise<A
 
 /**
  * The project's move into the personal Library. Asked only on a server that keeps one: when the
- * panel opens, after each Library change, and about once a second while the move waits or runs.
+ * panel opens, after each Library change, about once a second while the move waits or runs, and
+ * every few seconds after a read that failed.
  */
 export function useLibraryMoveStatus(input: {
   readonly environmentId: EnvironmentId;
@@ -42,8 +44,10 @@ export function useLibraryMoveStatus(input: {
   const context = `${input.environmentId}\0${input.root}`;
   const [reading, setReading] = useState<{
     readonly context: string;
-    readonly status: ScientSourcesMoveStatus;
-    /** The ask this answers; a failed read keeps the last answer under the new ask. */
+    /** Null until a read answers; a failed read keeps the last answer. */
+    readonly status: ScientSourcesMoveStatus | null;
+    readonly failed: boolean;
+    /** The ask this answers, so the next timer starts from the answer. */
     readonly ask: number;
   } | null>(null);
   const status = tracked && reading?.context === context ? reading.status : null;
@@ -63,14 +67,17 @@ export function useLibraryMoveStatus(input: {
         const was = lastState.current?.context === context ? lastState.current.running : false;
         const running = libraryMoveRunning(next);
         lastState.current = { context, running };
-        setReading({ context, status: next, ask: asks });
+        setReading({ context, status: next, failed: false, ask: asks });
         if (was && !running) onStoreChanged();
       },
       () => {
         if (!current) return;
-        setReading((previous) =>
-          previous?.context === context ? { ...previous, ask: asks } : previous,
-        );
+        setReading((previous) => ({
+          context,
+          status: previous?.context === context ? previous.status : null,
+          failed: true,
+          ask: asks,
+        }));
       },
     );
     return () => {
@@ -78,11 +85,18 @@ export function useLibraryMoveStatus(input: {
     };
   }, [tracked, context, input.environmentId, input.root, asks, onStoreChanged]);
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment server again on a timer after each answer while the move waits or runs; unmounting stops it
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- asks the environment server again on a timer after each answer while the move waits or runs, and after a failed read; unmounting stops it
   useEffect(() => {
-    const answered = reading?.context === context ? reading.status : null;
-    if (!tracked || !(movingBack || libraryMoveRunning(answered))) return;
-    const timer = window.setTimeout(() => setAsks((value) => value + 1), ASK_AGAIN_MS);
+    if (!tracked) return;
+    const answered = reading?.context === context ? reading : null;
+    const wait =
+      movingBack || libraryMoveRunning(answered?.status ?? null)
+        ? ASK_AGAIN_MS
+        : answered?.failed
+          ? ASK_AFTER_FAILURE_MS
+          : null;
+    if (wait === null) return;
+    const timer = window.setTimeout(() => setAsks((value) => value + 1), wait);
     return () => window.clearTimeout(timer);
   }, [tracked, movingBack, reading, context]);
 
@@ -119,6 +133,17 @@ export function useLibraryMoveStatus(input: {
             () => null,
           );
           if (after?.state === "restoring" || after?.state === "moved-back") return;
+          if (after === null) {
+            // Unknown, not failed: the status is asked again until it answers.
+            setAsks((value) => value + 1);
+            toastManager.add({
+              type: "warning",
+              title: "Moving back could not be confirmed",
+              description:
+                "The answer was lost and the Library's status could not be read. It is checked again every few seconds.",
+            });
+            return;
+          }
           toastManager.add({
             type: "error",
             title: "The Library was not moved back",

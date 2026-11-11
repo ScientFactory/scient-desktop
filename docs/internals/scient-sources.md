@@ -945,7 +945,9 @@ The panel asks `moveStatus` only when the overview carries the mark
 on that environment settles, landed or failed (`runSourcesCommand` notifies
 `libraryWrites.ts`; highlight writes go the same way), and about once a second
 after each answer while the state is `waiting`, `moving` or `restoring`, or
-while this panel's own move back is running. Nothing is asked while the panel
+while this panel's own move back is running. A read that fails is tried again
+every five seconds, so a panel whose first read failed still finds a running
+move. Nothing is asked while the panel
 is closed, and nothing animates: only the numbers change. When a move or a move
 back that the panel saw running ends, the overview is read again, because the
 project's store changed.
@@ -967,7 +969,9 @@ toast).
 `cleanup-pending` project to a session holding operate, after a confirmation.
 It calls organize `move-back`. A failed answer is not shown as an error when
 the status then reads `restoring` or `moved-back`, since the move back runs on
-after a lost answer. On a library server, `move-back` on a project already
+after a lost answer. When the status cannot be read either, the panel says the
+move back could not be confirmed and keeps asking; it reports a failure only
+when the status answers with another state. On a library server, `move-back` on a project already
 moved back answers `not-moved` (the route serves that project from its own
 folder, where the action used to be refused). The project then stays on its own
 store: lazy moves and the background pass skip `moved-back`, and nothing moves
@@ -977,7 +981,12 @@ it into the library again.
 review has another version from a copy of this project.", which opens a picker
 read fresh from `systematicReviewConflicts`: the version in force and each
 other version side by side, with "Keep this version", "Use the other" and
-"Combine" (`systematicReviewConflict`, its own command and grant). Combine's
+"Combine" (`systematicReviewConflict`, its own command and grant). The choices
+are off until the versions have been read after the picker opened and after
+each choice. The pick carries the `updatedAt` of the version in force that the
+picker showed (`currentUpdatedAt`); if another one is in force by then, the
+server changes nothing and answers `version-changed`, and the picker says so and
+reads again. The agent tool sends no such value. Combine's
 report stays on the review, counts first and the lists behind "Details", until
 dismissed. After a choice the review and the list are read again; nothing is
 patched locally. A read-only session sees the line and both versions, with the

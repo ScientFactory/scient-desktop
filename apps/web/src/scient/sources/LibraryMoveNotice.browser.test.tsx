@@ -190,4 +190,42 @@ describe("the Library's move line", () => {
       .toBeVisible();
     expect(mocks.toast).not.toHaveBeenCalled();
   });
+
+  it("asks again after a first read that failed", async ({ signal }) => {
+    await using resources = new AsyncDisposableStack();
+    const clock = fakeTimers();
+    resources.defer(() => clock[Symbol.dispose]());
+    setup([{ state: "moving", progress: null }]);
+    mocks.readLibraryMoveStatus.mockRejectedValueOnce(new Error("offline"));
+    const screen = resources.use(await render(<Harness libraryBackend />, { router: false }));
+    await vi.waitFor(() => expect(mocks.readLibraryMoveStatus).toHaveBeenCalledTimes(1));
+
+    // The failed answer lands during the first step, so the retry may be timed from its end.
+    await advanceTestClock(signal, 5_000);
+    await advanceTestClock(signal, 5_000);
+
+    await expect.element(screen.getByText("Moving the Library out of this project.")).toBeVisible();
+  });
+
+  it("does not call a move back failed when its answer and the status are both lost", async () => {
+    setup([
+      { state: "done", lines: [summary] },
+      { state: "moved-back", restoredSources: 2, restoredPdfs: 1 },
+    ]);
+    mocks.organizeScientSources.mockRejectedValueOnce(new Error("timed out"));
+    await using screen = await render(<Harness libraryBackend />, { router: false });
+    await expect.element(screen.getByText(summary, { exact: false })).toBeVisible();
+    mocks.readLibraryMoveStatus.mockRejectedValueOnce(new Error("offline"));
+
+    await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "Move back into this project" }));
+    await userEvent.click(page.getByRole("button", { name: "Move back" }));
+
+    await expect
+      .element(screen.getByText("The Library is back in this project: 2 sources, 1 PDF."))
+      .toBeVisible();
+    expect(mocks.toast.mock.calls.map(([toast]) => toast.title)).toEqual([
+      "Moving back could not be confirmed",
+    ]);
+  });
 });

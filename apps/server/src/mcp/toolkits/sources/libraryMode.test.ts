@@ -801,6 +801,11 @@ describe("Sources tools on the library backend", () => {
         ),
       ).toEqual({ outcome: "dismissed" });
       expect(yield* run(listScientSourcesForInvocation({}), fixture)).not.toHaveProperty("move");
+
+      const moveBack = () =>
+        run(organizeLibrarySourcesForInvocation({ change: { action: "move-back" } }), fixture);
+      expect(yield* moveBack()).toMatchObject({ outcome: "moved-back" });
+      expect(yield* moveBack()).toEqual({ outcome: "not-moved" });
     }),
   );
 

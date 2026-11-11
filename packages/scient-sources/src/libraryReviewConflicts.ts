@@ -270,9 +270,12 @@ export async function resolveScientReviewConflict(input: {
   readonly conflictId: string;
   readonly pick: "keep" | "use-other" | "combine";
   readonly actor: ScientSourceActor;
+  /** The `updatedAt` of the version in force that the pick was made against. */
+  readonly expectedUpdatedAt?: string;
 }): Promise<
   | { readonly outcome: "resolved"; readonly report: ScientReviewCombineReport | null }
   | { readonly outcome: "not-found" }
+  | { readonly outcome: "version-changed" }
 > {
   const root = await projectRootFor(input.projectRoot);
   const { projectId } = await readScientProjectIdentity(root);
@@ -291,6 +294,9 @@ export async function resolveScientReviewConflict(input: {
     if (!incomingText || !existingText) return { outcome: "not-found" };
     const incoming = decodeReview(JSON.parse(incomingText));
     const existing = decodeReview(JSON.parse(existingText));
+    if (input.expectedUpdatedAt !== undefined && existing.updatedAt !== input.expectedUpdatedAt) {
+      return { outcome: "version-changed" };
+    }
     const incomingSnapshotText = await readText(conflictSnapshotPath);
     const existingSnapshotText = await readText(snapshotFile(root, input.reviewId));
     const snapshotOf = (text: string | null) =>

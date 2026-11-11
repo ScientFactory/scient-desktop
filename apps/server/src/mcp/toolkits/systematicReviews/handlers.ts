@@ -253,6 +253,13 @@ export const updateLibrarySystematicReviewForInvocation = Effect.fn(
       "agent",
     ),
   );
+  // Only a pick that names the version it was made against can get this answer; the tool's cannot.
+  if (result.outcome === "version-changed") {
+    return yield* new ScientSourcesToolError({
+      code: "operation-failed",
+      message: "The review changed. Read its versions again.",
+    });
+  }
   return { ...result, reviewId: change.reviewId };
 });
 

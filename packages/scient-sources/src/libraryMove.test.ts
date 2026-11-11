@@ -11,6 +11,7 @@ import { readLibraryAliasesAt } from "./libraryAliases.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   listScientReviewConflicts,
+  readScientReviewVersions,
   resolveScientReviewConflict,
   SCIENT_REVIEW_COMBINED_NOTE,
 } from "./libraryReviewConflicts.ts";
@@ -748,15 +749,22 @@ describe("crash tests: each crash, then a rerun that ends in done with nothing l
     const empty = await newLibrary(base, "other-state");
     const copied = NodePath.join(base, "copied-again");
     await NodeFSP.cp(projectB, copied, { recursive: true });
-    for (const root of [projectB, copied]) {
-      const resolved = await resolveScientReviewConflict({
+    // A pick made against a version that is no longer in force changes nothing.
+    const pickAt = (root: string, expectedUpdatedAt: string) =>
+      resolveScientReviewConflict({
         projectRoot: root,
         library: empty,
         reviewId,
         conflictId: conflict!.conflictId,
         pick: "combine",
         actor: "user",
+        expectedUpdatedAt,
       });
+    expect((await pickAt(projectB, "2026-01-01T00:00:00.000Z")).outcome).toBe("version-changed");
+    expect(await listScientReviewConflicts({ projectRoot: projectB, reviewId })).toHaveLength(1);
+    for (const root of [projectB, copied]) {
+      const inForce = (await readScientReviewVersions({ projectRoot: root, reviewId })).current;
+      const resolved = await pickAt(root, inForce!.updatedAt);
       expect(resolved.outcome).toBe("resolved");
       if (resolved.outcome !== "resolved") return;
       expect(resolved.report?.undecidedPairs.map((pair) => [...pair].toSorted())).toEqual([
