@@ -11,6 +11,7 @@ import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -4685,7 +4686,13 @@ describe("Codex restored Policy", () => {
             } catch {}
           };
           yield* Effect.addFinalizer(() => Effect.sync(killGroup));
-          yield* child.stdout.pipe(Stream.take(1), Stream.runDrain);
+          // Stop it only once its SIGTERM trap is set; an early exit would pass without testing it.
+          const firstLine = yield* child.stdout.pipe(
+            Stream.decodeText(),
+            Stream.splitLines,
+            Stream.runHead,
+          );
+          assert.deepStrictEqual(firstLine, Option.some("ready"));
           // Scope.close cannot be interrupted, so a regression is ended by this rescue instead of
           // hanging the test; the deadline under test must make it unnecessary.
           let rescued = false;
