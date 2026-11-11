@@ -135,7 +135,7 @@ function SharePageContent({
     <SharePageFrame
       header={
         <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="min-w-0 flex-1">
+          <div className="min-w-0 flex-1 basis-56">
             <h1 className="truncate text-base font-medium">{snapshot.thread.title}</h1>
             <p className="text-xs text-muted-foreground">
               Shared from Scient{sharedAt ? ` · ${formatDate(sharedAt)}` : ""}
