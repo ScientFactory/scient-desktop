@@ -29,13 +29,13 @@ import * as Path from "effect/Path";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
-import { HttpClient } from "effect/http";
 
 import { accountTokenRef } from "../../accounts/AccountBoundRef.ts";
 import type { AccountsService } from "../../accounts/AccountsService.ts";
 import { type ConnectorSessionsShape, needsYouMessage } from "../../accounts/connectorSessions.ts";
 import { latestHistory } from "../../storage/FolderHistory.ts";
 import { downloadBundle } from "./LocalBundleDownload.ts";
+import type { ConnectorFetch } from "./ConnectorOutbound.ts";
 import type { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import {
   parseScientPluginManifest,
@@ -203,8 +203,8 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
   readonly accounts: Option.Option<AccountsService["Service"]>;
   readonly projects: ProjectStoreV2["Service"];
   readonly sessions: Option.Option<ConnectorSessionsShape>;
-  /** Downloads MCP Registry bundles. */
-  readonly http: Option.Option<HttpClient.HttpClient>;
+  /** Downloads MCP Registry bundles, under the connector egress rules. */
+  readonly bundleFetch: ConnectorFetch;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -614,9 +614,6 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       let registry: { readonly name: string; readonly version: string } | undefined;
       switch (target.type) {
         case "registry-bundle": {
-          if (Option.isNone(options.http))
-            return yield* unsupported("Scient can't download bundles here.");
-          const http = options.http.value;
           const download = path.join(root, `.download-${connectorId}.mcpb`);
           yield* withFiles(
             fileSystem
@@ -628,9 +625,7 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
               ),
           );
           directory = yield* Effect.gen(function* () {
-            yield* downloadBundle(target.bundle, download).pipe(
-              Effect.provideService(HttpClient.HttpClient, http),
-            );
+            yield* downloadBundle(target.bundle, download, options.bundleFetch);
             const read = yield* readBundleManifest(download);
             const reason = platformUnavailable(read.manifest, platform);
             if (reason !== undefined) return yield* unsupported(reason);

@@ -36,7 +36,6 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
-import { HttpClient } from "effect/http";
 
 import { AccountsService } from "../../accounts/AccountsService.ts";
 import {
@@ -81,11 +80,13 @@ import {
   controlFetch,
   describeEgressFailure,
   egressPolicyFor,
+  type ConnectorFetch,
   makeConnectorFetch,
   proxyFetch,
   STRICT_EGRESS_POLICY,
 } from "./ConnectorOutbound.ts";
 import { probeConnector } from "./ConnectorProbe.ts";
+import { bundleFetch } from "./LocalBundleDownload.ts";
 import {
   agentRequestIds,
   requestIdToken,
@@ -155,6 +156,8 @@ export interface ConnectorRuntimeOptions {
   readonly signInSessions?: ConnectorSessionsShape;
   /** Stands in for npm and uv when a copy brings in a package's code (tests). */
   readonly runTool?: RunTool;
+  /** Stands in for the network when a registry bundle is downloaded (tests). */
+  readonly bundleFetch?: ConnectorFetch;
 }
 
 type Credential =
@@ -593,7 +596,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
     accounts,
     projects,
     sessions: signInSessions,
-    http: yield* Effect.serviceOption(HttpClient.HttpClient),
+    bundleFetch: options.bundleFetch ?? bundleFetch,
   });
   /** One connector as clients see it; a local one reads its manifest for what it needs. */
   const summarizeWith =

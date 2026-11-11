@@ -31,7 +31,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Stream from "effect/Stream";
-import { HttpClient, HttpClientResponse, HttpRouter } from "effect/http";
+import { HttpRouter } from "effect/http";
 import * as yazl from "yazl";
 
 import * as ServerSecretStore from "../../../auth/ServerSecretStore.ts";
@@ -64,7 +64,12 @@ import {
   decodeOAuthMaterial,
   encodeOAuthMaterial,
 } from "./ConnectorOAuth.ts";
-import { controlFetch, egressPolicyFor, STRICT_EGRESS_POLICY } from "./ConnectorOutbound.ts";
+import {
+  type ConnectorFetch,
+  controlFetch,
+  egressPolicyFor,
+  STRICT_EGRESS_POLICY,
+} from "./ConnectorOutbound.ts";
 import { probeConnector } from "./ConnectorProbe.ts";
 import { GitHubSourceControlCredential } from "./GitHubSourceControlCredential.ts";
 import * as ConnectorProxyRoute from "./ConnectorProxyRoute.ts";
@@ -574,6 +579,8 @@ const makeHarness = Effect.fn("makeHarness")(function* (
     readonly github?: GitHubSourceControlCredential["Service"];
     /** Stands in for Accounts' sessions for signed-in connectors. */
     readonly signInSessions?: ConnectorSessionsShape;
+    /** Stands in for the network when a registry bundle is downloaded. */
+    readonly bundleFetch?: ConnectorFetch;
   } = {},
 ) {
   const config = yield* ServerConfig.ServerConfig;
@@ -590,6 +597,7 @@ const makeHarness = Effect.fn("makeHarness")(function* (
   const runtime = yield* makeConnectorRuntime({
     stateDir: config.stateDir,
     ...(options.signInSessions === undefined ? {} : { signInSessions: options.signInSessions }),
+    ...(options.bundleFetch === undefined ? {} : { bundleFetch: options.bundleFetch }),
   }).pipe(
     Effect.provideService(
       ConnectorCredentialStore.ConnectorCredentialStore,
@@ -2662,19 +2670,12 @@ describe("local connectors", () => {
       yield* writeBundle(archive);
       const bytes = yield* Effect.promise(() => NodeFSP.readFile(archive));
       const sha256 = NodeCrypto.createHash("sha256").update(bytes).digest("hex");
-      const client = HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            request.url === "https://example.com/echo.mcpb"
-              ? new Response(bytes)
-              : new Response("missing", { status: 404 }),
-          ),
-        ),
-      );
-      const harness = yield* makeHarness().pipe(
-        Effect.provide(Layer.merge(accounts.layer, Layer.succeed(HttpClient.HttpClient, client))),
-      );
+      const harness = yield* makeHarness({
+        bundleFetch: async (url) =>
+          String(url) === "https://example.com/echo.mcpb"
+            ? new Response(bytes)
+            : new Response("missing", { status: 404 }),
+      }).pipe(Effect.provide(accounts.layer));
       const target = (hash: string) =>
         ({
           type: "registry-bundle",
@@ -3107,11 +3108,8 @@ describe("connectors agents run", () => {
       const archive = NodePath.join(config.stateDir, "..", "agent-echo.mcpb");
       yield* writeBundle(archive);
       const bytes = yield* Effect.promise(() => NodeFSP.readFile(archive));
-      const client = HttpClient.make((request) =>
-        Effect.succeed(HttpClientResponse.fromWeb(request, new Response(bytes))),
-      );
-      const harness = yield* makeHarness().pipe(
-        Effect.provide(Layer.merge(accounts.layer, Layer.succeed(HttpClient.HttpClient, client))),
+      const harness = yield* makeHarness({ bundleFetch: async () => new Response(bytes) }).pipe(
+        Effect.provide(accounts.layer),
       );
       const echo: DiscoverEntry = {
         name: "io.example/echo",
