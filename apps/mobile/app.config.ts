@@ -242,10 +242,14 @@ const sharingPlugin: NonNullable<ExpoConfig["plugins"]>[number] = [
 
 const config: ExpoConfig = {
   name: variant.appName,
+  // SCIENT-FORK:START
   slug: repoEnv.T3CODE_EAS_SLUG?.trim() || "scient",
+  // SCIENT-FORK:END
   platforms: ["ios", "android"],
   scheme: variant.scheme,
+  // SCIENT-FORK:START
   version: repoEnv.T3CODE_MOBILE_VERSION ?? "1.0.0",
+  // SCIENT-FORK:END
   runtimeVersion: {
     // Skip costly fingerprinting on dev launches; preview and production OTAs require matching native projects.
     policy: runtimeVersionPolicy,
@@ -254,8 +258,10 @@ const config: ExpoConfig = {
   icon: variant.assets.appIcon,
   userInterfaceStyle: "automatic",
   updates: {
+    // SCIENT-FORK:START — OTA only from Scient's own EAS project.
     enabled: easProjectId !== undefined && repoEnv.T3CODE_MOBILE_UPDATES_ENABLED !== "0",
     ...(easProjectId ? { url: `https://u.expo.dev/${easProjectId}` } : {}),
+    // SCIENT-FORK:END
     checkAutomatically: "ON_LOAD",
     fallbackToCacheTimeout: 0,
   },
@@ -265,7 +271,9 @@ const config: ExpoConfig = {
     requireFullScreen: process.env.T3_SHOWCASE_CAPTURE_BUILD === "1",
     bundleIdentifier: iosBundleIdentifier,
     // Avoid Personal Team fallback: it cannot sign App Groups, Apple sign-in or push entitlements.
+    // SCIENT-FORK:START
     appleTeamId: APPLE_TEAM_ID,
+    // SCIENT-FORK:END
     associatedDomains: [
       `applinks:${variant.relyingParty}`,
       `webcredentials:${variant.relyingParty}`,
@@ -494,11 +502,15 @@ const config: ExpoConfig = {
       tracesToken: repoEnv.EXPO_PUBLIC_OTLP_TRACES_TOKEN ?? null,
     },
     eas: {
+      // SCIENT-FORK:START
       ...(easProjectId ? { projectId: easProjectId } : {}),
+      // SCIENT-FORK:END
       observe: { endpointUrl: observeEndpointUrl },
     },
   },
+  // SCIENT-FORK:START
   ...(easOwner ? { owner: easOwner } : {}),
+  // SCIENT-FORK:END
   experiments: {
     // Metro only runs babel-plugin-react-compiler when this is set; see src/reactCompilerCoverage.test.ts.
     reactCompiler: true,
