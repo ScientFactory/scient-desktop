@@ -419,6 +419,8 @@ This skill grants no tools or permissions.
    \`{"query":"gmail"}\`) shows the user's connectors and ones Scient can add from Discover and
    the MCP Registry. If one fits, \`scient_connector_add {from}\` with its \`name\` adds it, on for
    every project; a key or the user's own sign-in app it needs is asked in a private card.
+   Add one connector for the need: not alternatives, or aggregators that bundle many services,
+   unless the user asks.
    Then follow its message (\`scient_connector_setup\` for \`needs-setup\`,
    \`scient_connector_control {action: "sign-in"}\` for \`needs-sign-in\`). New chats get its
    tools; in this chat, call them through \`scient_connector_check {connector, calls}\`.
@@ -448,7 +450,9 @@ This skill grants no tools or permissions.
 6. **Test with real calls.** \`scient_connector_check {folder, calls}\` with real inputs from the
    user's tasks. For a site the user signs in to, add \`signIn\` with the name of their Accounts
    sign-in, so the check runs signed in. Read the data: it must match the source, not just
-   arrive. See \`testing.md\`. Fix and check again until it passes.
+   arrive. See \`testing.md\`. Fix and check again until it passes. If the service keeps
+   answering 429 or 403, to plain requests too, stop after a couple of tries: tell the user,
+   and don't save a connector you couldn't check.
 7. **Save and set up.** \`scient_connector_save {folder}\`. When it says \`needs-setup\`, call
    \`scient_connector_setup {connector}\`: keys open a private card, a sign-in links the user's
    Accounts sign-in. Then check once more with \`connector\` set, so it uses them. (\`signIn\` is
@@ -487,7 +491,8 @@ This skill grants no tools or permissions.
       so.
 
 Turning connectors on, off or restarting them needs no question first. Removing one is the
-user's: tell them where (its page in Settings → Extensions).
+user's: tell them where (its page in Settings → Extensions). When the user asks you not to
+change anything, that includes connectors: don't add, save, set up or switch any.
 
 Go from the diagnosis to the saved fix in one go; don't stop to ask whether to go ahead.
 Ask only when the fix needs something from the user (a key, a sign-in, a choice of behaviour).
