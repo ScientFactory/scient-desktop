@@ -539,19 +539,19 @@ const isLibraryOrganizeChange = (
   change.action === "undo-merge";
 
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
-const organizeLibrarySourcesForInvocation = Effect.fn("ScientSourcesToolkit.organizeLibrary")(
-  function* (input: { readonly change: ScientSourcesLibraryOrganizeAction }) {
-    const { change } = input;
-    if (!isLibraryOrganizeChange(change)) {
-      return yield* organizeScientSourcesForInvocation({ change });
-    }
-    const store = yield* resolveScientSourcesStore();
-    if (store.kind !== "library") {
-      return yield* toolError("operation-failed", "Pins and merges need the personal Library.");
-    }
-    return yield* changeLibraryPinsOrMerges(store, change);
-  },
-);
+export const organizeLibrarySourcesForInvocation = Effect.fn(
+  "ScientSourcesToolkit.organizeLibrary",
+)(function* (input: { readonly change: ScientSourcesLibraryOrganizeAction }) {
+  const { change } = input;
+  if (!isLibraryOrganizeChange(change)) {
+    return yield* organizeScientSourcesForInvocation({ change });
+  }
+  const store = yield* resolveScientSourcesStore();
+  if (store.kind !== "library") {
+    return yield* toolError("operation-failed", "Pins and merges need the personal Library.");
+  }
+  return yield* changeLibraryPinsOrMerges(store, change);
+});
 
 const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges")(function* (
   store: ScientSourcesLibraryStore,
@@ -1259,7 +1259,7 @@ export const detachScientSourcePdfForInvocation = Effect.fn("ScientSourcesToolki
   },
 );
 
-const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolkit.bibliography")(
+export const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolkit.bibliography")(
   function* (input: {
     readonly replaceEdited?: ReadonlyArray<"references.bib" | "references.json">;
     readonly importEdited?: ReadonlyArray<"references.bib" | "references.json">;
@@ -1287,7 +1287,7 @@ const syncScientBibliographyForInvocation = Effect.fn("ScientSourcesToolkit.bibl
   },
 );
 
-const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search")(
+export const searchScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.search")(
   function* (input: {
     readonly query: string;
     readonly sourceIds?: ReadonlyArray<string>;
@@ -1564,35 +1564,37 @@ async function exportableRecords(
   });
 }
 
-const citeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.cite")(function* (input: {
-  readonly sources: ReadonlyArray<string>;
-  readonly format?: "markdown" | "latex";
-}) {
-  const store = yield* resolveScientSourcesStore();
-  const resolveIdentifiers = yield* keyedBatchLookup(yield* ReferenceIdentifierLookup);
-  if (store.kind === "library") {
+export const citeScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.cite")(
+  function* (input: {
+    readonly sources: ReadonlyArray<string>;
+    readonly format?: "markdown" | "latex";
+  }) {
+    const store = yield* resolveScientSourcesStore();
+    const resolveIdentifiers = yield* keyedBatchLookup(yield* ReferenceIdentifierLookup);
+    if (store.kind === "library") {
+      return yield* attempt(() =>
+        citePinnedSources(
+          {
+            root: store.root,
+            library: store.library,
+            sources: input.sources,
+            format: input.format ?? "markdown",
+            actor: "agent",
+            resolveLibraryId: (wanted) => resolveLibrarySourceId(store, wanted),
+          },
+          { resolveIdentifiers },
+        ),
+      );
+    }
+    const { root } = store;
     return yield* attempt(() =>
-      citePinnedSources(
-        {
-          root: store.root,
-          library: store.library,
-          sources: input.sources,
-          format: input.format ?? "markdown",
-          actor: "agent",
-          resolveLibraryId: (wanted) => resolveLibrarySourceId(store, wanted),
-        },
+      citeLibrarySources(
+        { root, sources: input.sources, format: input.format ?? "markdown" },
         { resolveIdentifiers },
       ),
     );
-  }
-  const { root } = store;
-  return yield* attempt(() =>
-    citeLibrarySources(
-      { root, sources: input.sources, format: input.format ?? "markdown" },
-      { resolveIdentifiers },
-    ),
-  );
-});
+  },
+);
 
 const handlers = {
   scient_sources_list: listScientSourcesForInvocation,
