@@ -633,6 +633,8 @@ export function makeNativeSessionAdapterV2(
             status: "failed" | "cancelled" | "interrupted",
             now: DateTime.Utc,
             clearWake: boolean = true,
+            // SCIENT-FORK: false when work settled normally and step reads still finish on their own.
+            settleSubagentSteps: boolean = true,
           ) {
             backgroundPending = false;
             if (clearWake) {
@@ -659,7 +661,8 @@ export function makeNativeSessionAdapterV2(
               }
             }
             // SCIENT-FORK: steps whose last read will not come stop running.
-            for (const key of subagentChildren.keys()) yield* finishSubagentSteps(key, now);
+            if (settleSubagentSteps)
+              for (const key of subagentChildren.keys()) yield* finishSubagentSteps(key, now);
             yield* publishBackgroundRoster(now);
           },
         );
@@ -942,7 +945,7 @@ export function makeNativeSessionAdapterV2(
                       yield* DateTime.now,
                       options.eventQueueLimits && active ? () => Effect.void : emit,
                     );
-                  } else yield* stopBackgroundTasks("cancelled", yield* DateTime.now, false);
+                  } else yield* stopBackgroundTasks("cancelled", yield* DateTime.now, false, false);
                   return;
                 }
                 // SCIENT-FORK: a subagent's own steps fill its child thread and never wake the agent.
@@ -953,6 +956,8 @@ export function makeNativeSessionAdapterV2(
                     return;
                   const childThreadId = owner.childThreadId;
                   const child = subagentChild(key);
+                  // Its steps were settled at shutdown or by an earlier final read.
+                  if (child.final) return;
                   const now = yield* DateTime.now;
                   for (const step of update.steps) {
                     const stepKey = `${key}:step:${step.id}`;
@@ -1475,6 +1480,10 @@ export function makeNativeSessionAdapterV2(
                       driver,
                       turnItem: artifacts.turnItem,
                     });
+                  }
+                  if (reopened) {
+                    const child = subagentChildren.get(nativeId);
+                    if (child) child.final = false;
                   }
                   const observedResult = scient ? update.result : update.detail;
                   const resultPending =

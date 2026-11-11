@@ -3786,11 +3786,13 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               content: [{ type: "text", text: "Two plus two is 4." }],
             }),
         );
+        // Work settles before the last read of the saved steps.
         yield* peer.emit([
           {
             type: "subagent_lifecycle",
             payload: { id: "check", status: "completed", output: "Two plus two is 4." },
           },
+          { type: "session_settled" },
         ]);
         yield* TestClock.adjust("3 seconds");
         const settled = yield* h.takeUntil(
