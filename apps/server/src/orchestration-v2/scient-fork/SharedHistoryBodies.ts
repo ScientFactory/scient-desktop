@@ -12,7 +12,6 @@ import { readJsonStringFieldPage } from "./JsonStringFieldPage.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
-const CHUNK_BYTES = 64 * 1024;
 const MESSAGE_BATCH_BYTES = 4 * 1024 * 1024;
 const SUMMARY_PREFIX = '{"text":';
 const SUMMARY_SUFFIX = "}";
@@ -26,96 +25,74 @@ const sourceBodySql = (sql: SqlClient.SqlClient, sourceId: string) => sql`
   LEFT JOIN orchestration_events AS event ON event.event_id = source.event_id
   WHERE source.source_id = ${sourceId}`;
 
-const readSourceChunk = (
-  sql: SqlClient.SqlClient,
-  sourceId: string,
-  start: number,
-  length: number,
-) =>
-  sql<{ readonly chunk: Uint8Array | null }>`
-    SELECT substr(CAST(body AS BLOB), ${start + 1}, ${length}) AS chunk
-    FROM (${sourceBodySql(sql, sourceId)})`.pipe(
-    Effect.map((rows) => rows[0]?.chunk ?? new Uint8Array(0)),
-  );
-
 const QUOTE = 0x22;
 const BACKSLASH = 0x5c;
-const isJsonSpace = (byte: number) =>
-  byte === 0x20 || byte === 0x09 || byte === 0x0a || byte === 0x0d;
 
 /**
- * Finds the raw bytes of a top-level string field, quotes included, without decoding the
- * document. JSON's structural characters are ASCII and never appear inside a multibyte
- * UTF-8 sequence, so a byte scan is exact. Returns the first occurrence, as the paged
- * string reader does, or undefined when the field is missing or not a string.
+ * Finds the raw bytes of a top-level string field in single passes inside SQLite (a chunked
+ * read would load the whole value once per chunk). An unescaped `"field":` cannot occur inside
+ * a JSON string, where quotes are escaped, and the slice must decode to the field's value, so
+ * a wrong match is rejected, never used. Returns a 0-based byte offset of the opening quote.
  */
-export const locateTopLevelStringField = Effect.fn("SharedHistory.locateField")(function* <E>(
-  read: (byteOffset: number, length: number) => Effect.Effect<Uint8Array, E>,
+const locateStringField = Effect.fn("SharedHistory.locateField")(function* (
+  sql: SqlClient.SqlClient,
+  document: import("effect/sql/Statement").Fragment,
   field: string,
 ) {
-  const wanted = new TextEncoder().encode(field);
-  let offset = 0;
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  let keyExpected = false;
-  let role: "key" | "value" | "skip" = "skip";
-  let keyPosition = 0;
-  let keyMatches = true;
-  let valueNext = false;
-  let colonSeen = false;
-  let valueStart = -1;
-  while (true) {
-    const bytes = yield* read(offset, CHUNK_BYTES);
-    if (bytes.byteLength === 0) return undefined;
-    for (let at = 0; at < bytes.byteLength; at++) {
-      const byte = bytes[at]!;
-      const position = offset + at;
-      if (inString) {
-        if (escaped) {
-          escaped = false;
-          if (role === "key") keyMatches = false;
-        } else if (byte === BACKSLASH) {
-          escaped = true;
-          if (role === "key") keyMatches = false;
-        } else if (byte === QUOTE) {
-          inString = false;
-          if (role === "value") return { start: valueStart, length: position - valueStart + 1 };
-          if (role === "key") {
-            valueNext = keyMatches && keyPosition === wanted.length;
-            colonSeen = false;
-          }
-          role = "skip";
-        } else if (role === "key") {
-          if (wanted[keyPosition++] !== byte) keyMatches = false;
-        }
-        continue;
-      }
-      if (byte === QUOTE) {
-        inString = true;
-        if (depth === 1 && keyExpected) {
-          role = "key";
-          keyPosition = 0;
-          keyMatches = true;
-          keyExpected = false;
-        } else if (depth === 1 && valueNext && colonSeen) {
-          role = "value";
-          valueStart = position;
-        } else role = "skip";
-      } else if (byte === 0x7b || byte === 0x5b) {
-        if (depth === 1 && valueNext && colonSeen) return undefined;
-        depth++;
-        if (depth === 1) keyExpected = true;
-      } else if (byte === 0x7d || byte === 0x5d) depth--;
-      else if (depth === 1 && byte === 0x2c) {
-        keyExpected = true;
-        valueNext = false;
-      } else if (depth === 1 && byte === 0x3a) colonSeen = true;
-      else if (depth === 1 && valueNext && colonSeen && !isJsonSpace(byte)) return undefined;
+  const key = `"${field}":`;
+  const path = `$.${field}`;
+  const found = yield* sql<{ readonly start: number | null; readonly length: number | null }>`
+    WITH doc AS (SELECT ${document} AS body)
+    SELECT instr(CAST(body AS BLOB), CAST(${key} AS BLOB)) + ${Buffer.byteLength(key)} AS start,
+      octet_length(json_quote(json_extract(body, ${path}))) AS length
+    FROM doc WHERE json_valid(body) AND json_type(body, ${path}) = 'text'
+      AND instr(CAST(body AS BLOB), CAST(${key} AS BLOB)) > 0`;
+  const at = found[0];
+  if (at === undefined || at.start === null || at.length === null) return undefined;
+  const verify = (length: number) =>
+    sql<{ readonly ok: number | null }>`
+      WITH doc AS (SELECT ${document} AS body),
+        slice AS (SELECT body, CAST(substr(CAST(body AS BLOB), ${at.start}, ${length}) AS TEXT) AS raw FROM doc)
+      SELECT CASE WHEN substr(raw, 1, 1) = '"' AND json_valid('{"t":' || raw || '}')
+        THEN json_extract('{"t":' || raw || '}', '$.t') = json_extract(body, ${path}) END AS ok
+      FROM slice`.pipe(Effect.map((rows) => rows[0]?.ok === 1));
+  if (yield* verify(at.length)) return { start: at.start - 1, length: at.length };
+  // SQLite re-escapes some strings (lone surrogates) unlike JSON.stringify, so the canonical
+  // length can differ; find the closing quote in one read of the document instead.
+  const whole = yield* sql<{ readonly bytes: Uint8Array | null }>`
+    SELECT CAST(${document} AS BLOB) AS bytes`;
+  const bytes = whole[0]?.bytes;
+  if (bytes === null || bytes === undefined || bytes[at.start - 1] !== QUOTE) return undefined;
+  let end = -1;
+  for (let index = at.start; index < bytes.byteLength; index++) {
+    if (bytes[index] === BACKSLASH) index++;
+    else if (bytes[index] === QUOTE) {
+      end = index;
+      break;
     }
-    offset += bytes.byteLength;
-    yield* Effect.yieldNow;
   }
+  if (end < 0) return undefined;
+  const length = end - (at.start - 1) + 1;
+  return (yield* verify(length)) ? { start: at.start - 1, length } : undefined;
+});
+
+const digestSlice = Effect.fn("SharedHistory.digestSlice")(function* (
+  sql: SqlClient.SqlClient,
+  document: import("effect/sql/Statement").Fragment,
+  located: { readonly start: number; readonly length: number },
+) {
+  const rows = yield* sql<{ readonly slice: Uint8Array | null }>`
+    SELECT substr(CAST(${document} AS BLOB), ${located.start + 1}, ${located.length}) AS slice`;
+  const slice = rows[0]?.slice;
+  if (slice === null || slice === undefined || slice.byteLength !== located.length)
+    return undefined;
+  return new Uint8Array(
+    NodeCrypto.createHash("sha256")
+      .update(SUMMARY_PREFIX)
+      .update(slice)
+      .update(SUMMARY_SUFFIX)
+      .digest(),
+  );
 });
 
 /** Inserts or reuses a body whose bytes the given SQL expression produces, and proves that
@@ -161,24 +138,11 @@ export const convertLegacySourceToShared = Effect.fn("SharedHistory.convertSourc
   const summaryOnly = shape.historyNull === 1;
   if (!summaryOnly && shape.messagesArray !== 1) return "skipped" as const;
 
-  const located = yield* locateTopLevelStringField(
-    (byteOffset, length) => readSourceChunk(sql, sourceId, byteOffset, length),
-    "summaryText",
-  );
+  const sourceDocument = sql`(${sourceBodySql(sql, sourceId)})`;
+  const located = yield* locateStringField(sql, sourceDocument, "summaryText");
   if (located === undefined) return "skipped" as const;
-  const summaryHash = NodeCrypto.createHash("sha256").update(SUMMARY_PREFIX);
-  for (let at = 0; at < located.length; at += CHUNK_BYTES) {
-    summaryHash.update(
-      yield* readSourceChunk(
-        sql,
-        sourceId,
-        located.start + at,
-        Math.min(CHUNK_BYTES, located.length - at),
-      ),
-    );
-    yield* Effect.yieldNow;
-  }
-  const summaryDigest = new Uint8Array(summaryHash.update(SUMMARY_SUFFIX).digest());
+  const summaryDigest = yield* digestSlice(sql, sourceDocument, located);
+  if (summaryDigest === undefined) return "skipped" as const;
   const summaryExpression = sql`(SELECT ${SUMMARY_PREFIX} || CAST(substr(CAST(body AS BLOB),
     ${located.start + 1}, ${located.length}) AS TEXT) || ${SUMMARY_SUFFIX}
     FROM (${sourceBodySql(sql, sourceId)}))`;
@@ -313,21 +277,12 @@ export const shareHandoffItemSummary = Effect.fn("SharedHistory.shareItemSummary
   if (row === undefined || row.summary_hash === null) return "skipped" as const;
   const read = (byteOffset: number, length: number) =>
     readItemChunk(sql, itemId, byteOffset, length);
-  const located = yield* locateTopLevelStringField(read, "summary");
+  const itemDocument = sql`(SELECT payload_json FROM orchestration_v2_projection_turn_items
+    WHERE turn_item_id = ${itemId})`;
+  const located = yield* locateStringField(sql, itemDocument, "summary");
   if (located === undefined) return "skipped" as const;
-  const hash = NodeCrypto.createHash("sha256").update(SUMMARY_PREFIX);
-  for (let at = 0; at < located.length; at += CHUNK_BYTES) {
-    hash.update(
-      yield* readItemChunk(
-        sql,
-        itemId,
-        located.start + at,
-        Math.min(CHUNK_BYTES, located.length - at),
-      ),
-    );
-    yield* Effect.yieldNow;
-  }
-  const digest = new Uint8Array(hash.update(SUMMARY_SUFFIX).digest());
+  const digest = yield* digestSlice(sql, itemDocument, located);
+  if (digest === undefined) return "skipped" as const;
   if (Buffer.compare(Buffer.from(digest), Buffer.from(row.summary_hash)) !== 0)
     return "skipped" as const;
   const expression = sql`(SELECT ${SUMMARY_PREFIX} || CAST(substr(CAST(payload_json AS BLOB),

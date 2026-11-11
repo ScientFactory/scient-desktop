@@ -23,7 +23,6 @@ import * as EventStore from "../EventStore.ts";
 import * as ProjectionStore from "../ProjectionStore.ts";
 import { historicalMessage } from "../ScientHistoricalContext.ts";
 import { shareLegacyContextHistories } from "./ContextHistorySource.ts";
-import { locateTopLevelStringField } from "./SharedHistoryBodies.ts";
 
 const TestLayer = Layer.mergeAll(
   Layer.mergeAll(ProjectionStore.layer, EventStore.layer).pipe(Layer.provideMerge(layerMemory)),
@@ -61,35 +60,6 @@ const texts = [
   "Long ".repeat(20_000),
   "Last answer",
 ];
-
-const encoder = new TextEncoder();
-const readerOf = (text: string) => (offset: number, length: number) =>
-  Effect.succeed(encoder.encode(text).subarray(offset, offset + length));
-
-it.effect("locates a top-level string field by its raw bytes", () =>
-  Effect.gen(function* () {
-    const document = '{"a":{"summaryText":"nested"},"b":["summaryText"],"summaryText":"é\\"x"}';
-    const found = yield* locateTopLevelStringField(readerOf(document), "summaryText");
-    assert.isDefined(found);
-    const bytes = encoder.encode(document);
-    assert.equal(
-      new TextDecoder().decode(bytes.subarray(found!.start, found!.start + found!.length)),
-      '"é\\"x"',
-    );
-    assert.isUndefined(
-      yield* locateTopLevelStringField(readerOf('{"summaryText":3}'), "summaryText"),
-    );
-    assert.isUndefined(
-      yield* locateTopLevelStringField(readerOf('{"summary":"x"}'), "summaryText"),
-    );
-    assert.isUndefined(
-      yield* locateTopLevelStringField(
-        readerOf('{"x\\u0041":"y","summaryText":{}}'),
-        "summaryText",
-      ),
-    );
-  }),
-);
 
 it.layer(TestLayer)("shared archived history bodies", (it) => {
   it.effect(
