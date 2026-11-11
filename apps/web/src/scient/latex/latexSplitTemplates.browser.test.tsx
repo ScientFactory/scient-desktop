@@ -530,7 +530,13 @@ it("a Source interaction cancels a queued Visual reveal before it can replace So
   await using _fixture = _createFixture();
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
 
-  const state = await mount(_fixture, template26, "cancel-source", context);
+  // One Hebrew paragraph: cancellation needs a word to reveal, not the manuscript's layout.
+  const state = await mount(
+    _fixture,
+    "\\documentclass{article}\n\\begin{document}\nפסקה\n\\end{document}\n",
+    "cancel-source",
+    context,
+  );
   await scrollLatexVisualTestEditor(state.visual, () => {
     wordPosition(state.visual.view.dom, "פסקה");
   });
