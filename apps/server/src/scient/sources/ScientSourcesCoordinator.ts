@@ -319,7 +319,9 @@ export async function getScientSourceJournalIconMaterial(input: {
 }
 
 /** A deliberate citation key rename also renames the key where project documents cite it. */
-export async function updateScientSource(input: Parameters<typeof updateScientSourceMetadata>[0]) {
+export async function updateScientSource(
+  input: Parameters<typeof updateScientSourceMetadata>[0] & { readonly root: string },
+) {
   const previousKey = input.metadata.citationKey
     ? (await readScientSourceRecord(input.root, input.sourceId))?.citationKey
     : undefined;

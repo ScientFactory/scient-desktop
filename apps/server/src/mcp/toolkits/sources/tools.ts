@@ -109,9 +109,9 @@ export const ScientSourcesListResult = Schema.Struct({
 });
 
 export const ScientSourceAgentDetail = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  formatVersion: Schema.Literals([1, 2]),
   sourceId: NonEmptyString,
-  projectId: NonEmptyString,
+  projectId: Schema.optionalKey(NonEmptyString),
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
   citationKey: Schema.optionalKey(CitationKey),
   type: ScientSourceType,

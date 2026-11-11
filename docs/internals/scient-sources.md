@@ -232,11 +232,21 @@ two seconds of the scan are not trusted, for volumes with coarse clocks. A
 record file edited in place by hand is seen once the folder changes or the
 server restarts.
 
-Measured at 20,000 records (generated in a temporary folder, about 1.6 KiB
-abstract each; Apple Silicon, Node 24, under the shared agent load of that
-day):
+Measured once at 20,000 records (42.5 MiB of generated record files with
+abstracts, in a temporary folder; Apple M5 Pro, Node 24.19, under shared agent
+load):
 
-MEASUREMENTS
+| Measure                                                           | Result  |
+| ----------------------------------------------------------------- | ------- |
+| Cold build (first listing)                                        | 1.53 s  |
+| Heap retained by the index                                        | 76 MiB  |
+| Process memory growth                                             | 166 MiB |
+| Repeat listing, timestamps settled                                | 0.3 ms  |
+| Listing after one write (stat every file, read one)               | 219 ms  |
+| Repeat listing within two seconds of the writes (reads all again) | 1.77 s  |
+
+The in-memory index is enough for 5a. If a library grows far past this, the
+same index can move into a SQLite file in the library, rebuilt from records.
 
 ## Source truth and provenance
 

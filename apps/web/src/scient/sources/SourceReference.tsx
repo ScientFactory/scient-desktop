@@ -28,8 +28,9 @@ const REFERENCE_STYLE_ITEMS = SCIENT_REFERENCE_STYLES.map((style) => ({
 }));
 const REFERENCE_STYLE_SCHEMA = Schema.Literals(["vancouver", "apa"]);
 
-function referenceStyleStorageKey(projectId: string): string {
-  return `scient:sources:reference-style:${projectId}:v1`;
+/** A library record names no project; it shares one preference. */
+function referenceStyleStorageKey(projectId: string | undefined): string {
+  return `scient:sources:reference-style:${projectId ?? "library"}:v1`;
 }
 
 let citationModule: CitationModule | null = null;
