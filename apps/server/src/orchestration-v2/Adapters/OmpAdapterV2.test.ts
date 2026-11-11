@@ -3721,6 +3721,108 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       ),
   );
 
+  it.effect("fills a native subagent's thread with its saved steps, once each", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"] }],
+          initial: { provider: "test", id: "selected" },
+        });
+        peer.state.pendingAsyncWork = true;
+        let sessionDir: string | undefined;
+        const h = yield* harness(false, {
+          target: scientAgentTarget,
+          makeProcess: (options) => {
+            sessionDir = options.sessionDir;
+            return peer.makeProcess(options);
+          },
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        if (!sessionDir) return yield* Effect.die("Missing session directory");
+        const transcript = h.path.join(sessionDir, "parent", "Check.jsonl");
+        NodeFS.mkdirSync(h.path.dirname(transcript), { recursive: true });
+        const record = (id: string, message: unknown) =>
+          `${JSON.stringify({ type: "message", id, parentId: null, message })}\n`;
+        const call = { type: "toolCall", id: "call-1", name: "eval", arguments: { code: "2+2" } };
+        NodeFS.writeFileSync(
+          transcript,
+          record("a1", { role: "user", content: [{ type: "text", text: "Assignment" }] }) +
+            record("a2", { role: "assistant", content: [call] }),
+        );
+        yield* peer.emit([
+          {
+            type: "subagent_lifecycle",
+            payload: {
+              id: "check",
+              status: "started",
+              description: "Check",
+              sessionFile: transcript,
+            },
+          },
+        ]);
+        const spawned = yield* h.takeUntil((event) => event.type === "subagent.updated");
+        if (spawned.type !== "subagent.updated") return yield* Effect.die("Missing child");
+        const childThreadId = spawned.subagent.childThreadId;
+        const running = yield* h.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+        );
+        if (running.type !== "turn_item.updated" || running.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Missing running step");
+        assert.equal(running.turnItem.threadId, childThreadId);
+        assert.equal(running.turnItem.status, "running");
+        assert.deepEqual(running.turnItem.input, { code: "2+2" });
+        // The answer is in both the saved conversation and the ending frame.
+        NodeFS.appendFileSync(
+          transcript,
+          record("a3", {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "eval",
+            content: [{ type: "text", text: "4" }],
+          }) +
+            record("a4", {
+              role: "assistant",
+              content: [{ type: "text", text: "Two plus two is 4." }],
+            }),
+        );
+        yield* peer.emit([
+          {
+            type: "subagent_lifecycle",
+            payload: { id: "check", status: "completed", output: "Two plus two is 4." },
+          },
+        ]);
+        yield* TestClock.adjust("3 seconds");
+        const settled = yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.status === "completed",
+        );
+        if (settled.type !== "turn_item.updated" || settled.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Missing finished step");
+        assert.equal(settled.turnItem.id, running.turnItem.id);
+        assert.equal(settled.turnItem.output, "4");
+        yield* TestClock.adjust("3 seconds");
+        const childItems = h.recorded.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.threadId === childThreadId
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          [...new Set(childItems.map((item) => item.id))].map((id) => {
+            const item = childItems.findLast((candidate) => candidate.id === id)!;
+            return [item.type, item.type === "assistant_message" ? item.text : item.status];
+          }),
+          [
+            ["dynamic_tool", "completed"],
+            ["assistant_message", "Two plus two is 4."],
+          ],
+        );
+      }),
+    ),
+  );
+
   it.effect(
     "projects Scient assignment, observations and late result without relabeling the child",
     () =>

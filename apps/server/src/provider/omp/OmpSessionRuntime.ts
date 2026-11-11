@@ -109,6 +109,8 @@ export type OmpSessionUpdate =
       readonly result?: string;
       readonly model?: string;
       readonly presentation?: ScientSubagentObservation["presentation"];
+      /** Where OMP saves this subagent's own conversation. */
+      readonly sessionFile?: string;
     }
   | { readonly type: "command-output"; readonly delta: string }
   | {
@@ -1370,6 +1372,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       const terminal = previous !== undefined && previous !== "inProgress";
       if (terminal && (input.target.driverKind !== "scient" || status !== previous)) return;
       if (status !== previous) subagentStatuses.set(id, status);
+      const sessionFile = rawText(subagentPayload(event)?.sessionFile);
       if (input.target.driverKind === "scient") {
         const observed = parseScientSubagent(event, status !== "inProgress");
         const prior = scientSubagents.get(id);
@@ -1405,6 +1408,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           id,
           title: title ?? "Subagent",
           status,
+          ...(sessionFile === undefined ? {} : { sessionFile }),
         });
       } else {
         const detail = subagentDetail(event);
@@ -1414,6 +1418,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
           title: subagentTitle(event) ?? "Subagent",
           status,
           ...(detail ? { detail } : {}),
+          ...(sessionFile === undefined ? {} : { sessionFile }),
         });
       }
       return;

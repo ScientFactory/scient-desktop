@@ -79,6 +79,25 @@ type NativeSessionPresentation =
     }
   | { readonly type: "todo_list"; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> };
 
+/** SCIENT-FORK: one step of a native subagent's conversation; `id` is stable across reads. */
+export type NativeSubagentStep =
+  | {
+      readonly kind: "text";
+      readonly id: string;
+      readonly role: "user" | "assistant";
+      readonly text: string;
+      readonly reasoning?: boolean;
+    }
+  | {
+      readonly kind: "tool";
+      readonly id: string;
+      readonly name: string;
+      readonly status: "running" | "completed" | "failed";
+      readonly input?: unknown;
+      readonly output?: string;
+    }
+  | { readonly kind: "notice"; readonly id: string; readonly message: string };
+
 /** Native process events, before either orchestration version's presentation mapping. */
 export type NativeSessionUpdate =
   | {
@@ -144,6 +163,15 @@ export type NativeSessionUpdate =
       readonly presentation?: OrchestrationV2Subagent["presentation"];
       /** Only an authoritative new activation may reopen a settled native task. */
       readonly reopen?: boolean;
+    }
+  | {
+      /** SCIENT-FORK: a native subagent's own steps, shown in its child thread. */
+      readonly type: "subagent-steps";
+      /** The subagent's native id, as in its `subagent` update. */
+      readonly id: string;
+      readonly steps: ReadonlyArray<NativeSubagentStep>;
+      /** The subagent has ended and this is its last read: unanswered calls stop running. */
+      readonly final?: boolean;
     }
   | {
       readonly type: "question";
@@ -337,6 +365,17 @@ export function makeNativeSessionAdapterV2(
         const presentationOwners = new Map<string, NonNullable<typeof active>>();
         const subagentOwners = new Map<string, ProviderAdapter.ProviderAdapterV2TurnInput>();
         const subagents = new Map<string, OrchestrationV2Subagent>();
+        // SCIENT-FORK: child-thread items from native subagents' own steps, keyed by step.
+        const subagentSteps = new Map<string, OrchestrationV2TurnItem>();
+        const subagentNextOrdinal = new Map<string, number>();
+        const subagentResultText = new Map<string, string>();
+        const subagentResultOrdinal = new Map<string, number>();
+        // The assignment is ordinal 0; steps and an observed result follow in arrival order.
+        const allocateSubagentOrdinal = (key: string) => {
+          const ordinal = subagentNextOrdinal.get(key) ?? 1;
+          subagentNextOrdinal.set(key, ordinal + 1);
+          return ordinal;
+        };
         const nodes = new Map<string, OrchestrationV2ExecutionNode>();
         const messages = new Map<string, OrchestrationV2ConversationMessage>();
         const turns = new Map<string, OrchestrationV2ProviderTurn>();
@@ -812,6 +851,134 @@ export function makeNativeSessionAdapterV2(
                   } else yield* stopBackgroundTasks("cancelled", yield* DateTime.now, false);
                   return;
                 }
+                // SCIENT-FORK: a subagent's own steps fill its child thread and never wake the agent.
+                if (update.type === "subagent-steps") {
+                  const key = thread ? `${thread.id}:subagent:${update.id}` : undefined;
+                  const owner = key === undefined ? undefined : items.get(key);
+                  if (key === undefined || owner?.type !== "subagent" || !owner.childThreadId)
+                    return;
+                  const childThreadId = owner.childThreadId;
+                  const now = yield* DateTime.now;
+                  const emitStep = Effect.fnUntraced(function* (
+                    stepKey: string,
+                    next: OrchestrationV2TurnItem,
+                  ) {
+                    const previous = subagentSteps.get(stepKey);
+                    const content = (item: OrchestrationV2TurnItem) =>
+                      encodeNativeJson({
+                        ...item,
+                        startedAt: null,
+                        updatedAt: null,
+                        completedAt: null,
+                      });
+                    // Re-reads repeat settled steps; only a changed step is written.
+                    if (previous && content(previous) === content(next)) return;
+                    subagentSteps.set(stepKey, next);
+                    yield* emit({ type: "turn_item.updated", driver, turnItem: next });
+                  });
+                  for (const step of update.steps) {
+                    const stepKey = `${key}:step:${step.id}`;
+                    // An observed result already shows the final answer.
+                    if (
+                      step.kind === "text" &&
+                      step.role === "assistant" &&
+                      step.reasoning !== true &&
+                      !subagentSteps.has(stepKey) &&
+                      step.text.trim() === subagentResultText.get(key)?.trim()
+                    )
+                      continue;
+                    const previous = subagentSteps.get(stepKey);
+                    const ordinal = previous?.ordinal ?? allocateSubagentOrdinal(key);
+                    const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+                      driver,
+                      nativeItemId: stepKey,
+                    });
+                    const common = {
+                      id: turnItemId,
+                      threadId: childThreadId,
+                      runId: null,
+                      nodeId: owner.subagentId,
+                      providerThreadId: null,
+                      providerTurnId: null,
+                      nativeItemRef: ref(stepKey),
+                      parentItemId: null,
+                      ordinal,
+                      startedAt: previous?.startedAt ?? now,
+                      updatedAt: now,
+                    };
+                    if (step.kind === "text" && step.reasoning !== true) {
+                      const artifacts = makeSubagentConversationArtifacts({
+                        messageId: idAllocator.derive.messageFromProviderItem({
+                          driver,
+                          nativeItemId: stepKey,
+                        }),
+                        turnItemId,
+                        threadId: childThreadId,
+                        rootNodeId: owner.subagentId,
+                        providerThreadId: null,
+                        providerTurnId: null,
+                        nativeItemRef: ref(stepKey),
+                        role: step.role,
+                        text: step.text,
+                        ordinal,
+                        now,
+                      });
+                      if (!previous)
+                        yield* emit({
+                          type: "message.updated",
+                          driver,
+                          message: artifacts.message,
+                        });
+                      yield* emitStep(stepKey, artifacts.turnItem);
+                    } else if (step.kind === "text") {
+                      yield* emitStep(stepKey, {
+                        ...common,
+                        type: "reasoning",
+                        title: null,
+                        status: "completed",
+                        completedAt: now,
+                        text: step.text,
+                        streaming: false,
+                      });
+                    } else if (step.kind === "tool") {
+                      const prior = previous?.type === "dynamic_tool" ? previous : undefined;
+                      yield* emitStep(stepKey, {
+                        ...common,
+                        type: "dynamic_tool",
+                        title: step.name,
+                        toolName: step.name,
+                        status: step.status,
+                        input: step.input ?? prior?.input ?? {},
+                        ...(step.output === undefined ? {} : { output: step.output }),
+                        completedAt: step.status === "running" ? null : (prior?.completedAt ?? now),
+                      });
+                    } else {
+                      yield* emitStep(stepKey, {
+                        ...common,
+                        type: "system_notice",
+                        title: null,
+                        status: "completed",
+                        completedAt: now,
+                        message: step.message,
+                      });
+                    }
+                  }
+                  if (update.final) {
+                    for (const [stepKey, step] of subagentSteps) {
+                      if (
+                        stepKey.startsWith(`${key}:step:`) &&
+                        step.type === "dynamic_tool" &&
+                        step.status === "running"
+                      )
+                        yield* emitStep(stepKey, {
+                          ...step,
+                          status: "interrupted",
+                          completedAt: now,
+                        });
+                    }
+                  }
+                  return;
+                }
                 if (update.type === "question-resolved") {
                   for (const pending of requests.values()) {
                     if (pending.nativeId !== update.id || pending.request.status !== "pending")
@@ -1253,7 +1420,18 @@ export function makeNativeSessionAdapterV2(
                     });
                   }
                   const observedResult = scient ? update.result : update.detail;
-                  if (observedResult && update.status !== "running") {
+                  const resultShown = [...subagentSteps.entries()].some(
+                    ([stepKey, step]) =>
+                      stepKey.startsWith(`${nativeId}:step:`) &&
+                      step.type === "assistant_message" &&
+                      step.text.trim() === observedResult?.trim(),
+                  );
+                  if (observedResult && update.status !== "running" && !resultShown) {
+                    const resultOrdinal = subagentResultText.has(nativeId)
+                      ? (subagentResultOrdinal.get(nativeId) ?? 1)
+                      : allocateSubagentOrdinal(nativeId);
+                    subagentResultText.set(nativeId, observedResult);
+                    subagentResultOrdinal.set(nativeId, resultOrdinal);
                     const artifacts = makeSubagentConversationArtifacts({
                       messageId: idAllocator.derive.messageFromProviderItem({
                         driver,
@@ -1270,7 +1448,7 @@ export function makeNativeSessionAdapterV2(
                       nativeItemRef: ref(update.id),
                       role: "assistant",
                       text: observedResult,
-                      ordinal: 1,
+                      ordinal: resultOrdinal,
                       now,
                     });
                     yield* emit({ type: "message.updated", driver, message: artifacts.message });
