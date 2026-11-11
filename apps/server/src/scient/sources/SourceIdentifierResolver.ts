@@ -14,6 +14,7 @@ import {
   isWellFormedPmid,
   normalizePersistentIdentifier,
   normalizeScientSourceAbstractDocument,
+  plainTextFromMarkup,
   SOURCE_ADD_IDENTIFIER_SCHEMES,
   type SourceAddIdentifierScheme,
   type ScientSourceAbstractSection,
@@ -156,6 +157,11 @@ export function cslIssuedDate(issued: CslMetadata["issued"]): {
     raw: raw ?? formatted,
     year: validYear ?? year(raw),
   };
+}
+
+/** Crossref titles carry inline markup and line breaks from the deposited XML. */
+export function cslTitle(value: CslMetadata["title"]): string | null {
+  return plainTextFromMarkup(text(value));
 }
 
 export function cslCreators(
@@ -317,7 +323,7 @@ function metadataFromCsl(csl: CslMetadata, doi: string): ResolvedSourceMetadata 
   const updates = cslUpdates(csl["updated-by"]);
   return {
     type: type === "other" ? null : type,
-    title: text(csl.title),
+    title: cslTitle(csl.title),
     creators: cslCreators(csl.author),
     issuedRaw: issued.raw,
     issuedYear: issued.year,

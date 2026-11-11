@@ -305,7 +305,9 @@ title the agent supplied returns `identifier-mismatch` with the registry's title
 three creators, year and container. Neither writes a record. A confirmed
 identifier makes the registry's bibliographic fields authoritative, with `doi`
 or `pubmed` field provenance carrying the identifier and retrieval time, and
-stores verification `verified`. An unreachable or unusable registry adds the
+stores verification `verified`. A CSL title is read as plain text: Crossref
+passes on the inline markup (`<i>`, `<sub>`, MathML) and line breaks of the
+deposited XML, and Library titles are plain text. An unreachable or unusable registry adds the
 source as given with `unchecked`; a source without a DOI, PMID, arXiv ID or ISBN
 is `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. The same add path serves a person

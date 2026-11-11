@@ -179,6 +179,12 @@ export function normalizeScientSourceAbstractDocument(
   ]);
 }
 
+/** Plain text of a registry string with inline markup (`<i>`, `<sub>`, MathML) and entities. */
+export function plainTextFromMarkup(value: string | null | undefined): string | null {
+  const trimmed = value?.trim();
+  return trimmed ? inlineText(parseFragment(trimmed)) : null;
+}
+
 export function normalizeScientSourceAbstract(value: string | null | undefined): string | null {
   return normalizeScientSourceAbstractDocument(value)?.text ?? null;
 }
