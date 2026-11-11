@@ -196,6 +196,49 @@ const isTainted = (text: string, credentials: CredentialSet): boolean => {
 export const redactString = (text: string, credentials: CredentialSet): string =>
   isTainted(text, credentials) ? REDACTED : text;
 
+/** A local program's credentials: long keys hide anywhere; short keys and cookies as whole tokens. */
+export const programCredentials = (
+  keys: Iterable<string>,
+  cookies: Iterable<string> = [],
+): CredentialSet => {
+  const given = [...keys].filter((key) => key.length > 0);
+  return credentialSet(given.filter(isProtectableCredential), [
+    ...cookies,
+    ...given.filter((key) => !isProtectableCredential(key)),
+  ]);
+};
+
+/** Room past a cut so a credential the cut would split is still seen whole. */
+const CUT_MARGIN = 4_096;
+
+/**
+ * Free text for people and agents (tool output, error output, messages): each word carrying a
+ * credential in any encoding becomes the marker, and a credential across words hides it all.
+ * With `limit`, only what is shown is checked: the text is cut after redaction, never before.
+ */
+export const redactText = (text: string, credentials: CredentialSet, limit?: number): string => {
+  const shown = limit === undefined ? text : text.slice(0, limit + CUT_MARGIN);
+  if (credentials.secrets.length === 0 && credentials.tokens.length === 0) return shown;
+  const parts = shown.split(/(\s+)/u);
+  for (let index = 0; index < parts.length; index += 2)
+    if (parts[index] !== "" && isTainted(parts[index]!, credentials)) parts[index] = REDACTED;
+  const joined = parts.join("");
+  return isTainted(joined, credentials) ? REDACTED : joined;
+};
+
+/** A JSON value (a tool's parameter schema) with tainted strings replaced; undefined if unsafe. */
+export const redactJsonValue = (value: unknown, credentials: CredentialSet): unknown => {
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+  if (text === undefined) return undefined;
+  const redacted = redactJsonText(text, credentials);
+  return redacted === undefined ? undefined : (JSON.parse(redacted) as unknown);
+};
+
 const ESCAPES: Readonly<Record<string, string>> = {
   '"': '"',
   "\\": "\\",

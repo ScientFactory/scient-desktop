@@ -96,7 +96,7 @@ import {
   MIN_CREDENTIAL_LENGTH,
   redactEventStream,
   redactJsonStream,
-  redactString,
+  redactText,
 } from "./ConnectorRedaction.ts";
 import { ConnectorSessionBindings } from "./ConnectorSessionBindings.ts";
 import {
@@ -717,11 +717,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
       // A program may echo its own key back; agents never receive one long enough to matter.
       secrets: localConnectors.secretsFor(record.connectorId).filter(isProtectableCredential),
       // A new sign-in during the exchange adds cookies; each answer is checked against all of them.
-      live: () =>
-        credentialSet(
-          localConnectors.secretsFor(record.connectorId).filter(isProtectableCredential),
-          localConnectors.cookiesFor(record.connectorId),
-        ),
+      live: () => localConnectors.credentialsFor(record.connectorId),
     } satisfies SendOutcome;
   });
 
@@ -2073,14 +2069,11 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         return result("unreachable", describeEgressFailure(error));
       }
       // Scient writes a local program's start and stop failures for people; the program's own
-      // error text may still carry its key.
+      // error text may still carry its key or session.
       if (record.local !== undefined && error instanceof Error) {
-        const keys = localConnectors.secretsFor(record.connectorId);
-        const message = redactString(
-          keys
-            .filter((key) => key.length > 0)
-            .reduce((text, key) => text.replaceAll(key, "[hidden]"), error.message),
-          credentialSet(applied),
+        const message = redactText(
+          error.message,
+          localConnectors.credentialsFor(record.connectorId),
         )
           .replace(/^MCP error -?\d+: /, "")
           .trim();
@@ -2095,10 +2088,13 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         updatedAt,
       })).pipe(Effect.ignore);
     }
-    // Server-provided text reaches the settings UI; a reflected credential must not.
-    const credentials = credentialSet(applied);
+    // Server-provided text reaches the settings UI and agents; a reflected credential must not.
+    const credentials =
+      record.local === undefined
+        ? credentialSet(applied)
+        : localConnectors.credentialsFor(record.connectorId);
     const clean = (text: string | undefined) => {
-      const trimmed = text === undefined ? "" : redactString(text, credentials).trim();
+      const trimmed = text === undefined ? "" : redactText(text, credentials).trim();
       return trimmed.length > 0 ? trimmed : undefined;
     };
     const serverName = clean(listed.value.serverName);
@@ -2112,7 +2108,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
         if (name === undefined) return [];
         const title = clean(tool.title);
         const parameters = extractToolParameters(tool.inputSchema, (text) =>
-          redactString(text, credentials),
+          redactText(text, credentials),
         );
         return [
           {
@@ -2121,7 +2117,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
             ...(title === undefined ? {} : { title }),
             ...(tool.description === undefined
               ? {}
-              : { description: redactString(tool.description, credentials) }),
+              : { description: redactText(tool.description, credentials) }),
             ...(tool.annotations?.readOnlyHint === undefined
               ? {}
               : { readOnly: tool.annotations.readOnlyHint }),

@@ -10,7 +10,9 @@ import {
   redactEventStream,
   redactJsonStream,
   redactJsonText,
+  programCredentials,
   redactString,
+  redactText,
   requestIdToken,
   SSE_KEEPALIVE,
   SSE_KEEPALIVE_INTERVAL_MS,
@@ -349,5 +351,21 @@ describe("session cookie values", () => {
     // Decoded bytes that only contain the cookie inside a word stay.
     const inWord = Buffer.from("xs6k9xqy").toString("base64");
     expect(redactString(inWord, short)).toBe(inWord);
+  });
+});
+
+describe("free text a program writes", () => {
+  it("hides each word carrying a key or cookie, keeps the rest, and checks past a cut", () => {
+    const credentials = programCredentials(["short-key-1", TOKEN], ["s6k9xq"]);
+    const encoded = Buffer.from(`sid=s6k9xq`).toString("base64");
+    expect(redactText(`ok ${encoded} and short-key-1, then ${TOKEN}`, credentials)).toBe(
+      `ok ${REDACTED} and ${REDACTED} then ${REDACTED}`,
+    );
+    // A credential spanning words hides the whole text.
+    expect(
+      redactText("x spaced key value 123 y", programCredentials(["spaced key value 123"])),
+    ).toBe(REDACTED);
+    // Cut after redaction: the word the cut splits is still checked whole.
+    expect(redactText(`see short-key-1`, credentials, 6)).toBe(`see ${REDACTED}`);
   });
 });

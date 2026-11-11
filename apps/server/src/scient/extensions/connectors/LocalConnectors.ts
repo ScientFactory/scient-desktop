@@ -41,6 +41,7 @@ import {
   parseScientPluginManifest,
   SCIENT_PLUGIN_MANIFEST_FILE,
 } from "../plugins/ScientPluginManifest.ts";
+import { credentialSet, programCredentials } from "./ConnectorRedaction.ts";
 import type { ConnectorRecord, LocalLaunchRecord } from "./ConnectorStateStore.ts";
 import {
   type BundleManifest,
@@ -189,6 +190,8 @@ const hostOf = (site: string) => (URL.canParse(site) ? new URL(site).host : site
 /** The account id a record's `signIn` names. */
 const signInAccountOf = (local: Pick<LocalLaunchRecord, "signIn">) =>
   local.signIn?.startsWith(ACCOUNT_PREFIX) ? local.signIn.slice(ACCOUNT_PREFIX.length) : undefined;
+
+const NO_CREDENTIALS = credentialSet([]);
 
 /** How a start went that the check reports: what it ran without. */
 export interface CheckedStart extends LocalStart {
@@ -978,7 +981,11 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
           {},
           local.directory,
         );
-        return { launch, hide: [], missing: [signInProblem] } satisfies CheckedStart;
+        return {
+          launch,
+          credentials: NO_CREDENTIALS,
+          missing: [signInProblem],
+        } satisfies CheckedStart;
       }
       if (mode.checking !== true && missing.length > 0) {
         const message = `${record.displayName} is not set up yet: it needs ${missing.join(", ")}. Next step: call mcp__scient__scient_connector_setup with {"connector":"${serverName}"} (load it with your tool search if needed). It asks the user for keys in a private card; never ask for keys in chat. Then call this tool again.`;
@@ -1001,7 +1008,7 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
           {},
           local.directory,
         );
-        return { launch, hide: [], missing } satisfies CheckedStart;
+        return { launch, credentials: NO_CREDENTIALS, missing } satisfies CheckedStart;
       }
       if (signInProblem !== undefined) missing.push(signInProblem);
       const built = yield* bundleLaunch({
@@ -1048,7 +1055,7 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
       });
       return {
         launch,
-        hide: [...Object.values(built.secrets), ...session.hide],
+        credentials: programCredentials(Object.values(built.secrets), session.hide),
         missing,
         ...(asked === undefined ? {} : { signInGeneration: generation }),
       } satisfies CheckedStart;
@@ -1246,8 +1253,9 @@ export const makeLocalConnectors = Effect.fn("LocalConnectors.make")(function* (
     discard,
     /** Key values the last start used, so the proxy redacts them if the program echoes one. */
     secretsFor: (connectorId: string) => [...(started.get(connectorId) ?? [])],
-    /** Session cookie values every start handed the program, read live for each answer. */
-    cookiesFor: (connectorId: string) => [...(startedCookies.get(connectorId) ?? [])],
+    /** Every key and session cookie its starts handed the program, read live for each answer. */
+    credentialsFor: (connectorId: string) =>
+      programCredentials(started.get(connectorId) ?? [], startedCookies.get(connectorId) ?? []),
     stillAuthorized,
   };
 });

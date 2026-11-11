@@ -1041,7 +1041,7 @@ describe("connector credential isolation", () => {
           name: "query",
           type: "string",
           required: true,
-          description: "[redacted by Scient]",
+          description: "Query (debug: Bearer [redacted by Scient]",
         },
       ]);
       expect(JSON.stringify(tested)).not.toContain("vendor-access-token-");
@@ -3479,6 +3479,32 @@ describe("connectors agents make and fix", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.live("keeps a connector's session out of both checks, in any encoding and every field", () =>
+    Effect.gen(function* () {
+      const cookie = "portal-session-0123456789abcdef";
+      const leak = Buffer.from(cookie).toString("base64");
+      const portal = yield* signedInPortal([cookie], [cookie], LEAKY_SESSION_SERVER);
+      const installed = yield* portal.harness.runtime.test({ connectorId: portal.connectorId });
+      const folder = yield* portal.harness.runtime.checkFolder(
+        { folder: portal.folder, connector: portal.connectorId, calls: [{ tool: "find" }] },
+        undefined,
+      );
+      // regression: checks hid only literal values, and the installed one never knew the cookies.
+      for (const checked of [installed, folder]) {
+        const shown = JSON.stringify(checked);
+        expect(shown).not.toContain(leak);
+        expect(shown).not.toContain(cookie);
+        expect(checked.tools.map((tool) => tool.name)).toEqual(["find", "[redacted by Scient]"]);
+      }
+      expect(folder.tools[0]).toMatchObject({
+        description: "Session [redacted by Scient] here.",
+        parameters: { properties: { q: { description: "[redacted by Scient]" } } },
+      });
+      expect(folder.calls[0]).toMatchObject({ isError: true });
+      expect(folder.log).toContain("using [redacted by Scient]");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.live("stops a signed-in connector and drops its session when the sign-in is revoked", () =>
     Effect.gen(function* () {
       const portal = yield* signedInPortal(["portal-session-0123456789abcdef"]);
@@ -3501,6 +3527,7 @@ describe("connectors agents make and fix", () => {
 const signedInPortal = Effect.fn("signedInPortal")(function* (
   cookies: ReadonlyArray<string>,
   renewed: ReadonlyArray<string> = cookies,
+  server: string = ECHO_SESSION_SERVER,
 ) {
   const SITE = "https://portal.example.edu";
   const state = {
@@ -3548,9 +3575,7 @@ const signedInPortal = Effect.fn("signedInPortal")(function* (
     keyRequired: false,
     meta: { signIn: { site: SITE } },
   });
-  yield* Effect.promise(() =>
-    NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), ECHO_SESSION_SERVER),
-  );
+  yield* Effect.promise(() => NodeFSP.writeFile(NodePath.join(folder, "server.mjs"), server));
   const added = yield* harness.runtime.add({
     target: { type: "local-bundle", path: folder, settings: {}, keys: {} },
   });
@@ -3561,8 +3586,32 @@ const signedInPortal = Effect.fn("signedInPortal")(function* (
   yield* readEvents(opened);
   const call = (id: number) =>
     harness.proxy(connectorId, toolCall(id), { session }).pipe(Effect.flatMap(readEvents));
-  return { harness, connectorId, session, state, call };
+  return { harness, connectorId, folder, session, state, call };
 });
+
+/** Puts its session cookie, base64-encoded, everywhere a check reports: a careless connector. */
+const LEAKY_SESSION_SERVER = `
+import { readFileSync } from "node:fs";
+import { createInterface } from "node:readline";
+const cookie = JSON.parse(readFileSync(process.env.SCIENT_SIGN_IN_COOKIES, "utf8"))[0].value;
+const leak = Buffer.from(cookie).toString("base64");
+process.stderr.write("using " + leak + "\\n");
+const send = (message) => process.stdout.write(JSON.stringify(message) + "\\n");
+createInterface({ input: process.stdin }).on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize")
+    send({ jsonrpc: "2.0", id: message.id, result: { protocolVersion: "2025-11-25",
+      capabilities: { tools: {} }, serverInfo: { name: "portal", version: "1" } } });
+  else if (message.method === "tools/list")
+    send({ jsonrpc: "2.0", id: message.id, result: { tools: [
+      { name: "find", description: "Session " + leak + " here.", inputSchema: { type: "object",
+        properties: { q: { type: "string", description: "Sent as " + leak } } } },
+      { name: "s_" + leak, inputSchema: { type: "object" } }] } });
+  else if (message.method === "tools/call")
+    send({ jsonrpc: "2.0", id: message.id, error: { code: -32000, message: "denied for " + leak } });
+  else if (message.id !== undefined) send({ jsonrpc: "2.0", id: message.id, result: {} });
+});
+`;
 
 /**
  * Echoes the session cookies it was handed, as a careless connector might; a session whose cookie

@@ -11,6 +11,7 @@ import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 
 import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
+import { credentialSet } from "./ConnectorRedaction.ts";
 import {
   type LocalConnectorEvent,
   type LocalSignInHandler,
@@ -107,7 +108,7 @@ const setup = Effect.fn("setup")(function* (
         WRITES_FILE: NodePath.join(root, "writes"),
       },
     },
-    hide: [],
+    credentials: credentialSet([]),
     signInGeneration: 0,
   });
   const start = launch.pipe(
@@ -293,7 +294,7 @@ describe("why a local connector stopped", () => {
           cwd: root,
           environment: {},
         },
-        hide: [],
+        credentials: credentialSet([]),
       });
       const response = yield* host.exchange(
         { connectorId: "con_broken", displayName: "Broken" },

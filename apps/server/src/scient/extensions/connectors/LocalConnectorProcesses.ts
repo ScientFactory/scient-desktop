@@ -13,6 +13,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import { DuplexProcess } from "../../execution/LocalDuplexProcess.ts";
+import { type CredentialSet, redactText } from "./ConnectorRedaction.ts";
 import type { LocalLaunchError, ResolvedLocalLaunch } from "./LocalConnectorLaunch.ts";
 
 const LOCAL_SESSION_IDLE_MS = 30 * 60_000;
@@ -45,8 +46,8 @@ export interface LocalExchange {
 
 export interface LocalStart {
   readonly launch: ResolvedLocalLaunch;
-  /** Key values to remove from the program's error output before Scient shows it. */
-  readonly hide: ReadonlyArray<string>;
+  /** Its keys and session cookies, hidden from its error output before Scient shows it. */
+  readonly credentials: CredentialSet;
   /** Which sign-in the program's session files came from, for a connector that signs in. */
   readonly signInGeneration?: number;
 }
@@ -91,7 +92,7 @@ interface Session {
   /** The current process's scope; a replacement process gets its own. */
   scope: Scope.Closeable;
   process: DuplexProcessHandle;
-  hide: ReadonlyArray<string>;
+  credentials: CredentialSet;
   readonly posts: Set<PostChannel>;
   get: Channel | undefined;
   readonly backlog: string[];
@@ -204,16 +205,6 @@ const lastLine = (text: string) => {
     lines.findLast((line) => /\b(?:[A-Z]\w*)?Error\b|\berror\b/u.test(line)) ?? lines.at(-1)
   )?.slice(0, 300);
 };
-
-const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
-
-/** Keys go wherever they appear; shorter values (cookies) only as whole tokens. */
-const hidden = (text: string, hide: ReadonlyArray<string>) =>
-  hide.reduce((current, secret) => {
-    if (secret.length >= 16) return current.replaceAll(secret, "[hidden]");
-    const whole = new RegExp(`(?<![A-Za-z0-9])${escapeRegExp(secret)}(?![A-Za-z0-9])`, "gu");
-    return current.replace(whole, "[hidden]");
-  }, text);
 
 const channelStream = (
   onCancel: () => void,
@@ -363,7 +354,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     // Its last words explain the exit; they may still be in the pipe.
     yield* Deferred.await(session.stderrDone).pipe(Effect.timeout("2 seconds"), Effect.ignore);
     if (session.stopping) return;
-    const detail = lastLine(hidden(session.stderr, session.hide));
+    const detail = lastLine(redactText(session.stderr, session.credentials));
     const reason = detail ? `: ${detail}` : ` (exit code ${code})`;
     const message = session.initialized
       ? `${session.identity.displayName} stopped${reason}.`
@@ -417,7 +408,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
         : options.onEvent({
             type: "stderr",
             connectorId: session.identity.connectorId,
-            text: hidden(text, session.hide),
+            text: redactText(text, session.credentials),
           });
     return process.stderr.pipe(
       Stream.decodeText(),
@@ -526,7 +517,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
       identity,
       scope,
       process,
-      hide: prepared.hide.filter((secret) => secret.length > 0),
+      credentials: prepared.credentials,
       posts: new Set(),
       get: undefined,
       backlog: [],
@@ -602,7 +593,7 @@ export const makeLocalConnectorHost = Effect.fn("LocalConnectorHost.make")(funct
     const previous = session.scope;
     session.scope = next.scope;
     session.process = next.process;
-    session.hide = prepared.hide.filter((secret) => secret.length > 0);
+    session.credentials = prepared.credentials;
     session.signInGeneration = prepared.signInGeneration;
     session.stderr = "";
     yield* Scope.close(previous, Exit.void);

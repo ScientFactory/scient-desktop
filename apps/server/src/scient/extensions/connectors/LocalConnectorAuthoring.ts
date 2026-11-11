@@ -31,6 +31,7 @@ import {
 } from "../../storage/FolderHistory.ts";
 import { agentStatusOf } from "./agentStatus.ts";
 import type { ConnectorLogs } from "./ConnectorLogs.ts";
+import { credentialSet, redactJsonValue, redactText } from "./ConnectorRedaction.ts";
 import { ConnectorRecord } from "./ConnectorStateStore.ts";
 import { connectorTemplate } from "./connectorTemplate.ts";
 import {
@@ -69,6 +70,8 @@ const MAX_RESULT_CHARS = 4_000;
 const MAX_LOG_CHARS = 8_000;
 /** Folder names tried for a copy before giving up: `name`, `name-2`, … */
 const MAX_COPY_NAMES = 20;
+
+const NO_CREDENTIALS = credentialSet([]);
 
 const decodeRecord = Schema.decodeUnknownExit(Schema.fromJsonString(ConnectorRecord));
 const encodeRecord = Schema.encodeSync(Schema.fromJsonString(ConnectorRecord));
@@ -476,10 +479,9 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
         ),
       );
     };
-    const hide = (text: string) =>
-      (started?.hide ?? [])
-        .filter((value) => value.length >= 4)
-        .reduce((current, value) => current.replaceAll(value, "[hidden]"), text);
+    const credentials = () => started?.credentials ?? NO_CREDENTIALS;
+    const shown = (text: string, limit: number) =>
+      clip(redactText(text, credentials(), limit), limit);
     const outcome = yield* Effect.tryPromise({
       try: async () => {
         const transport = new StreamableHTTPClientTransport(new URL("http://scient.local/check"), {
@@ -520,14 +522,14 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
               calls.push({
                 tool: call.tool,
                 isError: result.isError === true,
-                text: clip(hide(text + structured), MAX_RESULT_CHARS),
+                text: shown(text + structured, MAX_RESULT_CHARS),
               });
             } catch (error) {
               calls.push({
                 tool: call.tool,
                 isError: true,
-                text: clip(
-                  hide(error instanceof Error ? error.message : String(error)),
+                text: shown(
+                  error instanceof Error ? error.message : String(error),
                   MAX_RESULT_CHARS,
                 ),
               });
@@ -543,21 +545,26 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
         cause instanceof Error ? cause.message.replace(/^MCP error -?\d+: /u, "") : String(cause),
     }).pipe(Effect.result);
     yield* host.stop(checkId, "The check is done.");
-    const log = hide(yield* logs.tail(checkId)).trim();
+    const log = shown(yield* logs.tail(checkId), MAX_LOG_CHARS).trim();
     yield* logs.remove(checkId);
     if (base === undefined && Option.isSome(deps.sessions))
       yield* deps.sessions.value.remove(checkId);
-    if (outcome._tag === "Failure") return failed(hide(outcome.failure), log);
+    if (outcome._tag === "Failure") return failed(shown(outcome.failure, MAX_RESULT_CHARS), log);
     return {
       ok: true,
-      tools: outcome.success.tools.map((tool) => ({
-        name: tool.name,
-        ...(tool.description === undefined ? {} : { description: hide(tool.description) }),
-        parameters: tool.inputSchema,
-      })),
+      tools: outcome.success.tools.map((tool) => {
+        const parameters = redactJsonValue(tool.inputSchema, credentials());
+        return {
+          name: shown(tool.name, MAX_RESULT_CHARS),
+          ...(tool.description === undefined
+            ? {}
+            : { description: shown(tool.description, MAX_RESULT_CHARS) }),
+          ...(parameters === undefined ? {} : { parameters }),
+        };
+      }),
       calls: outcome.success.calls,
       missing: started?.missing ?? [],
-      ...(log.length === 0 ? {} : { log: clip(log, MAX_LOG_CHARS) }),
+      ...(log.length === 0 ? {} : { log }),
     } satisfies CheckResult;
   });
 
