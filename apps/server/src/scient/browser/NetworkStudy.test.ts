@@ -96,6 +96,7 @@ const answer = (
   url: string,
   options: {
     readonly method?: string;
+    readonly type?: string;
     readonly frame?: object;
     /** Sent uncompressed. */
     readonly plain?: boolean;
@@ -103,7 +104,11 @@ const answer = (
     readonly finished?: Promise<null>;
   } = {},
 ) => {
-  const request = { ...fakeRequest(url), method: () => options.method ?? "GET" } as Request;
+  const request = {
+    ...fakeRequest(url),
+    method: () => options.method ?? "GET",
+    resourceType: () => options.type ?? "fetch",
+  } as Request;
   const headers = {
     "content-type": "application/json",
     ...(options.plain === true ? {} : { "content-encoding": "gzip" }),
@@ -204,6 +209,7 @@ describe("the network study", () => {
       readonly beforeFinished?: (cdp: Cdp) => void;
       readonly frame?: object;
       readonly method?: string;
+      readonly type?: string;
       readonly plain?: boolean;
       /** The body shown, when it is, without whitespace. */
       readonly shown?: string;
@@ -213,6 +219,13 @@ describe("the network study", () => {
         path: "/works",
         browser: (cdp) => cdp.loaded(`${API}/works`, 2_000),
         shown: '{"items":[1]}',
+      },
+      // A script is read from the browser's cache, which a later load of its address can replace
+      // with a larger body: counted or not, never read.
+      {
+        path: "/app.js",
+        browser: (cdp) => cdp.loaded(`${API}/app.js`, 2_000),
+        type: "script",
       },
       // Two requests for one address: which is this answer's can't be told, so neither is read.
       {
@@ -328,6 +341,7 @@ describe("the network study", () => {
       const { request, response } = answer(item.url ?? `${API}${item.path}`, {
         ...(item.frame === undefined ? {} : { frame: item.frame }),
         ...(item.method === undefined ? {} : { method: item.method }),
+        ...(item.type === undefined ? {} : { type: item.type }),
         ...(item.plain === undefined ? {} : { plain: item.plain }),
         finished: finished.promise,
       });

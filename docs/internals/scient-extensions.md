@@ -632,7 +632,7 @@ Only requests the session saw from their start have a count, and a count still l
 dropped to make room. As an answer arrives, the requests with its method, address and status are
 pinned; exactly one must match, and it is then the answer's own. Its count is settled once the
 answer finishes and kept with the request, and the body is read by that request's id with
-`Network.getResponseBody`, which answers with exactly that body (empty is empty) or an error.
+`Network.getResponseBody`, which answers with exactly that body (empty is empty) or an error. Only documents and XHR/fetch answers are read: the browser keeps those as received, while a script, style or image comes from its cache, which a later load of the address can replace with a larger body.
 None, or more than one, and the body is left out. Text comes back as UTF-8, up to 3 bytes per
 counted byte, so every read reserves and is capped at 3 × its count, within 24 MB at once, the
 same for bodies read as they arrive and for an agent's request. A left-out GET body's note,

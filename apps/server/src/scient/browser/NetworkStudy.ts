@@ -143,6 +143,8 @@ const KEEP_COUNTED = 2 * KEEP;
 const GROWTH = 3;
 /** Most bytes being read from the browser at once, for every reason. */
 const READING_BYTES = 24 * 1024 * 1024;
+/** Requests whose body the browser keeps as it arrived, so a read returns what was counted. */
+const KEPT_AS_RECEIVED = new Set(["document", "xhr", "fetch"]);
 
 const withoutFragment = (url: string) => {
   const at = url.indexOf("#");
@@ -244,6 +246,10 @@ const makeNetworkStudy = (page: Page) => {
   const ownCount = (response: Response): Promise<Counted | undefined> => {
     // A subframe in its own process, or a service worker, is counted elsewhere: never borrow.
     if (!safely(() => response.frame() === page.mainFrame(), false) || hadWorker)
+      return Promise.resolve(undefined);
+    // Only kinds whose body the browser keeps as received: a script, style or image is read from
+    // its cache, which a later load of the address can replace with a larger body.
+    if (!KEPT_AS_RECEIVED.has(safely(() => response.request().resourceType(), "")))
       return Promise.resolve(undefined);
     const url = withoutFragment(response.url());
     const method = response.request().method();
