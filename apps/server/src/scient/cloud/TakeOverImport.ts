@@ -175,14 +175,15 @@ const make = Effect.gen(function* () {
   const previousImport = Effect.fn("TakeOverImport.previousImport")(function* (
     request: ScientCloudTakeOverRequest,
   ) {
-    const { continuedFrom } = yield* store.get;
+    const { continuedFrom, moved } = yield* store.get;
     for (const [threadId, from] of Object.entries(continuedFrom)) {
       if (from.env !== request.source.environmentId || from.thread !== request.source.threadId)
         continue;
+      // An archived continuation, or one that moved on and takes no turns here, no longer counts.
+      if (moved[threadId as ThreadId] !== undefined) continue;
       const shell = yield* projections
         .getThreadShell(threadId as ThreadId)
         .pipe(Effect.orElseSucceed(() => null));
-      // An archived continuation no longer counts; a new take-over imports again.
       if (shell !== null && shell.archivedAt === null) {
         return { _tag: "imported", threadId: shell.id, projectId: shell.projectId } as const;
       }
