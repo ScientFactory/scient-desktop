@@ -226,7 +226,9 @@ Use **Edit** to correct the metadata. Use **Refresh metadata** when you want
 Scient to recheck the existing PDF and exact DOI or PMID; review the warning
 first because refreshed fields can replace manual corrections. Scient blocks
 conflicting exact identifiers and asks before accepting a possible duplicate
-as a separate source.
+as a separate source. An agent can refresh a source's metadata the same way;
+the change is credited to the agent, and **History** can restore the earlier
+version.
 
 Use **Move to Trash** from the source actions to remove a source. Choose
 **Undo** in the message that appears to put it straight back, or choose
