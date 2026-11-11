@@ -27,6 +27,8 @@ const URL_CHARS = 2048;
 const EAGER_TYPES = new Set(["document", "xhr", "fetch", "eventsource", "other"]);
 const EAGER_BODY_BYTES = 2 * 1024 * 1024;
 const EAGER_TOTAL_BYTES = 24 * 1024 * 1024;
+/** A body an agent asks for is read from the browser only up to this size. */
+const READ_BODY_BYTES = 8 * 1024 * 1024;
 /** How long to wait for a request's full headers. */
 const HEADERS_MS = 1000;
 /** How long to wait for the page's cookies or password fields. */
@@ -116,6 +118,17 @@ const within = <A>(read: () => Promise<A>, fallback: A, ms: number): Promise<A> 
   });
 
 const NONE: ReadonlyArray<string> = [];
+
+/**
+ * The body's size before it is read: its declared length, else what the browser received once it
+ * all came (sent compressed, it is the compressed size). Undefined when it never finished.
+ */
+const bodySize = async (response: Response): Promise<number | undefined> => {
+  const declared = Number(safely(() => response.headers()["content-length"], undefined));
+  if (Number.isFinite(declared) && declared >= 0) return declared;
+  if ((await response.finished()) !== null) return undefined;
+  return (await response.request().sizes()).responseBodySize;
+};
 
 const leftOutNote = (checked: CheckedBody, contentType: string) =>
   "leftOut" in checked && checked.leftOut === "too-deep"
@@ -262,15 +275,27 @@ const makeNetworkStudy = (page: Page) => {
       entry.status = response.status();
       entry.finishedAt = Date.now();
       if (!EAGER_TYPES.has(response.request().resourceType())) return;
-      const length = Number(response.headers()["content-length"] ?? "0");
-      if (length > EAGER_BODY_BYTES) return;
-      void response.body().then(
-        (body) => {
-          if (body.length > EAGER_BODY_BYTES || eagerBytes + body.length > EAGER_TOTAL_BYTES)
-            return;
-          if (!entries.includes(entry)) return;
-          entry.body = body;
-          eagerBytes += body.length;
+      // Only bodies of a known size are read, and the bytes are counted before reading, so
+      // reads at once stay within the total.
+      void bodySize(response).then(
+        (size) => {
+          const fits = (bytes: number) =>
+            bytes <= EAGER_BODY_BYTES &&
+            eagerBytes + bytes <= EAGER_TOTAL_BYTES &&
+            entries.includes(entry);
+          if (size === undefined || !fits(size)) return;
+          eagerBytes += size;
+          return response.body().then(
+            (body) => {
+              eagerBytes -= size;
+              if (!fits(body.length)) return;
+              entry.body = body;
+              eagerBytes += body.length;
+            },
+            () => {
+              eagerBytes -= size;
+            },
+          );
         },
         () => undefined,
       );
@@ -346,7 +371,19 @@ const makeNetworkStudy = (page: Page) => {
       };
       if (!isText(contentType))
         return { ...withHeaders, note: shown(`The body is ${contentType}, not text.`) };
-      const body = entry.body ?? (await response.body().catch(() => undefined));
+      let body = entry.body;
+      if (body === undefined) {
+        const size = await within(() => bodySize(response), undefined, HEADERS_MS);
+        if (size === undefined || size > READ_BODY_BYTES)
+          return {
+            ...withHeaders,
+            note:
+              size === undefined
+                ? "The body is still coming or its size is unknown, so it is left out."
+                : `The body is ${Math.ceil(size / (1024 * 1024))} MB, too large to read here.`,
+          };
+        body = await response.body().catch(() => undefined);
+      }
       if (body === undefined)
         return { ...withHeaders, note: "The browser no longer has this body. Repeat the action." };
       const cutAtSave = body.length > SAVED_BODY_BYTES;

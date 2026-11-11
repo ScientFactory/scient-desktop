@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "@effect/vitest";
-import type { Page, Request } from "playwright-core";
+import type { Page, Request, Response } from "playwright-core";
 
 import { networkStudyOf } from "./NetworkStudy.ts";
 
@@ -12,8 +12,9 @@ const fakePage = () =>
     evaluate: async () => ["typed-pass-1"],
   }) as unknown as Page;
 
-const fakeRequest = (url: string, headers: Record<string, string> = {}) =>
+const fakeRequest = (url: string, headers: Record<string, string> = {}, received = 0) =>
   ({
+    sizes: async () => ({ responseBodySize: received }),
     url: () => url,
     method: () => "GET",
     resourceType: () => "fetch",
@@ -82,5 +83,34 @@ describe("the network study", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("reads only bodies of a known size that fit, counted before the read", async () => {
+    const study = networkStudyOf(fakePage());
+    let reads = 0;
+    const MB = 1024 * 1024;
+    // Sent without Content-Length, as chunked answers are: the size is what the browser received.
+    const answer = (url: string, size: number) => {
+      const request = fakeRequest(url, {}, size);
+      study.onRequest(request);
+      study.onResponse({
+        request: () => request,
+        headers: () => ({ "content-type": "application/json" }),
+        allHeaders: async () => ({ "content-type": "application/json" }),
+        status: () => 200,
+        finished: async () => null,
+        body: async () => {
+          reads += 1;
+          return Buffer.alloc(size, 97);
+        },
+      } as unknown as Response);
+    };
+    answer("https://app.test/huge", 50 * MB);
+    for (let index = 0; index < 13; index += 1) answer(`https://app.test/${index}`, 2 * MB);
+    // regression: every body was read whole first, and reads at once all passed the total.
+    await vi.waitFor(() => expect(reads).toBe(12));
+    const huge = (await study.list()).find((item) => item.url.endsWith("/huge"))!;
+    expect((await study.detail(huge.id))?.note).toContain("too large to read");
+    expect(reads).toBe(12);
   });
 });
