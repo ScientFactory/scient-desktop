@@ -19,6 +19,8 @@ export type CheckedBody =
 
 const SECRET_HEADER = /^(cookie|set-cookie|authorization|proxy-authorization)$/iu;
 const URL_HEADER = /^(location|content-location|referer|origin|refresh|link)$/iu;
+/** HTTP/2 pseudo-headers that only say where and how; `:path` is masked as the URL is. */
+const PLAIN_PSEUDO_HEADER = /^:(authority|method|scheme|status|protocol)$/iu;
 /** Words that make a key, attribute, element or field name a secret's. */
 const SECRET_NAME =
   /(token|secret|passw|pwd|pass_?code|session|sess_?id|sesskey|csrf|xsrf|auth|api[-_]?key|apikey|signature|bearer|cookie|nonce|otp|code_verifier|credential|private[-_]?key)/iu;
@@ -1177,7 +1179,8 @@ export const maskHeaders = (headers: Readonly<Record<string, string>>, context?:
       const header = name.toLowerCase();
       let masked: string;
       if (SECRET_HEADER.test(name)) masked = hide(value);
-      else if (header === "location" || header === "content-location")
+      else if (PLAIN_PSEUDO_HEADER.test(name)) masked = value;
+      else if (header === "location" || header === "content-location" || header === ":path")
         masked = maskUrlLike(value, base);
       else if (header === "link") masked = maskLink(value, base);
       else if (header === "refresh") masked = maskRefresh(value, base);

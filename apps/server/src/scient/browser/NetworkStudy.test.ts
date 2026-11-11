@@ -235,6 +235,17 @@ describe("the network study", () => {
           cdp.loaded(`${API}/twice`, 1_000);
         },
       },
+      // A page that cancels its first request before any answer and asks again (as
+      // clinicaltrials.gov does): the cancelled one isn't this answer's, so the second is read.
+      {
+        path: "/again",
+        browser: (cdp) => {
+          cdp.start(`${API}/again`);
+          return cdp.loaded(`${API}/again`, 2_000);
+        },
+        beforeFinished: (cdp) => cdp.emit("Network.loadingFailed", { requestId: "cdp-1" }),
+        shown: '{"items":[1]}',
+      },
       // Five counted bytes that decode to no text (FF FE 00 D8 00 in UTF-16LE): the browser
       // answers with exactly that, empty, and nothing else is fetched.
       {

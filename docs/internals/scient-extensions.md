@@ -632,14 +632,17 @@ Playwright reports a dedicated worker's answers as the main frame's, and its byt
 the worker's own session: once a page has had a dedicated worker, all its bodies are left out.
 Only requests the session saw from their start have a count, and a count still loading is never
 dropped to make room. As an answer arrives, the requests with its method, address and status are
-pinned; exactly one must match, and it is then the answer's own. Its count is settled once the
+pinned; once they settle, those that failed before any answer (a page cancelling a request and
+asking again) are dropped, and exactly one must remain: it is then the answer's own. Its count is settled once the
 answer finishes and kept with the request, and the body is read by that request's id with
 `Network.getResponseBody`, which answers with exactly that body (empty is empty) or an error. Only documents and XHR/fetch answers are read: the browser keeps those as received, while a script, style or image comes from its cache, which a later load of the address can replace with a larger body.
 None, or more than one, and the body is left out. Text comes back as UTF-8, up to 3 bytes per
 counted byte, so every read reserves and is capped at 3 × its count, within 24 MB at once, the
 same for bodies read as they arrive and for an agent's request. A left-out GET body's note,
-masked like any other output, tells the agent to fetch it in the page with `preview_evaluate`,
-streaming and stopping at 1 MiB; other methods are never repeated.
+masked like any other output, names the rule that left it out and tells the agent to fetch it in
+the page with `preview_evaluate`, streaming and stopping at 1 MiB; other methods are never
+repeated. Headers named like secrets are hidden, except the HTTP/2 pseudo-headers `:authority`,
+`:method`, `:scheme`, `:status` and `:protocol`; `:path` is masked as the URL is.
 
 The work is linear. Bodies are cut to their output limit before masking (32 KB shown, 1 MB saved
 to a file), the tokenizers use no recursion, and nesting past the limits leaves the body out with

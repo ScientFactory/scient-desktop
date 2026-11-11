@@ -19,6 +19,10 @@ describe("network study masking", () => {
         "x-csrf-token": "short",
         accept: "application/json",
         "x-request-id": "a".repeat(40),
+        ":authority": "clinicaltrials.gov",
+        ":method": "GET",
+        ":scheme": "https",
+        ":path": "/api/int/studies?access_token=abcd&cond=glioma",
       }),
     ).toEqual({
       cookie: "<hidden 20 chars>",
@@ -26,6 +30,11 @@ describe("network study masking", () => {
       "x-csrf-token": "<hidden 5 chars>",
       accept: "application/json",
       "x-request-id": "<hidden 40 chars>",
+      // regression: `:authority` (the host) was hidden for the "auth" in its name.
+      ":authority": "clinicaltrials.gov",
+      ":method": "GET",
+      ":scheme": "https",
+      ":path": "/api/int/studies?access_token=%3Chidden+4+chars%3E&cond=glioma",
     });
     expect(maskUrl("https://moodle.test/webservice/rest/server.php?wstoken=abcd&courseid=7")).toBe(
       "https://moodle.test/webservice/rest/server.php?wstoken=%3Chidden+4+chars%3E&courseid=7",

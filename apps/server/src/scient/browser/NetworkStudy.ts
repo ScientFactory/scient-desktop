@@ -61,8 +61,11 @@ interface Entry {
   status: number | null;
   failed: string | undefined;
   finishedAt: number | undefined;
-  /** Its own count, settled once when its answer finished; its body is read only through it. */
-  own: Promise<Counted | undefined> | undefined;
+  /**
+   * Its own count, settled once when its answer finished; its body is read only through it. A
+   * string says why it has none.
+   */
+  own: Promise<Counted | string> | undefined;
   body: Buffer | undefined;
 }
 
@@ -239,18 +242,21 @@ const makeNetworkStudy = (page: Page) => {
   let session: CDPSession | undefined;
 
   /**
-   * The answer's own count, settled once it finishes: the one request of the main frame the
-   * session saw from its start with the same method, address and status, chosen as the answer
-   * arrives. None, or more than one, and the body is never read. The page's numbers are never used.
+   * The answer's own count, settled once it finishes: of the main frame's requests the session
+   * saw from their start with the same method, address and status, pinned as the answer arrives,
+   * the one left once those that ended without any answer are dropped. None, or more than one,
+   * and the body is never read. The page's numbers are never used.
    */
-  const ownCount = (response: Response): Promise<Counted | undefined> => {
+  const ownCount = (response: Response): Promise<Counted | string> => {
     // A subframe in its own process, or a service worker, is counted elsewhere: never borrow.
-    if (!safely(() => response.frame() === page.mainFrame(), false) || hadWorker)
-      return Promise.resolve(undefined);
+    if (!safely(() => response.frame() === page.mainFrame(), false))
+      return Promise.resolve("it came from a frame or worker Scient doesn't count");
+    if (hadWorker)
+      return Promise.resolve("the page runs a worker, whose requests Scient can't tell apart");
     // Only kinds whose body the browser keeps as received: a script, style or image is read from
     // its cache, which a later load of the address can replace with a larger body.
     if (!KEPT_AS_RECEIVED.has(safely(() => response.request().resourceType(), "")))
-      return Promise.resolve(undefined);
+      return Promise.resolve("Scient reads only pages and fetch or XHR answers");
     const url = withoutFragment(response.url());
     const method = response.request().method();
     const status = response.status();
@@ -260,13 +266,20 @@ const makeNetworkStudy = (page: Page) => {
         item.method === method &&
         (item.status === undefined || item.status === status),
     );
-    return candidates.length === 1 ? settled(response, candidates[0]!) : Promise.resolve(undefined);
+    return settled(response, candidates);
   };
 
-  const settled = async (response: Response, own: Counted) => {
-    if ((await response.finished()) !== null) return undefined;
-    const done = await within(() => own.settled.then(() => true), false, HEADERS_MS);
-    return done && own.outcome === "finished" ? own : undefined;
+  const settled = async (response: Response, pinned: ReadonlyArray<Counted>) => {
+    if (pinned.length === 0) return "the request began before Scient started counting";
+    if ((await response.finished()) !== null) return "its answer did not finish loading";
+    await within(() => Promise.all(pinned.map((item) => item.settled)), undefined, HEADERS_MS);
+    // A request that failed before any answer (a page cancelling and asking again) isn't this one.
+    const answered = pinned.filter(
+      (item) => item.outcome !== "failed" || item.status !== undefined,
+    );
+    if (answered.length > 1) return "the page made this same request more than once at a time";
+    const own = answered[0];
+    return own?.outcome === "finished" ? own : "its answer did not finish loading";
   };
 
   /**
@@ -365,9 +378,8 @@ const makeNetworkStudy = (page: Page) => {
       ).then((headers) => ({ headers, secrets: secretsInHeaders({}, headers) }));
       entry.status = response.status();
       entry.finishedAt = Date.now();
-      entry.own = safely(() => ownCount(response), Promise.resolve(undefined)).catch(
-        () => undefined,
-      );
+      const unknown = "Scient could not tell which request it was";
+      entry.own = safely(() => ownCount(response), Promise.resolve(unknown)).catch(() => unknown);
       if (!EAGER_TYPES.has(response.request().resourceType())) return;
       // Only bodies the browser counted are read, within what is kept and being read.
       void entry.own.then(async (own) => {
@@ -375,7 +387,7 @@ const makeNetworkStudy = (page: Page) => {
           bytes <= EAGER_BODY_BYTES &&
           eagerBytes + bytes <= EAGER_TOTAL_BYTES &&
           entries.includes(entry);
-        if (own === undefined || !fits(GROWTH * own.bytes)) return;
+        if (typeof own === "string" || !fits(GROWTH * own.bytes)) return;
         eagerBytes += GROWTH * own.bytes;
         const body = await readOwn(own, GROWTH * own.bytes);
         eagerBytes -= GROWTH * own.bytes;
@@ -508,17 +520,16 @@ const makeNetworkStudy = (page: Page) => {
         return { ...withHeaders, note: shown(`The body is ${contentType}, not text.`) };
       let body = entry.body;
       if (body === undefined) {
+        const loading = "its answer is still loading";
         const own =
-          entry.own === undefined
-            ? undefined
-            : await within(() => entry.own!, undefined, HEADERS_MS);
+          entry.own === undefined ? loading : await within(() => entry.own!, loading, HEADERS_MS);
         const yourself = readItYourself(request.method());
-        if (own === undefined || GROWTH * own.bytes > READ_BODY_BYTES)
+        if (typeof own === "string" || GROWTH * own.bytes > READ_BODY_BYTES)
           return {
             ...withHeaders,
             note: shown(
-              (own === undefined
-                ? "Scient could not count this body's size in the browser, so it is left out."
+              (typeof own === "string"
+                ? `Scient could not count this body's size in the browser (${own}), so it is left out.`
                 : `The body is ${Math.ceil(own.bytes / (1024 * 1024))} MB, too large to read here.`) +
                 yourself,
             ),
