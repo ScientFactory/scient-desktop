@@ -1,0 +1,164 @@
+/* The website hero's background symbol (website/src/pages/index.astro .hero-geometry), for the
+   hosted landing: large, faint, fading in once. It is anchored to the centered content, not to
+   the window edge, so it keeps the same place beside the title at every width; narrower windows
+   only crop more of it. Phones get a smaller one. */
+.scient-hosted-geometry {
+  --geometry-opacity: 0.075;
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  left: calc(50% + 3rem);
+  width: 30rem;
+  height: auto;
+  translate: 0 -82%;
+  opacity: var(--geometry-opacity);
+  pointer-events: none;
+  user-select: none;
+  animation: scient-hosted-geometry-in 1100ms cubic-bezier(0.16, 1, 0.3, 1) 120ms both;
+}
+
+html.dark .scient-hosted-geometry {
+  --geometry-opacity: 0.1;
+}
+
+@media (max-width: 600px) {
+  .scient-hosted-geometry {
+    left: calc(50% - 1rem);
+    width: 24rem;
+    translate: 0 -105%;
+  }
+}
+
+@keyframes scient-hosted-geometry-in {
+  from {
+    opacity: 0;
+    transform: translate3d(3rem, -1rem, 0) scale(1.02);
+  }
+  to {
+    opacity: var(--geometry-opacity);
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scient-hosted-geometry {
+    animation: none;
+  }
+}
+
+/* The website's header (website/src/layouts/Layout.astro .nav), same sizes and spacing. In px:
+   the website's rem is 16px and the app's is larger, so rem would draw it bigger here. */
+.scient-hosted-header {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  min-height: 112px;
+  padding: 28px clamp(48px, 3.4vw, 52px);
+}
+
+.scient-hosted-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 12.5px;
+  border-radius: 6px;
+  color: var(--foreground);
+}
+
+.scient-hosted-brand-icon {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
+  transition: transform 260ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.scient-hosted-brand:hover .scient-hosted-brand-icon {
+  transform: translateY(-1px) scale(1.025);
+}
+
+/* The name is 30.4px (1.9rem on the website); its box is 6.01em wide and 1.302em tall. */
+.scient-hosted-brand-wordmark {
+  width: calc(30.4px * 6.01);
+  height: calc(30.4px * 1.302);
+}
+
+@media (max-width: 640px) {
+  .scient-hosted-header {
+    min-height: 88px;
+    padding-block: 18.4px;
+    padding-inline: 20px;
+  }
+
+  .scient-hosted-brand {
+    gap: 11.2px;
+  }
+
+  .scient-hosted-brand-icon {
+    width: 32.8px;
+    height: 35.2px;
+  }
+
+  .scient-hosted-brand-wordmark {
+    width: calc(19.2px * 6.01);
+    height: calc(19.2px * 1.302);
+  }
+}
+
+/* The website's dark pill button (website/src/components/DownloadCards.astro .dl-card__button). */
+.scient-hosted-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 6px 15.2px;
+  border-radius: 999px;
+  background: #34353a;
+  color: #ffffff;
+  font-size: 13.4px;
+  font-weight: 500;
+  cursor: pointer;
+  transition:
+    background-color 200ms ease,
+    box-shadow 240ms ease,
+    transform 240ms ease;
+}
+
+.scient-hosted-pill:hover {
+  background: #4a4b51;
+  box-shadow: 0 6px 16px rgba(17, 17, 17, 0.12);
+  transform: translateY(-1px);
+}
+
+.scient-hosted-pill:active {
+  transform: translateY(0) scale(0.98);
+}
+
+.scient-hosted-pill:focus-visible {
+  outline: 3px solid rgba(52, 53, 58, 0.3);
+  outline-offset: 3px;
+}
+
+html.dark .scient-hosted-pill {
+  background: #fafafa;
+  color: #111111;
+}
+
+html.dark .scient-hosted-pill:hover {
+  background: #e4e4e7;
+}
+
+html.dark .scient-hosted-pill:focus-visible {
+  outline-color: rgba(250, 250, 250, 0.25);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scient-hosted-pill,
+  .scient-hosted-brand-icon {
+    transition-duration: 0.01ms;
+  }
+
+  .scient-hosted-pill:hover,
+  .scient-hosted-pill:active,
+  .scient-hosted-brand:hover .scient-hosted-brand-icon {
+    transform: none;
+  }
+}

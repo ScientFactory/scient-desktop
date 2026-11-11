@@ -21,6 +21,10 @@ import * as AgentInvocationContext from "../../../scient/operations/AgentInvocat
 const NonEmptyString = Schema.String.check(isTrimmedUnadvertised(), Schema.isNonEmpty());
 const NullableText = Schema.NullOr(Schema.String);
 const dependencies = [AgentInvocationContext.AgentInvocationContext, WorkspaceBindingResolver];
+const AllowPossibleMetadataMatch = Schema.Boolean.annotate({
+  description:
+    "Set true only after deciding that a reported possible metadata match is a different source. It cannot override an exact duplicate.",
+});
 
 const ScientSourceAgentAttachment = Schema.Struct({
   attachmentId: NonEmptyString,
@@ -99,7 +103,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a bounded page of canonical Sources from this thread's Scient project. Use this before source-dependent work; do not scan or edit .scient/sources files directly.",
+    "List a page of this project's Sources. Use this before source-dependent work; do not scan or edit .scient/sources files directly.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
     offset: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -118,7 +122,7 @@ const ScientSourcesListTool = Tool.make("scient_sources_list", {
 
 const ScientSourceGetTool = Tool.make("scient_sources_get", {
   description:
-    "Read one canonical Source from this thread's Scient project by source ID. Returns metadata, provenance, and attachment identity but never an absolute filesystem path.",
+    "Read one of this project's Sources by source ID: its metadata, revision, provenance and attachments. An abstract over 50,000 characters is cut, and abstractTruncated says so.",
   parameters: Schema.Struct({ sourceId: NonEmptyString }),
   success: ScientSourceAgentDetail,
   failure: ScientSourcesToolError,
@@ -140,7 +144,7 @@ export const ScientSourceNoteUpdateResult = Schema.Struct({
 
 const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update", {
   description:
-    "Add, replace, or clear the project-owned note for one canonical Source. Read the source first and pass its current revision. Use null to clear the note; bold and italic may use Markdown markers.",
+    "Add, replace or clear (null) the project note on one Source. Read the source first and pass its current revision. If stale, read it again and redo the change on what you read. Bold and italic may use Markdown markers.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -159,13 +163,15 @@ const ScientSourceNoteUpdateTool = Tool.make("scient_sources_note_update", {
 
 const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
   description:
-    "Update canonical metadata or tags for one project Source after the user explicitly asks. " +
-    "Read the source first and pass its current revision. This never changes provenance, review state, or attachments.",
+    "Replace one Source's metadata and tags after the user explicitly asks. metadata is the complete new record, not a patch: " +
+    "read the source first, keep every field you are not changing, and pass its current revision. " +
+    "If the read says abstractTruncated, do not replace from it; tell the user. If stale, read it again and redo the change on what you read. " +
+    "Changed fields are recorded as set by the user; review state and attachments stay as they are.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
     metadata: ScientSourceEditableMetadata,
-    allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
+    allowPossibleMetadataMatch: Schema.optionalKey(AllowPossibleMetadataMatch),
   }),
   success: Schema.Struct({
     outcome: Schema.Literals(["updated", "unchanged", "stale", "duplicate"]),
@@ -196,7 +202,7 @@ const ScientSourceMetadataUpdateTool = Tool.make("scient_sources_update", {
 
 const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   description:
-    "Remove one canonical Source from this project's library. Use only after the user explicitly asks for removal. Read the source first and pass its current revision.",
+    "Remove one Source from this project after the user explicitly asks. Read the source first and pass its current revision. If stale, read it again and redo the change on what you read.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -218,7 +224,7 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
 
 const ScientSourceReviewTool = Tool.make("scient_sources_review", {
   description:
-    "Approve or reject an agent-added Source after the user explicitly asks. Approval clears pending review; rejection removes the source.",
+    "Approve or reject an agent-added Source after the user explicitly asks. Read the source first and pass its current revision. Approval clears pending review; rejection removes the source. If stale, read it again and redo the change on what you read.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -267,8 +273,12 @@ export const ScientSourceAddInput = Schema.Struct({
     Schema.Array(Schema.String).pipe(Schema.check(Schema.isMaxLength(1_000))),
   ),
   pdfRelativePath: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(4_096)))),
-  enrich: Schema.optionalKey(Schema.Boolean),
-  allowPossibleMetadataMatch: Schema.optionalKey(Schema.Boolean),
+  enrich: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description: "Fill a missing abstract by looking up the source's DOI or PMID.",
+    }),
+  ),
+  allowPossibleMetadataMatch: Schema.optionalKey(AllowPossibleMetadataMatch),
 });
 export type ScientSourceAddInput = typeof ScientSourceAddInput.Type;
 
@@ -293,10 +303,9 @@ export const ScientSourceAddResult = Schema.Struct({
 
 const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
-    "Add one source to this thread's Scient project after the user explicitly asks. Read existing " +
-    "Sources first. To add a PDF, find it in the project and pass its relative .pdf path; Scient " +
-    "derives available metadata from the PDF, so citation fields are optional. New agent-added " +
-    "sources are marked pending review. Repeating the same request is idempotent.",
+    "Add one source to this project after the user explicitly asks. List existing Sources first. " +
+    "For a PDF in the project, pass its relative path as pdfRelativePath; Scient reads metadata from it, " +
+    "so citation fields are optional. Sources you add wait for the user's review. Repeating the same request adds nothing.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
   failure: ScientSourcesToolError,
@@ -311,8 +320,8 @@ const ScientSourceAddTool = Tool.make("scient_sources_add", {
 
 const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
   description:
-    "Attach a project-relative PDF to any Source after the user explicitly asks. Read the source first " +
-    "and pass its current revision. The PDF is copied or reused in canonical Sources storage.",
+    "Attach a project-relative PDF to a Source after the user explicitly asks. Read the source first " +
+    "and pass its current revision. If stale, read it again and redo the change on what you read.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -335,8 +344,8 @@ const ScientSourceAttachPdfTool = Tool.make("scient_sources_attach_pdf", {
 
 const ScientSourceDetachPdfTool = Tool.make("scient_sources_detach_pdf", {
   description:
-    "Remove one PDF attachment from a Source while keeping its metadata. Use only after the user explicitly asks. " +
-    "Read the source first and pass its current revision.",
+    "Remove one PDF attachment from a Source, keeping its metadata, after the user explicitly asks. " +
+    "Read the source first and pass its current revision. If stale, read it again and redo the change on what you read.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     attachmentId: NonEmptyString,

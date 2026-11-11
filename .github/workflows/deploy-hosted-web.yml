@@ -1,0 +1,38 @@
+name: Deploy Scient hosted web
+
+# app.scientfactory.com serves the web client of the latest stable release, so the
+# hosted app matches the servers people run. release.yml dispatches this on the
+# release tag after a stable publish; dispatch it by hand on a v* tag or main to redeploy.
+# The scient-connect environment admits only main and v* refs, and the job builds that ref.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-web-production
+  cancel-in-progress: false
+
+jobs:
+  deploy_hosted_web:
+    name: Deploy app.scientfactory.com
+    if: ${{ github.repository == 'ScientFactory/scient-desktop' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    environment:
+      name: scient-connect
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
+        with:
+          node-version-file: package.json
+          cache: true
+          # A full install: `vp run` loads every package's config, and the server's config
+          # imports workspace packages a web-only install lacks (v0.6.28's deploy failed on this).
+          run-install: true
+      - name: Build and deploy
+        run: infra/scient-web/build.sh --deploy
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}

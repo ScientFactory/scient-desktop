@@ -90,6 +90,9 @@ describe("interactive output analytics", () => {
             captureReason: values.includes(false) ? "persistence-failed" : "none",
             retainedOutputCount: scenario.retained.filter(Boolean).length,
             rejectedOutputCount: scenario.retained.filter((value) => !value).length,
+            ...(values.includes(false)
+              ? { failureOwner: "scient", failureCategory: "persistence-failed" }
+              : {}),
           },
         },
       ]);

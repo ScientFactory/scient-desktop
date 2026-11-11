@@ -49,6 +49,10 @@ import {
   type ProviderSnapshotSettings,
 } from "@t3tools/provider-core/server/snapshotSettings";
 import { scientAgentProcessEnvironment, scientAgentTarget } from "../scient/ScientAgentTarget.ts";
+import {
+  SCIENT_AGENT_CONFIG_FILES_ENV,
+  writeScientAgentHostConfig,
+} from "../scient/ScientAgentHostConfig.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
 import {
   makeScientAgentPluginInventory,
@@ -126,6 +130,13 @@ export const ScientAgentDriver: ScientProviderDriver<ScientAgentSettings, Scient
         path.join(yield* HostProcess.HomeDirectory, ".claude"),
     );
     processEnv.CLAUDE_CONFIG_DIR = claudeHome;
+    processEnv[SCIENT_AGENT_CONFIG_FILES_ENV] = yield* writeScientAgentHostConfig(root, {
+      computerControl: effectiveConfig.computerControl,
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(failure("Could not write the Scient Agent settings Scient manages.")),
+    );
     // A crashed server never removed its extension files, and a bootstrap
     // it left unread still holds credentials.
     yield* sweepStaleOmpExtensionFiles({

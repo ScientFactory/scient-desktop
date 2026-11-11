@@ -20,6 +20,9 @@ import { render } from "../../../test/render";
 
 const server = vi.hoisted(() => ({
   accounts: [] as Array<unknown>,
+  keyLinks: [] as Array<unknown>,
+  linked: [] as Array<unknown>,
+  providerInstances: {} as Record<string, unknown>,
   /** Snapshots wait here, as behind a slow source-control discovery, until released. */
   gate: Promise.resolve() as Promise<void>,
   release: () => {},
@@ -42,7 +45,11 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
             server.failNext = false;
             throw new Error("Synthetic snapshot failure");
           }
-          return { ...base, accounts: [...server.accounts] } as AccountsSnapshot;
+          return {
+            ...base,
+            accounts: [...server.accounts],
+            keyLinks: [...server.keyLinks],
+          } as AccountsSnapshot;
         },
         catch: (error) => new Cause.UnknownError(error, "Synthetic snapshot failure"),
       }),
@@ -60,6 +67,15 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
   };
   const handle = (label: string, input: unknown) => {
     if (label === "accounts:plainKeys") return [];
+    if (label === "accounts:linkKey") {
+      // As the server does for a link without an account: the variable's key becomes one.
+      const link = input as { instanceId: string; variable: string };
+      const accountId = AccountId.make(`acc_synthetic${server.accounts.length}`);
+      server.linked.push(input);
+      server.accounts.push(apiKey(accountId, `Work · ${link.variable}`));
+      server.keyLinks.push({ ...link, accountId });
+      return {};
+    }
     if (label !== "accounts:save") return {};
     const save = input as AccountSaveInput;
     const accountId = AccountId.make(`acc_synthetic${server.accounts.length}`);
@@ -96,6 +112,17 @@ vi.mock(import("@t3tools/client-runtime/state/runtime"), async (original) => {
             permissionAtom: () => Atom.make(true),
           }
         : runtime.createEnvironmentRpcCommand(rpcRuntime, options as never)) as never,
+  };
+});
+vi.mock("~/state/server", async (original) => {
+  const actual = await original<typeof import("~/state/server")>();
+  return {
+    ...actual,
+    serverEnvironment: {
+      ...actual.serverEnvironment,
+      settingsValueAtom: () =>
+        Atom.make(() => ({ providerInstances: server.providerInstances }) as never),
+    },
   };
 });
 vi.mock("~/state/session", async (original) => ({
@@ -141,6 +168,19 @@ function summary(
   };
 }
 
+function apiKey(accountId: AccountId, name: string): AccountSummary {
+  return {
+    ...summary(accountId, name, {
+      kind: "api-key",
+      sites: [],
+      auth: { type: "bearer" },
+      envName: "OPENAI_API_KEY",
+    }),
+    secrets: { token: { source: { type: "scient" } } },
+    controls: defaultAccountControls("api-key"),
+  };
+}
+
 async function setup() {
   server.accounts = [
     summary(AccountId.make("acc_synthetic_first"), "example.com", {
@@ -151,6 +191,9 @@ async function setup() {
   ];
   server.gate = Promise.resolve();
   server.failNext = false;
+  server.keyLinks = [];
+  server.linked = [];
+  server.providerInstances = {};
   const registry = AtomRegistry.make();
   const screen = await render(
     <RegistryContext.Provider value={registry}>
@@ -264,4 +307,42 @@ it("lists session rows under their profile, one this client doesn't list too, an
   await expect.element(page.getByText("Imported", { exact: true })).toBeVisible();
   // The named row is still listed here, not moved out once it has a username.
   expect(page.getByRole("dialog").element().textContent).toContain("Signed in as");
+});
+
+it("lists every key in one API keys card and keeps an agent's own key in Accounts", async () => {
+  const openai = AccountId.make("acc_synthetic_openai");
+  server.accounts = [apiKey(openai, "OpenAI")];
+  server.keyLinks = [{ accountId: openai, instanceId: "codex", variable: "OPENAI_API_KEY" }];
+  server.linked = [];
+  server.providerInstances = {
+    codex: { driver: "codex", environment: [{ name: "OPENAI_API_KEY", sensitive: true }] },
+    work: {
+      driver: "omp",
+      displayName: "Work",
+      environment: [{ name: "HF_TOKEN", sensitive: true }],
+    },
+  };
+  server.gate = Promise.resolve();
+  await using _screen = await render(
+    <RegistryContext.Provider value={AtomRegistry.make()}>
+      <AccountsPage />
+    </RegistryContext.Provider>,
+  );
+  await expect.element(page.getByText("2 keys · 1 not in Accounts")).toBeVisible();
+  // A key is no top-level account: it is in the card.
+  await expect.element(page.getByRole("button", { name: "Edit OpenAI" })).not.toBeInTheDocument();
+  await page.getByRole("button", { name: "Show api keys" }).click();
+  const dialog = page.getByRole("dialog");
+  await expect.element(dialog.getByText("OPENAI_API_KEY · Codex")).toBeVisible();
+  await expect.element(dialog.getByText("Only in Work settings")).toBeVisible();
+  await dialog.getByRole("button", { name: "Keep in Accounts" }).click();
+  await vi.waitFor(() =>
+    expect(server.linked).toEqual([{ instanceId: "work", variable: "HF_TOKEN" }]),
+  );
+  // Kept: the variable now follows its own row in Accounts, and nothing is left to keep.
+  await expect.element(dialog.getByText("Only in Work settings")).not.toBeInTheDocument();
+  await expect.element(dialog.getByText("OPENAI_API_KEY · Work")).toBeVisible();
+  await expect
+    .element(dialog.getByRole("button", { name: "Keep in Accounts" }))
+    .not.toBeInTheDocument();
 });

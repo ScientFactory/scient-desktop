@@ -17,6 +17,7 @@ import { readerAtReadingEnd, readingEndGapOnScreen, withReadingEnd } from "./rea
 import { MessagesTimeline } from "./MessagesTimeline";
 import { HandoffRow } from "./V2LifecycleRow";
 import { useTimelineEndControl } from "./useTimelineEndControl";
+import { scrollTimelineToEnd } from "./timelineEndScroll";
 import { readTimelinePosition, rememberTimelinePosition } from "./timelineScrollAnchoring";
 
 const env = EnvironmentId.make("scroll-geometry-tests");
@@ -843,6 +844,35 @@ it("allows three of the answer's lines hidden, but not more, at different text s
 it("remeasures pending handoff footer layout and clears end navigation through the reader owner", async (context) => {
   await using _fixture = _createFixture(context);
   _fixture.cleanup.defer(() => _cleanupFixture0(_fixture));
+  // CI machines deliver the footer's new size to Legend a frame late. Hold it back here so the
+  // end control always runs before Legend has measured the grown footer.
+  let holdFooterSize = false;
+  const heldFooterSizes: Array<() => void> = [];
+  const NativeResizeObserver = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class extends NativeResizeObserver {
+    constructor(callback: ResizeObserverCallback) {
+      super((entries, observer) => {
+        const held = holdFooterSize
+          ? entries.filter(
+              // The footer's own box: it holds the appendix but none of the timeline's rows.
+              (entry) =>
+                entry.target.querySelector("[data-pending-handoff-appendix]") !== null &&
+                entry.target.querySelector("[data-reading-end]") === null,
+            )
+          : [];
+        const delivered = entries.filter((entry) => !held.includes(entry));
+        if (held.length > 0) heldFooterSizes.push(() => callback(held, observer));
+        if (delivered.length > 0) callback(delivered, observer);
+      });
+    }
+  };
+  _fixture.cleanup.defer(() => {
+    globalThis.ResizeObserver = NativeResizeObserver;
+  });
+  const releaseFooterSize = () => {
+    holdFooterSize = false;
+    for (const deliver of heldFooterSizes.splice(0)) deliver();
+  };
 
   const key = "geometry:pending-handoff-end";
   const answer = {
@@ -933,7 +963,7 @@ it("remeasures pending handoff footer layout and clears end navigation through t
             onPointerDown={(event) => event.preventDefault()}
             style={{ position: "absolute", bottom: _fixture.base.contentInsetEndAdjustment + 4 }}
             onClick={async () => {
-              await _fixture.listRef.current?.scrollToEnd({ animated: false });
+              await scrollTimelineToEnd(_fixture.listRef.current, { animated: false });
               _fixture.listRef.current?.getScrollableNode()?.dispatchEvent(new Event("scroll"));
             }}
           >
@@ -991,6 +1021,9 @@ it("remeasures pending handoff footer layout and clears end navigation through t
   // A child-only appendix reflow changes no rows, viewport, or Reader props and
   // sends no scroll event. It still must produce fresh end/position bookkeeping.
   const reportCount = reports.length;
+  holdFooterSize = true;
+  // A report already on its way passes the wait below before Legend sees the new footer size.
+  viewport.dispatchEvent(new Event("scroll"));
   await _fixtureAct(() => resizeFooter(160));
   await vi.waitFor(() => {
     expect(
@@ -1003,6 +1036,7 @@ it("remeasures pending handoff footer layout and clears end navigation through t
 
   const endControl = _fixture.host!.querySelector<HTMLButtonElement>("[data-reader-end-control]")!;
   endControl.click();
+  releaseFooterSize();
   await vi.waitFor(() => {
     expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThanOrEqual(
       1,

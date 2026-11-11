@@ -160,6 +160,20 @@ export type ScientLatexBuildState = typeof ScientLatexBuildState.Type;
  * terminal write. Preserve the published descriptor through later failure so stale bindings still
  * display the last PDF.
  */
+/** Why a build failed, as analytics reports it; never derived from the compiler's text. */
+export const ScientLatexBuildFailureClass = Schema.Literals([
+  "compile_error",
+  "missing_package",
+  "missing_engine",
+  "no_output",
+  "timeout",
+  "sources_changed",
+  "publish",
+  "workspace",
+  "internal",
+]);
+export type ScientLatexBuildFailureClass = typeof ScientLatexBuildFailureClass.Type;
+
 export const ScientLatexBuildSnapshot = Schema.Struct({
   logicalDocumentKey: Schema.String,
   rootRelativePath: Schema.String,
@@ -167,6 +181,8 @@ export const ScientLatexBuildSnapshot = Schema.Struct({
   diagnostics: Schema.Array(ScientLatexDiagnostic),
   descriptor: Schema.NullOr(PdfSourceDescriptor),
   failureSummary: Schema.NullOr(Schema.String),
+  /** Present on a failed build this process ran. */
+  failureClass: Schema.optional(ScientLatexBuildFailureClass),
   startedAtEpochMs: Schema.NullOr(Schema.Number),
   finishedAtEpochMs: Schema.NullOr(Schema.Number),
   toolchain: Schema.NullOr(ScientLatexToolchainStatus),

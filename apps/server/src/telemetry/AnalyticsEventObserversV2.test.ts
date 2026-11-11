@@ -28,6 +28,7 @@ import {
   launchV2AnalyticsEventObservers,
   makeV2AnalyticsObservers,
 } from "./AnalyticsEventObserversV2.ts";
+import { BrowserToolCallLedger } from "./ScientMcpAnalytics.ts";
 import { EventSinkStreamError, EventSinkV2 } from "../orchestration-v2/EventSink.ts";
 import { ProjectionStoreV2 } from "../orchestration-v2/ProjectionStore.ts";
 import { ProviderRegistry } from "../provider/ProviderRegistry.ts";
@@ -635,10 +636,131 @@ describe("native V2 analytics", () => {
           hasAttachment: false,
         },
       },
+      {
+        name: "provider.commands.observed",
+        properties: {
+          provider: "codex",
+          model: "gpt-6",
+          commandCategory: "shell-other",
+          commandCount: 1,
+          failedCount: 0,
+        },
+      },
     ]);
     expect(JSON.stringify(output)).not.toContain("private");
     expect(mapper.event(runEvent("completed"))).toEqual([]);
   });
+  it("tallies an agent's own terminal commands by category once each, never their text", () => {
+    const mapper = createV2AnalyticsEventMapper();
+    mapper.event(runEvent("running"));
+    const item = (
+      id: string,
+      status: "running" | "completed" | "failed" | "cancelled",
+      fields:
+        | { type: "command_execution"; input: string; exitCode?: number; title?: string }
+        | { type: "dynamic_tool"; toolName: string; input: unknown },
+    ) =>
+      mapper.event({
+        ...base,
+        type: "turn-item.updated",
+        payload: {
+          id: TurnItemId.make(id),
+          threadId,
+          runId,
+          nodeId: NodeId.make("private-node"),
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          ...fields,
+          title: "title" in fields ? (fields.title ?? null) : null,
+        },
+      });
+    const script = {
+      type: "command_execution",
+      input: '/bin/zsh -lc "python private.py"',
+    } as const;
+    item("private-1", "running", script);
+    item("private-1", "completed", { ...script, exitCode: 0 });
+    item("private-1", "completed", { ...script, exitCode: 0 });
+    item("private-2", "failed", {
+      type: "command_execution",
+      input: "cd private && Rscript private.R",
+      exitCode: 1,
+    });
+    item("private-3", "completed", {
+      type: "command_execution",
+      input: "pdflatex private.tex",
+      exitCode: 2,
+    });
+    item("private-4", "completed", {
+      type: "dynamic_tool",
+      toolName: "bash",
+      input: { command: "python3 -m pip install private-package" },
+    });
+    item("private-5", "cancelled", { type: "command_execution", input: "python private.py" });
+    item("private-6", "completed", { type: "dynamic_tool", toolName: "read", input: "python" });
+    item("private-7", "completed", { type: "command_execution", input: "Preparing workspace" });
+    const output = mapper.event(runEvent("completed"));
+    const tallies = output
+      .filter((entry) => entry.name === "provider.commands.observed")
+      .map((entry) => entry.properties);
+    expect(tallies).toEqual([
+      {
+        provider: "codex",
+        model: "gpt-6",
+        commandCategory: "python",
+        commandCount: 2,
+        failedCount: 0,
+        stoppedCount: 1,
+      },
+      { provider: "codex", model: "gpt-6", commandCategory: "r", commandCount: 1, failedCount: 1 },
+      {
+        provider: "codex",
+        model: "gpt-6",
+        commandCategory: "latex",
+        commandCount: 1,
+        failedCount: 1,
+      },
+      {
+        provider: "codex",
+        model: "gpt-6",
+        commandCategory: "python-package-install",
+        commandCount: 1,
+        failedCount: 0,
+      },
+    ]);
+    expect(JSON.stringify(output)).not.toContain("private");
+  });
+  it.each(["completed", "failed", "cancelled"] as const)(
+    "keeps browser counts on the %s turn, not the next turn",
+    (status) => {
+      const ledger = new BrowserToolCallLedger();
+      const completedAt = DateTime.toEpochMillis(runEvent("completed").occurredAt);
+      ledger.record(threadId, completedAt - 2_000, false);
+      ledger.record(threadId, completedAt - 1_000, true);
+      ledger.record(threadId, completedAt + 1, false);
+      const mapper = createV2AnalyticsEventMapper(ledger);
+      mapper.event(runEvent("running"));
+      expect(mapper.event(runEvent(status))).toMatchObject([
+        {
+          name:
+            status === "completed"
+              ? "provider.turn.completed"
+              : status === "failed"
+                ? "provider.turn.failed"
+                : "provider.turn.stopped",
+          properties: { browserToolCalls: 2, browserToolFailures: 1 },
+        },
+      ]);
+      expect(ledger.take(threadId, completedAt + 1)).toEqual({ calls: 1, failures: 0 });
+    },
+  );
   it("ignores restored terminals and workspace-preparation failures", () => {
     const mapper = createV2AnalyticsEventMapper();
     expect(mapper.event(runEvent("completed"))).toEqual([]);

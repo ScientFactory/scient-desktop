@@ -8,6 +8,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2ProviderThread,
   type ModelSelection,
   ProviderInstanceId,
   ProviderSessionId,
@@ -45,6 +46,9 @@ import {
   AttachmentReservationReconciliation,
   reconcileReservationsBestEffort,
 } from "./AttachmentReservationReconciliation.ts";
+// SCIENT-FORK:START — the turn-start workspace binding survives adapter row updates.
+import { withRecordedWorkspace } from "./scient-provider/RecordedWorkspace.ts";
+// SCIENT-FORK:END
 import { boundFileChangeForStorage } from "./WireProjection.ts";
 
 export class ProviderEventNormalizeError extends Schema.TaggedError<ProviderEventNormalizeError>()(
@@ -463,6 +467,23 @@ export const layer: Layer.Layer<
       return events;
     });
 
+    // SCIENT-FORK:START — keep the turn-start workspace binding on same-session adapter updates.
+    const keepRecordedWorkspace = Effect.fnUntraced(function* (
+      threadId: ThreadId,
+      providerThread: OrchestrationV2ProviderThread,
+    ) {
+      const recorded = yield* projections
+        .getThreadRecords(threadId, ["providerThreads"], { providerThreadIds: [providerThread.id] })
+        .pipe(
+          Effect.map((records) =>
+            records.providerThreads.find((thread) => thread.id === providerThread.id),
+          ),
+          Effect.orElseSucceed(() => undefined),
+        );
+      return withRecordedWorkspace(recorded, providerThread);
+    });
+    // SCIENT-FORK:END
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] =
       /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
       Effect.fnUntraced(
@@ -512,10 +533,16 @@ export const layer: Layer.Layer<
               ];
             case "provider_thread.updated": {
               const threadId = input.event.providerThread.appThreadId ?? input.threadId;
+              // SCIENT-FORK:START — the bound workspace is orchestration-owned; adapters omit it.
+              const providerThread = yield* keepRecordedWorkspace(
+                threadId,
+                input.event.providerThread,
+              );
+              // SCIENT-FORK:END
               const updated = yield* makeDomainEvent(input, {
                 type: "provider-thread.updated",
                 threadId,
-                payload: input.event.providerThread,
+                payload: providerThread,
               });
               return input.event.retainedNativeTurnIds === undefined
                 ? [updated]
@@ -632,6 +659,35 @@ export const layer: Layer.Layer<
                   payload,
                   runId: plan.runId,
                   nodeId: plan.nodeId,
+                  occurredAt,
+                }),
+              ];
+            }
+            case "steer.updated": {
+              const item = yield* projections.getTurnItem({
+                threadId: input.event.threadId,
+                itemId: idAllocator.derive.userTurnItem({ messageId: input.event.messageId }),
+              });
+              if (
+                item?.type !== "user_message" ||
+                item.status === input.event.status ||
+                (item.status !== "pending" && item.status !== "completed")
+              ) {
+                return [];
+              }
+              const occurredAt = yield* DateTime.now;
+              return [
+                yield* makeDomainEvent(input, {
+                  type: "turn-item.updated",
+                  threadId: item.threadId,
+                  payload: {
+                    ...item,
+                    status: input.event.status,
+                    completedAt: input.event.status === "pending" ? null : occurredAt,
+                    updatedAt: occurredAt,
+                  },
+                  runId: item.runId,
+                  nodeId: item.nodeId,
                   occurredAt,
                 }),
               ];

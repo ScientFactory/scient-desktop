@@ -2,12 +2,17 @@ import { useAuth, useClerk } from "@clerk/react";
 import { MessageSquareIcon, ServerIcon, SmartphoneIcon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { createPortal } from "react-dom";
+// SCIENT-FORK:START — the phone-app switch for the account pages.
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 
 import { MobileClientsUserProfilePage } from "./MobileClientsUserProfilePage";
 import { T3ChatUserProfilePage } from "./T3ChatUserProfilePage";
 import { T3ConnectUserProfilePage } from "./T3ConnectUserProfilePage";
 
-export const T3_CONNECT_ACCOUNT_PAGES = [
+// SCIENT-FORK:START — not exported; consumers use SCIENT_ACCOUNT_PAGES.
+const T3_CONNECT_ACCOUNT_PAGES = [
+  // SCIENT-FORK:END
   {
     label: "Mobile clients",
     url: "mobile-clients",
@@ -15,7 +20,7 @@ export const T3_CONNECT_ACCOUNT_PAGES = [
     content: <MobileClientsUserProfilePage />,
   },
   {
-    label: "T3 Connect",
+    label: "Scient Connect",
     url: "t3-connect",
     icon: <ServerIcon className="size-4" />,
     content: <T3ConnectUserProfilePage />,
@@ -29,6 +34,14 @@ export const T3_CONNECT_ACCOUNT_PAGES = [
 ] as const;
 
 export type T3ConnectAccountPageUrl = (typeof T3_CONNECT_ACCOUNT_PAGES)[number]["url"];
+
+// SCIENT-FORK:START — no T3 Chat link on Scient's relay, and mobile only once the phone app ships.
+export const SCIENT_ACCOUNT_PAGES = T3_CONNECT_ACCOUNT_PAGES.filter(
+  (page) =>
+    page.url !== "t3-chat" &&
+    (page.url !== "mobile-clients" || SCIENT_DESKTOP_IDENTITY.mobileAppEnabled),
+);
+// SCIENT-FORK:END
 
 type PortalTargets = Readonly<Record<string, HTMLDivElement | undefined>>;
 
@@ -46,7 +59,9 @@ export function useT3ConnectAccountPage(): {
       setTargets((current) => ({ ...current, [key]: element }));
     clerk.openUserProfile({
       __experimental_startPath: `/${page}`,
-      customPages: T3_CONNECT_ACCOUNT_PAGES.map((page) => ({
+      // SCIENT-FORK:START — only the pages Scient offers.
+      customPages: SCIENT_ACCOUNT_PAGES.map((page) => ({
+        // SCIENT-FORK:END
         label: page.label,
         url: page.url,
         mount: (element: HTMLDivElement) => setTarget(`content:${page.url}`, element),
@@ -57,7 +72,9 @@ export function useT3ConnectAccountPage(): {
     });
   };
 
-  const portals = T3_CONNECT_ACCOUNT_PAGES.flatMap((page) => {
+  // SCIENT-FORK:START — only the pages Scient offers.
+  const portals = SCIENT_ACCOUNT_PAGES.flatMap((page) => {
+    // SCIENT-FORK:END
     const content = targets[`content:${page.url}`];
     const icon = targets[`icon:${page.url}`];
     return [

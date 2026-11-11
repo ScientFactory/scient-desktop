@@ -2,6 +2,7 @@ import * as Config from "effect/Config";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 
@@ -40,6 +41,24 @@ export const legacyTunnelGraceMinutesConfig = Config.option(
   ),
 );
 
+// SCIENT-FORK:START — default managed tunnel cap per account; manual overrides still replace it.
+// Blank counts as unset because CI passes missing variables as empty strings.
+const decodeTunnelLimit = Schema.decodeUnknownEffect(
+  Schema.NumberFromString.pipe(Schema.check(Schema.isInt(), Schema.isGreaterThan(0))),
+);
+export const defaultManagedTunnelLimitConfig = Config.String("RELAY_DEFAULT_TUNNEL_LIMIT").pipe(
+  Config.withDefault(""),
+  Config.mapEffect((value) =>
+    value.trim() === ""
+      ? Effect.succeed(Option.none<number>())
+      : decodeTunnelLimit(value.trim()).pipe(
+          Effect.asSome,
+          Effect.mapError((error) => new Config.ConfigError(error)),
+        ),
+  ),
+);
+// SCIENT-FORK:END
+
 export interface ApnsCredentials {
   readonly teamId: string;
   readonly keyId: string;
@@ -63,6 +82,12 @@ export class RelayConfiguration extends Context.Service<
     readonly clerkSecretKey: Redacted.Redacted<string>;
     readonly clerkPublishableKey: string;
     readonly clerkJwtAudience: string;
+    // SCIENT-FORK:START clerk-legacy-instance — the Clerk instance older builds sign in with.
+    readonly clerkLegacy?: {
+      readonly secretKey: Redacted.Redacted<string>;
+      readonly publishableKey: string;
+    };
+    // SCIENT-FORK:END clerk-legacy-instance
     readonly apnsDeliveryJobSigningSecret: Redacted.Redacted<string>;
     readonly cloudMintPrivateKey: Redacted.Redacted<string>;
     readonly cloudMintPublicKey: string;

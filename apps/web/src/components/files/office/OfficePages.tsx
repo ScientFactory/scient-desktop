@@ -10,6 +10,7 @@ import {
   type ReactNode,
   type RefObject,
 } from "react";
+import { useShelfHidden } from "~/scient/documentShelf/ScientDocumentShelf"; // SCIENT-FORK
 
 export type PageSize = {
   readonly width: number;
@@ -111,13 +112,6 @@ export function OfficePages(props: {
   }, [mounted, props.pages.length]);
   // SCIENT-FORK:START — a page past those mounted so far mounts at once, then is scrolled to.
   const pending = useRef<{ index: number; y: number } | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the container DOM node to a page once the page it was asked for has mounted
-  useLayoutEffect(() => {
-    const target = pending.current;
-    if (!target || target.index >= mounted) return;
-    pending.current = null;
-    scrollRef?.current?.(target.index, target.y);
-  }, [mounted, scrollRef]);
   const stopPending = () => {
     pending.current = null;
   };
@@ -129,7 +123,7 @@ export function OfficePages(props: {
         const row = rows.current.get(index);
         const page = props.pages[index];
         // SCIENT-FORK:START
-        if (!row && page) {
+        if ((!row || width === 0) && page) {
           pending.current = { index, y };
           setMounted((count) => Math.max(count, index + 1));
           return;
@@ -154,6 +148,15 @@ export function OfficePages(props: {
       },
     [props.pages, width, zoom], // SCIENT-FORK
   );
+  // SCIENT-FORK:START — finish pending jumps after measurement and mounting.
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- scrolls the container DOM node to a page once the page it was asked for has mounted
+  useLayoutEffect(() => {
+    const target = pending.current;
+    if (!target || target.index >= mounted || width === 0) return;
+    pending.current = null;
+    scrollRef?.current?.(target.index, target.y);
+  }, [mounted, width, scrollRef]);
+  // SCIENT-FORK:END
   return (
     <div
       ref={scroller}
@@ -242,16 +245,18 @@ function OfficePage(props: {
   const canvas = useRef<HTMLCanvasElement>(null);
   const [near, setNear] = useState(false);
   const [ratio, setRatio] = useState(window.devicePixelRatio || 1);
+  // SCIENT-FORK: a view kept hidden (documentShelf) keeps only the pages in view drawn.
+  const hidden = useShelfHidden();
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Observe the page's viewport proximity to limit painting and text layers to nearby pages.
   useEffect(() => {
     if (!row.current) return;
     const observer = new IntersectionObserver(
       ([entry]) => setNear(entry?.isIntersecting ?? false),
-      { root: root.current, rootMargin: "100% 0px" },
+      { root: root.current, rootMargin: hidden ? "0px" : "100% 0px" },
     );
     observer.observe(row.current);
     return () => observer.disconnect();
-  }, [root]);
+  }, [root, hidden]);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- Subscribe to display density changes so canvas rasters match the current screen.
   useEffect(() => {
     const query = matchMedia(`(resolution: ${ratio}dppx)`);

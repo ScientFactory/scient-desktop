@@ -3081,6 +3081,8 @@ function runIdleThreadUnloadScenario(
     /** Ends run `ordinal` on a thread and waits for the session to process it. */
     readonly endTurn: (threadId: ThreadId, ordinal: number) => Effect.Effect<void>;
     readonly resume: (threadId: ThreadId) => Effect.Effect<void>;
+    /** Repoints the thread's durable provider row to another session, as a handoff does. */
+    readonly reassign: (threadId: ThreadId, owner: ProviderSessionId) => Effect.Effect<void>;
   }) => Effect.Effect<void, ProviderSessionManager.ProviderSessionManagerV2Error>,
   options: {
     readonly hasPendingBackgroundWorkForThread?: Effect.Effect<boolean>;
@@ -3202,6 +3204,21 @@ function runIdleThreadUnloadScenario(
             yield* Fiber.join(received);
           }),
         ).pipe(Effect.orDie);
+      const reassign = (threadId: ThreadId, owner: ProviderSessionId) =>
+        Effect.gen(function* () {
+          yield* eventSink.write({
+            events: [
+              {
+                id: yield* idAllocator.allocate.event({ threadId }),
+                type: "provider-thread.updated",
+                threadId,
+                driver: CODEX_DRIVER,
+                occurredAt: now,
+                payload: { ...providerThreadOf(threadId), providerSessionId: owner },
+              },
+            ],
+          });
+        }).pipe(Effect.orDie);
 
       // B's running turn keeps the shared runtime itself busy throughout.
       yield* startTurn(threadB, 1);
@@ -3216,6 +3233,7 @@ function runIdleThreadUnloadScenario(
         startTurnOnly,
         endTurn,
         resume,
+        reassign,
       });
     }).pipe(
       Effect.provide(
@@ -3306,6 +3324,45 @@ it.effect.each(["resume", "start"] as const)(
             yield* Deferred.await(releaseUnload);
             startsBeforeUnloadFinished = yield* Ref.get(nativeStarts);
           }),
+        },
+      );
+    }).pipe(Effect.scoped),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 handoff detach waits for an in-flight idle unload and re-joins its release",
+  () =>
+    Effect.gen(function* () {
+      const unloadStarted = yield* Deferred.make<void>();
+      const releaseUnload = yield* Deferred.make<void>();
+      yield* runIdleThreadUnloadScenario(
+        "idle-unload-handoff",
+        ({ state, manager, providerSessionId, threadA, startTurn, endTurn, reassign }) =>
+          Effect.gen(function* () {
+            yield* startTurn(threadA, 1);
+            yield* endTurn(threadA, 1);
+            yield* TestClock.adjust("1 second");
+            // The idle unsubscribe is in flight and its tracking row is gone.
+            yield* Deferred.await(unloadStarted);
+            yield* reassign(threadA, ProviderSessionId.make("replacement-owner"));
+            const detach = yield* manager
+              .detach({ providerSessionId, threadId: threadA })
+              .pipe(Effect.forkScoped);
+            yield* Effect.yieldNow;
+            yield* Effect.yieldNow;
+            // The replacement may resume once detach returns; the old writer is still held.
+            assert.isUndefined(detach.pollUnsafe());
+            yield* Deferred.succeed(releaseUnload, undefined);
+            yield* Fiber.join(detach);
+            assert.deepEqual((yield* Ref.get(state)).unloadedNativeThreadIds, [
+              `native-${threadA}`,
+              `native-${threadA}`,
+            ]);
+          }).pipe(Effect.scoped),
+        {
+          beforeUnload: Deferred.succeed(unloadStarted, undefined).pipe(
+            Effect.andThen(Deferred.await(releaseUnload)),
+          ),
         },
       );
     }).pipe(Effect.scoped),

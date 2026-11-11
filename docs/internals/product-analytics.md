@@ -25,10 +25,11 @@ Like T3, Scient sends every event its code records; there is no list of event or
 [`contract.ts`](../../packages/scient-analytics/src/contract.ts) shapes each event: a Scient
 normalizer decides the fields it reads (buckets, model keys, closed values), and every other field
 passes through as recorded. [`wireContract.ts`](../../packages/scient-analytics/src/wireContract.ts)
-then checks only shape and privacy: an event name, at most 64 properties of strings up to 256
+then checks shape and privacy: an event name, at most 64 properties of strings up to 256
 characters, finite numbers, booleans or arrays of up to 32 of those, 16 KiB in all, and no free-text
 key (`prompt`, `message`, `error`, `path`, `url`, `email` and the like) or value that looks like a
-path, link or email address. Such fields are dropped before queueing; the gateway rejects them too.
+path, link or email address. Revision 11 permits a validated `email` only on
+`install.account_observed`; ordinary events retain the same exclusions.
 Consent level is enforced before queueing, delivery uses only Scient's first-party gateway, and
 failures cannot block normal product behavior.
 
@@ -98,8 +99,8 @@ event with a normalizer. Each event's ordinary case supplies only the fields its
 ```sh
 node packages/scient-analytics/src/generateConformance.ts \
   --wire=/absolute/website/workers/events/src/eventContract.ts \
-  packages/scient-analytics/fixtures/contract-v10.json \
-  /absolute/website/workers/events/fixtures/contract-v10.json
+  packages/scient-analytics/fixtures/contract-v11.json \
+  /absolute/website/workers/events/fixtures/contract-v11.json
 # Repeat with --check to verify exact source/corpus parity without writing.
 ```
 
@@ -611,13 +612,45 @@ imports and code runs keep their existing operation events, so they are not coun
 measure a new Scient feature, add its method, route or tool to that file; its test fails if a
 route or tool name no longer exists.
 
+## Whose failure, and what agents run outside Scient
+
+A failure count mixes Scient's bugs with ordinary bad code. Failed `scient.operation.*` events and
+failed `mcp.tool.invoked` calls carry `failureOwner`: `scient`, `code` (the code or document being
+run), `input` (a request the caller got wrong), `environment` (a missing runtime, package or
+permission), `external` (a network or remote service), `cancelled` or `unknown`.
+[`FailureAttribution.ts`](../../apps/server/src/telemetry/FailureAttribution.ts) decides it where
+the typed failure is still in hand, with a closed `failureCategory` beside it. A runtime-reported
+error is the code's own, unless its error class names a missing package, memory or network; a
+missing package in Scient-managed Python stays `unknown`, since its Toolkits are Scient's promise.
+A run that never reached the kernel, an app restart or a broken bridge connection is Scient's. A
+runtime that exits mid-run stays `unknown`. Error names and messages never leave the computer.
+Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`, `selection`,
+`cell`, `run-file`) and `runtimeSource`.
+
+Agents also run programs in their own terminal, which bypasses Scient's tools. At each turn's end
+the native observer sends one `provider.commands.observed` per program category the turn ran, with
+`commandCount`, `failedCount` and `stoppedCount`.
+[`CommandCategories.ts`](../../apps/server/src/telemetry/CommandCategories.ts) reads the command
+on the computer and keeps only the category (`python`, `r`, `stata`, `latex`, `hpc`,
+`document-convert` and so on, or `shell-other`); the command, its arguments and output never
+leave it. Codex and Claude commands arrive as `command_execution`; native providers' shell tools
+as `dynamic_tool` with the command in their input. Scient's own workspace-preparation and
+sign-out rows are excluded. A command counts once, when it ends; a nonzero exit or a failed
+item counts as failed.
+
+The contract reads these fields with closed lists, so free text becomes `unknown` or is dropped.
+The gateway accepts them unchanged; reference queries on the ledger live in the website's
+`workers/events/src/attributionPipeline.test.ts`.
+
 ## Privacy invariants
 
 Analytics must never include prompts, responses, file contents or paths, URLs (except a public skill
-source's host and path, see [personal skills](./scient-skills.md#personal-skills)), credential tokens, email
-addresses, provider account identifiers, or user-assigned device names. As in T3, this rests on what
+source's host and path, see [personal skills](./scient-skills.md#personal-skills)), credential tokens
+or user-assigned device names. Dedicated account observations
+may include a provider-reported email; account/device owner IDs are hashed. As in T3, this rests on what
 the code records: no call site passes free text. The wire check backs it up by dropping free-text
-keys and any value that looks like a path, link or email address. New upstream instrumentation is
+keys and any value that looks like a path, link or email address outside that
+account-event exception. New upstream instrumentation is
 sent as recorded, so review new `analytics.record` call sites during alignments.
 
 Who an install belongs to is sent as `install.owner_observed`, at most once per
@@ -633,3 +666,37 @@ delivery and relay tracing remain disabled.
 The detailed current event schema and tests live in `packages/scient-analytics`. Historical design
 and capability evidence remains in
 [`docs/reports/scient-specific-capabilities.md`](../reports/scient-specific-capabilities.md).
+
+## Account observations and activation
+
+Revision 11 adds `install.account_observed` and `install.profile_observed`.
+The gateway and generated conformance corpus must land before a desktop release
+using the account-email exception. The gateway defaults
+`IDENTITY_ANALYTICS_ENABLED=false`, independently of existing ingestion/export
+controls. With this flag off it acknowledges but discards account/profile/device
+observations and collects no new request-network observations. Activation waits
+for the reviewed privacy notice; ordinary quality instrumentation remains usable.
+
+The account observer uses authenticated provider snapshots, not credential files
+or browser profiles. Codex and Claude expose email and plan labels; Grok exposes
+email. Other providers contribute only fields they actually publish. Antigravity,
+Cursor, Droid, Pi, OpenCode and arbitrary ACP drivers do not currently expose a
+consistent account email/tier in their Desktop snapshots. Their model and tool
+usage is still recorded. Scient Agent's optional RPC `emails` list supplies
+active stored OAuth email metadata in newer agent builds; older builds remain
+compatible. Connected service IDs identify access to a service, not a subscription
+tier. API-key login options are not reported as subscription accounts.
+
+MCP and provider-turn model dimensions accept bounded names reported by agents,
+including Pi and custom models. Turn/request reports include the primary model
+and distinct-model count where usage lists them. Browser calls are counted before
+the tool response returns and consumed by the turn terminal observation; collection
+resets clear the ledger. Download and LaTeX failures use bounded classes, never
+raw diagnostic messages.
+
+When activated, Cloudflare retains linked usage until two years after the
+installation's last activity and diagnostics for 60 days. Local outbox limits
+remain separate delivery-buffer limits. Account, profile, device and network
+observations stay outside PostHog. Deletion covers these observations as well as
+the event ledger. Permanent daily totals contain no account/installation IDs;
+shared-IP/time download candidates never change canonical identity automatically.

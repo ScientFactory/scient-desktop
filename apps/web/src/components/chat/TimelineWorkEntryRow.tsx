@@ -72,6 +72,9 @@ import {
   THINKING_PREVIEW_PLUGINS,
   THOUGHT_PREVIEW_PLUGINS,
 } from "./TimelineWorkEntryRow.logic";
+// SCIENT-FORK:START — computer control permission notice.
+import { ComputerControlPermissionNotice } from "~/scient/computerControl/ComputerControlPermissions";
+// SCIENT-FORK:END
 
 export function useThreadReadTarget(entry: TimelineWorkEntry, environmentId: EnvironmentId) {
   const rawThreadId = threadReadTargetId(entry);
@@ -570,6 +573,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             Open in browser
           </a>
         </div>
+      ) : null}
+      {/* SCIENT-FORK:END */}
+      {/* SCIENT-FORK:START — a computer call macOS refused says what to allow. */}
+      {workEntry.projectedItem?.item.toolPermissionsNeeded?.length ? (
+        <ComputerControlPermissionNotice
+          permissions={workEntry.projectedItem.item.toolPermissionsNeeded}
+          environmentId={ctx.activeThreadEnvironmentId}
+        />
       ) : null}
       {/* SCIENT-FORK:END */}
       {expanded && isReasoning ? <ReasoningTraceContent entries={[workEntry]} /> : null}

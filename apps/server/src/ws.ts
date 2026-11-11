@@ -337,6 +337,9 @@ import {
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import { captureScientWsServices } from "./scient/ScientWsServices.ts";
+// SCIENT-FORK:START — a guest link needs Connect to reach this server.
+import { requireReachableGuestHost } from "./scient/guest/guestLinkReachability.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Browser: history and search suggestions.
 import { BrowserHistory } from "./scient/browserHistory/BrowserHistory.ts";
 import { searchSuggestions } from "./scient/browserHistory/searchSuggestions.ts";
@@ -352,7 +355,8 @@ import {
   accountsUserRunsForRpc,
   makeAccountsRpcHandlers,
 } from "./scient/accounts/AccountsRpcHandlers.ts";
-import { makeAccountKeyLinks } from "./scient/accounts/keyLinks.ts";
+import { linkKeyForRpc } from "./scient/accounts/keyLinks.ts";
+import { restoreKeptKeysForRpc } from "./scient/accounts/keptAgentKeys.ts";
 import { makePlainKeys } from "./scient/accounts/plainKeys.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient extensions RPCs.
@@ -1636,7 +1640,8 @@ export const layerWsRpc = (
       const accounts = yield* accountsForRpc;
       const accountUserRuns = yield* accountsUserRunsForRpc;
       const accountPlainKeys = yield* makePlainKeys(accounts);
-      const linkAccountKey = yield* makeAccountKeyLinks(accounts);
+      const linkAccountKey = yield* linkKeyForRpc;
+      const restoreKeptAgentKeys = yield* restoreKeptKeysForRpc;
       // SCIENT-FORK:END
       // SCIENT-FORK:START — Scient Browser: history.
       const browserHistory = yield* BrowserHistory;
@@ -2766,6 +2771,9 @@ export const layerWsRpc = (
           ),
         [WS_METHODS.guestShareCreate]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
+            // SCIENT-FORK:START
+            Effect.andThen(requireReachableGuestHost()),
+            // SCIENT-FORK:END
             Effect.andThen(guestShares.create(input)),
           ),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
@@ -2908,6 +2916,10 @@ export const layerWsRpc = (
         [WS_METHODS.serverRefreshProviders]:
           /* Request instrumentation already owns the span; keep this helper in that context. */
           Effect.fnUntraced(function* (input) {
+            if (input.modelCatalogOnly === true) {
+              yield* providerRegistry.refreshModelCatalog;
+              return { providers: [] };
+            }
             if (input.refreshModels) {
               yield* providerRegistry.invalidateModelCaches({
                 instanceId: input.instanceId,
@@ -2935,6 +2947,7 @@ export const layerWsRpc = (
               ? providerRegistry.refreshWorkspaceSnapshot({
                   instanceId: input.instanceId,
                   cwd: input.cwd,
+                  scanCwd: yield* projectService.workspaceScanDirectory(input.cwd),
                   fresh: input.fresh === true,
                   // SCIENT-FORK:START — full inventory replies include completed native listings.
                   awaitNativeInventory: input.workspaceSnapshotsOnDemand === false,
@@ -4175,6 +4188,7 @@ export const layerWsRpc = (
             papers: accountUserRuns.papers,
             plainKeys: accountPlainKeys,
             linkKey: linkAccountKey,
+            restoreKeptKeys: restoreKeptAgentKeys,
           }),
         ),
         // SCIENT-FORK:END

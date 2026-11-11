@@ -3,6 +3,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeZlib from "node:zlib";
 
 import * as Tar from "tar";
 import JSZip from "jszip";
@@ -11,8 +12,10 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { resolveReviewedCursorArtifact } from "./cursorManifest.ts";
 import { resolveReviewedCodexArtifact } from "./codexManifest.ts";
 import {
+  canUnpackManagedRuntimeZstd,
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
+  unpackManagedRuntimeZstd,
   verifyManagedRuntimeChecksum,
 } from "./runtimeFiles.ts";
 
@@ -437,5 +440,64 @@ describe("managed runtime files", () => {
         signal: new AbortController().signal,
       }),
     ).rejects.toThrow("invalid extraction limits");
+  });
+});
+
+describe("compressed managed runtime downloads", () => {
+  const binary = NodeCrypto.randomBytes(256 * 1024);
+
+  async function unpack(compressed: Buffer, expectedSize = binary.length) {
+    const root = await temporaryRoot();
+    const source = NodePath.join(root, "binary.zst");
+    const destination = NodePath.join(root, "binary");
+    await NodeFSP.writeFile(source, compressed);
+    const run = unpackManagedRuntimeZstd({
+      source,
+      destination,
+      expectedSize,
+      signal: new AbortController().signal,
+    });
+    return { run, destination };
+  }
+
+  /** As a release is made: streamed, so the frame states its window. */
+  async function compress(bytes: Buffer, windowLog: number): Promise<Buffer> {
+    const chunks: Buffer[] = [];
+    const stream = NodeZlib.createZstdCompress({
+      params: { [NodeZlib.constants.ZSTD_c_windowLog]: windowLog },
+    });
+    stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+    const ended = new Promise((resolve) => stream.on("end", resolve));
+    stream.end(bytes);
+    await ended;
+    return Buffer.concat(chunks);
+  }
+
+  it("is available on the Node this app runs on", () => {
+    expect(canUnpackManagedRuntimeZstd()).toBe(true);
+  });
+
+  it("unpacks a copy made with the release window", async () => {
+    const { run, destination } = await unpack(await compress(binary, 27));
+    await run;
+    expect(await NodeFSP.readFile(destination)).toEqual(binary);
+  });
+
+  it.each([
+    { name: "a window larger than the release's", window: 28, size: undefined, error: /unpacked/u },
+    { name: "more bytes than the release", window: 27, size: 1_024, error: /more than/u },
+    { name: "fewer bytes than the release", window: 27, size: 512 * 1024, error: /less than/u },
+  ])("refuses $name and leaves nothing behind", async ({ window, size, error }) => {
+    const { run, destination } = await unpack(await compress(binary, window), size);
+    await expect(run).rejects.toThrow(error);
+    await expect(NodeFSP.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("refuses a damaged copy", async () => {
+    const compressed = await compress(binary, 27);
+    compressed.fill(0, 0, 4);
+    const { run, destination } = await unpack(compressed);
+    await expect(run).rejects.toThrow(/could not be unpacked/u);
+    await expect(NodeFSP.stat(destination)).rejects.toMatchObject({ code: "ENOENT" });
   });
 });

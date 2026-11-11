@@ -8,7 +8,7 @@ const { validateResult } = require("./thread-transfer-report.cjs");
 const WORKFLOW = ".github/workflows/ci.yml";
 const { jobFailures } = require("./ci-check.cjs");
 // The main ruleset lands at most this many queue entries in one push (max_entries_to_merge).
-const MAX_QUEUE_SEGMENTS = 4;
+const MAX_QUEUE_SEGMENTS = 6;
 const SCHEMA = 4;
 const RECEIPT_KEYS = [
   "schemaVersion",
@@ -105,6 +105,10 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
     reusedFrom = Number(needs.queue_ci.outputs.source_run_id);
     assert(positive(reusedFrom), "Reused qualification source is missing");
   }
+  // A reused run skips Overleaf Windows: the source receipt it verified recorded that pass.
+  const overleafWindows = reused
+    ? needs.queue_ci.outputs.overleaf_windows === "true"
+    : needs.overleaf_windows?.result === "success";
   const reports = Object.fromEntries(
     ["web", "server"].map((suite) => [
       suite,
@@ -128,7 +132,7 @@ async function writeReceipt({ github, context, core, needs, env = process.env })
   }
   const receipt = {
     schemaVersion: SCHEMA,
-    overleafWindows: needs.overleaf_windows.result === "success",
+    overleafWindows,
     event: context.eventName,
     ...who,
     baseSha,
@@ -195,9 +199,17 @@ function matchesRun(run, current, who, event, headSha) {
     run.head_sha === headSha &&
     (event !== "merge_group" || run.head_branch?.startsWith("gh-readonly-queue/main/")) &&
     positive(run.id) &&
-    positive(run.run_attempt) &&
-    run.status === "completed" &&
-    run.conclusion === "success"
+    positive(run.run_attempt)
+  );
+}
+
+// Qualification is the run's gates, not its overall result: advisory jobs (ci-check.cjs
+// ADVISORY) can still be running, or have failed, after `Check` passed. A cancelled, timed-out
+// or not-yet-started run never qualifies, whatever its earlier jobs did.
+function qualifyingState(run) {
+  return (
+    run.status === "in_progress" ||
+    (run.status === "completed" && (run.conclusion === "success" || run.conclusion === "failure"))
   );
 }
 
@@ -220,7 +232,10 @@ function checkReceipt(receipt, expected) {
   );
 }
 
-/** The newest successful run of this workflow for one head, with its qualification receipt. */
+/**
+ * The newest run of this workflow for one head, when its `Check` and qualification receipt
+ * passed, with that receipt. An older run behind a newer unqualified one is never used.
+ */
 async function qualifiedRun({ github, repo, current, who, event, headSha, env, archiveReader }) {
   const api = github.rest.actions;
   const { data } = await api.listWorkflowRuns({
@@ -228,18 +243,49 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
     workflow_id: current.workflow_id,
     event,
     head_sha: headSha,
-    status: "success",
     per_page: 20,
   });
   const run = data.workflow_runs.find((candidate) =>
     matchesRun(candidate, current, who, event, headSha),
   );
-  assert(run, `No successful exact-content ${event} run`);
+  assert(run && qualifyingState(run), `No qualified exact-content ${event} run`);
   const artifacts = await github.paginate(api.listWorkflowRunArtifacts, {
     ...repo,
     run_id: run.id,
     per_page: 100,
   });
+  // "Re-run failed jobs" carries passing jobs into the new attempt under its number, but their
+  // artifacts keep the attempt they ran in. A carried job keeps its original start time.
+  const latest = await github.paginate(api.listJobsForWorkflowRun, {
+    ...repo,
+    run_id: run.id,
+    filter: "latest",
+    per_page: 100,
+  });
+  const attempts = [];
+  for (let attempt = 1; attempt < run.run_attempt; attempt++)
+    attempts[attempt] = await github.paginate(api.listJobsForWorkflowRunAttempt, {
+      ...repo,
+      run_id: run.id,
+      attempt_number: attempt,
+      per_page: 100,
+    });
+  const attemptOf = (name) => {
+    const matching = latest.filter((job) => job.name === name);
+    assert(
+      matching.length === 1 &&
+        matching[0].conclusion === "success" &&
+        matching[0].run_attempt === run.run_attempt &&
+        typeof matching[0].started_at === "string",
+      `No single successful ${name} job`,
+    );
+    const { started_at } = matching[0];
+    for (let attempt = 1; attempt < run.run_attempt; attempt++) {
+      const earlier = attempts[attempt].filter((job) => job.name === name);
+      if (earlier.length === 1 && earlier[0].started_at === started_at) return attempt;
+    }
+    return run.run_attempt;
+  };
   const download = async (name, filename, limit) => {
     const matching = artifacts.filter((artifact) => artifact.name === name && !artifact.expired);
     assert(
@@ -269,13 +315,24 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
     assert(Buffer.byteLength(raw) <= limit, "Artifact member is too large");
     return JSON.parse(raw.toString());
   };
+  // The receipt is written only when every qualifying job passed; `Check` then also requires the
+  // native gates and transfer evidence.
+  attemptOf("Check");
   const prefix = event === "merge_group" ? "queue" : "pr";
+  const receiptAttempt = attemptOf("Qualification receipt");
   const receipt = await download(
-    `ci-${prefix}-qualification-attempt-${run.run_attempt}`,
+    `ci-${prefix}-qualification-attempt-${receiptAttempt}`,
     "receipt.json",
     64 * 1024,
   );
-  return { run, receipt, download };
+  // A run that reused its source republished every report from its probe job.
+  const reportAttempt = (suite, shard) =>
+    attemptOf(
+      receipt.reusedFrom === null
+        ? `Test ${suite === "web" ? "Web" : "Server"} ${shard}`
+        : "Reuse exact CI",
+    );
+  return { run, receipt, receiptAttempt, download, reportAttempt };
 }
 
 /**
@@ -283,6 +340,8 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
  * exact commit from its first parent, back to the commit main held before the push.
  */
 async function pushSegments(probe) {
+  // The queue merges only after `Check`, which follows the receipt, so each entry's evidence
+  // already exists when its push runs.
   const { github, repo, who, before } = probe;
   const segments = [];
   for (let head = who.headSha; head !== before;) {
@@ -295,7 +354,7 @@ async function pushSegments(probe) {
       workflow: WORKFLOW,
       workflowSha: head,
       runId: segment.run.id,
-      runAttempt: segment.run.run_attempt,
+      runAttempt: segment.receiptAttempt,
       headSha: head,
     });
     const commit = await commitOf(github, repo, head);
@@ -341,7 +400,7 @@ async function queueSegments(probe) {
     repository: who.repository,
     workflow: WORKFLOW,
     runId: segment.run.id,
-    runAttempt: segment.run.run_attempt,
+    runAttempt: segment.receiptAttempt,
     baseSha: group.base_sha,
     treeSha: commit.tree,
     reusedFrom: null,
@@ -407,7 +466,7 @@ async function restore({ github, context, core, env = process.env, archiveReader
       for (let shard = 1; shard <= count; shard++) {
         const filename = `vitest-${suite}-${shard}.json`;
         const report = await source.download(
-          `vitest-${suite}-${shard}-attempt-${source.run.run_attempt}`,
+          `vitest-${suite}-${shard}-attempt-${source.reportAttempt(suite, shard)}`,
           filename,
           MAX_REPORT,
         );
@@ -420,6 +479,7 @@ async function restore({ github, context, core, env = process.env, archiveReader
       const { data: latest } = await api.getWorkflowRun({ ...repo, run_id: run.id });
       assert(
         matchesRun(latest, current, who, run.event, run.head_sha) &&
+          qualifyingState(latest) &&
           latest.run_attempt === run.run_attempt,
         "Source run changed during reuse",
       );
@@ -433,6 +493,7 @@ async function restore({ github, context, core, env = process.env, archiveReader
       `https://github.com/${who.repository}/actions/runs/${source.run.id}`,
     );
     core.setOutput("source_event", source.run.event);
+    core.setOutput("overleaf_windows", String(source.receipt.overleafWindows));
     for (const suite of ["web", "server"])
       core.setOutput(`${suite}_reports`, String(source.receipt.reports[suite]));
     core.setOutput("candidate", "true");

@@ -23,6 +23,12 @@ const login = {
   password_value: encrypt(secret),
   blacklisted_by_user: 0,
 };
+// A real Chrome time (microseconds since 1601), larger than Number.MAX_SAFE_INTEGER.
+const chromeTimes = {
+  date_password_modified: 13_294_165_657_507_815n,
+  date_last_used: 0,
+  date_created: 13_294_165_657_507_815n,
+};
 
 it.effect(
   "reads a synthetic WAL Login Data snapshot, maps rows and removes all temporary copies",
@@ -34,7 +40,7 @@ it.effect(
       yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`pragma journal_mode = WAL`;
-        yield* sql`create table logins (origin_url text, signon_realm text, username_value text, password_value blob, blacklisted_by_user integer)`;
+        yield* sql`create table logins (origin_url text, signon_realm text, username_value text, password_value blob, blacklisted_by_user integer, date_password_modified integer, date_last_used integer, date_created integer)`;
         const rows = [
           login,
           { ...login, origin_url: "", signon_realm: "https://realm.example.test/" },
@@ -48,7 +54,8 @@ it.effect(
           { ...login, origin_url: "file:///tmp/example" },
           { ...login, password_value: encrypt("") },
         ];
-        for (const row of rows) yield* sql`insert into logins ${sql.insert(row)}`;
+        for (const row of rows)
+          yield* sql`insert into logins ${sql.insert({ ...row, ...chromeTimes })}`;
         expect(yield* countBrowserPasswords(database)).toBe(7);
         const logs = vi.fn();
         const result = yield* readPasswordDatabase(database, { cbcV10: key }, "darwin").pipe(
@@ -57,7 +64,7 @@ it.effect(
         );
         expect(result.skipped).toBe(9);
         expect(result.content).toContain(
-          '"login.example.test","https://login.example.test/path","synthetic-user","synthetic-password,""\nvalue"',
+          '"login.example.test","https://login.example.test/path","synthetic-user","synthetic-password,""\nvalue","2022-04-11T15:47:37.507Z"',
         );
         expect(result.content).toContain('"realm.example.test"');
         expect(JSON.stringify(logs.mock.calls)).not.toContain("synthetic-password");

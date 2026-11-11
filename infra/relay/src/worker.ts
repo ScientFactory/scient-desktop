@@ -124,7 +124,9 @@ export const layer = Api.make(
       // Requests run several Postgres queries in sequence. At the user's edge
       // each one paid the round trip to the database (~300 ms from JNB); next
       // to PlanetScale `us-west` the request pays that distance once.
-      placement: { region: "aws:us-west-2" },
+      // SCIENT-FORK:START — next to the us-east database (src/db.ts).
+      placement: { region: "aws:us-east-1" },
+      // SCIENT-FORK:END
       domain: relayPublicDomain,
     })),
     Effect.orDie,
@@ -164,6 +166,24 @@ export const layer = Api.make(
     const clerkSecretKey = yield* Config.Redacted("CLERK_SECRET_KEY");
     const clerkPublishableKey = yield* Config.String("CLERK_PUBLISHABLE_KEY");
     const clerkJwtAudience = yield* Config.String("CLERK_JWT_AUDIENCE");
+    // SCIENT-FORK:START clerk-legacy-instance — both values, or neither (src/auth/ClerkInstances.ts).
+    const clerkLegacySecretKey = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.Redacted("CLERK_LEGACY_SECRET_KEY")),
+        (value) => Redacted.value(value).trim().length > 0,
+      ),
+    );
+    const clerkLegacyPublishableKey = Option.getOrUndefined(
+      Option.filter(
+        yield* Config.option(Config.String("CLERK_LEGACY_PUBLISHABLE_KEY")),
+        (value) => value.trim().length > 0,
+      ),
+    );
+    const clerkLegacy =
+      clerkLegacySecretKey && clerkLegacyPublishableKey
+        ? { secretKey: clerkLegacySecretKey, publishableKey: clerkLegacyPublishableKey.trim() }
+        : undefined;
+    // SCIENT-FORK:END clerk-legacy-instance
     const t3ChatLinkSecret = Option.getOrUndefined(
       Option.filter(
         yield* Config.option(Config.Redacted("T3CHAT_LINK_SECRET")),
@@ -193,6 +213,9 @@ export const layer = Api.make(
     const legacyTunnelGraceMinutes = Option.getOrUndefined(
       yield* RelayConfiguration.legacyTunnelGraceMinutesConfig,
     );
+    // SCIENT-FORK:START — RELAY_DEFAULT_TUNNEL_LIMIT, read at deploy time like the cleanup modes.
+    const defaultManagedTunnelLimit = yield* RelayConfiguration.defaultManagedTunnelLimitConfig;
+    // SCIENT-FORK:END
     // Endpoint keys and their hashes differ by stage, including in shared accounts.
     const hookRateLimit = yield* Cloudflare.RateLimit("HOOK_RATE_LIMIT", {
       namespaceId: 1001,
@@ -236,6 +259,9 @@ export const layer = Api.make(
         clerkSecretKey,
         clerkPublishableKey,
         clerkJwtAudience,
+        // SCIENT-FORK:START clerk-legacy-instance
+        ...(clerkLegacy ? { clerkLegacy } : {}),
+        // SCIENT-FORK:END clerk-legacy-instance
         cloudMintPrivateKey: yield* cloudMintPrivateKey,
         cloudMintPublicKey: yield* cloudMintPublicKey,
         managedEndpointBaseDomain: yield* managedEndpointZoneName,
@@ -347,7 +373,17 @@ export const layer = Api.make(
           Layer.provideMerge(Layer.succeed(RelayDb.RelayDb, db)),
         ),
       ),
-      Layer.provideMerge(Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings)),
+      // SCIENT-FORK:START — with the configured default cap; unset keeps the contract default.
+      Layer.provideMerge(
+        Layer.mergeAll(
+          Layer.effect(RelayConfiguration.RelayConfiguration, loadSettings),
+          Option.match(defaultManagedTunnelLimit, {
+            onNone: () => Layer.empty,
+            onSome: (limit) => Layer.succeed(ManagedTunnelLimits.ManagedTunnelDefaultLimit, limit),
+          }),
+        ),
+      ),
+      // SCIENT-FORK:END
       Layer.provideMerge(layerWebcrypto),
     );
 

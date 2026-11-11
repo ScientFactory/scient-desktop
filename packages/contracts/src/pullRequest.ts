@@ -120,6 +120,11 @@ export const PullRequestCheck = Schema.Struct({
   description: Schema.NullOr(Schema.String),
   url: Schema.NullOr(Schema.String),
   required: Schema.optional(Schema.Boolean),
+  /**
+   * Not a check: it stands for ones the host could not list, such as workflow runs awaiting
+   * approval when that read fails, so nothing waits on it or counts it as passing.
+   */
+  placeholder: Schema.optional(Schema.Boolean),
 });
 export type PullRequestCheck = typeof PullRequestCheck.Type;
 
@@ -611,6 +616,14 @@ export const PullRequestReportStateInput = Schema.Struct({
 });
 export type PullRequestReportStateInput = typeof PullRequestReportStateInput.Type;
 
+/** The host's merge queue letting go of a pull request without merging it, newest first. */
+export const PullRequestMergeQueueRemoval = Schema.Struct({
+  id: TrimmedNonEmptyString,
+  removedAt: IsoDateTime,
+  reason: Schema.NullOr(Schema.String),
+});
+export type PullRequestMergeQueueRemoval = typeof PullRequestMergeQueueRemoval.Type;
+
 export const PullRequestDetail = Schema.Struct({
   provider: SourceControlProviderKind,
   capabilities: PullRequestCapabilities,
@@ -650,6 +663,8 @@ export const PullRequestDetail = Schema.Struct({
   autoMergeEnabled: Schema.optional(Schema.Boolean),
   autoMergeMethod: Schema.optional(PullRequestMergeMethod),
   workflowApprovalsRequired: Schema.optional(NonNegativeInt),
+  /** Absent where the host has no merge queue or does not report one. */
+  mergeQueueRemoval: Schema.optional(PullRequestMergeQueueRemoval),
   maintainerCanModify: Schema.optional(Schema.Boolean),
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;

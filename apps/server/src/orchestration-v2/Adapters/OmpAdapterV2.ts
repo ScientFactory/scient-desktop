@@ -24,6 +24,7 @@ import * as Scope from "effect/Scope";
 import * as Option from "effect/Option";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Semaphore from "effect/Semaphore";
 import { ChildProcessSpawner } from "effect/process";
 import {
   OMP_KNOWN_EVENT_TYPES,
@@ -59,10 +60,16 @@ import {
 import type { ServerConfig } from "../../config.ts";
 import { withAgentDeviceEnvironment } from "@t3tools/provider-core/server/mcpSession";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
-import { buildScientAwareness } from "../../provider/ScientAwareness.ts";
 import { ompCommandDecision } from "../../provider/omp/OmpCommandPolicy.ts";
 import { writeOmpExtensionFiles } from "../../provider/omp/OmpExtensionBootstrap.ts";
 import { ompScientExtensionSource } from "../../provider/omp/OmpScientExtension.ts";
+import { buildOmpScientGuidance } from "../../provider/omp/OmpScientGuidance.ts";
+import {
+  OMP_SUBAGENT_TRANSCRIPT_START,
+  type OmpSubagentStep,
+  type OmpSubagentTranscriptCursor,
+  readOmpSubagentTranscript,
+} from "../../provider/omp/OmpSubagentTranscript.ts";
 import { makeOmpRedaction, type OmpRpcProcess } from "../../provider/omp/OmpRpcProcess.ts";
 import type { EventNdjsonLogger } from "@t3tools/provider-core/server/ProviderEventLoggers";
 import {
@@ -105,6 +112,13 @@ import {
   browserActionText,
   browserActionDiagnostic,
 } from "../../provider/omp/OmpBrowserAction.ts";
+import {
+  ompComputerPermissionsNeeded,
+  ompComputerPresentation,
+  ompComputerStatusErrors,
+  ompToolImages,
+  retainedComputerPresentation,
+} from "../../provider/omp/OmpComputerPresentation.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 import { AcpProviderCapabilitiesV2 } from "@t3tools/provider-acp/server/adapter";
 import {
@@ -318,9 +332,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           bootstrap: {
             endpoint: mcp?.endpoint ?? null,
             authorization: mcp?.authorizationHeader ?? null,
-            awareness: buildScientAwareness(
-              mcp?.capabilities === undefined ? undefined : toMcpCapabilities(mcp.capabilities),
-            ),
+            awareness: buildOmpScientGuidance({
+              target,
+              capabilities:
+                mcp?.capabilities === undefined ? undefined : toMcpCapabilities(mcp.capabilities),
+            }),
             ...(mcp === undefined || mcp.connectors.length === 0
               ? {}
               : {
@@ -647,6 +663,127 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           });
 
         const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
+        // Native subagents' own steps, read from the conversation OMP saves for each:
+        // at most once a second while one runs, then twice after it ends, since its last
+        // record can land after its ending frame. Two reads run at a time per session.
+        const subagentTranscripts = new Map<
+          string,
+          {
+            readonly file: string;
+            cursor: OmpSubagentTranscriptCursor;
+            checked: boolean;
+            reading: boolean;
+            dirty: boolean;
+            ended: boolean;
+            endedReads: number;
+          }
+        >();
+        const transcriptReads = yield* Semaphore.make(2);
+        const subagentStep = (
+          step: OmpSubagentStep,
+        ): Extract<NativeSessionUpdate, { type: "subagent-steps" }>["steps"][number] =>
+          step.kind === "text"
+            ? { ...step, text: client.redaction.exact(step.text) }
+            : step.kind === "tool"
+              ? {
+                  kind: "tool",
+                  id: step.id,
+                  name: step.name,
+                  status: step.status,
+                  ...(step.input === undefined
+                    ? {}
+                    : { input: boundedToolInput(client.redaction.log(step.input)) }),
+                  ...(step.output === undefined
+                    ? {}
+                    : { output: boundedToolText(client.redaction.text(step.output)) }),
+                }
+              : {
+                  kind: "notice",
+                  id: step.id,
+                  message: `A step of ${(step.bytes / 1024 / 1024).toFixed(1)} MB is too large to show here.`,
+                };
+        const readSubagentSteps = Effect.fnUntraced(function* (id: string, final: boolean) {
+          const state = subagentTranscripts.get(id);
+          if (!state) return;
+          if (!state.checked) {
+            // The file appears with the subagent's first record; it must stay in this session's folder.
+            const real = yield* fs.realPath(state.file).pipe(Effect.option);
+            if (Option.isSome(real)) {
+              if (sessionFileInsideRoot(root, real.value) === undefined) {
+                subagentTranscripts.delete(id);
+                return yield* onUpdate({ type: "subagent-steps", id, steps: [], final: true });
+              }
+              state.checked = true;
+            }
+          }
+          let more = state.checked;
+          let sentFinal = false;
+          while (more) {
+            const read = yield* transcriptReads
+              .withPermits(1)(readOmpSubagentTranscript(state.file, state.cursor))
+              .pipe(Effect.provideService(FileSystem.FileSystem, fs), Effect.option);
+            if (Option.isNone(read)) break;
+            state.cursor = read.value.cursor;
+            more = read.value.more;
+            const last = final && !more;
+            if (read.value.steps.length > 0 || last)
+              yield* onUpdate({
+                type: "subagent-steps",
+                id,
+                steps: read.value.steps.map(subagentStep),
+                ...(last ? { final: true } : {}),
+              });
+            sentFinal ||= last;
+          }
+          if (final && !sentFinal)
+            yield* onUpdate({ type: "subagent-steps", id, steps: [], final: true });
+        });
+        const drainSubagentSteps = Effect.fnUntraced(function* (id: string) {
+          while (true) {
+            const state = subagentTranscripts.get(id);
+            if (!state) return;
+            state.dirty = false;
+            const final = state.ended && state.endedReads > 0;
+            if (state.ended) state.endedReads += 1;
+            yield* readSubagentSteps(id, final);
+            if (final) return;
+            yield* Effect.sleep(state.ended ? "2 seconds" : "1 second");
+            if (!state.dirty && !state.ended) {
+              state.reading = false;
+              return;
+            }
+          }
+        });
+        const followSubagentSteps = Effect.fnUntraced(function* (
+          id: string,
+          file: string | undefined,
+          ended: boolean,
+        ) {
+          let state = subagentTranscripts.get(id);
+          if (!state) {
+            if (file === undefined) return;
+            state = {
+              file,
+              cursor: OMP_SUBAGENT_TRANSCRIPT_START,
+              checked: false,
+              reading: false,
+              dirty: false,
+              ended: false,
+              endedReads: 0,
+            };
+            subagentTranscripts.set(id, state);
+          }
+          state.dirty = true;
+          if (ended) state.ended = true;
+          else if (state.ended && !state.reading) {
+            // A reopened subagent is read again as it runs.
+            state.ended = false;
+            state.endedReads = 0;
+          }
+          if (state.reading) return;
+          state.reading = true;
+          yield* drainSubagentSteps(id).pipe(Effect.forkIn(scope));
+        });
         let compactionOrdinal = 0;
         let runningCompaction: string | undefined;
         // A refused compaction starts and ends within a millisecond and shows no row.
@@ -813,10 +950,35 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               const previous = ordinaryTools.get(update.toolCallId);
               if (previous && previous.status !== "running") return Effect.void;
               const rawOutput = nativeToolText(update.data) ?? update.detail;
+              const name = update.name === "tool" && previous ? previous.name : update.name;
+              const computer =
+                ompComputerPresentation(
+                  name,
+                  update.input ?? previous?.input,
+                  update.data,
+                  client.redaction.text,
+                ) ?? retainedComputerPresentation(previous);
+              const images = computer ? ompToolImages(update.data) : [];
+              const permissionsNeeded = computer
+                ? ompComputerPermissionsNeeded(
+                    [rawOutput, ...ompComputerStatusErrors(update.data)].join("\n"),
+                  )
+                : [];
               const item: Extract<NativeSessionUpdate, { type: "tool" }> = {
                 type: "tool",
                 id: update.toolCallId,
-                name: update.name === "tool" && previous ? previous.name : update.name,
+                name,
+                ...computer,
+                ...(images.length > 0
+                  ? { images }
+                  : previous?.images === undefined
+                    ? {}
+                    : { images: previous.images }),
+                ...(permissionsNeeded.length > 0
+                  ? { permissionsNeeded }
+                  : previous?.permissionsNeeded === undefined
+                    ? {}
+                    : { permissionsNeeded: previous.permissionsNeeded }),
                 status: update.status === "inProgress" ? "running" : update.status,
                 ...(update.input === undefined
                   ? previous?.input === undefined
@@ -980,59 +1142,65 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             case "warning":
               return notice(update.message);
             case "subagent":
-              return onUpdate({
-                type: "subagent",
-                id: update.id,
-                title:
-                  target.driverKind === "scient"
-                    ? client.redaction.text(update.title)
-                    : update.title,
-                status:
-                  update.status === "inProgress"
-                    ? "running"
-                    : update.status === "stopped"
-                      ? "cancelled"
-                      : update.status,
-                ...(update.detail === undefined
-                  ? {}
-                  : { detail: client.redaction.text(update.detail) }),
-                ...(target.driverKind !== "scient"
-                  ? {}
-                  : {
-                      ...(update.prompt === undefined
-                        ? {}
-                        : { prompt: client.redaction.text(update.prompt) }),
-                      ...(update.progress === undefined
-                        ? {}
-                        : { progress: client.redaction.text(update.progress) }),
-                      ...(update.result === undefined
-                        ? {}
-                        : { result: client.redaction.text(update.result) }),
-                      ...(update.model === undefined
-                        ? {}
-                        : { model: client.redaction.text(update.model) }),
-                      ...(update.presentation === undefined
-                        ? {}
-                        : {
-                            presentation: {
-                              ...update.presentation,
-                              ...(update.presentation.role === undefined
-                                ? {}
-                                : { role: client.redaction.text(update.presentation.role) }),
-                              ...(update.presentation.effort === undefined
-                                ? {}
-                                : { effort: client.redaction.text(update.presentation.effort) }),
-                              ...(update.presentation.lastToolName === undefined
-                                ? {}
-                                : {
-                                    lastToolName: client.redaction.text(
-                                      update.presentation.lastToolName,
-                                    ),
-                                  }),
-                            },
-                          }),
-                    }),
-              });
+              return Effect.andThen(
+                onUpdate({
+                  type: "subagent",
+                  id: update.id,
+                  ...(update.sessionFile === undefined && !subagentTranscripts.has(update.id)
+                    ? {}
+                    : { stepsFollow: true }),
+                  title:
+                    target.driverKind === "scient"
+                      ? client.redaction.text(update.title)
+                      : update.title,
+                  status:
+                    update.status === "inProgress"
+                      ? "running"
+                      : update.status === "stopped"
+                        ? "cancelled"
+                        : update.status,
+                  ...(update.detail === undefined
+                    ? {}
+                    : { detail: client.redaction.text(update.detail) }),
+                  ...(target.driverKind !== "scient"
+                    ? {}
+                    : {
+                        ...(update.prompt === undefined
+                          ? {}
+                          : { prompt: client.redaction.text(update.prompt) }),
+                        ...(update.progress === undefined
+                          ? {}
+                          : { progress: client.redaction.text(update.progress) }),
+                        ...(update.result === undefined
+                          ? {}
+                          : { result: client.redaction.text(update.result) }),
+                        ...(update.model === undefined
+                          ? {}
+                          : { model: client.redaction.text(update.model) }),
+                        ...(update.presentation === undefined
+                          ? {}
+                          : {
+                              presentation: {
+                                ...update.presentation,
+                                ...(update.presentation.role === undefined
+                                  ? {}
+                                  : { role: client.redaction.text(update.presentation.role) }),
+                                ...(update.presentation.effort === undefined
+                                  ? {}
+                                  : { effort: client.redaction.text(update.presentation.effort) }),
+                                ...(update.presentation.lastToolName === undefined
+                                  ? {}
+                                  : {
+                                      lastToolName: client.redaction.text(
+                                        update.presentation.lastToolName,
+                                      ),
+                                    }),
+                              },
+                            }),
+                      }),
+                }),
+                followSubagentSteps(update.id, update.sessionFile, update.status !== "inProgress"),
+              );
             case "session-settled":
               return refreshUsage(false).pipe(
                 Effect.andThen(onUpdate({ type: "background", pending: false })),
@@ -1850,6 +2018,26 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               effect.pipe(Effect.provideService(Scope.Scope, scope), Effect.mapError(safeFailure)),
           ),
           beforeOwnerClose: Effect.suspend(() => processLossPublished ?? Effect.void),
+          // SCIENT-FORK: Scient Agent predicts the user's next message; an agent without the
+          // command, or one that fails to answer, offers none.
+          ...(target.driverKind === "scient"
+            ? {
+                predictNextMessage: client.command({ type: "predict_next_message" }).pipe(
+                  Effect.map((result) =>
+                    isRecord(result.data) && typeof result.data.text === "string"
+                      ? result.data.text
+                      : null,
+                  ),
+                  Effect.catchTags({
+                    OmpRpcCommandError: (cause) =>
+                      Effect.logDebug("orchestration-v2.omp-next-message-unavailable", {
+                        detail: cause.detail,
+                      }).pipe(Effect.as(null)),
+                  }),
+                  Effect.mapError(safeFailure),
+                ),
+              }
+            : {}),
           interrupt: interrupt().pipe(Effect.mapError(safeFailure)),
           resume,
           respond: Effect.fn("OmpAdapterV2.respond")(

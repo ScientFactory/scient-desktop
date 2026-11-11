@@ -20,6 +20,7 @@ import {
   type ChatAttachment,
   type OrchestrationV2AppThread,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
 } from "@t3tools/contracts";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { ompProcessEnvironment } from "../../provider/omp/OmpEnvironment.ts";
@@ -106,6 +107,7 @@ const harness = Effect.fnUntraced(function* (
     readonly shutdownUncertain?: boolean;
     readonly shutdownSignalConfirmed?: boolean;
     readonly makeProcess?: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
+    readonly promptSuggestions?: boolean;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -280,6 +282,9 @@ const harness = Effect.fnUntraced(function* (
     ...(behavior?.initialNativeThreadId === undefined
       ? {}
       : { initialNativeThreadId: behavior.initialNativeThreadId }),
+    ...(behavior?.promptSuggestions === undefined
+      ? {}
+      : { promptSuggestions: Effect.succeed(behavior.promptSuggestions) }),
   };
   yield* behavior?.prepareOpen?.(openInput, adapter) ?? Effect.void;
   const runtime = yield* adapter.openSession(openInput);
@@ -978,6 +983,66 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           assert.equal(sent.frame.images![0]!.mimeType, "image/png");
         }),
       ),
+  );
+
+  it.effect("offers Scient Agent's prediction of the next message after a completed turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"], contextWindow: null }],
+          initial: { provider: "test", id: "selected" },
+          responseData: (frame) =>
+            frame.type === "predict_next_message" ? { text: " Plot the residuals " } : undefined,
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+          promptSuggestions: true,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.finish();
+        const offered = yield* h.takeUntil((event) => event.type === "prompt_suggestion.updated");
+        assert.deepInclude(offered, {
+          threadId: h.input.threadId,
+          runId: h.input.runId,
+          text: "Plot the residuals",
+        });
+      }),
+    ),
+  );
+  it.effect("keeps a session working when its agent has no next-message command", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"], contextWindow: null }],
+          initial: { provider: "test", id: "selected" },
+          commandError: (frame) =>
+            frame.type === "predict_next_message"
+              ? "Unknown command: predict_next_message"
+              : undefined,
+        });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+          promptSuggestions: true,
+        });
+        for (const ordinal of [1, 2]) {
+          yield* h.runtime.startTurn({
+            ...h.input,
+            runId: RunId.make(`suggestion-run-${ordinal}`),
+            runOrdinal: ordinal,
+            providerTurnOrdinal: ordinal,
+            attemptId: RunAttemptId.make(`suggestion-attempt-${ordinal}`),
+            rootNodeId: NodeId.make(`suggestion-root-${ordinal}`),
+          });
+          yield* peer.finish();
+          const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+          assert.deepInclude(terminal, { status: "completed" });
+        }
+        assert.isTrue(peer.state.frames.some((frame) => frame.type === "predict_next_message"));
+        assert.isFalse(h.recorded.some((event) => event.type === "prompt_suggestion.updated"));
+      }),
+    ),
   );
 
   it.effect("budgets several native OMP images together against one serialized frame", () =>
@@ -2030,6 +2095,39 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect("redacts credentials from a computer call's title and app before projection", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const secret = "opaque-fixture-credential-abcdefghijk";
+        const h = yield* ordinaryToolsHarness({ SYNTHETIC_API_KEY: secret });
+        yield* h.peer.emit([
+          nativeToolStart("look", "eval", {
+            language: "js",
+            title: `Type ${secret}`,
+            code: `await computer.window({ app: "${secret}" });`,
+          }),
+        ]);
+        yield* h.untilTool("look", "running");
+        assert.equal(h.tool("look")?.toolSurface, "computer");
+        assert.notInclude(encodeDiagnostic(h.tool("look")), secret.slice(0, -1));
+        yield* h.peer.emit([
+          {
+            type: "tool_execution_update",
+            toolCallId: "look",
+            toolName: "eval",
+            partialResult: {
+              details: { statusEvents: [{ op: "computer", detail: `desktop.window(${secret})` }] },
+            },
+          },
+          nativeToolEnd("look", "eval", { content: [{ type: "text", text: "done" }] }),
+        ]);
+        yield* h.untilTool("look", "completed");
+        assert.notInclude(encodeDiagnostic(h.tool("look")), secret.slice(0, -1));
+        yield* h.stop();
+      }),
+    ),
+  );
+
   it.effect("preserves native OMP pre-execution stream identity and adopts finalized input", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -2398,7 +2496,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                   providerInstanceId: input.modelSelection.instanceId,
                   endpoint: "http://127.0.0.1:43123/mcp",
                   authorizationHeader: token,
-                  capabilities: new Set(["preview", "skills:read", "sources:read"]),
+                  capabilities: new Set([
+                    "orchestration",
+                    "preview",
+                    "skills:read",
+                    "sources:read",
+                  ]),
                   agentDeviceEnvironment: { PATH: "/scient/device-shim", PATH_SEPARATOR: ":" },
                   connectors: [],
                 })
@@ -2441,6 +2544,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.notInclude(bootstrap.value.awareness, "inherited awareness");
         assert.equal(bootstrap.value.awareness.includes("preview_status"), granted);
         assert.equal(bootstrap.value.awareness.includes("scient_skill_load"), granted);
+        assert.include(bootstrap.value.awareness, "<runtime_info>");
+        // Without the rules an OMP parent waited on its delegates instead of ending its turn.
+        assert.equal(
+          bootstrap.value.awareness.includes("Follow a running delegate's `next`"),
+          granted,
+        );
         assert.isFalse(NodeFS.existsSync(bootstrap.path));
         // A session without connectors keeps the bootstrap's original shape.
         assert.isUndefined(bootstrap.value.connectors);
@@ -3338,6 +3447,78 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
     ),
   );
 
+  it.effect("shows computer calls on the computer surface with their screenshots", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const h = yield* harness();
+        yield* h.runtime.startTurn(h.input);
+        const screenshot = { type: "image", mimeType: "image/png", data: "iVBORw0KGgo=" };
+        for (const event of [
+          {
+            type: "tool_execution_start",
+            toolCallId: "look",
+            toolName: "eval",
+            args: {
+              language: "js",
+              title: "Look at the document",
+              code: 'const win = await computer.window({ app: "TextEdit" }); await win.screenshot();',
+            },
+          },
+          {
+            type: "tool_execution_end",
+            toolCallId: "look",
+            toolName: "eval",
+            result: { content: [{ type: "text", text: "screenshot 14214" }, screenshot] },
+          },
+          {
+            type: "tool_execution_start",
+            toolCallId: "read-tree",
+            toolName: "eval",
+            args: { language: "js", code: "console.log(await win.ax());" },
+          },
+          {
+            type: "tool_execution_end",
+            toolCallId: "read-tree",
+            toolName: "eval",
+            isError: true,
+            result: {
+              content: [{ type: "text", text: "ToolError: PermissionDenied" }],
+              details: {
+                statusEvents: [
+                  {
+                    op: "computer",
+                    error:
+                      "PermissionDenied: macOS Accessibility permission is not granted to Scient, which macOS holds responsible for omp",
+                  },
+                ],
+              },
+            },
+          },
+        ])
+          yield* Queue.offer(h.notifications, { _tag: "Event", event });
+        const seen = new Map<string, OrchestrationV2TurnItem>();
+        yield* h.takeUntil((event) => {
+          if (event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool")
+            seen.set(event.turnItem.id, event.turnItem);
+          return [...seen.values()].filter((item) => item.status !== "running").length === 2;
+        });
+        const items = [...seen.values()];
+        const look = items.find((item) => item.title === "Look at the document");
+        const tree = items.find((item) => item !== look);
+        if (look?.type !== "dynamic_tool" || tree?.type !== "dynamic_tool")
+          return yield* Effect.die("Missing computer items");
+        assert.equal(look.toolSurface, "computer");
+        assert.equal(look.toolSource?.name, "TextEdit");
+        assert.deepEqual(look.output, {
+          content: [{ type: "text", text: "screenshot 14214" }, screenshot],
+        });
+        assert.equal(tree.toolSurface, "computer");
+        assert.equal(tree.title, "Computer use");
+        assert.deepEqual(tree.toolPermissionsNeeded, ["accessibility"]);
+      }),
+    ),
+  );
+
   it.effect("refuses foreign native OMP history and rejects unregistered host tools", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -3538,6 +3719,120 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           );
         }),
       ),
+  );
+
+  it.effect("fills a native subagent's thread with its saved steps, once each", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({
+          models: [{ provider: "test", id: "selected", input: ["text"] }],
+          initial: { provider: "test", id: "selected" },
+        });
+        peer.state.pendingAsyncWork = true;
+        let sessionDir: string | undefined;
+        const h = yield* harness(false, {
+          target: scientAgentTarget,
+          makeProcess: (options) => {
+            sessionDir = options.sessionDir;
+            return peer.makeProcess(options);
+          },
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        if (!sessionDir) return yield* Effect.die("Missing session directory");
+        const transcript = h.path.join(sessionDir, "parent", "Check.jsonl");
+        NodeFS.mkdirSync(h.path.dirname(transcript), { recursive: true });
+        const record = (id: string, message: unknown) =>
+          `${JSON.stringify({ type: "message", id, parentId: null, message })}\n`;
+        const call = { type: "toolCall", id: "call-1", name: "eval", arguments: { code: "2+2" } };
+        NodeFS.writeFileSync(
+          transcript,
+          record("a1", { role: "user", content: [{ type: "text", text: "Assignment" }] }) +
+            record("a2", { role: "assistant", content: [call] }),
+        );
+        yield* peer.emit([
+          {
+            type: "subagent_lifecycle",
+            payload: {
+              id: "check",
+              status: "started",
+              description: "Check",
+              sessionFile: transcript,
+            },
+          },
+        ]);
+        const spawned = yield* h.takeUntil((event) => event.type === "subagent.updated");
+        if (spawned.type !== "subagent.updated") return yield* Effect.die("Missing child");
+        const childThreadId = spawned.subagent.childThreadId;
+        const running = yield* h.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
+        );
+        if (running.type !== "turn_item.updated" || running.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Missing running step");
+        assert.equal(running.turnItem.threadId, childThreadId);
+        assert.equal(running.turnItem.status, "running");
+        assert.deepEqual(running.turnItem.input, { code: "2+2" });
+        // The answer is in both the saved conversation and the ending frame.
+        NodeFS.appendFileSync(
+          transcript,
+          record("a3", {
+            role: "toolResult",
+            toolCallId: "call-1",
+            toolName: "eval",
+            content: [{ type: "text", text: "4" }],
+          }) +
+            record("a4", {
+              role: "assistant",
+              content: [{ type: "text", text: "Two plus two is 4." }],
+            }),
+        );
+        // Work settles before the last read of the saved steps.
+        yield* peer.emit([
+          {
+            type: "subagent_lifecycle",
+            payload: { id: "check", status: "completed", output: "Two plus two is 4." },
+          },
+          { type: "session_settled" },
+        ]);
+        yield* TestClock.adjust("3 seconds");
+        const settled = yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.status === "completed",
+        );
+        if (settled.type !== "turn_item.updated" || settled.turnItem.type !== "dynamic_tool")
+          return yield* Effect.die("Missing finished step");
+        assert.equal(settled.turnItem.id, running.turnItem.id);
+        assert.equal(settled.turnItem.output, "4");
+        yield* TestClock.adjust("3 seconds");
+        yield* h.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.threadId === childThreadId &&
+            event.turnItem.type === "assistant_message",
+        );
+        const childItems = h.recorded.flatMap((event) =>
+          event.type === "turn_item.updated" && event.turnItem.threadId === childThreadId
+            ? [event.turnItem]
+            : [],
+        );
+        assert.deepEqual(
+          // In display order: the answer follows the steps it came from.
+          [...new Set(childItems.map((item) => item.id))]
+            .map((id) => childItems.findLast((candidate) => candidate.id === id)!)
+            .toSorted((left, right) => left.ordinal - right.ordinal)
+            .map((item) => [
+              item.type,
+              item.type === "assistant_message" ? item.text : item.status,
+            ]),
+          [
+            ["dynamic_tool", "completed"],
+            ["assistant_message", "Two plus two is 4."],
+          ],
+        );
+      }),
+    ),
   );
 
   it.effect(

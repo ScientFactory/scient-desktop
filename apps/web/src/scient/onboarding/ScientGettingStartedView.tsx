@@ -4,6 +4,13 @@ import { type ComponentType, type ReactNode, useEffect, useId, useRef, useState 
 
 import { Button } from "../../components/ui/button";
 import { Checkbox } from "../../components/ui/checkbox";
+import {
+  Select,
+  SelectItem,
+  SelectPopup,
+  SelectTrigger,
+  SelectValue,
+} from "../../components/ui/select";
 import { SidebarInset } from "../../components/ui/sidebar";
 import { ScientSymbol } from "../../components/ScientSymbol";
 import type { ProviderInstanceEntry } from "../../providerInstances";
@@ -11,7 +18,16 @@ import { ProviderSetupFailureLine } from "../providerConnection/ProviderFailureI
 import { ProviderSettingsLifecycleAction } from "../providerConnection/ProviderSettingsLifecycleAction";
 import { ProviderConnectionDialog } from "../providerConnection/ProviderConnectionDialog";
 import { ProviderLifecycleSetupSurface } from "../providerConnection/ProviderOnboardingPicker";
-import { SCIENT_OTHER_WORK_MAX_LENGTH, type ScientWorkKind } from "./model";
+import {
+  SCIENT_FIELD_LABELS,
+  SCIENT_FIELD_VALUES,
+  SCIENT_OTHER_WORK_MAX_LENGTH,
+  SCIENT_ROLE_LABELS,
+  SCIENT_ROLE_VALUES,
+  type ScientField,
+  type ScientRole,
+  type ScientWorkKind,
+} from "./model";
 import type { ScientOnboardingStep } from "./policy";
 
 const ONBOARDING_STEP_LABELS: Readonly<Record<ScientOnboardingStep, string>> = {
@@ -273,6 +289,10 @@ export function GettingStartedPreferencesStep(props: {
   readonly workKinds: ReadonlyArray<ScientWorkKind>;
   readonly otherSelected: boolean;
   readonly otherWork: string;
+  readonly field: ScientField | undefined;
+  readonly role: ScientRole | undefined;
+  readonly onFieldChange: (field: ScientField) => void;
+  readonly onRoleChange: (role: ScientRole) => void;
   readonly onToggleWorkKind: (kind: ScientWorkKind) => void;
   readonly onOtherSelectedChange: (selected: boolean) => void;
   readonly onOtherWorkChange: (value: string) => void;
@@ -341,11 +361,68 @@ export function GettingStartedPreferencesStep(props: {
           ) : null}
         </div>
       </fieldset>
+      <div className="mt-5 grid max-w-md gap-3 sm:grid-cols-2">
+        <GettingStartedChoice
+          label="Your field"
+          labels={SCIENT_FIELD_LABELS}
+          onChange={props.onFieldChange}
+          value={props.field}
+          values={SCIENT_FIELD_VALUES}
+        />
+        <GettingStartedChoice
+          label="Your role"
+          labels={SCIENT_ROLE_LABELS}
+          onChange={props.onRoleChange}
+          value={props.role}
+          values={SCIENT_ROLE_VALUES}
+        />
+      </div>
       <div className="mt-7 flex justify-end">
         <Button onClick={props.onContinue} size="sm" type="button">
           Continue
         </Button>
       </div>
+    </div>
+  );
+}
+
+function GettingStartedChoice<Value extends string>(props: {
+  readonly label: string;
+  readonly values: ReadonlyArray<Value>;
+  readonly labels: Readonly<Record<Value, string>>;
+  readonly value: Value | undefined;
+  readonly onChange: (value: Value) => void;
+}) {
+  const labelId = useId();
+  return (
+    <div className="flex min-w-0 flex-col gap-1.5">
+      <span className="text-sm text-foreground" id={labelId}>
+        {props.label}
+      </span>
+      <Select
+        onValueChange={(next) => {
+          const match = props.values.find((candidate) => candidate === next);
+          if (match !== undefined) props.onChange(match);
+        }}
+        value={props.value ?? null}
+      >
+        <SelectTrigger aria-labelledby={labelId} size="sm">
+          <SelectValue>
+            {props.value === undefined ? (
+              <span className="text-muted-foreground">Choose</span>
+            ) : (
+              props.labels[props.value]
+            )}
+          </SelectValue>
+        </SelectTrigger>
+        <SelectPopup alignItemWithTrigger={false}>
+          {props.values.map((value) => (
+            <SelectItem key={value} value={value}>
+              {props.labels[value]}
+            </SelectItem>
+          ))}
+        </SelectPopup>
+      </Select>
     </div>
   );
 }

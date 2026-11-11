@@ -70,6 +70,66 @@ apps from the host or stop that server, then reconnect. To start fresh instead
 of copying, create an empty `~/.scient-next` folder on the host before
 connecting.
 
+## Scient Connect
+
+Scient Connect reaches your computers from anywhere without opening ports or
+setting up a VPN. Sign in once, turn it on for a computer, and that computer
+appears in Scient on your other devices and at
+[app.scientfactory.com](https://app.scientfactory.com) in any browser.
+
+1. On the computer to share, open **Settings → Sharing & access** and sign in
+   to Scient Connect with Google, Microsoft, GitHub or email.
+2. Turn on **Scient Connect** for that environment. The first time, Scient
+   asks to download the relay client (`cloudflared`) and checks it against a
+   pinned checksum before installing it.
+3. On another device, sign in with the same account. The computer is listed
+   under Scient Connect; select it to connect.
+
+On a server without a screen, run `scient connect` and open the printed link on
+any device to sign in. `scient connect status` checks the connection from that
+computer. When a connection fails, see
+[Scient Connect troubleshooting](./scient-connect-troubleshooting.md).
+
+How it works: Scient's relay at `relay.scientfactory.com` keeps your account's
+list of computers and creates one private Cloudflare tunnel per computer, at an
+address under `scientusercontent.com`. Your threads, files and terminals travel
+directly between your device and that tunnel; the relay does not carry them.
+Cloudflare decrypts tunnel traffic at its edge before passing it on, as with
+any site behind Cloudflare. A computer that stays offline for a while loses its
+tunnel and gets a new one, at the same address, when it comes back.
+
+Each account can link a limited number of computers at once. **Settings →
+Sharing & access** shows how many are in use. To free a place, select **Manage
+tunnels**, then **Deregister** a computer you no longer use.
+
+A computer is reachable only while Scient runs on it: the desktop app, or
+`scient serve` on a server (see [headless server](background-service.md)). This
+is the same on macOS, Windows and Linux; Scient does not install a background
+service.
+
+### Share a thread with a guest
+
+A guest link lets one person without Scient watch a thread live in their
+browser and suggest messages. It works on a computer with Scient Connect on and
+reachable.
+
+1. Open the thread's menu, from the thread title or by right-clicking it in the
+   sidebar, and choose **Share with guest**. The command palette has it too.
+2. Select **Create link** and send the link to your guest. It works in one
+   browser and expires after 24 hours. A new link ends the current one.
+3. The guest enters a name and sees the thread as you do, including command
+   output and the agent's reasoning. Each message they send, with up to four
+   files, waits above your composer until you **Send** or **Dismiss** it.
+
+The header shows who is watching. **Stop sharing** there ends the link at once,
+and so do archiving or deleting the thread. Guest links are a beta, on unless
+you turn them off: **Settings → Labs → Guest links** off stops every link on
+that computer.
+
+If Scient says other devices can't reach the computer, **Settings → Sharing &
+access** shows why; see
+[Scient Connect troubleshooting](./scient-connect-troubleshooting.md).
+
 ## Direct and private-network access
 
 Advanced deployments can run a separately managed
@@ -235,9 +295,8 @@ in **Settings → Environments**. Use that
 exact action or copied command; see [Update Scient](updating.md). Changing the
 package or version can produce an incompatible server.
 
-Scient does not currently provide a public hosted relay for remote projects.
-Use desktop-managed SSH or a separately secured direct/private-network
-deployment.
+The hosted app at app.scientfactory.com follows the latest Scient release, so
+keep computers you open there updated.
 
 If SSH reconnecting fails after an app update, retry the launch once. Removing
 the connection stops a server that Scient launched; a server that was already
@@ -388,8 +447,9 @@ Turn **Local environment** back on in the same place to restore the previous loc
 environment.
 
 Removing a saved remote environment from **Settings → Environments** forgets it on
-this device only. Scient hosts no relay, so there is no account-level
-registration left behind to revoke.
+this device only. A computer linked through Scient Connect stays on your
+account until you turn Scient Connect off on it, or remove it from your account
+in **Settings → Sharing & access**; that also deletes its tunnel.
 
 When the app connects to more than one environment, choose one at the top of the
 page. A desktop app with **Local environment** off can manage a background

@@ -8,6 +8,7 @@ import { Button } from "~/components/ui/button";
 import { useBrowserSurfaceStore } from "~/browser/browserSurfaceStore";
 import { acquireDesktopTab } from "~/browser/desktopTabLifetime";
 import { consumePreviewTakeover, createPreviewHostClaim } from "./previewHostOwnership";
+import { usePreviewTabShownHere } from "./previewTabShown";
 import { desktopWindowLocks } from "./windowLocks";
 
 interface PreviewWindowTab {
@@ -51,12 +52,14 @@ function CoordinatedPreviewWindowHost({
   ...tab
 }: PreviewWindowTab & { readonly locks: LockManager; readonly children: ReactNode }) {
   const { runtimeTabId, tabId } = tab;
-  const displayed = useBrowserSurfaceStore((state) => {
-    const presentation = state.byTabId[runtimeTabId];
-    return presentation?.visible === true && presentation.rect !== null;
-  });
+  const displayed = usePreviewTabShownHere(runtimeTabId);
   // Instances are keyed by runtime tab id, so the claim never needs to follow a new one.
-  const [claim] = useState(() => createPreviewHostClaim(runtimeTabId, locks));
+  const [claim] = useState(() =>
+    createPreviewHostClaim(runtimeTabId, locks, {
+      // Electron can report a reloaded background window as focused; it then claims as before.
+      inBackground: () => document.visibilityState === "hidden" || !document.hasFocus(),
+    }),
+  );
   const role = useSyncExternalStore(claim.subscribe, claim.role);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- queues this window in the Web Locks contest over the tab's webview while mounted

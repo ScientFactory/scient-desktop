@@ -69,6 +69,17 @@ const NonEmptyString = (maxLength: number) =>
     Schema.check(Schema.isMaxLength(maxLength)),
   );
 
+/** A zstd copy of the binary. A copy this app cannot read is ignored, never its release. */
+const CatalogCompressedSchema = Schema.Struct({
+  format: Schema.Literal("zstd"),
+  size: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 4 * 1_024 * 1_024 * 1_024 })),
+  checksum: Schema.Struct({
+    algorithm: Schema.Literal("sha256"),
+    digest: NonEmptyString(128),
+  }),
+});
+const decodeCatalogCompressed = Schema.decodeUnknownOption(CatalogCompressedSchema);
+
 const CatalogArtifactSchema = Schema.Struct({
   artifactName: NonEmptyString(512),
   url: NonEmptyString(2_048),
@@ -89,6 +100,7 @@ const CatalogArtifactSchema = Schema.Struct({
       ),
     }),
   ),
+  compressed: Schema.optionalKey(Schema.Unknown),
 });
 
 const CatalogProviderSchema = Schema.Struct({
@@ -231,8 +243,10 @@ export function mergeManagedRuntimeCatalogs(
   return { schemaVersion: 1, providers };
 }
 
+/** With `withTransport: false`, the release's identity alone: a compressed copy is left out. */
 function normalizedProviderRelease(
   release: ManagedRuntimeCatalogData["providers"][string] | undefined,
+  withTransport = true,
 ) {
   if (!release) return null;
   return {
@@ -254,6 +268,9 @@ function normalizedProviderRelease(
             },
             size: artifact.size,
             ...(artifact.antigravityAcp ? { antigravityAcp: artifact.antigravityAcp } : {}),
+            ...(withTransport && artifact.compressed !== undefined
+              ? { compressed: artifact.compressed }
+              : {}),
           },
         ]),
     ),
@@ -261,16 +278,16 @@ function normalizedProviderRelease(
 }
 
 /**
- * The same release, or a republish of it that only adds targets: every
- * artifact `reference` lists is unchanged in `candidate`. Publication adds a
- * target to an existing version when app policy approves a new one.
+ * The same release, or a republish that only adds targets (newly approved by app
+ * policy) or compressed copies: every binary `reference` lists is unchanged in
+ * `candidate`. A compressed copy is only another way to download those bytes.
  */
 function extendsProviderRelease(
   candidate: ManagedRuntimeCatalogData["providers"][string],
   reference: ManagedRuntimeCatalogData["providers"][string],
 ): boolean {
-  const next = normalizedProviderRelease(candidate);
-  const base = normalizedProviderRelease(reference);
+  const next = normalizedProviderRelease(candidate, false);
+  const base = normalizedProviderRelease(reference, false);
   if (!next || !base) return false;
   return (
     next.contractRevision === base.contractRevision &&
@@ -422,13 +439,17 @@ export function resolveManagedRuntimeCatalogArtifact(input: {
     checksum: release.checksum,
     size: release.size,
   } satisfies Omit<ManagedRuntimeArtifactReceipt, "catalogRevision">;
-  return hydrateManagedRuntimeArtifact(input.policy, {
-    ...receiptWithoutRevision,
-    catalogRevision: catalogRevision({
-      receipt: receiptWithoutRevision,
-      contractRevision: input.contractRevision,
-    }),
-  });
+  return hydrateManagedRuntimeArtifact(
+    input.policy,
+    {
+      ...receiptWithoutRevision,
+      catalogRevision: catalogRevision({
+        receipt: receiptWithoutRevision,
+        contractRevision: input.contractRevision,
+      }),
+    },
+    Option.getOrUndefined(decodeCatalogCompressed(release.compressed)),
+  );
 }
 
 function isSameManagedRuntimeRelease(

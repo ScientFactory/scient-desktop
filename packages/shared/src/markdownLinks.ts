@@ -19,18 +19,18 @@ const RELATIVE_PATH_PREFIX_PATTERN = /^(~\/|\.{1,2}\/)/;
 // `Résumé & results.md`) but no separators, controls or position/scheme colons. The final
 // segment is optional so a folder link may end in `/`. A bare name with no slash still fails.
 const RELATIVE_FILE_PATH_PATTERN =
-  /^(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\/)+(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*(?::\d+){0,2})?$/u;
+  /^(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*\/)+(?:[^\s/\\:\p{Cc}]+(?: +[^\s/\\:\p{Cc}]+)*(?::\d+(?::\d+|-\d+)?)?)?$/u;
 
 // No `@` here: `me@example.com` is an address, not a file.
 const RELATIVE_FILE_NAME_PATTERN =
-  /^[^\s/\\:@\p{Cc}]+(?: +[^\s/\\:@\p{Cc}]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+){0,2}$/u;
+  /^[^\s/\\:@\p{Cc}]+(?: +[^\s/\\:@\p{Cc}]+)*\.[\p{L}\p{M}\p{N}_-]+(?::\d+(?::\d+|-\d+)?)?$/u;
 // SCIENT-FORK:END
 
 const EXTERNAL_SCHEME_PATTERN = /^([A-Za-z][A-Za-z0-9+.-]*):(.*)$/;
 
-const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+)?$/;
+const POSITION_SUFFIX_PATTERN = /:\d+(?::\d+|-\d+)?$/;
 
-const POSITION_ONLY_PATTERN = /^\d+(?::\d+)?$/;
+const POSITION_ONLY_PATTERN = /^\d+(?::\d+|-\d+)?$/;
 
 const INLINE_CODE_DISQUALIFIER_PATTERN = /[\s`]/;
 const INLINE_CODE_RELATIVE_PATH_CHARACTER_PATTERN = /^[A-Za-z0-9._:/-]+$/;
@@ -259,7 +259,8 @@ export function isMarkdownFileLinkLabel(label: string, href: string): boolean {
   const labelPosition = splitFilePathPosition(label.trim());
   if (
     (labelPosition.line !== undefined && labelPosition.line !== destination.line) ||
-    (labelPosition.column !== undefined && labelPosition.column !== destination.column)
+    (labelPosition.column !== undefined && labelPosition.column !== destination.column) ||
+    (labelPosition.endLine !== undefined && labelPosition.endLine !== destination.endLine)
   ) {
     return false;
   }
@@ -317,6 +318,14 @@ export function parseMarkdownFileLink(href: string): FilePathPosition | null {
   const hash = safeDecodeURIComponent(source.hash.trim());
   if (path.length === 0 || hasExternalScheme(path)) return null;
 
+  const position = parseFilePathLink(path, hash);
+  // `src\a.ts` is Windows-relative. A link that already parses keeps its spelling, since POSIX
+  // names may contain `\`; a rooted `\\host` or `\foo` would change root if rewritten.
+  if (position || /^[\\/]/.test(path) || isWindowsAbsolutePath(path)) return position;
+  return path.includes("\\") ? parseFilePathLink(path.replaceAll("\\", "/"), hash) : null;
+}
+
+function parseFilePathLink(path: string, hash: string): FilePathPosition | null {
   const position = splitFilePathPosition(path, hash);
   return looksLikeFilePath(position.path, path) ? position : null;
 }

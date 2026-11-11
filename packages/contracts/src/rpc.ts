@@ -566,6 +566,7 @@ import {
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,
+  WsAccountsRestoreKeptKeysRpc,
 } from "./scient/accountRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient provider connection and runtime RPCs.
@@ -937,6 +938,11 @@ export const WsServerRefreshProvidersRpc = Rpc.make(WS_METHODS.serverRefreshProv
     refreshModels: Schema.optional(Schema.Boolean),
     /** Explicit Settings action: bypass the managed catalog's automatic refresh cadence. */
     refreshManagedRuntimeCatalog: Schema.optional(Schema.Boolean),
+    /**
+     * A model picker opened: refetch a model manifest older than a few minutes and probe providers
+     * only when it changed. The other fields are ignored and the config stream carries the result.
+     */
+    modelCatalogOnly: Schema.optional(Schema.Boolean),
     /** Read secret references again; unlocking a vault can prompt on the host, so only explicit user refreshes ask. */
     reloadSecrets: Schema.optional(Schema.Boolean),
     /**
@@ -2812,6 +2818,7 @@ export const WsAccountsRpcGroup = RpcGroup.make(
   WsAccountsPlainKeysRpc,
   WsAccountsKeepPlainKeyRpc,
   WsAccountsUnlinkKeyRpc,
+  WsAccountsRestoreKeptKeysRpc,
 );
 // SCIENT-FORK:END
 

@@ -19,7 +19,7 @@ export function LabsSettingsPanel() {
     <SettingsPageContainer>
       <SettingsSection id="beta" title="Beta">
         <BoringSidebarRow />
-        {/* SCIENT-FORK:START — guest links need T3 Connect, which Scient keeps off. */}
+        {/* SCIENT-FORK:START — guests arrive through Scient Connect; builds without it offer no guest links. */}
         {/* Clerk is only mounted when this build has T3 Connect. */}
         {hasCloudPublicConfig() ? <GuestLinksRowWithSignIn /> : null}
         {/* SCIENT-FORK:END */}
@@ -86,7 +86,7 @@ function GuestLinksRowWithSignIn() {
   return (
     <SettingsRow
       {...searchableSetting("guest-links")}
-      description="Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to T3 Connect to use guest links."
+      description="Share a thread with a guest who watches it live in a browser and sends messages you approve. Sign in to Scient Connect to use guest links."
       control={
         <Button size="sm" variant="outline" onClick={openAuthPrompt}>
           Sign in
@@ -117,8 +117,8 @@ function GuestLinksRow() {
       managed={settings.guestSharingEnabled ? undefined : connectDenial}
       description={
         <>
-          Share a thread with a guest who watches it live in a browser and sends messages you
-          approve. Needs T3 Connect: sign in and link this machine in{" "}
+          A guest watches a thread live in a browser and sends messages you approve. Needs Scient
+          Connect: sign in and link this machine in{" "}
           <Link to="/settings/access" className="underline underline-offset-2">
             Sharing & access
           </Link>
@@ -177,7 +177,7 @@ function PromptSuggestionsRow() {
       serverScoped
       {...searchableSetting("prompt-suggestions-beta")}
       settingKeys={["promptSuggestionsEnabled"]}
-      description="Show a predicted next message in the empty composer after a Claude or Codex turn. Tab uses it. Each is an extra cached request on your plan. Needs Codex 0.165+. Claude threads update on restart."
+      description="Show a predicted next message in the empty composer after a Claude, Codex or Scient Agent turn. Tab uses it. Each is an extra cached request. Needs Codex 0.165+. Claude threads update on restart."
       control={
         <ScopedSwitch
           settingKeys={["promptSuggestionsEnabled"]}

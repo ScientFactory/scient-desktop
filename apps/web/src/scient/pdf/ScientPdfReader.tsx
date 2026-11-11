@@ -669,6 +669,10 @@ function LoadedScientPdfReader(props: {
           current: state.findCount.current,
           total: state.findCount.total,
           notFound: state.findPhase === "not-found",
+          // Said only when a search finds nothing, never over the page.
+          notFoundNote: state.scanned
+            ? "This PDF's pages are images, so their words can't be searched or copied."
+            : undefined,
           focusRequest: searchFocus,
           onFocus: () => setSearchOpen(true),
           onQuery: (value) => {
@@ -736,11 +740,6 @@ function LoadedScientPdfReader(props: {
           >
             <X />
           </Button>
-        </div>
-      ) : null}
-      {state.scanned === true && state.phase === "ready" ? (
-        <div className="scient-pdf-notice">
-          No selectable text was detected on the opening pages. Search and copying may be limited.
         </div>
       ) : null}
       <div className="scient-pdf-body">

@@ -128,7 +128,6 @@ const CASES: ReadonlyArray<QualifyCase<ElectronJar>> = [
     async ({ send: a, session: sessionA }, { session: sessionB }) => {
       await setCookies(a, [domainCookie("s", { domain: ".skip.test" })]);
       const result = await copyIntoMain(sessionA, sessionB, {
-        from: "qualify",
         units: [["skip.test"]],
         mode: "fill",
         skipSites: ["skip.test"],

@@ -7,19 +7,29 @@ import {
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
-import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
+import {
+  CheckIcon,
+  ChevronRightIcon,
+  ChevronUpIcon,
+  EllipsisIcon,
+  WorkflowIcon,
+} from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
 import { cn } from "~/lib/utils";
 import {
   Menu,
+  MenuCheckboxItem,
+  MenuGroupLabel,
   MenuPopup,
   MenuRadioGroup,
   MenuRadioItem,
   MenuRadioItemIndicator,
   MenuTrigger,
+  MenuSeparator,
 } from "../ui/menu";
 import { Switch } from "../ui/switch";
+import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import type { ComposerControlSize } from "./ComposerControl";
 import { ComposerPermissionsSection, type RuntimeModeOption } from "./ComposerFooterControls";
@@ -523,23 +533,10 @@ export function ComposerEffortColumn(props: { traits: TraitsSelectionInput | nul
 }
 
 const FOOTER_SEGMENT =
-  "flex h-6 cursor-pointer items-center justify-center gap-1 px-2 text-muted-foreground text-xs outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
+  "flex h-5 cursor-pointer items-center justify-center gap-1 px-1.5 text-muted-foreground text-2xs outline-none first:rounded-l-md last:rounded-r-md hover:text-foreground data-checked:bg-input/72 data-checked:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset";
 
-function SpeedSegment(props: {
-  checked: boolean;
-  label: string;
-  description?: string | undefined;
-  onPick: () => void;
-}) {
-  const buttonProps = {
-    type: "button",
-    role: "radio",
-    "aria-checked": props.checked,
-    "data-checked": props.checked || undefined,
-    className: FOOTER_SEGMENT,
-    onClick: props.onPick,
-  } as const;
-  const content = (
+function SpeedLabel(props: { label: string }) {
+  return (
     <>
       {props.label === "Fast" || props.label === "Ultrafast" ? (
         <FastBolt ultra={props.label === "Ultrafast"} />
@@ -547,70 +544,176 @@ function SpeedSegment(props: {
       {props.label}
     </>
   );
-  if (!props.description) return <button {...buttonProps}>{content}</button>;
+}
+
+function SpeedSegment(props: { value: string; label: string; description?: string | undefined }) {
+  const content = <SpeedLabel label={props.label} />;
+  if (!props.description) return <Toggle value={props.value}>{content}</Toggle>;
   return (
     <Tooltip>
-      <TooltipTrigger render={<button {...buttonProps} />}>{content}</TooltipTrigger>
+      <TooltipTrigger render={<Toggle value={props.value} />}>{content}</TooltipTrigger>
       <TooltipPopup side="top">{props.description}</TooltipPopup>
     </Tooltip>
   );
 }
 
-function SpeedControl(props: { traits: TraitsSelectionInput }) {
+function FooterModelOptions(props: { traits: TraitsSelectionInput }) {
   const traits = useTraitsSelection(props.traits);
-  const { speedSelect, fastToggle } = splitSpeed(
+  const { speedSelect, fastToggle, ultracodeToggle } = splitSpeed(
     traits.selectDescriptors,
     traits.booleanDescriptors,
   );
-  if (traits.modelIsUnavailable || (!speedSelect && !fastToggle)) return null;
-  return (
-    <div
-      role="radiogroup"
-      aria-label={speedSelect?.label ?? fastToggle?.label}
-      className="flex rounded-lg bg-input/40 p-0.5"
-    >
-      {speedSelect
-        ? selectableProviderOptionChoices(speedSelect).map((option) => (
-            <SpeedSegment
-              key={option.id}
-              checked={option.id === traits.selectValue(speedSelect)}
-              label={option.label}
-              description={option.description}
-              onPick={() => traits.changeSelect(speedSelect, option.id)}
-            />
-          ))
-        : fastToggle
-          ? ([false, true] as const).map((value) => (
-              <SpeedSegment
-                key={String(value)}
-                checked={(fastToggle.currentValue === true) === value}
-                label={value ? "Fast" : "Standard"}
-                onPick={() => traits.changeBoolean(fastToggle.id, value)}
-              />
-            ))
-          : null}
-    </div>
+  if (traits.modelIsUnavailable) return null;
+  const choices = speedSelect
+    ? selectableProviderOptionChoices(speedSelect)
+    : fastToggle
+      ? [
+          { id: "false", label: "Standard" },
+          { id: "true", label: "Fast" },
+        ]
+      : [];
+  const speedLabel = speedSelect?.label ?? fastToggle?.label ?? "Speed";
+  const selected = speedSelect
+    ? traits.selectValue(speedSelect)
+    : String(fastToggle?.currentValue === true);
+  const current = choices.find((choice) => choice.id === selected);
+  const changeSpeed = (value: string) => {
+    if (value === selected) return;
+    if (speedSelect) traits.changeSelect(speedSelect, value);
+    else if (fastToggle) traits.changeBoolean(fastToggle.id, value === "true");
+  };
+  const ultracodeOn = ultracodeToggle?.currentValue === true;
+  const speedChoices = (
+    <MenuRadioGroup aria-label={speedLabel} value={selected} onValueChange={changeSpeed}>
+      <MenuGroupLabel>{speedLabel}</MenuGroupLabel>
+      {choices.map((choice) => (
+        <MenuRadioItem key={choice.id} value={choice.id} closeOnClick>
+          <span className="flex flex-col">
+            <span className="flex items-center gap-1">
+              <SpeedLabel label={choice.label} />
+            </span>
+            {"description" in choice && choice.description ? (
+              <span className="text-muted-foreground text-xs">{choice.description}</span>
+            ) : null}
+          </span>
+        </MenuRadioItem>
+      ))}
+    </MenuRadioGroup>
   );
-}
-
-function UltracodeControl(props: { traits: TraitsSelectionInput }) {
-  const traits = useTraitsSelection(props.traits);
-  const { ultracodeToggle } = splitSpeed(traits.selectDescriptors, traits.booleanDescriptors);
-  if (traits.modelIsUnavailable || !ultracodeToggle) return null;
-  const on = ultracodeToggle.currentValue === true;
+  const segmented = choices.length === 2 && !ultracodeToggle;
   return (
-    <div className="flex rounded-lg bg-input/40 p-0.5">
-      <button
-        type="button"
-        aria-pressed={on}
-        data-checked={on || undefined}
-        className={FOOTER_SEGMENT}
-        onClick={() => traits.changeBoolean(ultracodeToggle.id, !on)}
-      >
-        <WorkflowIcon aria-hidden="true" className="size-3" />
-        {ultracodeToggle.label}
-      </button>
-    </div>
+    <>
+      {choices.length > 0 ? (
+        <>
+          {segmented ? (
+            <div className="hidden shrink-0 @min-[26.5rem]/model-picker-footer:flex">
+              <ToggleGroup
+                aria-label={speedLabel}
+                variant="segmented"
+                size="segmented-compact"
+                value={[selected]}
+                onValueChange={(next) => {
+                  if (next[0] !== undefined) changeSpeed(next[0]);
+                }}
+              >
+                {choices.map((choice) => (
+                  <SpeedSegment
+                    key={choice.id}
+                    value={choice.id}
+                    label={choice.label}
+                    description={"description" in choice ? choice.description : undefined}
+                  />
+                ))}
+              </ToggleGroup>
+            </div>
+          ) : null}
+          <div
+            className={cn(
+              "shrink-0 @max-[26.5rem]/model-picker-footer:hidden",
+              segmented && "@min-[26.5rem]/model-picker-footer:hidden",
+            )}
+          >
+            <Menu modal={false}>
+              <MenuTrigger
+                render={
+                  <button
+                    type="button"
+                    aria-label={`${speedLabel}: ${current?.label ?? selected}`}
+                    className={cn(FOOTER_SEGMENT, "rounded-md bg-input/40")}
+                  />
+                }
+              >
+                <SpeedLabel label={current?.label ?? speedLabel} />
+                <ChevronUpIcon aria-hidden="true" className="size-3" />
+              </MenuTrigger>
+              <MenuPopup
+                side="top"
+                align="end"
+                data-model-picker-option-menu
+                {...composerFloatingLayerProps}
+              >
+                {speedChoices}
+              </MenuPopup>
+            </Menu>
+          </div>
+        </>
+      ) : null}
+      {ultracodeToggle ? (
+        <div className="shrink-0 rounded-lg bg-input/40 p-0.5 @max-[26.5rem]/model-picker-footer:hidden">
+          <button
+            type="button"
+            aria-pressed={ultracodeOn}
+            data-checked={ultracodeOn || undefined}
+            className={FOOTER_SEGMENT}
+            onClick={() => traits.changeBoolean(ultracodeToggle.id, !ultracodeOn)}
+          >
+            <WorkflowIcon aria-hidden="true" className="size-3" />
+            {ultracodeToggle.label}
+          </button>
+        </div>
+      ) : null}
+      {choices.length > 0 || ultracodeToggle ? (
+        <div className="shrink-0 @min-[26.5rem]/model-picker-footer:hidden">
+          <Menu modal={false}>
+            <MenuTrigger
+              render={
+                <button
+                  type="button"
+                  aria-label={
+                    ultracodeOn ? "More model options, Ultracode on" : "More model options"
+                  }
+                  className={cn(FOOTER_SEGMENT, "rounded-md bg-input/40")}
+                />
+              }
+            >
+              <EllipsisIcon aria-hidden="true" className="size-3" />
+              More
+              {ultracodeOn ? <WorkflowIcon aria-hidden="true" className="size-3" /> : null}
+            </MenuTrigger>
+            <MenuPopup
+              side="top"
+              align="end"
+              data-model-picker-option-menu
+              {...composerFloatingLayerProps}
+            >
+              {choices.length > 0 ? speedChoices : null}
+              {ultracodeToggle ? (
+                <>
+                  {choices.length > 0 ? <MenuSeparator /> : null}
+                  <MenuCheckboxItem
+                    closeOnClick
+                    checked={ultracodeOn}
+                    onCheckedChange={(checked) => traits.changeBoolean(ultracodeToggle.id, checked)}
+                  >
+                    {ultracodeToggle.label}
+                  </MenuCheckboxItem>
+                </>
+              ) : null}
+            </MenuPopup>
+          </Menu>
+        </div>
+      ) : null}
+    </>
   );
 }
 
@@ -637,11 +740,11 @@ function PermissionsMenu(props: {
             type="button"
             data-composer-permissions-trigger
             aria-label={`Permissions: ${current.label}`}
-            className="ms-auto flex h-7 cursor-pointer items-center gap-1.5 rounded-md px-2 text-muted-foreground text-xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
+            className="ms-auto flex h-6 shrink-0 cursor-pointer items-center gap-1 whitespace-nowrap rounded-md px-1.5 text-muted-foreground text-2xs outline-none hover:bg-foreground/[0.09] hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset data-popup-open:bg-foreground/[0.09] data-popup-open:text-foreground"
           />
         }
       >
-        <CurrentIcon aria-hidden="true" className="size-3.5" />
+        <CurrentIcon aria-hidden="true" className="size-3" />
         {current.label}
         <ChevronUpIcon aria-hidden="true" className="size-3" />
       </MenuTrigger>
@@ -664,9 +767,8 @@ export function ComposerPickerFooter(props: {
   onRuntimeModeChange: (mode: RuntimeMode) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2 border-t border-border/70 bg-muted/40 px-3 py-2">
-      {props.traits ? <SpeedControl traits={props.traits} /> : null}
-      {props.traits ? <UltracodeControl traits={props.traits} /> : null}
+    <div className="ms-auto flex min-w-0 items-center justify-end gap-2 whitespace-nowrap">
+      {props.traits ? <FooterModelOptions traits={props.traits} /> : null}
       <PermissionsMenu
         runtimeMode={props.runtimeMode}
         options={props.runtimeModeOptions}

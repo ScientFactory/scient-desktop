@@ -12,9 +12,17 @@ leaves its keychain and 1Password copies in place. Passwords also come in from a
 a browser import.
 
 When an agent needs a key you haven't saved, it asks in a private card and keeps your answer here.
-A key a service refuses shows **Key refused**. **Keys used by Scient** shows the keys Scient itself
-runs on. **Keys in plain files** lists secrets found in `.env` files and shell profiles; **Keep in
-Accounts** copies one in and leaves the file alone.
+A key a service refuses shows **Key refused**. A code you give an agent once, such as a 2FA or
+pairing code, goes to that agent only and isn't kept.
+
+**API keys** is one row on the page and lists every key, one row each: the keys saved here, the
+secret variables in agents' settings, Custom models keys, and secrets found in `.env` files and
+shell profiles. Each row says what uses it, such as Codex or Custom models. A key that is only in
+an agent's settings or a file says **Only in …**; **Keep in Accounts** saves it here, and an agent's
+variable then follows it, so changing the key here changes it everywhere it is used. A file stays
+as it is. Custom models already keep their keys in Accounts' encrypted store. Removing an agent
+keeps the keys you typed into its settings here, and adding that kind of agent again offers them
+back.
 
 ## What agents may use
 
@@ -103,8 +111,10 @@ on the profile's row. A profile that didn't come from a browser offers **Import 
 instead. When a site's sign-in doesn't work in Main but works in another profile, the site's row in
 Main says which profile is used; for Google it offers **Copy from** that profile.
 
-**Apps and connectors** lists sign-ins managed elsewhere: Claude, Codex, Source Control and [Extensions](extensions.md). Each
-GitHub login is one row, with its own chip for Source Control and for the GitHub connector.
+**Apps and connectors** lists connections you sign in to elsewhere: Claude, Codex, Droid, Source
+Control and [Extensions](extensions.md). Connections that use a key are under API keys. A
+connector reported by two agents signed in to the same account is one row. Each GitHub login is one
+row, with its own chip for Source Control and for the GitHub connector.
 
 ## Other computers
 

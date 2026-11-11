@@ -14,6 +14,7 @@ import * as Schema from "effect/Schema";
 import {
   ACCOUNT_SECRET_REQUEST_NOTE,
   ACCOUNT_SECRET_REQUEST_SAVED,
+  ONE_TIME_SECRET_REQUEST_SAVED,
   isAccountSecretRequest,
 } from "@t3tools/shared/scientAccountSecretRequest";
 // SCIENT-FORK:END
@@ -101,7 +102,9 @@ export type SecretRequestDisplay =
 const SAVED_DISPLAY: SecretRequestDisplay = {
   kind: "answered",
   outcome: "saved",
-  label: "Saved securely and kept private",
+  // SCIENT-FORK:START — Scient Accounts: a one-time card's answer is not kept in Accounts.
+  label: ONE_TIME_SECRET_REQUEST_SAVED,
+  // SCIENT-FORK:END
 };
 const DECLINED_DISPLAY: SecretRequestDisplay = {
   kind: "answered",

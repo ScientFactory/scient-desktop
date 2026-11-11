@@ -17,7 +17,9 @@ You are in Scient, a project workspace for code and science. The user reads your
 
 Replies render LaTeX math, Markdown images, and fenced \`mermaid\`, \`vega-lite\` (JSON) and \`plotly\` (self-contained figure JSON) blocks. Put a chart or diagram that fits one in your reply as that block, and explain it nearby. Show a visual without being asked when it says more than prose. Start Mermaid with its diagram type. Do not wrap them in HTML or JavaScript or embed base64 images.
 
-Put standalone deliverables in project files and link them instead of preview URLs. Linked \`.tex\` files open in Scient's LaTeX editor and \`.html\` files in its browser.`;
+Put standalone deliverables in project files and link them instead of preview URLs. Linked \`.tex\` files open in Scient's LaTeX editor and \`.html\` files in its browser.
+
+For questions about Scient itself, read its help pages, listed at https://scientfactory.com/docs/index.json.`;
 
 /** Upstream's browser rules in Scient's copy, with each tool named as this provider sees it. */
 const buildScientBrowserAwareness = (tools: ScientToolProjection): string =>
@@ -42,7 +44,7 @@ export const SCIENT_DOCUMENT_BUILD_AWARENESS = buildScientDocumentAwareness(
 
 /** Included with document authority: the Overleaf tools need no grant of their own. */
 const buildScientOverleafAwareness = (tools: ScientToolProjection): string => `## Scient Overleaf
-A project folder can be linked to one Overleaf project and synced both ways on request. For Overleaf work, use the Overleaf tools, starting with \`${tools.name("scient_overleaf_status")}\`, and follow the \`overleaf-sync\` skill. The tools need no approval: do what the user asked. Only a conflict stops a sync.${tools.deferred ? " If they are deferred, load their exact names through `ToolSearch` first." : ""}`;
+A project folder can be linked to one Overleaf project and synced both ways on request. For Overleaf work, use the Overleaf tools, starting with \`${tools.name("scient_overleaf_status")}\`, and follow the \`overleaf-sync\` skill. The tools need no approval: do what the user asked. Settle reported conflicts; report other problems.${tools.deferred ? " If they are deferred, load their exact names through `ToolSearch` first." : ""}`;
 
 export const SCIENT_OVERLEAF_AWARENESS = buildScientOverleafAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
@@ -64,7 +66,7 @@ export const SCIENT_COMPUTE_AWARENESS = buildScientComputeAwareness(
 /** The sign-in sentence needs the browser grant as well as Accounts. */
 const buildScientPapersAwareness = (tools: ScientToolProjection, browser: boolean): string =>
   `## Scient papers
-For a paper by DOI, title or publisher link, call \`${tools.name("scient_paper_get")}\` first: it uses the user's free legal copies and university access. For more than a few papers, use \`${tools.name("scient_papers_queue")}\`.${browser ? ` \`${tools.name("preview_open")}\` signs in by itself on sites with a saved sign-in; its \`accountsNote\` says what to do when it could not.` : ""}${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
+To fetch a paper, call \`${tools.name("scient_paper_get")}\` first with its DOI or link (for a title, find one): it uses the user's free legal copies and university access. For more than a few papers, use \`${tools.name("scient_papers_queue")}\`.${browser ? ` \`${tools.name("preview_open")}\` signs in by itself on sites with a saved sign-in; its \`accountsNote\` says what to do when it could not.` : ""}${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
 
 export const SCIENT_PAPERS_AWARENESS = buildScientPapersAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,

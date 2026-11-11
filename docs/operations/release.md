@@ -31,10 +31,26 @@ the stable scheduler and production gate.
 - Never rerun the full source test suite merely to reproduce evidence already
   green on the exact source SHA. Release jobs verify that exact CI provenance,
   then perform native build, signing, manifest, checksum, and distribution work.
-- Desktop builds cache the Windows dependency store and compiled resource
-  monitor, omit unused Claude SDK platform executables, and package only the
-  target Windows `node-pty` architecture. These optimizations do not relax the
-  exact-source CI, signing, assembly, or publication gates.
+- Desktop builds cache the Windows dependency store, compiled resource
+  monitor and, on macOS, the pinned whisper.cpp and SyncTeX runtimes. They omit
+  unused Claude SDK platform executables and package only the target Windows
+  `node-pty` architecture. These optimizations do not relax the exact-source CI,
+  signing, assembly, or publication gates. The macOS runtime cache is keyed by the
+  pinning scripts and the runner's toolchain, written only by `main`, and the
+  packer verifies each receipt and every file before staging it.
+- Jobs wait only for the inputs they use. Each macOS package builds its own native
+  runtimes, so a release holds two macOS runners, not four. Linux and Windows
+  packages set up while their prerequisites build, then wait for their own
+  target's. The remote server asset starts once every target's SyncTeX runtime
+  and resource monitor exist, and fails if any is missing; Windows payload
+  verification starts once the Windows package exists. Assembly still requires
+  every job to succeed.
+- The macOS updater ZIP uses 7-Zip Deflate level 5 rather than electron-builder's
+  default 7: about 2.5 times faster for under 1% more bytes. Its blockmap and
+  updater manifests are generated from the archive as before.
+- macOS packages run on matching host architectures: Intel uses `macos-26-intel`
+  and Apple Silicon uses `macos-26`. Intel's prepared server bytecode is generated
+  natively, without Rosetta, under the same cache-generation timeout and checks.
 - Windows packaging runs on Ubuntu 24.04 with pinned `cargo-xwin` and `jsign`.
   Both Linux-hosted packaging targets install `libsecret-1-dev` and `pkg-config`:
   the desktop build task compiles the Linux browser helper on its host, including
@@ -181,7 +197,11 @@ tag or release already exists.
    `publish_release=true`; this builds and assembles the candidate but does not
    publish it until the protected `production` job is separately approved. Use
    `publish_release=false` only for a non-publishing machinery rehearsal, not as
-   the candidate for a later rebuilt publication. Keep `allow_note_free=false`
+   the candidate for a later rebuilt publication. To try release-workflow changes
+   before they reach `main`, push them to a `release-rehearsal/*` branch and run the
+   workflow there with `rehearsal=true`: it signs, notarizes and assembles a
+   `0.0.<run number>` Stable-shaped candidate from that commit, skips the exact-main
+   CI and release-note checks, and never reaches the publication job. Keep `allow_note_free=false`
    unless Yaacov explicitly accepts a note-free release.
 4. Wait for assembly, then inspect the `scient-release-v<version>` artifact from
    that same pending workflow run. It contains macOS arm64/x64, Linux x64,
@@ -215,11 +235,39 @@ tag or release already exists.
 ## Signing configuration
 
 macOS publication requires secrets `CSC_LINK`, `CSC_KEY_PASSWORD`,
-`APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`. The current
-cloud-disabled product does not request T3's passkey Associated Domains
-entitlement or require its provisioning profile. If Scient later enables that
-cloud capability, the profile and relying-party domains become a separate
-explicit release requirement.
+`APPLE_API_KEY`, `APPLE_API_KEY_ID`, and `APPLE_API_ISSUER`. Scient Connect also
+requires a Developer ID distribution provisioning profile for the explicit macOS
+App ID `com.scientfactory.scient`, with Associated Domains enabled. An iOS,
+development, or App Store profile cannot replace this profile.
+
+Configure repository variable `SCIENT_APPLE_TEAM_ID` and repository secret
+`SCIENT_MACOS_PROVISIONING_PROFILE_BASE64` (the base64-encoded, Apple-signed
+profile). The Team ID must match the distribution certificate. Keep the profile
+out of the source repository and logs. For example, pipe it directly into GitHub:
+
+```sh
+gh variable set SCIENT_APPLE_TEAM_ID --repo ScientFactory/scient-desktop --body '<Apple Team ID>'
+base64 < /path/to/Scient.provisionprofile | gh secret set SCIENT_MACOS_PROVISIONING_PROFILE_BASE64 --repo ScientFactory/scient-desktop
+```
+
+Signed or publishing builds in both channels validate the profile's team, application identifier, macOS
+platform, expiry, Developer ID distribution and Associated Domains authority
+before packaging. The decoded profile stays in a private runner temporary file.
+The passkey domain defaults to the Clerk Frontend API hostname from the configured
+public key; repository variable `T3CODE_CLERK_PASSKEY_RP_DOMAINS` overrides it only
+when required by the Clerk deployment. Clerk's Native API application and its
+Apple App Site Association must authorize the same Team ID, application ID and
+domains; see [Connect setup](./connect-setup.md#desktop-passkeys).
+
+Stable build-only rehearsals without complete macOS signing credentials remain
+unsigned and do not require a provisioning profile. A build that has complete
+signing credentials still signs and therefore requires the profile, even when
+publication is off. Beta always publishes and always requires it.
+
+Retrying a failed job uses the workflow revision of its original run. A correction
+to profile secrets can reuse failed macOS jobs, but a workflow-wiring correction
+requires a new qualified workflow revision and release run. Never mix artifacts
+from different release candidates to avoid that requirement.
 
 Normal Windows publication requires Azure Trusted Signing secrets
 `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`,

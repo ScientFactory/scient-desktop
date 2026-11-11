@@ -9,6 +9,12 @@ on:
   push:
     branches:
       - main
+  # SCIENT-FORK:START — main pushes reuse exact queue qualification, so this full run on every
+  # computer catches drift and anything an exact gate missed.
+  schedule:
+    - cron: "41 2 * * *"
+  workflow_dispatch:
+  # SCIENT-FORK:END
 
 permissions:
   contents: read
@@ -33,7 +39,7 @@ jobs:
           sparse-checkout: .github/scripts
       - name: Classify immutable release-note diff
         id: detect
-        if: github.event_name != 'push'
+        if: github.event_name == 'pull_request' || github.event_name == 'merge_group'
         run: node .github/scripts/release-notes-ci-gate.mjs
       - name: Checkout focused test inputs
         if: steps.detect.outputs.only == 'true'
@@ -75,12 +81,12 @@ jobs:
           echo "qualified=true" >> "$GITHUB_OUTPUT"
           echo 'Release-note content passed catalog validation, web types, formatting, lint, and Chromium rendering tests. Full product suites also run.' >> "$GITHUB_STEP_SUMMARY"
 
-  # Reuse is an optimization only: unavailable evidence runs normal CI. A queue entry
-  # reuses its PR run only for the exact same content and base; main always runs fresh.
+  # Reuse is an optimization only: unavailable evidence runs normal CI. A queue entry reuses
+  # its PR run, and a main push its queue runs, only for the exact same content and base.
   queue_ci:
     needs: release_notes
     name: Reuse exact CI
-    if: ${{ !cancelled() && github.event_name == 'merge_group' }}
+    if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'push' && github.ref == 'refs/heads/main')) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     continue-on-error: true
@@ -93,6 +99,7 @@ jobs:
       server_reports: ${{ steps.restore.outputs.server_reports }}
       source_run_id: ${{ steps.restore.outputs.source_run_id }}
       source_url: ${{ steps.restore.outputs.source_url }}
+      overleaf_windows: ${{ steps.restore.outputs.overleaf_windows }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -127,7 +134,7 @@ jobs:
 
   # SCIENT-FORK:START — test, build and typecheck lanes always run fresh unless reused.
   # Changes retains upstream ownership for release smoke and exact native gates.
-  # Unknown diffs fail open; main runs every lane.
+  # Unknown diffs fail open; the nightly run and a main push that cannot reuse run every lane.
   # SCIENT-FORK:END
   changes:
     needs: [queue_ci, release_notes]
@@ -147,12 +154,12 @@ jobs:
       release_smoke: ${{ steps.detect.outputs.release_smoke }}
       mobile_native: ${{ steps.detect.outputs.mobile_native }}
       # SCIENT-FORK:START — native selectors share this immutable-diff checkout.
-      compute_changed: ${{ github.event_name == 'push' && 'true' || steps.compute.outputs.changed }}
-      real_kernel: ${{ github.event_name == 'push' && 'true' || steps.compute.outputs.real_kernel }}
-      managed_python: ${{ github.event_name == 'push' && 'true' || steps.compute.outputs.managed_python }}
-      compute_platforms: ${{ github.event_name == 'push' && 'all' || steps.compute.outputs.platforms }}
-      windows_changed: ${{ github.event_name == 'push' && 'true' || steps.packaging.outputs.changed }}
-      linux_changed: ${{ github.event_name == 'push' && 'true' || steps.packaging.outputs.linux_changed }}
+      compute_changed: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.changed }}
+      real_kernel: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.real_kernel }}
+      managed_python: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.compute.outputs.managed_python }}
+      compute_platforms: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'all' || steps.compute.outputs.platforms }}
+      windows_changed: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.packaging.outputs.changed }}
+      linux_changed: ${{ (github.event_name != 'pull_request' && github.event_name != 'merge_group') && 'true' || steps.packaging.outputs.linux_changed }}
       # SCIENT-FORK:END
     steps:
       # Only the package manifests the script reads to build the dependency graph.
@@ -420,7 +427,7 @@ jobs:
 
       - name: Test release checks
         if: ${{ matrix.part == 1 }}
-        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs
+        run: node --test .github/scripts/check-nightly-release.test.cjs .github/scripts/vercel-deployment-output.test.cjs .github/scripts/mobile-preview-comment.test.cjs
 
       - name: Finish installing browser secret helper build libraries
         if: ${{ matrix.part == 1 }}
@@ -782,11 +789,12 @@ jobs:
             !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
           sparse-checkout-cone-mode: false
 
+      # SCIENT-FORK: hosted macOS restores setup-vp's 1.5 GB cache slower than it installs this.
       - name: Setup Vite+
         uses: voidzero-dev/setup-vp@v1
         with:
           node-version-file: package.json
-          cache: true
+          cache: false
           run-install: |
             args:
               - --filter=@t3tools/scripts...
@@ -817,7 +825,7 @@ jobs:
     needs: [queue_ci, release_notes, changes]
     if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' && needs.changes.outputs.release_smoke != 'false' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -832,12 +840,17 @@ jobs:
         uses: ./.github/actions/setup-ci-deps
 
       - name: Exercise release-only workflow steps
-        run: node scripts/release-smoke.ts
+        run: |
+          python3 -m unittest discover -s .github/scripts -p 'test_macos_connect_profile.py'
+          node scripts/release-smoke.ts
 
-  # SCIENT-FORK:START — Windows Overleaf evidence is mandatory, including exact queue reuse.
+  # SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory. Exact reuse carries the
+  # source's verified pass instead of rerunning it. Accounts rides this job to reuse its install: a
+  # job of its own would wait for a runner and install again.
   overleaf_windows:
     name: Overleaf Windows
-    needs: [release_notes]
+    needs: [queue_ci, release_notes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused != 'true' }}
     runs-on: windows-2025
     timeout-minutes: 30
     steps:
@@ -869,7 +882,7 @@ jobs:
       - name: Install
         run: vp install
       - name: Save packages
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.package_cache.outputs.cache-hit != 'true' }}
+        if: ${{ github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && steps.package_cache.outputs.cache-hit != 'true' }}
         uses: actions/cache/save@v6
         with:
           path: ${{ steps.package_cache_path.outputs.path }}
@@ -898,15 +911,25 @@ jobs:
         timeout-minutes: 15
         working-directory: apps/server
         run: vp test bench --run --fileParallelism=false --maxWorkers=1 --testTimeout=600000 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) (10|50)$"
+      - name: Accounts and browser import tests on Windows
+        working-directory: apps/desktop
+        run: vp test run src/scient/accounts src/preview/BrowserImport
+      # Real Chrome and Edge windows: sign in to a local page, quit, read the profile back.
+      - name: Sign in in a Chrome and an Edge window on Windows
+        working-directory: apps/desktop
+        env:
+          SCIENT_CHROME_WINDOW_TEST: "1"
+        run: vp test run --testTimeout=120000 src/scient/accounts/chromeWindow.real.test.ts
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — tests only macOS can run (its Git, cloud-file flags, disk images, file
   # identity, lease room); not a required check.
   overleaf_macos:
     name: Overleaf macOS
-    needs: [release_notes]
-    # Nothing waits on it in the merge queue, so it runs on pull requests and main only.
-    if: github.event_name != 'merge_group'
+    needs: [queue_ci, release_notes]
+    # Nothing waits on it in the merge queue, so it runs on pull requests and main pushes that
+    # could not reuse the queue's qualification of the same content.
+    if: ${{ !cancelled() && github.event_name != 'merge_group' && needs.queue_ci.outputs.reused != 'true' }}
     runs-on: macos-26
     timeout-minutes: 20
     steps:
@@ -932,6 +955,63 @@ jobs:
         run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers
       - name: Require every macOS Overleaf platform file without skips
         run: node .github/scripts/overleaf-platform-tests.cjs
+  # SCIENT-FORK:END
+
+  # SCIENT-FORK:START — a reused main push skips the jobs that save main's dependency stores,
+  # which pull requests restore. Save only a store the merged lockfile does not have yet.
+  main_caches:
+    name: Main dependency store (${{ matrix.os }})
+    needs: [queue_ci, release_notes]
+    if: ${{ !cancelled() && github.event_name == 'push' && needs.queue_ci.outputs.reused == 'true' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-2025]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          sparse-checkout: |
+            /*
+            !/.repos/
+            !/apps/mobile/modules/t3-terminal/Vendor/**/*.a
+          sparse-checkout-cone-mode: false
+      # Restores the full store and saves it under a new key when the lockfile changed.
+      - name: Refresh the Linux store
+        if: runner.os == 'Linux'
+        uses: ./.github/actions/setup-ci-deps
+      - name: Setup Vite+
+        if: runner.os == 'Windows'
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+      - name: Resolve package cache path
+        id: package_cache_path
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: '"path=$(vp pm cache dir)" >> $env:GITHUB_OUTPUT'
+      # The key overleaf_windows and windows-packaging.yml restore.
+      - name: Look up the Windows store
+        id: package_cache
+        if: runner.os == 'Windows'
+        uses: actions/cache/restore@v6
+        with:
+          path: ${{ steps.package_cache_path.outputs.path }}
+          key: windows-pnpm-store-v1-${{ hashFiles('pnpm-lock.yaml') }}
+          lookup-only: true
+      - name: Install
+        if: runner.os == 'Windows' && steps.package_cache.outputs.cache-hit != 'true'
+        run: vp install
+      - name: Save the Windows store
+        if: runner.os == 'Windows' && steps.package_cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: ${{ steps.package_cache_path.outputs.path }}
+          key: ${{ steps.package_cache.outputs.cache-primary-key }}
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — native qualification stays under the same required gate.
@@ -968,7 +1048,7 @@ jobs:
   # Only Check is required, so one reporter per reused suite is sufficient.
   test_web_reused:
     needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group' }}
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' }}
     name: Test Web (qualified)
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -981,7 +1061,7 @@ jobs:
 
   test_server_reused:
     needs: [queue_ci, release_notes]
-    if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' && github.event_name == 'merge_group' }}
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' }}
     name: Test Server (qualified)
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -992,9 +1072,28 @@ jobs:
         run: |
           printf 'All suites passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
 
+  # SCIENT-FORK:START — release/stable's protection requires these names on the promoted commit.
+  # A skipped matrix reports one unexpanded name, so a reused run reports each one here.
+  stable_contexts_reused:
+    needs: [queue_ci, release_notes]
+    if: ${{ !cancelled() && needs.queue_ci.outputs.reused == 'true' }}
+    name: ${{ matrix.check }}
+    strategy:
+      matrix:
+        check: [Test, Test Server 1, Test Server 2, Test Server 3]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Report reused qualification
+        env:
+          SOURCE_URL: ${{ needs.queue_ci.outputs.source_url }}
+        run: |
+          printf 'Passed in [exact-content CI](%s).\n' "$SOURCE_URL" >> "$GITHUB_STEP_SUMMARY"
+  # SCIENT-FORK:END
+
   qualification:
     name: Qualification receipt
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused]
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused]
     if: ${{ !cancelled() && (github.event_name == 'merge_group' || (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository)) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -1029,7 +1128,7 @@ jobs:
   check:
     name: Check
     if: ${{ always() }}
-    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, qualification]
+    needs: [release_notes, queue_ci, changes, lint, build, test, test_web, test_server, overleaf_windows, rust, mobile_native_static_analysis, release_smoke, compute_native, windows_packaging, remote_server_packaging, linux_packaging, test_web_reused, test_server_reused, stable_contexts_reused, qualification]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

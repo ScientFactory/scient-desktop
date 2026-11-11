@@ -91,7 +91,7 @@ function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentI
                 title={
                   environment === null
                     ? "Connect to an environment first."
-                    : "T3 Connect is not available in this build."
+                    : "Scient Connect is not available in this build."
                 }
               />
             </WizardPanel>
@@ -103,6 +103,7 @@ function UseInAnotherAppDialog({ requested }: { readonly requested: EnvironmentI
 }
 
 const STEPS = ["App", "Access", "Connect"] as const;
+const HOSTED_APPROVAL_STEPS = ["App", "Connect"] as const;
 type Step = 0 | 1 | 2;
 type Choice = McpApp | "other";
 
@@ -120,16 +121,22 @@ function Wizard({
   const [picked, setPicked] = useState<AuthMcpClientAccess | null>(null);
   const access = picked ?? DEFAULT_LEVELS.find((level) => levels.get(level) === undefined) ?? null;
   const open = gate.gate.kind === "open";
+  // The level is picked on the sign-in page, so the wizard neither asks for it nor needs a code.
+  const hostedApproval =
+    environment.serverConfig?.environment.capabilities.mcpHostedApproval === true;
+  const steps = hostedApproval ? HOSTED_APPROVAL_STEPS : STEPS;
+  const shownStep = hostedApproval && step === 2 ? 1 : step;
+  const next = () => setStep(step === 0 ? (hostedApproval ? 2 : 1) : 2);
   const appName = choice === null || choice === "other" ? "the app" : choice.name;
   return (
     <>
       <WizardHeader title={title}>
         {open ? (
           <WizardSteps
-            steps={STEPS}
-            currentStep={step}
-            isStepDisabled={(index) => index > step}
-            onStepChange={(index) => setStep(index as Step)}
+            steps={steps}
+            currentStep={shownStep}
+            isStepDisabled={(index) => index > shownStep}
+            onStepChange={(index) => setStep(hostedApproval && index === 1 ? 2 : (index as Step))}
           />
         ) : null}
       </WizardHeader>
@@ -159,12 +166,12 @@ function Wizard({
               ))}
             </RadioGroup>
           </section>
-        ) : choice !== null && access !== null ? (
+        ) : choice !== null && (hostedApproval || access !== null) ? (
           <ConnectStep
             environment={environment}
             mcpUrl={gate.gate.mcpUrl}
             choice={choice}
-            access={access}
+            access={hostedApproval ? null : access}
           />
         ) : null}
       </WizardPanel>
@@ -180,10 +187,7 @@ function Wizard({
           {step === 2 ? (
             <Button onClick={close}>Done</Button>
           ) : (
-            <Button
-              disabled={step === 0 ? choice === null : access === null}
-              onClick={() => setStep(step === 0 ? 1 : 2)}
-            >
+            <Button disabled={step === 0 ? choice === null : access === null} onClick={next}>
               Next
             </Button>
           )}
@@ -370,16 +374,16 @@ function GateScreen({
       return (
         <p role="status" className="flex items-center gap-2 text-sm text-muted-foreground">
           <Spinner size="sm" tone="muted" />
-          Checking T3 Connect…
+          Checking Scient Connect…
         </p>
       );
     case "sign-in":
       return (
         <GateMessage
-          title="Sign in to T3 Connect"
+          title="Sign in to Scient Connect"
           lines={[
             `Apps like Poke and Claude run in the cloud. They need a public address to reach ${name}.`,
-            `T3 Connect gives ${name} that address. Each app still needs your approval.`,
+            `Scient Connect gives ${name} that address. Each app still needs your approval.`,
           ]}
         >
           {/* Clerk's sign-in is its own modal, so this dialog closes first. */}
@@ -389,7 +393,7 @@ function GateScreen({
               openAuthPrompt();
             }}
           >
-            Sign in to T3 Connect
+            Sign in to Scient Connect
           </Button>
         </GateMessage>
       );
@@ -400,25 +404,25 @@ function GateScreen({
         <GateMessage
           title={
             gate.relay === "offline"
-              ? `${name}'s T3 Connect is offline`
-              : `Can't check T3 Connect on ${name}`
+              ? `${name}'s Scient Connect is offline`
+              : `Can't check Scient Connect on ${name}`
           }
         >
           {retry(refreshList)}
         </GateMessage>
       );
     case "update":
-      return <GateMessage title={`Update T3 Code on ${name}`} />;
+      return <GateMessage title={`Update Scient on ${name}`} />;
     case "no-relay-read":
       return (
         <GateMessage
-          title={`Can't check T3 Connect on ${name}`}
+          title={`Can't check Scient Connect on ${name}`}
           lines={[`This device needs the View relay permission on ${name}.`]}
         />
       );
     case "error":
       return (
-        <GateMessage title={`Can't check T3 Connect on ${name}`} lines={[gate.message]}>
+        <GateMessage title={`Can't check Scient Connect on ${name}`} lines={[gate.message]}>
           {checkAgain}
         </GateMessage>
       );
@@ -429,7 +433,9 @@ function GateScreen({
         return (
           <GateMessage
             title={
-              reachability ? `${name}'s T3 Connect is offline` : `Can't check T3 Connect on ${name}`
+              reachability
+                ? `${name}'s Scient Connect is offline`
+                : `Can't check Scient Connect on ${name}`
             }
             lines={reachability ? [reachability.reason, `Fix: ${reachability.fix}`] : []}
           >
@@ -439,7 +445,7 @@ function GateScreen({
       }
       return (
         <GateMessage
-          title={`Turn on T3 Connect for ${name}`}
+          title={`Turn on Scient Connect for ${name}`}
           lines={[
             `${name} gets a public https address, with no router setup.`,
             "Only apps you approve can use it. You can turn it off in Settings.",
@@ -456,7 +462,7 @@ function GateScreen({
               {tunnelLimit !== null ? (
                 <>
                   <p className="text-sm text-destructive-foreground">
-                    Your T3 Connect account is out of tunnels.
+                    Your Scient Connect account is out of tunnels.
                   </p>
                   <ManageAccessButton environment={environment} label="Manage tunnels" />
                 </>
@@ -466,8 +472,8 @@ function GateScreen({
             <p className="text-sm text-muted-foreground">{turnOnHere.reason}</p>
           ) : (
             <div className="space-y-2 text-sm">
-              <CommandBlock command="t3 connect link" />
-              <p>Restart T3 Code on {name}.</p>
+              <CommandBlock command="scient connect link" />
+              <p>Restart Scient on {name}.</p>
               {checkAgain}
             </div>
           )}
@@ -554,18 +560,25 @@ function ConnectStep({
   readonly environment: EnvironmentPresentation;
   readonly mcpUrl: string;
   readonly choice: Choice;
-  readonly access: AuthMcpClientAccess;
+  /** Null when the sign-in page asks for the level, so no code is needed. */
+  readonly access: AuthMcpClientAccess | null;
 }) {
   const [anotherWay, setAnotherWay] = useState(choice === "other");
   const app = choice === "other" ? null : choice;
-  const code = (
-    <ApprovalCode
-      key={access}
-      environmentId={environment.environmentId}
-      name={environment.label}
-      access={access}
-    />
-  );
+  const code =
+    access === null ? (
+      <p className="text-sm text-muted-foreground">
+        When {app?.name ?? "the app"} opens the sign-in page, choose what it may do and approve with
+        your Scient Connect account.
+      </p>
+    ) : (
+      <ApprovalCode
+        key={access}
+        environmentId={environment.environmentId}
+        name={environment.label}
+        access={access}
+      />
+    );
   if (anotherWay || app === null) {
     const message = app?.handoff.kind === "copy-message" ? app.handoff.message(mcpUrl) : null;
     return (
@@ -651,7 +664,16 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
       </div>
     );
   }
-  const { copy, link } = action;
+  const { copy, link, appLink } = action;
+  // The desktop app reports a link nothing opens and falls back; a browser cannot tell, and
+  // opens an app link in place (a new tab for it would stay blank), so its toast keeps the web.
+  const openApp = () => {
+    if (appLink === null) return openLink(link);
+    if (!isElectron) return window.location.assign(appLink);
+    void readLocalApi()
+      ?.shell.openExternal(appLink)
+      .catch(() => openLink(link));
+  };
   const handOff = async () => {
     if (copy !== null) {
       // The app opens only once the copy lands, so it never gets an older clipboard.
@@ -667,13 +689,19 @@ function PrimaryAction({ app, mcpUrl }: { readonly app: McpApp; readonly mcpUrl:
       toastManager.add({
         type: "success",
         title: copy.title,
-        // A browser can block an open that follows the copy; this keeps a way through.
-        ...(isElectron
+        // A browser can block an open that follows the copy, and no platform reliably reports an
+        // app link nothing handles (Linux says it opened), so these keep a way through.
+        ...(isElectron && appLink === null
           ? {}
-          : { actionProps: { children: `Open ${app.name}`, onClick: () => openLink(link) } }),
+          : {
+              actionProps: {
+                children: appLink === null ? `Open ${app.name}` : `Open ${app.name} on the web`,
+                onClick: () => openLink(link),
+              },
+            }),
       });
     }
-    openLink(link);
+    openApp();
   };
   return (
     <div className="space-y-2">
@@ -773,7 +801,8 @@ function LinkedLine({
   access,
 }: {
   readonly environment: EnvironmentPresentation;
-  readonly access: AuthMcpClientAccess;
+  /** Null when the level is picked later; each link then shows its own. */
+  readonly access: AuthMcpClientAccess | null;
 }) {
   const offered = offersLinkedEnvironments(environment.serverConfig);
   const links = useEnvironmentQuery(
@@ -788,7 +817,8 @@ function LinkedLine({
       identities.find((identity) => identity.environmentId === link.environmentId)?.label ??
       link.label;
     // A forwarded call keeps the lower of the app's level and the link's own.
-    const level = levelRank(link.access) < levelRank(access) ? link.access : access;
+    const level =
+      access === null || levelRank(link.access) < levelRank(access) ? link.access : access;
     return `${name} · ${link.status === "expired" ? "Expired" : accessConfig[level].label}`;
   });
   return <p className="text-xs text-muted-foreground">Linked: {named.join(", ")}</p>;

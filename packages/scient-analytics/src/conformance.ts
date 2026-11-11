@@ -9,6 +9,13 @@ import {
 const context = { appVersion: "0.6.8", buildChannel: "stable" } as const;
 const representativeProperties = {
   provider: "antigravity",
+  email: "synthetic@scient.test",
+  plan: "Pro",
+  accountType: "subscription",
+  workKinds: "scientific,code",
+  field: "biology",
+  role: "researcher",
+  otherWork: "Teaching",
   usageStatus: "complete",
   inputTokens: 1500,
   outputTokens: 100,
@@ -105,8 +112,18 @@ const representativeProperties = {
   createdBy: "user",
   scheduled: false,
   subagent: false,
+  failureOwner: "code",
+  failureCategory: "code-error",
+  language: "python",
+  actor: "agent",
+  entry: "cell",
+  runtimeSource: "managed",
+  commandCategory: "python",
+  commandCount: 3,
+  failedCount: 1,
+  stoppedCount: 1,
 };
-// Every case sends these too, and they must never reach the wire.
+// Content sentinels must not reach the wire; account email is the explicit exception.
 const privateProperties = {
   path: "/private/fixture",
   email: "fixture@example.invalid",
@@ -207,6 +224,7 @@ function representativeInput(
   return {
     ...Object.fromEntries(Object.entries(sample).filter(([key]) => used.has(key))),
     ...privateProperties,
+    ...(name === "install.account_observed" ? { email: sample.email } : {}),
   };
 }
 
@@ -230,7 +248,9 @@ function fixtureCase(
 export function buildAnalyticsConformanceFixture() {
   const cases = ANALYTICS_EVENT_NAMES.flatMap((name) => [
     // An owner event without a valid hash is dropped, so it has no fallback case.
-    ...(name === "install.owner_observed" ? [] : [fixtureCase("fallbacks", name, undefined)]),
+    ...(["install.owner_observed", "install.account_observed"].includes(name)
+      ? []
+      : [fixtureCase("fallbacks", name, undefined)]),
     fixtureCase("representative", name, representativeInput(name)),
   ]);
   for (const captureSource of ["interactive", "run-file"]) {
@@ -251,6 +271,23 @@ export function buildAnalyticsConformanceFixture() {
       captureCoverage: "unavailable",
       captureReason: "artifact-collection-failed",
       retainedOutputCount: 1,
+    }),
+  );
+  // Who a failure belongs to and what an agent ran are closed: free text becomes `unknown`.
+  cases.push(
+    fixtureCase("attribution-hostile", "scient.operation.failed", {
+      operationKind: "compute-run",
+      failureOwner: "PRIVATE-CONTENT",
+      failureCategory: "PrivatePatientStudyError",
+      actor: "someone@example.invalid",
+      entry: "/private/fixture.py",
+    }),
+    fixtureCase("command-hostile", "provider.commands.observed", {
+      provider: "codex",
+      model: "gpt-5.6-sol",
+      commandCategory: "python /private/fixture.py",
+      commandCount: -4,
+      failedCount: "2",
     }),
   );
   for (const captureOutcome of ["retained", "partial", "none", "failed", "unobserved"]) {

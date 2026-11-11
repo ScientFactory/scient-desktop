@@ -310,6 +310,34 @@ it("offers Main a copy of another profile's working Google before an import", as
   expect(actions.importProfile).not.toHaveBeenCalled();
 });
 
+it.each([
+  [
+    "an imported profile",
+    { browser: "chrome", profileName: "Y", importedAt: "2026-11-03T00:00:00.000Z" },
+    "Refresh from Chrome",
+  ],
+  ["Main with a profile to copy from", undefined, "Copy from Work"],
+  ["Main with nothing to copy or import", undefined, "Import from a browser…"],
+] as const)("offers %s a sign-in in a Chrome window", async (name, source, other) => {
+  const chromeWindow = vi.fn();
+  const actions = {
+    refresh: vi.fn(),
+    importProfile: vi.fn(),
+    chromeWindow,
+    ...(name.includes("copy from") ? { copyFrom: { name: "Work", run: vi.fn() } } : {}),
+  };
+  await using _screen = await render(
+    <ProfileDetail
+      signedOut
+      email={undefined}
+      recover={googleRecovery(source as never, actions)}
+    />,
+  );
+  await expect.element(page.getByRole("button", { name: other, exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Sign in in a Chrome window", exact: true }).click();
+  expect(chromeWindow).toHaveBeenCalledOnce();
+});
+
 it("shows only the address while Google accepts the profile", async () => {
   await using _screen = await render(
     <ProfileDetail

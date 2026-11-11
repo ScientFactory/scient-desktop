@@ -37,6 +37,11 @@
   ],
   "upstreamMounts": [
     {
+      "path": ".github/workflows/ci.yml",
+      "anchor": "SCIENT-FORK:START \u2014 Windows Overleaf and Accounts evidence is mandatory",
+      "purpose": "Run the desktop Accounts and browser import tests, and real Chrome and Edge sign-in windows, on Windows."
+    },
+    {
       "path": "packages/contracts/src/browserProfile.ts",
       "anchor": "SCIENT-FORK:START — distinguish original browser storage from the new-tab preference.",
       "purpose": "Name the built-in original browser profile Main while preserving its default id."
@@ -124,7 +129,17 @@
     {
       "path": "apps/web/src/components/ChatView.tsx",
       "anchor": "Scient Accounts: approvals belong to the active thread.",
-      "purpose": "Show account approvals above the active thread composer."
+      "purpose": "Show account approvals above the active thread composer, and draw a side panel asked to open maximized (a sign-in) maximized from its first frame."
+    },
+    {
+      "path": "apps/web/src/components/Sidebar.tsx",
+      "anchor": "SCIENT-FORK:START \u2014 the conversation's browser profile.",
+      "purpose": "Offer and apply a conversation's browser profile from its right-click menu."
+    },
+    {
+      "path": "apps/web/src/components/threadActionMenu.logic.ts",
+      "anchor": "SCIENT-FORK:START \u2014 the conversation's browser profile.",
+      "purpose": "Place the conversation's Browser profile submenu in the thread menu."
     },
     {
       "path": "apps/web/src/components/preview/PreviewChromeRow.tsx",
@@ -244,7 +259,7 @@
     {
       "path": "apps/server/src/serverSettings.ts",
       "anchor": "Scient Accounts: encrypt only Custom models credentials through the shared vault.",
-      "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users."
+      "purpose": "Provide encrypted storage only to Custom models persistence, key hints and runtime resolution while preserving all other secret-store users; and, inside the write that removes an agent and before its secrets are deleted, hand its keys to Accounts, failing the removal if they can't be kept."
     },
     {
       "path": "apps/desktop/src/preview/BrowserImport/BrowserImport.ts",
@@ -314,7 +329,12 @@
     {
       "path": "packages/client-runtime/src/secretRequest.ts",
       "anchor": "SCIENT-FORK:START — Scient Accounts: an Accounts card keeps the key in Accounts.",
-      "purpose": "Say on scient_account_add cards that the key is kept in Accounts, on web and mobile."
+      "purpose": "Say on scient_account_add cards that the key is kept in Accounts, and on one-time cards that it went to that agent only and is not kept, on web and mobile."
+    },
+    {
+      "path": "apps/web/src/components/settings/AddProviderInstanceDialog.tsx",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: offer the keys kept from an earlier agent of this kind.",
+      "purpose": "Offer the keys Accounts kept from a removed agent when one of the same kind is added, and put them back after it is created."
     },
     {
       "path": "apps/server/src/mcp/toolkits/orchestrator/handlers.ts",
@@ -354,7 +374,7 @@
     {
       "path": "packages/contracts/src/settings.ts",
       "anchor": "SCIENT-FORK:START — Scient Accounts: sign-ins go to other computers unless turned off in Accounts.",
-      "purpose": "Keep the on-by-default client setting that gates sending sign-ins to other computers."
+      "purpose": "Keep the on-by-default client setting that gates sending sign-ins to other computers, and name the settings error when a removed agent's keys can't be kept in Accounts."
     }
   ],
   "scientMounts": [

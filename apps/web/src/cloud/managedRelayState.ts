@@ -158,16 +158,21 @@ function managedTunnelCap(t3Chat: RelayT3ChatLinkResponse): {
   if (t3Chat.maxTunnelsOverride !== undefined) {
     return { limit: t3Chat.maxTunnelsOverride, upgrade: null };
   }
-  if (!t3Chat.available) return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: null };
+  // SCIENT-FORK:START — the relay reports its configured default cap.
+  const defaultLimit = t3Chat.defaultMaxTunnels ?? DEFAULT_MANAGED_TUNNEL_LIMIT;
+  if (!t3Chat.available) return { limit: defaultLimit, upgrade: null };
+  // SCIENT-FORK:END
   switch (t3Chat.link?.plan) {
     case "premier":
       return { limit: T3CHAT_PLAN_TUNNEL_LIMITS.premier, upgrade: null };
     case "pro":
       return { limit: T3CHAT_PLAN_TUNNEL_LIMITS.pro, upgrade: "premier" };
+    // SCIENT-FORK:START — the relay's default cap, as above.
     case "free":
-      return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: "pro" };
+      return { limit: defaultLimit, upgrade: "pro" };
     case undefined:
-      return { limit: DEFAULT_MANAGED_TUNNEL_LIMIT, upgrade: "link" };
+      return { limit: defaultLimit, upgrade: "link" };
+    // SCIENT-FORK:END
   }
 }
 

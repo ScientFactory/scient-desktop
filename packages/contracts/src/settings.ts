@@ -1573,7 +1573,8 @@ export const ServerSettings = Schema.Struct({
   ),
   hideTaggedThreads: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   /** Beta: guest links for this machine's threads. Off refuses new links and pauses existing ones. */
-  guestSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  // SCIENT-FORK: on by default in Scient; a link still needs a deliberate Share with guest.
+  guestSharingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
    * Beta: links to the user's other machines, both ways. Off refuses new links, calls over links
    * and tasks on another machine; tasks already running there finish.
@@ -1852,6 +1853,9 @@ export const ServerSettingsOperation = Schema.Literals([
   "prepare-directory",
   "write-managed-setting",
   "use-disallowed-provider",
+  // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+  "keep-removed-agent-keys",
+  // SCIENT-FORK:END
 ]);
 export type ServerSettingsOperation = typeof ServerSettingsOperation.Type;
 
@@ -1878,6 +1882,12 @@ export class ServerSettingsError extends Schema.TaggedError<ServerSettingsError>
     if (this.operation === "write-managed-setting") {
       return `${this.managedSetting ?? "This setting"} is managed by ${this.managedBy ?? "your organization"} and cannot be changed.`;
     }
+    // SCIENT-FORK:START — Scient Accounts: keep a removed agent's keys before its secrets are deleted.
+    if (this.operation === "keep-removed-agent-keys") {
+      const reason = this.cause instanceof Error ? ` ${this.cause.message}` : "";
+      return `Scient couldn't keep this agent's keys in Accounts, so it wasn't removed.${reason}`;
+    }
+    // SCIENT-FORK:END
     if (this.operation === "use-disallowed-provider") {
       return disallowedProviderMessage(
         this.managedBy,

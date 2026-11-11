@@ -181,6 +181,8 @@ export const ServerProviderMcpServer = Schema.Struct({
   /** The provider can start its own sign-in for this server from Scient. */
   canStartSignIn: Schema.optional(Schema.Boolean),
   connectUrl: Schema.optional(TrimmedNonEmptyString),
+  /** The provider holds the user's own sign-in for this server, when it reports that. */
+  signedIn: Schema.optional(Schema.Boolean),
 });
 export type ServerProviderMcpServer = typeof ServerProviderMcpServer.Type;
 // SCIENT-FORK:END

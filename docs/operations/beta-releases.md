@@ -33,6 +33,9 @@ build and publication. There is no later approval or manual publish step.
 
 Leave `version` and `source_sha` blank for the normal path. The workflow pins the
 exact `main` commit at dispatch and requires successful CI for that exact commit.
+The merge queue tests the exact commit that lands on `main`, so its successful
+run qualifies a Beta as soon as the PR merges; there is no need to wait for the
+push run on `main`.
 It generates `x.y.z-beta.YYYYMMDD.N` using the UTC date and the next stable patch
 core, retaining a higher existing Beta core if one exists. It advances beyond
 all existing Beta release versions, including reserved drafts, and increments N

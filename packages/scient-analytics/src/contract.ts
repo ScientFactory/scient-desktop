@@ -3,6 +3,7 @@ export const ANALYTICS_SOURCE = "desktop" as const;
 import {
   ANALYTICS_CONTRACT_REVISION,
   EVENT_NAME_PATTERN,
+  isAllowedAccountEmail,
   isContentKey,
   isPrivateLooking,
   isWirePrimitive,
@@ -22,6 +23,8 @@ export const ANALYTICS_EVENT_NAMES = [
   "app.diagnostics",
   "server.boot.heartbeat",
   "install.owner_observed",
+  "install.account_observed",
+  "install.profile_observed",
   "client.turn.requested",
   "client.thread.started",
   "feature.used",
@@ -79,7 +82,129 @@ export const ANALYTICS_EVENT_NAMES = [
   "scient.operation.failed",
   "scient.operation.cancelled",
   "scient.operation.skipped",
+  "provider.commands.observed",
 ] as const;
+
+/**
+ * Who a failure belongs to: Scient itself, the code or document being run, a request's input,
+ * the computer's environment, an outside service, or a cancellation. `unknown` keeps doubt.
+ */
+const FAILURE_OWNERS = [
+  "scient",
+  "code",
+  "input",
+  "environment",
+  "external",
+  "cancelled",
+  "unknown",
+] as const;
+export type FailureOwner = (typeof FAILURE_OWNERS)[number];
+
+/** The closed reasons a failure is filed under; an error's own name is never one of them. */
+const FAILURE_CATEGORIES = [
+  // Compute runs
+  "code-error",
+  "syntax",
+  "assertion",
+  "data",
+  "filesystem",
+  "permission",
+  "network",
+  "missing-dependency",
+  "out-of-memory",
+  "interrupted",
+  "exited",
+  "runtime-reported",
+  "dispatch",
+  "runtime-start",
+  "app-restart",
+  "runtime-connection",
+  "runtime-exited",
+  // Run file
+  "nonzero-exit",
+  "not-started",
+  "failed-after-exit",
+  // LaTeX builds
+  "compile_error",
+  "missing_package",
+  "missing_engine",
+  "no_output",
+  "timeout",
+  "sources_changed",
+  "publish",
+  "workspace",
+  "internal",
+  // Figure and table capture
+  "scan-timeout",
+  "scan-entry-limit",
+  "scan-depth-limit",
+  "scan-unreadable",
+  "observation-unavailable",
+  "output-limit",
+  "image-limit",
+  "unsafe-image",
+  "invalid-image",
+  "image-changed",
+  "missing-resource",
+  "resource-mismatch",
+  "persistence-failed",
+  "artifact-collection-failed",
+  "unknown",
+] as const;
+export type FailureCategory = (typeof FAILURE_CATEGORIES)[number];
+
+/** The kinds of program an agent runs in its own terminal, read locally from the command. */
+const COMMAND_CATEGORIES = [
+  "python",
+  "python-package-install",
+  "jupyter",
+  "r",
+  "julia",
+  "matlab",
+  "octave",
+  "stata",
+  "sas",
+  "sql",
+  "latex",
+  "document-convert",
+  "quarto",
+  "workflow",
+  "hpc",
+  "remote",
+  "container",
+  "compile",
+  "javascript",
+  "system-package-install",
+  "version-control",
+  "download",
+  "file-inspection",
+  "file-management",
+  "shell-other",
+] as const;
+export type CommandCategory = (typeof COMMAND_CATEGORIES)[number];
+
+const COMPUTE_ACTORS = new Set(["user", "agent"]);
+const COMPUTE_ENTRIES = new Set(["console", "file", "selection", "cell", "run-file"]);
+const COMPUTE_RUNTIME_SOURCES = new Set([
+  "managed",
+  "configured",
+  "project",
+  "path",
+  "conventional",
+]);
+
+function attributionProperties(input: Readonly<Record<string, unknown>>) {
+  return {
+    ...(property(input, "failureOwner") === undefined
+      ? {}
+      : { failureOwner: closedCategory(property(input, "failureOwner"), FAILURE_OWNERS) }),
+    ...(property(input, "failureCategory") === undefined
+      ? {}
+      : {
+          failureCategory: closedCategory(property(input, "failureCategory"), FAILURE_CATEGORIES),
+        }),
+  };
+}
 
 export const AnalyticsConsent = ["off", "essential", "product", "diagnostic"] as const;
 export type AnalyticsConsent = (typeof AnalyticsConsent)[number];
@@ -158,6 +283,26 @@ const FAILURE_CLASSES = new Set([
   "process-crash",
   "internal",
   "unknown",
+  // Managed provider runtime installs, updates and repairs
+  "network",
+  "http_4xx",
+  "http_5xx",
+  "checksum",
+  "size_mismatch",
+  "certificate",
+  "disk_full",
+  "extract",
+  "cancelled",
+  "busy",
+  "other",
+  // LaTeX builds
+  "compile_error",
+  "missing_package",
+  "missing_engine",
+  "no_output",
+  "sources_changed",
+  "publish",
+  "workspace",
 ]);
 const HEALTH_COMPONENTS = new Set(["desktop", "server", "renderer", "browser", "analytics"]);
 const HEALTH_OPERATIONS = new Set([
@@ -283,6 +428,12 @@ const VOICE_CANCELLATION_STAGES = new Set([
   "correcting",
   "unknown",
 ]);
+
+function countOrZero(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? Math.min(value, 1_000_000)
+    : 0;
+}
 
 function closedCategory(value: unknown, allowed: ReadonlyArray<string>): string {
   return typeof value === "string" && allowed.includes(value) ? value : "unknown";
@@ -428,7 +579,7 @@ const KNOWN_MODEL_KEYS = new Set([
   "openai/gpt-5",
 ]);
 
-const MODEL_ID_PATTERN = /^[a-z0-9][a-z0-9._:/-]{0,79}$/u;
+const MAX_MODEL_KEY_LENGTH = 120;
 
 const MODEL_KEY_ALIASES: Readonly<Record<string, string>> = {
   "5.3": "gpt-5.3-codex",
@@ -477,6 +628,12 @@ function isIdentifier(value: unknown): value is string {
 
 function normalizedProvider(value: unknown): string {
   return isIdentifier(value) ? value : "other";
+}
+
+function shortLabel(value: unknown, maxLength = 64): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const label = value.replace(/\s+/gu, " ").trim().slice(0, maxLength);
+  return label === "" || isPrivateLooking(label) ? undefined : label;
 }
 
 function normalizedRuntimeMode(value: unknown): string {
@@ -586,13 +743,18 @@ function modelFamily(provider: string, model: unknown): string {
 
 /**
  * Returns a canonical model key: known aliases and pinned versions fold into one key, and any
- * other model name is sent as it is, as in T3, as long as it looks like a model id.
+ * other model name the agent reports is sent as it is, as in T3. Only a name that looks like a
+ * path, link or email address becomes `other`.
  */
 export function modelKey(model: unknown): string {
   if (typeof model !== "string") return "unknown";
-  const normalized = model.trim().toLowerCase();
+  const collapsed = model.replace(/\s+/gu, " ").trim();
+  if (collapsed === "") return "unknown";
+  const normalized = collapsed.toLowerCase().slice(0, MAX_MODEL_KEY_LENGTH).trimEnd();
+  // Both spellings: the path pattern matches `Users` and `home` only as written.
+  if (isPrivateLooking(collapsed) || isPrivateLooking(normalized)) return "other";
   if (KNOWN_MODEL_KEYS.has(normalized)) return normalized;
-  // Strip only known public namespaces; the result still must be allowlisted.
+  // Strip only known public namespaces.
   const publicSlug = normalized.replace(/^(?:openai|anthropic|google)\//u, "");
   const withoutPinnedVersion = publicSlug.replace(/-(?:20\d{6,8})$/u, "");
   const geminiVariant = withoutPinnedVersion.replace(/-(?:high|medium|low)$/u, "");
@@ -602,7 +764,7 @@ export function modelKey(model: unknown): string {
     MODEL_KEY_ALIASES[normalized] ??
     MODEL_KEY_ALIASES[withoutPinnedVersion] ??
     withoutPinnedVersion;
-  return KNOWN_MODEL_KEYS.has(canonical) || MODEL_ID_PATTERN.test(canonical) ? canonical : "other";
+  return canonical === "" ? normalized : canonical;
 }
 
 export function durationBucket(value: unknown): string {
@@ -778,6 +940,27 @@ function normalizeEvent(
           failureClass: normalizedEnum(property(input, "failureClass"), FAILURE_CLASSES),
           reviewRequired: normalizedBoolean(property(input, "reviewRequired")),
           ...captureProperties(input, name !== "scient.operation.started"),
+          ...(name === "scient.operation.started" ? {} : attributionProperties(input)),
+          ...optionalProperties(input, {
+            language: "identifier",
+            actor: COMPUTE_ACTORS,
+            entry: COMPUTE_ENTRIES,
+            runtimeSource: COMPUTE_RUNTIME_SOURCES,
+          }),
+        },
+      };
+    case "provider.commands.observed":
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          provider,
+          modelKey: modelKey(property(input, "model")),
+          commandCategory: closedCategory(property(input, "commandCategory"), COMMAND_CATEGORIES),
+          commandCount: countOrZero(property(input, "commandCount")),
+          failedCount: countOrZero(property(input, "failedCount")),
+          ...optionalProperties(input, { stoppedCount: "count" }),
         },
       };
     case "app.session.started":
@@ -839,6 +1022,54 @@ function normalizeEvent(
         },
       };
     }
+    case "install.account_observed": {
+      const rawEmail = property(input, "email");
+      const email = typeof rawEmail === "string" ? rawEmail.trim().toLowerCase() : undefined;
+      const plan = shortLabel(property(input, "plan"));
+      const accountType = shortLabel(property(input, "accountType"));
+      const accountEmail =
+        email !== undefined && isAllowedAccountEmail(name, "email", email) ? email : undefined;
+      if (accountEmail === undefined && plan === undefined && accountType === undefined)
+        return null;
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          provider: normalizedProvider(property(input, "provider")),
+          ...(accountEmail === undefined ? {} : { email: accountEmail }),
+          ...(plan === undefined ? {} : { plan }),
+          ...(accountType === undefined ? {} : { accountType }),
+        },
+      };
+    }
+    case "install.profile_observed": {
+      // The UI sends a comma-separated list; its event properties are single values.
+      const rawKinds = property(input, "workKinds");
+      const kinds: ReadonlyArray<unknown> = Array.isArray(rawKinds)
+        ? rawKinds
+        : typeof rawKinds === "string"
+          ? rawKinds.split(",")
+          : [];
+      const workKinds = kinds
+        .map((kind) => (typeof kind === "string" ? kind.trim() : kind))
+        .filter((kind): kind is string => isIdentifier(kind))
+        .slice(0, 8);
+      const field = shortLabel(property(input, "field"));
+      const role = shortLabel(property(input, "role"));
+      const otherWork = shortLabel(property(input, "otherWork"), 120);
+      return {
+        name,
+        privacyLevel: "product",
+        priority: "summary",
+        properties: {
+          workKinds,
+          ...(field === undefined ? {} : { field }),
+          ...(role === undefined ? {} : { role }),
+          ...(otherWork === undefined ? {} : { otherWork }),
+        },
+      };
+    }
     case "client.turn.requested":
       return {
         name,
@@ -888,6 +1119,7 @@ function normalizeEvent(
             callerDepth: "count",
             durationMs: "count",
             errorCode: "identifier",
+            failureClass: "identifier",
             targetInteractionMode: TOOL_INTERACTION_MODES,
             crossProvider: "boolean",
             targetChosen: "boolean",
@@ -898,6 +1130,7 @@ function normalizeEvent(
             delivery: "identifier",
             bindToCurrentThread: "boolean",
           }),
+          ...attributionProperties(input),
         },
       };
     case "mcp.delegated_task.finished":
@@ -1002,10 +1235,15 @@ function normalizeEvent(
       return { name, privacyLevel: "product", priority: "core", properties };
     }
     case "provider.turn.usage": {
+      // The model that did the work, then the one the provider confirmed, then the selected one.
+      // `observedModel` is read unmarked, so it is still sent as recorded.
+      const observed =
+        property(input, "mixedModels") === true || !Object.hasOwn(input, "observedModel")
+          ? undefined
+          : input.observedModel;
       const properties: Record<string, string | boolean | number> = {
         provider,
-        modelKey:
-          property(input, "mixedModels") === true ? "other" : modelKey(property(input, "model")),
+        modelKey: modelKey(property(input, "mainModel") ?? observed ?? property(input, "model")),
         terminalStatus: turnTerminalStatus(property(input, "terminalStatus")),
         usageStatus: normalizedEnum(
           property(input, "usageStatus"),
@@ -1018,6 +1256,7 @@ function normalizeEvent(
         properties,
         optionalProperties(input, {
           hasSubagents: "boolean",
+          modelCount: "count",
           inputTokens: "count",
           outputTokens: "count",
           cachedInputTokens: "count",
@@ -1072,6 +1311,10 @@ function normalizeEvent(
           durationBucket: durationBucket(property(input, "durationMs")),
           usedTools: normalizedBoolean(property(input, "usedTools")),
           hasAttachment: normalizedBoolean(property(input, "hasAttachment")),
+          ...optionalProperties(input, {
+            browserToolCalls: "count",
+            browserToolFailures: "count",
+          }),
         },
       };
     case "provider.turn.failed":
@@ -1082,6 +1325,7 @@ function normalizeEvent(
         properties: {
           provider,
           modelKey: modelKey(property(input, "model")),
+          ...optionalProperties(input, { browserToolCalls: "count", browserToolFailures: "count" }),
           failureClass: normalizedEnum(property(input, "failureClass"), TURN_FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),
         },
@@ -1094,6 +1338,7 @@ function normalizeEvent(
         properties: {
           provider,
           modelKey: modelKey(property(input, "model")),
+          ...optionalProperties(input, { browserToolCalls: "count", browserToolFailures: "count" }),
           durationBucket: durationBucket(property(input, "durationMs")),
           stopClass: normalizedEnum(property(input, "stopClass"), TURN_STOP_CLASSES),
         },
@@ -1409,7 +1654,7 @@ export function normalizeInheritedEvent(
   };
   const properties: Record<string, WireValue> = {};
   for (const [key, value] of Object.entries(normalized.properties)) {
-    const safe = wireValue(value);
+    const safe = isAllowedAccountEmail(name, key, value) ? (value as string) : wireValue(value);
     if (safe !== undefined) properties[key] = safe;
   }
   const room = MAX_EVENT_PROPERTIES - Object.keys(envelope).length;

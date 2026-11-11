@@ -15,6 +15,11 @@ The Shortcuts page uses the same source selector as Skills. Choose **General**, 
 part of the product. General contains application commands; the other sections
 contain document-authoring and reading commands. The selected section stays open.
 
+In Scient Desktop, **General → Application & windows** also lists **New Window**
+(`Cmd+Option+Shift+N` on macOS, `Ctrl+Alt+Shift+N` on Windows and Linux).
+It is labeled **Fixed shortcut** because it belongs to the desktop File menu and
+cannot be changed here. See [Multiple windows](./multiple-windows.md).
+
 Use the page search to filter the selected section. Click a document shortcut to
 edit it in place, or use **+** to add an alternative. The row menu can disable a
 command or reset it to its defaults. A command without a keyboard binding remains
@@ -347,6 +352,9 @@ always matches the build you are running. Use that rather than a copied list.
 
 `thread.stop` interrupts the running turn in the focused thread. It has no default
 shortcut; assign one in **Settings → Shortcuts**.
+
+`thread.regenerateTitle` generates a new title for the focused thread, like
+**Regenerate title** in the thread menu. It has no default shortcut.
 
 `thread.undo` (`mod+z` by default) reverses the actions shown in the notice at the
 bottom of the sidebar, such as unpin, settle, snooze, archive, or discarding a

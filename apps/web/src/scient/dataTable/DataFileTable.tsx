@@ -1,6 +1,9 @@
-import type { DataTableQuery, EnvironmentId } from "@t3tools/contracts";
+import type { DataTableQuery, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { useState } from "react";
+
+import { useAssetUrlState } from "~/assets/assetUrls";
+import { FileSurfaceLoading } from "~/components/files/fileSurfaceChrome";
 
 import {
   Select,
@@ -19,9 +22,32 @@ export function DataFileTable(props: {
   readonly environmentId: EnvironmentId;
   readonly absolutePath: string;
   readonly name: string;
-  /** Changes when the file changes on disk. */
-  readonly revision: string;
+  readonly threadId: ThreadId;
+  /** Moves when the file may have changed: an agent's command or edit anywhere, the watcher. */
+  readonly refreshToken: string;
+  /** Moves when the reader asks to reload: the rows are read again. */
+  readonly reloadKey: string;
 }) {
+  // Each move checks the file's revision; the table reads its rows again only for a new one.
+  // An environment that reports no revision reads them on every move.
+  const asset = useAssetUrlState(
+    props.environmentId,
+    {
+      _tag: "media-file",
+      threadId: props.threadId,
+      path: props.absolutePath,
+      disposition: "attachment",
+    },
+    props.refreshToken,
+  );
+  const checked =
+    asset._tag === "Success"
+      ? (asset.fileRevision ?? `unknown:${props.refreshToken}`)
+      : asset._tag === "Failure"
+        ? `unchecked:${props.refreshToken}`
+        : null;
+  const [revision, setRevision] = useState<string | null>(null);
+  if (checked !== null && checked !== revision) setRevision(checked);
   const readPage = useAtomQueryRunner(dataFileTablePage, { reportFailure: false, refresh: true });
   const [sheet, setSheet] = useState(0);
   const [sheets, setSheets] = useState<ReadonlyArray<string>>([]);
@@ -34,11 +60,12 @@ export function DataFileTable(props: {
     setSheets(result.value.sheets);
     return result.value;
   };
+  if (revision === null) return <FileSurfaceLoading />;
   return (
     <DataGrid
       key={sheet}
       label={sheets[sheet] ?? props.name}
-      revision={props.revision}
+      revision={`${revision}#${props.reloadKey}`}
       loadPage={loadPage}
       toolbarStart={
         sheets.length > 1 ? (

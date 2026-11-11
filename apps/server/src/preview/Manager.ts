@@ -46,6 +46,10 @@ export class PreviewManager extends Context.Service<
     readonly markHeadless: (
       input: PreviewCloseInput & { readonly tabId: string },
     ) => Effect.Effect<void, PreviewError>;
+    /** Publishes the tab's unchanged snapshot again, for clients that dropped the tab. */
+    readonly announce: (
+      input: PreviewCloseInput & { readonly tabId: string },
+    ) => Effect.Effect<void, PreviewError>;
     readonly requestReveal: (
       // SCIENT-FORK:START — fresh explicit suppression shares the presentation request channel.
       input: PreviewCloseInput & {
@@ -304,6 +308,28 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     );
   });
 
+  const announce: PreviewManager["Service"]["announce"] = Effect.fn("PreviewManager.announce")(
+    function* (input) {
+      return yield* mutateExistingSession(
+        input.threadId,
+        input.tabId,
+        Effect.fn("PreviewManager.announceSession")(function* (session) {
+          return {
+            next: session,
+            emit: {
+              type: "resized",
+              threadId: session.threadId,
+              tabId: session.tabId,
+              createdAt: yield* currentIsoTimestamp,
+              snapshot: session.snapshot,
+            },
+            result: undefined,
+          };
+        }),
+      );
+    },
+  );
+
   const resize: PreviewManager["Service"]["resize"] = Effect.fn("PreviewManager.resize")(
     function* (input) {
       return yield* mutateExistingSession(
@@ -460,6 +486,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     requestReveal,
     reportStatus,
     markHeadless,
+    announce,
     resize,
     adjust,
     close,

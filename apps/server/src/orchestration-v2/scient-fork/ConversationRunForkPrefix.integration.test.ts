@@ -202,6 +202,10 @@ it.live.each(
             label: "thread/unsubscribe/source",
             frame: { id: 4, result: { status: "unsubscribed" } },
           },
+          {
+            type: "emit_inbound",
+            frame: { method: "thread/closed", params: { threadId: "native-source-thread" } },
+          },
         );
       }
       const transcript = { ...full, entries };
@@ -442,6 +446,10 @@ it.live.each(
               type: "emit_inbound",
               label: "thread/unsubscribe/parent",
               frame: { id: 6, result: { status: "unsubscribed" } },
+            },
+            {
+              type: "emit_inbound",
+              frame: { method: "thread/closed", params: { threadId: "native-fork-thread" } },
             },
             {
               type: "expect_outbound",

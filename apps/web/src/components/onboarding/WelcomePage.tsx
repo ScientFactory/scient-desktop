@@ -896,7 +896,7 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
             <SmartphoneIcon className="size-4" />
           </RowIcon>
           <span className="min-w-0 flex-1 text-sm font-medium text-foreground">
-            Use T3 Code on your phone
+            Use Scient on your phone
           </span>
           <CollapsibleTrigger render={<Button variant="ghost-muted" size="xs" />}>
             {open ? "Hide" : "Set up"}
@@ -920,7 +920,7 @@ function PhoneSection({ environmentId }: { readonly environmentId: EnvironmentId
                 size={124}
                 level="M"
                 marginSize={2}
-                title="T3 Code app for iPhone and Android"
+                title="Scient app for iPhone and Android"
               />
             </div>
           </div>
@@ -966,13 +966,13 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
     </Button>
   );
   if (isSignedIn && link === null && linkState.isPending) {
-    return <p className="text-sm text-muted-foreground">Checking T3 Connect…</p>;
+    return <p className="text-sm text-muted-foreground">Checking Scient Connect…</p>;
   }
   if (isSignedIn && linkState.error !== null) {
     return (
       <>
-        <p className="text-sm text-foreground">Could not check T3 Connect.</p>
-        {settingsLink("Check T3 Connect")}
+        <p className="text-sm text-foreground">Could not check Scient Connect.</p>
+        {settingsLink("Check Scient Connect")}
       </>
     );
   }
@@ -987,7 +987,7 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
   if (isSignedIn && shared && reachability === undefined) {
     return (
       <p className="text-sm text-foreground">
-        T3 Connect is on for this computer. Sign in to the app with the same account.
+        Scient Connect is on for this computer. Sign in to the app with the same account.
       </p>
     );
   }
@@ -997,20 +997,20 @@ function PhoneConnectLink({ environmentId }: { readonly environmentId: Environme
       <>
         <p className="text-sm text-foreground">
           {shared
-            ? "T3 Connect is on, but the app cannot reach this computer."
+            ? "Scient Connect is on, but the app cannot reach this computer."
             : "Signed in. Share this computer so the app can reach it."}
         </p>
-        {settingsLink(shared ? "Check T3 Connect" : "Set up T3 Connect")}
+        {settingsLink(shared ? "Check Scient Connect" : "Set up Scient Connect")}
       </>
     );
   }
   return (
     <>
       <p className="text-sm text-foreground">
-        Sign in to T3 Connect here, then in the app with the same account.
+        Sign in to Scient Connect here, then in the app with the same account.
       </p>
       <Button variant="outline" size="xs" disabled={!isLoaded} onClick={openAuthPrompt}>
-        Sign in to T3 Connect
+        Sign in to Scient Connect
       </Button>
     </>
   );

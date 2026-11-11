@@ -258,9 +258,15 @@ it.live.each(
             createdBy: "user",
             creationSource: "web",
           });
+          // The session writes the request and the run writes its item, so wait for both.
           const waiting = yield* waitFor(source, (projection) =>
             projection.runtimeRequests.some(
-              (request) => request.kind === "user_input" && request.status === "pending",
+              (request) =>
+                request.kind === "user_input" &&
+                request.status === "pending" &&
+                projection.turnItems.some(
+                  (item) => item.type === "user_input_request" && item.requestId === request.id,
+                ),
             ),
           );
           const request = waiting.runtimeRequests.find(

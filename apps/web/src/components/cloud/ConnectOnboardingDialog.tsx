@@ -61,7 +61,11 @@ function ConfiguredConnectOnboardingDialog() {
   const { environments, isReady: environmentsReady } = useEnvironments();
   // The empty hosted home already adds account computers after sign-in.
   const homeScreenAddsComputers =
-    isHostedStaticApp() && environmentsReady && environments.length === 0;
+    isHostedStaticApp() &&
+    environmentsReady &&
+    // SCIENT-FORK:START hosted-landing — Scient's landing stays until a computer is open.
+    !environments.some(({ connection }) => connection.phase === "connected");
+  // SCIENT-FORK:END hosted-landing
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primarySessionState = useAtomValue(
     primaryEnvironmentId === null
@@ -188,9 +192,9 @@ function ConfiguredConnectOnboardingDialog() {
     if (!ok) return;
     toastManager.add({
       type: "success",
-      title: "T3 Connect enabled",
+      title: "Scient Connect enabled",
       description: exposeEnvironment
-        ? "This environment is available to your other devices through T3 Connect."
+        ? "This environment is available to your other devices through Scient Connect."
         : "This environment publishes agent activity to your mobile clients.",
     });
     setStep("devices");
@@ -214,7 +218,7 @@ function ConfiguredConnectOnboardingDialog() {
     >
       <WizardPopup>
         <WizardHeader
-          title="Set up T3 Connect"
+          title="Set up Scient Connect"
           description={
             <>
               Mesh your devices together. Publish this environment and connect the rest, all in one
@@ -336,7 +340,7 @@ function PublishStep({
       <div className="rounded-lg border">
         <OnboardingToggleRow
           title="Publish this environment"
-          description="Make this environment available to your other devices through T3 Connect."
+          description="Make this environment available to your other devices through Scient Connect."
           checked={exposeEnvironment}
           disabled={disabled}
           onCheckedChange={onExposeEnvironmentChange}

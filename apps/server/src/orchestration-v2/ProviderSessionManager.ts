@@ -28,7 +28,7 @@ import {
 } from "./scient-provider/ProviderTextSnapshots.ts";
 // SCIENT-FORK:END
 import { makePiSessionFileLeases } from "./scient-provider/PiSessionFileLeases.ts";
-import { makeSessionAuthority } from "./scient-provider/SessionAuthority.ts";
+import { makeSessionAuthority, POLICY_RUN_STATUSES } from "./scient-provider/SessionAuthority.ts";
 import {
   makeStartupSessionReservations,
   registerStartupSessionReservations,
@@ -333,6 +333,9 @@ interface LiveSessionEntry {
   readonly idleFiber: Fiber.Fiber<void, never> | null;
   readonly pinnedSinceMs: number | null;
   readonly idleThreadUnloads: ReadonlyMap<ThreadId, IdleThreadUnload>;
+  // SCIENT-FORK:START — an idle unload's native close may still be pending when a handoff detaches.
+  readonly idleUnloadedProviderThreads: ReadonlyMap<ThreadId, OrchestrationV2ProviderThread>;
+  // SCIENT-FORK:END
 }
 
 interface IdleThreadUnload {
@@ -1210,12 +1213,23 @@ export const layerWithOptions = (
         });
       });
 
+      // A detach removes its thread before releasing, but that thread's records still need releasing.
+      const releasedThreadIds = (input: {
+        readonly entry: LiveSessionEntry;
+        readonly detachedThreadId?: ThreadId;
+      }) => {
+        const threadIds = new Set(input.entry.attachedThreadIds);
+        if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
+        return threadIds;
+      };
+
       const writeReleasedRuntimeRequestEvents = Effect.fn(
         "ProviderSessionManager.writeReleasedRuntimeRequestEvents",
       )(function* (input: {
         readonly entry: LiveSessionEntry;
         readonly reason: ProviderSessionReleaseReason;
         readonly releasedAt: DateTime.Utc;
+        readonly detachedThreadId?: ThreadId;
       }) {
         const providerSessionId = input.entry.runtime.providerSessionId;
         const now = yield* DateTime.now;
@@ -1226,7 +1240,7 @@ export const layerWithOptions = (
             : "Provider session was closed before this runtime request was resolved.";
 
         const events: Array<OrchestrationV2DomainEvent> = [];
-        for (const threadId of input.entry.attachedThreadIds) {
+        for (const threadId of releasedThreadIds(input)) {
           const projection = yield* projectionStore.getThreadRecords(
             threadId,
             ["runtimeRequests"],
@@ -1348,10 +1362,8 @@ export const layerWithOptions = (
             return [];
           }
           const providerSessionId = input.entry.runtime.providerSessionId;
-          const threadIds = new Set(input.entry.attachedThreadIds);
-          if (input.detachedThreadId !== undefined) threadIds.add(input.detachedThreadId);
           const released = [];
-          for (const threadId of threadIds) {
+          for (const threadId of releasedThreadIds(input)) {
             const projection = yield* projectionStore.getThreadRecords(threadId, [
               "providerThreads",
             ]);
@@ -1462,6 +1474,9 @@ export const layerWithOptions = (
             entry,
             reason: input.reason,
             releasedAt: input.releasedAt,
+            ...(input.detachedThreadId === undefined
+              ? {}
+              : { detachedThreadId: input.detachedThreadId }),
           }),
         readReleasedWork: (
           entry: LiveSessionEntry,
@@ -2271,11 +2286,16 @@ export const layerWithOptions = (
                 loadedProviderThreadKeyByThread.delete(input.threadId);
                 const idleThreadUnloads = new Map(latest.idleThreadUnloads);
                 idleThreadUnloads.delete(input.threadId);
+                // SCIENT-FORK:START — detach re-joins this release if a handoff follows.
+                const idleUnloadedProviderThreads = new Map(latest.idleUnloadedProviderThreads);
+                idleUnloadedProviderThreads.set(input.threadId, pending.providerThread);
+                // SCIENT-FORK:END
                 const updated = new Map(current);
                 updated.set(key, {
                   ...latest,
                   loadedProviderThreadKeyByThread,
                   idleThreadUnloads,
+                  idleUnloadedProviderThreads,
                 });
                 return [true, updated] as const;
               });
@@ -3112,7 +3132,10 @@ export const layerWithOptions = (
         releasingRuntimes,
         readThreadRecords: (invocation) =>
           projectionStore
-            .getThreadRecords(invocation.threadId, ["runs", "attempts", "providerThreads"])
+            // Runs on every thread-caller MCP call; only an active run can carry the policy.
+            .getThreadRecords(invocation.threadId, ["runs", "attempts", "providerThreads"], {
+              runStatuses: POLICY_RUN_STATUSES,
+            })
             .pipe(Effect.mapError(authorityLookupError(invocation))),
         readThreadShell: (invocation) =>
           projectionStore
@@ -3469,6 +3492,8 @@ export const layerWithOptions = (
                             idleFiber: null,
                             pinnedSinceMs: null,
                             idleThreadUnloads: new Map(),
+                            // SCIENT-FORK: idle releases a handoff may need to wait for.
+                            idleUnloadedProviderThreads: new Map(),
                           };
                           // SCIENT-FORK:START — publication cannot resurrect a closing layer owner.
                           yield* Effect.suspend(() =>
@@ -3718,6 +3743,7 @@ export const layerWithOptions = (
                 return [
                   Option.none<{
                     readonly entry: LiveSessionEntry;
+                    readonly heldProviderThread: OrchestrationV2ProviderThread | undefined;
                     readonly idleUnloadFiber: Fiber.Fiber<void, never> | null;
                   }>(),
                   current,
@@ -3741,6 +3767,10 @@ export const layerWithOptions = (
                   : entry.mcpCredentialIdByThread;
               const idleThreadUnloads = new Map(entry.idleThreadUnloads);
               idleThreadUnloads.delete(input.threadId);
+              // SCIENT-FORK:START — the handoff waits for an idle release already under way.
+              const idleUnloadedProviderThreads = new Map(entry.idleUnloadedProviderThreads);
+              idleUnloadedProviderThreads.delete(input.threadId);
+              // SCIENT-FORK:END
               const updatedEntry = {
                 ...entry,
                 attachedThreadIds,
@@ -3748,12 +3778,17 @@ export const layerWithOptions = (
                 linkedEnvironmentsByThread,
                 mcpCredentialIdByThread,
                 idleThreadUnloads,
+                idleUnloadedProviderThreads,
               };
               const updated = new Map(current);
               updated.set(key, updatedEntry);
               return [
                 Option.some({
                   entry: updatedEntry,
+                  heldProviderThread:
+                    entry.idleThreadUnloads.get(input.threadId)?.providerThread ??
+                    // SCIENT-FORK: an idle unload may have released it before the row moved.
+                    entry.idleUnloadedProviderThreads.get(input.threadId),
                   idleUnloadFiber: entry.idleThreadUnloads.get(input.threadId)?.fiber ?? null,
                 }),
                 updated,
@@ -3769,29 +3804,37 @@ export const layerWithOptions = (
             if (Option.isSome(detachResult)) {
               yield* cancelIdleFiber(detachResult.value.idleUnloadFiber);
             }
-            const detached = Option.map(detachResult, (result) => result.entry);
             // Plain detaches preserve credentials held by live shared providers across workspace handoffs.
             if (input.revokeMcpCredential === true) {
               yield* mcpPrepareLock.withLock(input.threadId, clearMcpSession(input.threadId));
             }
-            if (Option.isNone(detached)) {
+            if (Option.isNone(detachResult)) {
               return;
             }
+            const { entry: detached, heldProviderThread } = detachResult.value;
             if (
-              detached.value.attachedThreadIds.size === 0 &&
-              !detached.value.supportsMultipleProviderThreads
+              detached.attachedThreadIds.size === 0 &&
+              !detached.supportsMultipleProviderThreads
             ) {
               yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
-                expectedRuntime: detached.value.runtime,
+                expectedRuntime: detached.runtime,
                 reason: "manual_shutdown",
                 ...(input.detail === undefined ? {} : { detail: input.detail }),
                 detachedThreadId: input.threadId,
               });
               return;
             }
-            const unloadThread = detached.value.exposedRuntime.unloadThread;
-            if (detached.value.supportsMultipleProviderThreads && unloadThread !== undefined) {
+            const unloadThread = detached.exposedRuntime.unloadThread;
+            if (detached.supportsMultipleProviderThreads && unloadThread !== undefined) {
+              // A cross-instance switch repoints the row before this detach, so the projection
+              // can miss what this session still holds for the thread.
+              if (
+                heldProviderThread !== undefined &&
+                !detachedProviderThreads.some((thread) => thread.id === heldProviderThread.id)
+              ) {
+                detachedProviderThreads = [...detachedProviderThreads, heldProviderThread];
+              }
               // The projection includes native children owned by other app threads;
               // lock each owner so an attached child stays loaded and later attaches wait.
               for (const providerThread of detachedProviderThreads) {
@@ -3805,12 +3848,13 @@ export const layerWithOptions = (
                   Effect.gen(function* () {
                     const entry = (yield* Ref.get(sessions)).get(key);
                     if (
-                      entry?.runtime !== detached.value.runtime ||
+                      entry?.runtime !== detached.runtime ||
                       entry.attachedThreadIds.has(ownerThreadId)
                     ) {
                       return;
                     }
-                    yield* unloadThread({ providerThread }).pipe(
+                    // SCIENT-FORK: the replacement owner may resume as soon as detach returns.
+                    yield* unloadThread({ providerThread, awaitRelease: true }).pipe(
                       Effect.timeout(UNLOAD_THREAD_TIMEOUT_MS),
                       Effect.catchCause((cause) =>
                         Effect.logWarning("orchestration-v2.driver-session.detach-unload-failed", {

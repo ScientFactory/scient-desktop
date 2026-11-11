@@ -193,6 +193,18 @@ instance:
 
 ## Model defaults
 
+Fresh Scient Agent, Pi, and Oh My Pi model preferences include GPT-6.1 Terra among the visible
+OpenAI account models when the agent discovers it. Saved visibility choices take precedence.
+The reasoning column shows the model’s supported levels directly; other agent options appear
+below them when available.
+
+On desktop and web, model choices show the company below the model name. Long names wrap
+so their distinguishing suffix stays readable. The picker keeps one bottom toolbar: **Fork to
+switch** on the left when available, with speed and permission controls on the right. Speed
+uses a compact menu when there are more than two tiers or an extra option such as Ultracode.
+Narrow windows put model options under **More** while keeping permissions visible. Fork's
+tooltip explains that it continues in a new chat.
+
 For providers that support custom models, **Settings → Providers → Models** lets you give an
 unlisted model a display name and define its options. Only options supported by the integration
 affect turns; declaring an option does not add a new provider capability. Antigravity uses the
@@ -449,15 +461,15 @@ Claude instances can also compact idle threads for you. See
 
 ## Goals
 
-With Codex and Claude, send `/goal` followed by what "done" means, for example
+With Codex, Claude, and OpenCode 2.2.5 or later, send `/goal` followed by what "done" means, for example
 `/goal all tests in packages/api pass`. The agent keeps working across turns
 until it judges the goal met. The thread shows **Goal** while it works, and a
 line at the end of the thread (above the composer on mobile) shows the goal and
 its progress.
 
 - `/goal` alone shows the current goal. `/goal clear` removes it.
-- Codex also supports `/goal pause` and `/goal resume`. Stopping a Codex goal
-  pauses it, and so does Codex ending its work without meeting the goal.
+- Codex and OpenCode also support `/goal pause` and `/goal resume`. Stopping
+  their goal pauses it. Codex also pauses when its work ends without meeting the goal.
 - Stopping Claude ends the current turn, but the goal stays set. Claude checks it
   again at the end of your next message.
 - Sending a new goal, or `/goal resume`, while the agent works stops the current
@@ -709,7 +721,7 @@ worktree** is selected, each background thread creates its own worktree.
 
 Forking lets you continue a conversation with a different provider or model
 without changing the original. Use **Fork** beside a sent message or completed
-response, use the compact **Fork** action in the model picker, or run `/fork`
+response, use **Fork to continue in a new chat** in the model picker, or run `/fork`
 to start from the latest completed response. In the new conversation, choose
 the provider and model you want before sending.
 

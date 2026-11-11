@@ -260,6 +260,30 @@ native offering and adopted provider work retain their receipt-aware control.
 Preserve upstream's effect ordering and transaction/cancellation machinery.
 The maintained boundaries are in [the separation map](docs/internals/scient-fork-divergence.md#extracted-owners-and-host-mounts).
 
+Scient's switch planning also runs on ordinary sends, so a project-folder move replaces the
+native binding. For providers that negotiate per-thread workspaces in a pooled process,
+`ProviderSwitchService.ts` compares the last bound workspace recorded by
+`ProviderTurnStartService.ts` in the optional `nativeMetadata.cwd`, not the pooled process's
+launch cwd; older records keep the conservative session-cwd fallback. Marked seams in
+`ProviderEventIngestor.ts` and `RunExecutionService.ts` apply
+`scient-provider/RecordedWorkspace.ts`, so the recorded value wins over an adapter's cached copy
+of the same session's row. Detach passes Scient's optional `awaitRelease` (`provider-core`
+`ProviderAdapter.ts`), and a marked block in `Adapters/CodexAdapterV2.ts` then waits up to 5
+seconds for `thread/closed`, including a close still pending from an earlier idle unsubscribe,
+because the next owner may be another app-server process. `ProviderSessionManager.ts` remembers
+threads an idle unload released (`idleUnloadedProviderThreads`) so a later handoff detach still
+joins that release. Preserve these divergences.
+
+The same change pre-adopts two open upstream fixes in their touched hunks:
+[#30647](https://github.com/pingdotgg/t3code/pull/30647)'s detach of the held native thread
+(`ProviderSessionManager.ts`, without its per-thread config fixture churn) and
+[#33767](https://github.com/pingdotgg/t3code/pull/33767)'s Codex unload delay launch argument and
+closing-thread resume retry. When syncing, take upstream's version of those hunks, then reapply
+the marked Scient additions inside them: the `awaitRelease` detach argument and
+`idleUnloadedProviderThreads` fallback in `ProviderSessionManager.ts`, the release wait in
+`CodexAdapterV2.unloadThread`, the `expectedRuntime` release argument, and the linked-environments
+test assertions. See [provider lifecycle](docs/internals/providers.md#registry-and-routing).
+
 This is the public ScientFactory-owned T3-derived desktop application. Official
 T3 supplies the maintained generic host platform; ScientFactory owns product
 policy, identity, scientific behavior, release decisions, and every deliberate
@@ -619,6 +643,25 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`44ebb2fe57465d32f2bd07c5eb3d8e871bdf5ed5` is recorded in
+[the 2026-11-11 44ebb2fe57 receipt](docs/internals/t3-upstream-sync-20261111-44ebb2fe57.md).
+Literal merge `18697158fb3c076f62fbe0aee8c9c37c0314d022` has owned base
+`b54217ce65ea261004b3222eec44de843db04f56` and the frozen official target as parents, retaining
+the 61 official commits after `7171fdd771`. T3's timeline viewport rules land in Scient's reader
+scrolling. A restart that Stop already reached is still refused, so nothing starts while a
+provider shuts down. No migrations. Release remains separate.
+
+The previous committed alignment through
+`7171fdd7716b05dc1b4be40c26ac78e8bb35f80c` is recorded in
+[the 2026-11-10 7171fdd771 receipt](docs/internals/t3-upstream-sync-20261110-7171fdd771.md).
+Literal merge `3bce08006815ca295d8e60f2402606ad4d666f0d` has owned base
+`a3cc2496dac3b2356f69864b73468fe7fdba33e4` and the frozen official target as parents, retaining
+the 80 official commits after `33db45effd`. Scient keeps its package install for the server
+runtime. T3's agent sign-in approval runs through Scient Connect, which merged first.
+`@pierre/diffs` moves to 1.7.0-beta.3 with Scient's editor additions. No migrations.
+Release remains separate.
+
+An earlier committed alignment through
 `33db45effd176c01a27b3f2976192e77ad82b301` is recorded in
 [the 2026-11-09 33db45effd receipt](docs/internals/t3-upstream-sync-20261109-33db45effd.md).
 Literal merge `dce80a7807a0f16dd1a3acdec885d3c644e48d73` has owned base
@@ -627,7 +670,7 @@ the 37 official commits after `402d0623d5`. T3's one-page Welcome replaces its w
 builds; Scient keeps Getting started. T3's "use in another app (MCP)" wizard is aligned with
 Scient names and stays dormant with T3 Connect. No migrations. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `402d0623d5f4160859607e9b7c11fc829fbe3e18` is recorded in
 [the 2026-11-09 402d0623d5 receipt](docs/internals/t3-upstream-sync-20261109-402d0623d5.md).
 Literal merge `4ced9d1208a9bdf0116ed3d7e60b72e53452d42c` has owned base
@@ -2009,6 +2052,16 @@ Two marked focus seams keep the caret where the person is typing:
 - `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
   takes the caret only if focus is still in the composer or nowhere in particular.
 
+## Desktop tab relay ends with a detach
+
+`DesktopBrowserChannel.ts` carries one marked block that T3 lacks: when the desktop detaches a
+tab, its relay socket closes, so Playwright's pending CDP commands fail. Upstream keeps the socket
+open after shutting the tab's queue, so a tab detached while the server was setting it up never
+settles. The desktop attach and preview event consumers await each setup in turn, so every later
+desktop tab is never set up and keeps showing the start page over a page that loaded. Offered to
+T3 as pingdotgg/t3code#34252 (issue #34251). When it merges, take T3's version, then delete the
+marked block and `DesktopBrowserChannel.scient.test.ts`.
+
 ## Multiple app windows
 
 Scient Desktop can run several full app windows in one Electron process
@@ -2120,6 +2173,35 @@ or the Files pane, still always remounts it); `AssetAccess.ts` reports the revis
 exact workspace file, not only PDFs. The boundary is offered to T3 as pingdotgg/t3code#32670 (issue #32669,
 `FileRevisionBoundary`); if it merges, take T3's and drop `ScientFileRevisionBoundary` and the
 marked key in `FilePreviewPanel.tsx`.
+
+### Kept documents
+
+Switching to another file and back reopened a document from scratch: the PDF was downloaded and
+parsed again, and a Word file fetched, prepared and laid out again. `scient/documentCache` keeps
+the opened document (a pdf.js document; a prepared Office file with its engine session) for the
+last two files a reader left, within 64 MB per GB of the computer's memory (128 to 512 MB, each
+kind estimating what it holds), and drops it when its file's revision changes. The drawn pages
+are not kept. Seams:
+
+- `OpenXmlOfficeViewer.tsx` prepares through `acquireOfficeDocument`, keyed by
+  `DocumentIdentityContext`, which `ScientFileRevisionBoundary` provides once the file's revision
+  is known (it now opens the preview only after that first check).
+- `WordDocument.tsx` and `Presentation.tsx` open their engine in a session (`openWordSession`,
+  `openPresentationSession`: T3's effect bodies, moved) and the viewer subscribes to it; a
+  `session` slot keeps it with the cached document. Without a slot the viewer owns it, as in T3.
+- `pdfRuntime.ts`: `destroy()` leaves the document open; `useScientPdfReader.ts` leases it through
+  `acquirePdfDocument` and shows a kept PDF at once, without waiting for its pages to paint.
+- `DataFileTable` checks the file's revision before reading its rows again, instead of on every
+  workspace mutation.
+- `FilePreviewPanel.tsx`: the preview body is `ScientDocumentShelf` (was a `div` with the same
+  props), and the PDF and Office branches are `ShelfItem`s. The shelf keeps the last left views
+  mounted but hidden while their reader parks its lease (`lease.park`): kept views and kept
+  documents share one budget, which counts a hidden view's canvases. A hidden PDF pauses pdf.js's
+  rendering queue and drops pages out of view (`pdfRuntime.ts` `park`); `OfficePages.tsx` draws
+  only pages in view while hidden (`useShelfHidden`). A reload counts for the file shown when it
+  was asked (`useChangesWhileShown`), so it does not remount another file's hidden view.
+
+When T3 changes those viewers' open or layout code, carry it into the session functions.
 
 When aligning, check that T3's `OfficePages` props, the paint keys (`paint:`, `slide:`) and the
 worker method maps still meet these seams. A T3 text layer for slides, or find of its own, should

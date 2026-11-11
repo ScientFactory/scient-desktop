@@ -92,10 +92,10 @@ describe("Scient analytics contract", () => {
     ).toBe(false);
     const freeText = normalizeInheritedEvent(
       "provider.turn.sent",
-      { provider: "a sentence, not a driver", model: "Not A Model Id!" },
+      { provider: "a sentence, not a driver", model: "  Lab   Model 7B!  " },
       context,
     );
-    expect(freeText?.properties).toMatchObject({ provider: "other", modelKey: "other" });
+    expect(freeText?.properties).toMatchObject({ provider: "other", modelKey: "lab model 7b!" });
   });
 
   it("attributes Pi and its model but never sends an endpoint address", () => {
@@ -138,8 +138,52 @@ describe("Scient analytics contract", () => {
     expect(modelKey("claude-opus-5-5")).toBe("claude-opus-5-5");
     expect(modelKey("anthropic/claude-opus-5-5")).toBe("claude-opus-5-5");
     expect(modelKey("lab-model-alpha")).toBe("lab-model-alpha");
-    expect(modelKey("a model name with spaces")).toBe("other");
+    expect(modelKey("gemini-4-argon")).toBe("gemini-4-argon");
+    expect(modelKey("A Model\tName  with Spaces")).toBe("a model name with spaces");
+    expect(modelKey(`x${"y".repeat(300)}`)).toHaveLength(120);
+    for (const privateLooking of [
+      "https://models.example.test/v1",
+      "/Users/someone/model.gguf",
+      "C:\\models\\local.gguf",
+      "someone@example.test",
+    ])
+      expect(modelKey(privateLooking)).toBe("other");
+    expect(modelKey("   ")).toBe("unknown");
     expect(modelKey(undefined)).toBe("unknown");
+  });
+
+  it("names the model that did a turn's work, with how many models the turn used", () => {
+    const usage = (properties: Record<string, unknown>) =>
+      normalizeInheritedEvent(
+        "provider.turn.completed",
+        { provider: "claudeAgent", terminalStatus: "completed", ...properties },
+        context,
+      )?.properties;
+    expect(
+      usage({
+        model: "claude-opus-5-5",
+        mixedModels: true,
+        mainModel: "claude-opus-5-5",
+        modelCount: 2,
+      }),
+    ).toMatchObject({ modelKey: "claude-opus-5-5", modelCount: 2 });
+    expect(usage({ model: "claude-opus-5-5", mixedModels: true })).toMatchObject({
+      modelKey: "claude-opus-5-5",
+    });
+    expect(usage({ model: "claude-opus-5-5", observedModel: "gemini-4-argon" })).toMatchObject({
+      modelKey: "gemini-4-argon",
+      observedModel: "gemini-4-argon",
+    });
+    const semantic = normalizeInheritedEvent(
+      "provider.turn.completed",
+      { provider: "omp", model: "gemini-4-argon", browserToolCalls: 7, browserToolFailures: 2 },
+      context,
+    )?.properties;
+    expect(semantic).toMatchObject({
+      modelKey: "gemini-4-argon",
+      browserToolCalls: 7,
+      browserToolFailures: 2,
+    });
   });
 
   it("uses bounded duration and failure values", () => {
