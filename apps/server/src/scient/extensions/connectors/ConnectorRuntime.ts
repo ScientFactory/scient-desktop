@@ -46,7 +46,6 @@ import {
 import { ServerEnvironment } from "../../../environment/ServerEnvironment.ts";
 import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts";
 import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
-import * as Cause from "effect/Cause";
 import * as ServerConfig from "../../../config.ts";
 import { ProjectStoreV2 } from "../../../orchestration-v2/ProjectStore.ts";
 import {
@@ -115,6 +114,7 @@ import {
 import type { McpInvocationScope } from "../../../mcp/McpInvocationContext.ts";
 import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
 import { makeConnectorLogs } from "./ConnectorLogs.ts";
+import { observeFeature } from "./observedFeature.ts";
 import { makeLocalConnectorAuthoring } from "./LocalConnectorAuthoring.ts";
 import { type LocalSignInHandler, makeLocalConnectorHost } from "./LocalConnectorProcesses.ts";
 import { makeLocalConnectors } from "./LocalConnectors.ts";
@@ -540,37 +540,7 @@ export const makeConnectorRuntime = Effect.fn("ConnectorRuntime.make")(function*
   });
 
   const analytics = Option.getOrUndefined(yield* Effect.serviceOption(AnalyticsService));
-  /** `feature.used` with outcome and timing; facts are fixed codes and counts, never names. */
-  const observed =
-    (feature: string, facts: Record<string, string | number | boolean> = {}) =>
-    <A, E extends { readonly reason?: string }, R>(
-      effect: Effect.Effect<A, E, R>,
-      more?: (value: A) => Record<string, string | number | boolean>,
-    ): Effect.Effect<A, E, R> => {
-      if (analytics === undefined) return effect;
-      return Effect.flatMap(Clock.currentTimeMillis, (startedAt) =>
-        effect.pipe(
-          Effect.onExit((exit) =>
-            Effect.flatMap(Clock.currentTimeMillis, (finishedAt) =>
-              analytics.record("feature.used", {
-                feature,
-                ...facts,
-                ...(Exit.isSuccess(exit)
-                  ? { outcome: "ok", ...more?.(exit.value) }
-                  : {
-                      outcome: Cause.hasInterruptsOnly(exit.cause) ? "cancelled" : "error",
-                      failureClass: Option.match(Cause.findErrorOption(exit.cause), {
-                        onNone: () => "unknown",
-                        onSome: (error) => error.reason ?? "unknown",
-                      }),
-                    }),
-                durationMs: finishedAt - startedAt,
-              }),
-            ).pipe(Effect.ignoreCause()),
-          ),
-        ),
-      );
-    };
+  const observed = observeFeature(analytics);
   const logs = yield* makeConnectorLogs(options.stateDir);
   const broker = yield* Effect.serviceOption(PreviewAutomationBroker);
   const environment = yield* Effect.serviceOption(ServerEnvironment);

@@ -49,6 +49,9 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   t3_account_fill: tool(["Fill", "Filling", "Filled", "a saved field"], "scient-accounts"),
   t3_account_add: tool(["Ask for", "Asking for", "Asked for", "a key"], "scient-accounts"),
   t3_connector_setup: tool(["Set up", "Setting up", "Set up", "a connector"], "scient-accounts"),
+  t3_connector_list: tool(["List", "Listing", "Listed", "connectors"], "scient-accounts"),
+  t3_connector_add: tool(["Add", "Adding", "Added", "a connector"], "scient-accounts"),
+  t3_connector_control: tool(["Change", "Changing", "Changed", "a connector"], "scient-accounts"),
   t3_connector_copy: tool(
     ["Copy", "Copying", "Copied", "a connector to change"],
     "scient-accounts",

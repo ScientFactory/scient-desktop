@@ -29,6 +29,7 @@ import {
   restoreFolder,
   writeFolder,
 } from "../../storage/FolderHistory.ts";
+import { agentStatusOf } from "./agentStatus.ts";
 import type { ConnectorLogs } from "./ConnectorLogs.ts";
 import { ConnectorRecord } from "./ConnectorStateStore.ts";
 import { connectorTemplate } from "./connectorTemplate.ts";
@@ -186,18 +187,20 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
 
   const findConnector = Effect.fn("LocalConnectorAuthoring.find")(function* (name: string) {
     const wanted = name.trim().toLowerCase();
-    const record = (yield* deps.records).find(
+    const named = (yield* deps.records).filter(
       (item) =>
-        item.local !== undefined &&
-        (item.serverName === name.trim() ||
-          item.connectorId === name.trim() ||
-          item.displayName.toLowerCase() === wanted),
+        item.serverName === name.trim() ||
+        item.connectorId === name.trim() ||
+        item.displayName.toLowerCase() === wanted,
     );
-    if (record === undefined)
-      return yield* notFound(
-        `No local connector is named ${name}. Its MCP server name works best.`,
-      );
-    return record;
+    const record = named.find((item) => item.local !== undefined);
+    if (record !== undefined) return record;
+    const hosted = named[0];
+    return yield* hosted === undefined
+      ? notFound(`No local connector is named ${name}. scient_connector_list shows them.`)
+      : invalid(
+          `${hosted.displayName} runs online, so it has no code here. scient_connector_check {"connector":"${hosted.serverName}"} tests it; scient_connector_control signs in again.`,
+        );
   });
 
   const requireFolder = Effect.fn("LocalConnectorAuthoring.requireFolder")(function* (
@@ -216,15 +219,6 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
       );
     return NodePath.resolve(folder);
   });
-
-  const statusOf = (summary: ConnectorSummary) =>
-    !summary.enabled
-      ? "off"
-      : summary.local?.problem !== undefined || summary.lastError !== undefined
-        ? "error"
-        : (summary.local?.missing.length ?? 0) > 0
-          ? "needs-setup"
-          : "ready";
 
   /** A copy of a connector, or the template, in the chat's folder, for the agent to change. */
   const copy = Effect.fn("LocalConnectorAuthoring.copy")(function* (input: {
@@ -306,7 +300,7 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
       folder: target,
       variant: record.local!.owned ? ("fix" as const) : ("fork" as const),
       connector: record.serverName,
-      status: statusOf(summary),
+      status: agentStatusOf(summary),
       ...(summary.lastError === undefined ? {} : { lastError: summary.lastError }),
       ...(summary.local?.problem === undefined ? {} : { problem: summary.local.problem }),
       ...(log.length === 0 ? {} : { log }),
@@ -734,7 +728,7 @@ export const makeLocalConnectorAuthoring = (deps: AuthoringDeps) => {
     return { fileName: `${slug(record.displayName)}.mcpb`, base64: bytes.toString("base64") };
   });
 
-  return { copy, check, save, undo, keepRemoved, exportBundle, statusOf };
+  return { copy, check, save, undo, keepRemoved, exportBundle };
 };
 
 export type LocalConnectorAuthoring = ReturnType<typeof makeLocalConnectorAuthoring>;

@@ -15,7 +15,9 @@ import {
   AccountsError,
   AccountId,
   type ConnectorId,
+  type DiscoverEntry,
   EnvironmentId,
+  ExtensionsError,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
@@ -44,7 +46,13 @@ import { noKeychain } from "../../accounts/Accounts.testkit.ts";
 import * as AccountsConnectorCredentials from "../../accounts/AccountsConnectorCredentials.ts";
 import { AccountVault, makeAccountVault } from "../../accounts/AccountVault.ts";
 import * as LocalDuplexProcess from "../../execution/LocalDuplexProcess.ts";
-import { ConnectorRuntime } from "../ExtensionsServices.ts";
+import {
+  addConnector,
+  controlConnector,
+  listConnectors,
+  testConnector,
+} from "../ConnectorAgentControl.ts";
+import { ConnectorRuntime, ExtensionsDiscover } from "../ExtensionsServices.ts";
 import * as PluginConnectorEligibility from "../plugins/PluginConnectorEligibility.ts";
 import * as ConnectorCallbackRoute from "./ConnectorCallbackRoute.ts";
 import * as ConnectorCredentialStore from "./ConnectorCredentialStore.ts";
@@ -3035,6 +3043,151 @@ const versionOf = (folder: string) =>
         }
       ).version,
   );
+
+describe("connectors agents run", () => {
+  const noBrowser = () => Effect.succeed(false);
+
+  it.live("lists, adds from Discover and switches a connector as the page does", () =>
+    Effect.gen(function* () {
+      const accounts = fakeKeyAccounts();
+      const config = yield* ServerConfig.ServerConfig;
+      const archive = NodePath.join(config.stateDir, "..", "agent-echo.mcpb");
+      yield* writeBundle(archive);
+      const bytes = yield* Effect.promise(() => NodeFSP.readFile(archive));
+      const client = HttpClient.make((request) =>
+        Effect.succeed(HttpClientResponse.fromWeb(request, new Response(bytes))),
+      );
+      const harness = yield* makeHarness().pipe(
+        Effect.provide(Layer.merge(accounts.layer, Layer.succeed(HttpClient.HttpClient, client))),
+      );
+      const echo: DiscoverEntry = {
+        name: "io.example/echo",
+        version: "1.2.0",
+        title: "Echo",
+        remotes: [],
+        categories: [],
+        installable: true,
+        localBundle: {
+          url: "https://example.com/echo.mcpb",
+          sha256: NodeCrypto.createHash("sha256").update(bytes).digest("hex"),
+        },
+      };
+      const docker: DiscoverEntry = {
+        name: "io.example/docker",
+        version: "1.0.0",
+        remotes: [],
+        categories: [],
+        installable: false,
+        unsupportedReason: "Runs in Docker, which Scient doesn't start",
+      };
+      let installed: ConnectorId | undefined;
+      const known = () => [
+        installed === undefined ? echo : { ...echo, installedConnectorId: installed },
+        docker,
+      ];
+      const discover = Layer.mock(ExtensionsDiscover)({
+        entry: ({ name }) => {
+          const found = known().find((entry) => entry.name === name);
+          return found === undefined
+            ? Effect.fail(new ExtensionsError({ reason: "not-found", message: "Not listed." }))
+            : Effect.succeed(found);
+        },
+        search: ({ scope }) =>
+          Effect.succeed({
+            entries: scope === "registry" ? known() : [],
+            fetchedAt: "2026-11-11T00:00:00.000Z",
+          }),
+      });
+      const agent = <A, E>(effect: Effect.Effect<A, E>) =>
+        effect.pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+          Effect.provide(discover),
+        );
+
+      const added = yield* agent(addConnector({ from: echo.name }));
+      expect(added).toMatchObject({ status: "needs-setup", missing: ["API key"], tools: [] });
+      expect(added.message).toContain("scient_connector_setup");
+      installed = (yield* harness.runtime.list()).connectors[0]!.connectorId;
+      expect((yield* agent(addConnector({ from: echo.name }))).message).toContain("already added");
+      const refused = yield* Effect.flip(agent(addConnector({ from: docker.name })));
+      expect(refused.message).toContain("Runs in Docker");
+
+      const row = {
+        connector: added.connector,
+        name: "Echo",
+        kind: "local",
+        on: true,
+        status: "needs-setup",
+        missing: ["API key"],
+      };
+      expect(yield* agent(listConnectors({ query: "echo" }))).toEqual({
+        connectors: [row],
+        found: [
+          { name: echo.name, title: "Echo", addable: false, added: added.connector },
+          { name: docker.name, addable: false, reason: docker.unsupportedReason },
+        ],
+      });
+
+      yield* agent(controlConnector({ connector: added.connector, action: "off" }, noBrowser));
+      expect((yield* agent(listConnectors({}))).connectors).toEqual([
+        { ...row, on: false, status: "off" },
+      ]);
+      const on = yield* agent(
+        controlConnector({ connector: added.connector, action: "on" }, noBrowser),
+      );
+      expect(on).toMatchObject({ status: "needs-setup" });
+      expect(
+        (yield* agent(controlConnector({ connector: "Echo", action: "restart" }, noBrowser)))
+          .message,
+      ).toContain("restarted");
+      const local = yield* Effect.flip(
+        agent(controlConnector({ connector: "Echo", action: "sign-in" }, noBrowser)),
+      );
+      expect(local.message).toContain("scient_connector_setup");
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.live("tests a hosted connector and opens its sign-in for the user", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness();
+      const config = yield* ServerConfig.ServerConfig;
+      const added = yield* harness.addSecure();
+      const server = added.connector.serverName;
+      const agent = <A, E>(effect: Effect.Effect<A, E>) =>
+        effect.pipe(
+          Effect.provideService(ConnectorRuntime, harness.runtime),
+          Effect.provideService(ServerConfig.ServerConfig, { ...config, port: 4777 }),
+        );
+
+      const checked = yield* agent(testConnector(server));
+      expect(checked).toMatchObject({ ok: false, tools: [] });
+      expect(checked.error).toContain('"action":"sign-in"');
+
+      const opened: string[] = [];
+      const signIn = yield* agent(
+        controlConnector({ connector: server, action: "sign-in" }, (url) =>
+          Effect.sync(() => opened.push(url) > 0),
+        ),
+      );
+      expect(signIn).toMatchObject({ status: "needs-sign-in" });
+      expect(signIn.message).toContain("Opened Vendor's sign-in");
+      expect(signIn).not.toHaveProperty("signInUrl");
+      expect(new URL(opened[0]!).searchParams.get("redirect_uri")).toBe(
+        "http://127.0.0.1:4777/oauth/connectors/callback",
+      );
+      // Without a browser in the chat, the agent gets the link to give the user.
+      const linked = yield* agent(
+        controlConnector({ connector: server, action: "sign-in" }, noBrowser),
+      );
+      expect(linked.signInUrl).toContain(`${vendor.base}/as/authorize`);
+
+      const restart = yield* Effect.flip(
+        agent(controlConnector({ connector: server, action: "restart" }, noBrowser)),
+      );
+      expect(restart.message).toContain("runs online");
+    }).pipe(Effect.provide(testLayer)),
+  );
+});
 
 describe("connectors agents make and fix", () => {
   it.live("checks a folder without its key, saves it with history, and Undo walks back", () =>
