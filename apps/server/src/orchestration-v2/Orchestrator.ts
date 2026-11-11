@@ -6620,14 +6620,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     ) {
       dispatchMode = { type: "queue_after_active" };
     }
-    // An explicit restart that Stop reached has only its start left, so it
-    // queues behind the stopping run like any other start.
-    if (
-      dispatchMode.type === "restart_active" &&
-      (yield* stopReachedRun(command, command.threadId, dispatchMode.targetRunId))
-    ) {
-      dispatchMode = { type: "start_immediately" };
-    }
+    // SCIENT-FORK:START — Stop-first: unlike T3, an explicit restart that Stop already reached is
+    // refused below, storing nothing, so it never creates a replacement owner during teardown.
+    // SCIENT-FORK:END
     const freshContext = command.freshContext === true;
     if (
       freshContext &&

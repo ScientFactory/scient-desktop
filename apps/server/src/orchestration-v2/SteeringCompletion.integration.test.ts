@@ -1831,35 +1831,36 @@ it.effect("refuses a steer but starts a restart sent into a run that Stop reache
           .pipe(Effect.flip);
         assert.equal(steerError._tag, "OrchestratorDispatchError");
         assert.include(String(steerError.cause), "is stopping and cannot be steered");
-        yield* orchestrator.dispatch({
-          type: "message.dispatch",
-          commandId: CommandId.make("restart"),
-          threadId,
-          messageId: MessageId.make("message:restart"),
-          text: "restart",
-          attachments: [],
-          modelSelection: runSelection,
-          dispatchMode: { type: "restart_active", targetRunId: first.runId },
-          createdBy: "user",
-          creationSource: "web",
-        });
+        const restart = (key: string) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(key),
+            threadId,
+            messageId: MessageId.make(`message:${key}`),
+            text: "restart",
+            attachments: [],
+            modelSelection: runSelection,
+            dispatchMode: { type: "restart_active", targetRunId: first.runId },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        // SCIENT-FORK:START — Stop-first: a restart Stop already reached is refused like a steer,
+        // storing nothing; sent again once the run has stopped, it starts as a new turn.
+        const restartError = yield* restart("restart-during-stop").pipe(Effect.flip);
+        assert.equal(restartError._tag, "OrchestratorDispatchError");
+        assert.include(String(restartError.cause), "is stopping and cannot be steered");
         yield* worker.drain();
-        // SCIENT-FORK:START — Stop holds the queue in Scient and a restart does not release it,
-        // so the restart waits in the held queue until Resume instead of being lost.
-        const waiting = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
-          (run) => run.userMessageId === "message:restart",
+        assert.notEqual(
+          (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+            (run) => run.id === first.runId,
+          )?.status,
+          "running",
         );
-        assert.equal(waiting?.status, "queued");
-        assert.isTrue(waiting?.queueHeld);
         assert.deepEqual(
           started.map((turn) => turn.message.text),
           ["first"],
         );
-        yield* orchestrator.dispatch({
-          type: "queue.resume",
-          commandId: CommandId.make("resume"),
-          threadId,
-        });
+        yield* restart("restart");
         yield* worker.drain();
         // SCIENT-FORK:END
 

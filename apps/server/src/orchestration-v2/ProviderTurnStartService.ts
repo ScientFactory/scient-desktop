@@ -1839,6 +1839,10 @@ export const layer: Layer.Layer<
         runId: run.id,
         activeAttemptId: attempt.id,
         expectedStatus: "starting",
+        // SCIENT-FORK:START — candidate upstream fix: `run` was read before the provider turn
+        // opened; a completion acknowledged since then keeps its cleared delivery.
+        keepCurrentDelegatedCompletion: true,
+        // SCIENT-FORK:END
         events,
       });
       if (!runningWrite.committed) {
