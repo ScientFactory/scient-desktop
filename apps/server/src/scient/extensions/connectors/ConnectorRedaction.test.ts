@@ -365,6 +365,10 @@ describe("free text a program writes", () => {
     expect(
       redactText("x spaced key value 123 y", programCredentials(["spaced key value 123"])),
     ).toBe(REDACTED);
+    // regression: keys under the cookie minimum were dropped, so a 4-character key showed.
+    expect(redactText("used k4y9 here", programCredentials(["k4y9"]))).toBe(
+      `used ${REDACTED} here`,
+    );
     // Cut after redaction: the word the cut splits is still checked whole.
     expect(redactText(`see short-key-1`, credentials, 6)).toBe(`see ${REDACTED}`);
   });

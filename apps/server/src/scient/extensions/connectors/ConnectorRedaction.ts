@@ -202,10 +202,12 @@ export const programCredentials = (
   cookies: Iterable<string> = [],
 ): CredentialSet => {
   const given = [...keys].filter((key) => key.length > 0);
-  return credentialSet(given.filter(isProtectableCredential), [
-    ...cookies,
-    ...given.filter((key) => !isProtectableCredential(key)),
-  ]);
+  const base = credentialSet(given.filter(isProtectableCredential), cookies);
+  // Every key it was given stays hidden, however short; the cookie minimum is not for keys.
+  const short = given.filter((key) => !isProtectableCredential(key));
+  const tokens = [...new Set([...base.tokens, ...short])];
+  const bytes = (value: string) => Buffer.from(value, "utf8").toString("latin1");
+  return { ...base, tokens, tokenBytes: tokens.map(bytes) };
 };
 
 /** Room past a cut so a credential the cut would split is still seen whole. */
