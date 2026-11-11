@@ -46,7 +46,7 @@ export function FontControls(props: {
       }}
     >
       <div className="grid gap-1.5">
-        <span className="text-xs text-muted-foreground">Font</span>
+        <span className="text-xs text-foreground/70">Font</span>
         <Input
           size="sm"
           type="search"
@@ -65,7 +65,7 @@ export function FontControls(props: {
           />
           {groups.map((group) => (
             <div key={group.label}>
-              <div className="px-2 pt-2 pb-0.5 text-xs text-muted-foreground">{group.label}</div>
+              <div className="px-2 pt-2 pb-0.5 text-xs text-foreground/70">{group.label}</div>
               {group.fonts.map((font) => (
                 <FontOption
                   key={font.name}
@@ -84,7 +84,7 @@ export function FontControls(props: {
         </div>
       </div>
       <div className="grid gap-1.5">
-        <span className="text-xs text-muted-foreground">Size (pt)</span>
+        <span className="text-xs text-foreground/70">Size (pt)</span>
         <NumberField
           size="sm"
           className="w-36"
@@ -114,7 +114,7 @@ export function FontControls(props: {
               disabled={props.disabled}
               className={cn(
                 "rounded-md border px-1.5 py-0.5 text-xs tabular-nums hover:bg-accent disabled:opacity-50",
-                props.size === preset ? "border-ring" : "border-border text-muted-foreground",
+                props.size === preset ? "border-ring" : "border-border text-foreground/70",
               )}
               onClick={() => props.onSize(preset)}
             >
@@ -124,7 +124,7 @@ export function FontControls(props: {
           <button
             type="button"
             disabled={props.disabled || props.size === null}
-            className="rounded-md px-1.5 py-0.5 text-xs text-muted-foreground hover:bg-accent disabled:opacity-50"
+            className="rounded-md px-1.5 py-0.5 text-xs text-foreground/70 hover:bg-accent disabled:opacity-50"
             onClick={() => props.onSize(null)}
           >
             Default size
@@ -149,14 +149,14 @@ function FontOption(props: {
       role="option"
       aria-selected={props.selected}
       disabled={props.disabled}
-      className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-start hover:bg-accent aria-selected:bg-accent disabled:opacity-50"
+      className="flex w-full items-center justify-between gap-3 rounded-md px-2 py-1.5 text-start hover:bg-accent aria-selected:bg-accent disabled:opacity-50"
       style={props.css === undefined ? undefined : { fontFamily: props.css }}
       onClick={props.onSelect}
     >
       <span>{props.label}</span>
-      {props.selected && <span className="font-sans text-xs text-muted-foreground">current</span>}
+      {props.selected && <span className="font-sans text-xs text-foreground/70">current</span>}
       {props.note !== undefined && (
-        <span className="font-sans text-xs text-muted-foreground">{props.note}</span>
+        <span className="font-sans text-xs text-foreground/70">{props.note}</span>
       )}
     </button>
   );
