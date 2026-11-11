@@ -286,6 +286,26 @@ cannot be searched.
 A quote you take from a Library PDF with **Ask in chat** records which file it
 came from, so it can be found again exactly.
 
+## Ask the Library
+
+To ask a question that should be answered from your papers, open the Library's
+**⋯** menu and choose **Ask the Library** (shown once the Library has
+sources). It puts this sentence at the start of the chat's message box, before
+anything you have already typed:
+
+> Answer from the papers in my Library: search their full text, cite the paper
+> and page for each claim, check any quotes, and say so if my Library does not
+> answer it.
+
+Type your question after it and send it. The answer gives the paper and page
+for each claim, and quotes are checked against the PDF text first. When the
+papers do not answer the question, the agent says so plainly; if it then uses
+the web, it says that too.
+
+You do not need the button for this. Whenever a question is about the
+literature and the project has a Library, the agent follows the same rules by
+default. The button makes them explicit for one question.
+
 ## Save from the Browser
 
 In the Browser, choose **Save to Library** from the tab's menu. Select a

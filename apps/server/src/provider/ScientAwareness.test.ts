@@ -98,7 +98,7 @@ describe("Scient awareness", () => {
   });
 
   it("points literature work at the Library only with Library access in a verified project", () => {
-    expect(wordCount(SCIENT_LIBRARY_AWARENESS)).toBeLessThanOrEqual(80);
+    expect(wordCount(SCIENT_LIBRARY_AWARENESS)).toBeLessThanOrEqual(95);
     expect(buildScientAwareness(new Set(["sources:read"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_LIBRARY_AWARENESS}`,
     );
