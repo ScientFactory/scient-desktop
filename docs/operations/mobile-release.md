@@ -29,9 +29,10 @@ values are in `.env.example`.
 2. **Apple Developer Program** on team `XR49G75382`, with the three bundle IDs and an
    App Store Connect record for `com.scientfactory.mobile`. Give EAS an App Store
    Connect API key (`eas credentials`) so it manages signing, the push key and
-   TestFlight uploads. `eas submit` finds the app from that App Store Connect record
-   once it exists; to pin it, add the record's Apple ID to `eas.json` as
-   `submit.production.ios.ascAppId` in a reviewed PR.
+   TestFlight uploads. Non-interactive submission (the workflows' `--auto-submit`)
+   requires the record's Apple ID in `eas.json` as `submit.production.ios.ascAppId`
+   (`testflight` inherits it): add it in a reviewed PR before setting
+   `SCIENT_MOBILE_RELEASE`.
 3. **Google Play Console** with an app for each package you publish, Play App
    Signing turned on, and a service account with release permission. Upload the
    service-account JSON to EAS (`eas credentials`, Android, Google Service Account).

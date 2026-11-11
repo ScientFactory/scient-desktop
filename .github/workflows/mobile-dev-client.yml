@@ -344,7 +344,9 @@ jobs:
         run: |
           node scripts/mobile-native-client.ts ensure ios --prepare ${EXPECTED_FINGERPRINT:+--expect-fingerprint "$EXPECTED_FINGERPRINT"} | tee "$RUNNER_TEMP/dev-client.log"
           result="$(tail -n 1 "$RUNNER_TEMP/dev-client.log")"
-          echo "file=$(jq -r '.file' <<<"$result")" >> "$GITHUB_OUTPUT"
+          # A zipped .app keeps its bundle layout and executable bits through the artifact upload.
+          ditto -c -k --keepParent "$(jq -r '.file' <<<"$result")" "$RUNNER_TEMP/ScientDev.app.zip"
+          echo "file=$RUNNER_TEMP/ScientDev.app.zip" >> "$GITHUB_OUTPUT"
           echo "### ios dev client: \`$(jq -r '.source' <<<"$result")\` for fingerprint \`$(jq -r '.fingerprint' <<<"$result")\`" >> "$GITHUB_STEP_SUMMARY"
 
       # SCIENT-FORK: the copy testers download when no shared cache holds the client.

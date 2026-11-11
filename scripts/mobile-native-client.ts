@@ -1261,7 +1261,12 @@ const main = Command.make(
         `Client ready for ${platform} (${artifact.source}); lease a device and install.`,
       );
       return yield* Console.log(
-        yield* encodeOutput({ status: "ready", source: artifact.source, fingerprint: current }),
+        yield* encodeOutput({
+          status: "ready",
+          source: artifact.source,
+          fingerprint: current,
+          file: artifact.file,
+        }),
       );
     }
     if (Option.isSome(session)) {
