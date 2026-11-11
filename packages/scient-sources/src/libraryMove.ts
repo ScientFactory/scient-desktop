@@ -1026,12 +1026,10 @@ async function verifyAndBackUp(
     const copied = await hashFile(NodePath.join(files.files, sha256.slice(0, 2), `${sha256}.pdf`));
     if (copied !== sha256) throw new Error("A PDF copied into the library does not verify.");
   }
+  const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
   for (const source of journal.sources) {
     if (source.identity === "removed") continue;
-    const target = resolveScientLibraryAlias(
-      await readLibraryAliasesAt(ctx.libraryRoot),
-      source.sourceId,
-    );
+    const target = resolveScientLibraryAlias(aliases, source.sourceId);
     if (!(await readLibraryRecord(ctx, target)) && !(await readLibraryTrash(ctx, target))) {
       throw new Error("A record copied into the library is missing.");
     }
@@ -1582,6 +1580,7 @@ async function switchOver(
 async function counterpartVerifies(
   ctx: MoveContext,
   journal: ScientLibraryMoveJournal,
+  aliases: ScientLibraryAliases,
   relative: string,
 ): Promise<boolean> {
   const filePath = absolute(ctx.root, relative);
@@ -1613,10 +1612,7 @@ async function counterpartVerifies(
   if (record) {
     const moved = journal.sources.find((source) => source.projectSourceId === record[1]);
     if (moved && moved.identity !== "removed") {
-      const target = resolveScientLibraryAlias(
-        await readLibraryAliasesAt(ctx.libraryRoot),
-        moved.sourceId,
-      );
+      const target = resolveScientLibraryAlias(aliases, moved.sourceId);
       if (!(await readLibraryRecord(ctx, target)) && !(await readLibraryTrash(ctx, target))) {
         return false;
       }
@@ -1648,10 +1644,11 @@ async function cleanUp(
     });
   }
   const left = [...new Set([...current.cleanup, ...current.retry])];
+  const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
   const retry: string[] = [];
   for (const [index, relative] of left.entries()) {
     if (index === Math.floor(left.length / 2)) crash(ctx, "mid-cleanup");
-    if (!(await counterpartVerifies(ctx, current, relative))) {
+    if (!(await counterpartVerifies(ctx, current, aliases, relative))) {
       retry.push(relative);
       continue;
     }

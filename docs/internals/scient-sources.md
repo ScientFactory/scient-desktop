@@ -650,6 +650,131 @@ Collection submenu. In the Library view rows pinned here say "In this project",
 and a pin this library lacks says "Not in this Library" in either view. The
 review screen uses the review's `records` when present.
 
+### Moving a project into the library (built, switched off)
+
+The one-time move of design section 5 lives in
+`packages/scient-sources/src/libraryMove.ts`; the server reaches it only
+through the library backend. With the constant on `"project"`, nothing calls
+it, no journal is written and every route reads the v1 store as before.
+
+**When it runs.** `resolveScientSourcesStoreFor` (`SourcesBackend.ts`) on the
+library backend:
+
+- A call with write authority (a route that needs `orchestration:operate`, an
+  agent call with `sources:write`) first runs `moveProjectIntoLibrary`
+  (`LibraryMove.ts`). A project with nothing to move costs a journal read and a
+  folder listing; git runs only when a move runs.
+- A read-only call never starts a move. It reads the v1 store while the
+  project is not moved (`readScientLibraryMoveState`), and writes nothing.
+- A project that was moved back, or whose v1 store has an import another
+  process touched in the last ten minutes, stays on its v1 store. So does a
+  project whose move failed; the failure is logged and the next write retries.
+- `LibraryMovePass.ts` runs the same move for every project the environment
+  lists, two minutes after start and every six hours, one project at a time.
+  A folder that is not there (an unattached drive) waits for a later pass.
+
+**Journal.** `<library>/migrations/<instanceId>/journal.json`, written with an
+atomic replace. States: `copying`, `prepared`, `committed`, `cleanup`, `done`,
+and `moved-back` after "Move back into this project". It records the run
+number, each v1 source's library ID and identity outcome (`copied`, `same`,
+`older`, `newer`, `diverged`, `removed`), the PDFs and annotation files moved,
+every project artifact (destination, plan `create` / `keep` / `replace` /
+`conflict-copy`, destination hash at staging, staged hash), the cleanup and
+retry lists, the merge counts, review conflicts and whether git tracks
+`.scient/sources`. Only this checkout's journal in `committed` or `cleanup`
+deletes v1 files; a `pins.json` on its own never does.
+
+**Steps.**
+
+1. Locks: this project's move, reviews and pins locks, then the library lock,
+   held for the whole run. Abandoned staging is dropped.
+2. Copy: records rewritten to format 2 (no `projectId`; the note goes to the
+   pin), their history, trash entries, Zotero merge bases, PDFs and full text
+   by hash, and annotation files for library PDFs, joined by annotation ID
+   (the higher revision wins). Every write is an exclusive create; a record ID
+   the library already has goes through the identity check below. Each
+   project source ID is written to the instance map (`resolvedBy: "moved"`).
+3. Verify and back up: every copied PDF is hashed and every mapped record read
+   back. Every v1 file except PDFs and full text is copied to
+   `migrations/<instanceId>/v1/<run>/` (a PDF whose bytes do not match its
+   name goes there too). A backup file is never overwritten; another version
+   sits beside it as `<name>.~<sha12>`.
+4. `mergeScientLibraryDuplicates`, then collections and saved searches move in.
+   A collection already in the library under the same ID gains the members; a
+   name another collection uses gets the project folder's name, "Methods
+   (Thesis)".
+5. Stage under `.scient/library/.staging/<runId>/`: each review (its v1 bytes),
+   its record snapshot (built from the library records, captured at each
+   record's last change so a rerun stages the same bytes), the bibliography
+   copies and the pins. Each staged file is read back and decoded, then planned
+   against the destination's bytes (the join rules below).
+6. Switch: each artifact is published from its staged bytes, `pins.json` last,
+   and read back against its staged hash. A destination that changed since
+   staging restages the plan (up to four times). A destination that is the
+   start of the staged bytes is a copy cut short; it is set aside as
+   `<name>.broken-<time>` and published again.
+7. Cleanup: each v1 file is deleted once its counterpart verifies (library
+   record, PDF or text by hash, annotation file by IDs, review or bibliography
+   copy by journal hash, everything else by its backup copy). A file that
+   cannot be deleted (a PDF open on Windows) stays in `retry` and the journal
+   stays in `cleanup` until a later open deletes it.
+
+**Recovery** follows the design's table: no journal or `copying` reruns from
+step 1 (a rerun finds its earlier copies identical); `prepared` reruns the
+switch, which treats an artifact already at its staged hash as done; a
+`pins.json` that does not decode is set aside, one that decodes but differs is
+joined on restage; `committed` and `cleanup` finish the cleanup; `done` with
+files under `.scient/sources` again starts run `n + 1`. A staging folder that
+came with a copied project is dropped by the next move.
+
+**Joins.** A review with other bytes at the destination stays in force; the
+incoming version and its snapshot go to
+`.scient/library/conflicts/reviews/<reviewId>/<sha12>.json` and `.works.json`.
+Equal reviews unite their snapshots, keeping the existing entry where the two
+differ (the incoming entry goes to `snapshot-<sha12>.works.json`). A
+bibliography copy is replaced only when the root file equals the v1 copy. A
+`pins.json` that exists gains the v1 pins it lacks, under its own keys where
+the source is already pinned (`joinScientProjectPinsText` keeps every existing
+pin's bytes and fields a newer Scient wrote).
+
+**Copies of one project** (`lineage` in `libraryMove.ts`): same content at the
+same revision, or the library's history holding the incoming revision, maps
+the ID to the library record; incoming history holding the library's current
+revision applies the incoming revisions; otherwise the copy is imported under
+a new ID (`moved-copy:<instanceId>:<id>`), the instance map sends this
+checkout's ID to it, and the pair is marked `divergent-copies` so the
+duplicate pass never merges it. A record merged away since an earlier run
+maps to its survivor; one in the library trash with the same lineage stays
+removed.
+
+**Review conflicts** (`libraryReviewConflicts.ts`): `listScientReviewConflicts`
+and `resolveScientReviewConflict` with `keep`, `use-other` or `combine`. The
+version not kept goes to `migrations/<instanceId>/reviews/<reviewId>/` first.
+Combine unites searches (a search in both keeps its details and the union of
+its IDs; differing details are reported), other IDs, duplicates, distinct
+pairs, screening and retrieval. A pair marked duplicate in one version and
+distinct in the other is dropped from both lists and reported as undecided. A
+source whose latest decision differs between the two gets a `cleared` entry
+with the note "Decided differently in two copies". The snapshot covering the
+whole membership is published and read back before the review. Nothing calls
+these yet; 5e adds the conflict line and the agent action.
+
+**Git.** `libraryMoveGitTracked` runs `git ls-files -z -- .scient/sources`
+through `GitVcsDriver` before the first cleanup. Tracked files are deleted from
+the working tree like any other and left for the person to commit;
+`scientLibraryMoveStatusLines` gives "The Library moved out of this project.
+Commit the change to stop storing PDFs in git." and the merge line "Merged N
+duplicates. K kept different values: Review." for 5e to show.
+
+**Move back into this project** (`moveScientProjectBackIntoProject`; the
+organize route and `scient_sources_organize` take `move-back`): finishes a
+pending cleanup, restores every run's backup into `.scient/sources`, writes each
+pinned record's later library state as a new v1 revision under the pin's key
+and project note, copies its PDFs back, copies the current reviews and
+bibliography copies over the backup's, backs up and removes `pins.json`, and
+sets the journal to `moved-back`. Library records stay. It refuses while
+`.scient/sources` holds files again.
+
 ## Source truth and provenance
 
 The persisted record has a first-class Scient source type and normalized
