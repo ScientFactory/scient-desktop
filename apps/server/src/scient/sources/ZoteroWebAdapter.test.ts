@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { inspectZotero, listZoteroGroups } from "./ZoteroConnections.ts";
+import { inspectZotero, listZoteroGroups, zoteroTransport } from "./ZoteroConnections.ts";
 import type { ZoteroResponse } from "./ZoteroLibraryReader.ts";
 import { betterBibTexLibraryId, localZoteroGroupsFrom } from "./ZoteroLocalAdapter.ts";
 import {
@@ -166,6 +166,37 @@ describe("Zotero connection choice", () => {
     expect(status).toMatchObject({ state: "ready", connection: "web", canWrite: false });
   });
 
+  it("works with a key that reads groups but not My Library", async () => {
+    const { http, requests } = recordedHttp((request) =>
+      request.url.pathname === "/keys/current"
+        ? ok({
+            userID: 475425,
+            access: { user: { library: false }, groups: { all: { library: true } } },
+          })
+        : ok([{ id: 11, data: { name: "Lab" } }], { "total-results": "1" }),
+    );
+    const access = { webKey: async () => "groups-only-key", http };
+
+    expect(await inspectZotero(access, "web")).toMatchObject({
+      state: "ready",
+      canWrite: false,
+      myLibrary: false,
+    });
+    expect(await listZoteroGroups(access, "web")).toEqual([
+      { groupId: "11", name: "Lab", canWrite: false },
+    ]);
+    await expect(zoteroTransport(access, "web")).rejects.toThrow("cannot read My Library");
+    await (await zoteroTransport(access, "web", "11")).get("/items/top");
+    expect(requests.at(-1)?.url.href).toBe("https://api.zotero.org/groups/11/items/top");
+  });
+
+  it("refuses a key that reads no library at all", async () => {
+    const { http } = recordedHttp(() => ok({ userID: 475425, access: { user: {} } }));
+
+    expect(
+      await inspectZotero({ webKey: async () => "reads-nothing-key", http }, "web"),
+    ).toMatchObject({ state: "access-disabled" });
+  });
   it("explains the local setup when there is no key either", async () => {
     const status = await inspectZotero({
       webKey: async () => null,

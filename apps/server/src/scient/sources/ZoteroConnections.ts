@@ -18,6 +18,8 @@ import {
 } from "./ZoteroLocalAdapter.ts";
 import {
   inspectZoteroWebKey,
+  keyGroupAccess,
+  keyReadsSomeLibrary,
   listZoteroWebGroups,
   makeZoteroWebLibrary,
   nodeZoteroWebHttp,
@@ -112,7 +114,7 @@ async function readyWebKey(access: ZoteroAccess, fresh?: boolean) {
   const http = access.http ?? nodeZoteroWebHttp;
   const result = await checkWebKey(apiKey, http, fresh);
   if (result.state === "unreachable") throw new Error("Scient could not reach zotero.org.");
-  if (result.state === "rejected" || !result.account.canRead) {
+  if (result.state === "rejected" || !keyReadsSomeLibrary(result.account)) {
     throw new Error("zotero.org refused the Zotero key in Accounts.");
   }
   return { apiKey, http, account: result.account };
@@ -128,8 +130,13 @@ export async function zoteroWebLibrary(
 ): Promise<ZoteroWebLibrary> {
   const { apiKey, http, account } = await readyWebKey(access, options.fresh);
   const groupId = options.groupId;
-  if (groupId && !(account.groupAccess[groupId] ?? account.groupAccess.all)?.read) {
+  if (groupId && !keyGroupAccess(account, groupId).read) {
     throw new Error("The Zotero key in Accounts cannot read this group.");
+  }
+  if (!groupId && !account.canRead) {
+    throw new Error(
+      "The Zotero key in Accounts cannot read My Library. Choose a group, or save a key that can read your library.",
+    );
   }
   return makeZoteroWebLibrary({ apiKey, account, http, ...(groupId ? { groupId } : {}) });
 }

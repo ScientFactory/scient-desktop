@@ -6,6 +6,7 @@ import {
   zoteroGroupLibraryId,
   type ScientSourceZoteroRefreshField,
   type ZoteroConnection,
+  type ZoteroGroup,
   type ZoteroImportScope,
 } from "@scientfactory/scient-sources";
 import { listScientSourceRecords } from "@scientfactory/scient-sources/store";
@@ -35,6 +36,9 @@ import { resolveScientSourcesProject } from "./handlers.ts";
 import { ScientSourcesToolError } from "./tools.ts";
 
 const MAX_COLLECTIONS_SHOWN = 1_000;
+
+const agentGroups = (groups: ReadonlyArray<ZoteroGroup>) =>
+  groups.map((group) => ({ id: group.groupId, name: group.name, canWrite: group.canWrite }));
 
 const zoteroAttempt = <A>(run: () => Promise<A>) =>
   Effect.tryPromise({
@@ -97,6 +101,21 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
       };
     }
     const connection = status.connection ?? "local";
+    if (status.myLibrary === false && !input.library) {
+      const groups = yield* zoteroAttempt(() => listZoteroGroups(zotero, connection));
+      return {
+        state: status.state,
+        connection,
+        canWrite: false,
+        message:
+          "The Zotero key in Accounts cannot read My Library. Pass `library` with a group id from `groups`.",
+        groups: agentGroups(groups),
+        collections: [],
+        items: [],
+        total: 0,
+        nextStart: null,
+      };
+    }
     const scope: ZoteroImportScope = input.collectionKey
       ? {
           kind: "collection",
@@ -140,11 +159,7 @@ export const browseZoteroForInvocation = Effect.fn("ScientSourcesToolkit.zoteroB
       connection,
       canWrite: status.canWrite ?? false,
       message: status.message,
-      groups: groups.map((group) => ({
-        id: group.groupId,
-        name: group.name,
-        canWrite: group.canWrite,
-      })),
+      groups: agentGroups(groups),
       collections: collections.collections.slice(0, MAX_COLLECTIONS_SHOWN).map((collection) => ({
         key: collection.key,
         name: collection.name,

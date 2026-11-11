@@ -182,9 +182,13 @@ export interface ZoteroWebAccount {
   >;
 }
 
-function keyGroupAccess(account: ZoteroWebAccount, groupId: string) {
+export function keyGroupAccess(account: ZoteroWebAccount, groupId: string) {
   return account.groupAccess[groupId] ?? account.groupAccess.all ?? { read: false, write: false };
 }
+
+/** A key may read groups without reading its owner's personal library. */
+export const keyReadsSomeLibrary = (account: ZoteroWebAccount): boolean =>
+  account.canRead || Object.values(account.groupAccess).some((access) => access.read);
 
 const ZoteroWebGroups = Schema.Array(
   Schema.Struct({
@@ -307,13 +311,23 @@ export function zoteroWebStatus(result: ZoteroWebAccountResult): ZoteroConnectio
       message: "Scient could not reach zotero.org. Check the connection, then try again.",
     };
   }
-  if (result.state === "rejected" || !result.account.canRead) {
+  if (result.state === "rejected" || !keyReadsSomeLibrary(result.account)) {
     return {
       state: "access-disabled",
       apiVersion: null,
       connection: "web",
       message:
         "zotero.org refused the Zotero key in Accounts. Create a key that can read your library.",
+    };
+  }
+  if (!result.account.canRead) {
+    return {
+      state: "ready",
+      apiVersion: 3,
+      connection: "web",
+      canWrite: false,
+      myLibrary: false,
+      message: "Using the Zotero groups your key can read on zotero.org.",
     };
   }
   return {

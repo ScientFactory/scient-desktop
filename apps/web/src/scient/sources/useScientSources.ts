@@ -348,7 +348,8 @@ export function useScientSources(input: {
   const openZoteroLibrary = async (showRetryFeedback = false) => {
     const status = await checkZotero(showRetryFeedback);
     if (status?.state === "ready" && isCurrentContext()) {
-      await showZoteroLibrary(status.connection, null);
+      const firstGroup = status.myLibrary === false ? status.groups?.[0]?.groupId : undefined;
+      await showZoteroLibrary(status.connection, firstGroup ?? null);
     }
     return status;
   };
@@ -946,6 +947,7 @@ export function useScientSources(input: {
     zoteroCollections: state.zoteroCollections,
     zoteroScope: state.zoteroScope,
     zoteroGroups: state.zoteroStatus?.groups ?? [],
+    zoteroMyLibrary: state.zoteroStatus?.myLibrary !== false,
     zoteroGroupId: state.zoteroGroupId,
     zoteroCheckFeedback: state.zoteroCheckFeedback,
     library: state.library,

@@ -763,18 +763,20 @@ export function ScientSourcesPanel(props: {
               }
             />
             <MenuPopup align="start" side="bottom" className="max-h-80 min-w-56 overflow-y-auto">
-              <MenuItem
-                onClick={() => {
-                  setQuery("");
-                  setSelectedKeys(new Set());
-                  void (sources.zoteroGroupId
-                    ? sources.selectZoteroLibrary(null)
-                    : sources.selectZoteroScope({ kind: "library" }));
-                }}
-              >
-                <Library />
-                My Library
-              </MenuItem>
+              {sources.zoteroMyLibrary ? (
+                <MenuItem
+                  onClick={() => {
+                    setQuery("");
+                    setSelectedKeys(new Set());
+                    void (sources.zoteroGroupId
+                      ? sources.selectZoteroLibrary(null)
+                      : sources.selectZoteroScope({ kind: "library" }));
+                  }}
+                >
+                  <Library />
+                  My Library
+                </MenuItem>
+              ) : null}
               {sources.zoteroGroups.map((group) => (
                 <MenuItem
                   key={group.groupId}

@@ -52,7 +52,9 @@ advanced settings and try again.
 
 The library menu in the import picker lists the group libraries you can read
 after **My Library**: the groups Zotero on this computer syncs, or on zotero.org
-the groups your key may read (allow group access when you create the key).
+the groups your key may read (allow group access when you create the key). A
+key that reads groups but not your personal library works too; the picker then
+opens on a group and leaves **My Library** out.
 Choose a group to browse its collections and import from it; sources still go
 into the current project. A group item and an item of yours stay two separate
 sources, even when Zotero gives them the same key, and **Refresh from Zotero**

@@ -648,6 +648,8 @@ export const ZoteroConnectionStatus = Schema.Struct({
   // Absent on statuses from before zotero.org support, which were always local.
   connection: Schema.optionalKey(ZoteroConnection),
   canWrite: Schema.optionalKey(Schema.Boolean),
+  /** False when a zotero.org key reads groups but not its owner's My Library. */
+  myLibrary: Schema.optionalKey(Schema.Boolean),
   /** Group libraries besides My Library; listed only when the connection is ready. */
   groups: Schema.optionalKey(Schema.Array(ZoteroGroup)),
 });
