@@ -69,7 +69,7 @@ export const readZoteroApiKey = Effect.fn("ZoteroAccountKey.read")(function* (
     yield* accounts.recordUse({
       target: { type: "account", accountId: account.accountId },
       action: "request",
-      detail: "Sources · api.zotero.org",
+      detail: "Library · api.zotero.org",
       outcome: "ok",
       ...(use.actor === "agent" && use.projectId !== undefined ? { projectId: use.projectId } : {}),
     });

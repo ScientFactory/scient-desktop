@@ -197,7 +197,7 @@ offers **Fix with an agent**.
 ## Scient plugins and agents' own items
 
 **Scient plugins** on **Installed** lists the features built into Scient, such
-as Sources and Documents, and any plugin bundles you
+as Library and Documents, and any plugin bundles you
 have installed. A built-in plugin's page describes what it adds and links to
 its settings.
 

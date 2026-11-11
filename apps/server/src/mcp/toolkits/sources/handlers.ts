@@ -100,7 +100,7 @@ const attempt = <A>(run: () => Promise<A>) =>
     // Store and filesystem errors can contain an absolute project path. MCP
     // results deliberately keep that host-only context out of model-visible
     // output.
-    catch: () => toolError("operation-failed", "The Sources operation could not be completed."),
+    catch: () => toolError("operation-failed", "The Library operation could not be completed."),
   });
 
 // PDF-only adds often share a filename-derived title. Include the content hash

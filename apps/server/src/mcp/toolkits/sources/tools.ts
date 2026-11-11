@@ -156,7 +156,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
 
 const ScientSourcesListTool = Tool.make("scient_sources_list", {
   description:
-    "List a page of this project's Library (Sources); total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
+    "List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly. query matches citation key, title, authors, year, journal, identifiers and tags. Filters: tags (all must match), collectionId (with subcollections), type, hasPdf, studyDesign, topic, savedSearchId (see scient_sources_collections). inTrash lists removed sources.",
   parameters: Schema.Struct({
     query: Schema.optionalKey(Schema.String.pipe(Schema.check(Schema.isMaxLength(500)))),
     tags: Schema.optionalKey(ScientSourceFilter.fields.tags),
@@ -442,7 +442,7 @@ export const ScientSourceAddResult = Schema.Struct({
 
 const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
-    "Add sources to this project's Library after the user explicitly asks; list existing Sources first. Repeats add nothing. Several works by DOI, PMID, arXiv ID or ISBN: identifierList (outcome batch, see results). A project PDF: pdfRelativePath (citation fields optional). From PubMed, Semantic Scholar or OpenAlex pass only the identifier (scheme pmid, s2 for a paperId or CorpusId:N, openalex for a W ID). Identifiers are checked at their registry: identifier-not-found and identifier-mismatch (see resolved) add nothing; found metadata replaces your fields (verified); unreachable adds as given (unchecked); no identifier is unverified. editorialStatus flags retractions and corrections: tell the user.",
+    "Add sources to this project's Library after the user explicitly asks; list existing sources first. Repeats add nothing. Several works by DOI, PMID, arXiv ID or ISBN: identifierList (outcome batch, see results). A project PDF: pdfRelativePath (citation fields optional). From PubMed, Semantic Scholar or OpenAlex pass only the identifier (scheme pmid, s2 for a paperId or CorpusId:N, openalex for a W ID). Identifiers are checked at their registry: identifier-not-found and identifier-mismatch (see resolved) add nothing; found metadata replaces your fields (verified); unreachable adds as given (unchecked); no identifier is unverified. editorialStatus flags retractions and corrections: tell the user.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
   failure: ScientSourcesToolError,
@@ -779,7 +779,7 @@ const ScientSourcesZoteroImportTool = Tool.make("scient_sources_zotero_import", 
 
 const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh", {
   description:
-    "Bring Zotero's changes into Sources imported from it (all, or sourceIds); only changed or problem sources are listed. A field edited on both sides stays local and is reported in conflicts: ask the user, then pass it in useZotero or keepLocal.",
+    "Bring Zotero's changes into sources imported from it (all, or sourceIds); only changed or problem sources are listed. A field edited on both sides stays local and is reported in conflicts: ask the user, then pass it in useZotero or keepLocal.",
   parameters: Schema.Struct({
     sourceIds: Schema.optionalKey(
       Schema.Array(NonEmptyString).pipe(
@@ -807,7 +807,7 @@ const ScientSourcesZoteroRefreshTool = Tool.make("scient_sources_zotero_refresh"
 
 const ScientSourcesZoteroSendTool = Tool.make("scient_sources_zotero_send", {
   description:
-    "Send Sources to the user's zotero.org library, or a group with canWrite, after the user asks, creating (and linking) or updating each item; needs an Accounts Zotero key with write access. Items changed in Zotero since Scient read them are not overwritten (changed-in-zotero): refresh, then send again.",
+    "Send sources to the user's zotero.org library, or a group with canWrite, after the user asks, creating (and linking) or updating each item; needs an Accounts Zotero key with write access. Items changed in Zotero since Scient read them are not overwritten (changed-in-zotero): refresh, then send again.",
   parameters: Schema.Struct({
     sourceIds: Schema.Array(NonEmptyString).pipe(
       Schema.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
@@ -882,7 +882,7 @@ const ScientSourcesOrganizeTool = Tool.make("scient_sources_organize", {
 
 const ScientSourcesBulkUpdateTool = Tool.make("scient_sources_bulk_update", {
   description:
-    "Apply one change to up to 500 Sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections; or {themes: [{name, parent?, sourceIds}]} fills new or existing collections (parent made if missing). Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
+    "Apply one change to up to 500 sources after the user asks: add or remove tags (case-insensitive), set type (customType required for other), add to or remove from collections; or {themes: [{name, parent?, sourceIds}]} fills new or existing collections (parent made if missing). Tag and type changes make a revision per source, credited to the agent; each source reports its outcome; failures do not stop the rest. Undo: change {undoBatchId: undo.batchId}; later edits are kept and listed in conflicts; if some parts fail, repeat it (finished parts are skipped). Removal: scient_sources_remove per source.",
   parameters: Schema.Struct({ change: ScientSourcesBulkRequestChange }),
   success: ScientSourcesBulkResult,
   failure: ScientSourcesToolError,

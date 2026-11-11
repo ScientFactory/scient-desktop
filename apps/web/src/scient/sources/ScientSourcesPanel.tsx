@@ -644,7 +644,7 @@ export function ScientSourcesPanel(props: {
       return (
         <CenteredState
           icon={<AlertCircle />}
-          title="Sources could not be loaded"
+          title="The Library could not be loaded"
           description={sources.error}
           action={
             <Button
@@ -674,7 +674,7 @@ export function ScientSourcesPanel(props: {
           conflicting
             ? (sources.overview.issues[0]?.message ?? "Scient will not change conflicting files.")
             : (setupError ??
-              "Sources are kept in this project so they remain portable and reviewable.")
+              "The Library is kept in this project so it stays portable and reviewable.")
         }
         action={
           conflicting ? null : (
@@ -1287,7 +1287,7 @@ export function ScientSourcesPanel(props: {
         threadId={props.threadId}
       />
       <PanelHeader
-        title="Sources"
+        title="Library"
         action={
           <div className="flex shrink-0 items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
@@ -1368,7 +1368,7 @@ export function ScientSourcesPanel(props: {
       />
       {dragActive ? (
         <div className="mx-3 mt-2 rounded-md border border-dashed border-foreground/30 bg-muted/35 px-3 py-2 text-center text-xs text-muted-foreground">
-          Drop PDFs or a reference file to add them to Sources
+          Drop PDFs or a reference file to add them to the Library
         </div>
       ) : null}
       {sources.importPreparation ? (
@@ -1785,7 +1785,7 @@ function ImportReview(props: {
       ? itemKeys.length > 1
         ? `Add ${itemKeys.length} anyway`
         : "Add anyway"
-      : "Add to Sources";
+      : "Add to Library";
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1848,11 +1848,11 @@ function ImportReview(props: {
             const metadataSummary = candidateMetadataSummary(item.candidate);
             const duplicateStatus =
               item.duplicate.kind === "same-origin"
-                ? "Already in Sources"
+                ? "Already in the Library"
                 : item.duplicate.kind === "same-identifier"
-                  ? "A source with this identifier is already in Sources"
+                  ? "A source with this identifier is already in the Library"
                   : item.duplicate.kind === "same-pdf"
-                    ? "This PDF is already in Sources"
+                    ? "This PDF is already in the Library"
                     : item.duplicate.reason;
             return (
               <div key={itemKey} className={willImport ? "bg-accent/20 px-3 py-3" : "px-3 py-3"}>
@@ -2074,7 +2074,7 @@ function AlreadyPresentSummary(props: {
     <div className="m-3 flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-3">
       <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">Already in Sources</div>
+        <div className="text-sm font-medium">Already in the Library</div>
         <div className="mt-0.5 text-xs text-muted-foreground">
           {count === 1
             ? "This source is already in this project."

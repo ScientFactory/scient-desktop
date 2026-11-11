@@ -301,7 +301,7 @@ export function normalizeScientRightPanelSurface(value: unknown): ScientRightPan
 export function scientRightPanelSurfaceTitle(surface: ScientRightPanelSurface): string {
   switch (surface.module) {
     case "sources":
-      return "Sources";
+      return "Library";
     case "new-tab":
       return "New tab";
     case "compute":
