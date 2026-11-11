@@ -625,7 +625,9 @@ Bodies are read from the browser only when their decoded size is known first, fr
 own CDP session (`Network.dataReceived` byte counts per request, final at `loadingFinished`),
 never from the page. Only the main frame's answers are matched: a subframe in its own process
 or a service worker is counted on another session. Playwright reports a dedicated worker's
-answers as the main frame's, so those are not yet told apart. Only requests the session saw from
+answers as the main frame's, and its bytes are counted on the worker's own session: once a page
+has had a dedicated worker, its compressed answers are left out (uncompressed ones keep the rule
+above). Only requests the session saw from
 their start have a count. A response is matched by method, address and status, the largest
 count when several match; with no count the body is left out. Bytes are reserved before reading,
 so reads at once stay within 24 MB, the same for bodies read as they arrive and for an agent's

@@ -9,9 +9,23 @@ import { networkStudyOf } from "./NetworkStudy.ts";
  */
 const MAIN_FRAME = { name: "main" };
 
-const fakePage = () =>
+const fakePage = () => {
+  const workerHandlers: Array<() => void> = [];
+  return Object.assign(fakePageWith(workerHandlers), {
+    /** A dedicated worker starts in the page. */
+    startWorker: () => {
+      for (const handler of workerHandlers) handler();
+    },
+  });
+};
+
+const fakePageWith = (workerHandlers: Array<() => void>) =>
   ({
     mainFrame: () => MAIN_FRAME,
+    workers: () => [],
+    on: (event: string, handler: () => void) => {
+      if (event === "worker") workerHandlers.push(handler);
+    },
     context: () => ({
       cookies: async () => [{ name: "sid", value: "tab-cookie-77" }],
     }),
@@ -156,25 +170,25 @@ describe("the network study", () => {
   it("reads a body only when the browser's count for it is certain", async () => {
     const MB = 1024 * 1024;
     const API = "https://api.other.test";
-    const study = networkStudyOf(fakePage());
-    const cdp = fakeCdp();
-    // Already under way when counting began: its end is seen, its start was not.
-    cdp.emit("Network.dataReceived", { requestId: "early", dataLength: 1_000 });
-    cdp.emit("Network.loadingFinished", { requestId: "early" });
-    await study.watch(cdp.session);
+    type Cdp = ReturnType<typeof fakeCdp>;
     const cases: ReadonlyArray<{
       readonly path: string;
-      readonly browser: () => void;
+      readonly browser: (cdp: Cdp, page: ReturnType<typeof fakePage>) => void;
+      readonly beforeCounting?: (cdp: Cdp) => void;
       readonly frame?: object;
       readonly method?: string;
       readonly shown: boolean;
     }> = [
       // The page says 1 byte for everything; the browser counted 64 MB.
-      { path: "/fake-size", browser: () => cdp.loaded(`${API}/fake-size`, 64 * MB), shown: false },
+      {
+        path: "/fake-size",
+        browser: (cdp) => cdp.loaded(`${API}/fake-size`, 64 * MB),
+        shown: false,
+      },
       // Two loads of one address: the larger count holds, whichever this answer was.
       {
         path: "/twice",
-        browser: () => {
+        browser: (cdp) => {
           cdp.loaded(`${API}/twice`, 1_000);
           cdp.loaded(`${API}/twice`, 64 * MB);
         },
@@ -184,14 +198,24 @@ describe("the network study", () => {
       // the same address is not borrowed.
       {
         path: "/subframe",
-        browser: () => cdp.loaded(`${API}/subframe`, 1_000),
+        browser: (cdp) => cdp.loaded(`${API}/subframe`, 1_000),
         frame: { name: "subframe" },
+        shown: false,
+      },
+      // A dedicated worker's answers look like the main frame's but are counted on its own
+      // session: once the page has had one, its compressed answers are never matched.
+      {
+        path: "/worker",
+        browser: (cdp, page) => {
+          page.startWorker();
+          cdp.loaded(`${API}/worker`, 1_000);
+        },
         shown: false,
       },
       // A redirect: the count starts again at the address it ends at.
       {
         path: "/moved",
-        browser: () => {
+        browser: (cdp) => {
           const id = cdp.start(`${API}/old`);
           cdp.emit("Network.requestWillBeSent", {
             requestId: id,
@@ -203,7 +227,7 @@ describe("the network study", () => {
       },
       {
         path: "/failed",
-        browser: () => {
+        browser: (cdp) => {
           const id = cdp.start(`${API}/failed`);
           cdp.emit("Network.dataReceived", { requestId: id, dataLength: 1_000 });
           cdp.emit("Network.loadingFailed", { requestId: id });
@@ -211,43 +235,53 @@ describe("the network study", () => {
         shown: false,
       },
       // From the cache: the browser's status differs from the answer's, so nothing matches.
-      { path: "/cached", browser: () => cdp.loaded(`${API}/cached`, 2_000, 304), shown: false },
-      // blob: and data: addresses, and requests begun before counting, have no count.
+      { path: "/cached", browser: (cdp) => cdp.loaded(`${API}/cached`, 2_000, 304), shown: false },
+      // blob: and data: addresses have no count.
       { path: "/blob", browser: () => undefined, shown: false },
-      { path: "/early", browser: () => undefined, shown: false },
-      // A custom method named like a known secret, uncounted: its note never shows it raw.
+      // Already under way when counting began: its end is seen, its start was not.
       {
-        path: "/custom",
+        path: "/early",
+        beforeCounting: (cdp) => {
+          cdp.emit("Network.dataReceived", { requestId: "early", dataLength: 1_000 });
+          cdp.emit("Network.loadingFinished", { requestId: "early" });
+        },
         browser: () => undefined,
-        method: "tab-cookie-77",
         shown: false,
       },
+      // A custom method named like a known secret, uncounted: its note never shows it raw.
+      { path: "/custom", browser: () => undefined, method: "tab-cookie-77", shown: false },
       // Counted, small, compressed, from another site: shown.
-      { path: "/works", browser: () => cdp.loaded(`${API}/works`, 2_000), shown: true },
+      { path: "/works", browser: (cdp) => cdp.loaded(`${API}/works`, 2_000), shown: true },
     ];
-    const read: string[] = [];
     for (const item of cases) {
-      item.browser();
+      const page = fakePage();
+      const study = networkStudyOf(page);
+      const cdp = fakeCdp();
+      item.beforeCounting?.(cdp);
+      await study.watch(cdp.session);
+      item.browser(cdp, page);
+      const read: string[] = [];
       const { request, response } = answer(`${API}${item.path}`, read, {
         ...(item.frame === undefined ? {} : { frame: item.frame }),
         ...(item.method === undefined ? {} : { method: item.method }),
       });
       study.onRequest(request);
       study.onResponse(response);
-    }
-    const listed = await study.list();
-    for (const item of cases) {
-      const detail = await study.detail(listed.find((entry) => entry.url.endsWith(item.path))!.id);
+      const [listed] = await study.list();
+      const detail = await study.detail(listed!.id);
       expect({ path: item.path, shown: detail?.responseBody !== undefined }).toEqual({
         path: item.path,
         shown: item.shown,
+      });
+      expect({ path: item.path, read: read.length > 0 }).toEqual({
+        path: item.path,
+        read: item.shown,
       });
       // regression: the left-out note carried the request's method as it was.
       expect(JSON.stringify(detail)).not.toContain("tab-cookie-77");
       if (!item.shown && item.method === undefined)
         expect(detail?.note).toContain("preview_evaluate");
     }
-    expect(read.sort()).toEqual([`${API}/moved`, `${API}/works`]);
   });
 
   it("keeps reads at once, as they arrive and asked for, within one 24 MB total", async () => {

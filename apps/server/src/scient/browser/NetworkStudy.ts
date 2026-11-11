@@ -135,6 +135,11 @@ const KEEP_COUNTED = 2 * KEEP;
 /** Most bytes being read from the browser at once, for every reason. */
 const READING_BYTES = 24 * 1024 * 1024;
 
+const isCompressed = (response: Response) => {
+  const encoding = safely(() => response.headers()["content-encoding"], undefined)?.trim();
+  return encoding !== undefined && encoding !== "" && encoding.toLowerCase() !== "identity";
+};
+
 const withoutFragment = (url: string) => {
   const at = url.indexOf("#");
   return at === -1 ? url : url.slice(0, at);
@@ -217,6 +222,13 @@ const makeNetworkStudy = (page: Page) => {
   /** Decoded body bytes per CDP request id, as the browser received them. */
   const counted = new Map<string, Counted>();
   let reading = 0;
+  /**
+   * A dedicated worker's answers report the main frame but are counted on its own session, so
+   * once the page has had one, its compressed answers (whose size can't be told otherwise) are
+   * never matched. Kept for the page's life.
+   */
+  let hadWorker = safely(() => page.workers().length > 0, true);
+  safely(() => page.on("worker", () => (hadWorker = true)), undefined);
 
   /**
    * The body's decoded size, before it is read, from the browser's own count: requests with the
@@ -227,6 +239,7 @@ const makeNetworkStudy = (page: Page) => {
   const bodySize = async (response: Response): Promise<number | undefined> => {
     // A subframe in its own process, or a service worker, is counted elsewhere: never borrow.
     if (!safely(() => response.frame() === page.mainFrame(), false)) return undefined;
+    if (hadWorker && isCompressed(response)) return undefined;
     if ((await response.finished()) !== null) return undefined;
     const url = withoutFragment(response.url());
     const method = response.request().method();
