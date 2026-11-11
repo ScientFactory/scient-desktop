@@ -8,7 +8,13 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "~/components/ui/number-field";
-import { FONT_GROUPS, FONT_SIZE_MAX, FONT_SIZE_MIN, normalizeFontSize } from "./fontChoices";
+import {
+  FONT_GROUPS,
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  measureSelectionSize,
+  normalizeFontSize,
+} from "./fontChoices";
 
 /**
  * Content of `Text > Font / Size`, identical in both editors: a scrolling list of
@@ -27,6 +33,10 @@ export function FontControls(props: {
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  // The size drawn when the text has no explicit size, measured while the selection is still in the page.
+  const [defaultSize, setDefaultSize] = useState(() =>
+    props.size === null ? measureSelectionSize() : null,
+  );
   const needle = query.trim().toLowerCase();
   const groups = FONT_GROUPS.map((group) => ({
     ...group,
@@ -109,7 +119,7 @@ export function FontControls(props: {
           step={1}
           smallStep={0.5}
           disabled={props.disabled}
-          value={props.size}
+          value={props.size ?? defaultSize}
           format={{ maximumFractionDigits: 2 }}
           onValueCommitted={(value) => {
             const size = value === null ? null : normalizeFontSize(value);
@@ -123,7 +133,10 @@ export function FontControls(props: {
             type="button"
             disabled={props.disabled || props.size === null}
             className="ms-auto rounded-md px-1.5 py-0.5 text-xs text-foreground/70 hover:bg-accent disabled:opacity-50"
-            onClick={() => props.onSize(null)}
+            onClick={() => {
+              props.onSize(null);
+              requestAnimationFrame(() => setDefaultSize(measureSelectionSize()));
+            }}
           >
             Default size
           </button>

@@ -29,3 +29,15 @@ export const FONT_GROUPS: ReadonlyArray<FontGroup> = (
   label: CATEGORY_LABELS[category],
   fonts: FONT_CATALOGUE.filter((font) => font.category === category),
 }));
+
+const CSS_PIXELS_PER_POINT = 96 / 72;
+
+/** The size in points that the selected text is drawn at now, or null without a selection in the page. */
+export function measureSelectionSize(): number | null {
+  const anchor = window.getSelection()?.anchorNode;
+  const element = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
+  if (element === null) return null;
+  const pixels = Number.parseFloat(getComputedStyle(element).fontSize);
+  // Nearest half point, so the stepper starts from a clean number (11.16 shows as 11).
+  return normalizeFontSize(Math.round((pixels / CSS_PIXELS_PER_POINT) * 2) / 2);
+}
