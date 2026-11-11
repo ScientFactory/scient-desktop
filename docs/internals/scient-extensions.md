@@ -626,14 +626,15 @@ own CDP session (`Network.dataReceived` byte counts per request, final at `loadi
 never from the page. Only the main frame's answers are matched: a subframe in its own process
 or a service worker is counted on another session. Playwright reports a dedicated worker's
 answers as the main frame's, and its bytes are counted on the worker's own session: once a page
-has had a dedicated worker, all its bodies are left out. A count still loading is never dropped
-to make room, and a matched count that is gone by the time it would be used is not trusted. Only requests the session saw from
-their start have a count. A response is matched by method, address and status, the largest
-count when several match; with no count the body is left out. Bytes are reserved before reading,
-so reads at once stay within 24 MB, the same for bodies read as they arrive and for an agent's
-request. A left-out GET body's note, masked like any other output, tells the agent to fetch it
-in the page with `preview_evaluate`, streaming and stopping at 1 MiB; other methods are never
-repeated.
+has had a dedicated worker, all its bodies are left out. Only requests the session saw from
+their start have a count, and a count still loading is never dropped to make room. Each answer's
+size is settled once, when it finishes: matched by method, address and status, the largest count
+when several match, and kept with the request; reads use only that size, and without one the
+body is left out. Text comes back as UTF-8, up to 3 bytes per counted byte, so every read
+reserves and is capped at 3 × its count, within 24 MB at once, the same for bodies read as they
+arrive and for an agent's request. A left-out GET body's note, masked like any other output,
+tells the agent to fetch it in the page with `preview_evaluate`, streaming and stopping at
+1 MiB; other methods are never repeated.
 
 The work is linear. Bodies are cut to their output limit before masking (32 KB shown, 1 MB saved
 to a file), the tokenizers use no recursion, and nesting past the limits leaves the body out with

@@ -182,6 +182,8 @@ describe("the network study", () => {
       readonly url?: string;
       readonly browser: (cdp: Cdp, page: ReturnType<typeof fakePage>) => void;
       readonly beforeCounting?: (cdp: Cdp) => void;
+      /** After the answer's size was settled once (by a first detail). */
+      readonly afterSettled?: (cdp: Cdp) => void;
       readonly frame?: object;
       readonly method?: string;
       readonly plain?: boolean;
@@ -275,6 +277,17 @@ describe("the network study", () => {
         },
         shown: false,
       },
+      // An old answer whose own count has since aged out: a newer, small count of the same
+      // address doesn't stand in for it.
+      {
+        path: "/aged-out",
+        browser: (cdp) => cdp.loaded(`${API}/aged-out`, 64 * MB),
+        afterSettled: (cdp) => {
+          for (let index = 0; index <= 400; index += 1) cdp.loaded(`${API}/other/${index}`, 10);
+          cdp.loaded(`${API}/aged-out`, 1_000);
+        },
+        shown: false,
+      },
       // Counted, small, compressed, from another site: shown.
       { path: "/works", browser: (cdp) => cdp.loaded(`${API}/works`, 2_000), shown: true },
     ];
@@ -294,6 +307,11 @@ describe("the network study", () => {
       study.onRequest(request);
       study.onResponse(response);
       const [listed] = await study.list();
+      if (item.afterSettled !== undefined) {
+        await study.detail(listed!.id);
+        item.afterSettled(cdp);
+      }
+      // regression: sizes were matched again at each read, so a newer count could stand in.
       const detail = await study.detail(listed!.id);
       expect({ path: item.path, shown: detail?.responseBody !== undefined }).toEqual({
         path: item.path,
@@ -310,41 +328,43 @@ describe("the network study", () => {
     }
   });
 
-  it("keeps reads at once, as they arrive and asked for, within one 24 MB total", async () => {
-    const MB = 1024 * 1024;
+  it("reserves 3 × the count for every read at once, as text can grow when decoded", async () => {
+    const KB = 1024;
     const study = networkStudyOf(fakePage());
     const cdp = fakeCdp();
     await study.watch(cdp.session);
     const started: string[] = [];
     const pending: Array<() => void> = [];
-    const slow = (url: string) => () =>
+    // Windows-1252 text: "é" is one counted byte, two once read as UTF-8.
+    const latin = (counted: number) => Buffer.from("é".repeat(counted), "utf8");
+    const slow = (url: string, counted: number) => () =>
       new Promise<Buffer>((resolve) => {
         started.push(url);
-        pending.push(() => resolve(Buffer.from("{}")));
+        pending.push(() => resolve(latin(counted)));
       });
-    // Twelve 2 MB answers whose reads have begun and not ended: 24 MB being read.
+    // Twelve answers counted at 640 KB, read as they arrive and not yet done: 12 × 1.875 MB.
     for (let index = 0; index < 12; index += 1) {
       const url = `https://api.other.test/${index}`;
-      cdp.loaded(url, 2 * MB);
-      const { request, response } = answer(url, [], { body: slow(url) });
+      cdp.loaded(url, 640 * KB);
+      const { request, response } = answer(url, [], { body: slow(url, 640 * KB) });
       study.onRequest(request);
       study.onResponse(response);
     }
     await vi.waitFor(() => expect(started).toHaveLength(12));
-    // An agent asks for a 4 MB body meanwhile: it must wait its turn, not read past the total.
+    // An agent asks for one counted at 600 KB meanwhile: 1.76 MB more would pass 24 MB.
     const url = "https://api.other.test/asked";
-    cdp.loaded(url, 4 * MB);
+    cdp.loaded(url, 600 * KB);
     const asked = answer(url, [], {
       body: async () => {
         started.push(url);
-        return Buffer.from("{}");
+        return latin(600 * KB);
       },
     });
     study.onRequest(asked.request);
     study.onResponse(asked.response);
     const listed = await study.list();
     const detail = await study.detail(listed.find((entry) => entry.url === url)!.id);
-    // regression: an asked-for read counted only against its own limit.
+    // regression: reads were reserved at the count, and decoding Windows-1252 grows it.
     expect(detail?.note).toContain("reading other bodies now");
     expect(started).not.toContain(url);
     for (const finish of pending) finish();
