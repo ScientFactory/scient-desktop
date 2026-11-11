@@ -100,6 +100,39 @@ describe("ISBN identifiers", () => {
     });
   });
 
+  it("lists an author Open Library names under two author records once", async () => {
+    // Recorded from openlibrary.org for ISBN:9780596517748 on 2026-11-11, shortened. The
+    // two other names are the Chinese edition's translators, which the API cannot tell apart.
+    const book = {
+      url: "http://openlibrary.org/books/OL10781042M/JavaScript_The_Good_Parts",
+      title: "JavaScript: The Good Parts",
+      subtitle: "Working with the Shallow Grain of JavaScript",
+      authors: [
+        {
+          url: "http://openlibrary.org/authors/OL3501231A/Douglas_Crockford",
+          name: "Douglas Crockford",
+        },
+        {
+          url: "http://openlibrary.org/authors/OL9968926A/Ke_luo_ke_fu_de",
+          name: "Ke luo ke fu de",
+        },
+        { url: "http://openlibrary.org/authors/OL9968927A/Yan_xue_kun", name: "Yan xue kun" },
+        {
+          url: "http://openlibrary.org/authors/OL14426346A/Douglas_Crockford",
+          name: "Douglas Crockford",
+        },
+      ],
+      publishers: [{ name: "O'Reilly Media, Inc." }],
+    };
+    const resolution = await resolveSourceIdentifier([{ scheme: "isbn", value: "9780596517748" }], {
+      request: catalogs({ openLibrary: { status: 200, body: { "ISBN:9780596517748": book } } }),
+      pace,
+    });
+    expect(
+      resolution?.status === "found" && resolution.metadata.creators.map((c) => c.familyName),
+    ).toEqual(["Crockford", "de", "kun"]);
+  });
+
   it("falls back to Google Books when Open Library has only an author-less listing", async () => {
     const resolution = await resolveSourceIdentifier([{ scheme: "isbn", value: "9780262033848" }], {
       request: catalogs({

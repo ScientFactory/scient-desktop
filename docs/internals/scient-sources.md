@@ -344,7 +344,9 @@ empty feed for the longer form. An ISBN must have a valid check digit and is sto
 ISBN-13. Open Library answers first (several ISBNs per request); an entry
 without authors is not accepted, since the openly edited catalogue holds spam
 listings under real ISBNs, and Google Books is asked instead, counting only a
-volume that lists the same ISBN. Not found needs both catalogues to say so;
+volume that lists the same ISBN. A name Open Library lists twice (one person
+under two author records) is kept once; its list can also include an edition's
+translators, which the API does not mark. Not found needs both catalogues to say so;
 otherwise the ISBN is unavailable. Field provenance names `arxiv`,
 `open-library` or `google-books`. None of these requests carries the contact
 email.
