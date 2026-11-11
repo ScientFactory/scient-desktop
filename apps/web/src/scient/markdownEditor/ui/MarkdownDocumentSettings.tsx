@@ -3,7 +3,7 @@ import { XIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { LatexSelect } from "~/scient/latex/LatexSelect";
 import { DocumentSettingsField } from "~/scient/writing/DocumentSettingsField";
-import { FONT_FAMILIES, isFontFamilyName } from "~/scient/writing/fontChoices";
+import { FONT_GROUPS, catalogueFont } from "~/scient/writing/fontChoices";
 import { DOCUMENT_FONT_SIZES } from "@scientfactory/scient-markdown";
 import type { MarkdownDocumentFont } from "../documentFont";
 
@@ -81,12 +81,14 @@ export function MarkdownDocumentSettings(props: {
               value={font.fontFamily ?? DEFAULT_CHOICE}
               options={[
                 { value: DEFAULT_CHOICE, label: "Default" },
-                ...FONT_FAMILIES.map((family) => ({ value: family.name, label: family.label })),
+                ...FONT_GROUPS.flatMap((group) =>
+                  group.fonts.map((font) => ({ value: font.name, label: font.name })),
+                ),
               ]}
               onValueChange={(value) => {
                 setFont((previous) => ({
                   ...previous,
-                  fontFamily: isFontFamilyName(value) ? value : null,
+                  fontFamily: catalogueFont(value)?.name ?? null,
                 }));
                 setError(null);
               }}

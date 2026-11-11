@@ -18,13 +18,11 @@ import { Schema } from "prosemirror-model";
 import { tableNodes } from "prosemirror-tables";
 
 import {
-  MARKDOWN_FONT_FAMILIES,
-  MARKDOWN_FONT_SIZES,
   MARKDOWN_FONT_SPAN_CLOSE,
+  catalogueFont,
   markdownFontSpanOpen,
+  normalizeFontSize,
   parseMarkdownFontSpanOpen,
-  type MarkdownFontFamilyName,
-  type MarkdownFontSizeName,
 } from "@scientfactory/scient-markdown";
 import {
   findScientBackslashMathSpans,
@@ -243,42 +241,40 @@ const strikeSpec: MarkSpec = {
 };
 
 const fontSizeSpec: MarkSpec = {
-  attrs: { size: { default: "normalsize" } },
+  attrs: { size: { default: 12 } },
   parseDOM: [
     {
       tag: "span[data-scient-font-size]",
-      // Pasted HTML is untrusted: only a known size name becomes a mark.
+      // Pasted HTML is untrusted: only a size inside the allowed range becomes a mark.
       getAttrs: (element) => {
-        const size = element.getAttribute("data-scient-font-size");
-        return MARKDOWN_FONT_SIZES.some(({ name }) => name === size) ? { size } : false;
+        const size = normalizeFontSize(Number(element.getAttribute("data-scient-font-size")));
+        return size === null ? false : { size };
       },
     },
   ],
   toDOM: (mark) => [
     "span",
-    {
-      style: `font-size:${MARKDOWN_FONT_SIZES.find(({ name }) => name === mark.attrs.size)?.em}em`,
-      "data-scient-font-size": String(mark.attrs.size),
-    },
+    { style: `font-size:${mark.attrs.size}pt`, "data-scient-font-size": String(mark.attrs.size) },
     0,
   ],
 };
 
 const fontFamilySpec: MarkSpec = {
-  attrs: { family: { default: "serif" } },
+  attrs: { family: { default: "Times New Roman" } },
   parseDOM: [
     {
       tag: "span[data-scient-font-family]",
+      // Only a name from the catalogue becomes a mark; the CSS never comes from the paste.
       getAttrs: (element) => {
         const family = element.getAttribute("data-scient-font-family");
-        return MARKDOWN_FONT_FAMILIES.some((name) => name === family) ? { family } : false;
+        return family !== null && catalogueFont(family) !== null ? { family } : false;
       },
     },
   ],
   toDOM: (mark) => [
     "span",
     {
-      style: `font-family:${String(mark.attrs.family)}`,
+      style: `font-family:${catalogueFont(String(mark.attrs.family))?.css ?? "inherit"}`,
       "data-scient-font-family": String(mark.attrs.family),
     },
     0,
@@ -1021,15 +1017,13 @@ export const scientMarkdownSerializer = new ScientMarkdownSerializer(
       },
     },
     font_size: {
-      open: (_state, mark) =>
-        markdownFontSpanOpen({ size: mark.attrs.size as MarkdownFontSizeName }),
+      open: (_state, mark) => markdownFontSpanOpen({ size: mark.attrs.size as number }),
       close: MARKDOWN_FONT_SPAN_CLOSE,
       expelEnclosingWhitespace: true,
       mixable: true,
     },
     font_family: {
-      open: (_state, mark) =>
-        markdownFontSpanOpen({ family: mark.attrs.family as MarkdownFontFamilyName }),
+      open: (_state, mark) => markdownFontSpanOpen({ family: String(mark.attrs.family) }),
       close: MARKDOWN_FONT_SPAN_CLOSE,
       expelEnclosingWhitespace: true,
       mixable: true,

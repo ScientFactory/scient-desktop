@@ -3,7 +3,6 @@ import { XIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
 import { Input } from "~/components/ui/input";
 import { DocumentSettingsField } from "../writing/DocumentSettingsField";
-import { FONT_FAMILIES } from "../writing/fontChoices";
 import { LatexSelect } from "./LatexSelect";
 import { latexVisualLayoutProfile, type LatexVisualLayoutUpdate } from "./latexVisualDocument";
 import { LATEX_PAPER_SIZES } from "./latexVisualLayout";
@@ -127,6 +126,12 @@ function Choice<T extends string>(props: {
  * One card: every setting shows what the document uses now, and Apply writes
  * only what was changed.
  */
+const GENERIC_FAMILIES = [
+  { value: "serif", label: "Serif" },
+  { value: "sans-serif", label: "Sans serif" },
+  { value: "monospace", label: "Code" },
+];
+
 export function LatexDocumentSettings(props: {
   onOpenChange: (open: boolean) => void;
   source: string;
@@ -287,10 +292,7 @@ export function LatexDocumentSettings(props: {
               width="fluid"
               aria-label="Document font"
               value={changes.fontFamily ?? extended.fontFamily}
-              options={[
-                { value: "default", label: "Default" },
-                ...FONT_FAMILIES.map((family) => ({ value: family.name, label: family.label })),
-              ]}
+              options={[{ value: "default", label: "Default" }, ...GENERIC_FAMILIES]}
               onValueChange={(value) =>
                 setLayout("fontFamily", value as DocumentLayoutSettings["fontFamily"])
               }

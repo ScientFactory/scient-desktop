@@ -1,15 +1,14 @@
 /**
  * Word export of local font size and family. Scient's recognised `<span style>` forms are turned
- * into Word character styles before raw HTML is stripped; the `font-size` and `font-family`
- * front matter keys set the base font of the reference document.
+ * into Word character styles before raw HTML is stripped; the `fontsize` and `mainfont` front
+ * matter keys set the base font of the reference document.
  */
 import {
   DOCUMENT_FONT_SIZES,
-  MARKDOWN_FONT_FAMILIES,
-  MARKDOWN_FONT_SIZES,
   MARKDOWN_FONT_SPAN_CLOSE,
-  type MarkdownFontFamilyName,
   type MarkdownFontSpan,
+  catalogueFont,
+  normalizeFontSize,
   parseMarkdownFontSpanOpen,
 } from "@scientfactory/scient-markdown";
 import * as Predicate from "effect/Predicate";
@@ -17,8 +16,6 @@ import * as Predicate from "effect/Predicate";
 import { attr, customStyleSpan, inlineText, isPandocNode, type PandocNode } from "./pandocAst.ts";
 import {
   DEFAULT_WORD_BASE_FONT,
-  FOOTNOTE_POINTS,
-  HEADING_POINTS,
   type WordBaseFont,
   type WordLocalFont,
   wordFontStyleName,
@@ -27,43 +24,22 @@ import {
 const SPAN_OPEN = /^<span\b/iu;
 const BASE_SIZE = new RegExp(`^(${DOCUMENT_FONT_SIZES.join("|")})$`, "u");
 
-/**
- * What a font pass needs to know: the document's base size, and a record of the sizes used
- * inside headings or footnotes, which the reference document must then define.
- */
+/** The base font of the document, and the local fonts used, which the reference document defines. */
 export interface FontPass {
   readonly base: WordBaseFont;
-  readonly inContext: Map<string, WordLocalFont>;
+  readonly used: Map<string, WordLocalFont>;
 }
 
-/** The Word style name for a font, noting it when it needs a style of its own. */
+/** The Word style name for a font, noting it so the reference document defines it. */
 function styleNameOf(font: WordLocalFont, pass: FontPass): string {
   const name = wordFontStyleName(font);
-  if (font.em !== undefined && font.context !== undefined) pass.inContext.set(name, font);
+  pass.used.set(name, font);
   return name;
-}
-
-/**
- * The font in force inside a node. A heading or a footnote starts afresh at its own size: a size
- * in it is a share of that size, as in the editor, not of the base size, and a font set around a
- * footnote reference does not reach the footnote text.
- */
-function fontWithin(node: PandocNode, outer: WordLocalFont, pass: FontPass): WordLocalFont {
-  const points =
-    node.t === "Header" && Array.isArray(node.c)
-      ? HEADING_POINTS[Number(node.c[0]) - 1]
-      : node.t === "Note"
-        ? FOOTNOTE_POINTS
-        : undefined;
-  if (points === undefined) return outer;
-  return points === pass.base.sizePoints ? {} : { context: points };
 }
 
 /** The font of a span laid over the font already in force around it. */
 function layered(outer: WordLocalFont, span: MarkdownFontSpan): WordLocalFont {
-  if ("family" in span) return { ...outer, family: span.family };
-  const size = MARKDOWN_FONT_SIZES.find(({ name }) => name === span.size);
-  return size === undefined ? outer : { ...outer, em: size.em };
+  return "family" in span ? { ...outer, family: span.family } : { ...outer, size: span.size };
 }
 
 /** The raw HTML text of an inline, or null when it is not a raw HTML inline. */
@@ -112,23 +88,18 @@ export function applyFontSpans(value: unknown, pass: FontPass, outer: WordLocalF
     return;
   }
   if (!Predicate.isObject(value)) return;
-  const within = isPandocNode(value) ? fontWithin(value, outer, pass) : outer;
-  for (const child of Object.values(value)) applyFontSpans(child, pass, within);
-}
-
-function isFontFamilyName(value: string): value is MarkdownFontFamilyName {
-  return MARKDOWN_FONT_FAMILIES.some((family) => family === value);
+  for (const child of Object.values(value)) applyFontSpans(child, pass, outer);
 }
 
 /** The base font named by the document's metadata; anything unrecognised keeps the default. */
 export function wordBaseFontOf(meta: Record<string, unknown>): WordBaseFont {
-  const size = inlineText(meta["font-size"]).trim();
-  const family = inlineText(meta["font-family"]).trim();
+  const size = inlineText(meta["fontsize"]).trim();
+  const family = inlineText(meta["mainfont"]).trim();
   return {
     sizePoints: BASE_SIZE.test(size)
       ? Number.parseInt(size, 10)
       : DEFAULT_WORD_BASE_FONT.sizePoints,
-    family: isFontFamilyName(family) ? family : DEFAULT_WORD_BASE_FONT.family,
+    family: catalogueFont(family) === null ? DEFAULT_WORD_BASE_FONT.family : family,
   };
 }
 
@@ -136,8 +107,22 @@ export function wordBaseFontOf(meta: Record<string, unknown>): WordBaseFont {
 // size group is rewritten to a `\textcolor` carrier Pandoc keeps, then turned into the same Word
 // style as a Markdown span.
 
+// Sizes of the standard class commands, in points, for the 10, 11 and 12 pt class options
+// (the same table as the Visual editor's layout).
+const LATEX_NAMED_SIZES: Readonly<Record<string, readonly [number, number, number]>> = {
+  tiny: [5, 6, 6],
+  scriptsize: [7, 8, 8],
+  footnotesize: [8, 9, 10],
+  small: [9, 10, 10.95],
+  normalsize: [10, 10.95, 12],
+  large: [12, 12, 14.4],
+  Large: [14.4, 14.4, 17.28],
+  LARGE: [17.28, 17.28, 20.74],
+  huge: [20.74, 20.74, 24.88],
+  Huge: [24.88, 24.88, 24.88],
+};
 const LATEX_SIZE_COMMAND = new RegExp(
-  String.raw`^\\(${MARKDOWN_FONT_SIZES.map(({ name }) => name).join("|")})(?![A-Za-z@])\s?`,
+  String.raw`^\\(?:(${Object.keys(LATEX_NAMED_SIZES).join("|")})|fontsize\{(\d+(?:\.\d+)?)\}\{[^{}]*\}\\selectfont)(?:\{\}|(?![A-Za-z@])\s?)`,
   "u",
 );
 const LATEX_SIZE_CARRIER = "scient-size-";
@@ -147,11 +132,27 @@ const LATEX_CLASS_SIZE = new RegExp(
   "u",
 );
 const LATEX_FAMILY_DEFAULT = /\\renewcommand\s*\{\\familydefault\}\s*\{\\(rm|sf|tt)default\}/u;
-const LATEX_FAMILIES: Readonly<Record<string, MarkdownFontFamilyName>> = {
-  rm: "serif",
-  sf: "sans-serif",
-  tt: "monospace",
+const LATEX_FAMILIES: Readonly<Record<string, string>> = {
+  rm: "Times New Roman",
+  sf: "Arial",
+  tt: "Courier New",
 };
+
+/** The source without its comments, so commented lines are never read as settings. */
+const withoutComments = (source: string): string => source.replaceAll(/(?<!\\)%.*$/gmu, "");
+
+/** The class option size, 10 when absent (LaTeX's own default). */
+function latexClassSize(source: string): 10 | 11 | 12 {
+  const option = LATEX_CLASS_SIZE.exec(withoutComments(source))?.[1];
+  return option === "11pt" ? 11 : option === "12pt" ? 12 : 10;
+}
+
+/** The size in points of a matched size command: a `\fontsize` number or a named class size. */
+function latexCommandPoints(command: RegExpExecArray, classSize: 10 | 11 | 12): number | null {
+  const named = command[1];
+  if (named !== undefined) return LATEX_NAMED_SIZES[named]?.[classSize - 10] ?? null;
+  return normalizeFontSize(Number(command[2]));
+}
 
 const isEscaped = (text: string, index: number): boolean => {
   let backslashes = 0;
@@ -182,7 +183,11 @@ const LATEX_VERBATIM_START = /^\\begin\{(verbatim\*?|lstlisting|minted)\}/u;
 // A brace right after a command name or a closing bracket is that command's argument, not a group.
 const LATEX_ARGUMENT_BEFORE = /[A-Za-z}\]*@]/u;
 
-function rewriteSizeGroups(text: string, counter: { found: boolean }): string {
+function rewriteSizeGroups(
+  text: string,
+  counter: { found: boolean },
+  classSize: 10 | 11 | 12,
+): string {
   let out = "";
   let inMath = false;
   for (let index = 0; index < text.length; index += 1) {
@@ -213,10 +218,12 @@ function rewriteSizeGroups(text: string, counter: { found: boolean }): string {
     if (char === "{" && standalone && !inMath && !isEscaped(text, index)) {
       const command = LATEX_SIZE_COMMAND.exec(text.slice(index + 1));
       const end = command === null ? -1 : braceEnd(text, index);
-      if (command !== null && end >= 0) {
+      const points = command === null ? null : latexCommandPoints(command, classSize);
+      if (command !== null && points !== null && end >= 0) {
         counter.found = true;
         const body = text.slice(index + 1 + command[0].length, end);
-        out += `\\ScientSize{${LATEX_SIZE_CARRIER}${command[1]}}{${rewriteSizeGroups(body, counter)}}`;
+        const carrier = `${LATEX_SIZE_CARRIER}${String(points).replace(".", "p")}`;
+        out += `\\ScientSize{${carrier}}{${rewriteSizeGroups(body, counter, classSize)}}`;
         index = end;
         continue;
       }
@@ -229,14 +236,15 @@ function rewriteSizeGroups(text: string, counter: { found: boolean }): string {
 /** The LaTeX source with each `{\large …}` size group made readable by Pandoc. */
 export function rewriteLatexSizeGroups(source: string): string {
   const counter = { found: false };
-  const rewritten = rewriteSizeGroups(source, counter);
+  const rewritten = rewriteSizeGroups(source, counter, latexClassSize(source));
   return counter.found ? `${LATEX_SIZE_MACRO}\n${rewritten}` : source;
 }
 
 /** The base font set by the preamble's class option and `\familydefault`, as the Visual card writes them. */
 export function latexBaseFontOf(source: string): WordBaseFont {
-  const size = LATEX_CLASS_SIZE.exec(source)?.[1];
-  const family = LATEX_FAMILY_DEFAULT.exec(source)?.[1];
+  const active = withoutComments(source);
+  const size = LATEX_CLASS_SIZE.exec(active)?.[1];
+  const family = LATEX_FAMILY_DEFAULT.exec(active)?.[1];
   return {
     sizePoints: size === undefined ? DEFAULT_WORD_BASE_FONT.sizePoints : Number.parseInt(size, 10),
     family:
@@ -249,17 +257,16 @@ function latexSpanFont(attributes: unknown): WordLocalFont | null {
   if (!Array.isArray(attributes)) return null;
   const [, classes, pairs] = attributes as [unknown, unknown, unknown];
   if (Array.isArray(classes)) {
-    if (classes.includes("sans-serif")) return { family: "sans-serif" };
-    if (classes.includes("roman")) return { family: "serif" };
+    if (classes.includes("sans-serif")) return { family: LATEX_FAMILIES["sf"] ?? "Arial" };
+    if (classes.includes("roman")) return { family: LATEX_FAMILIES["rm"] ?? "Times New Roman" };
   }
   if (!Array.isArray(pairs)) return null;
   for (const pair of pairs) {
     const style = Array.isArray(pair) && pair[0] === "style" ? pair[1] : null;
-    const name = Predicate.isString(style)
-      ? new RegExp(`^color:\\s*${LATEX_SIZE_CARRIER}(\\w+)$`, "u").exec(style)?.[1]
+    const carried = Predicate.isString(style)
+      ? new RegExp(`^color:\\s*${LATEX_SIZE_CARRIER}(\\d+(?:p\\d+)?)$`, "u").exec(style)?.[1]
       : undefined;
-    const size = MARKDOWN_FONT_SIZES.find((entry) => entry.name === name);
-    if (size !== undefined) return { em: size.em };
+    if (carried !== undefined) return { size: Number(carried.replace("p", ".")) };
   }
   return null;
 }
@@ -284,6 +291,5 @@ export function applyLatexFontSpans(
       return;
     }
   }
-  const within = isPandocNode(value) ? fontWithin(value, outer, pass) : outer;
-  for (const child of Object.values(value)) applyLatexFontSpans(child, pass, within);
+  for (const child of Object.values(value)) applyLatexFontSpans(child, pass, outer);
 }

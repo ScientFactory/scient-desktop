@@ -33,7 +33,7 @@ import { scientMarkdownSchema } from "./schema";
 import { selectMarkdownTable } from "./tables";
 import { nextScientMarkdownFootnoteLabel } from "../footnotes";
 import { WRITING_COMMAND_LABELS } from "../../writing/commandNames";
-import type { FontFamilyName, FontSizeName } from "../../writing/fontChoices";
+import { catalogueFont, normalizeFontSize } from "@scientfactory/scient-markdown";
 import {
   readMarkdownDocumentFont,
   writeMarkdownDocumentFont,
@@ -61,8 +61,9 @@ export type ScientMarkdownCommand =
   | "direction-rtl"
   | "display-math"
   | "footnote"
-  | `font-family-${FontFamilyName | "default"}`
-  | `font-size-${FontSizeName | "default"}`
+  | `font-family-${string}`
+  | `font-size-${number}`
+  | "font-size-default"
   | "clear-formatting"
   | "hard-break"
   | "heading-1"
@@ -489,19 +490,26 @@ function clearMarkdownFormatting(): Command {
   };
 }
 
-/** Set one font mark on the selection (or the typing marks at a caret); `null` removes it. */
+/**
+ * Set one font mark on the selection (or the typing marks at a caret); `null` removes it.
+ * Every selected range gets it, so a selection across table cells reaches all of them.
+ */
 function setMarkdownFontMark(markName: string, attrs: Attrs | null): Command {
   return (state, dispatch) => {
     if (!dispatch) return true;
     const type = requiredMarkType(markName);
-    const { from, to, empty, $from } = state.selection;
+    const { empty, $from } = state.selection;
     if (empty) {
       const kept = (state.storedMarks ?? $from.marks()).filter((mark) => mark.type !== type);
       dispatch(state.tr.setStoredMarks(attrs ? type.create(attrs).addToSet(kept) : kept));
       return true;
     }
-    let transaction = state.tr.removeMark(from, to, type);
-    if (attrs) {
+    let transaction = state.tr;
+    for (const range of state.selection.ranges) {
+      const from = range.$from.pos;
+      const to = range.$to.pos;
+      transaction = transaction.removeMark(from, to, type);
+      if (!attrs) continue;
       // Like toggleMark: the written span cannot keep whitespace at its ends.
       const isSpace = (at: number) => /^\s$/u.test(state.doc.textBetween(at, at + 1));
       let start = from;
@@ -515,12 +523,19 @@ function setMarkdownFontMark(markName: string, attrs: Attrs | null): Command {
   };
 }
 
-function fontCommand(
-  command: `font-family-${FontFamilyName | "default"}` | `font-size-${FontSizeName | "default"}`,
-): Command {
-  const [, kind, value] = /^font-(size|family)-(.+)$/u.exec(command) ?? [];
-  const attrs = value === "default" ? null : kind === "size" ? { size: value } : { family: value };
-  return setMarkdownFontMark(kind === "size" ? "font_size" : "font_family", attrs);
+/** Parses `font-size-12`, `font-size-default`, `font-family-Arial`, `font-family-default`. */
+function fontCommand(command: string): Command {
+  const [, kind, value = ""] = /^font-(size|family)-(.+)$/u.exec(command) ?? [];
+  if (kind === undefined) return () => false;
+  const markName = kind === "size" ? "font_size" : "font_family";
+  if (value === "default") return setMarkdownFontMark(markName, null);
+  if (kind === "size") {
+    const size = normalizeFontSize(Number(value));
+    return size === null ? () => false : setMarkdownFontMark(markName, { size });
+  }
+  return catalogueFont(value) === null
+    ? () => false
+    : setMarkdownFontMark(markName, { family: value });
 }
 
 /** The leading YAML or TOML front matter block, if the document starts with one. */

@@ -1,45 +1,34 @@
 /** Font size and family choices shared by the Markdown and LaTeX Visual editors. */
 import {
-  MARKDOWN_FONT_FAMILIES,
-  MARKDOWN_FONT_SIZES,
-  type MarkdownFontFamilyName,
-  type MarkdownFontSizeName,
+  FONT_CATALOGUE,
+  FONT_SIZE_MAX,
+  FONT_SIZE_MIN,
+  catalogueFont,
+  normalizeFontSize,
+  type CatalogueFont,
+  type FontCategory,
 } from "@scientfactory/scient-markdown";
 
-export type FontSizeName = MarkdownFontSizeName;
-export type FontFamilyName = MarkdownFontFamilyName;
+export { FONT_SIZE_MAX, FONT_SIZE_MIN, catalogueFont, normalizeFontSize };
 
-const SIZE_LABELS: Readonly<Record<FontSizeName, string>> = {
-  tiny: "Tiny",
-  scriptsize: "Very small",
-  footnotesize: "Footnote",
-  small: "Small",
-  normalsize: "Normal",
-  large: "Large",
-  Large: "Larger",
-  LARGE: "Very large",
-  huge: "Huge",
-  Huge: "Largest",
-};
+/** Sizes offered as shortcuts under the number field. */
+export const FONT_SIZE_PRESETS: ReadonlyArray<number> = [8, 9, 10, 11, 12, 14, 18, 24, 36];
 
-const FAMILY_LABELS: Readonly<Record<FontFamilyName, string>> = {
+const CATEGORY_LABELS: Readonly<Record<FontCategory, string>> = {
   serif: "Serif",
   "sans-serif": "Sans serif",
-  monospace: "Code",
+  monospace: "Monospace",
 };
 
-/** The ten LaTeX size names; `em` is each size relative to `\normalsize` at 10 pt. */
-export const FONT_SIZES = MARKDOWN_FONT_SIZES.map((size) => ({
-  ...size,
-  label: SIZE_LABELS[size.name],
-}));
-
-/** Generic families only; the names are the CSS keywords written in Markdown. */
-export const FONT_FAMILIES = MARKDOWN_FONT_FAMILIES.map((name) => ({
-  name,
-  label: FAMILY_LABELS[name],
-}));
-
-export function isFontFamilyName(value: string): value is FontFamilyName {
-  return MARKDOWN_FONT_FAMILIES.some((family) => family === value);
+export interface FontGroup {
+  readonly label: string;
+  readonly fonts: ReadonlyArray<CatalogueFont>;
 }
+
+/** The catalogue grouped for the picker, in catalogue order. */
+export const FONT_GROUPS: ReadonlyArray<FontGroup> = (
+  ["serif", "sans-serif", "monospace"] as const
+).map((category) => ({
+  label: CATEGORY_LABELS[category],
+  fonts: FONT_CATALOGUE.filter((font) => font.category === category),
+}));

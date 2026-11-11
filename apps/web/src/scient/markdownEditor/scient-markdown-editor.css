@@ -270,14 +270,8 @@
 .scient-markdown-document[data-scient-font-size] :is(h4, h5, h6) {
   font-size: calc(var(--scient-font-size-markdown-body) * var(--scient-markdown-size-scale));
 }
-.scient-markdown-document[data-scient-font-family="serif"] {
-  font-family: serif;
-}
-.scient-markdown-document[data-scient-font-family="sans-serif"] {
-  font-family: sans-serif;
-}
-.scient-markdown-document[data-scient-font-family="monospace"] {
-  font-family: var(--font-mono);
+.scient-markdown-document[data-scient-font-family] {
+  font-family: var(--scient-markdown-font-family);
 }
 
 .scient-markdown-document p,

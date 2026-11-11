@@ -16,13 +16,13 @@ const carrier = (name: string, body: string) => `\\ScientSize{scient-size-${name
 describe("rewriteLatexSizeGroups", () => {
   it("rewrites a size group and leaves the rest of the source unchanged", () => {
     const rewritten = rewriteLatexSizeGroups("A {\\Large big} B");
-    expect(rewritten).toContain(`A ${carrier("Large", "big")} B`);
+    expect(rewritten).toContain(`A ${carrier("14p4", "big")} B`);
     expect(rewritten.startsWith("\\newcommand{\\ScientSize}")).toBe(true);
   });
 
   it("keeps nested groups and family commands inside the body", () => {
     expect(rewriteLatexSizeGroups("{\\large a {\\small b} \\textsf{c}}")).toContain(
-      carrier("large", `a ${carrier("small", "b")} \\textsf{c}`),
+      carrier("12", `a ${carrier("9", "b")} \\textsf{c}`),
     );
   });
 
@@ -65,7 +65,7 @@ describe("rewriteLatexSizeGroups", () => {
   });
 
   it("still rewrites a group after bracket math", () => {
-    expect(rewriteLatexSizeGroups("\\[ a \\] {\\large x}")).toContain(carrier("large", "x"));
+    expect(rewriteLatexSizeGroups("\\[ a \\] {\\large x}")).toContain(carrier("12", "x"));
   });
 
   it("does not match a longer command that starts with a size name", () => {
@@ -80,90 +80,97 @@ describe("latexBaseFontOf", () => {
       latexBaseFontOf(
         "\\documentclass[a4paper,12pt]{article}\n\\renewcommand{\\familydefault}{\\ttdefault}",
       ),
-    ).toEqual({ sizePoints: 12, family: "monospace" });
+    ).toEqual({ sizePoints: 12, family: "Courier New" });
   });
 
   it("keeps the Word default when nothing is set", () => {
     expect(latexBaseFontOf("\\documentclass{article}")).toEqual({
       sizePoints: 11,
-      family: "sans-serif",
+      family: null,
     });
   });
 });
 
-describe("a local size keeps its share of the surrounding text", () => {
-  const open = { t: "RawInline", c: ["html", '<span style="font-size:1.2em">'] };
-  const close = { t: "RawInline", c: ["html", "</span>"] };
+describe("local fonts become Word character styles", () => {
+  const raw = (html: string) => ({ t: "RawInline", c: ["html", html] });
+  const close = raw("</span>");
   const word = { t: "Str", c: "word" };
-  const pass = (sizePoints = 11): FontPass => ({
-    base: { sizePoints, family: "sans-serif" },
-    inContext: new Map<string, WordLocalFont>(),
+  const pass = (): FontPass => ({
+    base: { sizePoints: 11, family: null },
+    used: new Map<string, WordLocalFont>(),
   });
-  const attributes = ["", [], []];
-  const styleOf = (inlines: Array<unknown>) =>
-    JSON.stringify(inlines).match(/Scient[^"]*/u)?.[0] ?? null;
+  const stylesOf = (inlines: unknown) =>
+    JSON.stringify(inlines).match(/custom-style","([^"]*)/gu) ?? [];
 
-  it("names the heading size in the style of a size set inside a heading", () => {
-    const heading = [{ t: "Header", c: [1, attributes, [open, word, close]] }];
-    const used = pass();
-    applyFontSpans(heading, used);
-    expect(styleOf(heading)).toBe("Scient Size 120% of 18pt");
-    expect([...used.inContext.keys()]).toEqual(["Scient Size 120% of 18pt"]);
-  });
-
-  it("uses the footnote size inside a footnote", () => {
-    const note = [{ t: "Para", c: [{ t: "Note", c: [{ t: "Para", c: [open, word, close] }] }] }];
-    const used = pass();
-    applyFontSpans(note, used);
-    expect(styleOf(note)).toBe("Scient Size 120% of 9pt");
-  });
-
-  it("keeps the plain style in a paragraph, and in a heading the size of the base", () => {
-    const text = [{ t: "Para", c: [open, word, close] }];
-    const same = [{ t: "Header", c: [5, attributes, [open, word, close]] }];
+  it("names an absolute size in points", () => {
+    const text = [{ t: "Para", c: [raw('<span style="font-size:13.5pt">'), word, close] }];
     const used = pass();
     applyFontSpans(text, used);
-    applyFontSpans(same, used);
-    expect(styleOf(text)).toBe("Scient Size 120%");
-    expect(styleOf(same)).toBe("Scient Size 120%");
-    expect(used.inContext.size).toBe(0);
+    expect(stylesOf(text)).toEqual(['custom-style","13.5 pt']);
+    expect([...used.used.keys()]).toEqual(["13.5 pt"]);
   });
 
-  it("writes the style of a heading size with the heading size times the share", () => {
-    const font = { em: 1.2, context: 18 };
-    const styles = scientReferenceDocumentParts(undefined, [font]).find(
-      ([name]) => name === "word/styles.xml",
-    )?.[1];
-    // 1.2 x 18 pt = 21.6 pt, kept to the half point: 21.5 pt, which Word writes as 43.
-    expect(styles).toMatch(
-      /<w:style [^>]*w:styleId="ScientSize120of18pt"(?:(?!<\/w:style>)[\s\S])*?<w:sz w:val="43"/u,
-    );
-  });
-
-  it("does not carry the font around a footnote reference into the footnote text", () => {
-    const family = { t: "RawInline", c: ["html", '<span style="font-family:monospace">'] };
+  it("names a font and combines a nested size and font in one style", () => {
     const text = [
       {
         t: "Para",
-        c: [open, { t: "Note", c: [{ t: "Para", c: [family, word, close] }] }, close],
+        c: [
+          raw('<span style="font-size:14pt">'),
+          raw("<span style=\"font-family:'Times New Roman'\">"),
+          word,
+          close,
+          close,
+        ],
       },
     ];
-    applyFontSpans(text, pass());
-    expect(JSON.stringify(text)).toContain("Scient Font monospace");
-    expect(JSON.stringify(text)).not.toContain("120% of 9pt Font");
+    const used = pass();
+    applyFontSpans(text, used);
+    expect(stylesOf(text).at(-1)).toBe('custom-style","Times New Roman 14 pt');
+    expect(used.used.has("Times New Roman 14 pt")).toBe(true);
   });
 
-  it("combines a size and a family in a heading", () => {
-    const family = { t: "RawInline", c: ["html", '<span style="font-family:serif">'] };
-    const heading = [{ t: "Header", c: [2, attributes, [open, family, word, close, close]] }];
-    const used = pass();
-    applyFontSpans(heading, used);
-    // Pandoc keeps only the innermost style of a run, so the innermost one names both.
-    expect(
-      JSON.stringify(heading)
-        .match(/Scient[^"]*/gu)
-        ?.at(-1),
-    ).toBe("Scient Size 120% of 15pt Font serif");
-    expect(used.inContext.has("Scient Size 120% of 15pt Font serif")).toBe(true);
+  it("leaves a name outside the catalogue as plain source", () => {
+    const text = [
+      { t: "Para", c: [raw("<span style=\"font-family:'Comic Sans'\">"), word, close] },
+    ];
+    applyFontSpans(text, pass());
+    expect(stylesOf(text)).toEqual([]);
+  });
+
+  it("defines each used style with half-point sizes and the right fonts", () => {
+    const styles = scientReferenceDocumentParts({ sizePoints: 11, family: null }, [
+      { size: 13.3, family: "Arial" },
+      { family: "Times New Roman" },
+    ]).find(([name]) => name === "word/styles.xml")?.[1];
+    // 13.3 pt rounds to 26.5 pt, written as 27 half points.
+    expect(styles).toMatch(/w:styleId="ScientArial13_3pt"[\s\S]*?<w:sz w:val="27"/u);
+    expect(styles).toContain('w:ascii="Times New Roman" w:hAnsi="Times New Roman"');
+    expect(styles).toContain('w:cs="Times New Roman"');
+  });
+});
+
+describe("LaTeX font sizes", () => {
+  it("reads a fontsize group in points", () => {
+    expect(rewriteLatexSizeGroups("A {\\fontsize{13}{15.6}\\selectfont big} B")).toContain(
+      `A ${carrier("13", "big")} B`,
+    );
+  });
+
+  it("keeps a decimal size and a leading space after selectfont{}", () => {
+    expect(rewriteLatexSizeGroups("{\\fontsize{13.5}{16}\\selectfont{} x}")).toContain(
+      carrier("13p5", " x"),
+    );
+  });
+
+  it("maps a named size through the class option", () => {
+    const source = "\\documentclass[12pt]{article}\n{\\large x}";
+    expect(rewriteLatexSizeGroups(source)).toContain(carrier("14p4", "x"));
+    expect(rewriteLatexSizeGroups("{\\large x}")).toContain(carrier("12", "x"));
+  });
+
+  it("ignores a commented class option and a commented family default", () => {
+    const source =
+      "%\\documentclass[12pt]{article}\n% \\renewcommand{\\familydefault}{\\ttdefault}";
+    expect(latexBaseFontOf(source)).toEqual({ sizePoints: 11, family: null });
   });
 });

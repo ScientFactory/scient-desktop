@@ -10,6 +10,7 @@ import {
   use,
   useEffect,
   useState,
+  type CSSProperties,
   type ReactNode,
   type SyntheticEvent,
 } from "react";
@@ -33,6 +34,7 @@ import { scientMarkdownRemarkPlugins } from "../markdown/scientMarkdownProfiles"
 import type { DocumentPageTracker } from "./documentPageReadiness";
 import {
   DOCUMENT_FONT_SANITIZE_ATTRIBUTES,
+  documentFontFamilyCss,
   documentFontOfMarkdown,
   rehypeApplyFontSpans,
   rehypeMarkFontSpans,
@@ -508,6 +510,7 @@ export function ScientDocumentPage(props: ScientDocumentPageProps) {
   );
   const direction = resolveMarkdownDirection(input.markdown, input.direction);
   const documentFont = documentFontOfMarkdown(input.markdown);
+  const documentFontCss = documentFontFamilyCss(documentFont.fontFamily);
   const context = {
     assets: new Map(input.assets.map((asset) => [asset.id, asset])),
     assetBaseUrl: props.inputUrl,
@@ -538,6 +541,11 @@ export function ScientDocumentPage(props: ScientDocumentPageProps) {
         data-scient-document={input.documentKind}
         data-scient-font-size={documentFont.fontSize ?? undefined}
         data-scient-font-family={documentFont.fontFamily ?? undefined}
+        style={
+          documentFontCss === null
+            ? undefined
+            : ({ "--scient-document-font-family": documentFontCss } as CSSProperties)
+        }
       >
         <ReactMarkdown
           remarkPlugins={remarkPlugins}

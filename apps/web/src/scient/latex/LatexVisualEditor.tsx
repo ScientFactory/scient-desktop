@@ -1,7 +1,7 @@
 import type { PagedTableLayout } from "./latexPagedGeometry";
 import { resolvedLatexFontSize } from "./latexVisualLayout";
 import { latexSelectionClipboard } from "./latexClipboard";
-import { FontMenuItems } from "../writing/FontMenuItems";
+import { FontControls } from "../writing/FontControls";
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
 import { setLatexFontFamily, setLatexFontSize } from "./latexFontCommands";
 import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
@@ -5577,6 +5577,29 @@ const LatexTextMarks = LATEX_CANVAS_TEXT_MARKS.map(({ name, style }) =>
   ),
 );
 
+/** A numeric size (`\fontsize{12}{14.4}\selectfont`): size and baseline in TeX points. */
+const LatexFontSize = Mark.create({
+  name: "latexFontSize",
+  addAttributes() {
+    return { points: { default: 10 }, leading: { default: 12 } };
+  },
+  parseHTML() {
+    return [{ tag: "span[data-latex-font-size]" }];
+  },
+  renderHTML({ mark }) {
+    const pixels = (points: unknown) =>
+      `${(Number(points) * CSS_PIXELS_PER_INCH) / TEX_POINTS_PER_INCH}px`;
+    return [
+      "span",
+      {
+        "data-latex-font-size": String(mark.attrs.points),
+        style: `font-size:${pixels(mark.attrs.points)};line-height:${pixels(mark.attrs.leading)}`,
+      },
+      0,
+    ];
+  },
+});
+
 const LatexColor = Mark.create({
   name: "latexColor",
   priority: 1100,
@@ -5626,6 +5649,7 @@ const LatexMonospace = Code.extend({ excludes: "" });
 
 const inlineFieldExtensions = [
   ...LatexTextMarks,
+  LatexFontSize,
   LatexColor,
   LatexColor.extend({
     name: "latexBackground",
@@ -5660,6 +5684,7 @@ const baseExtensions = [
     trailingNode: false,
   }),
   ...LatexTextMarks,
+  LatexFontSize,
   LatexColor,
   LatexColor.extend({
     name: "latexBackground",
@@ -9246,7 +9271,10 @@ function LatexVisualEditorReady(
   // The same inline formatting, in the same order, as the Markdown bar; LaTeX
   // has no strikethrough.
   // Inline formatting acts on text; on an object (title, figure, equation) it is off.
-  const editingPresentation = useLatexEditingPresentation(editor);
+  const editingPresentation = useLatexEditingPresentation(
+    editor,
+    latexVisualLayoutProfile(mathSetupSource).baseFontPt,
+  );
   const editingTarget = editingPresentation.editor;
   const formattingAvailable = editingPresentation.formattingAvailable;
   const formatActions = [
@@ -9656,7 +9684,7 @@ function LatexVisualEditorReady(
     paragraphStyle: writingStyleItems,
     formatting: writingFormattingItems,
     font: (
-      <FontMenuItems
+      <FontControls
         family={editingPresentation.fontFamily}
         size={editingPresentation.fontSize}
         disabled={readOnly || !editor || !formattingAvailable || mathActive}

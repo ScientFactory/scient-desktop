@@ -1,10 +1,10 @@
 import {
-  MARKDOWN_FONT_SIZES,
+  catalogueFont,
   markdownFontSpanStyle,
+  normalizeFontSize,
   parseMarkdownFontSpanStyle,
 } from "@scientfactory/scient-markdown";
 import { LEADING_FRONT_MATTER, readMarkdownDocumentFont } from "../markdownEditor/documentFont";
-import { isFontFamilyName } from "../writing/fontChoices";
 
 /**
  * Font styles of an exported Markdown document: the local `<span style>` forms
@@ -47,15 +47,16 @@ export function rehypeMarkFontSpans() {
 export function rehypeApplyFontSpans() {
   return (tree: HastNode) =>
     visitSpans(tree, (properties) => {
-      const size = properties.dataScientFontSize;
+      const sizeValue = properties.dataScientFontSize;
       const family = properties.dataScientFontFamily;
       delete properties.dataScientFontSize;
       delete properties.dataScientFontFamily;
-      const sizeName = MARKDOWN_FONT_SIZES.find(({ name }) => name === size)?.name;
-      if (sizeName !== undefined) {
-        properties.style = markdownFontSpanStyle({ size: sizeName });
-      } else if (typeof family === "string" && isFontFamilyName(family)) {
-        properties.style = `font-family:${family}, "Noto Sans Hebrew", "Arial Hebrew", "Noto Sans Arabic"`;
+      const size = sizeValue === undefined ? null : normalizeFontSize(Number(sizeValue));
+      const font = typeof family === "string" ? catalogueFont(family) : null;
+      if (size !== null) {
+        properties.style = markdownFontSpanStyle({ size });
+      } else if (font !== null) {
+        properties.style = `font-family:${documentFontFamilyCss(font.name)}`;
       }
     });
 }
@@ -64,4 +65,12 @@ export function rehypeApplyFontSpans() {
 export function documentFontOfMarkdown(markdown: string) {
   const front = LEADING_FRONT_MATTER.exec(markdown);
   return readMarkdownDocumentFont(front?.[0] ?? null);
+}
+
+const HEBREW_FALLBACKS = '"Noto Sans Hebrew", "Arial Hebrew", "Noto Sans Arabic"';
+
+/** The CSS font stack for a catalogue name, with fallbacks for Hebrew and Arabic text. */
+export function documentFontFamilyCss(name: string | null): string | null {
+  const font = name === null ? null : catalogueFont(name);
+  return font === null ? null : `${font.css}, ${HEBREW_FALLBACKS}`;
 }

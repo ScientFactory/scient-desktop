@@ -156,7 +156,7 @@ export interface ScientMarkdownEditorSnapshot {
   readonly findOpen: boolean;
   readonly findQuery: string;
   readonly fontFamily: string | null;
-  readonly fontSize: string | null;
+  readonly fontSize: number | null;
   readonly findWholeWord: boolean;
   readonly inTable: boolean;
   readonly listKind: "bullet" | "ordered" | "task" | null;
@@ -1720,19 +1720,23 @@ export class ScientMarkdownEditorView {
       )
       .map((mark) => mark.name);
     // The shared value of a mark attribute over the selection; null when none or mixed.
-    const markAttribute = (markName: string, attribute: string) => {
+    const markAttribute = <T extends string | number>(
+      markName: string,
+      attribute: string,
+      kind: "string" | "number",
+    ): T | null => {
       const type = scientMarkdownSchema.marks[markName]!;
+      const valid = (value: unknown): value is T => typeof value === kind;
       if (selection.empty) {
         const mark = (state.storedMarks ?? selection.$from.marks()).find((m) => m.type === type);
-        return typeof mark?.attrs[attribute] === "string"
-          ? (mark.attrs[attribute] as string)
-          : null;
+        const value = mark?.attrs[attribute];
+        return valid(value) ? value : null;
       }
-      const values = new Set<string | null>();
+      const values = new Set<T | null>();
       state.doc.nodesBetween(selection.from, selection.to, (node) => {
         if (!node.isText) return;
         const value = node.marks.find((m) => m.type === type)?.attrs[attribute];
-        values.add(typeof value === "string" ? value : null);
+        values.add(valid(value) ? value : null);
       });
       return values.size === 1 ? ([...values][0] ?? null) : null;
     };
@@ -1803,8 +1807,8 @@ export class ScientMarkdownEditorView {
       findMatchCount: find.matches.length,
       findOpen: this.findOpen,
       findQuery: find.query,
-      fontFamily: markAttribute("font_family", "family"),
-      fontSize: markAttribute("font_size", "size"),
+      fontFamily: markAttribute<string>("font_family", "family", "string"),
+      fontSize: markAttribute<number>("font_size", "size", "number"),
       findWholeWord: find.wholeWord,
       headingLevel,
       inTable,

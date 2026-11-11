@@ -33,20 +33,22 @@ function markedText(session: ScientProseMirrorSession, markName: string) {
 describe("Markdown font size and family", () => {
   it("reads the recognised span forms as marks", () => {
     const session = open(
-      'a <span style="font-size:1.2em">big</span> and <span style="font-family:monospace">code</span>\n',
+      `a <span style="font-size:14pt">big</span> and <span style="font-family:'Courier New'">code</span>\n`,
     );
     expect(markedText(session, "font_size")).toEqual(["big"]);
     expect(markedText(session, "font_family")).toEqual(["code"]);
     const size = session.state.doc.firstChild!.child(1).marks[0]!;
-    expect(size.attrs.size).toBe("large");
+    expect(size.attrs.size).toBe(14);
   });
 
   it.each([
-    '<span style="font-size:3em">x</span>',
+    '<span style="font-size:1.2em">x</span>',
+    '<span style="font-size:300pt">x</span>',
     '<span style="color:red">x</span>',
     '<span style="font-family:Arial">x</span>',
-    '<span style="font-size:1.2em" class="a">x</span>',
-    '<span style="font-size:1.2em">unclosed',
+    `<span style="font-family:'Comic Sans MS'">x</span>`,
+    '<span style="font-size:14pt" class="a">x</span>',
+    '<span style="font-size:14pt">unclosed',
     "plain </span> stray close",
   ])("leaves other HTML as text: %s", (source) => {
     const session = open(`${source}\n`);
@@ -58,13 +60,11 @@ describe("Markdown font size and family", () => {
   it("applies, replaces and removes a size on a selection, writing the exact span", () => {
     const session = open("one two three\n");
     select(session, 4, 7);
-    run(session, "font-size-large");
+    run(session, "font-size-14");
+    expect(session.session.draftSource).toBe('one <span style="font-size:14pt">two</span> three\n');
+    run(session, "font-size-9.5");
     expect(session.session.draftSource).toBe(
-      'one <span style="font-size:1.2em">two</span> three\n',
-    );
-    run(session, "font-size-small");
-    expect(session.session.draftSource).toBe(
-      'one <span style="font-size:0.9em">two</span> three\n',
+      'one <span style="font-size:9.5pt">two</span> three\n',
     );
     run(session, "font-size-default");
     expect(session.session.draftSource).toBe("one two three\n");
@@ -73,17 +73,15 @@ describe("Markdown font size and family", () => {
   it("leaves whitespace at the ends of the selection outside the span", () => {
     const session = open("one two three\n");
     select(session, 3, 8);
-    run(session, "font-size-LARGE");
-    expect(session.session.draftSource).toBe(
-      'one <span style="font-size:1.73em">two</span> three\n',
-    );
+    run(session, "font-size-18");
+    expect(session.session.draftSource).toBe('one <span style="font-size:18pt">two</span> three\n');
   });
 
   it("never nests two sizes and keeps size and family as separate spans", () => {
     const session = open("one two three\n");
     select(session, 4, 7);
-    run(session, "font-size-huge");
-    run(session, "font-family-sans-serif");
+    run(session, "font-size-24");
+    run(session, "font-family-Arial");
     const written = session.session.draftSource;
     expect(written.match(/font-size/gu)).toHaveLength(1);
     const reopened = open(written);
@@ -98,7 +96,7 @@ describe("Markdown font size and family", () => {
       session.state.tr.setSelection(TextSelection.create(session.state.doc, 10, 14)),
       "user",
     );
-    run(session, "font-size-Large");
+    run(session, "font-size-16");
     const written = session.session.draftSource;
     expect(written.startsWith("# Title\n\n")).toBe(true);
     expect(written.endsWith("\n\nsecond paragraph\n")).toBe(true);
@@ -106,9 +104,9 @@ describe("Markdown font size and family", () => {
 
   it("round-trips a span inside bold, a list item and a table cell", () => {
     for (const source of [
-      '**a <span style="font-size:1.44em">b</span> c**\n',
-      '- item <span style="font-family:serif">x</span>\n',
-      '| A |\n| --- |\n| <span style="font-size:0.5em">t</span> |\n',
+      '**a <span style="font-size:16pt">b</span> c**\n',
+      `- item <span style="font-family:'Times New Roman'">x</span>\n`,
+      '| A |\n| --- |\n| <span style="font-size:8pt">t</span> |\n',
     ]) {
       const session = open(source);
       expect(
@@ -122,9 +120,9 @@ describe("Markdown font size and family", () => {
   });
 
   it.each([
-    '- a <span style="font-size:1.2em">x `</span>` y</span>',
-    '- a <span style="font-size:1.2em">x `<span>` y</span>',
-    '- <span style="font-size:1.2em">[</span>](https://example.com) y</span>',
+    '- a <span style="font-size:12pt">x `</span>` y</span>',
+    '- a <span style="font-size:12pt">x `<span>` y</span>',
+    '- <span style="font-size:12pt">[</span>](https://example.com) y</span>',
   ])("keeps a block whose span text contains tags in code or links: %s", (block) => {
     const source = `${block}\n\nsecond paragraph\n`;
     const session = open(source);
@@ -146,17 +144,19 @@ describe("Markdown font size and family", () => {
     expect(scientMarkdownSchema.marks.font_family).toBeDefined();
   });
 
-  it("ignores pasted HTML whose size or family is not a known name", () => {
+  it("ignores pasted HTML whose size or family is not a known size or font", () => {
     const parseRule = (markName: "font_size" | "font_family") => {
       const rule = scientMarkdownSchema.marks[markName]?.spec.parseDOM?.[0];
       return rule?.getAttrs as (element: { getAttribute: (name: string) => string }) => unknown;
     };
     const attribute = (value: string) => ({ getAttribute: () => value });
-    expect(parseRule("font_size")(attribute("huge"))).toEqual({ size: "huge" });
+    expect(parseRule("font_size")(attribute("14"))).toEqual({ size: 14 });
+    expect(parseRule("font_size")(attribute("1000"))).toBe(false);
     expect(parseRule("font_size")(attribute("x;background:url(https://example.invalid)"))).toBe(
       false,
     );
-    expect(parseRule("font_family")(attribute("monospace"))).toEqual({ family: "monospace" });
-    expect(parseRule("font_family")(attribute('serif" onmouseover="alert(1)'))).toBe(false);
+    expect(parseRule("font_family")(attribute("Arial"))).toEqual({ family: "Arial" });
+    expect(parseRule("font_family")(attribute("Comic Sans MS"))).toBe(false);
+    expect(parseRule("font_family")(attribute('Arial" onmouseover="alert(1)'))).toBe(false);
   });
 });

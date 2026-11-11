@@ -648,85 +648,53 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
         }),
       );
 
-    it.live("applies a recognised size span as a Word character style", () =>
+    it.live("applies a size in points as a Word character style", () =>
       Effect.gen(function* () {
         const { document, styles, warnings } = yield* exportMarkdown(
           "font-size-span",
-          'Some <span style="font-size:1.2em">big</span> words.',
+          'Some <span style="font-size:13.5pt">big</span> words.',
         );
         expect(document).toMatch(
-          /<w:rStyle w:val="ScientSize120"\s*\/>[\s\S]*?<w:t[^>]*>big<\/w:t>/u,
+          /<w:rStyle w:val="Scient13_5pt"\s*\/>[\s\S]*?<w:t[^>]*>big<\/w:t>/u,
         );
-        expect(styles).toMatch(/w:styleId="ScientSize120"[\s\S]*?<w:sz w:val="26"\s*\/>/u);
+        expect(styles).toMatch(/w:styleId="Scient13_5pt"[\s\S]*?<w:sz w:val="27"\s*\/>/u);
         expect(warnings).not.toContain("Raw HTML");
         expect(document).not.toContain("&lt;span");
       }),
     );
 
-    it.live("applies a recognised family span as a Word character style", () =>
+    it.live("applies a named font as a Word character style", () =>
       Effect.gen(function* () {
         const { document, styles } = yield* exportMarkdown(
           "font-family-span",
-          'Some <span style="font-family:monospace">code</span> words.',
+          "Some <span style=\"font-family:'Courier New'\">code</span> words.",
         );
-        expect(document).toMatch(/<w:rStyle w:val="ScientFontmonospace"\s*\/>[\s\S]*?code/u);
-        expect(styles).toMatch(/w:styleId="ScientFontmonospace"[\s\S]*?Consolas/u);
+        expect(document).toMatch(/<w:rStyle w:val="ScientCourierNew"\s*\/>[\s\S]*?code/u);
+        expect(styles).toMatch(/w:styleId="ScientCourierNew"[\s\S]*?w:ascii="Courier New"/u);
       }),
     );
 
-    it.live("keeps both when a size span and a family span are nested", () =>
+    it.live("keeps both when a size span and a font span are nested", () =>
       Effect.gen(function* () {
         const { document } = yield* exportMarkdown(
           "font-nested",
-          'Some <span style="font-size:1.2em">big <span style="font-family:sans-serif">words</span></span> here.',
+          'Some <span style="font-size:14pt">big <span style="font-family:\'Arial\'">words</span></span> here.',
         );
         const sizeRun = /<w:r>(?:(?!<\/w:r>)[\s\S])*?big/u.exec(document)?.[0] ?? "";
         const wordsRun = /<w:r>(?:(?!<\/w:r>)[\s\S])*?words/u.exec(document)?.[0] ?? "";
-        expect(sizeRun).toContain("ScientSize120");
-        expect(wordsRun).toContain("ScientSize120Fontsansserif");
+        expect(sizeRun).toContain("Scient14pt");
+        expect(wordsRun).toContain("ScientArial14pt");
       }),
     );
 
-    it.live("keeps the share of the heading size for a size inside a heading", () =>
+    it.live("keeps an absolute size inside a heading and a footnote", () =>
       Effect.gen(function* () {
         const { document, styles } = yield* exportMarkdown(
           "font-heading",
-          '# Title with <span style="font-size:1.2em">big</span> word\n\nPlain <span style="font-size:1.2em">body</span>.\n',
+          '# Title with <span style="font-size:20pt">big</span> word\n\nText[^1]\n\n[^1]: Note <span style="font-size:20pt">big</span>.\n',
         );
-        expect(document).toMatch(
-          /<w:rStyle w:val="ScientSize120of18pt"\s*\/>[\s\S]*?<w:t[^>]*>big<\/w:t>/u,
-        );
-        // 1.2 x 18 pt = 21.6 pt, kept to the half point: 21.5 pt.
-        expect(styles).toMatch(
-          /<w:style [^>]*w:styleId="ScientSize120of18pt"(?:(?!<\/w:style>)[\s\S])*?<w:sz w:val="43"\s*\/>/u,
-        );
-        // The same size in the body stays a share of the base size.
-        expect(document).toMatch(
-          /<w:rStyle w:val="ScientSize120"\s*\/>[\s\S]*?<w:t[^>]*>body<\/w:t>/u,
-        );
-      }),
-    );
-
-    it.live("keeps the share of the footnote size for a size inside a footnote", () =>
-      Effect.gen(function* () {
-        const { styles, footnotes } = yield* withConverter(({ converter, directory }) =>
-          Effect.gen(function* () {
-            const { docx } = yield* convertTo(converter, directory, "font-footnote", {
-              bundle: makeBundle({
-                markdown: 'Text[^1]\n\n[^1]: Note with <span style="font-size:1.2em">big</span>.\n',
-              }),
-            });
-            return {
-              styles: docx.text("word/styles.xml"),
-              footnotes: docx.text("word/footnotes.xml"),
-            };
-          }),
-        );
-        expect(footnotes).toMatch(/<w:rStyle w:val="ScientSize120of9pt"\s*\/>/u);
-        // 1.2 x 9 pt = 10.8 pt, kept to the half point: 11 pt.
-        expect(styles).toMatch(
-          /<w:style [^>]*w:styleId="ScientSize120of9pt"(?:(?!<\/w:style>)[\s\S])*?<w:sz w:val="22"\s*\/>/u,
-        );
+        expect(document).toMatch(/<w:rStyle w:val="Scient20pt"\s*\/>[\s\S]*?<w:t[^>]*>big<\/w:t>/u);
+        expect(styles).toMatch(/w:styleId="Scient20pt"[\s\S]*?<w:sz w:val="40"\s*\/>/u);
       }),
     );
 
@@ -743,14 +711,15 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
       }),
     );
 
-    it.live("sets the base font and scales local sizes from the front matter", () =>
+    it.live("sets the base font and size from the front matter", () =>
       Effect.gen(function* () {
         const { styles } = yield* exportMarkdown(
           "font-front-matter",
-          '---\nfont-size: 12pt\nfont-family: serif\n---\n\nText with <span style="font-size:1.2em">size</span>.\n',
+          "---\nfontsize: 12pt\nmainfont: Times New Roman\n---\n\nText.\n",
         );
-        expect(styles).toMatch(/<w:docDefaults>[\s\S]*?Cambria[\s\S]*?<w:sz w:val="24"\s*\/>/u);
-        expect(styles).toMatch(/w:styleId="ScientSize120"[\s\S]*?<w:sz w:val="29"\s*\/>/u);
+        expect(styles).toMatch(
+          /<w:docDefaults>[\s\S]*?w:ascii="Times New Roman"[\s\S]*?<w:sz w:val="24"\s*\/>/u,
+        );
       }),
     );
     const exportLatex = (name: string, tex: string) =>
@@ -776,16 +745,16 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
           [
             "\\documentclass{article}",
             "\\begin{document}",
-            "A {\\Large big \\textsf{both}} and \\textrm{roman} and {\\small tiny}.",
+            "A {\\fontsize{14.4}{17.3}\\selectfont big \\textsf{both}} and \\textrm{roman} and {\\small tiny}.",
             "\\end{document}",
           ].join("\n"),
         );
         const run = (text: string) =>
           new RegExp(`<w:r>(?:(?!</w:r>)[\\s\\S])*?${text}`, "u").exec(document)?.[0] ?? "";
-        expect(run("big")).toContain("ScientSize144");
-        expect(run("both")).toContain("ScientSize144Fontsansserif");
-        expect(run("roman")).toContain("ScientFontserif");
-        expect(run("tiny")).toContain("ScientSize90");
+        expect(run("big")).toContain("Scient14_4pt");
+        expect(run("both")).toContain("ScientArial14_4pt");
+        expect(run("roman")).toContain("ScientTimesNewRoman");
+        expect(run("tiny")).toContain("Scient9pt");
         expect(document).not.toContain("scient-size");
       }),
     );
@@ -802,7 +771,9 @@ describe.skipIf(binary === null)("Word export with the real Pandoc (local integr
             "\\end{document}",
           ].join("\n"),
         );
-        expect(styles).toMatch(/<w:docDefaults>[\s\S]*?Cambria[\s\S]*?<w:sz w:val="24"\s*\/>/u);
+        expect(styles).toMatch(
+          /<w:docDefaults>[\s\S]*?Times New Roman[\s\S]*?<w:sz w:val="24"\s*\/>/u,
+        );
       }),
     );
   });

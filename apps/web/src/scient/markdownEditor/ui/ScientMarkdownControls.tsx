@@ -87,7 +87,7 @@ import {
   type InsertMenuAction,
   type InsertMenuLayout,
 } from "../../writing/InsertMenu";
-import { FontMenuItems } from "../../writing/FontMenuItems";
+import { FontControls } from "../../writing/FontControls";
 import { TextMenu, TextMenuItems } from "../../writing/TextMenu";
 import { MarkdownDocumentSettings } from "./MarkdownDocumentSettings";
 import { DockCommandCheckboxItem } from "../../writing/dockChrome";
@@ -358,12 +358,14 @@ function markdownTextContents(
     paragraphStyle: <StyleMenuItems controller={controller} snapshot={snapshot} />,
     formatting: <FormattingMenuItems controller={controller} snapshot={snapshot} />,
     font: (
-      <FontMenuItems
+      <FontControls
         family={snapshot.fontFamily}
         size={snapshot.fontSize}
         disabled={!snapshot.editable}
         onFamily={(family) => controller.execute(`font-family-${family ?? "default"}`)}
-        onSize={(size) => controller.execute(`font-size-${size ?? "default"}`)}
+        onSize={(size) =>
+          controller.execute(size === null ? "font-size-default" : `font-size-${size}`)
+        }
       />
     ),
     direction: <DirectionMenuItems controller={controller} snapshot={snapshot} />,
