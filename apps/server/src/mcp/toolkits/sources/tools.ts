@@ -365,15 +365,29 @@ const ScientSourceRevertTool = Tool.make("scient_sources_revert", {
 
 const ScientSourceCheckTool = Tool.make("scient_sources_check", {
   description:
-    "Recheck one Source's DOI or PMID at its registry, for example before citing. Records the result (credited to you, when changed); never changes metadata. registry: found, not-found, mismatch (now names another title), unavailable (earlier result kept) or none. editorialStatus reports retractions, withdrawals, concerns and corrections.",
-  parameters: Schema.Struct({ sourceId: NonEmptyString }),
+    "Recheck one Source's DOI or PMID at its registry, for example before citing. Records the result (credited to you, when changed). registry: found, not-found, mismatch (now names another title), unavailable (earlier result kept) or none. editorialStatus reports retractions, withdrawals, concerns and corrections. Metadata changes only with refresh: it first replaces fields from the registry, or the PDF without DOI/PMID (can overwrite manual edits), and lists changedFields.",
+  parameters: Schema.Struct({
+    sourceId: NonEmptyString,
+    refresh: Schema.optionalKey(Schema.Boolean),
+  }),
   success: Schema.Struct({
-    outcome: Schema.Literals(["updated", "unchanged", "stale"]),
+    outcome: Schema.Literals([
+      "updated",
+      "unchanged",
+      "stale",
+      "refreshed",
+      "unavailable",
+      "duplicate",
+    ]),
     sourceId: NonEmptyString,
     revision: Schema.Int.check(Schema.isGreaterThan(0)),
-    registry: Schema.Literals(["found", "not-found", "mismatch", "unavailable", "none"]),
+    registry: Schema.optionalKey(
+      Schema.Literals(["found", "not-found", "mismatch", "unavailable", "none"]),
+    ),
     verification: Schema.optionalKey(ScientSourceVerification),
     editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus),
+    changedFields: Schema.optionalKey(Schema.Array(NonEmptyString)),
+    message: Schema.optionalKey(Schema.String),
   }),
   failure: ScientSourcesToolError,
   dependencies,

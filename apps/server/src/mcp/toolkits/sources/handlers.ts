@@ -99,6 +99,7 @@ import {
 import {
   addAgentSource,
   checkSourceIdentifier,
+  refreshAndCheckSourceMetadata,
   attachSourcePdf,
   bulkUpdateSources,
   importBibliographyFile,
@@ -1210,13 +1211,37 @@ const EDITORIAL_WORDS = {
 } as const;
 
 export const checkScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.check")(
-  function* (input: { readonly sourceId: string }) {
+  function* (input: { readonly sourceId: string; readonly refresh?: boolean }) {
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
     const sourceId = yield* sourceIdIn(store, input.sourceId);
     const current = yield* attempt(() => readScientSourceRecord(root, sourceId));
     if (!current) return yield* toolError("not-found", "The source was not found in this project.");
     const resolveIdentifier = yield* keyedIdentifierLookup();
+    if (input.refresh) {
+      const { refresh, registry } = yield* attempt(() =>
+        refreshAndCheckSourceMetadata({
+          root,
+          sourceId,
+          expectedRevision: current.revision,
+          actor: "agent",
+          resolveIdentifier,
+        }),
+      );
+      if (refresh.outcome === "refreshed") yield* afterLibraryChange(store, [sourceId]);
+      return {
+        outcome: refresh.outcome,
+        sourceId: refresh.record.sourceId,
+        revision: refresh.record.revision,
+        ...(registry ? { registry } : {}),
+        ...(refresh.record.verification ? { verification: refresh.record.verification } : {}),
+        ...(refresh.record.editorialStatus
+          ? { editorialStatus: refresh.record.editorialStatus }
+          : {}),
+        changedFields: refresh.changedFields,
+        ...(refresh.message ? { message: refresh.message } : {}),
+      };
+    }
     const result = yield* attempt(() =>
       checkSourceIdentifier({ root, sourceId, actor: "agent", resolveIdentifier }),
     );

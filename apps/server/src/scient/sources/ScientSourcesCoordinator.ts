@@ -813,6 +813,7 @@ export async function applyRefreshedSourceMetadata(input: {
   readonly root: ScientSourceStoreLocation;
   readonly record: ScientSourceRecord;
   readonly candidate: ScientSourceCandidate;
+  readonly actor?: ScientSourceActor;
 }) {
   const currentMetadata = editableMetadataFromRecord(input.record);
   const proposed = proposeRefreshedSourceUpdate({
@@ -847,6 +848,7 @@ export async function applyRefreshedSourceMetadata(input: {
     // custom source type. Refresh may improve other fields without first
     // requiring the user to repair pre-existing validation issues.
     allowExistingValidationIssues: true,
+    ...(input.actor ? { actor: input.actor } : {}),
   });
   if (result.outcome === "updated") {
     return {
@@ -886,18 +888,33 @@ export async function refreshScientSourceMetadata(input: {
   readonly expectedRevision: number;
   readonly resolveIdentifier?: ResolveSourceIdentifier;
 }) {
+  return (await refreshAndCheckSourceMetadata({ ...input, actor: "user" })).refresh;
+}
+
+/**
+ * Refreshes one source's metadata from its DOI or PMID registry, or from its PDF, then checks its
+ * identifier again. `registry` is the check's outcome, or null when the check did not run.
+ */
+export async function refreshAndCheckSourceMetadata(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+  readonly actor: ScientSourceActor;
+  readonly resolveIdentifier?: ResolveSourceIdentifier;
+}) {
+  const unchecked = <A>(refresh: A) => ({ refresh, registry: null });
   const root = isScientLibraryLocation(input.root)
     ? await canonicalScientSourceLocation(input.root)
     : await canonicalizeScientSourceRoot(input.root);
   const record = await readScientSourceRecord(root, input.sourceId);
   if (!record) throw new Error("The source was not found in this project.");
   if (record.revision !== input.expectedRevision) {
-    return {
+    return unchecked({
       outcome: "stale" as const,
       record,
       changedFields: [],
       message: "This source changed after you opened it.",
-    };
+    });
   }
 
   const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
@@ -906,7 +923,7 @@ export async function refreshScientSourceMetadata(input: {
     ["doi", "pmid"].includes(identifier.scheme.trim().toLowerCase()),
   );
   if (!pdf && !hasResolvableIdentifier) {
-    return {
+    return unchecked({
       outcome: "unavailable" as const,
       record,
       changedFields: [],
@@ -914,7 +931,7 @@ export async function refreshScientSourceMetadata(input: {
         materialSelection._tag === "SeveralMaterials"
           ? "This source has several PDFs. Metadata refresh needs an explicit material choice."
           : "Add a PDF, DOI, or PMID before refreshing this source's metadata.",
-    };
+    });
   }
 
   const candidate = await refreshExistingSourceCandidate({
@@ -925,15 +942,22 @@ export async function refreshScientSourceMetadata(input: {
   const latest = await readScientSourceRecord(root, input.sourceId);
   if (!latest) throw new Error("The source was removed while its metadata was being checked.");
   if (latest.revision !== input.expectedRevision) {
-    return {
+    return unchecked({
       outcome: "stale" as const,
       record: latest,
       changedFields: [],
       message: "This source changed while its metadata was being checked.",
-    };
+    });
   }
-  const refreshed = await applyRefreshedSourceMetadata({ root, record: latest, candidate });
-  if (refreshed.outcome !== "refreshed" && refreshed.outcome !== "unchanged") return refreshed;
+  const refreshed = await applyRefreshedSourceMetadata({
+    root,
+    record: latest,
+    candidate,
+    actor: input.actor,
+  });
+  if (refreshed.outcome !== "refreshed" && refreshed.outcome !== "unchanged") {
+    return unchecked(refreshed);
+  }
   // Study design and topics are looked up again too, off this request.
   await forgetSourceCategories(root, input.sourceId).catch(() => undefined);
   void scheduleSourceCategorization(root);
@@ -941,18 +965,22 @@ export async function refreshScientSourceMetadata(input: {
   const checked = await checkSourceIdentifier({
     root,
     sourceId: input.sourceId,
-    actor: "user",
+    actor: input.actor,
     ...(input.resolveIdentifier ? { resolveIdentifier: input.resolveIdentifier } : {}),
   }).catch(() => null);
-  if (checked?.outcome !== "updated") return refreshed;
+  const registry = checked?.registry ?? null;
+  if (checked?.outcome !== "updated") return { refresh: refreshed, registry };
   return {
-    ...refreshed,
-    outcome: "refreshed" as const,
-    record: checked.record,
-    message:
-      refreshed.outcome === "refreshed"
-        ? refreshed.message
-        : "The identifier was checked again with its registry.",
+    refresh: {
+      ...refreshed,
+      outcome: "refreshed" as const,
+      record: checked.record,
+      message:
+        refreshed.outcome === "refreshed"
+          ? refreshed.message
+          : "The identifier was checked again with its registry.",
+    },
+    registry,
   };
 }
 
