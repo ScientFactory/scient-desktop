@@ -77,23 +77,23 @@ describe("Library citations in the Markdown editor", () => {
   it("opens the source of a clicked citation while reading", async () => {
     const onOpenCitation = vi.fn(() => true);
     await using editor = mount("See [@lovelace1843notes; @other].\n", onOpenCitation, "read");
-    const citation = editor.view.dom.querySelector<HTMLElement>(
-      '[data-scient-markdown-reference="citation"]',
-    );
-    if (!citation) throw new Error("Expected a rendered citation.");
-    // The click is placed by coordinates; earlier tests in a shard can leave it below the viewport.
-    citation.scrollIntoView({ block: "center" });
-    const rect = citation.getBoundingClientRect();
-    const at = {
-      bubbles: true,
-      button: 0,
-      clientX: rect.left + 2,
-      clientY: rect.top + rect.height / 2,
-    };
-    await act(() => {
-      citation.dispatchEvent(new MouseEvent("mousedown", at));
-      citation.dispatchEvent(new MouseEvent("mouseup", at));
+    const { view } = editor;
+    let citationPosition = -1;
+    view.state.doc.descendants((node, position) => {
+      if (node.type.name === "citation") citationPosition = position;
     });
+    const citation = view.state.doc.nodeAt(citationPosition);
+    if (!citation) throw new Error("Expected a citation node.");
+    // ProseMirror's click handler, called directly: a click placed by coordinates depends on
+    // what else a CI shard has left on the page.
+    const click = new MouseEvent("click", { bubbles: true, button: 0 });
+    await act(() =>
+      expect(
+        view.someProp("handleClickOn", (handler) =>
+          handler(view, citationPosition, citation, citationPosition, click, true),
+        ),
+      ).toBe(true),
+    );
     expect(onOpenCitation).toHaveBeenCalledWith(["lovelace1843notes", "other"]);
   });
 
