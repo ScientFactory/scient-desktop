@@ -24,9 +24,18 @@ import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 import { importScientSource, listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import {
+  scientLibraryLocation,
+  scientLibraryRootFor,
+} from "@scientfactory/scient-sources/library-root";
+import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
+import { sourceAttachmentAbsolutePath } from "@scientfactory/scient-sources/store";
+import { ServerConfig } from "../../config.ts";
+import {
   SourceIdentifierLookup,
   verifiableSourceIdentifier,
+  type ResolveSourceIdentifier,
 } from "../sources/SourceIdentifierResolver.ts";
+import { ScientSourcesBackend } from "../sources/SourcesBackend.ts";
 
 const fetched = vi.hoisted(() => ({
   calls: [] as Array<{ doi: string | undefined; requester: PaperRequester }>,
@@ -234,6 +243,33 @@ it.effect("forgets who asked once a paper is finished", () =>
   ),
 );
 
+/** Every identifier resolves to the same registry record. */
+const foundInRegistry: ResolveSourceIdentifier = async (identifiers) => {
+  const identifier = verifiableSourceIdentifier(identifiers)!;
+  return {
+    status: "found",
+    identifier,
+    retrievedAt: "2026-11-10T00:00:00.000Z",
+    metadata: {
+      type: "article",
+      title: "The registry's title",
+      creators: [],
+      issuedRaw: "2026",
+      issuedYear: 2026,
+      identifiers: [identifier],
+      abstract: "An abstract, so no enrichment is looked up.",
+      abstractSections: [],
+      containerTitle: null,
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      url: null,
+    },
+  };
+};
+
 it.effect("files a paper asked for the Library on a new source, credited to the agent", () =>
   withServices((settled) =>
     Effect.gen(function* () {
@@ -260,33 +296,37 @@ it.effect("files a paper asked for the Library on a new source, credited to the 
           sourceId: records[0]!.sourceId,
         },
       ]);
-    }).pipe(
-      Effect.provideService(SourceIdentifierLookup, async (identifiers) => {
-        const identifier = verifiableSourceIdentifier(identifiers)!;
-        return {
-          status: "found",
-          identifier,
-          retrievedAt: "2026-11-10T00:00:00.000Z",
-          metadata: {
-            type: "article",
-            title: "The registry's title",
-            creators: [],
-            issuedRaw: "2026",
-            issuedYear: 2026,
-            identifiers: [identifier],
-            abstract: "An abstract, so no enrichment is looked up.",
-            abstractSections: [],
-            containerTitle: null,
-            publisher: null,
-            volume: null,
-            issue: null,
-            pages: null,
-            language: null,
-            url: null,
-          },
-        };
-      }),
-    ),
+    }).pipe(Effect.provideService(SourceIdentifierLookup, foundInRegistry)),
+  ),
+);
+
+it.effect("on the library backend, files a paper on a library record pinned in its project", () =>
+  withServices((settled) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-" });
+      const stateDir = yield* fs.makeTempDirectoryScoped({ prefix: "scient-papers-state-" });
+      yield* Effect.promise(() => initializeScientProject({ root }));
+      yield* requestPapers(root, [{ doi: "10.1/preprint", library: true }], agent).pipe(
+        Effect.provideService(ServerConfig, { stateDir } as ServerConfig["Service"]),
+        Effect.provideService(ScientSourcesBackend, "library"),
+      );
+      yield* settled(root);
+
+      const library = scientLibraryLocation(scientLibraryRootFor(stateDir));
+      const records = yield* Effect.promise(() => listScientSourceRecords(library));
+      expect(records).toMatchObject([
+        { title: "The registry's title", origin: { actor: "agent", intake: "paper" } },
+      ]);
+      const pdf = sourceAttachmentAbsolutePath(library, records[0]!.attachments[0]!);
+      expect(pdf.startsWith(path.join(library.root, "files"))).toBe(true);
+      expect(yield* fs.exists(pdf)).toBe(true);
+      expect(yield* Effect.promise(() => readScientProjectPins(root))).toMatchObject([
+        { sourceId: records[0]!.sourceId },
+      ]);
+      expect(yield* fs.exists(path.join(root, ".scient", "sources", "records"))).toBe(false);
+    }).pipe(Effect.provideService(SourceIdentifierLookup, foundInRegistry)),
   ),
 );
 
