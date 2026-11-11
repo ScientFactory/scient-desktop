@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Statement from "effect/sql/Statement";
 import { layerMemory } from "../../persistence/Sqlite.ts";
 import * as ContextHandoffService from "../ContextHandoffService.ts";
 import * as EventStore from "../EventStore.ts";
@@ -285,6 +286,68 @@ it.layer(TestLayer)("shared archived history bodies", (it) => {
         // The private reference never reaches clients.
         const records = yield* store.getThreadRecords(threadId, ["turnItems"]);
         assert.notInclude(JSON.stringify(records), "scientSummaryBody");
+
+        // A concurrent rewrite between verification and cutover, with the same timestamp and
+        // length, must win: the cutover rechecks the stored summary in its own statement.
+        const racedItemId = TurnItemId.make("shared:raced-item");
+        yield* store.apply({
+          id: EventId.make("shared-write:raced-item"),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: racedItemId,
+            threadId,
+            runId: null,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 11,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "handoff",
+            contextHandoffId: prepared.id,
+            fromProviderThreadIds: [],
+            toProviderThreadId: ProviderThreadId.make("target"),
+            fromProviderInstanceIds: [instance],
+            toProviderInstanceId: instance,
+            strategy: "full_thread_summary",
+            summary,
+          },
+        });
+        const rewritten = "X" + summary.slice(1);
+        let injected = false;
+        const raced = yield* shareLegacyContextHistories(sql, Effect.void).pipe(
+          Effect.provideService(Statement.CurrentTransformer, (statement) => {
+            const [text] = statement.compile();
+            if (injected || !text.includes("UPDATE orchestration_v2_projection_turn_items")) {
+              return Effect.succeed(statement);
+            }
+            injected = true;
+            return sql`UPDATE orchestration_v2_projection_turn_items
+            SET payload_json = json_set(payload_json, '$.summary', ${rewritten})
+            WHERE turn_item_id = ${racedItemId}`.pipe(
+              Effect.provideService(Statement.CurrentTransformer, undefined),
+              Effect.orDie,
+              Effect.as(statement),
+            );
+          }),
+        );
+        assert.isTrue(injected);
+        assert.equal(raced.items, 0);
+        const kept = yield* sql<{ readonly summary: string; readonly body: string | null }>`
+        SELECT json_extract(payload_json, '$.summary') AS summary,
+          json_extract(payload_json, '$.scientSummaryBody') AS body
+        FROM orchestration_v2_projection_turn_items WHERE turn_item_id = ${racedItemId}`;
+        // The concurrent text stays whole (its own lone surrogate is bound as U+FFFD by SQLite).
+        assert.equal(kept[0]!.summary.slice(0, 1_000), rewritten.slice(0, 1_000));
+        assert.equal(kept[0]!.summary.length, rewritten.length);
+        assert.isNull(kept[0]!.body);
 
         // A lost body is reported, never hidden behind source metadata.
         yield* sql`DELETE FROM scient_history_bodies WHERE rowid = (

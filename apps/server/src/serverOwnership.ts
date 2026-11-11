@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Runtime from "effect/Runtime";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import {
@@ -187,8 +188,11 @@ const olderBootServiceHome = Effect.fn("olderBootServiceHome")(
  * even on SIGKILL, so a crashed owner never blocks the next start.
  */
 // SCIENT-FORK:START — maintenance keeps the server lock (see runRequestedReclaim).
-/** Holds the server lock while maintenance repairs a stopped server's database, so a server
- * started meanwhile reports "already running" instead of opening it mid-repair. */
+const maintenanceMarker = (stateDir: string) => NodePath.join(stateDir, "maintenance-in-progress");
+const MAINTENANCE_WAIT_SECONDS = 30 * 60;
+
+/** Holds the server lock while maintenance repairs a stopped server's database. A server
+ * started meanwhile sees the maintenance marker and waits instead of opening it mid-repair. */
 export const holdServerOwnershipForMaintenance = (statePath: string) => {
   const stateDir = NodePath.dirname(statePath);
   const lockPath = NodePath.join(stateDir, "server-owner.sqlite");
@@ -199,6 +203,7 @@ export const holdServerOwnershipForMaintenance = (statePath: string) => {
         const db = new NodeSqlite.DatabaseSync(lockPath);
         try {
           db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+          NodeFS.writeFileSync(maintenanceMarker(stateDir), "");
           return db;
         } catch (cause) {
           db.close();
@@ -210,7 +215,11 @@ export const holdServerOwnershipForMaintenance = (statePath: string) => {
           ? new ServerAlreadyRunningError({ stateDir })
           : new ServerOwnershipError({ stateDir, cause }),
     }),
-    (db) => Effect.sync(() => db.close()),
+    (db) =>
+      Effect.sync(() => {
+        NodeFS.rmSync(maintenanceMarker(stateDir), { force: true });
+        db.close();
+      }),
   );
 };
 // SCIENT-FORK:END
@@ -236,6 +245,9 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         const db = new NodeSqlite.DatabaseSync(lockPath);
         try {
           db.exec("PRAGMA busy_timeout = 0; BEGIN EXCLUSIVE;");
+          // SCIENT-FORK:START — holding the lock proves no repair is running; clear a stale marker.
+          NodeFS.rmSync(maintenanceMarker(stateDir), { force: true });
+          // SCIENT-FORK:END
           const identity = NodeFS.statSync(lockPath, { bigint: true });
           return {
             db,
@@ -251,7 +263,23 @@ export const acquireServerOwnership = Effect.fn("acquireServerOwnership")(functi
         isSqliteBusy(cause)
           ? new ServerAlreadyRunningError({ stateDir })
           : new ServerOwnershipError({ stateDir, cause }),
-    }),
+    }).pipe(
+      // SCIENT-FORK:START — a database repair holds the lock for minutes; wait for it to finish
+      // instead of failing the launch.
+      Effect.tapError((error) =>
+        error._tag === "ServerAlreadyRunningError" && NodeFS.existsSync(maintenanceMarker(stateDir))
+          ? Effect.logInfo("Waiting for a database repair to finish before starting")
+          : Effect.void,
+      ),
+      Effect.retry({
+        while: (error) =>
+          error._tag === "ServerAlreadyRunningError" &&
+          NodeFS.existsSync(maintenanceMarker(stateDir)),
+        schedule: Schedule.spaced("1 second"),
+        times: MAINTENANCE_WAIT_SECONDS,
+      }),
+      // SCIENT-FORK:END
+    ),
     ({ db }) =>
       readPersistedServerRuntimeState(statePath).pipe(
         Effect.flatMap((state) =>

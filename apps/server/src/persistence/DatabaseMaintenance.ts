@@ -213,7 +213,7 @@ const make = Effect.gen(function* () {
         // VACUUM renumbers the rows the search index points at. If the process stops after
         // VACUUM commits but before the rebuild, the marker makes the next start rebuild it.
         const marker = searchRebuildMarker(path, databasePath);
-        yield* fs.writeFileString(marker, "");
+        yield* writeDurably(marker, path.dirname(marker));
         // SCIENT-FORK:END
         // VACUUM is required to enable incremental auto_vacuum on existing databases.
         yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
@@ -292,6 +292,34 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(DatabaseMaintenance, make);
 
 // SCIENT-FORK:START — durable repair phases: interrupted-repair recovery and restart gating.
+/** Writes an empty file and flushes it and its directory entry, so it outlives a power loss
+ * that happens after the VACUUM it guards commits. */
+const writeDurably = Effect.fn("DatabaseMaintenance.writeDurably")(function* (
+  file: string,
+  directory: string,
+) {
+  // Windows cannot open a directory for flushing; NTFS journals the new entry itself.
+  const flushDirectory = (yield* HostProcess.Platform) !== "win32";
+  yield* Effect.tryPromise({
+    try: async () => {
+      const handle = await NodeFSP.open(file, "w");
+      try {
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      if (!flushDirectory) return;
+      const folder = await NodeFSP.open(directory, "r");
+      try {
+        await folder.sync();
+      } finally {
+        await folder.close();
+      }
+    },
+    catch: (cause) => new DatabaseCompactError({ path: file, cause }),
+  });
+});
+
 /** Present while a repair has renumbered rows but not yet rebuilt message search. */
 export const searchRebuildMarker = (path: Path.Path, databasePath: string) =>
   path.join(path.dirname(databasePath), "search-rebuild-required");
@@ -304,11 +332,21 @@ export const recoverInterruptedRepair = Effect.fn("DatabaseMaintenance.recoverIn
     const marker = searchRebuildMarker(yield* Path.Path, databasePath);
     if (!(yield* fs.exists(marker))) return;
     yield* Effect.logWarning("A database repair stopped before search was rebuilt; rebuilding it.");
-    yield* rebuildMessageSearch(yield* SqlClient.SqlClient);
-    yield* fs.remove(marker, { force: true });
+    const sql = yield* SqlClient.SqlClient;
+    const rebuilt = yield* rebuildMessageSearch(sql).pipe(Effect.exit);
+    if (rebuilt._tag === "Success") return yield* fs.remove(marker, { force: true });
+    // Stale row ids would match the wrong messages. An empty index matches none, so the app
+    // can still open; the marker stays and the next start rebuilds. If even emptying it
+    // fails, opening is refused rather than serving wrong results.
+    yield* Effect.logError(
+      "Could not rebuild message search; it stays empty until the next start",
+      {
+        cause: rebuilt.cause,
+      },
+    );
+    yield* sql`INSERT INTO orchestration_v2_message_search (orchestration_v2_message_search)
+      VALUES ('delete-all')`;
   },
-  // Search may stay stale, but the app still opens; the next start tries again.
-  Effect.catchCause((cause) => Effect.logError("Could not rebuild message search", { cause })),
 );
 
 // Only the process that asked for a repair restarts into it. A request found by any other

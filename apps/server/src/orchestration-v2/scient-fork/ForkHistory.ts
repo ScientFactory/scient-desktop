@@ -592,7 +592,10 @@ export const readLiveToolPageReferences = (sql: SqlClient.SqlClient, ids: Readon
         UNION
         SELECT wanted.id FROM scient_fork_frozen_items AS frozen CROSS JOIN wanted
         WHERE frozen.thread_id IN (SELECT thread_id FROM live)
-          AND instr(lower(frozen.item_json), wanted.id) > 0
+          AND (instr(lower(frozen.item_json), wanted.id) > 0
+            -- A kept handoff whose summary moved to a shared body keeps its full text there.
+            OR instr(lower((SELECT body.body FROM scient_history_bodies AS body WHERE body.hash =
+              unhex(json_extract(frozen.item_json, '$.scientSummaryBody')))), wanted.id) > 0)
       `.pipe(Effect.map((rows) => new Set(rows.map((row) => row.id))));
 
 /** Files attached to the thread's own submitted question answers. */

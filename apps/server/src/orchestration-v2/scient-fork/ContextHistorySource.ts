@@ -178,6 +178,7 @@ export const isLegacyContextHistoryReadable = Effect.fn("ContextHistory.validate
 const shareLegacyContextHistory = Effect.fn("ContextHistory.shareLegacy")(function* (
   sql: SqlClient.SqlClient,
   sourceId: ContextHandoffId,
+  between: Effect.Effect<void>,
 ) {
   const shape = yield* legacySourceShape(sql, sourceId);
   if (shape === undefined) return "skipped" as const;
@@ -193,6 +194,7 @@ const shareLegacyContextHistory = Effect.fn("ContextHistory.shareLegacy")(functi
     sourceId,
     shape,
     recorded[0]?.shape_json ?? encodeJson(shape),
+    between,
   );
 });
 
@@ -215,6 +217,7 @@ export const shareLegacyContextHistories = Effect.fn("ContextHistory.shareLegacy
       const result = yield* shareLegacyContextHistory(
         sql,
         ContextHandoffId.make(row.source_id),
+        between,
       ).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("Could not share archived context history", {

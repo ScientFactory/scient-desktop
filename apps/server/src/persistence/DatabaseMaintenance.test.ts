@@ -165,6 +165,30 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
       }).pipe(Effect.scoped),
     );
 
+    it.effect("serves an empty search, never a stale one, when the rebuild fails", () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-search-failed-" });
+        const dbPath = path.join(baseDir, "userdata", "statev2.sqlite");
+        yield* Effect.void.pipe(Effect.provide(Sqlite.layerFromPath(dbPath)));
+        const marker = DatabaseMaintenance.searchRebuildMarker(path, dbPath);
+        const indexed = yield* Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          // A stale entry, as a renumbering VACUUM leaves it, and a rebuild that cannot read.
+          yield* sql`INSERT INTO orchestration_v2_message_search (rowid, text) VALUES (1, 'needle')`;
+          yield* sql`ALTER TABLE orchestration_v2_projection_messages RENAME TO unreadable_messages`;
+          yield* fs.writeFileString(marker, "");
+          yield* DatabaseMaintenance.recoverInterruptedRepair(dbPath);
+          return yield* sql<{ readonly count: number }>`
+            SELECT COUNT(*) AS count FROM orchestration_v2_message_search
+            WHERE orchestration_v2_message_search MATCH 'needle'`;
+        }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath })));
+        assert.equal(indexed[0]!.count, 0);
+        assert.isTrue(yield* fs.exists(marker), "the next start retries the rebuild");
+      }).pipe(Effect.scoped),
+    );
+
     it.effect("does not repair a database another server has started on meanwhile", () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;

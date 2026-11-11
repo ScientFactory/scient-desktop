@@ -130,6 +130,7 @@ export const convertLegacySourceToShared = Effect.fn("SharedHistory.convertSourc
   sourceId: ContextHandoffId,
   shape: SharedSourceShape,
   shapeJson: string,
+  between: Effect.Effect<void> = Effect.void,
 ) {
   const converted = yield* sql`
     SELECT 1 FROM scient_handoff_shared_sources WHERE source_id = ${sourceId}`;
@@ -175,7 +176,8 @@ export const convertLegacySourceToShared = Effect.fn("SharedHistory.convertSourc
         messageHashes.push(Buffer.from(digest).toString("hex"));
       }
       position = rows.at(-1)!.position;
-      yield* Effect.yieldNow;
+      // A source can hold thousands of messages; pace between batches, not just sources.
+      yield* between;
     }
     if (messageHashes.length !== shape.count) return "skipped" as const;
   }
@@ -313,8 +315,13 @@ export const shareHandoffItemSummary = Effect.fn("SharedHistory.shareItemSummary
     UPDATE orchestration_v2_projection_turn_items
     SET payload_json = json_set(payload_json, '$.summary', ${prefix},
       ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}, ${Buffer.from(digest).toString("hex")})
-    WHERE turn_item_id = ${itemId} AND updated_at = ${row.updated_at}
-      AND octet_length(payload_json) = ${row.bytes}
+    WHERE turn_item_id = ${itemId}
+      -- The same statement proves the stored summary is still the verified body, so a
+      -- concurrent rewrite (even with an equal timestamp and length) is never replaced.
+      AND json_type(payload_json, ${`$.${HANDOFF_ITEM_SUMMARY_BODY_FIELD}`}) IS NULL
+      AND json_extract(payload_json, '$.summary') = (
+        SELECT json_extract(body, ${`$.${SHARED_SUMMARY_FIELD}`}) FROM scient_history_bodies
+        WHERE hash = ${digest})
     RETURNING turn_item_id`;
   return changed.length === 1 ? ("converted" as const) : ("skipped" as const);
 });
