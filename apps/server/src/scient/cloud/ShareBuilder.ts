@@ -36,8 +36,43 @@ export interface BuiltShare extends Omit<ScientCloudShareBuild, "blobs"> {
 }
 
 const TEXT_ATTACHMENT = /^(?:text\/|application\/(?:json|xml|x-yaml|yaml|toml|x-sh|javascript))/u;
-/** Text attachments above this are carried unsearched, like binary ones. */
+/** Text attachments above this are too large to search, so they are left out unless kept. */
 const SEARCHED_TEXT_MAX_BYTES = 8 * 1024 * 1024;
+
+/** The encoding a text file declares or shows; UTF-8 when neither says otherwise. */
+function textEncodingOf(bytes: Uint8Array, mimeType: string): string {
+  if (bytes[0] === 0xef && bytes[1] === 0xbb && bytes[2] === 0xbf) return "utf-8";
+  if (bytes[0] === 0xff && bytes[1] === 0xfe) return "utf-16le";
+  if (bytes[0] === 0xfe && bytes[1] === 0xff) return "utf-16be";
+  const declared = /;\s*charset="?([^";\s]+)"?/iu.exec(mimeType)?.[1];
+  if (declared !== undefined) {
+    try {
+      return new TextDecoder(declared).encoding;
+    } catch {
+      // An unknown label: fall through to what the bytes show.
+    }
+  }
+  // UTF-16 without a mark: many zero bytes, on odd offsets for little-endian.
+  const sample = bytes.subarray(0, 4096);
+  let even = 0;
+  let odd = 0;
+  for (let index = 0; index < sample.length; index += 1) {
+    if (sample[index] === 0) {
+      if (index % 2 === 0) even += 1;
+      else odd += 1;
+    }
+  }
+  if (odd + even > sample.length / 8) return odd >= even ? "utf-16le" : "utf-16be";
+  return "utf-8";
+}
+
+/** Every reading of the file worth searching: its own encoding, and UTF-8 when that differs. */
+function attachmentTexts(bytes: Uint8Array, mimeType: string): ReadonlyArray<string> {
+  const encoding = textEncodingOf(bytes, mimeType);
+  const texts = [new TextDecoder(encoding).decode(bytes)];
+  if (encoding !== "utf-8") texts.push(new TextDecoder().decode(bytes));
+  return texts;
+}
 /** A share carries files up to the cloud's per-file limit; larger ones are left out. */
 const CARRIED_MAX_BYTES = DEFAULT_CLOUD_LIMITS.maxBlobBytes;
 
@@ -109,16 +144,23 @@ const make = Effect.gen(function* () {
       if (!attachment.available || path === undefined || carried.has(attachment.localId)) continue;
       const bytes = yield* readBounded(fileSystem, path, CARRIED_MAX_BYTES);
       if (bytes === null) continue;
-      const searchable =
-        TEXT_ATTACHMENT.test(attachment.mimeType) && bytes.byteLength <= SEARCHED_TEXT_MAX_BYTES;
-      if (!searchable) binaryNotSearched += 1;
+      const isText = TEXT_ATTACHMENT.test(attachment.mimeType);
+      if (!isText) binaryNotSearched += 1;
+      const location = { field: "attachment", itemId: attachment.localId } as const;
+      // Text too large to search could hold anything the transcript would hide.
       if (
-        searchable &&
-        redactor.holdsPrivateText(new TextDecoder().decode(bytes)) &&
-        redactor.excludeItem(
-          { field: "attachment", itemId: attachment.localId },
-          "Attachment with private text",
-        )
+        isText &&
+        bytes.byteLength > SEARCHED_TEXT_MAX_BYTES &&
+        redactor.excludeItem(location, "Text file too large to check")
+      )
+        continue;
+      if (
+        isText &&
+        bytes.byteLength <= SEARCHED_TEXT_MAX_BYTES &&
+        attachmentTexts(bytes, attachment.mimeType).some((text) =>
+          redactor.holdsPrivateText(text),
+        ) &&
+        redactor.excludeItem(location, "Attachment with private text")
       )
         continue;
       carried.set(attachment.localId, { path, sha256: sha256Hex(bytes), bytes: bytes.byteLength });

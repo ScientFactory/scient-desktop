@@ -126,6 +126,38 @@ describe("ShareBuilder", () => {
       expect(second.kept.map((entry) => entry.id)).toEqual([attachmentId]);
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
+  it.effect("searches UTF-16 text and leaves out text too large to search", () =>
+    Effect.gen(function* () {
+      const message = capturedSnapshot.messages[0]!;
+      const utf16 = Buffer.from(`mail ${EMAIL}`, "utf16le");
+      const large = new Uint8Array(8 * 1024 * 1024 + 1).fill(0x61);
+      const build = yield* builderFor(
+        {
+          ...capturedSnapshot,
+          messages: [
+            {
+              ...message,
+              text: "See the files",
+              attachments: [
+                attachment("a-utf16", "file", "notes.txt", "text/plain", utf16.byteLength),
+                attachment("a-large", "file", "log.txt", "text/plain", large.byteLength),
+              ],
+              references: [],
+            },
+          ],
+          warnings: [],
+        },
+        { "a-utf16": new Uint8Array(utf16), "a-large": large },
+      );
+      const built = yield* build();
+      expect(built.blobs).toEqual([]);
+      expect(built.redactions.map((entry) => entry.label).toSorted()).toEqual([
+        "Attachment with private text",
+        "Text file too large to check",
+      ]);
+    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  );
+
   it.effect("never lets a planted value reach the document, the report or a blob name", () =>
     Effect.gen(function* () {
       const message = capturedSnapshot.messages[0]!;
