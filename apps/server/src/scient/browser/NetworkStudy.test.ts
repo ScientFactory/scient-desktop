@@ -325,14 +325,22 @@ describe("the network study", () => {
         shown: true,
         reads: false,
       },
-      // An empty answer and a full one at one address: the empty one may be this answer, and
-      // reading it would make Playwright fetch the address again in full. Left out.
+      // A body that may come back as no text while the answer declares a length makes Playwright
+      // fetch the address again in full: an empty answer beside a full one at one address, or a
+      // lone byte-order mark. Left out.
       {
         path: "/changing",
         browser: (cdp) => {
           cdp.loaded(`${API}/changing`, 1_000);
           cdp.loaded(`${API}/changing`, 0);
         },
+        headers: { "content-length": "1000" },
+        shown: false,
+      },
+      {
+        path: "/bom",
+        browser: (cdp) => cdp.loaded(`${API}/bom`, 3),
+        headers: { "content-length": "3" },
         shown: false,
       },
       // Counted, small, compressed, from another site: shown.

@@ -141,6 +141,8 @@ const KEEP_COUNTED = 2 * KEEP;
 const GROWTH = 3;
 /** Most bytes being read from the browser at once, for every reason. */
 const READING_BYTES = 24 * 1024 * 1024;
+/** The most bytes that can decode to no text: a UTF-32 byte-order mark. */
+const MAY_DECODE_TO_NOTHING = 4;
 
 const withoutFragment = (url: string) => {
   const at = url.indexOf("#");
@@ -264,9 +266,13 @@ const makeNetworkStudy = (page: Page) => {
     const sizes = candidates
       .filter((item) => item.outcome === "finished")
       .map((item) => item.bytes);
-    // An empty answer read as another's size makes Playwright fetch the address again in full.
-    if (sizes.includes(0) && sizes.some((size) => size > 0)) return undefined;
-    return sizes.length > 0 ? Math.max(...sizes) : undefined;
+    if (sizes.length === 0) return undefined;
+    // Playwright fetches the address again in full, unbounded, when a body comes back as no text
+    // while the answer declares a length. Only an empty body or a lone byte-order mark (at most
+    // 4 bytes) decodes to no text, so such an answer is never read.
+    const declared = Number(safely(() => response.headers()["content-length"], undefined));
+    if (declared > 0 && sizes.some((size) => size <= MAY_DECODE_TO_NOTHING)) return undefined;
+    return Math.max(...sizes);
   };
 
   /** Reads a body of `bound` bytes at most, reserved first so reads at once stay bounded. */
