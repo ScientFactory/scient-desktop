@@ -73,9 +73,12 @@ export const SCIENT_PAPERS_AWARENESS = buildScientPapersAwareness(
   true,
 );
 
-/** Included with Library access, so literature work starts in the Library rather than on the web. */
+/**
+ * Included with Library access, so literature work starts in the Library rather than on the web.
+ * The answer rules are the ones the "Ask the Library" composer sentence was measured with.
+ */
 const buildScientLibraryAwareness = (tools: ScientToolProjection): string => `## Scient Library
-Start literature or citation work in the project's Library, before web search: \`${tools.name("scient_sources_list")}\` (\`total\` is its size), \`${tools.name("scient_sources_search")}\` (PDF text), \`${tools.name("scient_sources_add")}\` by DOI, PMID, arXiv ID or ISBN (\`identifierList\` for several). Cite with keys from the \`references.bib\` that \`${tools.name("scient_sources_bibliography")}\` manages.${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
+Start literature or citation work in the project's Library, before web search: \`${tools.name("scient_sources_list")}\` (\`total\` is its size), \`${tools.name("scient_sources_add")}\` by DOI, PMID, arXiv ID or ISBN (\`identifierList\` for several). Answer literature questions from its papers, not memory: search their full text with \`${tools.name("scient_sources_search")}\` and \`${tools.name("scient_sources_read_text")}\`, give the paper and page for each claim, and check quotes with \`${tools.name("scient_sources_quote_check")}\` before giving them. If the Library does not answer, say so; you may then use the web, and say you did. Cite with keys from the \`references.bib\` that \`${tools.name("scient_sources_bibliography")}\` manages.${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
 
 export const SCIENT_LIBRARY_AWARENESS = buildScientLibraryAwareness(
   CANONICAL_SCIENT_TOOL_PROJECTION,
