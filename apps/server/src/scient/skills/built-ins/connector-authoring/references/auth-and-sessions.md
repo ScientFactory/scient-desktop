@@ -184,17 +184,18 @@ while you study. Use it for reading requests only, and never copy those files an
 
 ## OAuth APIs
 
-A local connector gets its credentials from the environment; it does not run an OAuth flow
-itself.
+The template doesn't support OAuth yet: a connector made from it gets its credentials from
+the environment and can't run an OAuth sign-in or keep one fresh. A package connector (npm or
+PyPI) that runs its own OAuth sign-in can be added and used as it is.
 
 1. Prefer a personal access token or API key if the service offers one (GitHub, GitLab,
    Zotero, Zenodo, Figshare and many others do). Treat it as a key.
 2. If the vendor runs its own remote MCP server, suggest adding that in Extensions instead: it
    signs in with OAuth through Scient.
 3. If the site works in the browser, a website sign-in may reach the same data.
-4. If none of these fit, tell the user plainly that this service needs an OAuth app that a
-   local connector can't keep signed in yet. Don't embed a client secret, and never use the
-   user's password to get a token (the "password grant").
+4. If none of these fit, tell the user plainly that a connector made with the template
+   can't sign in to this service yet, because it offers only OAuth. Don't embed a client
+   secret, and never use the user's password to get a token (the "password grant").
 
 ## Local files, databases and programs
 

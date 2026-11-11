@@ -418,7 +418,8 @@ This skill grants no tools or permissions.
 1. **Add one that exists before building.** \`scient_connector_list {query}\` (for example
    \`{"query":"gmail"}\`) shows the user's connectors and ones Scient can add from Discover and
    the MCP Registry. If one fits, \`scient_connector_add {from}\` with its \`name\` adds it, on for
-   every project; then follow its message (\`scient_connector_setup\` for \`needs-setup\`,
+   every project; a key or the user's own sign-in app it needs is asked in a private card.
+   Then follow its message (\`scient_connector_setup\` for \`needs-setup\`,
    \`scient_connector_control {action: "sign-in"}\` for \`needs-sign-in\`). \`scient_connector_add\`
    also takes an https MCP address or a \`.mcpb\` file. Build one only when none fits; an
    entry's \`reason\` says why it can't be added, a good place to start. Also check Scient's own
@@ -430,7 +431,8 @@ This skill grants no tools or permissions.
 3. **Choose the kind:**
    - a web API with a key or none: \`auth-and-sessions.md\` for keys, \`science-apis.md\` for
      science services;
-   - an API that only offers OAuth: \`auth-and-sessions.md\`, "OAuth APIs";
+   - an API that only offers OAuth: the template can't sign in with OAuth yet; read
+     \`auth-and-sessions.md\`, "OAuth APIs", for what to do instead;
    - a website the user signs in to, with no documented API: \`study-a-website.md\` first, then
      \`auth-and-sessions.md\`;
    - files, a database or a command-line tool on this computer: \`local-tools.md\`.
@@ -451,7 +453,9 @@ This skill grants no tools or permissions.
    Accounts sign-in. Then check once more with \`connector\` set, so it uses them. (\`signIn\` is
    only for a folder that isn't saved yet.)
 8. **Report** in a few lines: what it does, its tools, what you tested with one real result,
-   what you didn't test, and that its page has Undo.
+   what you didn't test, and how to take it back: a new connector has nothing earlier to go
+   back to, so the user removes it on its page (Remove can be undone); after a fix, its page
+   has **Undo last change**.
 
 ## Fix or improve a connector
 
@@ -714,17 +718,18 @@ while you study. Use it for reading requests only, and never copy those files an
 
 ## OAuth APIs
 
-A local connector gets its credentials from the environment; it does not run an OAuth flow
-itself.
+The template doesn't support OAuth yet: a connector made from it gets its credentials from
+the environment and can't run an OAuth sign-in or keep one fresh. A package connector (npm or
+PyPI) that runs its own OAuth sign-in can be added and used as it is.
 
 1. Prefer a personal access token or API key if the service offers one (GitHub, GitLab,
    Zotero, Zenodo, Figshare and many others do). Treat it as a key.
 2. If the vendor runs its own remote MCP server, suggest adding that in Extensions instead: it
    signs in with OAuth through Scient.
 3. If the site works in the browser, a website sign-in may reach the same data.
-4. If none of these fit, tell the user plainly that this service needs an OAuth app that a
-   local connector can't keep signed in yet. Don't embed a client secret, and never use the
-   user's password to get a token (the "password grant").
+4. If none of these fit, tell the user plainly that a connector made with the template
+   can't sign in to this service yet, because it offers only OAuth. Don't embed a client
+   secret, and never use the user's password to get a token (the "password grant").
 
 ## Local files, databases and programs
 
@@ -1165,7 +1170,8 @@ Keep the questions in the connector's \`README.md\` for the next fix.
 - What you tested: the calls, and one real result in short.
 - What you did not test: tools that change data, other computers (say which systems you ran it
   on), anything that needs the person (a captcha).
-- What setup is still needed, if any, and that the connector's page has Undo.
+- What setup is still needed, if any, and how to take it back: Remove on the page of a new
+  connector (Remove can be undone), **Undo last change** after a fix.
 `,
       "references/tool-design.md": `# Tool design
 

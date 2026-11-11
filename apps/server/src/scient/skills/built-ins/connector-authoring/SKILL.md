@@ -17,7 +17,8 @@ This skill grants no tools or permissions.
 1. **Add one that exists before building.** `scient_connector_list {query}` (for example
    `{"query":"gmail"}`) shows the user's connectors and ones Scient can add from Discover and
    the MCP Registry. If one fits, `scient_connector_add {from}` with its `name` adds it, on for
-   every project; then follow its message (`scient_connector_setup` for `needs-setup`,
+   every project; a key or the user's own sign-in app it needs is asked in a private card.
+   Then follow its message (`scient_connector_setup` for `needs-setup`,
    `scient_connector_control {action: "sign-in"}` for `needs-sign-in`). `scient_connector_add`
    also takes an https MCP address or a `.mcpb` file. Build one only when none fits; an
    entry's `reason` says why it can't be added, a good place to start. Also check Scient's own
@@ -29,7 +30,8 @@ This skill grants no tools or permissions.
 3. **Choose the kind:**
    - a web API with a key or none: `auth-and-sessions.md` for keys, `science-apis.md` for
      science services;
-   - an API that only offers OAuth: `auth-and-sessions.md`, "OAuth APIs";
+   - an API that only offers OAuth: the template can't sign in with OAuth yet; read
+     `auth-and-sessions.md`, "OAuth APIs", for what to do instead;
    - a website the user signs in to, with no documented API: `study-a-website.md` first, then
      `auth-and-sessions.md`;
    - files, a database or a command-line tool on this computer: `local-tools.md`.
@@ -50,7 +52,9 @@ This skill grants no tools or permissions.
    Accounts sign-in. Then check once more with `connector` set, so it uses them. (`signIn` is
    only for a folder that isn't saved yet.)
 8. **Report** in a few lines: what it does, its tools, what you tested with one real result,
-   what you didn't test, and that its page has Undo.
+   what you didn't test, and how to take it back: a new connector has nothing earlier to go
+   back to, so the user removes it on its page (Remove can be undone); after a fix, its page
+   has **Undo last change**.
 
 ## Fix or improve a connector
 

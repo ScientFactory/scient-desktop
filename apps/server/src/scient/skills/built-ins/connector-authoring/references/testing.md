@@ -75,4 +75,5 @@ Keep the questions in the connector's `README.md` for the next fix.
 - What you tested: the calls, and one real result in short.
 - What you did not test: tools that change data, other computers (say which systems you ran it
   on), anything that needs the person (a captcha).
-- What setup is still needed, if any, and that the connector's page has Undo.
+- What setup is still needed, if any, and how to take it back: Remove on the page of a new
+  connector (Remove can be undone), **Undo last change** after a fix.

@@ -571,22 +571,32 @@ connectors alike through the calls the Extensions page makes:
   Registry) with whether an agent can add each, or why not.
 - `scient_connector_add {from}`: a Discover or Registry name, an https MCP address, or a
   `.mcpb`/`.zip` path, through `connectors.add` (on, all projects), then the connector test for
-  its tools. Entries that need the user's input on the page (an API key, their own OAuth app, an
-  address, GitHub's Source Control account) are refused with that reason.
+  its tools, using what the chat's project may use. A hosted entry that needs an API key or the
+  user's own OAuth app asks for it in the private secret card, as `scient_connector_setup` does:
+  the key becomes an Accounts key bound to the connector, the app's client ID and secret go to
+  the connector; nothing passes through the chat. Entries that need an address or GitHub's
+  Source Control account are refused with that reason. A local add records `changedBy: agent`.
 - `scient_connector_control {connector, action}`: `on`/`off` and `restart` through
   `connectors.update`; `sign-in` for a hosted OAuth connector starts `startSignIn` with Scient's
-  own loopback origin and opens the authorization page in the chat's browser for the user to
-  finish (or returns the link when the chat has no browser). A local connector's sign-in points
+  own loopback origin and opens the authorization page as the user's own tab in the chat's
+  browser (no agent holds it, so there is nothing to take over), or returns the link when the
+  chat has no browser. A local connector's sign-in points
   at `scient_account_sign_in` with its linked account. Removing stays the user's.
 
 `scient_connector_check {connector}` without a folder runs `connectors.test` on the installed
-connector, hosted ones too.
+connector, hosted ones too, with the chat's project, so a sign-in or key scoped to another
+project counts as missing. Both checks pass every returned field (tool names, descriptions,
+parameter schemas, call results, errors, logs) through `ConnectorRedaction.redactText` with the
+program's keys and session cookies, in any encoding, before anything is cut.
 
 **History.** `FolderHistory`, shared with personal skills, swaps a folder in one step, with
-rollback, and keeps 10 entries per connector in
+rollback, and keeps 10 entries per connector, fewer when they pass 100 MB together (the newest
+always stays, never with a gap), in
 `<stateDir>/connector-history/<connectorId>/` (`created`, `replaced`, `removed`; a removal keeps
 the record so it can come back). `extensions.connectors.undo` restores the newest entry.
 Undoing a connector's creation is not offered, because Remove keeps a copy and has its own Undo.
+Undo links the sign-in again for the manifest it restores. Save, Undo, remove, copy and export
+of one connector take a per-connector lock, so they never interleave.
 Summaries carry `changedBy`, `updatedAt`, `forkedFrom` and whether Undo is possible.
 `extensions.connectors.export` returns a local connector as `.mcpb`.
 
@@ -1009,7 +1019,8 @@ unresolved templates whose scheme is not a literal non-https one; a remote
 values or defaults, with its declared environment variables, or a `localBundle`: an
 `mcpb` package with an https address and `fileSha256`. Runtime arguments are allowed
 only when Scient applies them already (`-y`/`--yes` for npx, passed once). A bundle is
-added through the `registry-bundle` target: downloaded (200 MB at most), kept only if
+added through the `registry-bundle` target: downloaded under the connector egress rules (public
+https only, each redirect checked, 200 MB at most), kept only if
 its SHA-256 matches, then unpacked like a picked `.mcpb`. Otherwise `unsupportedReason`
 says why, from the first package when there is one: Docker (OCI), a registry Scient
 doesn't run (NuGet, Cargo), another transport, runner options it doesn't pass, or a
