@@ -577,6 +577,9 @@ const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
     maxCharacters: Schema.optionalKey(
       Schema.Int.check(Schema.isBetween({ minimum: 1_000, maximum: 60_000 })),
     ),
+  }).annotate({
+    messageUnexpectedKey:
+      "Unknown parameter. Accepted: sourceId, attachmentId, fromPage, maxCharacters",
   }),
   success: Schema.Struct({
     outcome: Schema.Literals([
@@ -602,6 +605,7 @@ const ScientSourceReadTextTool = Tool.make("scient_sources_read_text", {
   dependencies,
 })
   .annotate(Tool.Title, "Read source text")
+  .annotate(Tool.Strict, true)
   .annotate(Tool.Readonly, true)
   .annotate(Tool.Destructive, false)
   .annotate(Tool.Idempotent, true)
