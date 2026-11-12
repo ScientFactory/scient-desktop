@@ -413,6 +413,22 @@ describe("a moved name the library already has", () => {
     expect(names[11]).toMatch(/ 12\)$/);
     expect(new Set(names).size).toBe(names.length);
   });
+
+  it("never cuts a character made of two code units in half", () => {
+    const loneHalf = /[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u;
+    const title = `${"A".repeat(189)}🌊${"B".repeat(9)}`;
+    const taken = new Set(["methods"]);
+    for (let index = 0; index < 12; index += 1) {
+      const name = scientLibraryMoveInternals.uniqueName("Methods", taken, title);
+      expect(name).not.toMatch(loneHalf);
+      expect(name.length).toBeLessThanOrEqual(SCIENT_SOURCE_NAME_LIMIT);
+      taken.add(name.toLocaleLowerCase());
+    }
+    const long = `${"C".repeat(196)}🌊`;
+    expect(
+      scientLibraryMoveInternals.uniqueName(long, new Set([long.toLocaleLowerCase()]), "🌊"),
+    ).not.toMatch(loneHalf);
+  });
 });
 
 describe("crash tests: each crash, then a rerun that ends in done with nothing lost", () => {

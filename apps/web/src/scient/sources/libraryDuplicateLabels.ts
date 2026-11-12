@@ -116,6 +116,17 @@ export function mergedRowLabel(merge: {
     : `Two copies of ${quoted(mergedTitle)} merged`;
 }
 
+/**
+ * The fields named without values ("Identifiers and PDF differed."), for a row whose first line
+ * does not already name what differed: two titles, or a kept source no longer in the Library.
+ */
+export function namedDifferencesLabel(differences: ReadonlyArray<MergeDifference>): string | null {
+  const fields = differences.filter((difference) => !hasMergeValues(difference));
+  if (fields.length === 0) return null;
+  const words = fieldWords(fields.map(({ field }) => field));
+  return `${words.charAt(0).toLocaleUpperCase()}${words.slice(1)} differed.`;
+}
+
 /** One field the two differed in, with both values: "Volume: none (kept), 12 (merged away)". */
 export function mergeDifferenceLabel(difference: MergeValues): string {
   const word = fieldWords([difference.field]);

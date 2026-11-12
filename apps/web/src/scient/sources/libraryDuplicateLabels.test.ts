@@ -6,6 +6,7 @@ import {
   DUPLICATE_FIELDS,
   keptDifferentLabel,
   mergeDifferenceLabel,
+  namedDifferencesLabel,
   mergedRowLabel,
   mergedTitleLabel,
   otherProjectsLabel,
@@ -54,6 +55,15 @@ describe("possible-duplicate labels", () => {
         differences: [{ field: "creators" }, { field: "identifiers" }, { field: "attachments" }],
       }),
     ).toBe("Two copies of “Shock trial” merged. Their authors, identifiers and PDF differed.");
+    // Rows whose first line names two titles still say what was only named.
+    expect(
+      namedDifferencesLabel([
+        { field: "volume", kept: null, other: "12" },
+        { field: "identifiers" },
+        { field: "attachments" },
+      ]),
+    ).toBe("Identifiers and PDF differed.");
+    expect(namedDifferencesLabel([{ field: "volume", kept: null, other: "12" }])).toBeNull();
     expect(mergeDifferenceLabel({ field: "volume", kept: null, other: "12" })).toBe(
       "Volume: none (kept), 12 (merged away)",
     );

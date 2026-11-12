@@ -22,6 +22,7 @@ import {
   keptDifferentLabel,
   hasMergeValues,
   mergeDifferenceLabel,
+  namedDifferencesLabel,
   mergedDateLabel,
   mergedRowLabel,
   sideSummary,
@@ -431,6 +432,11 @@ function MergedRow(props: {
 }) {
   const { merge } = props;
   const kept = keptDifferentLabel(merge.keptDifferent);
+  // The first line names what differed only for two copies of one title still in the Library.
+  const named =
+    merge.kept && merge.kept.title === merge.mergedTitle
+      ? null
+      : namedDifferencesLabel(merge.differences);
   return (
     <li className="flex items-start gap-2 px-3 py-2.5 text-xs">
       <div className="min-w-0 flex-1">
@@ -453,6 +459,7 @@ function MergedRow(props: {
               {mergeDifferenceLabel(difference)}
             </p>
           ))}
+        {named ? <p className="mt-0.5 break-words text-muted-foreground">{named}</p> : null}
         <p className="mt-0.5 text-muted-foreground">
           {[
             mergedDateLabel(merge.mergedAt),

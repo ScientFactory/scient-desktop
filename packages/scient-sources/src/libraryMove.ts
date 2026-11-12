@@ -1249,6 +1249,13 @@ async function verifyAndBackUp(
   }
 }
 
+/** The first `end` code units of `text`, never ending inside a character made of two units. */
+function sliceWhole(text: string, end: number): string {
+  const part = text.slice(0, Math.max(0, end));
+  const last = part.charCodeAt(part.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? part.slice(0, -1) : part;
+}
+
 /** "Methods (Title)", then "Methods (Title 2)", …: shortened to fit, never losing the bracket or number. */
 function uniqueName(name: string, taken: ReadonlySet<string>, title: string): string {
   const key = (value: string) => value.trim().toLocaleLowerCase();
@@ -1256,9 +1263,9 @@ function uniqueName(name: string, taken: ReadonlySet<string>, title: string): st
   for (let index = 1; ; index += 1) {
     const tail = index === 1 ? ")" : ` ${index})`;
     const room = SCIENT_SOURCE_NAME_LIMIT - " (".length - tail.length;
-    // At least one character of the title stays, so the bracket always opens.
-    const head = name.slice(0, room - 1).trimEnd();
-    const label = title.slice(0, room - head.length).trimEnd();
+    // Room for one whole character of the title stays, so the bracket always opens.
+    const head = sliceWhole(name, room - 2).trimEnd();
+    const label = sliceWhole(title, room - head.length).trimEnd();
     const candidate = `${head} (${label}${tail}`;
     if (!taken.has(key(candidate))) return candidate;
   }
