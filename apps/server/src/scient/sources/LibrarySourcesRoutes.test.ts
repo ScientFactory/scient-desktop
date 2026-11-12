@@ -777,6 +777,7 @@ describe("Library routes on the library backend", () => {
           const one = await libraryRecord(fixture, "pair1", {
             title: "Shock trial",
             publisher: "North",
+            volume: "12",
           });
           const two = await libraryRecord(fixture, "pair2", {
             title: "Shock trial",
@@ -841,6 +842,11 @@ describe("Library routes on the library backend", () => {
             mergedTitle: "Shock trial",
             merged: { sourceId: first.sourceId, title: "Shock trial" },
             keptDifferent: ["publisher"],
+            // The kept one's own value, and the other's, also where the kept one had none.
+            differences: [
+              { field: "publisher", kept: "South", other: "North" },
+              { field: "volume", kept: null, other: "12" },
+            ],
           },
         ]);
         yield* Effect.promise(() =>

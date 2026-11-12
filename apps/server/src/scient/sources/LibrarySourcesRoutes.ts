@@ -25,6 +25,7 @@ import {
   markScientLibrarySourcesDistinct,
   mergeScientLibrarySources,
   readScientLibraryDuplicates,
+  type ScientLibraryMerge,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
 import { dismissScientLibraryMoveSummary } from "@scientfactory/scient-sources/library-move";
@@ -269,6 +270,92 @@ export async function libraryOverview(
   };
 }
 
+/** A work's fields two copies can differ in, in the order a Merged row lists them. */
+const MERGE_DIFFERENCE_FIELDS = [
+  "type",
+  "customType",
+  "title",
+  "creators",
+  "issuedRaw",
+  "issuedYear",
+  "abstract",
+  "containerTitle",
+  "publisher",
+  "volume",
+  "issue",
+  "pages",
+  "language",
+  "url",
+  "identifiers",
+  "attachments",
+] as const;
+
+/** A merge file's value as a row shows it: names, identifiers and PDF file names; null if empty. */
+function mergeValueText(value: unknown): string | null {
+  if (typeof value === "string") return value.trim() || null;
+  if (typeof value === "number") return String(value);
+  if (Array.isArray(value)) {
+    const parts = value.map(mergeValueText).filter((part) => part !== null);
+    return parts.length > 0 ? parts.join(", ") : null;
+  }
+  if (typeof value !== "object" || value === null) return null;
+  const entry: Record<string, unknown> = { ...value };
+  if (typeof entry.scheme === "string" && typeof entry.value === "string") {
+    return `${entry.scheme.toUpperCase()} ${entry.value}`;
+  }
+  if (typeof entry.fileName === "string") return entry.fileName;
+  return (
+    mergeValueText(entry.literalName) ??
+    mergeValueText([entry.givenName, entry.familyName].filter(Boolean).join(" "))
+  );
+}
+
+/**
+ * What the two copies had in each field they differed in: the kept one's value before the merge
+ * and the other's, from the merge file. The file records identifiers and PDFs only as added, so
+ * the kept one's own are what it holds now less those, while it is still in the library.
+ */
+function mergeDifferences(
+  merge: ScientLibraryMerge,
+  merged: ScientSourceRecord,
+  kept: ScientSourceRecord | undefined,
+) {
+  const values = new Map<string, { readonly kept: unknown; readonly other: unknown }>();
+  for (const change of merge.changes) {
+    values.set(change.field, { kept: change.before, other: change.after });
+  }
+  const identifierConflicts = merge.conflicts.filter(({ field }) => field === "identifiers");
+  for (const conflict of merge.conflicts) {
+    if (conflict.field !== "identifiers") values.set(conflict.field, conflict);
+  }
+  const addedIdentifiers = new Set(
+    merge.added.identifiers.map((identifier) => `${identifier.scheme}\0${identifier.value}`),
+  );
+  if (identifierConflicts.length > 0 || (kept && addedIdentifiers.size > 0)) {
+    values.set("identifiers", {
+      kept: kept
+        ? kept.identifiers.filter(
+            (identifier) => !addedIdentifiers.has(`${identifier.scheme}\0${identifier.value}`),
+          )
+        : identifierConflicts.map((conflict) => conflict.kept),
+      other: merged.identifiers,
+    });
+  }
+  const addedPdfs = new Set(merge.added.attachmentSha256);
+  if (kept && addedPdfs.size > 0) {
+    values.set("attachments", {
+      kept: kept.attachments.filter((attachment) => !addedPdfs.has(attachment.sha256)),
+      other: merged.attachments,
+    });
+  }
+  return MERGE_DIFFERENCE_FIELDS.flatMap((field) => {
+    const value = values.get(field);
+    return value
+      ? [{ field, kept: mergeValueText(value.kept), other: mergeValueText(value.other) }]
+      : [];
+  });
+}
+
 /**
  * The possible duplicates of the whole library and the merges Undo can still reverse. Reading
  * never merges: the automatic merges run with the move, not here.
@@ -324,13 +411,7 @@ export async function libraryDuplicates(
         mergedTitle: merged.title,
         merged: scientSourceSummaryFromRecord(merged),
         keptDifferent: merge.conflicts.map((conflict) => conflict.field),
-        filledIn: [
-          ...new Set([
-            ...merge.changes.map((change) => change.field),
-            ...(merge.added.identifiers.length > 0 ? ["identifiers"] : []),
-            ...(merge.added.attachmentSha256.length > 0 ? ["attachments"] : []),
-          ]),
-        ],
+        differences: mergeDifferences(merge, merged, kept),
       };
     }),
     mergesTotal: listing.mergesTotal,

@@ -36,6 +36,7 @@ export const DUPLICATE_LABELS = {
   requested: "Merged on request",
   keptSide: "Kept",
   mergedSide: "Merged away",
+  none: "none",
 } as const;
 
 /** How a merge's different-value fields read in a sentence. */
@@ -87,26 +88,11 @@ export function keptDifferentLabel(fields: ReadonlyArray<string>): string | null
     : `Where they differed, the kept one's ${fieldWords(fields)} stayed.`;
 }
 
-/** What two copies of one work can differ in; reading state and notes are not the work's. */
-const WORK_FIELDS = new Set([
-  "type",
-  "customType",
-  "title",
-  "creators",
-  "issuedRaw",
-  "issuedYear",
-  "abstract",
-  "abstractSections",
-  "containerTitle",
-  "publisher",
-  "volume",
-  "issue",
-  "pages",
-  "language",
-  "url",
-  "identifiers",
-  "attachments",
-]);
+interface MergeDifference {
+  readonly field: string;
+  readonly kept: string | null;
+  readonly other: string | null;
+}
 
 /**
  * `kept` is null once the kept source was merged again or moved to the Trash. Two copies with one
@@ -115,18 +101,21 @@ const WORK_FIELDS = new Set([
 export function mergedRowLabel(merge: {
   readonly mergedTitle: string | null;
   readonly kept: { readonly title: string | null } | null;
-  readonly keptDifferent: ReadonlyArray<string>;
-  readonly filledIn: ReadonlyArray<string>;
+  readonly differences: ReadonlyArray<Pick<MergeDifference, "field">>;
 }): string {
   const { mergedTitle, kept } = merge;
   if (!kept) return `${quoted(mergedTitle)} merged into a source no longer in your Library`;
   if (kept.title !== mergedTitle) return `${quoted(mergedTitle)} merged into ${quoted(kept.title)}`;
-  const differed = [...merge.keptDifferent, ...merge.filledIn].filter((field) =>
-    WORK_FIELDS.has(field),
-  );
-  return differed.length > 0
-    ? `Two copies of ${quoted(mergedTitle)} merged. Their ${fieldWords(differed)} differed.`
+  return merge.differences.length > 0
+    ? `Two copies of ${quoted(mergedTitle)} merged. Their ${fieldWords(merge.differences.map(({ field }) => field))} differed.`
     : `Two copies of ${quoted(mergedTitle)} merged`;
+}
+
+/** One field the two differed in, with both values: "Volume: none (kept), 12 (merged away)". */
+export function mergeDifferenceLabel(difference: MergeDifference): string {
+  const word = fieldWords([difference.field]);
+  const value = (text: string | null) => text ?? DUPLICATE_LABELS.none;
+  return `${word.charAt(0).toLocaleUpperCase()}${word.slice(1)}: ${value(difference.kept)} (kept), ${value(difference.other)} (merged away)`;
 }
 
 const SUMMARY_FIELDS: ReadonlyArray<DuplicateField> = ["authors", "year", "journal", "identifiers"];

@@ -20,6 +20,7 @@ import {
   differsLabel,
   fieldValue,
   keptDifferentLabel,
+  mergeDifferenceLabel,
   mergedDateLabel,
   mergedRowLabel,
   sideSummary,
@@ -442,6 +443,14 @@ function MergedRow(props: {
           {DUPLICATE_LABELS.mergedSide}:{" "}
           {sideSummary({ ...merge.merged, otherProjects: [] }, { projects: false })}
         </p>
+        {merge.differences.map((difference) => (
+          <p
+            key={difference.field}
+            className="mt-0.5 line-clamp-2 break-words text-muted-foreground"
+          >
+            {mergeDifferenceLabel(difference)}
+          </p>
+        ))}
         <p className="mt-0.5 text-muted-foreground">
           {[
             mergedDateLabel(merge.mergedAt),

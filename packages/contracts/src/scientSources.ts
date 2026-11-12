@@ -923,8 +923,17 @@ export const ScientSourcesDuplicatesResult = Schema.Struct({
       merged: ScientSourceSummary,
       /** Fields where the two had different values and the kept source's value stayed. */
       keptDifferent: Schema.Array(Schema.String),
-      /** Fields the kept source lacked and took from the merged one (identifiers, attachments too). */
-      filledIn: Schema.Array(Schema.String),
+      /**
+       * Each work field the two differed in (kept, or filled in from the other), with the kept
+       * one's value before the merge and the other's as text; null where one had none.
+       */
+      differences: Schema.Array(
+        Schema.Struct({
+          field: NonEmptyString,
+          kept: Schema.NullOr(Schema.String),
+          other: Schema.NullOr(Schema.String),
+        }),
+      ),
     }),
   ).pipe(Schema.check(Schema.isMaxLength(SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT))),
   mergesTotal: Count,
