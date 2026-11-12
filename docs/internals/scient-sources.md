@@ -1254,6 +1254,11 @@ three plain check-only runs fetched four papers into the project and no reply
 labelled its pages; after it, six runs fetched nothing, the project stayed
 unchanged, and the last three labelled every page
 (`reviews/sources-roadmap-20261110/support-check/followup-2` in the workspace).
+The rule is about fetching, not about writing nothing: reading a Library PDF
+whose text is not cached yet still writes that cache, and the runs started with
+the caches built. The page is the 1-based position in the file, which is what
+`scient_sources_read_text` returns; a viewer set to show a PDF's own page
+labels can show a different number.
 The skill text lives in both `built-ins/references/SKILL.md` and its embedded
 copy in `BuiltInSkillSources.ts`; a test keeps them identical.
 
