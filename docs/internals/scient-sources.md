@@ -434,6 +434,16 @@ is derived from the library ID and the project source ID, so a repeat after a
 lost map finds the same record. `ambiguous` and `removed` pins are never
 hydrated, so hydration never adds a duplicate or brings back a removed record.
 
+**Two pins, one source.** A project that pinned both sides of a pair keeps
+both pins after they are merged: its documents may cite either key, and the
+managed bibliography keeps both. Everything that lists or counts the
+project's sources (`LibraryProjectSources.ts` `distinctPinnedWorks` and
+`projectPinGroupsByLibraryId`: the overview and its `scopes.project`, the
+details, export and the agent list) shows the source once, under the key
+pinned first, the one its documents have had longest; the other keys travel
+as `alsoCitedAs` ("Also cited as" in the details). Remove from this project
+unpins every key.
+
 ### Review record snapshots
 
 `@scientfactory/scient-sources/library-reviews` is the library-mode review
@@ -1141,9 +1151,13 @@ A larger selection in the bar is sent in parts by `apps/web` `bulkParts.ts`;
   own client timeout is 120 s. Each part is its own bulk edit with its own
   receipt, so the store keeps the latest 250 receipts, enough for
   a 20,000-source edit and 50 others.
-- **While it runs** the bar's count reads "Changing 400 of 1,200 sources" with
-  **Stop**, which takes effect once the part in flight is answered. Undo of a
-  multi-part edit shows "Undoing … sources" the same way, without Stop.
+- **While it runs** a line under the bar reads "Changing 400 of 1,200 sources"
+  with **Stop**, which takes effect once the part in flight is answered. Undo
+  of a multi-part edit shows "Undoing … sources" the same way, without Stop.
+  The naming dialog of New tag and New collection closes as the parts start,
+  so Stop is never behind it; 500 or fewer keeps it open until answered.
+  Narrower than one row of actions (a 30rem container), the actions take a
+  line of their own so the count and Done selecting stay visible.
 - **At the end** one toast gives the sum of `undo.sourceCount` over the parts
   and one Undo that undoes the parts newest first. The per-source problems of
   the answered parts (`bulkResultSummary`) are in that same toast, and Undo's
@@ -1190,9 +1204,9 @@ Systematic reviews does, with two sections: the possible pairs and **Merged**.
   only `possibleDuplicates`. It never merges, never settles an interrupted
   merge and takes no lock; `mergeScientLibraryDuplicates` stays on the move's
   path only. Each pair carries both sides as overview rows plus
-  `otherProjects` (other checkouts on this computer that use it, by folder
-  name; one pin resolution per checkout) and `keptByDefault`, the design's
-  survivor rule. The default side comes first. At most 200 pairs are sent;
+  `otherProjects` (other checkouts on this computer that use it, by their
+  title in the server's project list or else their folder name; one pin
+  resolution per checkout) and `keptByDefault`, the design's survivor rule. The default side comes first. At most 200 pairs are sent;
   `pairsTotal` counts them all. A project server refuses the read.
 - **Merges Undo can still reverse** come from `merges/*.json` with state
   `done` by Undo's own rule: the merged-away source is in the trash under that
@@ -1201,7 +1215,11 @@ Systematic reviews does, with two sections: the possible pairs and **Merged**.
   `mergesTotal` counting them all; this reads one trash entry per done merge.
   `requested` is false for the move's automatic merges. `keptSourceId` is the
   source the merge kept; `kept` is its row, or null when it was merged again
-  or removed, and Undo then answers `survivor-missing`.
+  or removed, and Undo then answers `survivor-missing`. `merged` is the
+  merged-away source's summary and `filledIn` the fields the kept one took
+  from it, so a Merged row tells two copies apart: each side's authors,
+  journal and identifiers, and for one title "Their authors and journal
+  differed." from `keptDifferent` and `filledIn`.
 - **Cost at 20,000 records** (M5 Pro, Node 26, load 2): the assessment alone
   46 ms, the whole read 57 ms warm and 1.2 s cold (the cold part is the
   record listing the overview pays too). The assessment is not on the overview
@@ -1215,7 +1233,10 @@ Systematic reviews does, with two sections: the possible pairs and **Merged**.
 - **The view's changes** (Merge with the chosen side as `survivorId`, Undo,
   Not duplicates and its Undo) all go through `useSourcesOrganize`'s
   `organize`, one request per pair, so they are refused while a change in
-  parts runs and then change nothing: the pair and the merge dialog stay. Toast
+  parts runs and then change nothing: the pair and its choice stay. Each side
+  of a pair is a radio "Keep this one" (the suggested side chosen first);
+  **Merge** merges at once, with no confirmation, and the toast's Undo is the
+  way back. Toast
   actions are wrapped in `whenFree`, which also refuses while any other request
   of the hook is in flight, so a merge's Undo from its toast and its Merged row
   cannot both be sent. A successful change reads the overview again, and moves
@@ -1669,7 +1690,12 @@ not valid JSON, does not decode, belongs to another project or does not match
 its file name, is skipped and reported in the overview's `unreadableRecords`
 with its project-relative path; the UI shows one quiet line naming the files.
 The trash listing reports its own entries the same way. Reading a single source
-by ID still fails for that source alone.
+by ID still fails for that source alone. The store never writes such a record
+itself: an import or a new revision with a type outside `ScientSourceType` is
+refused ("The source type “…” is not one Scient knows, so the source was not
+saved."). Every real caller already decodes the type (agent tools, routes,
+importers; a pin's snapshot maps an unknown type to `other`); only an untyped
+script could send one.
 
 The UI moves a source to the trash straight from the row's secondary-click
 menu or the details page and offers Undo in the confirmation toast; **Trash** in
