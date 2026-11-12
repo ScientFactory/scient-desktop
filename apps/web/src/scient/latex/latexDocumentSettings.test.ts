@@ -138,4 +138,19 @@ describe("document settings font family", () => {
     expect(none).not.toContain("familydefault");
     expect(documentLayoutSettings(none).fontFamily).toBe("default");
   });
+
+  it("removes only the active family declaration on Default", () => {
+    const commented = String.raw`% \renewcommand{\familydefault}{\sfdefault}
+\newcommand{\mono}{\renewcommand{\familydefault}{\ttdefault}}
+`;
+    const withActive = updateLatexDocumentSettingsSource(
+      document().replace("\\begin{document}", `${commented}\\begin{document}`),
+      { fontFamily: "serif" },
+    )!;
+    const none = updateLatexDocumentSettingsSource(withActive, { fontFamily: "default" })!;
+    expect(none).toContain("% \\renewcommand{\\familydefault}{\\sfdefault}");
+    expect(none).toContain("\\newcommand{\\mono}{\\renewcommand{\\familydefault}{\\ttdefault}}");
+    expect(none).not.toContain("{\\rmdefault}");
+    expect(documentLayoutSettings(none).fontFamily).toBe("default");
+  });
 });

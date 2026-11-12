@@ -155,20 +155,24 @@ export function updateDocumentLayoutSettings(
   )
     return null;
   const eol = source.includes("\r\n") ? "\r\n" : "\n";
-  const replace = (pattern: RegExp, declaration: string) => {
+  // Matches of a declaration that are active preamble commands, not comments or macro bodies.
+  const activeMatches = (pattern: RegExp) => {
     const end = latexPreambleEnd(result);
     const active = new Set(
       latexSourceCommands(result.slice(0, end))
         .filter((command) => command.depth === 0)
         .map((command) => command.from),
     );
-    const matches = [...result.slice(0, end).matchAll(pattern)].filter((match) =>
-      active.has(match.index),
-    );
-    const found = matches.at(-1);
+    return [...result.slice(0, end).matchAll(pattern)].filter((match) => active.has(match.index));
+  };
+  const replace = (pattern: RegExp, declaration: string) => {
+    const found = activeMatches(pattern).at(-1);
     result = found
       ? result.slice(0, found.index) + declaration + result.slice(found.index + found[0].length)
-      : result.slice(0, end) + declaration + eol + result.slice(end);
+      : result.slice(0, latexPreambleEnd(result)) +
+        declaration +
+        eol +
+        result.slice(latexPreambleEnd(result));
   };
   const requirePackage = (name: string) => {
     const preamble = result.slice(0, latexPreambleEnd(result));
@@ -265,8 +269,8 @@ export function updateDocumentLayoutSettings(
     );
   }
   if (update.fontFamily === "default") {
-    const end = latexPreambleEnd(result);
-    result = result.slice(0, end).replace(FAMILY_DEFAULT_PATTERN, "") + result.slice(end);
+    for (const match of activeMatches(FAMILY_DEFAULT_PATTERN).reverse())
+      result = result.slice(0, match.index) + result.slice(match.index + match[0].length);
   } else if (update.fontFamily !== undefined) {
     replace(
       FAMILY_DEFAULT_PATTERN,
