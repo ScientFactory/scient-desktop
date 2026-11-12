@@ -156,8 +156,7 @@ function isCurrent(state: SourcesWorkflowState, request: number): boolean {
 type OverviewRow = ScientSourcesOverviewResult["records"][number];
 
 /** A library server's row: its keys are this project's pins. */
-const isLibraryRow = (row: OverviewRow | undefined): row is OverviewRow =>
-  row !== undefined && row.pinned !== undefined;
+const isLibraryRow = (row: OverviewRow | undefined): boolean => row?.pinned !== undefined;
 
 function acceptRecordIntoOverview(
   overview: ScientSourcesOverviewResult,
@@ -168,7 +167,7 @@ function acceptRecordIntoOverview(
   const records = [...overview.records];
   const row = overview.records[recordIndex];
   const citationKey = isLibraryRow(row)
-    ? row.citationKey
+    ? row?.citationKey
     : (record.citationKey ?? row?.citationKey);
   records[recordIndex] = {
     sourceId: record.sourceId,
