@@ -17,12 +17,8 @@ export const DUPLICATE_LABELS = {
   notDuplicates: "Not duplicates",
   undo: "Undo",
   review: "Review",
-  mergeTitle: "Merge these two sources?",
-  mergeHelp:
-    "One is kept and the other is merged into it. Where they have different values, the kept one's value stays. Projects that use either one keep citing it, and Undo brings the other back.",
   keepThis: "Keep this one",
   suggested: "Suggested",
-  cancel: "Cancel",
   mergeFailed: "The sources were not merged",
   notDuplicatesFailed: "The sources were not marked",
   oneGone: "One of them is no longer in the Library.",
@@ -38,6 +34,8 @@ export const DUPLICATE_LABELS = {
   untitled: "Untitled",
   automatic: "Merged automatically when the Library moved",
   requested: "Merged on request",
+  keptSide: "Kept",
+  mergedSide: "Merged away",
 } as const;
 
 /** How a merge's different-value fields read in a sentence. */
@@ -58,6 +56,7 @@ const FIELD_WORDS: Readonly<Record<string, string>> = {
   language: "language",
   url: "web address",
   identifiers: "identifiers",
+  attachments: "PDF",
   note: "note",
   readingStatus: "reading state",
   starred: "star",
@@ -88,14 +87,67 @@ export function keptDifferentLabel(fields: ReadonlyArray<string>): string | null
     : `Where they differed, the kept one's ${fieldWords(fields)} stayed.`;
 }
 
-/** `kept` is null once the kept source was merged again or moved to the Trash. */
-export function mergedRowLabel(
-  mergedTitle: string | null,
-  kept: { readonly title: string | null } | null,
+/** What two copies of one work can differ in; reading state and notes are not the work's. */
+const WORK_FIELDS = new Set([
+  "type",
+  "customType",
+  "title",
+  "creators",
+  "issuedRaw",
+  "issuedYear",
+  "abstract",
+  "abstractSections",
+  "containerTitle",
+  "publisher",
+  "volume",
+  "issue",
+  "pages",
+  "language",
+  "url",
+  "identifiers",
+  "attachments",
+]);
+
+/**
+ * `kept` is null once the kept source was merged again or moved to the Trash. Two copies with one
+ * title are told apart by what differed: values the kept one kept, and ones it took from the other.
+ */
+export function mergedRowLabel(merge: {
+  readonly mergedTitle: string | null;
+  readonly kept: { readonly title: string | null } | null;
+  readonly keptDifferent: ReadonlyArray<string>;
+  readonly filledIn: ReadonlyArray<string>;
+}): string {
+  const { mergedTitle, kept } = merge;
+  if (!kept) return `${quoted(mergedTitle)} merged into a source no longer in your Library`;
+  if (kept.title !== mergedTitle) return `${quoted(mergedTitle)} merged into ${quoted(kept.title)}`;
+  const differed = [...merge.keptDifferent, ...merge.filledIn].filter((field) =>
+    WORK_FIELDS.has(field),
+  );
+  return differed.length > 0
+    ? `Two copies of ${quoted(mergedTitle)} merged. Their ${fieldWords(differed)} differed.`
+    : `Two copies of ${quoted(mergedTitle)} merged`;
+}
+
+const SUMMARY_FIELDS: ReadonlyArray<DuplicateField> = ["authors", "year", "journal", "identifiers"];
+
+/** One line that tells two copies apart; `projects` adds where the source is used. */
+export function sideSummary(
+  source: ScientSourcesDuplicateSource,
+  options: { readonly projects: boolean },
 ): string {
-  return kept
-    ? `${quoted(mergedTitle)} merged into ${quoted(kept.title)}`
-    : `${quoted(mergedTitle)} merged into a source no longer in your Library`;
+  return [...SUMMARY_FIELDS, ...(options.projects ? (["projects"] as const) : [])]
+    .map((field) => fieldValue(source, field))
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** The month-name date the details and History use ("Nov 12, 2026"). */
+export function mergedDateLabel(mergedAt: string): string {
+  const date = new Date(mergedAt);
+  return Number.isNaN(date.getTime())
+    ? ""
+    : new Intl.DateTimeFormat(undefined, { dateStyle: "medium" }).format(date);
 }
 
 export function sectionCountLabel(label: string, count: number): string {

@@ -833,6 +833,7 @@ describe("Library routes on the library backend", () => {
             kept: { sourceId: second.sourceId },
             mergedSourceId: first.sourceId,
             mergedTitle: "Shock trial",
+            merged: { sourceId: first.sourceId, title: "Shock trial" },
             keptDifferent: ["publisher"],
           },
         ]);

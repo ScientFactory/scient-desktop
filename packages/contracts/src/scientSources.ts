@@ -907,8 +907,12 @@ export const ScientSourcesDuplicatesResult = Schema.Struct({
       kept: Schema.NullOr(ScientSourcesDuplicateSource),
       mergedSourceId: NonEmptyString,
       mergedTitle: Schema.NullOr(Schema.String),
+      /** The merged-away source as it was, so two copies with one title can be told apart. */
+      merged: ScientSourceSummary,
       /** Fields where the two had different values and the kept source's value stayed. */
       keptDifferent: Schema.Array(Schema.String),
+      /** Fields the kept source lacked and took from the merged one (identifiers, attachments too). */
+      filledIn: Schema.Array(Schema.String),
     }),
   ).pipe(Schema.check(Schema.isMaxLength(SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT))),
   mergesTotal: Count,

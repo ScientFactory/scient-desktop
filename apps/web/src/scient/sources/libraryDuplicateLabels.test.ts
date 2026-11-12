@@ -21,8 +21,14 @@ describe("possible-duplicate labels", () => {
       differsLabel(DUPLICATE_FIELDS),
       differsLabel([]),
       keptDifferentLabel(fields) ?? "",
-      mergedRowLabel("A", null),
-      mergedRowLabel("A", { title: "B" }),
+      mergedRowLabel({ mergedTitle: "A", kept: null, keptDifferent: [], filledIn: [] }),
+      mergedRowLabel({ mergedTitle: "A", kept: { title: "B" }, keptDifferent: [], filledIn: [] }),
+      mergedRowLabel({
+        mergedTitle: "A",
+        kept: { title: "A" },
+        keptDifferent: ["creators"],
+        filledIn: ["identifiers"],
+      }),
       mergedTitleLabel(null),
       otherProjectsLabel(["Grant", "Thesis"]) ?? "",
       shownOfTotalLabel(200, 340) ?? "",
@@ -39,6 +45,15 @@ describe("possible-duplicate labels", () => {
       "Where they differed, the kept one's journal, year and date stayed.",
     );
     expect(keptDifferentLabel([])).toBeNull();
+    // Two copies with one title are told apart by what differed, never by reading state.
+    expect(
+      mergedRowLabel({
+        mergedTitle: "Shock trial",
+        kept: { title: "Shock trial" },
+        keptDifferent: ["creators", "readingStatus"],
+        filledIn: ["identifiers", "attachments"],
+      }),
+    ).toBe("Two copies of “Shock trial” merged. Their authors, identifiers and PDF differed.");
     // Undo can name any field the merge set; none is shown by its key.
     expect(unrevertedLabel(["abstract", "abstractSections", "note", "someNewField"])).toBe(
       "Changes made after the merge were kept: abstract, note and other details.",

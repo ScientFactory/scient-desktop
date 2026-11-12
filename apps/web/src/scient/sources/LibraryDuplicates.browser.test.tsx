@@ -8,7 +8,7 @@ import type {
 } from "@t3tools/contracts";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { userEvent } from "vite-plus/test/browser";
 
 import { toastManager } from "../../components/ui/toast";
 import { LibraryDuplicatesView } from "./LibraryDuplicates";
@@ -136,10 +136,9 @@ describe("Possible duplicates", () => {
     using add = vi.spyOn(toastManager, "add");
 
     await expect.element(screen.getByText("Different journal and projects.")).toBeVisible();
+    await expect.element(screen.getByRole("radio", { name: /North Journal/u })).toBeChecked();
+    await userEvent.click(screen.getByRole("radio", { name: /South Journal/u }));
     await userEvent.click(screen.getByRole("button", { name: "Merge" }));
-    const dialog = page.getByRole("alertdialog");
-    await userEvent.click(dialog.getByRole("radio", { name: /South Journal/u }));
-    await userEvent.click(dialog.getByRole("button", { name: "Merge" }));
 
     await expect.element(screen.getByText("No possible duplicates in your Library.")).toBeVisible();
     expect(mocks.organizeScientSources.mock.calls[0]![1].change).toEqual({
@@ -174,16 +173,16 @@ describe("Possible duplicates", () => {
     expect(add.mock.calls.at(-1)![0]).toMatchObject({ type: "success", title: "Merge undone" });
   });
 
-  it("keeps the pair and the dialog when the merge did not happen", async () => {
+  it("keeps the pair and the choice when the merge did not happen", async () => {
     const { onMerged } = setup(withPair);
     mocks.organizeScientSources.mockRejectedValueOnce(new Error("The Library is busy."));
     await using screen = await render(<Harness onMerged={onMerged} />, { router: false });
 
+    await userEvent.click(screen.getByRole("radio", { name: /South Journal/u }));
     await userEvent.click(screen.getByRole("button", { name: "Merge" }));
-    await userEvent.click(page.getByRole("alertdialog").getByRole("button", { name: "Merge" }));
 
     await vi.waitFor(() => expect(mocks.organizeScientSources).toHaveBeenCalledTimes(1));
-    await expect.element(page.getByRole("alertdialog")).toBeVisible();
+    await expect.element(screen.getByRole("radio", { name: /South Journal/u })).toBeChecked();
     expect(mocks.readLibraryDuplicates).toHaveBeenCalledTimes(1);
     expect(onMerged).not.toHaveBeenCalled();
   });

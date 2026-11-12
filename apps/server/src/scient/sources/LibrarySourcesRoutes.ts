@@ -308,7 +308,15 @@ export async function libraryDuplicates(
         kept: kept ? row(kept) : null,
         mergedSourceId: merge.loserId,
         mergedTitle: merged.title,
+        merged: scientSourceSummaryFromRecord(merged),
         keptDifferent: merge.conflicts.map((conflict) => conflict.field),
+        filledIn: [
+          ...new Set([
+            ...merge.changes.map((change) => change.field),
+            ...(merge.added.identifiers.length > 0 ? ["identifiers"] : []),
+            ...(merge.added.attachmentSha256.length > 0 ? ["attachments"] : []),
+          ]),
+        ],
       };
     }),
     mergesTotal: listing.mergesTotal,

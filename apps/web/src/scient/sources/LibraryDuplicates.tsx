@@ -7,15 +7,6 @@ import type {
 import { LoaderCircle, RefreshCw } from "lucide-react";
 import { useEffect, useState } from "react";
 
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../../components/ui/alert-dialog";
 import { Button } from "../../components/ui/button";
 import { Radio, RadioGroup } from "../../components/ui/radio-group";
 import { ScrollArea } from "../../components/ui/scroll-area";
@@ -29,7 +20,9 @@ import {
   differsLabel,
   fieldValue,
   keptDifferentLabel,
+  mergedDateLabel,
   mergedRowLabel,
+  sideSummary,
   mergedTitleLabel,
   sectionCountLabel,
   shownOfTotalLabel,
@@ -77,9 +70,8 @@ export function LibraryDuplicatesView(props: {
   } | null>(null);
   // Pairs settled here leave the list at once; the next read confirms it.
   const [settled, setSettled] = useState<ReadonlySet<string>>(new Set());
-  const [merging, setMerging] = useState<{ readonly pair: Pair; readonly keep: string } | null>(
-    null,
-  );
+  // The side to keep, by pair, when the person chose other than the suggested one.
+  const [chosen, setChosen] = useState<ReadonlyMap<string, string>>(new Map());
   const current = reading?.context === context ? reading : null;
   // Try again. A change that lands (here, from a toast, or from a view that has closed since)
   // moves `changes`, which reads again too.
@@ -139,7 +131,6 @@ export function LibraryDuplicatesView(props: {
       DUPLICATE_LABELS.mergeFailed,
     );
     if (!result) return;
-    setMerging(null);
     settle(pair);
     const landed = result.outcome === "merged" ? result.merges?.[0] : undefined;
     if (!landed) {
@@ -255,18 +246,25 @@ export function LibraryDuplicatesView(props: {
           <LegendList<Pair>
             data={pairs}
             keyExtractor={pairKey}
-            extraData={{ busy, canChange: props.canChange }}
-            renderItem={({ item, index }) => (
-              <div className={index > 0 ? "border-t border-border" : undefined}>
-                <DuplicatePair
-                  pair={item}
-                  canChange={props.canChange}
-                  busy={busy}
-                  onMerge={() => setMerging({ pair: item, keep: item.keptByDefault })}
-                  onNotDuplicates={() => void markNotDuplicates(item)}
-                />
-              </div>
-            )}
+            extraData={{ busy, canChange: props.canChange, chosen }}
+            renderItem={({ item, index }) => {
+              const keep = chosen.get(pairKey(item)) ?? item.keptByDefault;
+              return (
+                <div className={index > 0 ? "border-t border-border" : undefined}>
+                  <DuplicatePair
+                    pair={item}
+                    keep={keep}
+                    canChange={props.canChange}
+                    busy={busy}
+                    onKeep={(sourceId) =>
+                      setChosen((previous) => new Map(previous).set(pairKey(item), sourceId))
+                    }
+                    onMerge={() => void merge(item, keep)}
+                    onNotDuplicates={() => void markNotDuplicates(item)}
+                  />
+                </div>
+              );
+            }}
             estimatedItemSize={PAIR_ESTIMATED_SIZE}
             drawDistance={PAIR_ESTIMATED_SIZE * 4}
             recycleItems={false}
@@ -304,33 +302,62 @@ export function LibraryDuplicatesView(props: {
           ) : null}
         </ScrollArea>
       )}
-      <MergeDialog
-        merging={merging}
-        busy={busy}
-        onKeep={(keep) => setMerging((previous) => (previous ? { ...previous, keep } : previous))}
-        onClose={() => setMerging(null)}
-        onConfirm={(pair, keep) => void merge(pair, keep)}
-      />
     </div>
   );
 }
 
 function DuplicatePair(props: {
   readonly pair: Pair;
+  readonly keep: string;
   readonly canChange: boolean;
   readonly busy: boolean;
+  readonly onKeep: (sourceId: string) => void;
   readonly onMerge: () => void;
   readonly onNotDuplicates: () => void;
 }) {
-  const [left, right] = props.pair.sources;
+  const { pair } = props;
+  const [left, right] = pair.sources;
   const differing = differingFields(left, right);
   return (
     <section className="@container/pair px-3 py-3" aria-label={fieldValue(left, "title")}>
       <p className="mb-2 text-xs text-muted-foreground">{differsLabel(differing)}</p>
-      <div className="grid gap-2 @md/pair:grid-cols-2">
-        <DuplicateSide source={left} differing={differing} />
-        <DuplicateSide source={right} differing={differing} />
-      </div>
+      {props.canChange ? (
+        // Each side is the choice of the one to keep; Merge merges at once and its toast undoes.
+        <RadioGroup
+          aria-label={DUPLICATE_LABELS.keepThis}
+          className="grid @md/pair:grid-cols-2"
+          value={props.keep}
+          onValueChange={(value) => {
+            if (typeof value === "string") props.onKeep(value);
+          }}
+        >
+          {pair.sources.map((side) => (
+            <label
+              key={side.sourceId}
+              className="min-w-0 cursor-pointer rounded-md border border-border px-2.5 py-2 text-xs"
+            >
+              <span className="mb-1 flex items-center gap-2 text-muted-foreground">
+                <Radio value={side.sourceId} disabled={props.busy} />
+                {side.sourceId === pair.keptByDefault
+                  ? `${DUPLICATE_LABELS.keepThis} · ${DUPLICATE_LABELS.suggested}`
+                  : DUPLICATE_LABELS.keepThis}
+              </span>
+              <DuplicateSide source={side} differing={differing} />
+            </label>
+          ))}
+        </RadioGroup>
+      ) : (
+        <div className="grid gap-3 @md/pair:grid-cols-2">
+          {pair.sources.map((side) => (
+            <div
+              key={side.sourceId}
+              className="min-w-0 rounded-md border border-border px-2.5 py-2 text-xs"
+            >
+              <DuplicateSide source={side} differing={differing} />
+            </div>
+          ))}
+        </div>
+      )}
       {props.canChange ? (
         <div className="mt-2 flex justify-end gap-1">
           <Button size="xs" variant="ghost" disabled={props.busy} onClick={props.onNotDuplicates}>
@@ -360,32 +387,32 @@ function DuplicateSide(props: {
 }) {
   const differs = (field: DuplicateField) => props.differing.includes(field);
   return (
-    <div className="min-w-0 rounded-md border border-border px-2.5 py-2 text-xs">
-      <p
-        className="break-words text-sm font-medium"
+    <>
+      <span
+        className="block break-words text-sm font-medium"
         data-differs={differs("title") ? "true" : undefined}
       >
         {fieldValue(props.source, "title")}
-      </p>
+      </span>
       {SIDE_FIELDS.map((field) => {
         const value = fieldValue(props.source, field);
         if (!value) return null;
         return (
-          <p
+          <span
             key={field}
             data-field={field}
             data-differs={differs(field) ? "true" : undefined}
             className={
               differs(field)
-                ? "mt-0.5 break-words font-medium text-foreground"
-                : "mt-0.5 break-words text-muted-foreground"
+                ? "mt-0.5 block break-words font-medium text-foreground"
+                : "mt-0.5 block break-words text-muted-foreground"
             }
           >
             {value}
-          </p>
+          </span>
         );
       })}
-    </div>
+    </>
   );
 }
 
@@ -400,10 +427,23 @@ function MergedRow(props: {
   return (
     <li className="flex items-start gap-2 px-3 py-2.5 text-xs">
       <div className="min-w-0 flex-1">
-        <p className="break-words text-sm">{mergedRowLabel(merge.mergedTitle, merge.kept)}</p>
+        <p className="break-words text-sm">{mergedRowLabel(merge)}</p>
+        {merge.kept ? (
+          <p className="mt-0.5 break-words text-muted-foreground">
+            {DUPLICATE_LABELS.keptSide}: {sideSummary(merge.kept, { projects: true })}
+          </p>
+        ) : null}
+        <p className="mt-0.5 break-words text-muted-foreground">
+          {DUPLICATE_LABELS.mergedSide}:{" "}
+          {sideSummary({ ...merge.merged, otherProjects: [] }, { projects: false })}
+        </p>
         <p className="mt-0.5 text-muted-foreground">
-          {new Date(merge.mergedAt).toLocaleDateString()} ·{" "}
-          {merge.requested ? DUPLICATE_LABELS.requested : DUPLICATE_LABELS.automatic}
+          {[
+            mergedDateLabel(merge.mergedAt),
+            merge.requested ? DUPLICATE_LABELS.requested : DUPLICATE_LABELS.automatic,
+          ]
+            .filter(Boolean)
+            .join(" · ")}
         </p>
         {kept ? <p className="mt-0.5 text-muted-foreground">{kept}</p> : null}
       </div>
@@ -413,78 +453,5 @@ function MergedRow(props: {
         </Button>
       ) : null}
     </li>
-  );
-}
-
-function MergeDialog(props: {
-  readonly merging: { readonly pair: Pair; readonly keep: string } | null;
-  readonly busy: boolean;
-  readonly onKeep: (sourceId: string) => void;
-  readonly onClose: () => void;
-  readonly onConfirm: (pair: Pair, keep: string) => void;
-}) {
-  const { merging } = props;
-  return (
-    <AlertDialog
-      open={merging !== null}
-      onOpenChange={(open) => (!open ? props.onClose() : undefined)}
-    >
-      <AlertDialogPopup>
-        <AlertDialogHeader>
-          <AlertDialogTitle>{DUPLICATE_LABELS.mergeTitle}</AlertDialogTitle>
-          <AlertDialogDescription>{DUPLICATE_LABELS.mergeHelp}</AlertDialogDescription>
-        </AlertDialogHeader>
-        {merging ? (
-          <div className="px-6">
-            <RadioGroup
-              aria-label={DUPLICATE_LABELS.keepThis}
-              value={merging.keep}
-              onValueChange={(value) => {
-                if (typeof value === "string") props.onKeep(value);
-              }}
-            >
-              {merging.pair.sources.map((side) => (
-                <label
-                  key={side.sourceId}
-                  className="flex cursor-pointer items-start gap-2 rounded-md border border-border p-2 text-xs"
-                >
-                  <Radio value={side.sourceId} />
-                  <span className="min-w-0 flex-1">
-                    <span className="block break-words text-sm font-medium">
-                      {fieldValue(side, "title")}
-                    </span>
-                    <span className="block text-muted-foreground">
-                      {[
-                        fieldValue(side, "year"),
-                        fieldValue(side, "journal"),
-                        fieldValue(side, "pdf"),
-                      ]
-                        .filter(Boolean)
-                        .join(" · ")}
-                    </span>
-                    {side.sourceId === merging.pair.keptByDefault ? (
-                      <span className="block text-muted-foreground">
-                        {DUPLICATE_LABELS.suggested}
-                      </span>
-                    ) : null}
-                  </span>
-                </label>
-              ))}
-            </RadioGroup>
-          </div>
-        ) : null}
-        <AlertDialogFooter>
-          <AlertDialogClose render={<Button variant="outline" />}>
-            {DUPLICATE_LABELS.cancel}
-          </AlertDialogClose>
-          <Button
-            disabled={props.busy || merging === null}
-            onClick={() => (merging ? props.onConfirm(merging.pair, merging.keep) : undefined)}
-          >
-            {DUPLICATE_LABELS.merge}
-          </Button>
-        </AlertDialogFooter>
-      </AlertDialogPopup>
-    </AlertDialog>
   );
 }
