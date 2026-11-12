@@ -106,6 +106,10 @@ import {
 } from "../scientSources.ts";
 import {
   ScientManagedBibliographyStatus,
+  ScientCitationStylesRequest,
+  ScientCitationStylesResult,
+  ScientCitationStyleSetRequest,
+  ScientCitationStyleSetResult,
   ScientManagedBibliographySyncRequest,
 } from "../scientBibliography.ts";
 import {
@@ -595,6 +599,22 @@ export function makeScientEnvironmentHttpGroups({
         headers: OptionalBearerHeaders,
         payload: ScientManagedBibliographySyncRequest,
         success: ScientManagedBibliographyStatus,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("citationStyles", "/api/scient/sources/citation-styles", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCitationStylesRequest,
+        success: ScientCitationStylesResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("citationStyleSet", "/api/scient/sources/citation-styles/set", {
+        headers: OptionalBearerHeaders,
+        payload: ScientCitationStyleSetRequest,
+        success: ScientCitationStyleSetResult,
         error: EnvironmentHttpCommonError,
       }).middleware(EnvironmentAuthenticatedAuth),
     ) {}

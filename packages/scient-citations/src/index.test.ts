@@ -1,7 +1,29 @@
 import type { ScientSourceRecord } from "@scientfactory/scient-sources";
 import { beforeAll, describe, expect, it } from "vite-plus/test";
 
-import { SCIENT_REFERENCE_STYLES, formatSourceReference, scientSourceToCslJson } from "./index.ts";
+import { BUNDLED_CSL_STYLES, bundledCslStyleXml } from "./catalog.ts";
+import {
+  SCIENT_REFERENCE_STYLES,
+  formatSourceReference,
+  readCslStyle,
+  renderableCslStyle,
+  scientSourceToCslJson,
+} from "./index.ts";
+
+// Recorded from https://www.zotero.org/styles/plos-one (2026-11-11).
+const PLOS_ONE = `<?xml version="1.0" encoding="utf-8"?>
+<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" default-locale="en-US">
+  <info>
+    <title>PLOS ONE</title>
+    <id>http://www.zotero.org/styles/plos-one</id>
+    <link href="http://www.zotero.org/styles/plos-one" rel="self"/>
+    <link href="http://www.zotero.org/styles/plos" rel="independent-parent"/>
+    <category citation-format="numeric"/>
+    <updated>2014-06-05T22:31:00+00:00</updated>
+    <rights license="http://creativecommons.org/licenses/by-sa/3.0/">This work is licensed under a Creative Commons Attribution-ShareAlike 3.0 License</rights>
+  </info>
+</style>
+`;
 
 const article: ScientSourceRecord = {
   formatVersion: 1,
@@ -122,5 +144,84 @@ describe("formatSourceReference", () => {
     expect(formatSourceReference(edited, "vancouver")).toBe(
       "1. Lovelace A. A Corrected Title. PLOS Medicine. 2005;2(8):e124. doi:10.1371/journal.pmed.0020124",
     );
+  });
+
+  it("renders a dependent style with its parent's layout", () => {
+    expect(readCslStyle(PLOS_ONE)).toMatchObject({ id: "plos-one", parentId: "plos" });
+    const xml = renderableCslStyle(PLOS_ONE, bundledCslStyleXml("plos"));
+
+    expect(formatSourceReference(article, { xml })).toBe(
+      "1.  Ioannidis JPA. Why Most Published Research Findings Are False. PLOS Medicine. 2005;2: e124. doi:10.1371/journal.pmed.0020124",
+    );
+  });
+});
+
+// regression: review B4-1, a file with the shape of a CSL style counted as usable whatever it held
+describe("readCslStyle", () => {
+  const nature = bundledCslStyleXml("nature")!;
+  const head = nature.slice(0, nature.indexOf("</info>") + "</info>".length);
+  const style = (layout: string, sort = "") =>
+    `${head}<macro name="title"><text variable="title"/></macro><macro name = 'a&amp;b'><text variable="title"/></macro><citation>${sort}<layout>${layout}</layout></citation><bibliography><layout>${layout}</layout></bibliography></style>`;
+  const forBooks = (text: string) =>
+    `<choose><if type="book">${text}</if><else><text macro="title"/></else></choose>`;
+  const title = '<text variable="title"/>';
+
+  it("reads every bundled style, and a style that prints only some source types", () => {
+    expect(
+      BUNDLED_CSL_STYLES.filter((entry) => !readCslStyle(bundledCslStyleXml(entry.id)!)),
+    ).toEqual([]);
+    expect(
+      readCslStyle(style('<choose><if type="book"><text macro="title"/></if></choose>')),
+    ).not.toBeNull();
+    expect(
+      readCslStyle(style(forBooks(title), "<sort><key macro='title'/></sort>")),
+    ).not.toBeNull();
+    // The style repository holds styles that end in a comment.
+    expect(
+      readCslStyle(`${head}<citation><layout>${title}</layout></citation></style>\n<!-- end -->\n`),
+    ).not.toBeNull();
+  });
+
+  // regression: review B4-3, names and values were compared as written, not as XML reads them
+  it("reads names and values as XML does", () => {
+    expect(readCslStyle(style('<text prefix=">" macro="a&#38;b"/>'))).not.toBeNull();
+    const written = style(title)
+      .replace("<style ", '<style xmlns:x="urn:example:>" ')
+      .replace(/<title>[^<]*<\/title>/u, "<title> A<![CDATA[<B>]]>&amp;C </title>");
+    expect(readCslStyle(written)).toMatchObject({ id: "nature", title: "A<B>&C" });
+  });
+
+  // regression: review B4-4, the locale went to a style tag inside a comment
+  it("gives a parent the locale of a dependent style, however either is written", () => {
+    const spaced = PLOS_ONE.replace('default-locale="en-US"', "default-locale = 'en-GB'").replace(
+      'rel="independent-parent"',
+      "rel = 'independent-parent'",
+    );
+    expect(readCslStyle(spaced)).toMatchObject({ parentId: "plos", defaultLocale: "en-GB" });
+    const comment = "<!-- <style default-locale='fr-FR'> -->";
+    const parent = bundledCslStyleXml("plos")!
+      .replace("<style ", `${comment}<style `)
+      .replace('default-locale="en-US"', "default-locale = 'en-US'");
+    const rendered = renderableCslStyle(spaced, parent);
+    expect(rendered).toContain(comment);
+    expect(readCslStyle(rendered)?.defaultLocale).toBe("en-GB");
+  });
+
+  const prefixed = '<cs:text xmlns:cs="http://purl.org/net/xbiblio/csl" macro="missing"/>';
+  const root = head.slice(head.indexOf("<style"), head.indexOf("<info>"));
+  it.each([
+    ["names an undefined macro in a branch", style(forBooks('<text macro="missing"/>'))],
+    ["names one after a > and a spaced =", style('<text prefix=">" macro = "missing"/>')],
+    ["names one in a prefixed element", style(prefixed)],
+    ["sorts by an undefined macro", style(title, "<sort><key macro\n= 'missing'/></sort>")],
+    ["has markup that does not close", style(forBooks('<text variable="title">'))],
+    ["has an attribute without quotes", style("<text variable=title/>")],
+    ["has character data after its root", `${style(title)}<![CDATA[more]]>`],
+    [
+      "has its identity outside its root",
+      `${head.slice(head.indexOf("<info>"))}${root}<citation><layout>${title}</layout></citation></style>`,
+    ],
+  ])("rejects a style that %s", (_name, xml) => {
+    expect(readCslStyle(xml)).toBeNull();
   });
 });

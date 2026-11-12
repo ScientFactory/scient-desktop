@@ -1,0 +1,26 @@
+Citation Style Language styles and locales
+
+Scient includes unmodified CSL style files from the Citation Style Language styles
+repository (https://github.com/citation-style-language/styles) and an unmodified CSL
+locale file from the CSL locales repository
+(https://github.com/citation-style-language/locales). Styles a person downloads in
+Scient come from the same repository through the Zotero Style Repository
+(https://www.zotero.org/styles).
+
+This software uses CSL styles and locales from the Citation Style Language project:
+https://citationstyles.org/
+
+The styles and locales are released under the Creative Commons Attribution-ShareAlike
+3.0 Unported license: https://creativecommons.org/licenses/by-sa/3.0/
+Their author, contributor and translator listings are kept as they are, in each file's
+metadata.
+
+Bundled styles (styles repository commit 7a37c5a736c10fbd468bc31f92cbc6eafaa2173d):
+apa, chicago-author-date, chicago-notes-bibliography, harvard-cite-them-right, ieee,
+nature, science, cell, american-medical-association, modern-language-association,
+american-chemical-society, nlm-citation-sequence, elsevier-vancouver, bmj, the-lancet,
+the-new-england-journal-of-medicine, pnas, plos, elsevier-harvard,
+springer-basic-author-date.
+
+Bundled locale (locales repository commit 6b70fe79264543aa538f8927fcc98d5b72425a94):
+en-GB.
