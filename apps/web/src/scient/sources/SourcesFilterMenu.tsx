@@ -262,24 +262,26 @@ export function SourcesFilterMenu(props: {
                 </MenuRadioItem>
               )}
               {orderedCollections(organization.collections).map(({ collection, child }) => (
-                <MenuRadioItem key={collection.collectionId} value={collection.collectionId}>
-                  <span
-                    className={
-                      child
-                        ? "flex min-w-0 items-center gap-2 ps-4"
-                        : "flex min-w-0 items-center gap-2"
-                    }
-                  >
-                    <ScientTooltip content={collection.name}>
-                      <span className="min-w-0 flex-1 truncate">{collection.name}</span>
-                    </ScientTooltip>
-                    <Count
-                      value={
-                        scientSourceCollectionMemberIds(organization, collection.collectionId).size
+                // On the item, which keyboard navigation focuses, so the full name shows there too.
+                <ScientTooltip key={collection.collectionId} content={collection.name}>
+                  <MenuRadioItem value={collection.collectionId}>
+                    <span
+                      className={
+                        child
+                          ? "flex min-w-0 items-center gap-2 ps-4"
+                          : "flex min-w-0 items-center gap-2"
                       }
-                    />
-                  </span>
-                </MenuRadioItem>
+                    >
+                      <span className="min-w-0 flex-1 truncate">{collection.name}</span>
+                      <Count
+                        value={
+                          scientSourceCollectionMemberIds(organization, collection.collectionId)
+                            .size
+                        }
+                      />
+                    </span>
+                  </MenuRadioItem>
+                </ScientTooltip>
               ))}
             </MenuRadioGroup>
             <MenuSeparator />
