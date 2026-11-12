@@ -5,6 +5,7 @@ import type {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
+import { projectKeys } from "./libraryActions";
 import {
   emptyZoteroPage,
   importOutcomeFromOperation,
@@ -489,6 +490,44 @@ describe("sources workflow on a personal Library", () => {
     });
     expect(next.overview?.records[0]).toMatchObject({ readingStatus: "unread", starred: true });
   });
+  it("keeps every key of a source cited twice through edits, so Remove unpins both", () => {
+    const keys = { citationKey: "ada2026", alsoCitedAs: ["ada2026a"], pinned: true };
+    const listed = sourcesWorkflowReducer(library([{ sourceId: "a", revision: 4, ...keys }]), {
+      type: "sourceDetailArrived",
+      sourceId: "a",
+      atDetailFetch: 1,
+      detail: { ...detail({ sourceId: "a", revision: 4 }), ...keys },
+    });
+    const edited = reduceAll(
+      listed,
+      {
+        type: "sourceRecordAccepted",
+        record: { ...detail({ sourceId: "a", revision: 5 }), ...keys },
+      },
+      // A project note save answers the details, which an overview row is rebuilt from.
+      {
+        type: "sourceRecordAccepted",
+        record: { ...detail({ sourceId: "a", revision: 5 }), ...keys, note: "Primary" },
+      },
+    );
+    expect(projectKeys(edited.overview!.records[0]!)).toEqual(["ada2026", "ada2026a"]);
+    expect(projectKeys(edited.sourceDetails["a"]!)).toEqual(["ada2026", "ada2026a"]);
+
+    // Undo of the merge leaves one key here without a new revision of the kept source.
+    const undone = reduceAll(
+      edited,
+      { type: "overviewRequestStarted", request: 2 },
+      {
+        type: "overviewArrived",
+        request: 2,
+        overview: overviewWith([
+          { sourceId: "a", revision: 5, citationKey: "ada2026", pinned: true },
+        ]),
+      },
+    );
+    expect(projectKeys(undone.sourceDetails["a"]!)).toEqual(["ada2026"]);
+  });
+
   it("keeps a merged-away source's reading change off the kept one and drops it after Undo", () => {
     const marked = sourcesWorkflowReducer(
       library([

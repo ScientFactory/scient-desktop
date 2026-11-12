@@ -160,9 +160,12 @@ function acceptRecordIntoOverview(
   const recordIndex = overview.records.findIndex((entry) => entry.sourceId === record.sourceId);
   if (recordIndex === -1) return overview;
   const records = [...overview.records];
+  const row = overview.records[recordIndex];
+  const citationKey = record.citationKey ?? row?.citationKey;
   records[recordIndex] = {
     sourceId: record.sourceId,
     revision: record.revision,
+    ...(citationKey ? { citationKey } : {}),
     type: record.type,
     title: record.title,
     creators: record.creators,
@@ -179,7 +182,7 @@ function acceptRecordIntoOverview(
     })),
     importedAt: record.importedAt,
     ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
-    ...libraryFields(record, overview.records[recordIndex]),
+    ...libraryFields(record, row),
   };
   return { ...overview, records };
 }
@@ -196,7 +199,7 @@ type ReadingOverride = ReadingChange & {
 
 type LibraryFields = Pick<
   ScientSourceDetailResult,
-  "pinned" | "projectNote" | "fromSnapshot" | "readingStatus" | "starred"
+  "pinned" | "projectNote" | "fromSnapshot" | "readingStatus" | "starred" | "alsoCitedAs"
 >;
 const LIBRARY_FIELDS = [
   "pinned",
@@ -208,11 +211,16 @@ const LIBRARY_FIELDS = [
 
 /** A library server's row fields, from the record where it carries them, else from the row. */
 function libraryFields(record: LibraryFields, row: LibraryFields | undefined): LibraryFields {
-  return Object.fromEntries(
-    LIBRARY_FIELDS.flatMap((key) =>
-      key in record ? [[key, record[key]]] : row && key in row ? [[key, row[key]]] : [],
+  // A record carrying this project's fields leaves `alsoCitedAs` out when it has one key here.
+  const alsoCitedAs = "pinned" in record ? record.alsoCitedAs : row?.alsoCitedAs;
+  return {
+    ...Object.fromEntries(
+      LIBRARY_FIELDS.flatMap((key) =>
+        key in record ? [[key, record[key]]] : row && key in row ? [[key, row[key]]] : [],
+      ),
     ),
-  );
+    ...(alsoCitedAs ? { alsoCitedAs } : {}),
+  };
 }
 
 /**
@@ -263,7 +271,9 @@ function pruneSourceDetails(
       const summary = overview.records.find(
         (entry) => entry.sourceId === sourceId && entry.revision === detail.revision,
       );
-      return summary ? [[sourceId, withSummaryReadingState(detail, summary)]] : [];
+      return summary
+        ? [[sourceId, withSummaryCitationKeys(withSummaryReadingState(detail, summary), summary)]]
+        : [];
     }),
   );
 }
@@ -298,6 +308,26 @@ function withSummaryReadingState(
     ...detail,
     readingStatus: summary.readingStatus,
     ...(summary.starred !== undefined ? { starred: summary.starred } : {}),
+  };
+}
+
+/** A project's keys change with its pins, not the revision, so a kept detail takes them from the overview. */
+function withSummaryCitationKeys(
+  detail: ScientSourceDetailResult,
+  summary: ScientSourcesOverviewResult["records"][number],
+): ScientSourceDetailResult {
+  if (
+    summary.pinned === undefined ||
+    (summary.citationKey === detail.citationKey &&
+      (summary.alsoCitedAs ?? []).join("\0") === (detail.alsoCitedAs ?? []).join("\0"))
+  ) {
+    return detail;
+  }
+  const { alsoCitedAs: _shown, ...rest } = detail;
+  return {
+    ...rest,
+    ...(summary.citationKey ? { citationKey: summary.citationKey } : {}),
+    ...(summary.alsoCitedAs ? { alsoCitedAs: summary.alsoCitedAs } : {}),
   };
 }
 

@@ -136,6 +136,20 @@ async function pinOf(store: Store, sourceId: string): Promise<ScientProjectPin |
   return (await projectPinsByLibraryId(store)).get(sourceId);
 }
 
+/**
+ * A route record with this project's fields, so a client rebuilding its row or details from an
+ * edit's answer keeps every key the project cites the source under.
+ */
+async function projectRecordOf(store: Store, record: ScientSourceRecord) {
+  const group = (await projectPinGroupsByLibraryId(store)).get(record.sourceId);
+  return {
+    ...routeRecord(record, group?.pin),
+    pinned: group !== undefined,
+    ...(group ? { projectNote: group.pin.note ?? null } : {}),
+    ...(group && group.alsoCitedAs.length > 0 ? { alsoCitedAs: group.alsoCitedAs } : {}),
+  };
+}
+
 async function requireRecord(store: Store, sourceId: string): Promise<ScientSourceRecord> {
   const record = store.exists ? await readScientSourceRecord(store.library, sourceId) : null;
   if (!record) throw new Error("The source was not found in the Library.");
@@ -349,13 +363,8 @@ export async function librarySourceDetail(
   const sourceId = await libraryIdOf(store, input.sourceId);
   const record = store.exists ? await readScientSourceRecord(store.library, sourceId) : null;
   if (record) {
-    const group = (await projectPinGroupsByLibraryId(store)).get(sourceId);
-    const pin = group?.pin;
     return {
-      ...normalizeSourceRecordForRead(routeRecord(record, pin)),
-      pinned: pin !== undefined,
-      ...(pin ? { projectNote: pin.note ?? null } : {}),
-      ...(group && group.alsoCitedAs.length > 0 ? { alsoCitedAs: group.alsoCitedAs } : {}),
+      ...(await projectRecordOf(store, normalizeSourceRecordForRead(record))),
       ...(input.personal ? { personalNote: record.note ?? null } : {}),
       ...scientSourceReadingState(record),
     };
@@ -461,10 +470,9 @@ export async function updateLibrarySourceMetadata(
         : null
       : null;
   if (result.outcome === "updated" || renamed) await afterChange(store, [sourceId]);
-  const keptPin = pin ? { ...pin, citationKey: renamed ? requestedKey! : pin.citationKey } : pin;
   return {
     outcome: renamed && result.outcome === "unchanged" ? ("updated" as const) : result.outcome,
-    record: routeRecord(result.record, keptPin),
+    record: await projectRecordOf(store, result.record),
     duplicate: result.duplicate,
     validationIssues: result.validationIssues,
     ...(renamed ? { citationKeyRenamedIn: renamed.renamedIn } : {}),
@@ -536,7 +544,7 @@ export async function refreshLibrarySourceMetadata(
   if (result.outcome === "refreshed") await afterChange(store, [sourceId]);
   return {
     ...result,
-    record: routeRecord(result.record, await pinOf(store, sourceId)),
+    record: await projectRecordOf(store, result.record),
     ...(await reach(store, sourceId)),
   };
 }
@@ -611,7 +619,7 @@ export async function revertLibrarySource(
   if (result.outcome === "reverted") await afterChange(store, [sourceId]);
   return {
     ...result,
-    record: routeRecord(result.record, await pinOf(store, sourceId)),
+    record: await projectRecordOf(store, result.record),
     ...(await reach(store, sourceId)),
   };
 }

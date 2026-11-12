@@ -25,7 +25,9 @@ import {
   updateScientSourceNote,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { ScientSourceMetadataUpdateResult, ScientSourceNoteUpdateResult } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 
 import { ServerConfig } from "../../config.ts";
 import { beginBibliographyFileImport } from "./BibliographyFileAdapter.ts";
@@ -95,6 +97,10 @@ const storeFor = (fixture: Fixture, access: ScientSourcesAccess, root = fixture.
     Effect.provideService(ServerConfig, { stateDir: fixture.stateDir } as ServerConfig["Service"]),
     Effect.provideService(ScientSourcesBackend, "library"),
   );
+
+// What a client receives: the HTTP contract keeps only the fields it names.
+const encodeEditAnswer = Schema.encodeSync(ScientSourceMetadataUpdateResult);
+const encodeNoteAnswer = Schema.encodeSync(ScientSourceNoteUpdateResult);
 
 async function libraryRecord(
   fixture: Fixture,
@@ -900,6 +906,43 @@ describe("Library routes on the library backend", () => {
           );
           expect(bibliography).toContain(`{${firstPin.citationKey},`);
           expect(bibliography).toContain(`{${secondPin.citationKey},`);
+
+          // An edit's answer, as a client receives it, still names both keys, so the panel's
+          // Remove from this project unpins both.
+          const kept = await librarySourceDetail(store, { sourceId: second.sourceId });
+          const edited = encodeEditAnswer(
+            await updateLibrarySourceMetadata(store, {
+              sourceId: kept.sourceId,
+              expectedRevision: kept.revision,
+              metadata: {
+                type: kept.type,
+                title: "Shock trial, corrected",
+                creators: kept.creators,
+                issuedRaw: kept.issuedRaw,
+                issuedYear: kept.issuedYear,
+                identifiers: kept.identifiers,
+                abstract: kept.abstract,
+                containerTitle: kept.containerTitle,
+                publisher: kept.publisher,
+                volume: kept.volume,
+                issue: kept.issue,
+                pages: kept.pages,
+                language: kept.language,
+                url: kept.url,
+                tags: kept.tags,
+              },
+            }),
+          );
+          const noted = encodeNoteAnswer(
+            await updateLibraryProjectNote(store, { sourceId: kept.sourceId, note: "Primary" }),
+          );
+          for (const answer of [edited, noted]) {
+            expect(answer.record).toMatchObject({
+              citationKey: firstPin.citationKey,
+              alsoCitedAs: [secondPin.citationKey],
+              pinned: true,
+            });
+          }
         });
       }),
   );

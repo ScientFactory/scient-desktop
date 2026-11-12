@@ -6,7 +6,7 @@ import {
   ScientSourceMetadataDiagnostic,
   ScientSourceMetadataUpdateResult as ScientSourceMetadataUpdateResultFields,
   ScientSourceNote,
-  ScientSourceNoteUpdateResult,
+  ScientSourceNoteUpdateResult as ScientSourceNoteUpdateResultFields,
   ScientSourceRecord,
   ScientSourcePermanentDeletionResult,
   ScientSourceRemovalResult as ScientSourceRemovalResultFields,
@@ -115,9 +115,15 @@ const ScientSourcePinFields = {
   starred: Schema.optionalKey(Schema.Boolean),
 };
 
-export const ScientSourceDetailResult = Schema.Struct({
+/** A source with this project's fields: what an edit answers, so a client rebuilding its row keeps every key. */
+export const ScientSourceProjectRecord = Schema.Struct({
   ...ScientSourceRecord.fields,
   ...ScientSourcePinFields,
+});
+export type ScientSourceProjectRecord = typeof ScientSourceProjectRecord.Type;
+
+export const ScientSourceDetailResult = Schema.Struct({
+  ...ScientSourceProjectRecord.fields,
   /**
    * The person's own note on the library record, which follows the paper. Only in the detail,
    * and only for a session holding the Library write grant; `note` stays this project's note.
@@ -248,7 +254,11 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
   note: ScientSourceNote,
 });
 export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
-export { ScientSourceNoteUpdateResult };
+export const ScientSourceNoteUpdateResult = Schema.Struct({
+  ...ScientSourceNoteUpdateResultFields.fields,
+  record: ScientSourceProjectRecord,
+});
+export type ScientSourceNoteUpdateResult = typeof ScientSourceNoteUpdateResult.Type;
 
 /** Library servers only: the person's own note on the library record. */
 export const ScientSourcePersonalNoteUpdateRequest = ScientSourceNoteUpdateRequest;
@@ -287,6 +297,7 @@ export type ScientSourcesReadingStateResult = typeof ScientSourcesReadingStateRe
 
 export const ScientSourceMetadataUpdateResult = Schema.Struct({
   ...ScientSourceMetadataUpdateResultFields.fields,
+  record: ScientSourceProjectRecord,
   alsoPinnedIn: AlsoPinnedIn,
 });
 export type ScientSourceMetadataUpdateResult = typeof ScientSourceMetadataUpdateResult.Type;
@@ -299,6 +310,7 @@ export type ScientSourceRemovalResult = typeof ScientSourceRemovalResult.Type;
 
 export const ScientSourceRevertResult = Schema.Struct({
   ...ScientSourceRevertResultFields.fields,
+  record: ScientSourceProjectRecord,
   alsoPinnedIn: AlsoPinnedIn,
 });
 export type ScientSourceRevertResult = typeof ScientSourceRevertResult.Type;
@@ -312,7 +324,7 @@ export type ScientSourceMetadataRefreshRequest = typeof ScientSourceMetadataRefr
 
 export const ScientSourceMetadataRefreshResult = Schema.Struct({
   outcome: Schema.Literals(["refreshed", "unchanged", "stale", "unavailable", "duplicate"]),
-  record: ScientSourceRecord,
+  record: ScientSourceProjectRecord,
   changedFields: Schema.Array(NonEmptyString),
   message: Schema.NullOr(Schema.String),
   alsoPinnedIn: AlsoPinnedIn,
