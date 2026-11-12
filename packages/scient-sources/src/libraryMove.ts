@@ -37,6 +37,7 @@ import {
   type ScientLibraryLocation,
 } from "./libraryRoot.ts";
 import {
+  SCIENT_SOURCE_NAME_LIMIT,
   ScientSourceCollectionsDocument,
   type ScientSourceCollection,
   type ScientSourceSavedSearch,
@@ -1248,14 +1249,18 @@ async function verifyAndBackUp(
   }
 }
 
+/** "Methods (Title)", then "Methods (Title 2)", …: shortened to fit, never losing the bracket or number. */
 function uniqueName(name: string, taken: ReadonlySet<string>, title: string): string {
   const key = (value: string) => value.trim().toLocaleLowerCase();
   if (!taken.has(key(name))) return name;
-  const suffixed = `${name} (${title})`.slice(0, 200);
-  if (!taken.has(key(suffixed))) return suffixed;
-  for (let index = 2; ; index += 1) {
-    const numbered = `${name} (${title} ${index})`.slice(0, 200);
-    if (!taken.has(key(numbered))) return numbered;
+  for (let index = 1; ; index += 1) {
+    const tail = index === 1 ? ")" : ` ${index})`;
+    const room = SCIENT_SOURCE_NAME_LIMIT - " (".length - tail.length;
+    // At least one character of the title stays, so the bracket always opens.
+    const head = name.slice(0, room - 1).trimEnd();
+    const label = title.slice(0, room - head.length).trimEnd();
+    const candidate = `${head} (${label}${tail}`;
+    if (!taken.has(key(candidate))) return candidate;
   }
 }
 
@@ -2624,5 +2629,6 @@ export const scientLibraryMoveInternals = {
   moveContext,
   writeJournal,
   toLibraryRecord,
+  uniqueName,
   PINS_PATH,
 };

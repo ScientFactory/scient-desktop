@@ -36,6 +36,7 @@ import {
   type ScientSourceStoreLocation,
 } from "./libraryRoot.ts";
 import type { ScientSourceCandidate } from "./model.ts";
+import { SCIENT_SOURCE_NAME_LIMIT } from "./organize.ts";
 import { readScientProjectPins, resolveScientProjectPins } from "./projectPins.ts";
 import {
   attachScientSourcePdf,
@@ -392,6 +393,25 @@ describe("the move", () => {
     const project = await newProject(base);
     expect((await move(library, project)).outcome).toBe("not-needed");
     expect(await exists(NodePath.join(library.root, "migrations"))).toBe(false);
+  });
+});
+
+describe("a moved name the library already has", () => {
+  it("fits a long project title, keeps the bracket and number, and names each clash apart", () => {
+    const title = `${"A".repeat(189)} ${"B".repeat(10)}`;
+    const taken = new Set(["methods"]);
+    const names = Array.from({ length: 12 }, () => {
+      const name = scientLibraryMoveInternals.uniqueName("Methods", taken, title);
+      taken.add(name.toLocaleLowerCase());
+      return name;
+    });
+    for (const name of names) {
+      expect(name.length).toBeLessThanOrEqual(SCIENT_SOURCE_NAME_LIMIT);
+      expect(name).toBe(name.trim());
+      expect(name).toMatch(/^Methods \(A+( B+)?( \d+)?\)$/);
+    }
+    expect(names[11]).toMatch(/ 12\)$/);
+    expect(new Set(names).size).toBe(names.length);
   });
 });
 

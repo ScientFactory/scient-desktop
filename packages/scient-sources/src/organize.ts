@@ -16,8 +16,10 @@ const NonEmptyString = Schema.String.check(
   Schema.isTrimmed({ toJsonSchema: () => [{}, true] }),
   Schema.isNonEmpty(),
 );
-const Name = NonEmptyString.check(Schema.isMaxLength(200));
-const Tag = NonEmptyString.check(Schema.isMaxLength(200));
+/** The longest collection, saved search or tag name. */
+export const SCIENT_SOURCE_NAME_LIMIT = 200;
+const Name = NonEmptyString.check(Schema.isMaxLength(SCIENT_SOURCE_NAME_LIMIT));
+const Tag = NonEmptyString.check(Schema.isMaxLength(SCIENT_SOURCE_NAME_LIMIT));
 
 export const SCIENT_SOURCE_COLLECTION_LIMIT = 500;
 export const SCIENT_SOURCE_SAVED_SEARCH_LIMIT = 200;
