@@ -646,9 +646,8 @@ export async function setScientProjectPinNote(input: {
 }
 
 /**
- * Refreshes each resolvable pin's `work` from its library record, or only the pins that resolve
- * to `sourceIds`, reading just those records. Keys and notes never change. Writes nothing when
- * no snapshot changed.
+ * Refreshes each resolvable pin's `work` from its library record. Keys and notes never change.
+ * Writes nothing when no snapshot changed.
  */
 export async function refreshScientProjectPinSnapshots(input: {
   readonly projectRoot: string;
