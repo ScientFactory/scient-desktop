@@ -205,7 +205,20 @@ describe("Possible duplicates", () => {
       sources: [pair.sources[1], pair.sources[0]],
       keptByDefault: "b",
     };
-    setup({ ...withPair, pairs: [pair, fever], pairsTotal: 2 }, { ...withPair, pairs: [swapped] });
+    const cough: Pair = {
+      ...fever,
+      sources: [
+        { ...fever.sources[0], sourceId: "e", title: "Cough trial" },
+        { ...fever.sources[1], sourceId: "f", title: "Cough trial" },
+      ],
+      keptByDefault: "e",
+    };
+    // Opened, after Not duplicates, after the merge.
+    setup(
+      { ...withPair, pairs: [pair, fever], pairsTotal: 2 },
+      { ...withPair, pairs: [swapped] },
+      { ...withPair, pairs: [cough] },
+    );
     mocks.organizeScientSources
       .mockResolvedValueOnce({ outcome: "marked" })
       .mockResolvedValueOnce({ outcome: "merged", survivorId: "a", merges: [] });
@@ -220,6 +233,8 @@ describe("Possible duplicates", () => {
 
     await expect.element(screen.getByRole("radio", { name: /North Journal/u })).toBeChecked();
     await userEvent.click(screen.getByRole("button", { name: "Merge" }));
+    // The read after the merge has landed before the test ends.
+    await expect.element(screen.getByRole("region", { name: "Cough trial" })).toBeVisible();
     expect(mocks.organizeScientSources.mock.calls[1]![1].change).toMatchObject({
       survivorId: "a",
     });
