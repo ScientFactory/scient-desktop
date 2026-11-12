@@ -226,7 +226,11 @@ creating another.
 
 In Visual, **Text > Font / Size** works as in the Markdown editor: a size in
 points from 1 to 100 (field, minus and plus buttons) and a font from a
-searchable list. A size is saved as a group `{\fontsize{12}{14.4}\selectfont …}`
+searchable list. At a caret the change applies to the word under it. Enter in the
+size field closes the panel; a selection that mixes sizes or fonts leaves the
+field empty, and the buttons start from the document's base size. Unlike Markdown,
+LaTeX Visual has no floating selection toolbar, so the panel is reached through
+**Text** only. A size is saved as a group `{\fontsize{12}{14.4}\selectfont …}`
 (the baseline is 1.2 times the size). Existing `\large`-style commands stay as
 written and show their number; they change only when you edit that text. With
 pdfLaTeX, Computer Modern has only fixed sizes, so Scient adds

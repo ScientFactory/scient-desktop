@@ -378,12 +378,20 @@ purpose of the edit.
 
 ## Font and size
 
-**Text > Font / Size** sets the font and the size of the selected text. The size
-is a number of points from 1 to 100, typed in the field, stepped with the minus
-and plus buttons (1 pt; 0.5 pt with Shift).
-Sizes are absolute, as in Word: 12 means 12 pt whatever the surrounding text.
-The font list opens when you click the font button; it is searchable and scrolls inside its panel; each name is shown in
-its own face. **Default** removes the local setting.
+**Text > Font / Size** sets the font and the size of the selected text. With only a
+caret, it applies to the word under the caret; between two words it applies to
+what you type next. The size is a number of points from 1 to 100, typed in the
+field or stepped with the minus and plus buttons (1 pt; 0.5 pt with Alt; 10 pt
+with Shift). The field shows the current size, and is empty when the selection
+mixes several sizes; the buttons then start from the document's base size. Sizes are
+absolute, as in Word: 12 means 12 pt whatever the surrounding text.
+
+Press Enter in the size field, or choose a font, and the panel closes with the
+selection kept, so the result shows at once. The font list opens when you click
+the font button; it is searchable and scrolls inside its panel; each name is
+shown in its own face. A selection that mixes fonts shows "Mixed fonts".
+**Default** removes the local setting. The selection toolbar has the same panel
+behind its size button (**Aa**, or the size of the selection).
 
 The choice is saved in the file as `<span style="font-size:12pt">…</span>` and
 `<span style="font-family:'Times New Roman'">…</span>`. Only these exact forms
