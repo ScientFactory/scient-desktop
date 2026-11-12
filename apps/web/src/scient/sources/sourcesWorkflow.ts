@@ -153,6 +153,12 @@ function isCurrent(state: SourcesWorkflowState, request: number): boolean {
   return request === state.request;
 }
 
+type OverviewRow = ScientSourcesOverviewResult["records"][number];
+
+/** A library server's row: its keys are this project's pins. */
+const isLibraryRow = (row: OverviewRow | undefined): row is OverviewRow =>
+  row !== undefined && row.pinned !== undefined;
+
 function acceptRecordIntoOverview(
   overview: ScientSourcesOverviewResult,
   record: ScientSourceDetailResult,
@@ -161,7 +167,9 @@ function acceptRecordIntoOverview(
   if (recordIndex === -1) return overview;
   const records = [...overview.records];
   const row = overview.records[recordIndex];
-  const citationKey = record.citationKey ?? row?.citationKey;
+  const citationKey = isLibraryRow(row)
+    ? row.citationKey
+    : (record.citationKey ?? row?.citationKey);
   records[recordIndex] = {
     sourceId: record.sourceId,
     revision: record.revision,
@@ -209,10 +217,9 @@ const LIBRARY_FIELDS = [
   "starred",
 ] as const;
 
-/** A library server's row fields, from the record where it carries them, else from the row. */
+/** A library server's row fields: from the record where it carries them, its keys from the row. */
 function libraryFields(record: LibraryFields, row: LibraryFields | undefined): LibraryFields {
-  // A record carrying this project's fields leaves `alsoCitedAs` out when it has one key here.
-  const alsoCitedAs = "pinned" in record ? record.alsoCitedAs : row?.alsoCitedAs;
+  const alsoCitedAs = row?.alsoCitedAs;
   return {
     ...Object.fromEntries(
       LIBRARY_FIELDS.flatMap((key) =>
@@ -271,9 +278,7 @@ function pruneSourceDetails(
       const summary = overview.records.find(
         (entry) => entry.sourceId === sourceId && entry.revision === detail.revision,
       );
-      return summary
-        ? [[sourceId, withSummaryCitationKeys(withSummaryReadingState(detail, summary), summary)]]
-        : [];
+      return summary ? [[sourceId, withSummaryReadingState(detail, summary)]] : [];
     }),
   );
 }
@@ -296,7 +301,7 @@ function withReadingOverride<
 /** Reading state changes no revision, so a kept detail takes it from the newer overview. */
 function withSummaryReadingState(
   detail: ScientSourceDetailResult,
-  summary: ScientSourcesOverviewResult["records"][number],
+  summary: OverviewRow,
 ): ScientSourceDetailResult {
   if (
     summary.readingStatus === undefined ||
@@ -311,23 +316,30 @@ function withSummaryReadingState(
   };
 }
 
-/** A project's keys change with its pins, not the revision, so a kept detail takes them from the overview. */
-function withSummaryCitationKeys(
-  detail: ScientSourceDetailResult,
-  summary: ScientSourcesOverviewResult["records"][number],
-): ScientSourceDetailResult {
+/**
+ * The details shown for a source: the cached detail at the overview row's revision. Pins change
+ * without a revision, so this project's keys come from the latest overview row alone, never from a
+ * detail answer, which may have been read before the newest pin change.
+ */
+export function shownSourceRecord(
+  state: Pick<SourcesWorkflowState, "overview" | "sourceDetails">,
+  sourceId: string,
+): ScientSourceDetailResult | null {
+  const row = state.overview?.records.find((record) => record.sourceId === sourceId);
+  const detail = state.sourceDetails[sourceId];
+  if (!row || !detail || detail.revision !== row.revision) return null;
+  if (!isLibraryRow(row)) return detail;
   if (
-    summary.pinned === undefined ||
-    (summary.citationKey === detail.citationKey &&
-      (summary.alsoCitedAs ?? []).join("\0") === (detail.alsoCitedAs ?? []).join("\0"))
+    row.citationKey === detail.citationKey &&
+    (row.alsoCitedAs ?? []).join("\0") === (detail.alsoCitedAs ?? []).join("\0")
   ) {
     return detail;
   }
-  const { alsoCitedAs: _shown, ...rest } = detail;
+  const { citationKey: _key, alsoCitedAs: _others, ...rest } = detail;
   return {
     ...rest,
-    ...(summary.citationKey ? { citationKey: summary.citationKey } : {}),
-    ...(summary.alsoCitedAs ? { alsoCitedAs: summary.alsoCitedAs } : {}),
+    ...(row.citationKey ? { citationKey: row.citationKey } : {}),
+    ...(row.alsoCitedAs ? { alsoCitedAs: row.alsoCitedAs } : {}),
   };
 }
 

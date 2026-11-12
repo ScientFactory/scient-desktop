@@ -10,6 +10,7 @@ import {
   emptyZoteroPage,
   importOutcomeFromOperation,
   initialSourcesWorkflowState,
+  shownSourceRecord,
   sourcesWorkflowReducer,
   type SourcesWorkflowState,
 } from "./sourcesWorkflow";
@@ -490,16 +491,10 @@ describe("sources workflow on a personal Library", () => {
     });
     expect(next.overview?.records[0]).toMatchObject({ readingStatus: "unread", starred: true });
   });
-  it("keeps every key of a source cited twice through edits, so Remove unpins both", () => {
+  it("takes this project's keys from the latest overview row alone, so Remove unpins only those", () => {
     const keys = { citationKey: "ada2026", alsoCitedAs: ["ada2026a"], pinned: true };
-    const listed = sourcesWorkflowReducer(library([{ sourceId: "a", revision: 4, ...keys }]), {
-      type: "sourceDetailArrived",
-      sourceId: "a",
-      atDetailFetch: 1,
-      detail: { ...detail({ sourceId: "a", revision: 4 }), ...keys },
-    });
     const edited = reduceAll(
-      listed,
+      library([{ sourceId: "a", revision: 4, ...keys }]),
       {
         type: "sourceRecordAccepted",
         record: { ...detail({ sourceId: "a", revision: 5 }), ...keys },
@@ -507,13 +502,14 @@ describe("sources workflow on a personal Library", () => {
       // A project note save answers the details, which an overview row is rebuilt from.
       {
         type: "sourceRecordAccepted",
-        record: { ...detail({ sourceId: "a", revision: 5 }), ...keys, note: "Primary" },
+        record: { ...detail({ sourceId: "a", revision: 5 }), pinned: true, note: "Primary" },
       },
     );
     expect(projectKeys(edited.overview!.records[0]!)).toEqual(["ada2026", "ada2026a"]);
-    expect(projectKeys(edited.sourceDetails["a"]!)).toEqual(["ada2026", "ada2026a"]);
+    expect(projectKeys(shownSourceRecord(edited, "a")!)).toEqual(["ada2026", "ada2026a"]);
 
-    // Undo of the merge leaves one key here without a new revision of the kept source.
+    // Undo of the merge leaves one key here without a new revision of the kept source; a detail
+    // read before the Undo answers after its overview.
     const undone = reduceAll(
       edited,
       { type: "overviewRequestStarted", request: 2 },
@@ -524,8 +520,15 @@ describe("sources workflow on a personal Library", () => {
           { sourceId: "a", revision: 5, citationKey: "ada2026", pinned: true },
         ]),
       },
+      {
+        type: "sourceDetailArrived",
+        sourceId: "a",
+        atDetailFetch: 1,
+        detail: { ...detail({ sourceId: "a", revision: 5 }), ...keys },
+      },
     );
-    expect(projectKeys(undone.sourceDetails["a"]!)).toEqual(["ada2026"]);
+    expect(projectKeys(shownSourceRecord(undone, "a")!)).toEqual(["ada2026"]);
+    expect(projectKeys(undone.overview!.records[0]!)).toEqual(["ada2026"]);
   });
 
   it("keeps a merged-away source's reading change off the kept one and drops it after Undo", () => {

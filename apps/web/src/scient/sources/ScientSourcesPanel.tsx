@@ -80,6 +80,7 @@ import { LibraryDuplicatesView, type DuplicatesSection } from "./LibraryDuplicat
 import { LibraryMoveNotice } from "./LibraryMoveNotice";
 import { useLibraryMoveStatus } from "./useLibraryMoveStatus";
 import { announceSourceMovedToTrash } from "./SourceTrash";
+import { shownSourceRecord } from "./sourcesWorkflow";
 import { useScientSources } from "./useScientSources";
 import { SourceOrganizeSection } from "./SourceOrganizeSection";
 import { SourcesActiveFilters } from "./SourcesActiveFilters";
@@ -456,11 +457,7 @@ export function ScientSourcesPanel(props: {
   const selectedSummary = selectedSourceId
     ? (sources.overview?.records.find((record) => record.sourceId === selectedSourceId) ?? null)
     : null;
-  const selectedDetail = selectedSourceId
-    ? (sources.sourceDetails[selectedSourceId] ?? null)
-    : null;
-  const selectedRecord =
-    selectedDetail && selectedDetail.revision === selectedSummary?.revision ? selectedDetail : null;
+  const selectedRecord = selectedSourceId ? shownSourceRecord(sources, selectedSourceId) : null;
 
   if (selectedSourceId && !selectedRecord && !selectedSummary) setSelectedSourceId(null);
   const loadSource = sources.loadSource;
