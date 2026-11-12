@@ -629,7 +629,7 @@ export interface SourceDetailsLibrary {
   /** Absent when this connection may not change reading state: the markers stay, the controls go. */
   readonly onSetReadingState?: (change: ReadingStateChange) => Promise<void>;
   readonly onAddToProject?: () => Promise<void>;
-  readonly onRemoveFromProject?: () => Promise<void>;
+  readonly onRemoveFromProject?: () => Promise<unknown>;
 }
 
 function ReadingControls(props: {

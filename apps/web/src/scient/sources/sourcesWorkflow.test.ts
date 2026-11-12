@@ -543,6 +543,40 @@ describe("sources workflow on a personal Library", () => {
     });
     expect(late.sourceDetails["a"]).toMatchObject({ readingStatus: "read", starred: true });
   });
+
+  it("keeps a landed reading change on a late detail answer after the older overview arrives", () => {
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
+    const marked = sourcesWorkflowReducer(started, {
+      type: "readingStateArrived",
+      result: {
+        sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: true }],
+      },
+    });
+    const withOverview = sourcesWorkflowReducer(marked, {
+      type: "overviewArrived",
+      request: 1,
+      overview: overviewWith([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+      ]),
+    });
+    expect(withOverview.overview?.records[0]).toMatchObject({
+      readingStatus: "read",
+      starred: true,
+    });
+    const late = sourcesWorkflowReducer(withOverview, {
+      type: "sourceDetailArrived",
+      sourceId: "a",
+      detail: {
+        ...detail({ sourceId: "a", revision: 4 }),
+        readingStatus: "unread",
+        starred: false,
+      },
+    });
+    expect(late.sourceDetails["a"]).toMatchObject({ readingStatus: "read", starred: true });
+  });
 });
 
 describe("sources workflow import transitions", () => {

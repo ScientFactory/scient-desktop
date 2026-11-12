@@ -131,7 +131,8 @@ export interface SourcesBulkLibrary {
     change: ReadingStateChange,
   ) => Promise<void>;
   readonly onAddToProject: (records: ReadonlyArray<SourceSummary>) => Promise<void>;
-  readonly onRemoveFromProject: (records: ReadonlyArray<SourceSummary>) => Promise<void>;
+  /** Resolves false when the person cancelled a confirmation; the selection then stays. */
+  readonly onRemoveFromProject: (records: ReadonlyArray<SourceSummary>) => Promise<boolean>;
 }
 
 /** Replaces the search row while sources are selected. */
@@ -329,7 +330,13 @@ export function SourcesBulkBar(props: {
             variant="ghost"
             aria-label={`${LIBRARY_LABELS.removeFromProject}: ${count} selected`}
             disabled={busy || count === 0}
-            onClick={() => runOnSelection(library.onRemoveFromProject)}
+            onClick={() => {
+              setRemoving(true);
+              void library.onRemoveFromProject(selected).then((ran) => {
+                setRemoving(false);
+                if (ran) organize.clearSelection();
+              });
+            }}
           >
             <FolderMinus />
           </Button>

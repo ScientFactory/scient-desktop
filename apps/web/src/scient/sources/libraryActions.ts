@@ -20,6 +20,7 @@ export async function changeProjectSources(input: {
   let changed = 0;
   let failed = 0;
   let error = null as string | null;
+  const succeeded: ProjectSourcesChange[] = [];
   for (const change of input.changes) {
     const result = await organizeScientSources(input.environmentId, {
       root: input.root,
@@ -28,10 +29,12 @@ export async function changeProjectSources(input: {
       error ??= scientSourcesErrorMessage(cause, import.meta.env.DEV);
       return null;
     });
-    if (result?.outcome === "pinned" || result?.outcome === "unpinned") changed += 1;
-    else if (result?.outcome !== "existing" && result?.outcome !== "not-pinned") failed += 1;
+    if (result?.outcome === "pinned" || result?.outcome === "unpinned") {
+      changed += 1;
+      succeeded.push(change);
+    } else if (result?.outcome !== "existing" && result?.outcome !== "not-pinned") failed += 1;
   }
-  return { changed, failed, error };
+  return { changed, failed, error, succeeded };
 }
 
 export type ProjectSourcesOutcome = Awaited<ReturnType<typeof changeProjectSources>>;

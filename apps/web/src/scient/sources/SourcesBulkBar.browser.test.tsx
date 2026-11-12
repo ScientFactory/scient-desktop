@@ -191,7 +191,7 @@ describe("Sources bulk edit and saved searches", () => {
           listed: "library",
           onSetReadingState,
           onAddToProject: async () => undefined,
-          onRemoveFromProject: async () => undefined,
+          onRemoveFromProject: async () => true,
         }}
       />,
       { router: false },
@@ -211,7 +211,7 @@ describe("Sources bulk edit and saved searches", () => {
         library={{
           listed: "library",
           onAddToProject: async () => undefined,
-          onRemoveFromProject: async () => undefined,
+          onRemoveFromProject: async () => true,
         }}
       />,
       { router: false },
@@ -223,7 +223,7 @@ describe("Sources bulk edit and saved searches", () => {
 
   it("takes sources out of this project in This project, without moving them to Trash", async () => {
     setup();
-    const onRemoveFromProject = vi.fn(async () => undefined);
+    const onRemoveFromProject = vi.fn(async () => true);
     const onRemove = vi.fn(async () => undefined);
     await using screen = await render(
       <Harness
@@ -243,5 +243,27 @@ describe("Sources bulk edit and saved searches", () => {
     await vi.waitFor(() => expect(onRemoveFromProject).toHaveBeenCalledTimes(1));
     expect(onRemoveFromProject).toHaveBeenCalledWith([records[0], records[1]]);
     expect(onRemove).not.toHaveBeenCalled();
+    await expect
+      .element(page.getByRole("button", { name: "Remove from this project: 2 selected" }))
+      .not.toBeInTheDocument();
+  });
+
+  it("keeps the selection when removing from this project is cancelled", async () => {
+    setup();
+    const onRemoveFromProject = vi.fn(async () => false);
+    await using screen = await render(
+      <Harness
+        selected={["a", "b"]}
+        library={{ listed: "project", onAddToProject: async () => undefined, onRemoveFromProject }}
+      />,
+      { router: false },
+    );
+    await userEvent.click(
+      screen.getByRole("button", { name: "Remove from this project: 2 selected" }),
+    );
+    await vi.waitFor(() => expect(onRemoveFromProject).toHaveBeenCalledTimes(1));
+    await expect
+      .element(page.getByRole("button", { name: "Remove from this project: 2 selected" }))
+      .toBeInTheDocument();
   });
 });

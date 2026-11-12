@@ -334,7 +334,7 @@ export function sourcesWorkflowReducer(
         operation: overview.activeOperation ?? state.operation,
         readingOverrides: Object.fromEntries(
           Object.entries(state.readingOverrides).filter(
-            ([, override]) => override.atOverviewRequest > action.request,
+            ([, override]) => override.atOverviewRequest >= action.request,
           ),
         ),
       };

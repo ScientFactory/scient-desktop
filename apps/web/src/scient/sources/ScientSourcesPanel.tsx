@@ -458,6 +458,7 @@ export function ScientSourcesPanel(props: {
   const [snapshotRemoval, setSnapshotRemoval] = useState<{
     readonly records: ReadonlyArray<ProjectRemoval>;
     readonly snapshots: number;
+    readonly resolve: (ran: boolean) => void;
   } | null>(null);
   const panelContext = `${props.environmentId}\0${props.root}`;
   const [recentSourcesStore] = useState(() =>
@@ -699,7 +700,6 @@ export function ScientSourcesPanel(props: {
   const changeProject = async (
     kind: "add" | "remove",
     changes: ReadonlyArray<ProjectSourcesChange>,
-    snapshots = 0,
   ) => {
     const outcome = await changeProjectSources({
       environmentId: props.environmentId,
@@ -707,29 +707,45 @@ export function ScientSourcesPanel(props: {
       changes,
     });
     await sources.refreshOverview().catch(() => undefined);
-    announceProjectChange(kind, outcome, snapshots);
+    announceProjectChange(kind, outcome);
   };
   const addToProject = (records: ReadonlyArray<{ readonly sourceId: string }>) =>
     changeProject(
       "add",
       records.map((record) => ({ action: "pin", sourceId: record.sourceId })),
     );
-  const unpinFromProject = (records: ReadonlyArray<ProjectRemoval>, snapshots: number) =>
-    changeProject(
-      "remove",
-      records.flatMap((record) =>
+  // Only snapshots whose unpin succeeded count as gone from this computer in the toast.
+  const unpinFromProject = async (records: ReadonlyArray<ProjectRemoval>) => {
+    const outcome = await changeProjectSources({
+      environmentId: props.environmentId,
+      root: props.root,
+      changes: records.flatMap((record) =>
         record.citationKey ? [{ action: "unpin" as const, citationKey: record.citationKey }] : [],
       ),
-      snapshots,
+    });
+    await sources.refreshOverview().catch(() => undefined);
+    const removedKeys = new Set(
+      outcome.succeeded.flatMap((change) =>
+        change.action === "unpin" ? [change.citationKey] : [],
+      ),
     );
-  // A snapshot is only kept for this project, so its removal asks first and reports differently.
-  const removeFromProject = (records: ReadonlyArray<ProjectRemoval>) => {
+    const removedSnapshots = records.filter(
+      (record) =>
+        record.fromSnapshot === true &&
+        record.citationKey !== undefined &&
+        removedKeys.has(record.citationKey),
+    ).length;
+    announceProjectChange("remove", outcome, removedSnapshots);
+  };
+  // A snapshot is only kept for this project, so its removal asks first; false means cancelled.
+  const removeFromProject = (records: ReadonlyArray<ProjectRemoval>): Promise<boolean> => {
     const snapshots = records.filter((record) => record.fromSnapshot === true).length;
     if (snapshots > 0) {
-      setSnapshotRemoval({ records, snapshots });
-      return Promise.resolve();
+      return new Promise<boolean>((resolve) => {
+        setSnapshotRemoval({ records, snapshots, resolve });
+      });
     }
-    return unpinFromProject(records, 0);
+    return unpinFromProject(records).then(() => true);
   };
   const setReadingState = async (
     sourceIds: ReadonlyArray<string>,
@@ -1903,7 +1919,12 @@ export function ScientSourcesPanel(props: {
       <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
       <AlertDialog
         open={snapshotRemoval !== null}
-        onOpenChange={(open) => (!open ? setSnapshotRemoval(null) : undefined)}
+        onOpenChange={(open) => {
+          if (!open) {
+            snapshotRemoval?.resolve(false);
+            setSnapshotRemoval(null);
+          }
+        }}
       >
         <AlertDialogPopup>
           <AlertDialogHeader>
@@ -1921,7 +1942,8 @@ export function ScientSourcesPanel(props: {
                 const pendingRemoval = snapshotRemoval;
                 setSnapshotRemoval(null);
                 if (pendingRemoval) {
-                  void unpinFromProject(pendingRemoval.records, pendingRemoval.snapshots);
+                  pendingRemoval.resolve(true);
+                  void unpinFromProject(pendingRemoval.records);
                 }
               }}
             >
