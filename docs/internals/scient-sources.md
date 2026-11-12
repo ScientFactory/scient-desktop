@@ -1051,9 +1051,12 @@ by identifier from "All" says the same in its toast.
 
 #### The sources list at Library size (F5)
 
-The list in `ScientSourcesPanel.tsx` is a virtual list (`SourcesList.tsx`,
-`@legendapp/list/react`) on both backends: only the rows near the view are
-mounted, so a Library of thousands of sources renders a few dozen rows. Each
+With Library scopes the list in `ScientSourcesPanel.tsx` is a virtual list
+(`SourcesList.tsx`, `@legendapp/list/react`): only the rows near the view are
+mounted, so a Library of thousands of sources renders a few dozen rows. The
+project backend keeps the shared `ScrollArea` with every row mounted, so it
+shows no change before the flip; `SourcesList` takes `virtualized` and the
+panel passes it only when the overview has scopes. Each
 row (`SourceRow.tsx`) draws its own divider, since mounted rows are positioned
 rather than stacked; the university row is the list's header and the full-text
 matches its footer. The estimate (`SOURCE_ROW_ESTIMATED_SIZE`, 63 px) is the
@@ -1075,8 +1078,9 @@ not in this project" sentence (`ImportSummary.tsx`), the import review
 (`PanelChrome.tsx`). The dialog is the panel's, not a row's, so a row scrolled
 out of view and unmounted does not close it. `SourcesList.browser.test.tsx`
 renders 3,000 rows over the real `useScientSources` and checks the window, a
-star kept against an older overview through the reading overrides, and the
-snapshot dialog from a row reached by scrolling.
+star kept against an older overview through the reading overrides, the
+snapshot dialog from a row reached by scrolling, and the project backend
+keeping every row in the shared scroll area.
 
 ## Source truth and provenance
 
