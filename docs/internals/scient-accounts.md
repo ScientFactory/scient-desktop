@@ -391,6 +391,12 @@ project scope is checked against the thread's project. The connector keeps only 
 `account:<id>:token` ref; see
 [local connectors](scient-extensions.md#local-connectors).
 
+A local connector can also link a **website sign-in** for the site its manifest names
+(`signIn`). Scient hands it that site's current cookies, never the password, re-checks the
+sign-in's Off switches and scope on every exchange, and signs in again unattended (the
+`connector` caller of `guardedSignIn`, at most once per 2 minutes) when the connector reports an
+ended session; see [signed-in connectors](scient-extensions.md#signed-in-connectors).
+
 Plugin keys use the same two calls with a `plugin-key` consumer (agent, plugin,
 variable name, optional site and project). Without a site, `listBindable` offers
 every API-key account and `resolveBound` skips the site match; it still checks

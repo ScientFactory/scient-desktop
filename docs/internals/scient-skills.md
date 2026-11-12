@@ -410,8 +410,12 @@ The built-in shipping policy is:
 - `improve-workspace-readiness`: active, with explicit `$name` selection;
 - `scient-skill-authoring`: active, with automatic selection;
 - `pdf-authoring`: active, with automatic selection;
-- `html-pdf-authoring`: active, with automatic selection; and
-- `latex-authoring`: active, with automatic selection.
+- `html-pdf-authoring`: active, with automatic selection;
+- `latex-authoring`: active, with automatic selection; and
+- `connector-authoring`: active, with automatic selection. Its `references/` and
+  `templates/` are served by `scient_skill_read_resource`, and `scient_connector_copy` writes
+  the same embedded template; see
+  [agent-made connectors](scient-extensions.md#agent-made-connectors).
 
 Changing these catalog defaults affects only skills without an explicit user
 preference. Enabling or disabling a skill always creates a durable preference,

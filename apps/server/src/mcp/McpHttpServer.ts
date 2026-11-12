@@ -106,6 +106,8 @@ import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { ScientOverleafToolkitHandlersLive } from "./toolkits/overleaf/handlers.ts";
 import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
 // SCIENT-FORK:END
+import { ScientBrowserNetworkToolkitHandlersLive } from "./toolkits/browserNetwork/handlers.ts";
+import { ScientBrowserNetworkToolkit } from "./toolkits/browserNetwork/tools.ts";
 import { ScientComputeToolkitHandlersLive } from "./toolkits/compute/handlers.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientThreadsToolkitHandlersLive } from "./toolkits/threads/handlers.ts";
@@ -1441,6 +1443,15 @@ export const ScientOverleafToolkitRegistrationLive = registerScientToolkit(
 ).pipe(Layer.provide(ScientOverleafToolkitHandlersLive));
 // SCIENT-FORK:END
 
+// SCIENT-FORK:START — request details for agents studying a site.
+const ScientBrowserNetworkToolkitRegistrationLive = registerScientToolkit(
+  ScientBrowserNetworkToolkit,
+).pipe(
+  Layer.provide(ScientBrowserNetworkToolkitHandlersLive),
+  Layer.provide(AccountSessionFilesLive),
+);
+// SCIENT-FORK:END
+
 export const ScientComputeToolkitRegistrationLive = registerScientToolkit(
   ScientComputeToolkit,
 ).pipe(Layer.provide(ScientComputeToolkitHandlersLive));
@@ -1591,6 +1602,9 @@ export const layerTools = Layer.mergeAll(
   // SCIENT-FORK:END
   ScientComputeToolkitRegistrationLive,
   ScientThreadsToolkitRegistrationLive,
+  // SCIENT-FORK:START — request details for agents studying a site.
+  ScientBrowserNetworkToolkitRegistrationLive,
+  // SCIENT-FORK:END
   layerPreviewToolkit,
   layerOrchestratorToolkit,
   layerThreadToolkit,

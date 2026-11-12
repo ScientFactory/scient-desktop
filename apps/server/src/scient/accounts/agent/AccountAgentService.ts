@@ -41,6 +41,14 @@ import { userRunInvocation } from "../checkAccounts.ts";
 import { findProfiles } from "./findProfiles.ts";
 import { addAccount } from "./accountAdd.ts";
 import { setUpConnector } from "./connectorSetup.ts";
+import {
+  addConnector,
+  checkConnector,
+  controlConnector,
+  copyConnector,
+  listConnectors,
+  saveConnector,
+} from "./connectorAuthoring.ts";
 import { previewInvoker } from "./broker.ts";
 import { getPaper, paperStatus, queuePapers } from "../../papers/getPaper.ts";
 
@@ -377,6 +385,12 @@ export const accountAgentOperations = {
   }),
   scient_account_add: addAccount,
   scient_connector_setup: setUpConnector,
+  scient_connector_list: listConnectors,
+  scient_connector_add: addConnector,
+  scient_connector_control: controlConnector,
+  scient_connector_copy: copyConnector,
+  scient_connector_check: checkConnector,
+  scient_connector_save: saveConnector,
   scient_paper_get: getPaper,
   scient_papers_queue: queuePapers,
   scient_papers_status: paperStatus,

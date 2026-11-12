@@ -205,4 +205,9 @@ export const SCIENT_ACTION_TOOLS: ReadonlySet<string> = new Set([
   "scient_project_clone",
   "scient_skill_load",
   "scient_skill_save",
+  "scient_connector_add",
+  "scient_connector_control",
+  "scient_connector_copy",
+  "scient_connector_check",
+  "scient_connector_save",
 ]);

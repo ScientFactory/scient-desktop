@@ -244,6 +244,9 @@ export default defineConfig({
       "apps/mobile/android/**",
       "apps/mobile/ios/**",
       "apps/mobile/uniwind-types.d.ts",
+      // SCIENT-FORK:START — skill templates are example programs agents copy, not Scient code.
+      "apps/server/src/scient/skills/built-ins/*/templates/**",
+      // SCIENT-FORK:END
     ],
     plugins: ["eslint", "oxc", "react", "unicorn", "typescript"],
     jsPlugins: ["./oxlint-plugin-t3code/index.ts", "@shadcn/lint"],

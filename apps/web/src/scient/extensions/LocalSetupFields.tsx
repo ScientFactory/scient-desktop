@@ -9,6 +9,7 @@ import {
   VaultSecretRef,
 } from "@t3tools/contracts";
 
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import { useState } from "react";
 
 import { SecretInput } from "../../components/settings/SecretInput";
@@ -24,6 +25,7 @@ import {
 } from "../../components/ui/dialog";
 import { Input } from "../../components/ui/input";
 import { Label } from "../../components/ui/label";
+import { NativeSelect } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { Textarea } from "../../components/ui/textarea";
 import { useEnvironmentQuery } from "../../state/query";
@@ -41,6 +43,17 @@ export type SetupAnswer =
 const keyRef = (accountId: string) => `account:${accountId}:token`;
 
 /** API-key accounts a key can use; the one whose variable matches the field comes first. */
+/** Website and university sign-ins in Accounts that cover `site`. */
+function useSignInAccounts(environmentId: EnvironmentId, site: string | undefined) {
+  const query = useEnvironmentQuery(accountsState.snapshot({ environmentId, input: {} }));
+  if (site === undefined) return [];
+  return (query.data?.accounts ?? []).filter(
+    (account) => account.details.kind === "website" && anySiteMatches(account.details.sites, site),
+  );
+}
+
+export const siteHost = (site: string) => (URL.canParse(site) ? new URL(site).host : site);
+
 export function useKeyAccounts(environmentId: EnvironmentId) {
   const query = useEnvironmentQuery(accountsState.snapshot({ environmentId, input: {} }));
   return (query.data?.accounts ?? []).filter(
@@ -255,6 +268,9 @@ export function LocalSetupDialog({
       keys: new Set(Object.keys(keyStatus)),
     }),
   );
+  const signIn = connector.local.signIn;
+  const signIns = useSignInAccounts(environmentId, signIn?.site);
+  const [signInAccount, setSignInAccount] = useState(signIn?.accountId ?? "");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const save = async () => {
@@ -263,7 +279,15 @@ export function LocalSetupDialog({
     setSaving(true);
     const result = await update({
       environmentId,
-      input: { connectorId: connector.connectorId, localSetup: input },
+      input: {
+        connectorId: connector.connectorId,
+        localSetup: {
+          ...input,
+          ...(signInAccount !== "" && signInAccount !== signIn?.accountId
+            ? { signIn: signInAccount }
+            : {}),
+        },
+      },
     });
     setSaving(false);
     if (result._tag === "Success") onClose();
@@ -285,6 +309,33 @@ export function LocalSetupDialog({
               keyStatus={keyStatus}
               onChange={(key, answer) => setAnswers((current) => ({ ...current, [key]: answer }))}
             />
+            {signIn !== undefined ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor={`${connector.connectorId}-sign-in`}>
+                  Sign-in to {siteHost(signIn.site)}
+                </Label>
+                {signIns.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    None saved. Add it in Settings → Accounts, then come back.
+                  </p>
+                ) : (
+                  <NativeSelect
+                    id={`${connector.connectorId}-sign-in`}
+                    value={signInAccount}
+                    onChange={(event) => setSignInAccount(event.target.value)}
+                  >
+                    <option value="" disabled>
+                      Choose a sign-in
+                    </option>
+                    {signIns.map((account) => (
+                      <option key={account.accountId} value={account.accountId}>
+                        {account.name}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                )}
+              </div>
+            ) : null}
             {error ? (
               <p role="alert" className="text-sm text-destructive-foreground">
                 {error}

@@ -25,27 +25,54 @@ export const MAX_JSON_DEPTH = 512;
 const MAX_SSE_RETRY_MS = 600_000;
 
 const PERCENT_DECODE_ROUNDS = 3;
-/** Base64 of the shortest credential is at least this long. */
-const MIN_BASE64_RUN = Math.ceil((MIN_CREDENTIAL_LENGTH * 4) / 3) - 3;
+/** Base64 of `length` bytes holds a run at least this long at any alignment. */
+const base64RunFor = (length: number) => Math.ceil((length * 4) / 3) - 3;
 
 export const isProtectableCredential = (value: string): boolean =>
   value.length >= MIN_CREDENTIAL_LENGTH;
+
+/** A signed-in connector's cookie values this short or longer are hidden, as whole tokens. */
+const MIN_COOKIE_LENGTH = 6;
 
 /** The credentials one exchange applied or held, as matched against decoded text. */
 export interface CredentialSet {
   readonly secrets: ReadonlyArray<string>;
   /** The same secrets as latin1 byte strings, for matching decoded base64. */
   readonly secretBytes: ReadonlyArray<string>;
+  /** Session cookie values: shorter than keys, so matched only as whole tokens, never in words. */
+  readonly tokens: ReadonlyArray<string>;
+  /** The same cookie values as latin1 byte strings, for matching decoded base64. */
+  readonly tokenBytes: ReadonlyArray<string>;
 }
 
-export const credentialSet = (secrets: Iterable<string | undefined>): CredentialSet => {
+export const credentialSet = (
+  secrets: Iterable<string | undefined>,
+  tokens: Iterable<string> = [],
+): CredentialSet => {
   const unique = [
     ...new Set([...secrets].filter((secret): secret is string => secret !== undefined)),
   ];
+  const cookies = [...new Set(tokens)].filter((token) => token.length >= MIN_COOKIE_LENGTH);
+  const bytes = (value: string) => Buffer.from(value, "utf8").toString("latin1");
   return {
     secrets: unique,
-    secretBytes: unique.map((secret) => Buffer.from(secret, "utf8").toString("latin1")),
+    secretBytes: unique.map(bytes),
+    tokens: cookies,
+    tokenBytes: cookies.map(bytes),
   };
+};
+
+const isWordChar = (code: number) =>
+  (code >= 48 && code <= 57) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+
+/** Whether `token` appears in `text` with no letter or digit right before or after it. */
+const containsToken = (text: string, token: string) => {
+  for (let at = text.indexOf(token); at !== -1; at = text.indexOf(token, at + 1)) {
+    const before = at === 0 ? -1 : text.charCodeAt(at - 1);
+    const after = at + token.length >= text.length ? -1 : text.charCodeAt(at + token.length);
+    if ((before === -1 || !isWordChar(before)) && (after === -1 || !isWordChar(after))) return true;
+  }
+  return false;
 };
 
 const containsAny = (text: string, values: ReadonlyArray<string>) =>
@@ -124,6 +151,7 @@ const base64RunCarries = (run: string, credentials: CredentialSet): boolean => {
     // Node decodes an unpadded final group, so the run's tail is not lost.
     const decoded = Buffer.from(normalized.slice(shift), "base64").toString("latin1");
     if (containsAny(decoded, credentials.secretBytes)) return true;
+    if (credentials.tokenBytes.some((token) => containsToken(decoded, token))) return true;
   }
   return false;
 };
@@ -134,13 +162,17 @@ const base64RunCarries = (run: string, credentials: CredentialSet): boolean => {
  * single linear scan.
  */
 const base64Carries = (text: string, credentials: CredentialSet): boolean => {
+  const shortest = Math.min(
+    ...[...credentials.secretBytes, ...credentials.tokenBytes].map((value) => value.length),
+  );
+  const minRun = base64RunFor(shortest);
   let start = -1;
   for (let index = 0; index <= text.length; index += 1) {
     if (index < text.length && isBase64Char(text.charCodeAt(index))) {
       if (start === -1) start = index;
       continue;
     }
-    if (start !== -1 && index - start >= MIN_BASE64_RUN) {
+    if (start !== -1 && index - start >= minRun) {
       if (base64RunCarries(text.slice(start, index), credentials)) return true;
     }
     start = -1;
@@ -150,8 +182,10 @@ const base64Carries = (text: string, credentials: CredentialSet): boolean => {
 
 /** Whether decoded text carries a credential in any supported encoding. */
 const isTainted = (text: string, credentials: CredentialSet): boolean => {
-  if (credentials.secrets.length === 0 || text.length === 0) return false;
+  if ((credentials.secrets.length === 0 && credentials.tokens.length === 0) || text.length === 0)
+    return false;
   for (const variant of decodedVariants(text)) {
+    if (credentials.tokens.some((token) => containsToken(variant, token))) return true;
     if (containsAny(variant, credentials.secrets)) return true;
     if (base64Carries(variant, credentials)) return true;
   }
@@ -161,6 +195,56 @@ const isTainted = (text: string, credentials: CredentialSet): boolean => {
 /** A string safe to show: the original, or the redaction marker. */
 export const redactString = (text: string, credentials: CredentialSet): string =>
   isTainted(text, credentials) ? REDACTED : text;
+
+/** A local program's credentials: long keys hide anywhere; short keys and cookies as whole tokens. */
+export const programCredentials = (
+  keys: Iterable<string>,
+  cookies: Iterable<string> = [],
+): CredentialSet => {
+  const given = [...keys].filter((key) => key.length > 0);
+  const base = credentialSet(given.filter(isProtectableCredential), cookies);
+  // Every key it was given stays hidden, however short; the cookie minimum is not for keys.
+  const short = given.filter((key) => !isProtectableCredential(key));
+  const tokens = [...new Set([...base.tokens, ...short])];
+  const bytes = (value: string) => Buffer.from(value, "utf8").toString("latin1");
+  return { ...base, tokens, tokenBytes: tokens.map(bytes) };
+};
+
+/** Each word carrying a credential in any encoding becomes the marker; one across words hides all. */
+const redactWords = (text: string, credentials: CredentialSet): string => {
+  if (credentials.secrets.length === 0 && credentials.tokens.length === 0) return text;
+  const parts = text.split(/(\s+)/u);
+  for (let index = 0; index < parts.length; index += 2)
+    if (parts[index] !== "" && isTainted(parts[index]!, credentials)) parts[index] = REDACTED;
+  const joined = parts.join("");
+  return isTainted(joined, credentials) ? REDACTED : joined;
+};
+
+/**
+ * Free text for people and agents (tool output, error output, messages), credentials hidden.
+ * With `limit`, at most that much is shown, and never a piece of a credential the cut splits:
+ * the word the cut splits is left out (a credential with spaces: all of it is checked first).
+ */
+export const redactText = (text: string, credentials: CredentialSet, limit?: number): string => {
+  if (limit === undefined || text.length <= limit) return redactWords(text, credentials);
+  if ([...credentials.secrets, ...credentials.tokens].some((value) => /\s/u.test(value)))
+    return redactWords(text, credentials).slice(0, limit);
+  const cut = text.slice(0, limit);
+  return redactWords(/\s/u.test(text[limit]!) ? cut : cut.replace(/\S+$/u, ""), credentials);
+};
+
+/** A JSON value (a tool's parameter schema) with tainted strings replaced; undefined if unsafe. */
+export const redactJsonValue = (value: unknown, credentials: CredentialSet): unknown => {
+  let text: string | undefined;
+  try {
+    text = JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+  if (text === undefined) return undefined;
+  const redacted = redactJsonText(text, credentials);
+  return redacted === undefined ? undefined : (JSON.parse(redacted) as unknown);
+};
 
 const ESCAPES: Readonly<Record<string, string>> = {
   '"': '"',
@@ -410,6 +494,7 @@ const safelyRedactJson = (
 };
 
 export interface RedactionContext {
+  /** Read for each event, so credentials a running exchange gains are covered too. */
   readonly credentials: CredentialSet;
   /** Top-level ids of the request the agent sent (`agentRequestIds`); empty for GET streams. */
   readonly agentIds: ReadonlySet<string>;

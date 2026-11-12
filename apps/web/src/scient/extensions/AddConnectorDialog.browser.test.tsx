@@ -61,6 +61,13 @@ vi.mock("../skills/scientSkillsState", () => ({
   undoPersonalSkill: "skills-undo",
   listImportableSkills: "skills-importable",
 }));
+vi.mock("./connectorAgentChat", () => ({
+  useConnectorAgentChat: () => undefined,
+  MAKE_CONNECTOR_PROMPT: "",
+  fixConnectorPrompt: () => "",
+  improveConnectorPrompt: () => "",
+}));
+vi.mock("../accounts/useSignIn", () => ({ useSignIn: () => async () => false }));
 vi.mock("../skills/skillAgentChat", () => ({
   useSkillAgentChat: () => state.startChat,
   finishSkillPrompt: (candidate: { readonly name?: string }, source: string) =>

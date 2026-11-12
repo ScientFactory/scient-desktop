@@ -75,6 +75,7 @@ export function connectorStatusText(
 ) {
   if (!connector.enabled) return "Off";
   if (connector.local?.problem !== undefined) return "Can't read its folder";
+  if (connector.local?.signIn?.state === "needs-user") return "Needs sign-in";
   if (connector.local !== undefined && connector.local.missing.length > 0) return "Needs setup";
   if (connector.local !== undefined && connector.lastError !== undefined)
     return "Stopped with an error";

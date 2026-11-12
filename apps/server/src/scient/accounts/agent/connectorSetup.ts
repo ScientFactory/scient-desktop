@@ -3,6 +3,7 @@
  * the user in chat, and keys through Accounts' private card, linked to the connector.
  */
 import { AccountsError, type LocalKeyInput } from "@t3tools/contracts";
+import { anySiteMatches } from "@t3tools/shared/scientSiteMatch";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import type * as Schema from "effect/Schema";
@@ -11,6 +12,7 @@ import { ConnectorRuntime } from "../../extensions/ExtensionsServices.ts";
 import { accountTokenRef } from "../AccountBoundRef.ts";
 import { AccountsService } from "../AccountsService.ts";
 import { askForAccountKey } from "./accountAdd.ts";
+import { authorize } from "./accountUse.ts";
 import { accountSessionScope } from "./scope.ts";
 import type { ScientAccountsToolkit } from "./tools.ts";
 
@@ -72,7 +74,7 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
     const current =
       account === undefined ? undefined : session.accounts.find((item) => item.name === account);
     const asked = yield* askForAccountKey(scope, {
-      name: same(field.title, connector.displayName)
+      name: field.title.toLowerCase().includes(connector.displayName.trim().toLowerCase())
         ? field.title
         : `${connector.displayName} ${field.title}`,
       reason: field.description ?? `${connector.displayName} needs it to run.`,
@@ -95,9 +97,47 @@ export const setUpConnector = Effect.fn("AccountsAgent.connectorSetup")(function
       );
     }
   }
-  if (Object.keys(settings).length > 0 || Object.keys(keys).length > 0) {
+  // The site it signs in to: a sign-in the agent named, the only one saved for the site, or a
+  // request to add one. The agent's use of it is checked like any account use.
+  let signIn: string | undefined;
+  const asked = local.signIn;
+  if (asked !== undefined && (asked.state !== "linked" || input.signIn !== undefined)) {
+    const host = URL.canParse(asked.site) ? new URL(asked.site).host : asked.site;
+    const fitting = session.accounts.filter(
+      (account) =>
+        account.details.kind === "website" && anySiteMatches(account.details.sites, asked.site),
+    );
+    const wanted = input.signIn?.trim().toLowerCase();
+    const chosen =
+      wanted === undefined
+        ? fitting.length === 1
+          ? fitting[0]
+          : undefined
+        : fitting.find(
+            (account) =>
+              account.accountId === input.signIn?.trim() || account.name.toLowerCase() === wanted,
+          );
+    if (chosen !== undefined) {
+      yield* authorize(scope, { type: "account", accountId: chosen.accountId }, "browser-session");
+      signIn = chosen.accountId;
+    } else if (asked.state === "needs-user") {
+      missing.push(
+        `the sign-in to ${host}: the site needs the user to sign in themselves. Ask them to press Sign in on the connector's page in Settings → Extensions`,
+      );
+    } else if (asked.state === "missing") {
+      missing.push(
+        fitting.length === 0
+          ? `a sign-in to ${host}: call scient_account_add with {"kind":"website","site":"${asked.site}"} so the user signs in, then call this again`
+          : `a sign-in to ${host}: pass signIn with one of ${fitting.map((account) => account.name).join(", ")}`,
+      );
+    }
+  }
+  if (Object.keys(settings).length > 0 || Object.keys(keys).length > 0 || signIn !== undefined) {
     yield* runtime
-      .update({ connectorId: connector.connectorId, localSetup: { settings, keys } })
+      .update({
+        connectorId: connector.connectorId,
+        localSetup: { settings, keys, ...(signIn === undefined ? {} : { signIn }) },
+      })
       .pipe(Effect.mapError((error) => unavailable(error.message)));
   }
   return missing.length > 0

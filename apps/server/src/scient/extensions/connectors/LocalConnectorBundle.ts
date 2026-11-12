@@ -94,13 +94,62 @@ const SCIENT_MANIFEST_META = "com.scientfactory.scient";
 const ScientMeta = Schema.Struct({
   /** `project`: the chat's project folder; an absolute path: that folder. Default: the bundle's. */
   workingDirectory: Schema.optional(Schema.String),
+  /** The website the program needs the user signed in to; Scient hands it the session. */
+  signIn: Schema.optional(Schema.Struct({ site: Schema.String })),
 });
 const decodeScientMeta = Schema.decodeUnknownExit(ScientMeta);
 
+/**
+ * Scient's settings in the manifest, or a one-line reason they cannot be read. A malformed block
+ * is a problem to show, never a silent fall back to defaults.
+ */
+const scientMetaOf = (manifest: BundleManifest) => {
+  const raw = manifest._meta?.[SCIENT_MANIFEST_META];
+  if (raw === undefined) return { meta: {} as typeof ScientMeta.Type };
+  const meta = decodeScientMeta(raw);
+  if (Exit.isSuccess(meta)) return { meta: meta.value };
+  return {
+    problem: `Its manifest's _meta["${SCIENT_MANIFEST_META}"] is not valid: workingDirectory must be a text and signIn must look like {"site": "https://…"}.`,
+  };
+};
+
+/** Why the manifest's Scient settings cannot be used, if they cannot. */
+export const manifestScientProblem = (manifest: BundleManifest): string | undefined => {
+  const read = scientMetaOf(manifest);
+  if ("problem" in read) return read.problem;
+  const signIn = manifestSignIn(manifest);
+  return signIn !== undefined && "problem" in signIn ? signIn.problem : undefined;
+};
+
 /** Where the program runs, from the manifest's Scient settings. */
 export const manifestWorkingDirectory = (manifest: BundleManifest): string | undefined => {
-  const meta = decodeScientMeta(manifest._meta?.[SCIENT_MANIFEST_META] ?? {});
-  return Exit.isSuccess(meta) ? nonBlank(meta.value.workingDirectory) : undefined;
+  const read = scientMetaOf(manifest);
+  return "meta" in read ? nonBlank(read.meta.workingDirectory) : undefined;
+};
+
+const isLoopback = (url: URL) =>
+  url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "127.0.0.1");
+
+/**
+ * The origin of the site a connector signs in to, or why the manifest's `signIn` cannot be used.
+ * An `https:` site, or `http:` on this computer (localhost, 127.0.0.1) for a site under test.
+ */
+export const manifestSignIn = (
+  manifest: BundleManifest,
+): { readonly site: string } | { readonly problem: string } | undefined => {
+  const read = scientMetaOf(manifest);
+  if ("problem" in read) return { problem: read.problem };
+  const site = nonBlank(read.meta.signIn?.site);
+  if (site === undefined) return undefined;
+  const url = URL.canParse(site) ? new URL(site) : undefined;
+  if (
+    url === undefined ||
+    !(url.protocol === "https:" || isLoopback(url)) ||
+    url.username ||
+    url.password
+  )
+    return { problem: `Its signIn site must be an https:// address, not ${site.slice(0, 200)}.` };
+  return { site: url.origin };
 };
 
 const PLATFORM_NAMES: Readonly<Record<string, string>> = {
@@ -149,6 +198,10 @@ const directoryVariables = (directories: BundleDirectories, bundleDir?: string) 
 
 const fillDirectories = (text: string, variables: Readonly<Record<string, string>>) =>
   text.replace(/\$\{([^}]+)\}/g, (match, name: string) => variables[name] ?? match);
+
+/** Text from a manifest with its directory variables (`${HOME}`, `${__dirname}`, …) filled. */
+export const withDirectories = (text: string, directories: BundleDirectories, bundleDir: string) =>
+  fillDirectories(text, directoryVariables(directories, bundleDir));
 
 const fieldDefault = (
   value: typeof SettingValue.Type | undefined,
@@ -366,12 +419,13 @@ export const readFolderManifest = Effect.fn("LocalConnectorBundle.readFolderMani
 export const writeFolderManifest = Effect.fn("LocalConnectorBundle.writeFolderManifest")(function* (
   directory: string,
   manifest: BundleManifest,
+  options: { readonly replace?: boolean } = {},
 ) {
   yield* Effect.tryPromise({
     try: async () => {
       await NodeFSP.mkdir(directory, { recursive: true });
       await NodeFSP.writeFile(NodePath.join(directory, MANIFEST_FILE), manifestText(manifest), {
-        flag: "wx",
+        flag: options.replace === true ? "w" : "wx",
       });
     },
     catch: () => invalid("Scient could not write the connector's folder."),
