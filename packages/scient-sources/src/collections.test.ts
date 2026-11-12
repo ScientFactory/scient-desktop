@@ -33,6 +33,7 @@ import {
 
 const fixtures: string[] = [];
 const originalRename = NodeFS.promises.rename;
+const originalReadFile = NodeFS.promises.readFile;
 
 /** Fails the next bulk edit receipt write once `when` holds, as a full disk or a lock would. */
 function failNextReceiptWrite(when: () => Promise<boolean>): void {
@@ -47,7 +48,31 @@ function failNextReceiptWrite(when: () => Promise<boolean>): void {
   NodeModule.syncBuiltinESMExports();
 }
 
+/** Counts record file reads and bulk edit receipt writes until the returned function is called. */
+function countStoreTraffic(): () => {
+  readonly recordReads: number;
+  readonly receiptWrites: number;
+} {
+  const counts = { recordReads: 0, receiptWrites: 0 };
+  NodeFS.promises.readFile = (async (...args: Parameters<typeof originalReadFile>) => {
+    if (String(args[0]).includes(`${NodePath.sep}records${NodePath.sep}`)) counts.recordReads += 1;
+    return originalReadFile(...args);
+  }) as typeof originalReadFile;
+  NodeFS.promises.rename = async (from, to) => {
+    if (String(to).includes("bulk-edits")) counts.receiptWrites += 1;
+    return originalRename(from, to);
+  };
+  NodeModule.syncBuiltinESMExports();
+  return () => {
+    NodeFS.promises.readFile = originalReadFile;
+    NodeFS.promises.rename = originalRename;
+    NodeModule.syncBuiltinESMExports();
+    return counts;
+  };
+}
+
 afterEach(async () => {
+  NodeFS.promises.readFile = originalReadFile;
   NodeFS.promises.rename = originalRename;
   NodeModule.syncBuiltinESMExports();
   await Promise.all(
@@ -401,6 +426,35 @@ describe("Scient source collections", () => {
       actor: "user",
     });
     expect(repeat.sources[0]).toMatchObject({ outcome: "unchanged", revision: 3 });
+  });
+
+  it("bulk tags many sources reading the store once and saving Undo a fixed number of times", async () => {
+    const { root, sourceIds } = await project(["A", "B", "C", "D", "E", "F", "G", "H"]);
+    const edited = sourceIds.slice(0, 6);
+    const stop = countStoreTraffic();
+    const result = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds: edited, addTags: ["Screened"] },
+      actor: "user",
+    });
+    const counts = stop();
+    expect(result.undo?.sourceCount).toBe(6);
+    // Each edited record is read before and while it is written; the other records once.
+    expect(counts.recordReads).toBeLessThanOrEqual(sourceIds.length + 2 * edited.length);
+    // The empty receipt, every write planned, every write finished.
+    expect(counts.receiptWrites).toBe(3);
+
+    const undoStop = countStoreTraffic();
+    await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: result.undo?.batchId ?? "" },
+      actor: "user",
+    });
+    const undoCounts = undoStop();
+    expect(undoCounts.recordReads).toBeLessThanOrEqual(sourceIds.length + 3 * edited.length);
+    // Every restore planned, every one done.
+    expect(undoCounts.receiptWrites).toBe(2);
+    expect((await readScientSourceRecord(root, edited[0] ?? ""))?.tags).toEqual([]);
   });
 
   it("reports a bulk type change that a source cannot take instead of stopping", async () => {

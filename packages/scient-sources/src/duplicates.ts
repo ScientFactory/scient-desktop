@@ -118,3 +118,50 @@ export function assessSourceDuplicate(input: {
   }
   return metadataDuplicate;
 }
+
+function metadataMatchKeys(source: SourceMetadata): ReadonlyArray<string> {
+  const metadataKey = sourceMetadataKey(source);
+  return [
+    ...source.identifiers.flatMap((identifier) => {
+      const key = workLevelIdentifierKey(identifier.scheme, identifier.value);
+      return key ? [`id:${key}`] : [];
+    }),
+    ...(metadataKey === null ? [] : [`meta:${metadataKey}`]),
+  ];
+}
+
+/**
+ * Finds the records `assessSourceMetadataDuplicate` could match without scanning them all: the
+ * candidates share an identifier or the title key, in the order the records were given.
+ */
+export function sourceMetadataMatchIndex(records: ReadonlyArray<ScientSourceRecord>) {
+  const order = new Map(records.map((record, index) => [record.sourceId, index]));
+  const current = new Map(records.map((record) => [record.sourceId, record]));
+  const byKey = new Map<string, Set<string>>();
+  const add = (record: ScientSourceRecord) => {
+    for (const key of metadataMatchKeys(record)) {
+      const ids = byKey.get(key) ?? new Set<string>();
+      ids.add(record.sourceId);
+      byKey.set(key, ids);
+    }
+  };
+  for (const record of records) add(record);
+  return {
+    candidates(source: SourceMetadata, excludeSourceId: string): ReadonlyArray<ScientSourceRecord> {
+      const ids = new Set(metadataMatchKeys(source).flatMap((key) => [...(byKey.get(key) ?? [])]));
+      ids.delete(excludeSourceId);
+      return [...ids]
+        .toSorted((left, right) => order.get(left)! - order.get(right)!)
+        .map((sourceId) => current.get(sourceId)!);
+    },
+    replace(record: ScientSourceRecord): void {
+      const previous = current.get(record.sourceId);
+      if (previous) {
+        for (const key of metadataMatchKeys(previous)) byKey.get(key)?.delete(record.sourceId);
+      }
+      if (!order.has(record.sourceId)) order.set(record.sourceId, order.size);
+      current.set(record.sourceId, record);
+      add(record);
+    },
+  };
+}

@@ -37,7 +37,7 @@ import {
   readScientSourceRecord,
   SCIENT_SOURCES_DIRECTORY,
   scientSourceStoreInternals,
-  updateScientSourceMetadata,
+  updateScientSourcesMetadata,
 } from "./store.ts";
 
 export const SCIENT_SOURCE_COLLECTIONS_FILE = `${SCIENT_SOURCES_DIRECTORY}/collections.json`;
@@ -892,98 +892,153 @@ function sameFields(left: BulkFields, right: BulkFields): boolean {
   );
 }
 
-/**
- * Rewrites one source's tags and type from its current values, retrying once if it changes.
- * `beforeWrite` runs before each write with the revision it replaces; if it fails, nothing is
- * written. `uncertain` means the write failed part way, so it may have landed.
- */
-async function updateBulkFields(input: {
-  readonly root: ScientSourceStoreLocation;
-  readonly sourceId: string;
-  readonly actor: ScientSourceActor;
-  readonly compute: (current: BulkFields) => {
-    readonly next: BulkFields;
-    readonly conflicts?: ReadonlyArray<string>;
-  };
-  readonly beforeWrite?: (change: {
-    readonly before: BulkFields;
-    readonly after: BulkFields;
-    readonly revision: number;
-  }) => Promise<void>;
-}): Promise<{
+interface BulkFieldsUpdate {
   readonly entry: BulkSourceResult;
   readonly change?: { readonly before: BulkFields; readonly after: BulkFields };
   readonly conflicts: ReadonlyArray<string>;
   readonly uncertain?: true;
-}> {
+}
+
+interface PlannedBulkFields {
+  readonly sourceId: string;
+  readonly before: BulkFields;
+  readonly after: BulkFields;
+  readonly revision: number;
+}
+
+/**
+ * Rewrites each source's tags and type from its current values, retrying once those that change
+ * meanwhile. `beforeWrite` runs once per round with every write it plans; if it fails, none is
+ * written. `uncertain` means the write failed part way, so it may have landed.
+ */
+async function updateBulkFields(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly sourceIds: ReadonlyArray<string>;
+  readonly actor: ScientSourceActor;
+  readonly compute: (
+    sourceId: string,
+    current: BulkFields,
+  ) => { readonly next: BulkFields; readonly conflicts?: ReadonlyArray<string> };
+  readonly beforeWrite?: (planned: ReadonlyArray<PlannedBulkFields>) => Promise<void>;
+}): Promise<ReadonlyArray<BulkFieldsUpdate>> {
+  const results = new Map<string, BulkFieldsUpdate>();
+  let remaining = input.sourceIds;
   // One retry covers an edit that lands between the read and the write.
-  for (let attempt = 0; attempt < 2; attempt += 1) {
-    const record = await readScientSourceRecord(input.root, input.sourceId);
-    if (!record) {
-      return {
-        entry: { sourceId: input.sourceId, outcome: "not-found", revision: null },
-        conflicts: [],
-      };
-    }
-    const current = normalizeScientSourceEditableMetadata(editableMetadataFromRecord(record));
-    const { next: fields, conflicts = [] } = input.compute(bulkFields(current));
-    const next = normalizeScientSourceEditableMetadata({ ...current, ...fields });
-    if (editableMetadataEquals(current, next)) {
-      return {
-        entry: { sourceId: record.sourceId, outcome: "unchanged", revision: record.revision },
-        conflicts,
-      };
-    }
-    try {
-      await input.beforeWrite?.({
+  for (let attempt = 0; attempt < 2 && remaining.length > 0; attempt += 1) {
+    const planned: Array<
+      PlannedBulkFields & {
+        readonly metadata: ScientSourceEditableMetadata;
+        readonly conflicts: ReadonlyArray<string>;
+      }
+    > = [];
+    for (const sourceId of remaining) {
+      const record = await readScientSourceRecord(input.root, sourceId);
+      if (!record) {
+        results.set(sourceId, {
+          entry: { sourceId, outcome: "not-found", revision: null },
+          conflicts: [],
+        });
+        continue;
+      }
+      const current = normalizeScientSourceEditableMetadata(editableMetadataFromRecord(record));
+      const { next: fields, conflicts = [] } = input.compute(sourceId, bulkFields(current));
+      const next = normalizeScientSourceEditableMetadata({ ...current, ...fields });
+      if (editableMetadataEquals(current, next)) {
+        results.set(sourceId, {
+          entry: { sourceId: record.sourceId, outcome: "unchanged", revision: record.revision },
+          conflicts,
+        });
+        continue;
+      }
+      planned.push({
+        sourceId: record.sourceId,
         before: bulkFields(current),
         after: bulkFields(next),
         revision: record.revision,
-      });
-    } catch (error) {
-      return {
-        entry: {
-          sourceId: record.sourceId,
-          outcome: "failed",
-          revision: record.revision,
-          message: failureMessage(error, "Undo could not be saved."),
-        },
-        conflicts,
-      };
-    }
-    try {
-      const result = await updateScientSourceMetadata({
-        root: input.root,
-        sourceId: record.sourceId,
-        expectedRevision: record.revision,
         metadata: next,
+        conflicts,
+      });
+    }
+    remaining = [];
+    if (planned.length === 0) break;
+    try {
+      await input.beforeWrite?.(
+        planned.map(({ sourceId, before, after, revision }) => ({
+          sourceId,
+          before,
+          after,
+          revision,
+        })),
+      );
+    } catch (error) {
+      for (const plan of planned) {
+        results.set(plan.sourceId, {
+          entry: {
+            sourceId: plan.sourceId,
+            outcome: "failed",
+            revision: plan.revision,
+            message: failureMessage(error, "Undo could not be saved."),
+          },
+          conflicts: plan.conflicts,
+        });
+      }
+      break;
+    }
+    const written = await updateScientSourcesMetadata({
+      root: input.root,
+      updates: planned.map((plan) => ({
+        sourceId: plan.sourceId,
+        expectedRevision: plan.revision,
+        metadata: plan.metadata,
         allowPossibleMetadataMatch: true,
         allowExistingValidationIssues: true,
         actor: input.actor,
-      });
-      if (result.outcome === "stale") continue;
-      if (result.outcome === "duplicate") {
-        return {
+      })),
+    }).catch((error: unknown) =>
+      planned.map((plan) => ({ outcome: "failed" as const, sourceId: plan.sourceId, error })),
+    );
+    const retry: string[] = [];
+    for (const [index, plan] of planned.entries()) {
+      const { sourceId, revision, conflicts } = plan;
+      const result = written[index]!;
+      if (result.outcome === "stale") {
+        retry.push(sourceId);
+        continue;
+      }
+      if (result.outcome === "failed") {
+        results.set(sourceId, {
           entry: {
-            sourceId: record.sourceId,
+            sourceId,
             outcome: "failed",
-            revision: record.revision,
-            message: result.duplicate.reason,
+            revision,
+            message:
+              result.error instanceof Error
+                ? result.error.message
+                : "The source could not be updated.",
           },
           conflicts,
-        };
+          uncertain: true,
+        });
+        continue;
+      }
+      if (result.outcome === "duplicate") {
+        results.set(sourceId, {
+          entry: { sourceId, outcome: "failed", revision, message: result.duplicate.reason },
+          conflicts,
+        });
+        continue;
       }
       const updated = result.outcome === "updated";
-      return {
+      results.set(sourceId, {
         entry: {
-          sourceId: record.sourceId,
+          sourceId,
           outcome: updated ? "updated" : "unchanged",
           revision: result.record.revision,
         },
         ...(updated
           ? {
               change: {
-                before: bulkFields(current),
+                before: plan.before,
                 after: bulkFields(
                   normalizeScientSourceEditableMetadata(editableMetadataFromRecord(result.record)),
                 ),
@@ -991,29 +1046,22 @@ async function updateBulkFields(input: {
             }
           : {}),
         conflicts,
-      };
-    } catch (error) {
-      return {
-        entry: {
-          sourceId: record.sourceId,
-          outcome: "failed",
-          revision: record.revision,
-          message: error instanceof Error ? error.message : "The source could not be updated.",
-        },
-        conflicts,
-        uncertain: true,
-      };
+      });
     }
+    remaining = retry;
   }
-  return {
-    entry: {
-      sourceId: input.sourceId,
-      outcome: "failed",
-      revision: null,
-      message: "The source kept changing while it was updated. Try again.",
-    },
-    conflicts: [],
-  };
+  for (const sourceId of remaining) {
+    results.set(sourceId, {
+      entry: {
+        sourceId,
+        outcome: "failed",
+        revision: null,
+        message: "The source kept changing while it was updated. Try again.",
+      },
+      conflicts: [],
+    });
+  }
+  return input.sourceIds.map((sourceId) => results.get(sourceId)!);
 }
 
 function bulkEditsDirectory(paths: StorePaths): string {
@@ -1169,26 +1217,22 @@ export async function bulkUpdateScientSources(input: {
     }
   };
   try {
-    for (const sourceId of sourceIds) {
-      if (unsaved !== null) {
-        sources.push({ sourceId, outcome: "failed", revision: null, message: unsaved });
-        continue;
-      }
-      if (!editsRecords) {
+    if (!editsRecords) {
+      for (const sourceId of sourceIds) {
         const existing = await readScientSourceRecord(paths.location, sourceId);
         sources.push(
           existing
             ? { sourceId, outcome: "unchanged", revision: existing.revision }
             : { sourceId, outcome: "not-found", revision: null },
         );
-        continue;
       }
-      const intent = { entry: null as BulkReceiptSource | null };
-      const updated = await updateBulkFields({
+    } else {
+      const intents = new Map<string, BulkReceiptSource>();
+      const updates = await updateBulkFields({
         root: paths.location,
-        sourceId,
+        sourceIds,
         actor: input.actor,
-        compute: (current) => ({
+        compute: (_sourceId, current) => ({
           next: {
             tags: applyScientSourceTagChanges({
               tags: current.tags,
@@ -1204,38 +1248,63 @@ export async function bulkUpdateScientSources(input: {
           },
         }),
         beforeWrite: (planned) => {
-          const previous = intent.entry;
-          const entry: BulkReceiptSource = { sourceId, ...planned, pending: true };
+          const entries = planned.map((change): BulkReceiptSource => ({
+            sourceId: change.sourceId,
+            before: change.before,
+            after: change.after,
+            revision: change.revision,
+            pending: true,
+          }));
           return writeAhead(
             () => {
-              if (previous) replaceEntry(receiptSources, previous);
-              receiptSources.push(entry);
-              intent.entry = entry;
+              for (const entry of entries) {
+                const previous = intents.get(entry.sourceId);
+                if (previous) replaceEntry(receiptSources, previous);
+                receiptSources.push(entry);
+                intents.set(entry.sourceId, entry);
+              }
             },
             () => {
-              replaceEntry(receiptSources, entry);
-              intent.entry = null;
+              for (const entry of entries) {
+                replaceEntry(receiptSources, entry);
+                intents.delete(entry.sourceId);
+              }
             },
           );
         },
       });
-      const written = intent.entry;
-      const entryChange = updated.change;
-      let message: string | undefined;
-      if (written && entryChange) {
-        message = await finish(() =>
+      let finished = false;
+      let settledOnly = false;
+      for (const updated of updates) {
+        const written = intents.get(updated.entry.sourceId);
+        const entryChange = updated.change;
+        if (written && entryChange) {
           replaceEntry(receiptSources, written, {
-            sourceId,
+            sourceId: written.sourceId,
             ...entryChange,
             ...(written.revision === undefined ? {} : { revision: written.revision }),
-          }),
-        );
-      } else if (written && !updated.uncertain) {
-        // Known not to have landed, so Undo has nothing to check.
-        replaceEntry(receiptSources, written);
-        await publish().catch(() => undefined);
+          });
+          finished = true;
+        } else if (written && !updated.uncertain) {
+          // Known not to have landed, so Undo has nothing to check.
+          replaceEntry(receiptSources, written);
+          settledOnly = true;
+        }
       }
-      sources.push(message ? { ...updated.entry, message } : updated.entry);
+      const message = finished
+        ? await finish(() => undefined)
+        : settledOnly
+          ? await publish().then(
+              () => undefined,
+              () => undefined,
+            )
+          : undefined;
+      let reported = false;
+      for (const updated of updates) {
+        const note = message && updated.change && !reported ? message : undefined;
+        if (note) reported = true;
+        sources.push(note ? { ...updated.entry, message: note } : updated.entry);
+      }
     }
     const changeMembers = async (
       memberChange: {
@@ -1538,16 +1607,11 @@ async function undoBulkUpdate(input: {
         return `Undone, but that could not be saved. Try again to finish. ${failureMessage(error, "")}`.trim();
       }
     };
-    const sources: BulkSourceResult[] = [];
-    const conflicts: BulkConflict[] = [];
-    for (const [index, entry] of receiptSources.entries()) {
-      if (entry.undoneAt !== undefined) continue;
-      const { sourceId, before, after } = entry;
-      if (unsaved !== null) {
-        sources.push({ sourceId, outcome: "failed", revision: null, message: unsaved });
-        continue;
-      }
-      const record = await readScientSourceRecord(paths.location, sourceId);
+    const open = [...receiptSources.entries()].filter(([, entry]) => entry.undoneAt === undefined);
+    const known = new Map<number, Awaited<ReturnType<typeof updateBulkFields>>[number]>();
+    const toWrite: Array<readonly [number, BulkReceiptSource]> = [];
+    for (const [index, entry] of open) {
+      const record = await readScientSourceRecord(paths.location, entry.sourceId);
       const settled = record
         ? settledSource(
             entry,
@@ -1555,67 +1619,93 @@ async function undoBulkUpdate(input: {
             bulkFields(normalizeScientSourceEditableMetadata(editableMetadataFromRecord(record))),
           )
         : null;
-      const typeChanged = before.type !== after.type || before.customType !== after.customType;
-      const beforeKeys = new Set(before.tags.map(scientSourceTagKey));
-      const afterKeys = new Set(after.tags.map(scientSourceTagKey));
-      const added = after.tags.filter((tag) => !beforeKeys.has(scientSourceTagKey(tag)));
-      const removed = before.tags.filter((tag) => !afterKeys.has(scientSourceTagKey(tag)));
-      const result =
-        settled && record
-          ? {
-              entry: { sourceId, outcome: "unchanged" as const, revision: record.revision },
-              conflicts: settled.conflict ? [settled.conflict] : [],
-            }
-          : await updateBulkFields({
-              root: paths.location,
-              sourceId,
-              actor: input.actor,
-              compute: (current) => {
-                const isType = (fields: BulkFields) =>
-                  current.type === fields.type && current.customType === fields.customType;
-                const typeKept = typeChanged && !isType(after) && !isType(before);
-                return {
-                  next: {
-                    type: typeChanged && isType(after) ? before.type : current.type,
-                    customType:
-                      typeChanged && isType(after) ? before.customType : current.customType,
-                    // Untouched since: restore the original order too.
-                    tags: sameTags(current.tags, after.tags)
-                      ? before.tags
-                      : applyScientSourceTagChanges({
-                          tags: current.tags,
-                          add: removed,
-                          remove: added,
-                        }),
-                  },
-                  conflicts: typeKept
-                    ? ["Its type was changed after the bulk edit, so the newer type was kept."]
-                    : [],
-                };
-              },
-              beforeWrite: (planned) =>
-                intend(() => {
-                  receiptSources[index] = {
-                    ...entry,
-                    restoring: { revision: planned.revision, fields: planned.after },
-                  };
-                }),
-            });
+      if (settled && record) {
+        known.set(index, {
+          entry: { sourceId: entry.sourceId, outcome: "unchanged", revision: record.revision },
+          conflicts: settled.conflict ? [settled.conflict] : [],
+        });
+      } else {
+        toWrite.push([index, entry]);
+      }
+    }
+    const indexBySource = new Map(toWrite.map(([index, entry]) => [entry.sourceId, index]));
+    const restored = await updateBulkFields({
+      root: paths.location,
+      sourceIds: toWrite.map(([, entry]) => entry.sourceId),
+      actor: input.actor,
+      compute: (sourceId, current) => {
+        const { before, after } = receipt.sources[indexBySource.get(sourceId)!]!;
+        const typeChanged = before.type !== after.type || before.customType !== after.customType;
+        const beforeKeys = new Set(before.tags.map(scientSourceTagKey));
+        const afterKeys = new Set(after.tags.map(scientSourceTagKey));
+        const added = after.tags.filter((tag) => !beforeKeys.has(scientSourceTagKey(tag)));
+        const removed = before.tags.filter((tag) => !afterKeys.has(scientSourceTagKey(tag)));
+        const isType = (fields: BulkFields) =>
+          current.type === fields.type && current.customType === fields.customType;
+        const typeKept = typeChanged && !isType(after) && !isType(before);
+        return {
+          next: {
+            type: typeChanged && isType(after) ? before.type : current.type,
+            customType: typeChanged && isType(after) ? before.customType : current.customType,
+            // Untouched since: restore the original order too.
+            tags: sameTags(current.tags, after.tags)
+              ? before.tags
+              : applyScientSourceTagChanges({ tags: current.tags, add: removed, remove: added }),
+          },
+          conflicts: typeKept
+            ? ["Its type was changed after the bulk edit, so the newer type was kept."]
+            : [],
+        };
+      },
+      beforeWrite: (planned) =>
+        intend(() => {
+          for (const change of planned) {
+            const index = indexBySource.get(change.sourceId)!;
+            receiptSources[index] = {
+              ...receipt.sources[index]!,
+              restoring: { revision: change.revision, fields: change.after },
+            };
+          }
+        }),
+    });
+    for (const [position, [index]] of toWrite.entries()) known.set(index, restored[position]!);
+    const conflicts: BulkConflict[] = [];
+    const outcomes: Array<{
+      readonly index: number;
+      readonly entry: BulkSourceResult;
+      readonly done: boolean;
+    }> = [];
+    for (const [index, entry] of open) {
+      const { sourceId } = entry;
+      const result = known.get(index)!;
       if (result.entry.outcome === "failed") {
-        sources.push(result.entry);
+        outcomes.push({ index, entry: result.entry, done: false });
+        continue;
+      }
+      if (unsaved !== null) {
+        outcomes.push({
+          index,
+          entry: { sourceId, outcome: "failed", revision: null, message: unsaved },
+          done: false,
+        });
         continue;
       }
       if (result.entry.outcome === "not-found") {
         conflicts.push({ sourceId, message: "The source is no longer in the Library." });
       }
       for (const message of result.conflicts) conflicts.push({ sourceId, message });
-      const unrecorded = await markDone((undoneAt) => {
-        receiptSources[index] = { ...(receiptSources[index] ?? entry), undoneAt };
-      });
-      sources.push(
-        unrecorded ? { ...result.entry, outcome: "failed", message: unrecorded } : result.entry,
-      );
+      outcomes.push({ index, entry: result.entry, done: true });
     }
+    const unrecorded = outcomes.some((outcome) => outcome.done)
+      ? await markDone((undoneAt) => {
+          for (const { index, done } of outcomes) {
+            if (done) receiptSources[index] = { ...receiptSources[index]!, undoneAt };
+          }
+        })
+      : undefined;
+    const sources = outcomes.map(({ entry, done }) =>
+      done && unrecorded ? { ...entry, outcome: "failed" as const, message: unrecorded } : entry,
+    );
     const collections: BulkCollectionResult[] = [];
     for (const [index, delta] of [...receiptCollections.entries()].toReversed()) {
       if (delta.undoneAt !== undefined) continue;

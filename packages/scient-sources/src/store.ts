@@ -9,7 +9,11 @@ import { inspectScientProject, readScientProjectIdentity } from "@scientfactory/
 import * as Schema from "effect/Schema";
 
 import { BibliographyImportReport } from "./bibliography/index.ts";
-import { assessSourceDuplicate, assessSourceMetadataDuplicate } from "./duplicates.ts";
+import {
+  assessSourceDuplicate,
+  assessSourceMetadataDuplicate,
+  sourceMetadataMatchIndex,
+} from "./duplicates.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   isScientLibraryLocation,
@@ -469,8 +473,7 @@ async function pruneSourceHistory(paths: SourceStorePaths, sourceId: string): Pr
   }
 }
 
-export async function updateScientSourceMetadata(input: {
-  readonly root: ScientSourceStoreLocation;
+interface MetadataUpdate {
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly metadata: ScientSourceEditableMetadata;
@@ -478,85 +481,155 @@ export async function updateScientSourceMetadata(input: {
   readonly allowPossibleMetadataMatch?: boolean;
   readonly allowExistingValidationIssues?: boolean;
   readonly actor?: ScientSourceActor;
-}): Promise<ScientSourceMetadataUpdateResult> {
-  const paths = await sourceStorePaths(input.root);
+}
+
+/**
+ * Caller holds the source-write lock. `duplicates` lists the other records the update could
+ * duplicate; `others` every other record, read only when the citation key changes.
+ */
+async function applyMetadataUpdate(
+  paths: SourceStorePaths,
+  input: MetadataUpdate,
+  lookup: {
+    readonly duplicates: (
+      source: ScientSourceEditableMetadata,
+      sourceId: string,
+    ) => Promise<ReadonlyArray<ScientSourceRecord>>;
+    readonly others: (sourceId: string) => Promise<ReadonlyArray<ScientSourceRecord>>;
+  },
+): Promise<ScientSourceMetadataUpdateResult> {
   assertSafeIdentifier(input.sourceId, "Source ID");
   const normalized = normalizeScientSourceEditableMetadata(input.metadata);
   const validationIssues = validateScientSourceEditableMetadata(normalized);
+  const current = await readSourceRecordFromPaths(paths, input.sourceId);
+  const currentMetadata = normalizeScientSourceEditableMetadata(
+    editableMetadataFromRecord(current),
+  );
+  const requested =
+    normalized.citationKey === undefined && current.citationKey
+      ? { citationKey: current.citationKey, ...normalized }
+      : normalized;
+  const existingValidationIssues = input.allowExistingValidationIssues
+    ? validateScientSourceEditableMetadata(currentMetadata)
+    : [];
+  const introducedValidationIssues = validationIssues.filter(
+    (issue) =>
+      !existingValidationIssues.some(
+        (existing) => existing.field === issue.field && existing.message === issue.message,
+      ),
+  );
+  if (introducedValidationIssues.length > 0) {
+    throw new Error(introducedValidationIssues.map((issue) => issue.message).join(" "));
+  }
+  const duplicate = assessSourceMetadataDuplicate({
+    source: requested,
+    existing: await lookup.duplicates(requested, current.sourceId),
+  });
 
+  // A client that lost the successful response may retry with the old revision.
+  if (editableMetadataEquals(currentMetadata, requested)) {
+    return { outcome: "unchanged", record: current, duplicate, validationIssues };
+  }
+  if (current.revision !== input.expectedRevision) {
+    return { outcome: "stale", record: current, duplicate, validationIssues };
+  }
+  if (
+    duplicate.kind === "same-identifier" ||
+    (duplicate.kind === "possible-metadata-match" && !input.allowPossibleMetadataMatch)
+  ) {
+    return { outcome: "duplicate", record: current, duplicate, validationIssues };
+  }
+
+  if (
+    requested.citationKey !== undefined &&
+    citationKeyComparisonValue(requested.citationKey) !==
+      citationKeyComparisonValue(current.citationKey ?? "")
+  ) {
+    const message = citationKeyValidationMessage(
+      requested.citationKey,
+      takenCitationKeys(await lookup.others(current.sourceId)),
+    );
+    if (message) throw new Error(message);
+  }
+
+  const applied = applyEditableMetadata({
+    record: current,
+    metadata: requested,
+    updatedAt: new Date().toISOString(),
+    actor: input.actor ?? "user",
+  });
+  const identifiersChanged = changedEditableMetadataFields(currentMetadata, requested).includes(
+    "identifiers",
+  );
+  const {
+    verification: _staleVerification,
+    editorialStatus: _staleEditorialStatus,
+    ...unverified
+  } = applied;
+  // A verification or retraction check vouches only for the identifiers it checked.
+  const updated = identifiersChanged ? unverified : applied;
+  const next = input.fieldProvenance
+    ? { ...updated, fieldProvenance: [...input.fieldProvenance] }
+    : updated;
+  await persistSourceRevision(paths, current, next);
+  return { outcome: "updated", record: next, duplicate, validationIssues };
+}
+
+export async function updateScientSourceMetadata(
+  input: MetadataUpdate & { readonly root: ScientSourceStoreLocation },
+): Promise<ScientSourceMetadataUpdateResult> {
+  const paths = await sourceStorePaths(input.root);
+  assertSafeIdentifier(input.sourceId, "Source ID");
   return withStoreLock(paths, "source-write", async () => {
-    const current = await readSourceRecordFromPaths(paths, input.sourceId);
-    const currentMetadata = normalizeScientSourceEditableMetadata(
-      editableMetadataFromRecord(current),
-    );
-    const requested =
-      normalized.citationKey === undefined && current.citationKey
-        ? { citationKey: current.citationKey, ...normalized }
-        : normalized;
-    const existingValidationIssues = input.allowExistingValidationIssues
-      ? validateScientSourceEditableMetadata(currentMetadata)
-      : [];
-    const introducedValidationIssues = validationIssues.filter(
-      (issue) =>
-        !existingValidationIssues.some(
-          (existing) => existing.field === issue.field && existing.message === issue.message,
-        ),
-    );
-    if (introducedValidationIssues.length > 0) {
-      throw new Error(introducedValidationIssues.map((issue) => issue.message).join(" "));
-    }
-    const existing = (await listScientSourceRecordsFromPaths(paths)).filter(
-      (record) => record.sourceId !== current.sourceId,
-    );
-    const duplicate = assessSourceMetadataDuplicate({ source: requested, existing });
+    let existing: Promise<ReadonlyArray<ScientSourceRecord>> | undefined;
+    const others = (sourceId: string) =>
+      (existing ??= listScientSourceRecordsFromPaths(paths).then((records) =>
+        records.filter((record) => record.sourceId !== sourceId),
+      ));
+    return applyMetadataUpdate(paths, input, { duplicates: (_, id) => others(id), others });
+  });
+}
 
-    // A client that lost the successful response may retry with the old revision.
-    if (editableMetadataEquals(currentMetadata, requested)) {
-      return { outcome: "unchanged", record: current, duplicate, validationIssues };
-    }
-    if (current.revision !== input.expectedRevision) {
-      return { outcome: "stale", record: current, duplicate, validationIssues };
-    }
-    if (
-      duplicate.kind === "same-identifier" ||
-      (duplicate.kind === "possible-metadata-match" && !input.allowPossibleMetadataMatch)
-    ) {
-      return { outcome: "duplicate", record: current, duplicate, validationIssues };
-    }
+export type ScientSourceMetadataBatchResult =
+  | ScientSourceMetadataUpdateResult
+  | { readonly outcome: "failed"; readonly sourceId: string; readonly error: unknown };
 
-    if (
-      requested.citationKey !== undefined &&
-      citationKeyComparisonValue(requested.citationKey) !==
-        citationKeyComparisonValue(current.citationKey ?? "")
-    ) {
-      const message = citationKeyValidationMessage(
-        requested.citationKey,
-        takenCitationKeys(existing),
-      );
-      if (message) throw new Error(message);
-    }
-
-    const applied = applyEditableMetadata({
-      record: current,
-      metadata: requested,
-      updatedAt: new Date().toISOString(),
-      actor: input.actor ?? "user",
-    });
-    const identifiersChanged = changedEditableMetadataFields(currentMetadata, requested).includes(
-      "identifiers",
+/**
+ * Applies updates in order with each one's `updateScientSourceMetadata` outcome, under one lock
+ * and one scan of the store: duplicates are looked up by identifier and title key, not by
+ * reading every record per update. One that throws is reported and the rest still run.
+ */
+export async function updateScientSourcesMetadata(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly updates: ReadonlyArray<MetadataUpdate>;
+}): Promise<ReadonlyArray<ScientSourceMetadataBatchResult>> {
+  if (input.updates.length === 0) return [];
+  const paths = await sourceStorePaths(input.root);
+  return withStoreLock(paths, "source-write", async () => {
+    const records = new Map(
+      (await listScientSourceRecordsFromPaths(paths)).map((record) => [record.sourceId, record]),
     );
-    const {
-      verification: _staleVerification,
-      editorialStatus: _staleEditorialStatus,
-      ...unverified
-    } = applied;
-    // A verification or retraction check vouches only for the identifiers it checked.
-    const updated = identifiersChanged ? unverified : applied;
-    const next = input.fieldProvenance
-      ? { ...updated, fieldProvenance: [...input.fieldProvenance] }
-      : updated;
-    await persistSourceRevision(paths, current, next);
-    return { outcome: "updated", record: next, duplicate, validationIssues };
+    const index = sourceMetadataMatchIndex([...records.values()]);
+    const lookup = {
+      duplicates: async (source: ScientSourceEditableMetadata, sourceId: string) =>
+        index.candidates(source, sourceId),
+      others: async (sourceId: string) =>
+        [...records.values()].filter((record) => record.sourceId !== sourceId),
+    };
+    const results: ScientSourceMetadataBatchResult[] = [];
+    for (const update of input.updates) {
+      try {
+        const result = await applyMetadataUpdate(paths, update, lookup);
+        if (result.outcome === "updated") {
+          records.set(result.record.sourceId, result.record);
+          index.replace(result.record);
+        }
+        results.push(result);
+      } catch (error) {
+        results.push({ outcome: "failed", sourceId: update.sourceId, error });
+      }
+    }
+    return results;
   });
 }
 
