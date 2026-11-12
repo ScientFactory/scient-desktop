@@ -45,7 +45,8 @@ export const SCIENT_SOURCE_COLLECTIONS_FILE = `${SCIENT_SOURCES_DIRECTORY}/colle
 const LIBRARY_COLLECTIONS_DIRECTORY = "collections";
 const LIBRARY_SAVED_SEARCHES_FILE = "saved-searches.json";
 const MAX_BULK_RECEIPT_BYTES = 4 * 1024 * 1024;
-const BULK_RECEIPT_LIMIT = 50;
+// A Library-sized edit from the panel arrives in parts of 100, each with its own receipt.
+const BULK_RECEIPT_LIMIT = 250;
 
 const MAX_COLLECTIONS_BYTES = 8 * 1024 * 1024;
 const DELETED_ENTRY_LIMIT = 50;
@@ -1566,7 +1567,7 @@ async function undoBulkUpdate(input: {
           {
             message: receipt
               ? "This bulk edit was already undone."
-              : "This bulk edit was not found. Only the latest 50 can be undone.",
+              : "This bulk edit was not found. Only the latest 250 can be undone.",
           },
         ],
       };

@@ -1,9 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off -- A measurement script that builds real library and project folders.
 /**
- * Times a bulk tag (and its Undo) on a large store, and pinning and unpinning many library
- * sources in one project. Not part of any test suite; the scale gate reruns it.
- *
+ * Times a bulk tag and its Undo on a large store, then pinning and unpinning; the scale gate reruns it.
  *   node scripts/measureBulkEdits.ts [--records 20000] [--edit 1000] [--backend library|project]
+ *     [--part 100: in consecutive parts as the panel sends them, Undo newest first] [--pins-only]
  */
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -35,11 +34,14 @@ const { values } = NodeUtil.parseArgs({
     edit: { type: "string", default: "1000" },
     backend: { type: "string", default: "library" },
     keep: { type: "boolean", default: false },
+    part: { type: "string", default: "0" },
+    "pins-only": { type: "boolean", default: false },
   },
 });
 const RECORDS = Number.parseInt(values.records, 10);
 const EDIT = Number.parseInt(values.edit, 10);
 const BACKEND = values.backend === "project" ? "project" : "library";
+const PART = Number.parseInt(values.part, 10);
 
 const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).digest("hex");
 
@@ -130,71 +132,133 @@ try {
   const built = await time(() => fillStore(location, recordsDirectory));
   const sourceIds = built.value;
   const edited = sourceIds.slice(0, EDIT);
+  const loadBefore = NodeOS.loadavg().map((value) => Math.round(value * 100) / 100);
 
-  const tag = await time(() =>
-    bulkUpdateScientSources({
-      root: location,
-      change: { sourceIds: edited, addTags: ["measured"] },
-      actor: "user",
-    }),
-  );
-  const undo = await time(() =>
-    bulkUpdateScientSources({
-      root: location,
-      change: { undoBatchId: tag.value.undo!.batchId },
-      actor: "user",
-    }),
-  );
-  const pin =
-    BACKEND === "library"
-      ? await time(() =>
-          changeScientProjectPins({
-            projectRoot: project,
-            library,
-            changes: edited.map((sourceId) => ({ action: "pin" as const, sourceId })),
-            actor: "user",
-          }),
-        )
-      : null;
-  const unpin =
-    pin === null
+  if (PART > 0) {
+    const partMs: number[] = [];
+    const batchIds: string[] = [];
+    const started = performance.now();
+    for (let start = 0; start < edited.length; start += PART) {
+      const part = await time(() =>
+        bulkUpdateScientSources({
+          root: location,
+          change: { sourceIds: edited.slice(start, start + PART), addTags: ["measured"] },
+          actor: "user",
+        }),
+      );
+      partMs.push(part.ms);
+      if (part.value.undo) batchIds.push(part.value.undo.batchId);
+    }
+    const editMs = Math.round(performance.now() - started);
+    const undoMs: number[] = [];
+    const undoStarted = performance.now();
+    for (const batchId of batchIds.toReversed()) {
+      const part = await time(() =>
+        bulkUpdateScientSources({
+          root: location,
+          change: { undoBatchId: batchId },
+          actor: "user",
+        }),
+      );
+      undoMs.push(part.ms);
+    }
+    const undoTotalMs = Math.round(performance.now() - undoStarted);
+    const summary = (values: ReadonlyArray<number>) => ({
+      first: values[0],
+      max: Math.max(...values),
+      median: values.toSorted((a, b) => a - b)[Math.floor(values.length / 2)],
+    });
+    console.log(
+      JSON.stringify(
+        {
+          machine: `${NodeOS.cpus()[0]?.model ?? "unknown"}, ${NodeOS.cpus().length} cores, ${Math.round(NodeOS.totalmem() / 2 ** 30)} GiB, ${NodeOS.type()} ${NodeOS.release()}, Node ${NodeProcess.version}`,
+          backend: BACKEND,
+          records: RECORDS,
+          edited: edited.length,
+          part: PART,
+          parts: partMs.length,
+          loadBefore,
+          edit: { totalMs: editMs, firstProgressMs: partMs[0], perPartMs: summary(partMs) },
+          undo: { totalMs: undoTotalMs, perPartMs: summary(undoMs) },
+          loadAfter: NodeOS.loadavg().map((value) => Math.round(value * 100) / 100),
+        },
+        null,
+        2,
+      ),
+    );
+  } else {
+    const tag = values["pins-only"]
       ? null
       : await time(() =>
-          changeScientProjectPins({
-            projectRoot: project,
-            library,
-            changes: pin.value.flatMap((entry) =>
-              entry.outcome === "pinned"
-                ? [{ action: "unpin" as const, citationKey: entry.pin.citationKey }]
-                : [],
-            ),
+          bulkUpdateScientSources({
+            root: location,
+            change: { sourceIds: edited, addTags: ["measured"] },
             actor: "user",
           }),
         );
-  const count = (entries: ReadonlyArray<{ readonly outcome: string }>) =>
-    Object.fromEntries(
-      [...new Set(entries.map((entry) => entry.outcome))].map((outcome) => [
-        outcome,
-        entries.filter((entry) => entry.outcome === outcome).length,
-      ]),
+    const undo =
+      tag === null
+        ? null
+        : await time(() =>
+            bulkUpdateScientSources({
+              root: location,
+              change: { undoBatchId: tag.value.undo!.batchId },
+              actor: "user",
+            }),
+          );
+    const pin =
+      BACKEND === "library"
+        ? await time(() =>
+            changeScientProjectPins({
+              projectRoot: project,
+              library,
+              changes: edited.map((sourceId) => ({ action: "pin" as const, sourceId })),
+              actor: "user",
+            }),
+          )
+        : null;
+    const unpin =
+      pin === null
+        ? null
+        : await time(() =>
+            changeScientProjectPins({
+              projectRoot: project,
+              library,
+              changes: pin.value.flatMap((entry) =>
+                entry.outcome === "pinned"
+                  ? [{ action: "unpin" as const, citationKey: entry.pin.citationKey }]
+                  : [],
+              ),
+              actor: "user",
+            }),
+          );
+    const count = (entries: ReadonlyArray<{ readonly outcome: string }>) =>
+      Object.fromEntries(
+        [...new Set(entries.map((entry) => entry.outcome))].map((outcome) => [
+          outcome,
+          entries.filter((entry) => entry.outcome === outcome).length,
+        ]),
+      );
+    console.log(
+      JSON.stringify(
+        {
+          machine: `${NodeOS.cpus()[0]?.model ?? "unknown"}, ${NodeOS.cpus().length} cores, ${Math.round(NodeOS.totalmem() / 2 ** 30)} GiB, ${NodeOS.type()} ${NodeOS.release()}, Node ${NodeProcess.version}`,
+          backend: BACKEND,
+          records: RECORDS,
+          edited: edited.length,
+          buildMs: built.ms,
+          loadBefore,
+          ...(tag ? { bulkTag: { ms: tag.ms, outcomes: count(tag.value.sources) } } : {}),
+          ...(undo ? { undo: { ms: undo.ms, outcomes: count(undo.value.sources) } } : {}),
+          ...(pin ? { pin: { ms: pin.ms, outcomes: count(pin.value) } } : {}),
+          ...(unpin ? { unpin: { ms: unpin.ms, outcomes: count(unpin.value) } } : {}),
+          loadAfter: NodeOS.loadavg().map((value) => Math.round(value * 100) / 100),
+        },
+        null,
+        2,
+      ),
     );
-  console.log(
-    JSON.stringify(
-      {
-        machine: `${NodeOS.cpus()[0]?.model ?? "unknown"}, ${NodeOS.cpus().length} cores, ${Math.round(NodeOS.totalmem() / 2 ** 30)} GiB, ${NodeOS.type()} ${NodeOS.release()}, Node ${NodeProcess.version}`,
-        backend: BACKEND,
-        records: RECORDS,
-        edited: edited.length,
-        buildMs: built.ms,
-        bulkTag: { ms: tag.ms, outcomes: count(tag.value.sources) },
-        undo: { ms: undo.ms, outcomes: count(undo.value.sources) },
-        ...(pin ? { pin: { ms: pin.ms, outcomes: count(pin.value) } } : {}),
-        ...(unpin ? { unpin: { ms: unpin.ms, outcomes: count(unpin.value) } } : {}),
-      },
-      null,
-      2,
-    ),
-  );
+  }
 } finally {
   if (!values.keep) await NodeFSP.rm(base, { recursive: true, force: true });
 }

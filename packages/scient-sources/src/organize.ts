@@ -22,6 +22,8 @@ const Tag = NonEmptyString.check(Schema.isMaxLength(200));
 export const SCIENT_SOURCE_COLLECTION_LIMIT = 500;
 export const SCIENT_SOURCE_SAVED_SEARCH_LIMIT = 200;
 export const SCIENT_SOURCE_COLLECTION_MEMBER_LIMIT = 20_000;
+/** The most sources one bulk edit or collection change takes; clients send more in parts. */
+export const SCIENT_SOURCES_BULK_SOURCE_LIMIT = 500;
 
 /** One way of narrowing the Library, shared by the panel, saved searches and agent tools. */
 export const ScientSourceFilter = Schema.Struct({
@@ -99,7 +101,7 @@ export const ScientSourcesOrganization = Schema.Struct({
 export type ScientSourcesOrganization = typeof ScientSourcesOrganization.Type;
 
 const SourceIds = Schema.Array(NonEmptyString).pipe(
-  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(500)),
+  Schema.check(Schema.isMinLength(1), Schema.isMaxLength(SCIENT_SOURCES_BULK_SOURCE_LIMIT)),
 );
 const CollectionIds = Schema.Array(NonEmptyString).pipe(Schema.check(Schema.isMaxLength(50)));
 const Tags = Schema.Array(Tag).pipe(Schema.check(Schema.isMaxLength(50)));
