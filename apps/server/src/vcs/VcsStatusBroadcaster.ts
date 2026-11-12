@@ -459,8 +459,10 @@ export const make = Effect.gen(function* () {
     cwd: string,
     options?: Parameters<GitWorkflowService.GitWorkflowService["Service"]["remoteStatus"]>[1],
   ) {
-    // SCIENT-FORK:START — without Git, report no remote instead of probing it.
-    const available = yield* getOrLoadLocalStatus(cwd);
+    // SCIENT-FORK:START — without Git, report no remote instead of probing it. A cached local
+    // status answers without a read that would publish ahead of this remote read.
+    const available =
+      (yield* getCachedStatus(cwd))?.local?.value ?? (yield* getOrLoadLocalStatus(cwd));
     if (available.gitAvailability === "missing")
       return { branch: available.refName, value: null, fingerprint: fingerprintStatusPart(null) };
     // SCIENT-FORK:END

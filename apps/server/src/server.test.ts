@@ -13306,84 +13306,82 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect.each([
-      "non-repository",
-      "base-without-commit",
-      "fetch-failure",
-      "checkout-defect",
-    ] as const)("native required worktree preserves a failed first send for %s", (failure) =>
-      Effect.gen(function* () {
-        const createWorktree = vi.fn<GitManager.GitManager["Service"]["createWorktree"]>(() =>
-          failure === "checkout-defect"
-            ? Effect.die(new Error("checkout exploded"))
-            : Effect.fail(
-                new GitCommandError({
-                  operation: "create-worktree",
-                  command: "git worktree add",
-                  cwd: "/synthetic",
-                  detail:
-                    failure === "non-repository" ? "not a git repository" : "base has no commit",
-                }),
-              ),
-        );
-        const runForThread = vi.fn<
-          ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
-        >(() => Effect.die("Failed checkout must not run setup"));
-        const fixture = yield* makeNativeLaunchFixture(failure, {
-          layers: {
-            vcsDriver: { isInsideWorkTree: () => Effect.succeed(failure !== "non-repository") },
-            gitVcsDriver: {
-              resolveWorktreeBaseRemote: () =>
-                Effect.succeed(
-                  failure === "fetch-failure" ? { remoteName: "origin", branchName: "main" } : null,
-                ),
-              fetchWorktreeBaseCommit: () =>
-                Effect.fail(
+    // A non-Git project is refused at launch, before any send (ThreadLaunchService tests).
+    it.effect.each(["base-without-commit", "fetch-failure", "checkout-defect"] as const)(
+      "native required worktree preserves a failed first send for %s",
+      (failure) =>
+        Effect.gen(function* () {
+          const createWorktree = vi.fn<GitManager.GitManager["Service"]["createWorktree"]>(() =>
+            failure === "checkout-defect"
+              ? Effect.die(new Error("checkout exploded"))
+              : Effect.fail(
                   new GitCommandError({
-                    operation: "fetch",
-                    command: "git fetch",
+                    operation: "create-worktree",
+                    command: "git worktree add",
                     cwd: "/synthetic",
-                    detail: "fetch failed",
+                    detail: "base has no commit",
                   }),
                 ),
+          );
+          const runForThread = vi.fn<
+            ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
+          >(() => Effect.die("Failed checkout must not run setup"));
+          const fixture = yield* makeNativeLaunchFixture(failure, {
+            layers: {
+              gitVcsDriver: {
+                resolveWorktreeBaseRemote: () =>
+                  Effect.succeed(
+                    failure === "fetch-failure"
+                      ? { remoteName: "origin", branchName: "main" }
+                      : null,
+                  ),
+                fetchWorktreeBaseCommit: () =>
+                  Effect.fail(
+                    new GitCommandError({
+                      operation: "fetch",
+                      command: "git fetch",
+                      cwd: "/synthetic",
+                      detail: "fetch failed",
+                    }),
+                  ),
+              },
+              gitManager: { createWorktree },
+              projectSetupScriptRunner: { runForThread },
             },
-            gitManager: { createWorktree },
-            projectSetupScriptRunner: { runForThread },
-          },
-        });
-        const launched = yield* fixture.launch({
-          ...fixture.input,
-          workspaceStrategy: {
-            ...fixture.input.workspaceStrategy,
-            startFromOrigin: failure === "fetch-failure",
-          },
-        });
-        const failed = yield* fixture.awaitRun("failed");
-        assert.equal(launched.threadId, fixture.threadId);
-        assert.deepEqual(
-          failed.messages.map((message) => message.id),
-          [fixture.input.initialMessage.messageId],
-        );
-        assert.equal(failed.runs.length, 1);
-        assert.equal(failed.runs[0]?.status, "failed");
-        assert.isNull(failed.thread.deletedAt);
-        assert.isTrue(failed.runs.every((run) => run.status === "failed"));
-        assert.isNull(failed.thread.worktreePath);
-        assert.equal(runForThread.mock.calls.length, 0);
-        assert.equal(createWorktree.mock.calls.length, failure === "fetch-failure" ? 0 : 1);
-        const snapshot = yield* fixture.snapshotWhere((current) => current.phase === "failed");
-        assert.isString(snapshot.error);
-        if (failure === "fetch-failure") {
-          assert.include(snapshot.error!, "fetch failed");
-        }
-        // Retrying an accepted command reuses its durable message/run, not a second launch.
-        const retried = yield* fixture.launch();
-        assert.equal(retried.threadId, fixture.threadId);
-        assert.equal(
-          (yield* fixture.app.v2.threads.getThreadProjection(fixture.threadId)).messages.length,
-          1,
-        );
-      }).pipe(Effect.provide(NodeHttpServerTest)),
+          });
+          const launched = yield* fixture.launch({
+            ...fixture.input,
+            workspaceStrategy: {
+              ...fixture.input.workspaceStrategy,
+              startFromOrigin: failure === "fetch-failure",
+            },
+          });
+          const failed = yield* fixture.awaitRun("failed");
+          assert.equal(launched.threadId, fixture.threadId);
+          assert.deepEqual(
+            failed.messages.map((message) => message.id),
+            [fixture.input.initialMessage.messageId],
+          );
+          assert.equal(failed.runs.length, 1);
+          assert.equal(failed.runs[0]?.status, "failed");
+          assert.isNull(failed.thread.deletedAt);
+          assert.isTrue(failed.runs.every((run) => run.status === "failed"));
+          assert.isNull(failed.thread.worktreePath);
+          assert.equal(runForThread.mock.calls.length, 0);
+          assert.equal(createWorktree.mock.calls.length, failure === "fetch-failure" ? 0 : 1);
+          const snapshot = yield* fixture.snapshotWhere((current) => current.phase === "failed");
+          assert.isString(snapshot.error);
+          if (failure === "fetch-failure") {
+            assert.include(snapshot.error!, "fetch failed");
+          }
+          // Retrying an accepted command reuses its durable message/run, not a second launch.
+          const retried = yield* fixture.launch();
+          assert.equal(retried.threadId, fixture.threadId);
+          assert.equal(
+            (yield* fixture.app.v2.threads.getThreadProjection(fixture.threadId)).messages.length,
+            1,
+          );
+        }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
     it.effect("native launch rejects a missing project before creating a thread", () =>

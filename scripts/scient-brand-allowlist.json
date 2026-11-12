@@ -232,6 +232,12 @@
     "reason": "Upstream MCP tool copy kept verbatim; ScientMcpProtocol's tools/list rewrites every description and title through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
   },
   {
+    "path": "apps/server/src/mcp/toolkits/toolSearch/tools.ts",
+    "rules": ["inherited-brand"],
+    "kind": "rewritten-agent-copy",
+    "reason": "Upstream MCP tool copy kept verbatim; ScientMcpProtocol's tools/list rewrites every description and title through ScientAgentCopy.ts. ScientAgentCopy.test.ts fails on any T3 name an agent would see."
+  },
+  {
     "path": "apps/server/src/mcp/toolkits/pullRequests/tools.ts",
     "rules": ["bare-t3"],
     "kind": "rewritten-agent-copy",

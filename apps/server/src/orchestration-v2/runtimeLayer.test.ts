@@ -1338,7 +1338,11 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         rollbackThread.mock.calls[1]![0].providerThreadTurns.map((turn) => turn.id),
         [ProviderTurnId.make("non-git-resent-turn")],
       );
-    }).pipe(Effect.provide(Layer.merge(Layer.fresh(layerTest), NodeServices.layer))),
+      // SCIENT-FORK: a local build gives the case its own database; a fresh layer alone shares
+      // this block's, and the rerun Scient migrations then break the next case.
+    }).pipe(
+      Effect.provide(Layer.merge(Layer.fresh(layerTest), NodeServices.layer), { local: true }),
+    ),
   );
 
   it.effect("rejects non-ready rollback targets before persisting events or effects", () =>

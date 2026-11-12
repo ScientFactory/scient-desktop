@@ -121,6 +121,8 @@ export const SCIENT_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Read", "Reading", "Read", "a saved handoff summary"],
     "thread-read",
   ),
+  // T3's deferred-tool loader, which Scient's server also lists.
+  tool_search: tool(["Load", "Loading", "Loaded", "more tools"], "capabilities"),
 };
 
 /** A skill's reader-facing name from a skill tool's input: `latex-authoring` → `Latex Authoring`. */
