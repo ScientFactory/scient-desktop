@@ -340,11 +340,13 @@ describe("sources workflow data consistency", () => {
       {
         type: "sourceDetailArrived",
         sourceId: "current",
+        atDetailFetch: 1,
         detail: detail({ sourceId: "current", revision: 2 }),
       },
       {
         type: "sourceDetailArrived",
         sourceId: "stale",
+        atDetailFetch: 1,
         detail: detail({ sourceId: "stale", revision: 7 }),
       },
     );
@@ -398,6 +400,7 @@ describe("sources workflow data consistency", () => {
       {
         type: "sourceDetailArrived",
         sourceId: "gone",
+        atDetailFetch: 1,
         detail: detail({ sourceId: "gone" }),
       },
     );
@@ -430,6 +433,7 @@ describe("sources workflow on a personal Library", () => {
       {
         type: "sourceDetailArrived",
         sourceId: "a",
+        atDetailFetch: 1,
         detail: {
           ...detail({ sourceId: "a", revision: 4 }),
           readingStatus: "unread",
@@ -439,6 +443,7 @@ describe("sources workflow on a personal Library", () => {
     );
     const next = sourcesWorkflowReducer(base, {
       type: "readingStateArrived",
+      atDetailFetch: 1,
       result: {
         sources: [
           { sourceId: "a", outcome: "updated", readingStatus: "read", starred: false },
@@ -462,6 +467,7 @@ describe("sources workflow on a personal Library", () => {
       {
         type: "sourceDetailArrived",
         sourceId: "a",
+        atDetailFetch: 1,
         detail: {
           ...detail({ sourceId: "a", revision: 4 }),
           pinned: true,
@@ -490,6 +496,7 @@ describe("sources workflow on a personal Library", () => {
     });
     const marked = sourcesWorkflowReducer(started, {
       type: "readingStateArrived",
+      atDetailFetch: 1,
       result: {
         sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: true }],
       },
@@ -527,6 +534,7 @@ describe("sources workflow on a personal Library", () => {
       ]),
       {
         type: "readingStateArrived",
+        atDetailFetch: 1,
         result: {
           sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: true }],
         },
@@ -535,6 +543,7 @@ describe("sources workflow on a personal Library", () => {
     const late = sourcesWorkflowReducer(base, {
       type: "sourceDetailArrived",
       sourceId: "a",
+      atDetailFetch: 1,
       detail: {
         ...detail({ sourceId: "a", revision: 4 }),
         readingStatus: "unread",
@@ -551,6 +560,7 @@ describe("sources workflow on a personal Library", () => {
     });
     const marked = sourcesWorkflowReducer(started, {
       type: "readingStateArrived",
+      atDetailFetch: 1,
       result: {
         sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: true }],
       },
@@ -569,6 +579,7 @@ describe("sources workflow on a personal Library", () => {
     const late = sourcesWorkflowReducer(withOverview, {
       type: "sourceDetailArrived",
       sourceId: "a",
+      atDetailFetch: 1,
       detail: {
         ...detail({ sourceId: "a", revision: 4 }),
         readingStatus: "unread",
@@ -576,6 +587,38 @@ describe("sources workflow on a personal Library", () => {
       },
     });
     expect(late.sourceDetails["a"]).toMatchObject({ readingStatus: "read", starred: true });
+  });
+
+  it("does not mask a detail read that started after the reading change", () => {
+    const marked = reduceAll(
+      initialSourcesWorkflowState,
+      { type: "overviewRequestStarted", request: 1 },
+      {
+        type: "overviewArrived",
+        request: 1,
+        overview: overviewWith([
+          { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+      {
+        type: "readingStateArrived",
+        atDetailFetch: 1,
+        result: {
+          sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: false }],
+        },
+      },
+    );
+    const fresh = sourcesWorkflowReducer(marked, {
+      type: "sourceDetailArrived",
+      sourceId: "a",
+      atDetailFetch: 2,
+      detail: {
+        ...detail({ sourceId: "a", revision: 4 }),
+        readingStatus: "unread",
+        starred: false,
+      },
+    });
+    expect(fresh.sourceDetails["a"]).toMatchObject({ readingStatus: "unread" });
   });
 });
 
@@ -738,6 +781,7 @@ describe("sources workflow transient flags", () => {
     const arrived = sourcesWorkflowReducer(superseded, {
       type: "sourceDetailArrived",
       sourceId: "any",
+      atDetailFetch: 1,
       detail: detail({ sourceId: "any" }),
     });
     expect(arrived.sourceDetails["any"]?.revision).toBe(1);

@@ -93,10 +93,15 @@ export type SourcesWorkflowAction =
       readonly type: "sourceDetailArrived";
       readonly sourceId: string;
       readonly detail: ScientSourceDetailResult;
+      readonly atDetailFetch: number;
     }
   | { readonly type: "sourceRecordAccepted"; readonly record: ScientSourceDetailResult }
   | { readonly type: "sourceRemoved"; readonly sourceId: string }
-  | { readonly type: "readingStateArrived"; readonly result: ScientSourcesReadingStateResult }
+  | {
+      readonly type: "readingStateArrived";
+      readonly result: ScientSourcesReadingStateResult;
+      readonly atDetailFetch: number;
+    }
   | {
       readonly type: "zoteroStatusArrived";
       readonly status: ZoteroConnectionStatus;
@@ -183,8 +188,11 @@ type ReadingChange = Partial<
   Pick<ScientSourcesReadingStateResult["sources"][number], "outcome" | "readingStatus" | "starred">
 >;
 
-/** A reading change that landed, kept until an overview that started after it lands. */
-type ReadingOverride = ReadingChange & { readonly atOverviewRequest: number };
+/** A landed reading change, kept until an overview that started after it, and applied only to reads that started before it. */
+type ReadingOverride = ReadingChange & {
+  readonly atOverviewRequest: number;
+  readonly atDetailFetch: number;
+};
 
 type LibraryFields = Pick<
   ScientSourceDetailResult,
@@ -267,9 +275,11 @@ function withReadingOverride<
     readonly readingStatus?: unknown;
     readonly starred?: unknown;
   },
->(record: A, overrides: Readonly<Record<string, ReadingOverride>>): A {
+>(record: A, overrides: Readonly<Record<string, ReadingOverride>>, atDetailFetch?: number): A {
   const override = overrides[record.sourceId];
-  if (!override) return record;
+  if (!override || (atDetailFetch !== undefined && atDetailFetch > override.atDetailFetch)) {
+    return record;
+  }
   return withReadingState(record, new Map([[record.sourceId, override]]));
 }
 
@@ -344,7 +354,11 @@ export function sourcesWorkflowReducer(
         ...state,
         sourceDetails: {
           ...state.sourceDetails,
-          [action.sourceId]: withReadingOverride(action.detail, state.readingOverrides),
+          [action.sourceId]: withReadingOverride(
+            action.detail,
+            state.readingOverrides,
+            action.atDetailFetch,
+          ),
         },
       };
     }
@@ -389,6 +403,7 @@ export function sourcesWorkflowReducer(
           ...(entry.readingStatus !== undefined ? { readingStatus: entry.readingStatus } : {}),
           ...(entry.starred !== undefined ? { starred: entry.starred } : {}),
           atOverviewRequest: state.overviewRequest,
+          atDetailFetch: action.atDetailFetch,
         };
       }
       return {

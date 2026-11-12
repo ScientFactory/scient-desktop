@@ -81,6 +81,7 @@ export function useScientSources(input: {
   const requestRef = useRef(0);
   const overviewRequestRef = useRef(0);
   const zoteroRequestRef = useRef(0);
+  const detailFetchRef = useRef(0);
   // Collections of a library the person already left must not replace the current ones.
   const zoteroLibraryRef = useRef(0);
   const nextRequestToken = useStableCallback(() => {
@@ -168,10 +169,16 @@ export function useScientSources(input: {
       !("personalNote" in record) &&
       shown.revision !== record.revision
     ) {
+      const atDetailFetch = ++detailFetchRef.current;
       void readScientSource(input.environmentId, { root: input.root, sourceId: record.sourceId })
         .then((detail) => {
           if (isCurrentContext()) {
-            dispatch({ type: "sourceDetailArrived", sourceId: record.sourceId, detail });
+            dispatch({
+              type: "sourceDetailArrived",
+              sourceId: record.sourceId,
+              detail,
+              atDetailFetch,
+            });
           }
         })
         .catch(() => undefined);
@@ -186,6 +193,7 @@ export function useScientSources(input: {
     const cached = state.sourceDetails[sourceId];
     const summary = state.overview?.records.find((record) => record.sourceId === sourceId);
     if (cached && summary?.revision === cached.revision) return cached;
+    const atDetailFetch = ++detailFetchRef.current;
     try {
       const detail = await readScientSource(input.environmentId, {
         root: input.root,
@@ -193,7 +201,7 @@ export function useScientSources(input: {
         ...(reviewId ? { reviewId } : {}),
       });
       if (isCurrentContext()) {
-        dispatch({ type: "sourceDetailArrived", sourceId, detail });
+        dispatch({ type: "sourceDetailArrived", sourceId, detail, atDetailFetch });
       }
       return detail;
     } catch (cause) {
@@ -1021,7 +1029,13 @@ export function useScientSources(input: {
     saveSourceNote,
     /** Rows and details take a reading change from the route's answer: it changes no revision. */
     applyReadingState: (result: ScientSourcesReadingStateResult) => {
-      if (isCurrentContext()) dispatch({ type: "readingStateArrived", result });
+      if (isCurrentContext()) {
+        dispatch({
+          type: "readingStateArrived",
+          result,
+          atDetailFetch: detailFetchRef.current,
+        });
+      }
     },
     removeSource,
     clearError: () => dispatch({ type: "errorCleared" }),
