@@ -59,6 +59,7 @@ import {
   ScientSourceRecordV1,
   type ScientSourceRecord,
   ScientSourceStagedMaterial,
+  ScientSourceType,
   ScientSourceZoteroSync,
   SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   type ScientSourceActor,
@@ -435,11 +436,23 @@ async function latestSourceHistoryRevision(
   return latestRevision;
 }
 
+const isScientSourceType = Schema.is(ScientSourceType);
+
+/** A record whose type the store cannot read back is refused, never written. */
+function assertStorableSourceType(type: unknown): void {
+  if (!isScientSourceType(type)) {
+    throw new Error(
+      `The source type “${String(type)}” is not one Scient knows, so the source was not saved.`,
+    );
+  }
+}
+
 async function persistSourceRevision(
   paths: SourceStorePaths,
   current: ScientSourceRecord,
   next: ScientSourceRecord,
 ): Promise<void> {
+  assertStorableSourceType(next.type);
   await preserveSourceRevision(paths, current);
   await atomicWriteJson(sourceRecordPath(paths, current.sourceId), next, MAX_RECORD_BYTES);
   await pruneSourceHistory(paths, current.sourceId);
@@ -2585,6 +2598,7 @@ async function importScientSourceWithRecordLookup(
   lookup: "complete" | "operation-snapshot",
 ): Promise<ImportedSourceResult> {
   assertSafeIdentifier(input.operationId, "Operation ID");
+  assertStorableSourceType(input.candidate.type);
   const paths = await sourceStorePaths(input.root);
   return withStoreLock(paths, "source-write", async () => {
     const existing =

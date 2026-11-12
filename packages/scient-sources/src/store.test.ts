@@ -768,6 +768,17 @@ describe("Scient source store", () => {
     ).resolves.toMatchObject({ outcome: "updated", record: { revision: 3, note: null } });
   });
 
+  it("refuses a source type it could not read back, and writes nothing", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    // An untyped caller (a script) once wrote "conference", which the Library then could not read.
+    const unknownType = { ...candidate, type: "conference" } as unknown as ScientSourceCandidate;
+    await expect(
+      importScientSource({ root, operationId: NodeCrypto.randomUUID(), candidate: unknownType }),
+    ).rejects.toThrow("The source type “conference” is not one Scient knows");
+    expect(await listScientSourceRecords(root)).toEqual([]);
+  });
+
   it("rejects incomplete custom types and records that would exceed the readable size limit", async () => {
     const root = await fixture();
     await initializeScientProject({ root });
