@@ -82,9 +82,8 @@ export function CitationStylePicker(props: {
       else setError(result.error);
     } catch (cause) {
       setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
-    } finally {
-      setPending(false);
     }
+    setPending(false);
   };
   const results = (search?.results ?? []).filter((style) => style.id !== chosen?.id);
   const message = error ?? search?.message ?? null;
