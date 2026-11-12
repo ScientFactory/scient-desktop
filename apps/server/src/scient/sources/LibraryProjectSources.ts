@@ -228,6 +228,13 @@ export async function alsoPinnedIn(
 }
 
 /**
+ * Projects whose snapshots were all refreshed in this process with nothing failing since. Only
+ * these refresh just the changed sources; any other refreshes every snapshot, so a refresh that
+ * failed earlier (or before a restart) is caught up by the next change.
+ */
+const snapshotsCurrent = new Set<string>();
+
+/**
  * After library records change, refreshes this project's pin snapshots, the snapshots of its
  * reviews that name them, and its managed bibliography. Each writes only when bytes change;
  * other projects refresh when they are next opened with write authority.
@@ -238,20 +245,22 @@ export async function refreshProjectAfterLibraryChange(
   actor: ScientSourceActor,
 ): Promise<void> {
   if (store.access !== "write" || sourceIds.length === 0) return;
-  const changed = new Set(sourceIds);
+  const changed = snapshotsCurrent.has(store.root) ? new Set(sourceIds) : undefined;
+  snapshotsCurrent.delete(store.root);
   await refreshScientProjectPinSnapshots({
     projectRoot: store.root,
     library: store.library,
-    sourceIds: changed,
+    ...(changed ? { sourceIds: changed } : {}),
   });
   for (const reviewId of await listScientLibraryReviewIds(store.root)) {
     await refreshScientLibraryReviewSnapshot({
       projectRoot: store.root,
       library: store.library,
       reviewId,
-      naming: changed,
+      ...(changed ? { naming: changed } : {}),
     });
   }
+  snapshotsCurrent.add(store.root);
   await syncProjectBibliography(store, actor);
 }
 

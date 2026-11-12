@@ -335,6 +335,68 @@ describe("Library routes on the library backend", () => {
       }),
   );
 
+  it.effect(
+    "catches up a stale pin snapshot at the first change, then refreshes only changes",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const [stale, edited] = yield* Effect.promise(async () => {
+          const one = await libraryRecord(fixture, "one", { title: "Vasopressin timing" });
+          const two = await libraryRecord(fixture, "two", { title: "Lactate clearance" });
+          await pin(fixture, one.sourceId);
+          await pin(fixture, two.sourceId);
+          return [one, two] as const;
+        });
+        const store = yield* storeFor(fixture, "write");
+        const pinsFile = NodePath.join(fixture.root, ".scient", "library", "pins.json");
+        // As after a refresh that failed, or one lost with the previous server.
+        const makeStale = async () =>
+          NodeFSP.writeFile(
+            pinsFile,
+            (await NodeFSP.readFile(pinsFile, "utf8")).replace("Vasopressin timing", "Old title"),
+          );
+        const titleOf = async (sourceId: string) =>
+          (await readScientProjectPins(fixture.root)).find((entry) => entry.sourceId === sourceId)
+            ?.work.title;
+        const retitle = async (revision: number, title: string) => {
+          const result = await updateLibrarySourceMetadata(store, {
+            sourceId: edited.sourceId,
+            expectedRevision: revision,
+            metadata: {
+              type: "article",
+              title,
+              creators: [ada],
+              issuedRaw: "2026",
+              issuedYear: 2026,
+              identifiers: [],
+              abstract: null,
+              containerTitle: "Scient Journal",
+              publisher: null,
+              volume: null,
+              issue: null,
+              pages: null,
+              language: null,
+              url: null,
+              tags: [],
+            },
+          });
+          expect(result.outcome).toBe("updated");
+        };
+
+        yield* Effect.promise(async () => {
+          await makeStale();
+          await retitle(edited.revision, "Lactate clearance, corrected");
+          expect(await titleOf(stale.sourceId)).toBe("Vasopressin timing");
+          expect(await titleOf(edited.sourceId)).toBe("Lactate clearance, corrected");
+
+          await makeStale();
+          await retitle(edited.revision + 1, "Lactate clearance, again");
+          expect(await titleOf(edited.sourceId)).toBe("Lactate clearance, again");
+          expect(await titleOf(stale.sourceId)).toBe("Old title");
+        });
+      }),
+  );
+
   it.effect("says how many other projects pin a source an edit changed", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

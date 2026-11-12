@@ -1205,39 +1205,46 @@ async function verifyAndBackUp(
     if (done % 50 === 0 || done === total) ctx.progress("verifying", done, total);
   };
   ctx.progress("verifying", 0, total);
+  // Each item counts once its check or backup has finished, skipped ones included.
   for (const sha256 of journal.pdfs) {
     const copied = await hashFile(NodePath.join(files.files, sha256.slice(0, 2), `${sha256}.pdf`));
     if (copied !== sha256) throw new Error("A PDF copied into the library does not verify.");
     step();
   }
   const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
-  for (const source of journal.sources) {
-    step();
-    if (source.identity === "removed") continue;
+  const checkSource = async (source: (typeof journal.sources)[number]) => {
+    if (source.identity === "removed") return;
     const target = resolveScientLibraryAlias(aliases, source.sourceId);
     if (!(await readLibraryRecord(ctx, target)) && !(await readLibraryTrash(ctx, target))) {
       throw new Error("A record copied into the library is missing.");
     }
+  };
+  for (const source of journal.sources) {
+    await checkSource(source);
+    step();
   }
   const copiedPdfs = new Set(journal.pdfs);
-  for (const file of v1.files) {
-    step();
+  const backUpV1File = async (file: string) => {
     // A PDF whose bytes do not match its name cannot join the library; the backup keeps it.
     const pdf = PDF_FILE.exec(file);
-    if (pdf && copiedPdfs.has(pdf[2]!)) continue;
+    if (pdf && copiedPdfs.has(pdf[2]!)) return;
     const bytes = await readRegularFile(absolute(v1Base(ctx), file));
-    if (!bytes) continue;
+    if (!bytes) return;
     // Full text the library holds byte for byte needs no backup; any other text does.
     const text = TEXT_FILE.exec(file);
-    if (text && (await hashFile(libraryTextPath(ctx, text))) === sha256Of(bytes)) continue;
+    if (text && (await hashFile(libraryTextPath(ctx, text))) === sha256Of(bytes)) return;
     await backUpFile(ctx, journal.run, `sources/${file}`, bytes);
+  };
+  for (const file of v1.files) {
+    await backUpV1File(file);
+    step();
   }
   for (const sha256 of journal.annotations) {
-    step();
     const bytes = await readRegularFile(
       absolute(ctx.root, `${PROJECT_ANNOTATIONS_DIRECTORY}/${sha256}.json`),
     );
     if (bytes) await backUpFile(ctx, journal.run, `annotations/${sha256}.json`, bytes);
+    step();
   }
 }
 

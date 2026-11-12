@@ -586,10 +586,13 @@ share operations and handlers.
 - After a metadata edit, revert, merge or undo, the same call refreshes this
   project's pin snapshots, the snapshots of its reviews that name the record,
   and its managed files; each writes only when bytes change. Other projects
-  refresh the next time a call with write authority opens them. Only the pins
-  of the changed records are refreshed, reading just those records; each live
-  review's snapshot is loaded once and written only when the review names a
-  changed record. The bulk route refreshes after a type change and after the
+  refresh the next time a call with write authority opens them. Once this
+  project has had a full refresh that succeeded in this server process, only
+  the pins of the changed records are refreshed, reading just those records,
+  and each live review's snapshot is loaded once and written only when the
+  review names a changed record. The first refresh after start, and the next
+  one after a refresh failed, refresh every snapshot, so a refresh that failed
+  is caught up by the next change (`refreshProjectAfterLibraryChange`). The bulk route refreshes after a type change and after the
   Undo of a bulk edit that changed a type (`scientBulkEditChangedType`), never
   after tag-only edits or their Undo: tags are in no snapshot and not in the
   bibliography. With one 10,000-record review the refresh costs about 1.4 s
@@ -844,8 +847,8 @@ holds leaves `copying`, which reruns from step 1; the crash point
 (`{ phase, done, total }`, phases `sources`, `files`, `verifying`, `merging`,
 `switching`, `cleaning-up`, `restoring`; each counts its own items).
 `verifying` counts the PDF hashes, the moved records it checks, and the v1
-files and highlights it backs up, so the line keeps moving through the
-backups. Nothing about progress is written to the journal.
+files and highlights it backs up, each once its check or backup has finished,
+so the line keeps moving through the backups and never shows done early. Nothing about progress is written to the journal.
 
 **Measured** with `packages/scient-sources/scripts/measureLibraryMove.ts`
 (`pnpm run measure:library-move` in that package, Node 26; 5,000 records,
@@ -1277,22 +1280,22 @@ to 5); the CI runners are GitHub-hosted: `macos-15` (virtual M1, 3 cores,
 1 s, a filter under 200 ms, a bulk tag of 1,000 under 3 s (read as progress at
 once, about 11 ms per source), a part under 5 s.
 
-| Measure                                     | M5 Pro      | macos-15    | macos-15-intel | windows-2025 | ubuntu-24.04 |
-| ------------------------------------------- | ----------- | ----------- | -------------- | ------------ | ------------ |
-| Library list, first call (s)                | 1.03        | 3.06        | 6.62           | 3.53         | 2.23         |
-| Library list, warm (s)                      | 0.15        | 0.49        | 0.74           | 0.48         | 0.41         |
-| … encode, parse and decode of 26.6 MB (s)   | 0.23        | 0.73        | 1.47           | 0.67         | 0.75         |
-| Slowest filter or sort (ms)                 | 36          | 134         | 119            | 66           | 66           |
-| Bulk tag of 1,000: first progress (s)       | 1.62        | 2.45        | 3.43           | 3.89         | 2.30         |
-| Bulk tag of 1,000: total (s)                | 12.2        | 14.3        | 25.0           | 18.2         | 10.5         |
-| Its Undo through the route (s)              | 11.7        | 12.6        | 25.1           | 15.5         | 9.1          |
-| Type change of 1,000: median part (s)       | 2.42        | 4.05        | 5.53           | 4.69         | 3.37         |
-| Duplicates read, first / warm (s)           | 0.65 / 0.18 | 2.18 / 0.52 | 2.70 / 0.57    | 3.57 / 0.45  | 2.23 / 0.40  |
-| Review of 10,000, open and screening (s)    | 0.21        | 0.76        | 0.66           | 0.52         | 0.51         |
-| The move (min)                              | 5.4         | 4.7         | 8.8            | 3.5          | 2.2          |
-| Move: longest time without progress (s)     | 5.50        | 8.29        | 16.0           | 10.6         | 5.39         |
-| Move: event-loop delay p99 / max (ms)       | 1.6 / 99    | 13 / 370    | 5.2 / 544      | 24 / 346     | 4.2 / 318    |
-| change-pins, 2,000 per request: slowest (s) | 0.73        | 2.44        | 5.84           | 4.59         | 2.33         |
+| Measure                                                          | M5 Pro      | macos-15    | macos-15-intel | windows-2025 | ubuntu-24.04 |
+| ---------------------------------------------------------------- | ----------- | ----------- | -------------- | ------------ | ------------ |
+| Library list, first call (s)                                     | 1.03        | 3.06        | 6.62           | 3.53         | 2.23         |
+| Library list, warm (s)                                           | 0.15        | 0.49        | 0.74           | 0.48         | 0.41         |
+| … encode, parse and decode of 26.6 MB (s)                        | 0.23        | 0.73        | 1.47           | 0.67         | 0.75         |
+| Slowest filter or sort (ms)                                      | 36          | 134         | 119            | 66           | 66           |
+| Bulk tag of 1,000: first progress (s)                            | 1.62        | 2.45        | 3.43           | 3.89         | 2.30         |
+| Bulk tag of 1,000: total (s)                                     | 12.2        | 14.3        | 25.0           | 18.2         | 10.5         |
+| Its Undo through the route (s)                                   | 11.7        | 12.6        | 25.1           | 15.5         | 9.1          |
+| Type change of 1,000: median part (s)                            | 2.42        | 4.05        | 5.53           | 4.69         | 3.37         |
+| Duplicates read, first / warm (s)                                | 0.65 / 0.18 | 2.18 / 0.52 | 2.70 / 0.57    | 3.57 / 0.45  | 2.23 / 0.40  |
+| Review of 10,000, open and screening, after the reviews list (s) | 0.21        | 0.76        | 0.66           | 0.52         | 0.51         |
+| The move (min)                                                   | 5.4         | 4.7         | 8.8            | 3.5          | 2.2          |
+| Move: longest time without progress (s)                          | 5.50        | 8.29        | 16.0           | 10.6         | 5.39         |
+| Move: event-loop delay p99 / max (ms)                            | 1.6 / 99    | 13 / 370    | 5.2 / 544      | 24 / 346     | 4.2 / 318    |
+| change-pins, 2,000 per request: slowest (s)                      | 0.73        | 2.44        | 5.84           | 4.59         | 2.33         |
 
 **Changed by the scale gate:**
 
@@ -1311,8 +1314,9 @@ measure finished on all five machines, at the same speed on four (the Intel
 runner's single capped round was slower, at load 7 to 12); the highest peak
 RSS was 1.05 GB for the move, 0.27 GB of which is the modules the measuring
 process loads before it starts.
-Uncapped, the heap reaches 1.0 to 1.4 GB during a review open or a type
-change because collection waits while memory is free. The proposed bound at
+Uncapped, the heap reaches 1.0 to 1.4 GB during a review open, a type
+change or 19,000 pin changes (up to 1.66 GiB RSS) because collection waits
+while memory is free. The proposed bound at
 20,000 records: the Sources work runs within a 1 GiB heap and adds at most
 1 GiB of RSS to the server.
 
