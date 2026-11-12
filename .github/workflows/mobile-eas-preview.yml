@@ -4,13 +4,25 @@ on:
   pull_request:
     types: [opened, reopened, synchronize, labeled]
 
+# SCIENT-FORK:START mobile-release-gate
+# Scient's Expo project. app.config.ts reads these; without a project id OTA updates stay off.
+env:
+  T3CODE_EAS_OWNER: ${{ vars.T3CODE_EAS_OWNER }}
+  T3CODE_EAS_PROJECT_ID: ${{ vars.T3CODE_EAS_PROJECT_ID }}
+  T3CODE_EAS_SLUG: ${{ vars.T3CODE_EAS_SLUG || 'scient' }}
+# SCIENT-FORK:END mobile-release-gate
+
 jobs:
   preview:
     name: EAS Preview (iOS)
-    # Mobile artifacts and OTA branches remain disabled until the mobile
-    # release owner explicitly enables them.
-    if: ${{ false }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Fork PRs deploy one reviewed commit per label through mobile-eas-preview-fork.yml.
+    # SCIENT-FORK: off until the owner sets the SCIENT_MOBILE_RELEASE repository variable.
+    if: |
+      vars.SCIENT_MOBILE_RELEASE == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, '🚀 Mobile Continuous Deployment') &&
+      (github.event.action != 'labeled' || github.event.label.name == '🚀 Mobile Continuous Deployment')
+    runs-on: ubuntu-24.04
     concurrency:
       group: mobile-eas-preview-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -105,7 +117,7 @@ jobs:
         with:
           profile: preview:dev
           branch: pr-${{ github.event.pull_request.number }}
-          # Android is the android job below: its client builds on Blacksmith.
+          # Android is the android job below: its client builds on a GitHub-hosted runner.
           platform: ios
           environment: preview
           working-directory: apps/mobile
@@ -113,15 +125,17 @@ jobs:
 
   # Android publishes its own update and comment, because the Expo action can only
   # find a client that EAS built. A fingerprint with no client is built by
-  # android-build with `eas build --local` on Blacksmith (about 4 minutes warm,
-  # against about 40 on EAS) and recorded as a mobile-android-preview-build/<fingerprint>
+  # android-build with `eas build --local` on a GitHub-hosted runner and recorded as a mobile-android-preview-build/<fingerprint>
   # tag whose message is the install link. Clients EAS built earlier still count.
   android:
     name: EAS Preview (Android)
-    # Mobile artifacts and OTA branches remain disabled until the mobile
-    # release owner explicitly enables them.
-    if: ${{ false }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # SCIENT-FORK: off until the owner sets the SCIENT_MOBILE_RELEASE repository variable.
+    if: |
+      vars.SCIENT_MOBILE_RELEASE == 'true' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      contains(github.event.pull_request.labels.*.name, '🚀 Mobile Continuous Deployment') &&
+      (github.event.action != 'labeled' || github.event.label.name == '🚀 Mobile Continuous Deployment')
+    runs-on: ubuntu-24.04
     concurrency:
       group: mobile-eas-preview-android-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -240,11 +254,11 @@ jobs:
             # A client EAS built before this job existed; expired ones are gone.
             link="$(eas build:list --platform android --build-profile preview:dev --runtime-version "$hash" --status finished --limit 5 --json --non-interactive \
               | sed -n '/^\[/,$p' \
-              | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '[.[] | select((.expirationDate // "9999") > $now)][0] | select(. != null) | "https://expo.dev/accounts/pingdotgg/projects/t3-code/builds/\(.id)"')"
+              | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg project "https://expo.dev/accounts/$T3CODE_EAS_OWNER/projects/$T3CODE_EAS_SLUG" '[.[] | select((.expirationDate // "9999") > $now)][0] | select(. != null) | "\($project)/builds/\(.id)"')"
           fi
           echo "link=$link" >> "$GITHUB_OUTPUT"
           if [ -z "$link" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; fi
-          echo "android fingerprint \`$hash\`: ${link:-no client yet, building on Blacksmith}" >> "$GITHUB_STEP_SUMMARY"
+          echo "android fingerprint \`$hash\`: ${link:-no client yet, building on a GitHub-hosted runner}" >> "$GITHUB_STEP_SUMMARY"
 
       - id: update
         name: Publish the update
@@ -267,8 +281,9 @@ jobs:
     name: Android preview client
     needs: android
     if: needs.android.outputs.build == 'true'
-    runs-on: blacksmith-32vcpu-ubuntu-2404
-    timeout-minutes: 60
+    # SCIENT-FORK: GitHub-hosted runner.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     concurrency:
       # One build per fingerprint; a second PR with the same one finds the tag.
       group: mobile-android-preview-build-${{ needs.android.outputs.fingerprint }}
@@ -344,21 +359,31 @@ jobs:
             echo "CMAKE_CXX_COMPILER_LAUNCHER=ccache"
           } >> "$GITHUB_ENV"
 
-      - name: Mount build cache
+      # SCIENT-FORK:START mobile-release-gate
+      # GitHub-hosted runners have no sticky disk: restore Gradle and ccache state from
+      # the Actions cache and free the disk space a React Native build needs.
+      - name: Free disk space
         if: steps.record.outputs.built != 'true'
-        uses: useblacksmith/stickydisk@v1
+        run: sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL
+
+      - name: Restore build cache
+        if: steps.record.outputs.built != 'true'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
-          key: ${{ github.repository }}-android-preview-build
-          path: ~/.cache/t3-android-preview
+          path: |
+            ~/.cache/t3-android-preview/gradle/caches
+            ~/.cache/t3-android-preview/ccache
+          key: mobile-android-preview-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: mobile-android-preview-
+      # SCIENT-FORK:END mobile-release-gate
 
       - name: Configure Gradle and ccache
         if: steps.record.outputs.built != 'true'
         run: |
           mkdir -p "$GRADLE_USER_HOME" "$CCACHE_DIR"
           rm -rf "$EAS_LOCAL_BUILD_WORKINGDIR"
-          # No daemon: nothing should hold the sticky disk open when it is committed.
+          # No daemon: nothing should hold the cache directories open when they are saved.
           printf 'org.gradle.caching=true\norg.gradle.daemon=false\n' > "$GRADLE_USER_HOME/gradle.properties"
-          sudo sed -i 's|http://|https://|g' /etc/apt/blacksmith-ubuntu-mirrors.txt /etc/apt/sources.list.d/ubuntu.sources
           sudo apt-get update -qq && sudo apt-get install -y -qq ccache
           ccache --zero-stats
 

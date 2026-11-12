@@ -428,9 +428,8 @@ Status layout entirely. The shelf therefore lives only in the Status layout, and
 the Sections view receives the complete inbox in normal order so the toggle can
 neither hide nor reorder a thread inside a section. The shelf setting still
 decodes to `false`, so the beta is opt-in. Separately, upstream's mobile update
-documentation was removed from user Help: `docs/internals/scient-mobile-release-hold.md`
-records that there is no supported Scient mobile app and prohibits presenting that
-channel as Scient distribution.
+documentation was removed from user Help; the mobile hold it recorded is now part of
+[Mobile release](docs/operations/mobile-release.md).
 
 The preceding qualified alignment is recorded in
 [the 2026-10-08 receipt](docs/internals/t3-upstream-sync-20261008-468ade3049.md) ([Scient PR #472](https://github.com/ScientFactory/scient-desktop/pull/472)).
@@ -1919,6 +1918,18 @@ Git refer to them by absolute path; the data in `~/.t3` is left in place. Upstre
 merges must not restore `~/.t3` paths in these scripts. The
 Codex desktop handoff and its return addresses use Scient's registered
 `scient://` schemes, never `t3code://` or T3's hosted origin.
+
+T3's mobile workflows (`.github/workflows/mobile-*.yml`) keep their structure but
+run only when the owner sets repository variable `SCIENT_MOBILE_RELEASE=true`;
+the fork-preview and APK-mirror workflows need their own variables as well. They
+use GitHub-hosted runners with the Actions cache instead of Blacksmith sticky disks,
+take Scient's Expo project from `T3CODE_EAS_OWNER` and `T3CODE_EAS_PROJECT_ID`,
+and keep a development client as a run artifact because Scient has no shared
+native-client cache. Upstream refreshes must not restore the `pingdotgg/t3code`
+guards or Blacksmith labels. The hosted web build writes the phone app's
+`.well-known` link files (`infra/scient-web/well-known.mjs`): only `com.scientfactory.*`
+identifiers, with Android fingerprints from build-time variables. See
+[Mobile release](docs/operations/mobile-release.md).
 
 Native helpers ship as `scient-resource-monitor` (`.exe` on Windows),
 `scient-kde-snap-shot`, `scient-hyprland-snap-shot` and `scient-browser-secret`,

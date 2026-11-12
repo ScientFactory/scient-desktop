@@ -140,7 +140,6 @@ policy in [CONTRIBUTING.md](../CONTRIBUTING.md); agent rules in [AGENTS.md](../A
 - [Scient sidebar sections and New thread row](./internals/scient-sidebar-sections.md)
 - [Scient voice architecture](./internals/scient-voice.md)
 - [Custom model connections](./internals/custom-models.md)
-- [Scient mobile release hold](./internals/scient-mobile-release-hold.md)
 - [Scient Browser PDF export](./internals/scient-browser-pdf-export.md)
 - [Scient document PDF export](./internals/scient-document-pdf-export.md)
 - [Historical PDF export and rendering plan](./internals/scient-pdf-export-rendering-plan.md)
@@ -200,6 +199,7 @@ Follow their linked successors for current behavior.
 - [Observability](./operations/observability.md)
 - [Scient Connect operations](./operations/scient-connect.md)
 - [Relay observability](./operations/relay-observability.md)
+- [Mobile release](./operations/mobile-release.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)
 - [Inherited mobile source](../apps/mobile/README.md)
 
