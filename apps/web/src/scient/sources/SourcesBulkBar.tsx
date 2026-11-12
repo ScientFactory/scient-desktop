@@ -198,193 +198,212 @@ export function SourcesBulkBar(props: {
     });
 
   return (
-    <div className="mt-2 mb-1 ml-3 mr-4 flex min-h-8 shrink-0 items-center gap-1 text-sm">
-      <Checkbox
-        aria-label={allVisibleSelected ? "Clear selection" : "Select all shown sources"}
-        checked={allVisibleSelected}
-        indeterminate={!allVisibleSelected && count > 0}
-        onCheckedChange={() =>
-          allVisibleSelected
-            ? organize.clearSelection()
-            : organize.setSelection([...organize.selection, ...props.visibleSourceIds])
-        }
-      />
-      <span className="ms-2 min-w-0 flex-1 truncate text-muted-foreground tabular-nums">
-        {progress
-          ? `${progress.kind === "changing" ? "Changing" : "Undoing"} ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} sources`
-          : `${count} selected`}
-      </span>
-      {progress?.kind === "changing" ? (
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          disabled={progress.stopping}
-          onClick={organize.stopProgress}
-        >
-          {progress.stopping ? "Stopping…" : "Stop"}
-        </Button>
-      ) : null}
-      <Menu>
-        <MenuTrigger
-          render={<Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />}
-        >
-          <TagIcon />
-          Tag
-        </MenuTrigger>
-        <MenuPopup align="end" side="bottom" className="min-w-48">
-          {tags.map((entry) => {
-            const covered = tagCoverage.get(scientSourceTagKey(entry.tag)) ?? 0;
-            return (
-              <MenuCheckboxItem
-                key={scientSourceTagKey(entry.tag)}
-                checked={covered === count}
-                onCheckedChange={() =>
-                  void organize.bulk(
-                    covered === count
-                      ? { sourceIds, removeTags: [entry.tag] }
-                      : { sourceIds, addTags: [entry.tag] },
-                    "Tags were not changed",
-                  )
-                }
-              >
-                <span className="min-w-0 truncate">{entry.tag}</span>
-              </MenuCheckboxItem>
-            );
-          })}
-          {tags.length > 0 ? <MenuSeparator /> : null}
-          <MenuItem onClick={addTag}>New tag…</MenuItem>
-        </MenuPopup>
-      </Menu>
-      <Menu>
-        <MenuTrigger
-          render={<Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />}
-        >
-          <FolderIcon />
-          Collection
-        </MenuTrigger>
-        <MenuPopup align="end" side="bottom" className="min-w-48">
-          {orderedCollections(organize.organization.collections).map(({ collection, label }) => {
-            const members = new Set(collection.sourceIds);
-            const inAll = sourceIds.every((sourceId) => members.has(sourceId));
-            return (
-              <MenuCheckboxItem
-                key={collection.collectionId}
-                checked={inAll}
-                onCheckedChange={() =>
-                  void organize.bulk(
-                    inAll
-                      ? { sourceIds, removeFromCollectionIds: [collection.collectionId] }
-                      : { sourceIds, addToCollectionIds: [collection.collectionId] },
-                    "Collection was not changed",
-                  )
-                }
-              >
-                <span className="min-w-0 truncate">{label}</span>
-              </MenuCheckboxItem>
-            );
-          })}
-          {organize.organization.collections.length > 0 ? <MenuSeparator /> : null}
-          <MenuItem onClick={newCollection}>New collection…</MenuItem>
-        </MenuPopup>
-      </Menu>
-      <Menu>
-        <MenuTrigger
-          render={<Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />}
-        >
-          <ShapesIcon />
-          Type
-        </MenuTrigger>
-        <MenuPopup align="end" side="bottom">
-          {BULK_TYPES.map((type) => (
-            <MenuItem
-              key={type}
-              onClick={() => void organize.bulk({ sourceIds, type }, "Type was not changed")}
+    // Narrower than one row of actions, they take a line of their own (wrapping again if they
+    // must), so the count and Done selecting stay on the first. Progress has a line of its own.
+    <div className="@container/bulk mt-2 mb-1 ml-3 mr-4 shrink-0 text-sm">
+      <div className="flex min-h-8 flex-wrap items-center gap-1">
+        <Checkbox
+          aria-label={allVisibleSelected ? "Clear selection" : "Select all shown sources"}
+          checked={allVisibleSelected}
+          indeterminate={!allVisibleSelected && count > 0}
+          onCheckedChange={() =>
+            allVisibleSelected
+              ? organize.clearSelection()
+              : organize.setSelection([...organize.selection, ...props.visibleSourceIds])
+          }
+        />
+        <span className="ms-2 me-auto whitespace-nowrap text-muted-foreground tabular-nums">
+          {count > 0 || !progress ? `${count.toLocaleString()} selected` : null}
+        </span>
+        <div className="flex flex-wrap items-center gap-1 @max-[30rem]/bulk:order-1 @max-[30rem]/bulk:basis-full">
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />
+              }
             >
-              {SCIENT_SOURCE_TYPE_LABELS[type]}
-            </MenuItem>
-          ))}
-        </MenuPopup>
-      </Menu>
-      {library?.onSetReadingState ? (
-        <Menu>
-          <MenuTrigger
-            render={
-              <Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />
-            }
-          >
-            <BookmarkCheckIcon />
-            {LIBRARY_LABELS.readingMenu}
-          </MenuTrigger>
-          <MenuPopup align="end" side="bottom">
-            {READING_ACTIONS.map((action) => (
-              <MenuItem
-                key={action.label}
+              <TagIcon />
+              Tag
+            </MenuTrigger>
+            <MenuPopup align="end" side="bottom" className="min-w-48">
+              {tags.map((entry) => {
+                const covered = tagCoverage.get(scientSourceTagKey(entry.tag)) ?? 0;
+                return (
+                  <MenuCheckboxItem
+                    key={scientSourceTagKey(entry.tag)}
+                    checked={covered === count}
+                    onCheckedChange={() =>
+                      void organize.bulk(
+                        covered === count
+                          ? { sourceIds, removeTags: [entry.tag] }
+                          : { sourceIds, addTags: [entry.tag] },
+                        "Tags were not changed",
+                      )
+                    }
+                  >
+                    <span className="min-w-0 truncate">{entry.tag}</span>
+                  </MenuCheckboxItem>
+                );
+              })}
+              {tags.length > 0 ? <MenuSeparator /> : null}
+              <MenuItem onClick={addTag}>New tag…</MenuItem>
+            </MenuPopup>
+          </Menu>
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />
+              }
+            >
+              <FolderIcon />
+              Collection
+            </MenuTrigger>
+            <MenuPopup align="end" side="bottom" className="min-w-48">
+              {orderedCollections(organize.organization.collections).map(
+                ({ collection, label }) => {
+                  const members = new Set(collection.sourceIds);
+                  const inAll = sourceIds.every((sourceId) => members.has(sourceId));
+                  return (
+                    <MenuCheckboxItem
+                      key={collection.collectionId}
+                      checked={inAll}
+                      onCheckedChange={() =>
+                        void organize.bulk(
+                          inAll
+                            ? { sourceIds, removeFromCollectionIds: [collection.collectionId] }
+                            : { sourceIds, addToCollectionIds: [collection.collectionId] },
+                          "Collection was not changed",
+                        )
+                      }
+                    >
+                      <span className="min-w-0 truncate">{label}</span>
+                    </MenuCheckboxItem>
+                  );
+                },
+              )}
+              {organize.organization.collections.length > 0 ? <MenuSeparator /> : null}
+              <MenuItem onClick={newCollection}>New collection…</MenuItem>
+            </MenuPopup>
+          </Menu>
+          <Menu>
+            <MenuTrigger
+              render={
+                <Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />
+              }
+            >
+              <ShapesIcon />
+              Type
+            </MenuTrigger>
+            <MenuPopup align="end" side="bottom">
+              {BULK_TYPES.map((type) => (
+                <MenuItem
+                  key={type}
+                  onClick={() => void organize.bulk({ sourceIds, type }, "Type was not changed")}
+                >
+                  {SCIENT_SOURCE_TYPE_LABELS[type]}
+                </MenuItem>
+              ))}
+            </MenuPopup>
+          </Menu>
+          {library?.onSetReadingState ? (
+            <Menu>
+              <MenuTrigger
+                render={
+                  <Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />
+                }
+              >
+                <BookmarkCheckIcon />
+                {LIBRARY_LABELS.readingMenu}
+              </MenuTrigger>
+              <MenuPopup align="end" side="bottom">
+                {READING_ACTIONS.map((action) => (
+                  <MenuItem
+                    key={action.label}
+                    onClick={() => {
+                      const onSet = library.onSetReadingState;
+                      if (onSet) runOnSelection(() => onSet(sourceIds, action.change), true);
+                    }}
+                  >
+                    {action.label}
+                  </MenuItem>
+                ))}
+              </MenuPopup>
+            </Menu>
+          ) : null}
+          {library?.listed === "library" ? (
+            <ScientTooltip content={LIBRARY_LABELS.addToProject}>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={`${LIBRARY_LABELS.addToProject}: ${count} selected`}
+                disabled={busy || notInProject.length === 0}
+                onClick={() => runOnSelection(() => library.onAddToProject(notInProject))}
+              >
+                <FolderPlus />
+              </Button>
+            </ScientTooltip>
+          ) : null}
+          {library?.listed === "project" ? (
+            <ScientTooltip content={LIBRARY_LABELS.removeFromProject}>
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={`${LIBRARY_LABELS.removeFromProject}: ${count} selected`}
+                disabled={busy || count === 0}
                 onClick={() => {
-                  const onSet = library.onSetReadingState;
-                  if (onSet) runOnSelection(() => onSet(sourceIds, action.change), true);
+                  setRemoving(true);
+                  void library.onRemoveFromProject(selected).then((ran) => {
+                    setRemoving(false);
+                    if (ran) organize.clearSelection();
+                  });
                 }}
               >
-                {action.label}
-              </MenuItem>
-            ))}
-          </MenuPopup>
-        </Menu>
-      ) : null}
-      {library?.listed === "library" ? (
-        <ScientTooltip content={LIBRARY_LABELS.addToProject}>
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            aria-label={`${LIBRARY_LABELS.addToProject}: ${count} selected`}
-            disabled={busy || notInProject.length === 0}
-            onClick={() => runOnSelection(() => library.onAddToProject(notInProject))}
-          >
-            <FolderPlus />
-          </Button>
-        </ScientTooltip>
-      ) : null}
-      {library?.listed === "project" ? (
-        <ScientTooltip content={LIBRARY_LABELS.removeFromProject}>
-          <Button
-            type="button"
-            size="icon-xs"
-            variant="ghost"
-            aria-label={`${LIBRARY_LABELS.removeFromProject}: ${count} selected`}
-            disabled={busy || count === 0}
-            onClick={() => {
-              setRemoving(true);
-              void library.onRemoveFromProject(selected).then((ran) => {
-                setRemoving(false);
-                if (ran) organize.clearSelection();
-              });
-            }}
-          >
-            <FolderMinus />
-          </Button>
-        </ScientTooltip>
-      ) : (
+                <FolderMinus />
+              </Button>
+            </ScientTooltip>
+          ) : (
+            <Button
+              type="button"
+              size="icon-xs"
+              variant="ghost-destructive"
+              aria-label={`Move ${count} selected sources to Trash`}
+              disabled={busy || count === 0}
+              onClick={() => runOnSelection(props.onRemove)}
+            >
+              <Trash2 />
+            </Button>
+          )}
+        </div>
         <Button
           type="button"
           size="icon-xs"
-          variant="ghost-destructive"
-          aria-label={`Move ${count} selected sources to Trash`}
-          disabled={busy || count === 0}
-          onClick={() => runOnSelection(props.onRemove)}
+          variant="ghost"
+          aria-label="Done selecting"
+          onClick={organize.clearSelection}
         >
-          <Trash2 />
+          <X />
         </Button>
-      )}
-      <Button
-        type="button"
-        size="icon-xs"
-        variant="ghost"
-        aria-label="Done selecting"
-        onClick={organize.clearSelection}
-      >
-        <X />
-      </Button>
+      </div>
+      {progress ? (
+        <div className="flex min-h-8 items-center gap-2 ps-6">
+          <span className="min-w-0 flex-1 text-muted-foreground tabular-nums">
+            {`${progress.kind === "changing" ? "Changing" : "Undoing"} ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} sources`}
+          </span>
+          {progress.kind === "changing" ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={progress.stopping}
+              onClick={organize.stopProgress}
+            >
+              {progress.stopping ? "Stopping…" : "Stop"}
+            </Button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
