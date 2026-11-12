@@ -428,9 +428,8 @@ Status layout entirely. The shelf therefore lives only in the Status layout, and
 the Sections view receives the complete inbox in normal order so the toggle can
 neither hide nor reorder a thread inside a section. The shelf setting still
 decodes to `false`, so the beta is opt-in. Separately, upstream's mobile update
-documentation was removed from user Help: `docs/internals/scient-mobile-release-hold.md`
-records that there is no supported Scient mobile app and prohibits presenting that
-channel as Scient distribution.
+documentation was removed from user Help; the mobile hold it recorded is now part of
+[Mobile release](docs/operations/mobile-release.md).
 
 The preceding qualified alignment is recorded in
 [the 2026-10-08 receipt](docs/internals/t3-upstream-sync-20261008-468ade3049.md) ([Scient PR #472](https://github.com/ScientFactory/scient-desktop/pull/472)).
@@ -1920,6 +1919,18 @@ merges must not restore `~/.t3` paths in these scripts. The
 Codex desktop handoff and its return addresses use Scient's registered
 `scient://` schemes, never `t3code://` or T3's hosted origin.
 
+T3's mobile workflows (`.github/workflows/mobile-*.yml`) keep their structure but
+run only when the owner sets repository variable `SCIENT_MOBILE_RELEASE=true`;
+the fork-preview and APK-mirror workflows need their own variables as well. They
+use GitHub-hosted runners with the Actions cache instead of Blacksmith sticky disks,
+take Scient's Expo project from `T3CODE_EAS_OWNER` and `T3CODE_EAS_PROJECT_ID`,
+and keep a development client as a run artifact because Scient has no shared
+native-client cache. Upstream refreshes must not restore the `pingdotgg/t3code`
+guards or Blacksmith labels. The hosted web build writes the phone app's
+`.well-known` link files (`infra/scient-web/well-known.mjs`): only `com.scientfactory.*`
+identifiers, with Android fingerprints from build-time variables. See
+[Mobile release](docs/operations/mobile-release.md).
+
 Native helpers ship as `scient-resource-monitor` (`.exe` on Windows),
 `scient-kde-snap-shot`, `scient-hyprland-snap-shot` and `scient-browser-secret`,
 because process lists such as Windows Task Manager show those names.
@@ -2070,6 +2081,10 @@ Scient owns the fix that keeps that fetch from starting Git's automatic maintena
 (`ScientCheckpointUpkeep.ts`, provided once in `server.ts`, requested from `GitVcsDriver.ts`).
 Detached maintenance escaped the app's process group, and on Git without the detached-lock fix
 (Git 6e95b07e5f, e.g. Apple Git 2.54) several ran on one repository at once.
+Checkpoint packing and upkeep share one pack-memory setting (one thread, a 256 MiB delta window).
+The server keeps a minute-by-minute memory record that outlives a crash
+(`scient/observability/ResourceRecord.ts`, `logs/resource-record.ndjson`, provided in `server.ts`
+beside the upkeep).
 
 Marked blocks in T3-owned files, to offer upstream and then drop:
 
@@ -2078,10 +2093,18 @@ Marked blocks in T3-owned files, to offer upstream and then drop:
   `GitVcsDriverCore.scient.test.ts`. Asked on pingdotgg/t3code#34042, which reworks these fetches.
 - `GitVcsDriverCore.ts`: branch change totals remember a failed untracked-file listing per folder
   and back off (1 min doubling to 30 min) until the untracked roots change, and keep the failure's
-  real reason. Tested in `GitVcsDriverCore.scient.test.ts`. Offered as pingdotgg/t3code#34460
-  (issue #34457).
+  real reason. Tested in `GitVcsDriverCore.scient.test.ts`. Merged in T3 as
+  pingdotgg/t3code#34460 (issue #34457). Follow-up in the same blocks: overlapping status reads
+  share one running listing, and the error keeps the listing's `GitCommandError` as `cause`;
+  offered as pingdotgg/t3code#34574.
+- `GitVcsDriverCore.ts` (`prepareCommitContext`): drafting a commit message stages into a
+  temporary object directory, reading the repository's own objects and every alternate it lists
+  directly, so a draft without a commit leaves no objects in the repository. Tested in
+  `GitVcsDriverCore.scient.test.ts`. Offered as pingdotgg/t3code#34595 (issue #34594).
 - `CodexAdapterV2.ts`: the app-server gets a 2 s force-kill deadline. Tested in
-  `CodexAdapterV2.scient.test.ts`. Offered as pingdotgg/t3code#34461 (issue #34458).
+  `CodexAdapterV2.scient.test.ts`, which waits for the stand-in's `ready` line before stopping it.
+  Merged in T3 as pingdotgg/t3code#34461 (issue #34458); the test's wait offered as
+  pingdotgg/t3code#34575.
 - `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): descendants that left the CLI's process group
   (its detached Bash tool shells and helpers) stop with it. While the server runs, the CLI's tree
   is sampled and stopped after the CLI exits (`@t3tools/shared/scientOwnedProcessTree`); if the

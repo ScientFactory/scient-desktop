@@ -9,9 +9,11 @@ import * as Context from "effect/Context";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 
 import * as ProcessRunner from "../processRunner.ts";
-import { checkpointCleanGitEnv } from "./ScientCheckpointCapture.ts";
+import { ResourceRecord } from "../scient/observability/ResourceRecord.ts";
+import { CHECKPOINT_PACK_MEMORY_CONFIG, checkpointCleanGitEnv } from "./ScientCheckpointCapture.ts";
 
 /** Wait this long after a repository's latest checkpoint, so a busy session runs upkeep once. */
 export const UPKEEP_QUIET_PERIOD = Duration.minutes(2);
@@ -53,20 +55,14 @@ export function parseUpkeepPolicy(input: {
   };
 }
 
-/**
- * Foreground maintenance with one pack thread and a bounded delta window: they reduce memory use,
- * they are not a hard ceiling.
- */
+/** Foreground maintenance with the checkpoint pack's memory settings. */
 export function upkeepGitArgs(gitCommonDir: string, policy: UpkeepPolicy): ReadonlyArray<string> {
   return [
     "-c",
     "maintenance.autoDetach=false",
     "-c",
     "gc.autoDetach=false",
-    "-c",
-    "pack.threads=1",
-    "-c",
-    "pack.windowMemory=256m",
+    ...CHECKPOINT_PACK_MEMORY_CONFIG,
     ...(policy.prunesTooSoon ? ["-c", `gc.pruneExpire=${SAFE_PRUNE_EXPIRE}`] : []),
     "--git-dir",
     gitCommonDir,
@@ -94,6 +90,7 @@ interface RepositoryState {
 
 export const make = Effect.gen(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
+  const record = yield* Effect.serviceOption(ResourceRecord);
   const repositories = new Map<string, RepositoryState>();
   const git = (args: ReadonlyArray<string>, cwd: string, timeout: Duration.Input) =>
     runner
@@ -144,9 +141,16 @@ export const make = Effect.gen(function* () {
       state.dueAt = (yield* Clock.currentTimeMillis) + Duration.toMillis(UPKEEP_MIN_INTERVAL);
       return;
     }
+    const startedAt = yield* Clock.currentTimeMillis;
     const outcome = yield* git(upkeepGitArgs(gitCommonDir, policy), gitCommonDir, UPKEEP_TIMEOUT);
     const now = yield* Clock.currentTimeMillis;
     const succeeded = outcome._tag === "Success" && outcome.success.code === 0;
+    if (Option.isSome(record)) {
+      yield* record.value.note("checkpoint-upkeep", {
+        durationMs: now - startedAt,
+        outcome: succeeded ? "done" : "failed",
+      });
+    }
     state.dueAt = now + Duration.toMillis(succeeded ? UPKEEP_MIN_INTERVAL : UPKEEP_FAILURE_BACKOFF);
     if (!succeeded) {
       yield* Effect.logWarning("checkpoint repository upkeep failed", {

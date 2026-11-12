@@ -1,7 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { EnvironmentId } from "@t3tools/contracts";
-import { providerClients } from "@t3tools/client-runtime/provider-clients";
+// SCIENT-FORK:START — Scient provider names
+import { providerClients } from "@t3tools/client-runtime/scient-provider-clients";
+// SCIENT-FORK:END
 import { normalizeProviderAccentColor } from "@t3tools/client-runtime/state/provider-instance-display";
 import {
   collectLimitAccounts,

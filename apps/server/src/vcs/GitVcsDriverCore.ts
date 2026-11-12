@@ -1669,6 +1669,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       readonly count: number;
       readonly retryAt: number;
       readonly detail: string;
+      readonly cause: GitCommandError | undefined;
     }
   >();
   // SCIENT-FORK:END
@@ -2570,7 +2571,43 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             prefix: "t3code-commit-index-",
           });
           const tempIndexPath = path.join(directory, "index");
-          const env = { GIT_INDEX_FILE: tempIndexPath } satisfies NodeJS.ProcessEnv;
+          // SCIENT-FORK:START — what preparation stages goes to a temporary object directory, read
+          // beside the repository's own, so a message drafted without a commit leaves nothing behind.
+          const objectsValue = yield* runGitStdout(
+            "GitVcsDriver.prepareCommitContext.objectsPath",
+            cwd,
+            ["rev-parse", "--git-path", "objects"],
+          );
+          // Every object directory the repository reads, as Git resolved it (its own alternates,
+          // nested ones and the environment's), listed directly: one more level of nesting could
+          // pass Git's alternate depth limit.
+          const objectDirectories = yield* runGitStdout(
+            "GitVcsDriver.prepareCommitContext.alternates",
+            cwd,
+            ["count-objects", "-v"],
+          );
+          // Git prints an entry C-quoted when it needs quoting; quote the rest the same way, so a
+          // path holding the list separator stays one entry (Git 2.11.1+).
+          const quoted = (entry: string) =>
+            entry.startsWith('"') ? entry : `"${entry.replace(/[\\"]/g, "\\$&")}"`;
+          const alternates = [
+            path.resolve(cwd, objectsValue.trim()),
+            ...objectDirectories
+              .split("\n")
+              .flatMap((line) =>
+                line.startsWith("alternate: ") ? [line.slice("alternate: ".length)] : [],
+              ),
+          ];
+          const tempObjectsPath = path.join(directory, "objects");
+          yield* fileSystem.makeDirectory(tempObjectsPath);
+          const env = {
+            GIT_INDEX_FILE: tempIndexPath,
+            GIT_OBJECT_DIRECTORY: tempObjectsPath,
+            GIT_ALTERNATE_OBJECT_DIRECTORIES: alternates
+              .map(quoted)
+              .join(hostPlatform === "win32" ? ";" : ":"),
+          } satisfies NodeJS.ProcessEnv;
+          // SCIENT-FORK:END
           const config = [
             "-c",
             "core.splitIndex=false",
@@ -3199,21 +3236,34 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
   });
 
   // SCIENT-FORK:START — branch totals stop rescanning untracked files after a failed scan.
+  // Overlapping reads of the same paths share one listing instead of each walking the tree; the
+  // result is never kept, so a later read lists again.
+  const untrackedListings = yield* Cache.makeWith(
+    (key: string) => {
+      const [cwd = "", ...pathArgs] = key.split("\0");
+      return executeGit(
+        "GitVcsDriver.review.listUntracked",
+        cwd,
+        ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathArgs],
+        { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
+      );
+    },
+    { capacity: STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY, timeToLive: () => Duration.zero },
+  );
+
   // `unavailable` says why the untracked files could not be indexed.
   const prepareUntrackedReviewIndexOrReason = Effect.fn("prepareUntrackedReviewIndex")(function* (
     cwd: string,
     pathArgs: ReadonlyArray<string>,
     onlyPath?: string,
   ) {
-    const untracked = yield* executeGit(
-      "GitVcsDriver.review.listUntracked",
-      cwd,
-      ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathArgs],
-      { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
-    ).pipe(
+    const untracked = yield* Cache.get(untrackedListings, [cwd, ...pathArgs].join("\0")).pipe(
       Effect.catchTags({
         GitCommandError: (error) =>
-          Effect.succeed({ unavailable: `Could not list untracked files: ${error.detail}` }),
+          Effect.succeed({
+            unavailable: `Could not list untracked files: ${error.detail}`,
+            cause: error,
+          }),
       }),
     );
     if ("unavailable" in untracked) return untracked;
@@ -3338,6 +3388,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         command: "git ls-files",
         cwd,
         detail: remembered.detail,
+        ...(remembered.cause === undefined ? {} : { cause: remembered.cause }),
       });
     }
     // Empty status can mean untracked files are hidden; retain the full scan.
@@ -3353,6 +3404,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           (yield* Clock.currentTimeMillis) +
           Math.min(UNTRACKED_TOTALS_RETRY_MIN_MS * 2 ** (count - 1), UNTRACKED_TOTALS_RETRY_MAX_MS),
         detail: untracked.unavailable,
+        cause: "cause" in untracked ? untracked.cause : undefined,
       });
       if (untrackedTotalsFailures.size > STATUS_UPSTREAM_REFRESH_CACHE_CAPACITY) {
         const oldestKey = untrackedTotalsFailures.keys().next().value;
@@ -3363,6 +3415,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         command: "git ls-files",
         cwd,
         detail: untracked.unavailable,
+        ...("cause" in untracked ? { cause: untracked.cause } : {}),
       });
     }
     untrackedTotalsFailures.delete(cwd);

@@ -2,8 +2,11 @@
 // the update; the android-build job adds the client's install link a few minutes later. Each
 // run merges what it knows into the state kept in the comment's first line.
 const MARKER = "mobile-preview-android";
-const PROJECT_ID = "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
-const APP_SCHEME = "t3-code";
+// SCIENT-FORK:START mobile-release-gate
+// The preview workflows always set Scient's Expo project; T3's values remain for the upstream test.
+const PROJECT_ID = process.env.T3CODE_EAS_PROJECT_ID || "d763fcb8-d37c-41ea-a773-b54a0ab4a454";
+const APP_SCHEME = process.env.T3CODE_EAS_SLUG || "t3-code";
+// SCIENT-FORK:END mobile-release-gate
 
 function readState(body) {
   const match = new RegExp(`^<!-- ${MARKER} (\\{.*\\}) -->`).exec(body ?? "");

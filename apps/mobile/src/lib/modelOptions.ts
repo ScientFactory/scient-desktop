@@ -22,6 +22,12 @@ import {
   getProviderOptionDescriptors,
 } from "@t3tools/shared/model";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+// SCIENT-FORK:START — Scient provider names and order
+import {
+  orderProvidersForDisplay,
+  scientProviderLabel,
+} from "@t3tools/client-runtime/scient-provider-clients";
+// SCIENT-FORK:END
 
 export type ModelOption = {
   readonly key: string;
@@ -69,6 +75,11 @@ function providerDisplayLabel(provider: {
   if (provider.driver === "codex") return "Codex";
   if (provider.driver === "claudeAgent") return "Claude";
   if (provider.driver === "pi") return "Pi";
+  // SCIENT-FORK:START — Scient provider names and order
+  const scientLabel =
+    provider.instanceId === provider.driver ? scientProviderLabel(provider.driver) : undefined;
+  if (scientLabel) return scientLabel;
+  // SCIENT-FORK:END
   return provider.instanceId;
 }
 
@@ -336,7 +347,9 @@ export function buildModelOptions(
     };
   };
 
-  for (const provider of config?.providers ?? []) {
+  // SCIENT-FORK:START — Scient provider names and order
+  for (const provider of orderProvidersForDisplay(config?.providers ?? [])) {
+    // SCIENT-FORK:END
     if (
       !matchesLockedProvider(provider) ||
       isDriverDisallowed(config, provider.driver) ||

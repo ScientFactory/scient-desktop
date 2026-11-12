@@ -19,6 +19,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { AppText as Text } from "../../components/ui/AppText";
 import { ProviderIcon } from "../../components/ProviderIcon";
+// SCIENT-FORK:START — Scient provider names and order
+import {
+  orderProvidersForDisplay,
+  scientProviderLabel,
+} from "@t3tools/client-runtime/scient-provider-clients";
+// SCIENT-FORK:END
 import { ScreenScrollView } from "../../components/ui/ScreenScrollView";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { environmentPresentations } from "../../state/presentation";
@@ -327,7 +333,9 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                       });
                     }}
                   />
-                  {config.providers
+                  {/* SCIENT-FORK:START — Scient provider names and order */}
+                  {orderProvidersForDisplay(config.providers)
+                    /* SCIENT-FORK:END */
                     .filter((provider) => provider.enabled)
                     .map((provider) => (
                       <View key={provider.instanceId}>
@@ -339,7 +347,11 @@ function EnvironmentDetail({ environmentId }: { readonly environmentId: Environm
                               size={18}
                             />
                             <Text className="min-w-0 flex-1 text-base font-t3-medium text-foreground">
-                              {provider.displayName ?? provider.driver}
+                              {/* SCIENT-FORK:START — Scient provider names and order */}
+                              {provider.displayName ??
+                                scientProviderLabel(provider.driver) ??
+                                provider.driver}
+                              {/* SCIENT-FORK:END */}
                             </Text>
                           </View>
                           <Text className="text-sm text-foreground-muted">
