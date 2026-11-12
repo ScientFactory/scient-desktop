@@ -25,7 +25,11 @@ import {
   updateScientSourceNote,
 } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { ScientSourceMetadataUpdateResult, ScientSourceNoteUpdateResult } from "@t3tools/contracts";
+import {
+  ScientSourceMetadataUpdateResult,
+  ScientSourceNoteUpdateResult,
+  ScientSourcesDuplicatesResult,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
@@ -101,6 +105,7 @@ const storeFor = (fixture: Fixture, access: ScientSourcesAccess, root = fixture.
 // What a client receives: the HTTP contract keeps only the fields it names.
 const encodeEditAnswer = Schema.encodeSync(ScientSourceMetadataUpdateResult);
 const encodeNoteAnswer = Schema.encodeSync(ScientSourceNoteUpdateResult);
+const encodeDuplicates = Schema.encodeSync(ScientSourcesDuplicatesResult);
 
 async function libraryRecord(
   fixture: Fixture,
@@ -778,6 +783,7 @@ describe("Library routes on the library backend", () => {
             title: "Shock trial",
             publisher: "North",
             volume: "12",
+            identifiers: [{ scheme: "pmid", value: "4412" }],
           });
           const two = await libraryRecord(fixture, "pair2", {
             title: "Shock trial",
@@ -842,12 +848,14 @@ describe("Library routes on the library backend", () => {
             mergedTitle: "Shock trial",
             merged: { sourceId: first.sourceId, title: "Shock trial" },
             keptDifferent: ["publisher"],
-            // The kept one's own value, and the other's, also where the kept one had none.
-            differences: [
-              { field: "publisher", kept: "South", other: "North" },
-              { field: "volume", kept: null, other: "12" },
-            ],
           },
+        ]);
+        // The kept one's own value, and the other's, also where the kept one had none.
+        // Identifiers are named without values: the merge file records only what it added.
+        expect(encodeDuplicates(afterMerge).merges[0]!.differences).toEqual([
+          { field: "publisher", kept: "South", other: "North" },
+          { field: "volume", kept: null, other: "12" },
+          { field: "identifiers" },
         ]);
         yield* Effect.promise(() =>
           organizeLibrarySources(store, {

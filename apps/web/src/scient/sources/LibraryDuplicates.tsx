@@ -20,6 +20,7 @@ import {
   differsLabel,
   fieldValue,
   keptDifferentLabel,
+  hasMergeValues,
   mergeDifferenceLabel,
   mergedDateLabel,
   mergedRowLabel,
@@ -445,6 +446,7 @@ function MergedRow(props: {
         </p>
         {merge.differences
           // The first line already names both titles while the kept source is here.
+          .filter(hasMergeValues)
           .filter((difference) => difference.field !== "title" || !merge.kept)
           .map((difference) => (
             <p key={difference.field} className="mt-0.5 break-words text-muted-foreground">

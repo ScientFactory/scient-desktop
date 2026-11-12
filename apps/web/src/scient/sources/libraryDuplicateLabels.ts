@@ -1,4 +1,8 @@
-import type { ScientSourcesDuplicateSource, ScientSourcesOrganizeResult } from "@t3tools/contracts";
+import type {
+  ScientSourcesDuplicateSource,
+  ScientSourcesDuplicatesResult,
+  ScientSourcesOrganizeResult,
+} from "@t3tools/contracts";
 
 /**
  * Words of the possible-duplicates screen. `libraryDuplicateLabels.test.ts` keeps the engine's
@@ -88,11 +92,12 @@ export function keptDifferentLabel(fields: ReadonlyArray<string>): string | null
     : `Where they differed, the kept one's ${fieldWords(fields)} stayed.`;
 }
 
-interface MergeDifference {
-  readonly field: string;
-  readonly kept: string | null;
-  readonly other: string | null;
-}
+type MergeDifference = ScientSourcesDuplicatesResult["merges"][number]["differences"][number];
+type MergeValues = Extract<MergeDifference, { readonly kept: unknown }>;
+
+/** A field the merge file holds both values of; identifiers and PDFs are only named. */
+export const hasMergeValues = (difference: MergeDifference): difference is MergeValues =>
+  "kept" in difference;
 
 /**
  * `kept` is null once the kept source was merged again or moved to the Trash. Two copies with one
@@ -112,7 +117,7 @@ export function mergedRowLabel(merge: {
 }
 
 /** One field the two differed in, with both values: "Volume: none (kept), 12 (merged away)". */
-export function mergeDifferenceLabel(difference: MergeDifference): string {
+export function mergeDifferenceLabel(difference: MergeValues): string {
   const word = fieldWords([difference.field]);
   const value = (text: string | null) => text ?? DUPLICATE_LABELS.none;
   return `${word.charAt(0).toLocaleUpperCase()}${word.slice(1)}: ${value(difference.kept)} (kept), ${value(difference.other)} (merged away)`;
