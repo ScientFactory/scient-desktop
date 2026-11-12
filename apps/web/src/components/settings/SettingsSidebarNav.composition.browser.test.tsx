@@ -80,13 +80,26 @@ it("moves Tab through every settings section", async () => {
     (to) => SETTINGS_SECTION_LABELS[to],
   );
   const tabbed: string[] = [];
-  for (let step = 0; step < sections.length; step += 1) {
+  // SCIENT-FORK:START — the active section's page outline (Scient) sits between two sections;
+  // Tab passes through it, and stops counting once focus leaves the section list.
+  const buttons = [...document.querySelectorAll("[data-settings-section]")];
+  let list = buttons[0]?.parentElement ?? null;
+  while (list && !buttons.every((button) => list?.contains(button))) list = list.parentElement;
+  for (let step = 0; step < sections.length * 4 && tabbed.length < buttons.length; step += 1) {
     await userEvent.tab();
-    const section = document.activeElement?.closest("[data-settings-section]");
-    if (!section) break;
-    tabbed.push(section.textContent ?? "");
+    const focused = document.activeElement;
+    if (!focused || !list?.contains(focused)) break;
+    const section = focused.closest("[data-settings-section]");
+    if (section && section === focused) tabbed.push(section.textContent ?? "");
   }
-  expect(tabbed).toEqual(sections);
+  // Scient hides Voice outside the desktop app and Accounts where the server lacks it.
+  const shown = buttons.map((button) => button.textContent ?? "");
+  expect(sections.filter((label) => !shown.includes(label))).toEqual([
+    "Voice",
+    "Accounts & secrets",
+  ]);
+  expect(tabbed).toEqual(shown);
+  // SCIENT-FORK:END
 });
 
 it.each([1280, 390])("names each group by a heading outside it at %ipx wide", async (width) => {

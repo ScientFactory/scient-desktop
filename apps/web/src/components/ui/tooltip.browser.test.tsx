@@ -11,16 +11,17 @@ it.each([
 ])("scrolling with a $focus-focused hovered trigger keeps it open: $keptOpen", async (c) => {
   const onScroll = vi.fn();
   await using screen = await render(
+    // SCIENT-FORK: Scient's Tailwind skips test files, so the sizes are inline.
     <TooltipScrollDismissArea
       data-testid="timeline"
       onScrollCapture={onScroll}
-      className="h-32 overflow-y-auto"
+      style={{ height: 128, overflowY: "auto" }}
     >
       <Tooltip>
         <TooltipTrigger>Timeline action</TooltipTrigger>
         <TooltipPopup>Description</TooltipPopup>
       </Tooltip>
-      <div className="h-96" />
+      <div style={{ height: 384 }} />
     </TooltipScrollDismissArea>,
   );
   const trigger = screen.getByRole("button", { name: "Timeline action" });
