@@ -8,8 +8,11 @@ export type ProjectSourcesChange = Extract<
   { action: "pin" | "unpin" }
 >;
 
-/** The most changes one `change-pins` request takes. */
-const PIN_CHANGES_PER_REQUEST = 20_000;
+/**
+ * The most changes the panel sends in one `change-pins` request (the route takes 20,000):
+ * 19,000 in one took 36 s on a Windows runner, past the 15 s organize timeout (scale gate).
+ */
+const PIN_CHANGES_PER_REQUEST = 2_000;
 
 /**
  * Adds sources to this project or removes them from it in one request; the Library keeps them.
