@@ -1246,6 +1246,17 @@ skill in 0 of 3 runs, and with the sentence in 3 of 3
 workspace). It costs 76 bytes (`scientAwarenessAllCapabilitiesBytes` 5,239 to
 5,315).
 
+The `references` skill keeps a check-only request out of the project:
+`scient_paper_get` saves a PDF and a queue file there, so the skill forbids it
+for a check and reports a paper without a Library PDF as not read. It also asks
+for every page as "PDF page N" (or "printed page N"). Before this, one of the
+three plain check-only runs fetched four papers into the project and no reply
+labelled its pages; after it, six runs fetched nothing, the project stayed
+unchanged, and the last three labelled every page
+(`reviews/sources-roadmap-20261110/support-check/followup-2` in the workspace).
+The skill text lives in both `built-ins/references/SKILL.md` and its embedded
+copy in `BuiltInSkillSources.ts`; a test keeps them identical.
+
 The Library menu's **Ask the Library** puts the same rules, as the tested
 sentence (`ASK_LIBRARY_PROMPT` in `apps/web/src/scient/sources/askLibrary.ts`),
 at the start of the open thread's draft through the composer handle's
