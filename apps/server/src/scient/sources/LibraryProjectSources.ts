@@ -233,8 +233,11 @@ export async function alsoPinnedIn(
  * failed earlier (or before a restart) is caught up by the next change.
  */
 const snapshotsCurrent = new Set<string>();
-/** Failed refreshes per project, so a refresh running beside a failed one cannot mark it current. */
-const snapshotFailures = new Map<string, number>();
+/**
+ * Failed refreshes in this process, of any project, so a refresh running beside a failed one
+ * cannot mark its project current. Counting all projects costs at most an extra full refresh.
+ */
+let snapshotFailures = 0;
 
 /**
  * After library records change, refreshes this project's pin snapshots, the snapshots of its
@@ -248,18 +251,19 @@ export async function refreshProjectAfterLibraryChange(
 ): Promise<void> {
   if (store.access !== "write" || sourceIds.length === 0) return;
   // The project's real path, as the snapshot locks use: one project reached through a link is
-  // still one project here.
-  const root = await NodeFSP.realpath(store.root).catch(() => NodePath.resolve(store.root));
-  const failuresBefore = snapshotFailures.get(root) ?? 0;
-  const changed = snapshotsCurrent.has(root) ? new Set(sourceIds) : undefined;
+  // still one project here. Without one (the folder is gone) no project counts as current.
+  const root = await NodeFSP.realpath(store.root).catch(() => null);
+  const failuresBefore = snapshotFailures;
+  const changed = root !== null && snapshotsCurrent.has(root) ? new Set(sourceIds) : undefined;
   try {
     await refreshProjectSnapshots(store, changed);
   } catch (cause) {
-    snapshotsCurrent.delete(root);
-    snapshotFailures.set(root, (snapshotFailures.get(root) ?? 0) + 1);
+    if (root === null) snapshotsCurrent.clear();
+    else snapshotsCurrent.delete(root);
+    snapshotFailures += 1;
     throw cause;
   }
-  if ((snapshotFailures.get(root) ?? 0) === failuresBefore) snapshotsCurrent.add(root);
+  if (root !== null && snapshotFailures === failuresBefore) snapshotsCurrent.add(root);
   await syncProjectBibliography(store, actor);
 }
 

@@ -412,6 +412,17 @@ describe("Library routes on the library backend", () => {
           await NodeFSP.writeFile(pinsFile, kept);
           await retitle(edited.revision + 2, "Lactate clearance, third");
           expect(await titleOf(stale.sourceId)).toBe("Vasopressin timing");
+
+          // The same when the project is gone for a moment, so the link has no real path.
+          await makeStale();
+          const away = `${fixture.root}-away`;
+          await NodeFSP.rename(fixture.root, away);
+          await expect(
+            refreshProjectAfterLibraryChange(viaLink, [edited.sourceId], "user"),
+          ).rejects.toThrow();
+          await NodeFSP.rename(away, fixture.root);
+          await retitle(edited.revision + 3, "Lactate clearance, fourth");
+          expect(await titleOf(stale.sourceId)).toBe("Vasopressin timing");
         });
       }),
   );
