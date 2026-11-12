@@ -1407,6 +1407,8 @@ async function scanScientSourceRecords(paths: SourceStorePaths): Promise<RecordS
  */
 const RACY_TIMESTAMP_NS = 2_000_000_000n;
 
+const RECORD_SCAN_CONCURRENCY = 32;
+
 /** Editing a file in place leaves its folder's timestamps alone, so the folder alone is trusted briefly. */
 const FOLDER_TRUST_MS = 30_000;
 
@@ -1461,37 +1463,42 @@ async function scanLibraryRecords(paths: SourceStorePaths): Promise<RecordScan> 
   }
 
   const entries = await NodeFSP.readdir(paths.records, { withFileTypes: true });
-  const files = new Map<string, IndexedRecordFile>();
-  for (const entry of entries.toSorted((left, right) => left.name.localeCompare(right.name))) {
-    if (!entry.name.endsWith(".json")) continue;
-    const filePath = NodePath.join(paths.records, entry.name);
+  const names = entries
+    .map((entry) => entry.name)
+    .filter((name) => name.endsWith(".json"))
+    .toSorted((left, right) => left.localeCompare(right));
+  const indexFile = async (name: string): Promise<IndexedRecordFile | null> => {
+    const filePath = NodePath.join(paths.records, name);
     const stats = await NodeFSP.lstat(filePath, { bigint: true }).catch((error: unknown) => {
       if (isNodeError(error, "ENOENT")) return null;
       throw error;
     });
-    if (!stats) continue;
+    if (!stats) return null;
     if (!stats.isFile()) {
-      files.set(entry.name, {
+      return {
         stamp: "unsafe",
         settled: false,
         result: {
           issue: { path: projectRelativePath(paths, filePath), message: UNSAFE_ENTRY_MESSAGE },
         },
-      });
-      continue;
+      };
     }
     const stamp = [stats.ino, stats.size, stats.mtimeNs, stats.ctimeNs].join(":");
-    const previous = cached?.files.get(entry.name);
-    files.set(
-      entry.name,
-      previous?.settled && previous.stamp === stamp
-        ? previous
-        : {
-            stamp,
-            settled: isSettled(stats, scanStartedNs),
-            result: await readRecordFile(paths, entry.name),
-          },
-    );
+    const previous = cached?.files.get(name);
+    return previous?.settled && previous.stamp === stamp
+      ? previous
+      : {
+          stamp,
+          settled: isSettled(stats, scanStartedNs),
+          result: await readRecordFile(paths, name),
+        };
+  };
+  const files = new Map<string, IndexedRecordFile>();
+  // One file at a time waits on each stat and read in turn: 20,000 serial stats take 0.6 s.
+  for (let start = 0; start < names.length; start += RECORD_SCAN_CONCURRENCY) {
+    const part = names.slice(start, start + RECORD_SCAN_CONCURRENCY);
+    const indexed = await Promise.all(part.map(indexFile));
+    for (const [offset, file] of indexed.entries()) if (file) files.set(part[offset]!, file);
   }
   const index: LibraryRecordIndex = {
     ...settleScan([...files.values()].map((file) => file.result)),
