@@ -1110,7 +1110,50 @@ one-request restore as well: Undo restores each source by its own request,
 and each restore scans the store for a duplicate.
 
 `pnpm run measure:bulk-edits` in `packages/scient-sources` times a bulk tag,
-its Undo, and pinning and unpinning, on a synthetic store.
+its Undo, and pinning and unpinning, on a synthetic store; `--part 100` sends
+the edit in parts as the panel does and undoes them newest first.
+
+#### Bulk edits above one request (F6b)
+
+One bulk edit or collection change takes at most
+`SCIENT_SOURCES_BULK_SOURCE_LIMIT` (500) sources, the cap the agent tool shares.
+A larger selection in the bar is sent in parts by `apps/web` `bulkParts.ts`;
+500 or fewer is still one request with the same toasts.
+
+- **Tag, type and collection edits** go in parts of 100, one after another. A
+  part took at most 2.4 s at 20,000 records on a quiet M5 Pro and its Undo
+  1.3 s (2.4 s through the library route, which refreshes this project's pin
+  snapshots after an Undo or a type change), so each stays under a third of
+  the 15 s organize timeout at twice that on a loaded Mac. The bulk route's
+  own client timeout is 120 s. Each part is its own bulk edit with its own
+  receipt, so the store keeps the latest 250 receipts, enough for
+  a 20,000-source edit and 50 others.
+- **While it runs** the bar's count reads "Changing 400 of 1,200 sources" with
+  **Stop**, which takes effect once the part in flight is answered. Undo of a
+  multi-part edit shows "Undoing … sources" the same way, without Stop.
+- **At the end** one toast gives the sum of `undo.sourceCount` over the parts
+  and one Undo that undoes the parts newest first; the per-source problems
+  (`bulkResultSummary`) and Undo's failures and conflicts are summed with the
+  one-request words. **Try again** after an Undo repeats only the parts with a
+  failed entry or no answer; a part already undone answers that it was.
+- **A part that fails** ends the run: the toast says how many changed and how
+  many other sources were not. **A part with no answer** (`isLostAnswerError`)
+  ends it too and is counted as neither: the toast says its outcome is
+  unknown. Its receipt exists on the server but the client has no batch ID for
+  it and no route lists receipts, so the one Undo does not cover it. The
+  overview is read once at the end in every case, and the selection stays.
+- **New collection from a selection** over 500 sends `create-collection` with
+  the first 500, then `add-to-collection` in parts of 500 (about 0.45 s each
+  at 20,000 records). It has no Undo, as before; a run that does not finish
+  says which sources were not added.
+
+The other selection-sized requests: reading state and export take up to 20,000
+IDs in one request and are refused above that, with an error and nothing
+reported done; `change-pins` goes in requests of 20,000 changes (19,000 pins
+took 7.0 s through the route on a quiet Mac, near the 15 s timeout when
+loaded); Trash and its Undo go one source per request; Zotero send and refresh
+from the panel name one source or none; Empty Trash names none; a systematic
+review adds a selection in parts of 500.
 
 ## Source truth and provenance
 
@@ -1795,7 +1838,7 @@ an agent.
   `updateScientSourceMetadata` would give it alone. Bulk removal is the trash
   removal per source, with one Undo for the batch in the panel.
 - A bulk edit keeps a receipt in
-  `.scient/sources/bulk-edits/<batch-id>.json` (latest 50 kept): each updated
+  `.scient/sources/bulk-edits/<batch-id>.json` (latest 250 kept): each updated
   source's type, custom type and tags before and after with the revision it
   replaced, and each collection's exact added and removed members with the
   `updatedAt` it wrote. The receipt is published before anything changes, so

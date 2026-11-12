@@ -145,6 +145,7 @@ export function SourcesBulkBar(props: {
   readonly library?: SourcesBulkLibrary;
 }) {
   const { organize, library } = props;
+  const { progress } = organize;
   const [removing, setRemoving] = useState(false);
   const selected = props.records.filter((record) => organize.selection.has(record.sourceId));
   const sourceIds = selected.map((record) => record.sourceId);
@@ -200,8 +201,21 @@ export function SourcesBulkBar(props: {
         }
       />
       <span className="ms-2 min-w-0 flex-1 truncate text-muted-foreground tabular-nums">
-        {count} selected
+        {progress
+          ? `${progress.kind === "changing" ? "Changing" : "Undoing"} ${progress.done.toLocaleString()} of ${progress.total.toLocaleString()} sources`
+          : `${count} selected`}
       </span>
+      {progress?.kind === "changing" ? (
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          disabled={progress.stopping}
+          onClick={organize.stopProgress}
+        >
+          {progress.stopping ? "Stopping…" : "Stop"}
+        </Button>
+      ) : null}
       <Menu>
         <MenuTrigger
           render={<Button type="button" size="xs" variant="ghost" disabled={busy || count === 0} />}

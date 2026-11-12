@@ -372,8 +372,11 @@ history and can be restored like any other edit. **Undo** in the message that
 appears reverses the whole change: each source gets back its type, the tags
 that were added or removed, and its collections. A change someone made to a
 source since then is kept, and the message says what was kept. If part of an
-Undo fails, the message says so and **Try again** finishes the rest. The latest
-50 bulk changes can be undone.
+Undo fails, the message says so and **Try again** finishes the rest. With more
+than 500 sources selected, the bar shows how far the change is and **Stop** ends
+it after the sources in progress; what changed by then stays changed, and one
+**Undo** reverses it. The latest 250 bulk changes can be undone; a change to more
+than 500 sources counts as one for every 100 of them.
 
 Collections and saved searches are kept in `.scient/sources/collections.json`
 with the rest of the project's Library; study designs and topics in

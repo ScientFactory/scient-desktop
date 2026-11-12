@@ -1455,7 +1455,7 @@ export function ScientSourcesPanel(props: {
           onDismiss={() => setReferenceFileImport(null)}
         />
       ) : null}
-      {sources.overview.records.length > 0 && organize.selection.size > 0 ? (
+      {sources.overview.records.length > 0 && (organize.selection.size > 0 || organize.progress) ? (
         <SourcesBulkBar
           organize={organize}
           records={sources.overview.records}
@@ -1568,7 +1568,9 @@ export function ScientSourcesPanel(props: {
           </Select>
         </div>
       ) : null}
-      {sources.overview.records.length > 0 && organize.selection.size === 0 ? (
+      {sources.overview.records.length > 0 &&
+      organize.selection.size === 0 &&
+      !organize.progress ? (
         <SourcesActiveFilters
           organize={organize}
           matchCount={filteredSourceRecords.length}

@@ -1,5 +1,6 @@
 import {
   EMPTY_SCIENT_SOURCES_ORGANIZATION,
+  SCIENT_SOURCES_BULK_SOURCE_LIMIT,
   scientSourceFilterIsEmpty,
   scientSourceTagKey,
   type ScientSourceFilter,
@@ -8,11 +9,22 @@ import {
   type ScientSourcesOrganizeAction,
 } from "@scientfactory/scient-sources";
 import type { EnvironmentId, ScientSourcesBulkResult } from "@t3tools/contracts";
-import { useState } from "react";
+import { useRef, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
+import {
+  bulkChangeParts,
+  bulkPartsAnnouncement,
+  collectionPartsAnnouncement,
+  runParts,
+  splitIntoParts,
+  sumBulkResults,
+  undoBulkParts,
+  undoPartsAnnouncement,
+  type BulkUndoPart,
+} from "./bulkParts";
 import { bulkUpdateScientSources, organizeScientSources } from "./client";
-import { scientSourcesErrorMessage } from "./errorMessage";
+import { isLostAnswerError, scientSourcesErrorMessage } from "./errorMessage";
 import type { ReadingStateFilter } from "./libraryLabels";
 import { useCanChangeLibrary } from "./sourcesCommands";
 
@@ -22,6 +34,14 @@ type SourcesListFilter = {
 };
 
 const message = (error: unknown) => scientSourcesErrorMessage(error, import.meta.env.DEV);
+
+/** A selection larger than one request, sent in parts; only changing parts can be stopped. */
+interface SourcesBulkProgress {
+  readonly kind: "changing" | "undoing";
+  readonly done: number;
+  readonly total: number;
+  readonly stopping: boolean;
+}
 
 function bulkResultSummary(result: ScientSourcesBulkResult): string | null {
   const failed = result.sources.filter((entry) => entry.outcome === "failed");
@@ -75,6 +95,14 @@ export function useSourcesOrganize(input: {
     selection: new Set<string>() as ReadonlySet<string>,
   });
   const [pending, setPending] = useState(false);
+  const [progress, setProgress] = useState<SourcesBulkProgress | null>(null);
+  const stopRequested = useRef(false);
+  const startProgress = (kind: SourcesBulkProgress["kind"], total: number) => {
+    stopRequested.current = false;
+    setProgress({ kind, done: 0, total, stopping: false });
+  };
+  const showDone = (done: number) =>
+    setProgress((current) => (current ? { ...current, done } : current));
   const current =
     state.context === context
       ? state
@@ -159,7 +187,154 @@ export function useSourcesOrganize(input: {
     });
   };
 
+  const undoInParts = async (parts: ReadonlyArray<BulkUndoPart>) => {
+    startProgress(
+      "undoing",
+      parts.reduce((sum, part) => sum + part.sourceCount, 0),
+    );
+    let undone = 0;
+    const outcome = await run(
+      () =>
+        undoBulkParts({
+          parts,
+          send: (batchId) =>
+            bulkUpdateScientSources(input.environmentId, {
+              root: input.root,
+              change: { undoBatchId: batchId },
+            }),
+          isLost: isLostAnswerError,
+          onPartDone: (part) => {
+            undone += part.sourceCount;
+            showDone(undone);
+          },
+        }),
+      "Changes were not undone",
+    );
+    setProgress(null);
+    if (!outcome) return;
+    const announcement = undoPartsAnnouncement(outcome, message);
+    if (!announcement) return;
+    const { retry } = outcome;
+    const id = toastManager.add({
+      ...announcement,
+      ...(retry.length > 0
+        ? {
+            actionProps: {
+              children: "Try again",
+              onClick: () => {
+                toastManager.close(id);
+                void undoInParts(retry);
+              },
+            },
+          }
+        : {}),
+    });
+  };
+
+  const bulkInParts = async (change: ScientSourcesBulkChange, failureTitle: string) => {
+    const parts = bulkChangeParts(change);
+    startProgress(
+      "changing",
+      parts.reduce((sum, part) => sum + part.sourceIds.length, 0),
+    );
+    const outcome = await run(
+      () =>
+        runParts({
+          parts: parts.map((part) => part.sourceIds),
+          send: (sourceIds) =>
+            bulkUpdateScientSources(input.environmentId, {
+              root: input.root,
+              change: { ...change, sourceIds },
+            }),
+          isLost: isLostAnswerError,
+          onProgress: showDone,
+          stopRequested: () => stopRequested.current,
+        }),
+      failureTitle,
+    );
+    setProgress(null);
+    if (!outcome) return null;
+    const sum = sumBulkResults(outcome.results);
+    const problem = bulkResultSummary(sum.result);
+    if (problem) toastManager.add({ type: "warning", title: failureTitle, description: problem });
+    const announcement = bulkPartsAnnouncement({
+      outcome,
+      changed: sum.changed,
+      failureTitle,
+      message,
+    });
+    if (announcement) {
+      const undo = sum.undo;
+      const id = toastManager.add({
+        ...announcement,
+        ...(undo.length > 0
+          ? {
+              actionProps: {
+                children: "Undo",
+                onClick: () => {
+                  toastManager.close(id);
+                  void undoInParts(undo);
+                },
+              },
+            }
+          : {}),
+      });
+    }
+    return outcome.answered === 0 && outcome.end.kind === "failed" ? null : sum.result;
+  };
+
+  const createCollectionInParts = async (
+    name: string,
+    sourceIds: ReadonlyArray<string>,
+    parentCollectionId?: string,
+  ) => {
+    const [first = [], ...rest] = splitIntoParts(
+      [...new Set(sourceIds)],
+      SCIENT_SOURCES_BULK_SOURCE_LIMIT,
+    );
+    const total = first.length + rest.reduce((sum, part) => sum + part.length, 0);
+    startProgress("changing", total);
+    const outcome = await run(async () => {
+      const created = await organizeScientSources(input.environmentId, {
+        root: input.root,
+        change: {
+          action: "create-collection",
+          name,
+          sourceIds: first,
+          ...(parentCollectionId ? { parentCollectionId } : {}),
+        },
+      });
+      const collectionId = created.collection?.collectionId;
+      if (!collectionId) return { created, filled: null };
+      showDone(first.length);
+      const filled = await runParts({
+        parts: rest,
+        send: (members) =>
+          organizeScientSources(input.environmentId, {
+            root: input.root,
+            change: { action: "add-to-collection", collectionId, sourceIds: members },
+          }),
+        isLost: isLostAnswerError,
+        onProgress: showDone,
+        stopRequested: () => stopRequested.current,
+        answeredBefore: first.length,
+        totalBefore: first.length,
+      });
+      return { created, filled };
+    }, "Collection was not created");
+    setProgress(null);
+    if (!outcome) return null;
+    const announcement = outcome.filled
+      ? collectionPartsAnnouncement({ outcome: outcome.filled, name, message })
+      : null;
+    if (announcement) toastManager.add(announcement);
+    return outcome.created.collection ?? null;
+  };
+
   const bulk = async (change: ScientSourcesBulkChange, failureTitle: string) => {
+    if (change.sourceIds.length > SCIENT_SOURCES_BULK_SOURCE_LIMIT) {
+      return bulkInParts(change, failureTitle);
+    }
     const result = await run(
       () => bulkUpdateScientSources(input.environmentId, { root: input.root, change }),
       failureTitle,
@@ -186,6 +361,13 @@ export function useSourcesOrganize(input: {
   return {
     organization,
     pending,
+    progress,
+    stopProgress: () => {
+      stopRequested.current = true;
+      setProgress((current) =>
+        current?.kind === "changing" ? { ...current, stopping: true } : current,
+      );
+    },
     canChange,
     filter: listFilter,
     fullFilter,
@@ -241,6 +423,9 @@ export function useSourcesOrganize(input: {
       sourceIds?: ReadonlyArray<string>,
       parentCollectionId?: string,
     ) => {
+      if (sourceIds && sourceIds.length > SCIENT_SOURCES_BULK_SOURCE_LIMIT) {
+        return createCollectionInParts(name, sourceIds, parentCollectionId);
+      }
       const result = await organize(
         {
           action: "create-collection",
