@@ -249,9 +249,14 @@ describe("MessagesTimeline work rows", () => {
     }
     const container = document.createElement("div");
     container.style.cssText = "height:600px;width:900px;display:flex;flex-direction:column";
+    // SCIENT-FORK: Scient holds a fresh thread at its end until its rows stop moving.
+    let positioned: string | null = null;
     await using screen = await render(
       <MessagesTimeline
         {...props}
+        onPositionedThreadKeyChange={(key) => {
+          positioned = key;
+        }}
         renderHtmlRender={() => <Preview />}
         timelineEntries={[
           {
@@ -272,6 +277,7 @@ describe("MessagesTimeline work rows", () => {
       expect(frame.clientHeight).toBe(1437);
       expect(viewport.scrollTop).toBeGreaterThan(0);
       expect(viewport.scrollHeight - viewport.clientHeight - viewport.scrollTop).toBeLessThan(2);
+      expect(positioned).not.toBeNull();
     });
     const top = frame.getBoundingClientRect().top;
     frame.focus();
@@ -888,6 +894,9 @@ describe("MessagesTimeline messages", () => {
     if (mode === "grouped-end") screen.container.style.height = "648px";
     await vi.waitFor(() => expect(props.listRef.current?.getScrollableNode()).toBeTruthy());
     const viewport = props.listRef.current!.getScrollableNode()!;
+    // SCIENT-FORK: Scient keeps a freshly opened thread at its end until the reader acts; a
+    // press stands for the reader's first action, so the scrolling below is not pulled back.
+    await act(() => viewport.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })));
     if (mode === "grouped-delayed") {
       routeThreadKey = `${routeThreadKey}-switched`;
       await screen.rerender(timeline());

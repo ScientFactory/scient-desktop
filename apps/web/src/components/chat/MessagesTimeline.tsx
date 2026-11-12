@@ -577,6 +577,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
   // SCIENT-FORK:START — the reader's own scrolling input, held until their movement has
   // stopped: a drag, an animated wheel notch or key scroll moves for several frames.
   const readerInputRef = useRef(false);
+  const readerInputCountRef = useRef(0);
   const scrollbarHeldRef = useRef(false);
   const lastBookkeepingScrollRef = useRef<number | null>(null);
   const stillFramesRef = useRef(0);
@@ -634,6 +635,8 @@ const ConversationTimeline = memo(function ConversationTimeline({
     entryId: string | undefined;
     contentKey: string | undefined;
     ready: boolean;
+    // SCIENT-FORK: the reader input count when the row opened; only later input cancels.
+    readerInputCount?: number;
   } | null>(null);
   const disclosureRevealFrameRef = useRef<number | null>(null);
 
@@ -700,8 +703,11 @@ const ConversationTimeline = memo(function ConversationTimeline({
         entryId: reveal.entryId,
         contentKey: reveal.contentKey,
         ready: false,
+        readerInputCount: readerInputCountRef.current, // SCIENT-FORK
       };
     }
+    list.cancelScroll();
+    list.anchorVisibleContent({ key: anchorKey });
   };
 
   // Turn and attempt folds reveal later rows rather than growing their own row.
@@ -1019,6 +1025,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
     scrollbarHeldRef,
     stillFramesRef,
     scheduleBookkeepingRef,
+    readerInputCountRef,
   });
   // SCIENT-FORK:END
   // Re-measure the minimap gutter when the chat column changes width without a viewport resize.
@@ -1296,8 +1303,9 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // then, keep checking every frame.
     const scrollNow = viewport?.scrollTop ?? null;
     if (readerInputRef.current) {
-      // The reader's own scrolling ends a pending expanded-row reveal.
-      disclosureRevealRef.current = null;
+      // The reader's own scrolling after the row opened ends its pending reveal.
+      if (disclosureRevealRef.current?.readerInputCount !== readerInputCountRef.current)
+        disclosureRevealRef.current = null;
       const still =
         !scrollbarHeldRef.current &&
         scrollNow !== null &&
@@ -1549,8 +1557,15 @@ const ConversationTimeline = memo(function ConversationTimeline({
     // SCIENT-FORK:START — Scient has no timeline viewport model, so the expanded-row reveal
     // listens to the list's size here and stops on the reader's own scrolling.
     let contentSizeFrame: number | null = null;
+    // As in T3, one reveal per laid-out data, the next frame after LegendList settles it.
+    let scheduledData: unknown = null;
     const stopListeningToContentSize = list?.getState().listen("totalSize", () => {
-      if (contentSizeFrame !== null) cancelAnimationFrame(contentSizeFrame);
+      const laidOutData = list.getState().data;
+      if (contentSizeFrame !== null) {
+        if (scheduledData === laidOutData) return;
+        cancelAnimationFrame(contentSizeFrame);
+      }
+      scheduledData = laidOutData;
       contentSizeFrame = requestAnimationFrame(() => {
         contentSizeFrame = null;
         revealExpandedDisclosure();
