@@ -307,7 +307,9 @@ or changed files are read again. Every Scient write replaces, creates or
 removes a record file by rename, which changes the folder. Timestamps within
 two seconds of the scan are not trusted, for volumes with coarse clocks. A
 record file edited in place by hand is seen once the folder changes or the
-server restarts.
+server restarts. A scan stats, and reads where needed, 32 files at a time and
+keeps them in file-name order; one at a time, 20,000 serial stats alone took
+0.6 s (scale gate, below).
 
 Measured once at 20,000 records (42.5 MiB of generated record files with
 abstracts, in a temporary folder; Apple M5 Pro, Node 24.19, under shared agent
@@ -378,7 +380,8 @@ sources in `<project>/.scient/library/pins.json`:
   so the same pins are the same bytes on every computer. Fields a newer
   Scient wrote at the file, pin or `work` level are kept on every rewrite,
   after the known fields in sorted order. Unknown fields inside creators and
-  identifiers are not kept. Writes go through the store's atomic write under a
+  identifiers are not kept. The file may be 64 MiB: 20,000 pins with long
+  author lists are about 26 MiB. Writes go through the store's atomic write under a
   process-local `<project>:pins-write` lock, the same kind of lock as the
   project store's.
 - `pinScientLibrarySource` copies the record's preferred `citationKey` (or a
@@ -583,9 +586,14 @@ share operations and handlers.
 - After a metadata edit, revert, merge or undo, the same call refreshes this
   project's pin snapshots, the snapshots of its reviews that name the record,
   and its managed files; each writes only when bytes change. Other projects
-  refresh the next time a call with write authority opens them. With one
-  10,000-record review this costs about 0.5 s per edit, also when nothing
-  changes.
+  refresh the next time a call with write authority opens them. Only the pins
+  of the changed records are refreshed, reading just those records; each live
+  review's snapshot is loaded once and written only when the review names a
+  changed record. The bulk route refreshes after a type change and after the
+  Undo of a bulk edit that changed a type (`scientBulkEditChangedType`), never
+  after tag-only edits or their Undo: tags are in no snapshot and not in the
+  bibliography. With one 10,000-record review the refresh costs about 1.4 s
+  per part of 100 right after the write (scale gate, below).
 - In library mode the managed `references.bib` and `references.json` come from
   `listScientProjectPinnedWorks`, with the same state machine and kept copies;
   the last-written copies live in `.scient/library/bibliography/`.
@@ -834,8 +842,10 @@ holds leaves `copying`, which reruns from step 1; the crash point
 
 **Progress.** `runScientLibraryMove` and the move back take `onProgress`
 (`{ phase, done, total }`, phases `sources`, `files`, `verifying`, `merging`,
-`switching`, `cleaning-up`, `restoring`; each counts its own items). Nothing
-about progress is written to the journal.
+`switching`, `cleaning-up`, `restoring`; each counts its own items).
+`verifying` counts the PDF hashes, the moved records it checks, and the v1
+files and highlights it backs up, so the line keeps moving through the
+backups. Nothing about progress is written to the journal.
 
 **Measured** with `packages/scient-sources/scripts/measureLibraryMove.ts`
 (`pnpm run measure:library-move` in that package, Node 26; 5,000 records,
@@ -1097,8 +1107,8 @@ the record and its history revision, each with `fsync` (F_FULLFSYNC on macOS,
 about 4 ms); running them concurrently gained 1.26x at best on an M5 Pro, so
 they stay serial.
 
-Add to project and Remove from this project send one organize
-`change-pins` request (up to 20,000 changes) and get one answer per change in
+Add to project and Remove from this project send organize `change-pins`
+requests of up to 2,000 changes (the route takes 20,000) and get one answer per change in
 `pinChanges`, in order: `pinned`, `existing`, `unpinned`, `not-pinned`,
 `not-found` or `refused`. `changeScientProjectPins` reads and writes
 `pins.json` once and the route syncs the bibliography once; a refusal's
@@ -1122,8 +1132,7 @@ A larger selection in the bar is sent in parts by `apps/web` `bulkParts.ts`;
 
 - **Tag, type and collection edits** go in parts of 100, one after another. A
   part took at most 2.4 s at 20,000 records on a quiet M5 Pro and its Undo
-  1.3 s (2.4 s through the library route, which refreshes this project's pin
-  snapshots after an Undo or a type change), so each stays under a third of
+  1.3 s (the scale gate's numbers through the library route are below), so each stays under a third of
   the 15 s organize timeout at twice that on a loaded Mac. The bulk route's
   own client timeout is 120 s. Each part is its own bulk edit with its own
   receipt, so the store keeps the latest 250 receipts, enough for
@@ -1158,9 +1167,9 @@ A larger selection in the bar is sent in parts by `apps/web` `bulkParts.ts`;
 
 The other selection-sized requests: reading state and export take up to 20,000
 IDs in one request and are refused above that, with an error and nothing
-reported done; `change-pins` goes in requests of 20,000 changes (19,000 pins
-took 7.0 s through the route on a quiet Mac, near the 15 s timeout when
-loaded); Trash and its Undo go one source per request; Zotero send and refresh
+reported done; `change-pins` goes in requests of 2,000 changes (one request
+of 19,000 took 36 s on a Windows runner, past the 15 s timeout; see the scale
+gate below); Trash and its Undo go one source per request; Zotero send and refresh
 from the panel name one source or none; Empty Trash names none; a systematic
 review adds a selection in parts of 500.
 
@@ -1223,6 +1232,108 @@ Systematic reviews does, with two sections: the possible pairs and **Merged**.
   Library-only organize action to the tool's action(s), and its test checks
   the tool's schema names them.
 - Not built: merging two sources the assessment did not pair.
+
+#### The scale gate at 20,000 records (M3)
+
+**The test library.** `pnpm run generate:scale-library` in
+`packages/scient-sources` (`scripts/scaleLibrary.ts`) writes it from a seed
+(default 20261112): 20,000 live version 2 records with 1,200 to 1,800
+character abstracts (60% of articles also structured), up to 14 authors, DOIs
+on most, PMIDs, arXiv IDs and ISBNs on some, none on about 10%, tags and
+reading state; PDFs and extracted text for 5,000, highlights on 1,000; 300
+collections, 240 of them nested; five saved searches; 60 same-DOI copies the
+merge pass merges and 40 requested merges, leaving 400 possible pairs; three
+registered checkouts pinning 5,000, 3,000 and 1,000 sources; and one review of
+10,000 records with 2,000 screened, whose snapshot (37 MB) shards. `--move`
+adds a version 1 project of 20,100 records (5,000 PDFs with text, 1,000
+highlight files, 50 collections, a 10,000-record review, 100 DOI copies) to
+move into an empty Library. The Library is 31,689 files and 311 MB. Record,
+PDF, text, highlight and collection bytes depend only on the seed: the
+records' digest was the same on all five machines. IDs and times the store
+assigns itself are not.
+
+**The measurement.** `pnpm run measure:sources-scale` in `apps/server`
+(`scripts/measureSourcesScale.ts`) writes the library once, then runs each
+measure in a fresh Node process through the Library route functions the HTTP
+layer calls, with the store a project already in the Library resolves to.
+The first call in the process is "first" (the OS file cache may be warm);
+then five more give "warm". The list's wire cost is the contract schema's
+encode on the server and parse and decode on the client. Each process
+records its peak RSS and heap and its event-loop delay
+(`monitorEventLoopDelay`, the 10 ms interval taken off). Bulk edits go in the
+panel's parts of 100 and undo newest first; `change-pins` goes both as one
+request and in the panel's requests of 2,000; the move runs with another
+library writer taking the lock throughout, and `move-interrupt` kills the
+move with SIGKILL halfway through its file copies, then resumes it in a new
+process. `--heap-mib N` caps V8's heap. Raw JSON per round is in the Sources
+roadmap's `gate/scale/` folder.
+
+**Results** (median of three rounds; Node 26.12.1; a first call is in a
+fresh process). Apple Silicon is the M5 Pro (18 cores, 48 GB, shared, load 4
+to 5); the CI runners are GitHub-hosted: `macos-15` (virtual M1, 3 cores,
+7 GB, load 10 to 24), `macos-15-intel` (Core i7-8700B, 4 cores, 14 GB, load
+7 to 12), `windows-2025` and `ubuntu-24.04` (AMD EPYC 7763, 4 cores, 16 GB).
+`change-pins` is from a second run after the read fix. Gate: the list under
+1 s, a filter under 200 ms, a bulk tag of 1,000 under 3 s (read as progress at
+once, about 11 ms per source), a part under 5 s.
+
+| Measure                                     | M5 Pro      | macos-15    | macos-15-intel | windows-2025 | ubuntu-24.04 |
+| ------------------------------------------- | ----------- | ----------- | -------------- | ------------ | ------------ |
+| Library list, first call (s)                | 1.03        | 3.06        | 6.62           | 3.53         | 2.23         |
+| Library list, warm (s)                      | 0.15        | 0.49        | 0.74           | 0.48         | 0.41         |
+| … encode, parse and decode of 26.6 MB (s)   | 0.23        | 0.73        | 1.47           | 0.67         | 0.75         |
+| Slowest filter or sort (ms)                 | 36          | 134         | 119            | 66           | 66           |
+| Bulk tag of 1,000: first progress (s)       | 1.62        | 2.45        | 3.43           | 3.89         | 2.30         |
+| Bulk tag of 1,000: total (s)                | 12.2        | 14.3        | 25.0           | 18.2         | 10.5         |
+| Its Undo through the route (s)              | 11.7        | 12.6        | 25.1           | 15.5         | 9.1          |
+| Type change of 1,000: median part (s)       | 2.42        | 4.05        | 5.53           | 4.69         | 3.37         |
+| Duplicates read, first / warm (s)           | 0.65 / 0.18 | 2.18 / 0.52 | 2.70 / 0.57    | 3.57 / 0.45  | 2.23 / 0.40  |
+| Review of 10,000, open and screening (s)    | 0.21        | 0.76        | 0.66           | 0.52         | 0.51         |
+| The move (min)                              | 5.4         | 4.7         | 8.8            | 3.5          | 2.2          |
+| Move: longest time without progress (s)     | 5.50        | 8.29        | 16.0           | 10.6         | 5.39         |
+| Move: event-loop delay p99 / max (ms)       | 1.6 / 99    | 13 / 370    | 5.2 / 544      | 24 / 346     | 4.2 / 318    |
+| change-pins, 2,000 per request: slowest (s) | 0.73        | 2.44        | 5.84           | 4.59         | 2.33         |
+
+**Changed by the scale gate:**
+
+- The record index stats and reads 32 files at a time (above).
+- After a bulk Undo or a type change the route refreshes only what changed
+  (Pins and project keys, above); a tag-only Undo refreshes nothing.
+- `changeScientProjectPins` looks pins up by source ID, resolved ID and key
+  instead of scanning them per change, and `pins.json` may be 64 MiB.
+- `resolveLibrarySourceIds` reads records 32 at a time.
+- The panel sends `change-pins` in requests of 2,000.
+- The move's `verifying` count covers the records and files it backs up.
+- The list sorts with one `Intl.Collator`.
+
+**Memory.** With V8's heap capped at 1 GiB (`--heap-mib 1024`) every heavy
+measure finished on all five machines, at the same speed on four (the Intel
+runner's single capped round was slower, at load 7 to 12); the highest peak
+RSS was 1.05 GB for the move, 0.27 GB of which is the modules the measuring
+process loads before it starts.
+Uncapped, the heap reaches 1.0 to 1.4 GB during a review open or a type
+change because collection waits while memory is free. The proposed bound at
+20,000 records: the Sources work runs within a 1 GiB heap and adds at most
+1 GiB of RSS to the server.
+
+**Still open:**
+
+- The Library list's first call after the server starts reads and decodes
+  every record (0.7 to 1.0 s on the M5 Pro, 2.2 to 6.6 s on the runners).
+  Warm, the server answers in 0.15 to 0.74 s, but the answer is 26.6 MB for
+  20,000 rows (creators 6.8 MB, collection membership 4.2 MB, `origin`
+  2.1 MB, diagnostics 1.5 MB), which costs another 0.23 s (M5 Pro) to 0.67 to
+  1.47 s (runners) to encode, parse and decode.
+- A bulk tag moves its progress line after the first part (1.6 to 3.9 s) and
+  costs 10.5 to 25 ms per source. A type change's part costs 2.4 to 5.5 s at
+  the median because each part refreshes this project's 10,000-record review
+  snapshot and bibliography.
+- The move takes 2.2 to 8.8 minutes for 20,000 sources; most of it is the
+  durable record writes and the backups. Its longest silence is the start,
+  reading the v1 store before the first count (up to 16 s on the Intel
+  runner).
+- One `change-pins` request of 19,000 still takes 8 to 32 s on the runners
+  (it took 13 to 36 s before the read fix); the panel no longer sends one.
 
 ## Source truth and provenance
 
