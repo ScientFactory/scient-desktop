@@ -262,7 +262,9 @@ describe("Scient skill session planning", () => {
         ["latex-authoring", "automatic"],
         ["overleaf-sync", "automatic"],
         ["pdf-authoring", "automatic"],
+        ["references", "automatic"],
         ["scient-skill-authoring", "automatic"],
+        ["systematic-review", "automatic"],
         ["workspace-readiness-review", "automatic"],
       ]);
 
@@ -291,7 +293,9 @@ describe("Scient skill session planning", () => {
         "latex-authoring",
         "overleaf-sync",
         "pdf-authoring",
+        "references",
         "scient-skill-authoring",
+        "systematic-review",
       ]);
     }),
   );

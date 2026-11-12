@@ -242,6 +242,104 @@ Undo puts back what Overleaf had before one send: for example after an older bra
 Errors name what happened and what to do next: Overleaf unreachable, a missing or refused token, an editor that could not save, a link to relink (\`scient_overleaf_manage\` with action \`relink\`), or an interrupted sync to recover (action \`recover\`). Action \`cancel\` asks a running sync to stop before its next step. Do what the message says, or tell the user when only they can fix it.
 `;
 
+const references = `---
+name: references
+description: Use for any request about the references, citations, sources or bibliography of a paper, thesis, grant, review or report, for the whole document or a selected passage, or about the project Library's records. Covers checking or verifying references, fixing citations and bibliography entries, finding sources for claims, methods, instruments, software, data or guidelines, finding better or newer references, and judging whether cited work supports the text. Not for writing a literature review from scratch.
+---
+
+# References
+
+The goal is a draft in which every citation points to a real work, described correctly, that still stands and supports the sentence citing it, and in which everything that needs support has it. The researcher owns the scholarship: find the problems, show the evidence, fix what is clearly wrong when asked, and leave real choices to them.
+
+Finish the whole check in this turn, without stopping for progress updates. If something cannot be finished, say exactly what is left. This skill grants no tools or authority.
+
+## Tools
+
+- \`scient_references_check\` checks records. Give it the project path of a \`.md\`, \`.tex\` or \`.bib\` file, or no path for the Library. It reads the bibliography files a document names and the Library sources its citation keys name, resolves every DOI, PMID, arXiv ID and ISBN against its registry, and reports identifiers that do not resolve or name a different work, retractions and corrections, preprints with a published version, details that differ from the record, missing fields, and cited/listed mismatches. Its \`ledger\` lists every reference; \`complete: false\` means some were not checked, and its \`notes\` say why.
+- \`scient_references_resolve\` applies a finding's \`fix\` exactly as the check returned it, writing the registry's value to the \`.bib\` entry or Library source, and ignores or restores findings. A stale fix means the file changed: check again.
+- The Library comes before any search: \`scient_sources_list\` and \`scient_sources_get\` for records; \`scient_sources_search\`, \`scient_sources_read_text\` and \`scient_sources_quote_check\` for the full text of Library PDFs; \`scient_sources_add\` to add a work by identifier, which checks it against its registry, only when the user asked to add; \`scient_sources_bibliography\` to write \`references.bib\` and \`references.json\` from the Library.
+- \`scient_paper_get\` saves a paper's PDF to the project (free copy first, then the user's library access) so you can read it.
+- Connected literature tools (PubMed, Semantic Scholar, OpenAlex and others) and web search find candidates. PubMed and Europe PMC suit biomedicine; arXiv, OpenReview, ACL Anthology, PMLR and proceedings sites suit computer science, where many conference papers have no DOI; zbMATH suits mathematics, where many references are books. Web search finds editions of guidelines, manuals and software best.
+
+Work inside the project; do not search the rest of the computer, and do not scan or edit \`.scient\` files directly.
+
+## What to check
+
+- **Records.** Run \`scient_references_check\` first and read all of it before editing. Treat its ledger as your list: every reference must end up in your report. A difference is a lead, not a verdict: abbreviations, online and print years, and indexing gaps all cause them. A reference without a DOI, PMID, arXiv ID or ISBN was not checked against a registry; find its record yourself. If a result looks wrong, say so and check by hand.
+- **Support.** For every citation, does the work support the sentence as written? Typical failures: narrower than claimed (association as cause, mice as humans, healthy volunteers as patients, a lab feasibility study as home efficacy), the opposite or a null result, the wrong paper, a review cited for a primary finding, a different number. Grade it supports, partly supports (say which part), does not support, contradicts, or not assessed.
+- **Not only findings.** Methods, instruments, statistical procedures, software, datasets, guidelines, criteria and figures about the world each need the source a reader would check: the original or standard reference for what was used.
+- **Versions and currency.** Guidelines, reporting standards, scoring manuals, criteria and software have versions, and figures about the world go out of date. For each, search for a later edition or estimate, even when the text names its version, and record what you found; report a newer one as a decision, and never replace a figure with an older one.
+- **Evidence against.** When a sentence states a general or strong effect, look at later work before judging it supported: replications and meta-analyses since the cited year, and papers citing the source. Report important contrary evidence.
+- **Gaps and better references.** Sentences, including paragraph openers, that state a finding, number or trend, or use a named method, instrument or tool, without a citation; and better choices: primary over review, published over preprint, newer where the field has moved. For each gap, give at least one checked candidate, or say what you searched.
+
+Read the abstract for every judgement and the full text where the claim is specific or the abstract leaves it open.
+
+## Rules
+
+- **Never cite from memory.** Every reference you add or suggest, in the draft or in the report, was found in a scholarly record in this task, has a DOI or another stable identifier, and you read enough of it to judge support. Copy its details, including every author, from the registry record (the check's \`registry\`, or the Library source \`scient_sources_add\` created), never from memory. For works without an identifier (manuals, books, reports), confirm the edition from the publisher or mark the details unconfirmed.
+- **State only what you observed**, and where: "the DOI does not resolve", not a guess about whose it is; "none found in PubMed and Crossref", not "none exists". Say for each judgement whether it rests on full text, abstract or metadata; full text means you opened the paper's text in this task. Confidence in words with a reason, never a percentage.
+- **Not found is not fabricated.** Books, manuals, reports, theses and proceedings are often missing from indexes; search title, authors and venue before calling a reference likely fabricated.
+- **No suitable source is a valid answer.** Propose narrowing the claim rather than attaching a weak citation.
+
+## Changing the draft
+
+If the user asked only to check, do not modify the draft, its bibliography or the Library. If they asked to fix:
+
+- Apply: the check's fixes through \`scient_references_resolve\`; other details from the record; missing bibliography entries built from the record, identifying a cited-but-missing key from its sentence, key and year; a citation for something the text names (a method, instrument, software, dataset, guideline, or the authors it names); the paper a true claim actually comes from when it is attributed to the wrong one, including the primary study when a cited review reports it (find it rather than delete the claim); overclaims narrowed to what the cited source shows, in the author's words as far as possible. Narrowing a sentence to its own source is a fix, not a change to the argument. When the source supports a claim that later work disputes, attribute it in the text ("X et al. reported …") and propose the contrary evidence. Change an identifier only to one you confirmed resolves to the work. If an entry's identifier belongs to a different paper and the cited work cannot be found, never rewrite the entry to match that other paper: treat the source as nonexistent.
+- Never leave a claim resting on a retracted, nonexistent or contradicting source as it is: narrow it to what the source shows or remove it, and list it as a decision. Do not rescue it by swapping in a newly found study.
+- Propose, do not apply: newly found studies as evidence for a claim, contrary evidence, new sentences, version changes, published versions of cited preprints, and choices between alternatives. Do not add or delete parts of the author's argument; the author must stand behind every sentence in their paper.
+- Never downgrade a stated venue, year or edition because the records lack it; mark it unconfirmed. Leave uncited bibliography entries in place and list them. Never shorten author lists, and keep verification notes in the report, not in bibliography fields.
+
+Afterwards reread the changed passages, run \`scient_references_check\` again and, for LaTeX, build the document if you can; at least make sure new text escapes \`_\`, \`&\` and \`%\`.
+
+## Report
+
+When you changed files, save a Markdown report next to the manuscript (for example \`main.references-check.md\`) and reply with a short summary linking to it. For a check-only request, give the report in your reply and offer to save it. Put the most serious issues first, each with location, problem, evidence (short quote with its location and what you read), fix applied or proposed, and confidence; then decisions for the user; then one line for every reference that was fine. Say plainly whether the check is complete. Before replying, confirm the report exists and every change you describe is in the files. Link the report and changed files by project path.
+`;
+
+const systematicReview = `---
+name: systematic-review
+description: Use for systematic, scoping or rapid reviews in Scient, including planning the review question and eligibility criteria, running and logging database searches, removing duplicates, title and abstract or full-text screening, and reporting a PRISMA flow. Not for an ordinary literature summary or for checking a manuscript's references.
+---
+
+# Systematic Review
+
+The goal is a review another researcher could repeat: every search logged exactly, every record accounted for, every decision recorded with who made it and why, and a PRISMA 2020 flow that matches the decisions. The researcher owns the review question, the criteria and the final calls. You do the work they ask for, carefully and in the open.
+
+Change the review only when the user asks for that work. This skill grants no tools or authority.
+
+## Tools
+
+- \`scient_sources_systematic_reviews\` lists reviews, or reads one: its searches, exclusion reasons, PRISMA counts with a Mermaid PRISMA diagram (\`prismaMermaid\`), possible duplicate pairs, and the next records awaiting a decision with their abstracts.
+- \`scient_sources_systematic_review_update\` makes every change: \`create-review\`, \`update-review\` (title, question, exclusion reasons), \`log-search\`, \`add-sources\`, \`mark-duplicate\`, \`mark-distinct\`, \`screen\`, \`clear-decision\`, \`delete-review\`.
+- Records are Library sources. Bring them in with \`scient_sources_add\` (identifiers from a connector result or a list), a file import, or Zotero; group a search's records with \`scient_sources_organize\` (a collection per search) or \`scient_sources_bulk_update\`. Read full text with \`scient_paper_get\`, \`scient_sources_read_text\` and \`scient_sources_search\`.
+
+Never scan or edit \`.scient\` files directly.
+
+## Plan
+
+Agree the question and the eligibility criteria with the user before screening (population, intervention or exposure, comparator, outcomes, study designs, dates, languages). Put the question in the review and set \`exclusionReasons\` from the criteria, so every exclusion names one of them.
+
+## Search
+
+Use the databases the user names. For each search, log the database, the exact search string as run, the date, and the number of results the database reported (\`resultCount\`), then the records you brought into the Library (\`sourceIds\` or a \`collectionId\`). If you could not bring in every result, say how many are missing and why; the flow counts them as removed for other reasons. Records found another way (reference lists, experts, websites) go in with \`add-sources\`.
+
+## Remove duplicates
+
+The Library already merges records with the same DOI or PMID, and the flow counts those as duplicates. Then work through \`possibleDuplicates\`: mark a duplicate only when both records are the same work, keeping the more complete or published version; use \`mark-distinct\` for different works that share a title.
+
+## Screen
+
+- Title and abstract: judge each record against the criteria using only its title and abstract. Include when it may meet them; use maybe when you cannot tell, for example without an abstract; exclude only when it clearly fails one, with that criterion as the reason. Never infer an abstract you were not given.
+- Full text: only records included at title and abstract. Get and read the full text; exclude with the criterion it fails. When a report cannot be obtained, use \`record-retrieval\` with \`not-retrieved\` (not an exclusion), and say so; \`sought\` means retrieval is still in progress.
+- Screen in batches (\`screen\` takes up to 500 decisions) and read the result: \`skippedSourceIds\` were not applied. Your decisions are recorded as the agent's; the user can change any of them, and the latest decision counts.
+- Do not present agent screening as independent dual screening. If the protocol needs a second reviewer, say which decisions still need one.
+
+## Report
+
+Read the review again before reporting. Give the PRISMA counts from the tool, not your own tally, and include \`prismaMermaid\` when the user wants the diagram in a document. State what is still pending (records awaiting screening, reports awaiting retrieval or assessment, maybes) and every search or decision the user should check.
+`;
+
 /**
  * Bundle-safe mirrors of the reviewed built-in release files.
  * BuiltInSkillReleases.test.ts prevents these bytes from drifting from the
@@ -386,6 +484,48 @@ export const BUILT_IN_SKILL_SOURCES: ReadonlyArray<BuiltInSkillSource> = Object.
   "category": "Document creation",
   "categoryDescription": "Create polished documents and reliable final outputs.",
   "displayOrder": 70,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "references",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": references,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.references",
+  "version": "0.1.0",
+  "category": "Research",
+  "categoryDescription": "Check, find and cite the literature.",
+  "displayOrder": 80,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}
+`,
+    }),
+  }),
+  Object.freeze({
+    directoryName: "systematic-review",
+    defaultActive: true,
+    files: Object.freeze({
+      "SKILL.md": systematicReview,
+      "scient.skill.json": `{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.systematic-review",
+  "version": "0.1.0",
+  "category": "Research",
+  "categoryDescription": "Check, find and cite the literature.",
+  "displayOrder": 90,
   "supportedScopes": ["user"],
   "defaultInvocationPolicy": "automatic",
   "origin": {

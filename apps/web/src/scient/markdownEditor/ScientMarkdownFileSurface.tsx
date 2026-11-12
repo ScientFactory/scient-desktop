@@ -29,6 +29,8 @@ import type { ScientImageAction } from "~/scient/images/ScientImageControls";
 import { MarkdownPdfExportMenuItems } from "../documentExport/MarkdownPdfExportMenuItems";
 import { savedMarkdownRevision } from "../documentExport/markdownSavedRevision";
 import { WordFileExportDialog } from "../wordExport/WordFileExportDialog";
+import { ReferenceCheckDialog } from "../references/ReferenceCheckDialog";
+import { DockCommandItem } from "../writing/dockChrome";
 import { ScientMarkdownWorkspaceSurface } from "./ScientMarkdownWorkspaceSurface";
 import type { ScientMarkdownLinkCopyRequest, ScientMarkdownLinkKind } from "./linkContextMenu";
 import { isScientMarkdownDocumentPath } from "./markdownDocumentPaths";
@@ -60,6 +62,8 @@ import {
   workspaceLocatorAskPath,
 } from "~/scient/fileOpening/chatFileLinkResolution";
 import { environmentFileLinkResolution } from "~/scient/fileOpening/environmentFileState";
+import { openLibrarySource, useLibraryVersionStore } from "~/scient/sources/librarySourceRequest";
+import { useLibraryCitations } from "~/scient/sources/useLibraryCitations";
 
 // Longer than the environment's own search bound, so a slow search still answers.
 const FILE_LINK_RESOLVE_WAIT_MS = 3_000;
@@ -105,6 +109,7 @@ export interface ScientMarkdownFileSurfaceProps {
 
 export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps) {
   const [wordExportOpen, setWordExportOpen] = useState(false);
+  const [referenceCheckOpen, setReferenceCheckOpen] = useState(false);
   const onOpenFile = props.onOpenFile;
   const listDirectory = useAtomCommand(projectEnvironment.listDirectory, {
     reportDefect: false,
@@ -146,6 +151,20 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
   const recentWikiLinkPaths = sanitizeRecentWikiLinkPaths(storedRecentWikiLinkPaths).filter(
     (path) => wikiLinkCandidatePathSet.has(path),
   );
+  const libraryVersion = useLibraryVersionStore((state) => state.byRoot[props.cwd] ?? "");
+  const libraryCitations = useLibraryCitations({
+    environmentId: props.environmentId,
+    root: props.cwd,
+    refresh: libraryVersion,
+  });
+  const openCitation = useStableCallback((keys: ReadonlyArray<string>) => {
+    const source = keys
+      .map((key) => libraryCitations?.find((candidate) => candidate.citationKey === key))
+      .find((candidate) => candidate !== undefined);
+    if (!source) return false;
+    openLibrarySource({ threadRef: props.threadRef, root: props.cwd, sourceId: source.sourceId });
+    return true;
+  });
   const markdownPathSetRef = useRef<ReadonlySet<string>>(markdownPathSet);
   const entriesTruncatedRef = useRef(entriesQuery.data?.truncated ?? true);
   const mountedRef = useRef(true);
@@ -519,6 +538,8 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
         resolveLinkFullPath={resolveLinkFullPath}
         onCopyLink={handleCopyLink}
         wikiLinkTargetExists={wikiLinkTargetExists}
+        {...(libraryCitations ? { libraryCitations } : {})}
+        onOpenCitation={openCitation}
         wikiLinkCandidates={wikiLinkCandidates}
         recentWikiLinkPaths={recentWikiLinkPaths}
         onWikiLinkSelected={(path) => {
@@ -541,14 +562,19 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
             }
           : {})}
         documentActions={
-          <MarkdownPdfExportMenuItems
-            environmentId={props.environmentId}
-            cwd={props.cwd}
-            relativePath={props.relativePath}
-            threadRef={props.threadRef}
-            persistence={props.persistence}
-            onWordExport={() => setWordExportOpen(true)}
-          />
+          <>
+            <MarkdownPdfExportMenuItems
+              environmentId={props.environmentId}
+              cwd={props.cwd}
+              relativePath={props.relativePath}
+              threadRef={props.threadRef}
+              persistence={props.persistence}
+              onWordExport={() => setWordExportOpen(true)}
+            />
+            <DockCommandItem onClick={() => setReferenceCheckOpen(true)}>
+              Check references
+            </DockCommandItem>
+          </>
         }
         uploadImage={uploadImage}
         onImageUploadFailure={(error) => {
@@ -566,6 +592,22 @@ export function ScientMarkdownFileSurface(props: ScientMarkdownFileSurfaceProps)
           relativePath={props.relativePath}
           savedRevision={() => savedMarkdownRevision(props.persistence)}
           onClose={() => setWordExportOpen(false)}
+        />
+      ) : null}
+      {referenceCheckOpen ? (
+        <ReferenceCheckDialog
+          environmentId={props.environmentId}
+          root={props.cwd}
+          initialTarget={{ kind: "file", path: props.relativePath }}
+          {...(props.onOpenFileSource
+            ? {
+                onOpenFile: (path: string, line: number) => {
+                  setReferenceCheckOpen(false);
+                  props.onOpenFileSource?.(path, line);
+                },
+              }
+            : {})}
+          onClose={() => setReferenceCheckOpen(false)}
         />
       ) : null}
     </>

@@ -12,13 +12,15 @@ import { useScientSources } from "./useScientSources";
 const mocks = vi.hoisted(() => ({
   readScientSources: vi.fn(),
   preflightZoteroItems: vi.fn(),
+  importScientSourcesFile: vi.fn(),
+  advanceSourcesImport: vi.fn(),
 }));
 
 vi.mock("./client", () => ({
   readScientSources: mocks.readScientSources,
   readScientSource: vi.fn(),
-  advanceSourcesImport: vi.fn(),
-  approveScientSource: vi.fn(),
+  advanceSourcesImport: mocks.advanceSourcesImport,
+  importScientSourcesFile: mocks.importScientSourcesFile,
   beginLocalSourcesImport: vi.fn(),
   beginZoteroItemsImport: vi.fn(),
   beginZoteroScopeImport: vi.fn(),
@@ -62,11 +64,14 @@ function overviewWith(sourceIds: ReadonlyArray<string>): ScientSourcesOverviewRe
 
 interface HookProbe {
   overview: ScientSourcesOverviewResult | null;
+  clearOperationSummary: () => void;
   preflight: ScientSourcesPreflightResult | null;
   busy: boolean;
   error: string | null;
   reloadOverview: () => Promise<unknown>;
   previewImport: (itemKeys: ReadonlyArray<string>) => Promise<unknown>;
+  importReferenceFile: ReturnType<typeof useScientSources>["importReferenceFile"];
+  operation: ReturnType<typeof useScientSources>["operation"];
 }
 
 async function withMountedHook(
@@ -116,9 +121,69 @@ async function withMountedHook(
 async function _setupFixture0(_fixture: _Fixture) {
   mocks.readScientSources.mockReset();
   mocks.preflightZoteroItems.mockReset();
+  mocks.importScientSourcesFile.mockReset();
+  mocks.advanceSourcesImport.mockReset();
 }
 
 describe("useScientSources mounted behavior", () => {
+  it("runs a reference file import to the end and counts entries already in the Library", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    mocks.readScientSources.mockResolvedValue(overviewWith([]));
+    const operation = (state: "pending" | "imported", running: boolean) => ({
+      formatVersion: 1 as const,
+      operationId: "operation-file",
+      projectId: "project-1",
+      adapter: "file" as const,
+      actor: "user" as const,
+      intake: "file" as const,
+      state: running ? ("running" as const) : ("completed" as const),
+      createdAt: "2026-11-10T00:00:00.000Z",
+      updatedAt: "2026-11-10T00:00:00.000Z",
+      items: [
+        {
+          itemKey: "file_a",
+          state,
+          sourceId: state === "imported" ? "source-a" : null,
+          message: null,
+        },
+      ],
+    });
+    const report = {
+      format: "bibtex" as const,
+      entryCount: 3,
+      importCount: 1,
+      alreadyInLibrary: 2,
+      remaining: 0,
+      unreadableCount: 0,
+      unreadable: [],
+      notKept: [],
+      withoutCitationKey: 0,
+    };
+    mocks.importScientSourcesFile.mockResolvedValue({
+      operation: operation("pending", true),
+      report,
+    });
+    mocks.advanceSourcesImport.mockResolvedValue(operation("imported", false));
+
+    await withMountedHook(_fixture, async (probe) => {
+      let result: Awaited<ReturnType<HookProbe["importReferenceFile"]>> = null;
+      await act(async () => {
+        result = await probe.current.importReferenceFile(
+          new File(["@article{a, title={A}}"], "library.bib"),
+        );
+      });
+      expect(mocks.advanceSourcesImport).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({
+        report,
+        outcome: { kind: "imported", counts: { imported: 1, alreadyPresent: 2 } },
+      });
+      expect(probe.current.operation?.state).toBe("completed");
+      expect(probe.current.busy).toBe(false);
+    });
+  });
+
   it("loads the initial overview into state after mount", async () => {
     await using _fixture = _createFixture();
     await _setupFixture0(_fixture);
@@ -135,6 +200,33 @@ describe("useScientSources mounted behavior", () => {
       ]);
       expect(probe.current.busy).toBe(false);
       expect(probe.current.error).toBeNull();
+    });
+  });
+
+  it("dismisses a finished import summary", async () => {
+    await using _fixture = _createFixture();
+    await _setupFixture0(_fixture);
+
+    mocks.readScientSources.mockResolvedValue({
+      ...overviewWith(["one"]),
+      activeOperation: {
+        formatVersion: 1,
+        operationId: "operation-1",
+        projectId: "project-1",
+        adapter: "local-files",
+        actor: "user",
+        intake: "local-pdf",
+        state: "completed",
+        createdAt: "2026-08-13T00:00:00.000Z",
+        updatedAt: "2026-08-13T00:00:00.000Z",
+        items: [{ itemKey: "one", state: "imported", sourceId: "one", message: null }],
+      },
+    });
+
+    await withMountedHook(_fixture, async (probe) => {
+      expect(probe.current.operation?.operationId).toBe("operation-1");
+      await act(async () => probe.current.clearOperationSummary());
+      expect(probe.current.operation).toBeNull();
     });
   });
 

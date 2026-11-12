@@ -376,7 +376,21 @@ function SourceNoteEditor(props: {
   );
 }
 
-function NotePreview(props: { readonly value: string; readonly onEdit: () => void }) {
+function NotePreview(props: { readonly value: string; readonly onEdit?: () => void }) {
+  const text = (
+    <div className="text-foreground [&_em]:italic [&_p]:m-0 [&_p]:whitespace-pre-wrap [&_p+_p]:mt-2 [&_strong]:font-semibold">
+      <ReactMarkdown allowedElements={["p", "strong", "em"]} skipHtml>
+        {props.value}
+      </ReactMarkdown>
+    </div>
+  );
+  if (!props.onEdit) {
+    return (
+      <div className="px-2 py-1.5 text-start text-sm" dir="auto">
+        {text}
+      </div>
+    );
+  }
   return (
     <button
       type="button"
@@ -385,11 +399,7 @@ function NotePreview(props: { readonly value: string; readonly onEdit: () => voi
       dir="auto"
       onClick={props.onEdit}
     >
-      <div className="text-foreground [&_em]:italic [&_p]:m-0 [&_p]:whitespace-pre-wrap [&_p+_p]:mt-2 [&_strong]:font-semibold">
-        <ReactMarkdown allowedElements={["p", "strong", "em"]} skipHtml>
-          {props.value}
-        </ReactMarkdown>
-      </div>
+      {text}
     </button>
   );
 }
@@ -561,6 +571,7 @@ function QuickNoteResizeHandle() {
 
 export function useSourceNoteControls(props: {
   readonly record: ScientSourceDetailResult;
+  readonly readOnly?: boolean;
   readonly onSave: (
     note: string | null,
     expectedRevision: number,
@@ -584,7 +595,7 @@ export function useSourceNoteControls(props: {
   return {
     button: (
       <Popover open={quickNoteOpen} onOpenChange={setQuickNoteOpen}>
-        <PopoverTrigger render={<Button size="xs" variant="ghost" />}>
+        <PopoverTrigger render={<Button size="xs" variant="ghost" disabled={props.readOnly} />}>
           <StickyNote />
           Note
         </PopoverTrigger>
@@ -655,7 +666,16 @@ export function useSourceNoteControls(props: {
         </PopoverPopup>
       </Popover>
     ),
-    section: (
+    section: props.readOnly ? (
+      note.draft.trim() ? (
+        <section className="space-y-1.5" aria-labelledby="source-note-heading">
+          <h3 id="source-note-heading" className="text-sm font-medium text-foreground">
+            Notes
+          </h3>
+          <NotePreview value={note.draft} />
+        </section>
+      ) : null
+    ) : (
       <section className="space-y-1.5" aria-labelledby="source-note-heading">
         <h3 id="source-note-heading" className="text-sm font-medium text-foreground">
           Notes

@@ -26,6 +26,7 @@ vi.mock("../conversationExport/exportActions", () => ({
 }));
 
 const { WordFileExportDialog } = await import("./WordFileExportDialog");
+const { WORD_CITATION_STYLE_STORAGE_KEY } = await import("./wordCitationStyle");
 
 const environmentId = EnvironmentId.make("local");
 const revision = `sha256:${"a".repeat(64)}`;
@@ -112,6 +113,35 @@ describe("WordFileExportDialog", () => {
     await act(async () => completeExport({ file: { fileName: "report.docx" }, warnings: [] }));
     expect(saveConversationExport).toHaveBeenCalledOnce();
     expect(exportWordFile).toHaveBeenCalledOnce();
+  });
+
+  it("exports Markdown references in the citation style chosen in Settings", async () => {
+    await using _fixture = _createFixture();
+    _fixture.cleanup.defer(() => _cleanupFixture1(_fixture));
+    await _setupFixture0(_fixture);
+    localStorage.setItem(WORD_CITATION_STYLE_STORAGE_KEY, JSON.stringify("apa"));
+    _fixture.cleanup.defer(() => localStorage.removeItem(WORD_CITATION_STYLE_STORAGE_KEY));
+
+    readPandocTool.mockResolvedValue(status(true));
+    exportWordFile.mockResolvedValue({ file: { fileName: "report.docx" }, warnings: [] });
+    await act(
+      async () =>
+        await _fixture.root0.rerender(
+          <WordFileExportDialog
+            environmentId={environmentId}
+            cwd="/project"
+            relativePath="notes/report.md"
+            savedRevision={async () => revision}
+            onClose={() => {}}
+          />,
+        ),
+    );
+    await vi.waitFor(() =>
+      expect(exportWordFile).toHaveBeenCalledWith(
+        environmentId,
+        expect.objectContaining({ citationStyle: "apa" }),
+      ),
+    );
   });
 
   it("reads Pandoc's state again after a failed export, so a reinstall can be offered", async () => {

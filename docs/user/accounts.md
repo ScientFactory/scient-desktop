@@ -24,6 +24,12 @@ as it is. Custom models already keep their keys in Accounts' encrypted store. Re
 keeps the keys you typed into its settings here, and adding that kind of agent again offers them
 back.
 
+Research keys also serve [Sources](sources.md) and paper downloads. With an **OpenAlex** key, an
+**NCBI / PubMed** key or a **Semantic Scholar** key saved, Scient's own lookups use it, and
+**Unpaywall email** lets Scient ask Unpaywall for a free copy that OpenAlex doesn't list; without
+one, Scient uses the Library's contact email (Settings ▸ Documents ▸ Library) if you set it. A key you
+turn Off for agents is not used. The values stay in Accounts and never appear in what agents see.
+
 ## What agents may use
 
 Everything you add starts **Allowed**. **Ask me** asks you each time, **Off** keeps agents out, and
@@ -144,7 +150,8 @@ agents queue any number. One queue runs every paper, one at a time per publisher
 publisher that refuses several in a row. A sign-in or a publisher's check asks you once, then every
 paper waiting on it continues, even after a restart. Many university licences forbid systematic
 downloading, so how many papers you fetch is your call. Scient saves only a PDF that is the paper,
-in the project's `papers` folder, and never fetches one twice.
+in the project's `papers` folder, and never fetches one twice. Papers an agent gets for your
+library also go on their source in [Sources](sources.md), which is added when missing.
 
 ## What Accounts doesn't protect against
 

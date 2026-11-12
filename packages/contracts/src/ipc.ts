@@ -24,6 +24,7 @@ import type { EditorId } from "./editor.ts";
 // SCIENT-FORK:START — Scient preview PDF export artifacts.
 import type {
   DesktopControlledHtmlPdfRenderArtifact,
+  DesktopPreviewLibraryPage,
   DesktopPreviewPdfExportArtifact,
 } from "./scient/desktopPreview.ts";
 // SCIENT-FORK:END
@@ -811,11 +812,13 @@ export const DesktopPreviewScreenshotArtifactSchema: Schema.Codec<DesktopPreview
 export {
   DesktopControlledHtmlPdfRenderArtifactSchema,
   DesktopControlledHtmlPdfRenderInputSchema,
+  DesktopPreviewLibraryPageSchema,
   DesktopPreviewPdfExportArtifactSchema,
   DesktopPreviewPdfExportSourceSignalsSchema,
 } from "./scient/desktopPreview.ts";
 export type {
   DesktopControlledHtmlPdfRenderArtifact,
+  DesktopPreviewLibraryPage,
   DesktopPreviewPdfExportArtifact,
   DesktopPreviewPdfExportSourceSignals,
 } from "./scient/desktopPreview.ts";
@@ -1372,6 +1375,9 @@ export interface DesktopPreviewBridge {
   exportPdf: (tabId: string) => Promise<DesktopPreviewPdfExportArtifact>;
   /** Render one signed project HTML document in an isolated hidden Chromium guest. */
   renderHtmlPdf: (sourceUrl: string) => Promise<DesktopControlledHtmlPdfRenderArtifact>;
+  // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library"; null when it can't be read.
+  readLibraryPage?: (tabId: string) => Promise<DesktopPreviewLibraryPage | null>;
+  // SCIENT-FORK:END
   revealArtifact: (path: string) => Promise<void>;
   copyArtifactToClipboard: (path: string) => Promise<void>;
   pictureInPicture: {

@@ -73,6 +73,14 @@ export const SCIENT_PAPERS_AWARENESS = buildScientPapersAwareness(
   true,
 );
 
+/** Included with Library access, so literature work starts in the Library rather than on the web. */
+const buildScientLibraryAwareness = (tools: ScientToolProjection): string => `## Scient Library
+Start literature or citation work in the project's Library, before web search: \`${tools.name("scient_sources_list")}\` (\`total\` is its size), \`${tools.name("scient_sources_search")}\` (PDF text), \`${tools.name("scient_sources_add")}\` by DOI, PMID, arXiv ID or ISBN (\`identifierList\` for several). Cite with keys from the \`references.bib\` that \`${tools.name("scient_sources_bibliography")}\` manages.${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
+
+export const SCIENT_LIBRARY_AWARENESS = buildScientLibraryAwareness(
+  CANONICAL_SCIENT_TOOL_PROJECTION,
+);
+
 /**
  * Compose only the blocks whose tools this session's list can show. The
  * capabilities are the session's provider-facing manifest, which omits project
@@ -98,6 +106,7 @@ export function buildScientAwareness(
       ? [buildScientDocumentAwareness(tools), buildScientOverleafAwareness(tools)]
       : []),
     ...(has("skills:read") ? [buildScientSkillsAwareness(tools)] : []),
+    ...(has("sources:read") ? [buildScientLibraryAwareness(tools)] : []),
     ...(has("accounts") ? [buildScientPapersAwareness(tools, has("preview"))] : []),
   ].join("\n\n");
 }
@@ -115,6 +124,7 @@ export const buildScientPromptAwareness = (capabilities: ReadonlySet<string>): s
 const PROJECT_AWARENESS_GRANTS: ReadonlySet<string> = new Set<McpCapability>([
   "compute",
   "documents:build",
+  "sources:read",
 ]);
 
 /**

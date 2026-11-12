@@ -15,10 +15,19 @@ import {
 } from "../../auth/http.ts";
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
+import { searchSourceFullText } from "./SourceFullText.ts";
+import { saveWebPageSource } from "./SourceWebPage.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
+import { zoteroKeyLookup } from "./ZoteroAccountKey.ts";
+import { ZoteroTransports } from "./ZoteroConnections.ts";
+import { refreshZoteroSources, sendSourcesToZotero } from "./ZoteroSync.ts";
 import {
   advanceSourceImport,
   beginLocalPdfImport,
+  bulkUpdateSources,
+  changeSystematicReview,
+  getSystematicReview,
+  listSystematicReviews,
   beginZoteroImport,
   beginZoteroScopedImport,
   cancelSourceImport,
@@ -30,15 +39,28 @@ import {
   inspectZoteroConnection,
   listZoteroCollections,
   listZoteroLibrary,
+  organizeSources,
   preflightZoteroImport,
   refreshScientSourceMetadata,
+  deleteSourcesPermanently,
+  listSourceRevisions,
+  listSourceTrash,
   removeSource,
+  restoreSource,
   retrySourceImport,
+  syncManagedBibliographyWithImports,
+  revertSource,
   updateScientSource,
   updateSourceNote,
-  updateSourceReview,
   uploadLocalPdfSource,
 } from "./ScientSourcesCoordinator.ts";
+import { addScientSourcesByIdentifier } from "./SourceIdentifierAdd.ts";
+import {
+  beginBibliographyFileImport,
+  exportBibliography,
+  readBibliographyFile,
+} from "./BibliographyFileAdapter.ts";
+import { startManagedBibliographySync } from "./ManagedBibliography.ts";
 
 class ScientSourcesOperationError extends Schema.TaggedError<ScientSourcesOperationError>()(
   "ScientSourcesOperationError",
@@ -69,6 +91,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   "scientSources",
   Effect.fnUntraced(function* (handlers) {
     const observeImport = yield* makeSourceImportAnalytics("user");
+    startManagedBibliographySync();
+    const zotero = {
+      ...(yield* ZoteroTransports),
+      webKey: yield* zoteroKeyLookup({ actor: "user" }),
+    };
     return yield* Effect.succeed(
       handlers
         .handle("overview", (args) =>
@@ -104,8 +131,26 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),
             );
-            return asset;
+            const { sha256, byteLength } = material.attachment;
+            return /^[0-9a-f]{64}$/u.test(sha256) && byteLength >= 1
+              ? { ...asset, material: { sha256, byteLength } }
+              : asset;
           }),
+        )
+        .handle("fullTextSearch", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            searchSourceFullText({
+              root: args.payload.root,
+              query: args.payload.query,
+              limit: args.payload.limit ?? 20,
+              ...(args.payload.sourceIds ? { sourceIds: args.payload.sourceIds } : {}),
+            }),
+          ),
+        )
+        .handle("savePage", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            saveWebPageSource({ ...args.payload, actor: "user" }, observeImport),
+          ),
         )
         .handle("journalIcon", (args) =>
           Effect.gen(function* () {
@@ -148,11 +193,6 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             updateSourceNote(args.payload),
           ),
         )
-        .handle("updateReview", (args) =>
-          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            updateSourceReview(args.payload),
-          ),
-        )
         .handle("refreshMetadata", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             refreshScientSourceMetadata(args.payload),
@@ -163,20 +203,87 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             removeSource(args.payload),
           ),
         )
+        .handle("organize", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            organizeSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("systematicReviews", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listSystematicReviews(args.payload.root),
+          ),
+        )
+        .handle("systematicReview", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            getSystematicReview(args.payload),
+          ),
+        )
+        .handle("systematicReviewChange", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            changeSystematicReview({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("bulkUpdate", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            bulkUpdateSources({ ...args.payload, actor: "user" }),
+          ),
+        )
+        .handle("addByIdentifier", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, async () => ({
+            results: await addScientSourcesByIdentifier(
+              {
+                root: args.payload.root,
+                entries: args.payload.entries,
+                actor: "user",
+                enrich: true,
+              },
+              observeImport,
+            ),
+          })),
+        )
+        .handle("trash", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listSourceTrash(args.payload),
+          ),
+        )
+        .handle("restore", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            restoreSource(args.payload),
+          ),
+        )
+        .handle("deletePermanently", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            deleteSourcesPermanently(args.payload),
+          ),
+        )
+        .handle("revisions", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listSourceRevisions(args.payload),
+          ),
+        )
+        .handle("revert", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            revertSource(args.payload),
+          ),
+        )
         .handle("zoteroStatus", (args) =>
-          handle(args.endpoint.name, AuthOrchestrationReadScope, () => inspectZoteroConnection()),
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            inspectZoteroConnection({ ...args.payload, zotero }),
+          ),
         )
         .handle("zoteroLibrary", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
-            listZoteroLibrary(args.payload),
+            listZoteroLibrary({ ...args.payload, zotero }),
           ),
         )
         .handle("zoteroCollections", (args) =>
-          handle(args.endpoint.name, AuthOrchestrationReadScope, () => listZoteroCollections()),
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            listZoteroCollections({ ...args.payload, zotero }),
+          ),
         )
         .handle("preflight", (args) =>
           handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
-            preflightZoteroImport(args.payload),
+            preflightZoteroImport({ ...args.payload, zotero }),
           ),
         )
         .handle("localPdfUpload", (args) =>
@@ -198,6 +305,22 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             discardLocalPdfSources(args.payload),
           ),
         )
+        .handle("fileImport", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, async () =>
+            beginBibliographyFileImport({
+              root: args.payload.root,
+              operationId: args.payload.operationId,
+              fileName: args.payload.file.name,
+              text: await readBibliographyFile(args.payload.file.path),
+              actor: "user",
+            }),
+          ),
+        )
+        .handle("export", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationReadScope, () =>
+            exportBibliography(args.payload),
+          ),
+        )
         .handle("beginImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             beginZoteroImport(args.payload),
@@ -205,12 +328,32 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         )
         .handle("beginScopedImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            beginZoteroScopedImport(args.payload),
+            beginZoteroScopedImport({ ...args.payload, zotero }),
+          ),
+        )
+        .handle("zoteroRefresh", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            refreshZoteroSources({
+              root: args.payload.root,
+              ...(args.payload.sourceIds ? { sourceIds: args.payload.sourceIds } : {}),
+              ...(args.payload.connection ? { connection: args.payload.connection } : {}),
+              choices: {
+                useZotero: new Set(args.payload.useZotero ?? []),
+                keepLocal: new Set(args.payload.keepLocal ?? []),
+              },
+              actor: "user",
+              zotero,
+            }),
+          ),
+        )
+        .handle("zoteroSend", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            sendSourcesToZotero({ ...args.payload, actor: "user", zotero }),
           ),
         )
         .handle("advanceImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
-            advanceSourceImport(args.payload, observeImport),
+            advanceSourceImport({ ...args.payload, zotero }, observeImport),
           ),
         )
         .handle("cancelImport", (args) =>
@@ -221,6 +364,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
         .handle("retryImport", (args) =>
           handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
             retrySourceImport(args.payload),
+          ),
+        )
+        .handle("syncBibliography", (args) =>
+          handle(args.endpoint.name, AuthOrchestrationOperateScope, () =>
+            syncManagedBibliographyWithImports({ ...args.payload, actor: "user" }, observeImport),
           ),
         ),
     );

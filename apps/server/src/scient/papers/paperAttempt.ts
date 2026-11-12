@@ -15,9 +15,16 @@ import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import { AccountsService, type AccountSessionScope } from "../accounts/AccountsService.ts";
 import { fetchFromPage, type FetchResult } from "./paperFetch.ts";
-import { articleAddress, lookUpPaper, openAccessPdf, type Paper } from "./paperLookup.ts";
+import {
+  articleAddress,
+  lookUpPaper,
+  openAccessPdf,
+  type Paper,
+  type PaperVersion,
+} from "./paperLookup.ts";
 import { buttonSteps, routeSteps, type RouteStep, type WorkedRoute } from "./paperRoutes.ts";
 import { pdfVerdict, readPdfFacts } from "./pdfCheck.ts";
+import { readResearchKeys } from "../sources/researchKeys.ts";
 
 /** Longest one route of one paper may take, so a stalled publisher can't hold up the rest. */
 const ROUTE_DEADLINE = "90 seconds";
@@ -56,6 +63,8 @@ export type PaperOutcome =
       readonly path?: string;
       readonly route: NonNullable<PaperItem["route"]>;
       readonly published: boolean;
+      /** Unknown for a copy already in the project. */
+      readonly version?: PaperVersion;
     }
   | { readonly state: "not-found" | "no-access"; readonly message: string; readonly paper?: Paper }
   | {
@@ -148,7 +157,7 @@ export const noteRefusal = (lane: Lane, now: number) => {
 const firstPdf = Effect.fn("Papers.firstPdf")(function* (copies: Paper["openAccess"]) {
   for (const copy of copies) {
     const bytes = yield* openAccessPdf(copy);
-    if (bytes) return bytes;
+    if (bytes) return { bytes, version: copy.version };
   }
   return undefined;
 });
@@ -339,7 +348,7 @@ export const fetchOnePaper = Effect.fn("Papers.fetchOne")(function* (
   savedBefore: (paper: Paper) => Effect.Effect<string | undefined>,
 ) {
   const found = yield* Effect.gen(function* () {
-    const paper = yield* lookUpPaper(asked);
+    const paper = yield* lookUpPaper(asked, yield* readResearchKeys());
     if (!paper?.doi || asked.url) return paper;
     const articleUrl = yield* articleAddress(paper.doi);
     return articleUrl ? { ...paper, articleUrl } : paper;
@@ -359,16 +368,17 @@ export const fetchOnePaper = Effect.fn("Papers.fetchOne")(function* (
       route: "saved-before" as const,
       published: true,
     } satisfies PaperOutcome;
-  const free = yield* firstPdf(paper.openAccess.filter((copy) => copy.published)).pipe(
-    lookups.withPermits(1),
-  );
+  const free = yield* firstPdf(
+    paper.openAccess.filter((copy) => copy.version === "published"),
+  ).pipe(lookups.withPermits(1));
   if (free)
     return {
       state: "saved" as const,
       paper,
-      bytes: free,
+      bytes: free.bytes,
       route: "open-access" as const,
       published: true,
+      version: "published",
     } satisfies PaperOutcome;
   const reached = requester.browser ? yield* tryRoutes(paper, requester) : undefined;
   if (reached?.saved)
@@ -378,17 +388,19 @@ export const fetchOnePaper = Effect.fn("Papers.fetchOne")(function* (
       bytes: reached.saved.bytes,
       route: reached.route,
       published: true,
+      version: "published",
     } satisfies PaperOutcome;
-  const other = yield* firstPdf(paper.openAccess.filter((copy) => !copy.published)).pipe(
-    lookups.withPermits(1),
-  );
+  const other = yield* firstPdf(
+    paper.openAccess.filter((copy) => copy.version !== "published"),
+  ).pipe(lookups.withPermits(1));
   if (other)
     return {
       state: "saved" as const,
       paper,
-      bytes: other,
+      bytes: other.bytes,
       route: "open-access" as const,
       published: false,
+      version: other.version,
     } satisfies PaperOutcome;
   return reached
     ? nextMove(paper, reached)
