@@ -398,9 +398,10 @@ describe("Library routes on the library backend", () => {
           expect(await titleOf(stale.sourceId)).toBe("Old title");
         });
 
-        // A refresh that fails through a link to the project marks the project itself.
+        // A refresh that fails through a link to the project marks the project itself. A junction
+        // on Windows needs no privilege; other systems ignore the type.
         const link = NodePath.join(fixture.base, "project-link");
-        yield* Effect.promise(() => NodeFSP.symlink(fixture.root, link, "dir"));
+        yield* Effect.promise(() => NodeFSP.symlink(fixture.root, link, "junction"));
         const viaLink = yield* storeFor(fixture, "write", link);
         yield* Effect.promise(async () => {
           const kept = await NodeFSP.readFile(pinsFile, "utf8");
