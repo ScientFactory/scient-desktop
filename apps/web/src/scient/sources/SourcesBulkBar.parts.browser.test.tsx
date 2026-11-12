@@ -8,6 +8,7 @@ import { page, userEvent } from "vite-plus/test/browser";
 
 import { toastManager } from "../../components/ui/toast";
 import { SourcesBulkBar } from "./SourcesBulkBar";
+import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
 import { useSourcesOrganize } from "./useSourcesOrganize";
 
 const mocks = vi.hoisted(() => ({ bulkUpdateScientSources: vi.fn() }));
@@ -39,6 +40,7 @@ const records: SourceSummary[] = Array.from({ length: 600 }, (_, index) => ({
 
 function Harness() {
   const [root, setRoot] = useState("/project");
+  const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
   const organize = useSourcesOrganize({
     environmentId: "environment-1" as EnvironmentId,
     root,
@@ -60,10 +62,11 @@ function Harness() {
           organize={organize}
           records={records}
           visibleSourceIds={records.map((record) => record.sourceId)}
-          onRequestName={() => undefined}
+          onRequestName={setNameRequest}
           onRemove={async () => undefined}
         />
       ) : null}
+      <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
     </>
   );
 }
@@ -111,6 +114,35 @@ describe("A bulk edit larger than one request", () => {
       description: "1 could not be changed. Stopped. 400 other sources were not changed.",
       actionProps: { children: "Undo" },
     });
+  });
+
+  it("closes the naming dialog as the parts start, so Stop can be reached", async () => {
+    mocks.bulkUpdateScientSources.mockReset();
+    let answerFirst = () => undefined as void;
+    mocks.bulkUpdateScientSources.mockImplementationOnce(
+      (_id, input) =>
+        new Promise((resolve) => {
+          answerFirst = () => resolve(answer(input.change.sourceIds, "bulk_1"));
+        }),
+    );
+    await using screen = await render(<Harness />, { router: false });
+    using add = vi.spyOn(toastManager, "add");
+
+    await userEvent.click(screen.getByRole("button", { name: "Select every source" }));
+    await userEvent.click(page.getByRole("button", { name: "Tag" }));
+    await userEvent.click(page.getByRole("menuitem", { name: "New tag…" }));
+    await userEvent.fill(page.getByRole("textbox", { name: "Tag" }), "fieldwork");
+    await userEvent.click(page.getByRole("button", { name: "Add" }));
+
+    await expect
+      .element(page.getByRole("dialog", { name: "Add a tag to 600 sources" }))
+      .not.toBeInTheDocument();
+    await expect.element(screen.getByText("Changing 0 of 600 sources")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+    answerFirst();
+    await vi.waitFor(() => expect(add).toHaveBeenCalledTimes(1));
+    expect(mocks.bulkUpdateScientSources).toHaveBeenCalledTimes(1);
+    expect(add.mock.calls[0]![0]).toMatchObject({ title: "Changed 100 sources" });
   });
 
   it("refuses another change while one runs and shows its line only in its own project", async () => {

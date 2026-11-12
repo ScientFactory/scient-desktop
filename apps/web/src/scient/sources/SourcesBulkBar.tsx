@@ -1,4 +1,5 @@
 import {
+  SCIENT_SOURCES_BULK_SOURCE_LIMIT,
   scientSourceTagCounts,
   scientSourceTagKey,
   type ScientSourceType,
@@ -169,6 +170,15 @@ export function SourcesBulkBar(props: {
     });
   };
   const notInProject = selected.filter((record) => record.pinned === false);
+  // A change in parts reports in this bar, where Stop is, and in its toast: the naming dialog
+  // closes as it starts. A smaller change keeps the dialog open until it is answered.
+  const named = async (change: Promise<unknown>) => {
+    if (count > SCIENT_SOURCES_BULK_SOURCE_LIMIT) {
+      void change.catch(() => undefined);
+      return true;
+    }
+    return (await change) !== null;
+  };
 
   const addTag = () =>
     props.onRequestName({
@@ -176,8 +186,7 @@ export function SourcesBulkBar(props: {
       label: "Tag",
       initialName: "",
       action: "Add",
-      onSubmit: async (tag) =>
-        (await organize.bulk({ sourceIds, addTags: [tag] }, "Tag was not added")) !== null,
+      onSubmit: (tag) => named(organize.bulk({ sourceIds, addTags: [tag] }, "Tag was not added")),
     });
   const newCollection = () =>
     props.onRequestName({
@@ -185,7 +194,7 @@ export function SourcesBulkBar(props: {
       label: "Collection name",
       initialName: "",
       action: "Create",
-      onSubmit: async (name) => (await organize.createCollection(name, sourceIds)) !== null,
+      onSubmit: (name) => named(organize.createCollection(name, sourceIds)),
     });
 
   return (
