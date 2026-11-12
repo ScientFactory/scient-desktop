@@ -764,7 +764,7 @@ export function SourceDetails(props: {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-3 border-b border-border p-3">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border p-3">
         <Button variant="ghost" size="xs" onClick={props.onBack} aria-label="Back to Library">
           <ChevronLeft />
           Library
