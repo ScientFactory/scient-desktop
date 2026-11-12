@@ -32,11 +32,24 @@ export const FONT_GROUPS: ReadonlyArray<FontGroup> = (
 
 const CSS_PIXELS_PER_POINT = 96 / 72;
 
+function selectionElement(): Element | null {
+  const anchor = window.getSelection()?.anchorNode;
+  return anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
+}
+
 /** The size in points that the selected text is drawn at now, or null without a selection in the page. */
 export function measureSelectionSize(): number | null {
-  const anchor = window.getSelection()?.anchorNode;
-  const element = anchor instanceof Element ? anchor : (anchor?.parentElement ?? null);
-  if (element === null) return null;
+  const element = selectionElement();
+  return element === null ? null : pointsOf(element);
+}
+
+/** The size the document body is drawn at: the editable root holding the selection. */
+export function measureDocumentSize(): number | null {
+  const root = selectionElement()?.closest('[contenteditable="true"]');
+  return root ? pointsOf(root) : null;
+}
+
+function pointsOf(element: Element): number | null {
   const pixels = Number.parseFloat(getComputedStyle(element).fontSize);
   // Nearest half point, so the stepper starts from a clean number (11.16 shows as 11).
   return normalizeFontSize(Math.round((pixels / CSS_PIXELS_PER_POINT) * 2) / 2);

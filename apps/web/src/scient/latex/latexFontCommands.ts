@@ -1,4 +1,5 @@
 import type { ChainedCommands, Editor } from "@tiptap/core";
+import type { Mark } from "@tiptap/pm/model";
 import { latexVisualFontMetrics } from "./latexVisualLayout";
 import { normalizeFontSize } from "../writing/fontChoices";
 import { declaredLatexCompiler } from "./latexCompiler";
@@ -21,23 +22,50 @@ const NAMED_SIZES = [
 const LEADING_RATIO = 1.2;
 
 /**
- * The size in points shared by the whole selection, or null when none or mixed.
- * A named size (`\large`) reports its number for the document's class size.
+ * The size and font shared by the whole selection. A value is null when the text has none, and
+ * the matching `Mixed` flag is true when the selection holds several. A named size (`\large`)
+ * reports its number for the document's class size.
  */
 export function latexFontState(
   editor: Editor | null,
   baseFontPt: 10 | 11 | 12 = 10,
-): { readonly size: number | null; readonly family: string | null } {
-  if (!editor) return { size: null, family: null };
-  const numeric = editor.getAttributes("latexFontSize").points;
-  const writtenFamily = editor.getAttributes("latexFontFamily").family;
-  const markFamily =
-    typeof writtenFamily === "string" && writtenFamily !== "" ? writtenFamily : null;
-  if (typeof numeric === "number") return { size: numeric, family: markFamily };
-  const named = NAMED_SIZES.find((name) => editor.isActive(`latexSize_${name}`));
+): {
+  readonly size: number | null;
+  readonly family: string | null;
+  readonly sizeMixed: boolean;
+  readonly familyMixed: boolean;
+} {
+  if (!editor) return { size: null, family: null, sizeMixed: false, familyMixed: false };
+  const { selection, doc } = editor.state;
+  const sizes = new Set<number | null>();
+  const families = new Set<string | null>();
+  const read = (marks: ReadonlyArray<Mark>) => {
+    const numeric = marks.find((mark) => mark.type.name === "latexFontSize")?.attrs.points;
+    const named = NAMED_SIZES.find((name) =>
+      marks.some((mark) => mark.type.name === `latexSize_${name}`),
+    );
+    sizes.add(
+      typeof numeric === "number"
+        ? numeric
+        : named === undefined
+          ? null
+          : latexVisualFontMetrics(baseFontPt)[named][0],
+    );
+    const family = marks.find((mark) => mark.type.name === "latexFontFamily")?.attrs.family;
+    families.add(typeof family === "string" && family !== "" ? family : null);
+  };
+  if (selection.empty) read(editor.state.storedMarks ?? selection.$from.marks());
+  else {
+    doc.nodesBetween(selection.from, selection.to, (node) => {
+      if (node.isText) read(node.marks);
+    });
+  }
+  const only = <T>(values: Set<T>): T | null => (values.size === 1 ? [...values][0]! : null);
   return {
-    size: named === undefined ? null : latexVisualFontMetrics(baseFontPt)[named][0],
-    family: markFamily,
+    size: only(sizes),
+    family: only(families),
+    sizeMixed: sizes.size > 1,
+    familyMixed: families.size > 1,
   };
 }
 

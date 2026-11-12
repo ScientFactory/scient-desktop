@@ -156,7 +156,11 @@ export interface ScientMarkdownEditorSnapshot {
   readonly findOpen: boolean;
   readonly findQuery: string;
   readonly fontFamily: string | null;
+  /** True when the selection mixes several fonts; fontFamily is then null. */
+  readonly fontFamilyMixed: boolean;
   readonly fontSize: number | null;
+  /** True when the selection mixes several sizes; fontSize is then null. */
+  readonly fontSizeMixed: boolean;
   readonly findWholeWord: boolean;
   readonly inTable: boolean;
   readonly listKind: "bullet" | "ordered" | "task" | null;
@@ -1719,18 +1723,19 @@ export class ScientMarkdownEditorView {
           : state.doc.rangeHasMark(selection.from, selection.to, mark),
       )
       .map((mark) => mark.name);
-    // The shared value of a mark attribute over the selection; null when none or mixed.
+    // The shared value of a mark attribute over the selection; `mixed` when the selection
+    // holds more than one value (a null value there means "none", not "several").
     const markAttribute = <T extends string | number>(
       markName: string,
       attribute: string,
       kind: "string" | "number",
-    ): T | null => {
+    ): { readonly value: T | null; readonly mixed: boolean } => {
       const type = scientMarkdownSchema.marks[markName]!;
       const valid = (value: unknown): value is T => typeof value === kind;
       if (selection.empty) {
         const mark = (state.storedMarks ?? selection.$from.marks()).find((m) => m.type === type);
         const value = mark?.attrs[attribute];
-        return valid(value) ? value : null;
+        return { value: valid(value) ? value : null, mixed: false };
       }
       const values = new Set<T | null>();
       state.doc.nodesBetween(selection.from, selection.to, (node) => {
@@ -1738,8 +1743,12 @@ export class ScientMarkdownEditorView {
         const value = node.marks.find((m) => m.type === type)?.attrs[attribute];
         values.add(valid(value) ? value : null);
       });
-      return values.size === 1 ? ([...values][0] ?? null) : null;
+      return values.size === 1
+        ? { value: [...values][0] ?? null, mixed: false }
+        : { value: null, mixed: values.size > 1 };
     };
+    const fontFamily = markAttribute<string>("font_family", "family", "string");
+    const fontSize = markAttribute<number>("font_size", "size", "number");
     let blockType = selection.$from.parent.type.name;
     let headingLevel: number | null =
       blockType === "heading" ? Number(selection.$from.parent.attrs.level) : null;
@@ -1807,8 +1816,10 @@ export class ScientMarkdownEditorView {
       findMatchCount: find.matches.length,
       findOpen: this.findOpen,
       findQuery: find.query,
-      fontFamily: markAttribute<string>("font_family", "family", "string"),
-      fontSize: markAttribute<number>("font_size", "size", "number"),
+      fontFamily: fontFamily.value,
+      fontFamilyMixed: fontFamily.mixed,
+      fontSize: fontSize.value,
+      fontSizeMixed: fontSize.mixed,
       findWholeWord: find.wholeWord,
       headingLevel,
       inTable,

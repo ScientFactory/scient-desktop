@@ -140,7 +140,9 @@ interface EditingPresentation {
   italic: boolean;
   code: boolean;
   fontFamily: string | null;
+  fontFamilyMixed: boolean;
   fontSize: number | null;
+  fontSizeMixed: boolean;
   selectedWords: number | null;
 }
 
@@ -158,7 +160,9 @@ function editingPresentation(editor: Editor | null, baseFontPt: 10 | 11 | 12): E
     italic: editor?.isActive("italic") ?? false,
     code: editor?.isActive("code") ?? false,
     fontFamily: font.family,
+    fontFamilyMixed: font.familyMixed,
     fontSize: font.size,
+    fontSizeMixed: font.sizeMixed,
     selectedWords: editor ? countSelectedWords(editor.state) : null,
   };
 }
@@ -169,7 +173,9 @@ const sameEditingPresentation = (before: EditingPresentation, after: EditingPres
   before.italic === after.italic &&
   before.code === after.code &&
   before.fontFamily === after.fontFamily &&
+  before.fontFamilyMixed === after.fontFamilyMixed &&
   before.fontSize === after.fontSize &&
+  before.fontSizeMixed === after.fontSizeMixed &&
   before.selectedWords === after.selectedWords;
 
 /** Typing at a collapsed caret need not render unchanged controls. Selection,

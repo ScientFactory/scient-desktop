@@ -9718,6 +9718,9 @@ function LatexVisualEditorReady(
       <FontControls
         family={editingPresentation.fontFamily}
         size={editingPresentation.fontSize}
+        familyMixed={editingPresentation.fontFamilyMixed}
+        sizeMixed={editingPresentation.fontSizeMixed}
+        bodySize={latexVisualLayoutProfile(mathSetupSource).baseFontPt}
         disabled={readOnly || !editor || !formattingAvailable || mathActive}
         isAvailable={(name) => latexFontAvailable(fontEngine, name)}
         unavailableNote="Needs XeLaTeX or LuaLaTeX"

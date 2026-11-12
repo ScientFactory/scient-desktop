@@ -13,18 +13,22 @@ import {
   FONT_GROUPS,
   FONT_SIZE_MAX,
   FONT_SIZE_MIN,
+  measureDocumentSize,
   measureSelectionSize,
   normalizeFontSize,
 } from "./fontChoices";
 
 /**
- * Content of `Text > Font / Size`, identical in both editors: a scrolling list of
- * fonts opened from one button, each drawn in its own face, and a size row (minus, number, plus).
- * A null value means the document default; "Default font" removes the style.
+ * Content of `Text > Font / Size`, identical in both editors: a scrolling list of fonts and a
+ * size row. A null value means the document default; a mixed selection leaves the field empty.
  */
 export function FontControls(props: {
   readonly family: string | null;
   readonly size: number | null;
+  readonly familyMixed?: boolean;
+  readonly sizeMixed?: boolean;
+  /** The document's body size, where the size buttons start when the selection mixes sizes; measured when absent. */
+  readonly bodySize?: number;
   readonly disabled: boolean;
   /** Fonts the document cannot use are listed but disabled, with `unavailableNote` as the reason. */
   readonly isAvailable?: (name: string) => boolean;
@@ -38,6 +42,9 @@ export function FontControls(props: {
   const [defaultSize, setDefaultSize] = useState(() =>
     props.size === null ? measureSelectionSize() : null,
   );
+  // Where the size buttons start from when the selection mixes sizes.
+  const [measuredSize] = useState(measureDocumentSize);
+  const documentSize = props.bodySize ?? measuredSize;
   const needle = query.trim().toLowerCase();
   const groups = FONT_GROUPS.map((group) => ({
     ...group,
@@ -84,7 +91,9 @@ export function FontControls(props: {
           }
           onClick={() => setOpen(!open)}
         >
-          <span className="truncate">{props.family ?? "Default font"}</span>
+          <span className="truncate">
+            {props.familyMixed ? "Mixed fonts" : (props.family ?? "Default font")}
+          </span>
           <ChevronDownIcon className="size-4 shrink-0 text-foreground/70" />
         </button>
         {open && (
@@ -100,7 +109,7 @@ export function FontControls(props: {
             <div className="max-h-52 overflow-y-auto" role="listbox" aria-label="Font">
               <FontOption
                 label="Default font"
-                selected={props.family === null}
+                selected={props.family === null && !props.familyMixed}
                 disabled={props.disabled}
                 onSelect={() => choose(null)}
               />
@@ -136,8 +145,23 @@ export function FontControls(props: {
           step={1}
           smallStep={0.5}
           disabled={props.disabled}
-          value={props.size ?? defaultSize}
+          value={props.sizeMixed ? null : (props.size ?? defaultSize)}
           format={{ maximumFractionDigits: 2 }}
+          onValueChange={(value, details) => {
+            // From an empty (mixed) field the stepper would start at the minimum: start from the document size.
+            if (!props.sizeMixed || value === null) return;
+            const step =
+              details.reason === "increment-press"
+                ? 1
+                : details.reason === "decrement-press"
+                  ? -1
+                  : details.reason === "keyboard" && details.event instanceof KeyboardEvent
+                    ? ({ ArrowUp: 1, ArrowDown: -1 }[details.event.key] ?? 0)
+                    : 0;
+            if (step === 0) return;
+            details.cancel();
+            props.onSize(normalizeFontSize((documentSize ?? 12) + step));
+          }}
           onValueCommitted={(value) => {
             const size = value === null ? null : normalizeFontSize(value);
             if (size !== null) props.onSize(size);
@@ -148,7 +172,7 @@ export function FontControls(props: {
           <NumberFieldIncrement aria-label="Larger" />
           <button
             type="button"
-            disabled={props.disabled || props.size === null}
+            disabled={props.disabled || (props.size === null && !props.sizeMixed)}
             className="ms-auto rounded-md px-1.5 py-0.5 text-xs text-foreground/70 hover:bg-accent disabled:opacity-50"
             onClick={() => {
               props.onSize(null);

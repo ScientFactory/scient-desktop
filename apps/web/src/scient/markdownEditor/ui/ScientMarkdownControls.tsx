@@ -363,6 +363,8 @@ function MarkdownFontControls({
     <FontControls
       family={snapshot.fontFamily}
       size={snapshot.fontSize}
+      familyMixed={snapshot.fontFamilyMixed}
+      sizeMixed={snapshot.fontSizeMixed}
       disabled={!snapshot.editable}
       onFamily={(family) => controller.execute(`font-family-${family ?? "default"}`)}
       onSize={(size) =>
