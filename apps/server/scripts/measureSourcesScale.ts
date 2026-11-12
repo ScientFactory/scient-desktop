@@ -56,6 +56,7 @@ import type { ScientSourcesLibraryStore } from "../src/scient/sources/SourcesBac
 
 const SCRIPT = NodeURL.fileURLToPath(import.meta.url);
 const PART = 100;
+const PIN_CHANGES_PER_REQUEST = 2_000;
 const WARM = 5;
 const DELAY_RESOLUTION_MS = 10;
 
@@ -213,6 +214,15 @@ async function bulkInParts(
   };
 }
 
+type ScientPinChangeRequest =
+  | { readonly action: "pin"; readonly sourceId: string }
+  | { readonly action: "unpin"; readonly citationKey: string };
+
+const pinnedKeys = (result: Awaited<ReturnType<typeof organizeLibrarySources>>) =>
+  ("pinChanges" in result ? (result.pinChanges ?? []) : []).flatMap((entry) =>
+    entry.outcome === "pinned" && entry.pin ? [entry.pin.citationKey] : [],
+  );
+
 async function runLibraryMeasure(measure: Measure, meta: Meta): Promise<Record<string, unknown>> {
   const read = (projectRoot: string) => libraryStore(meta.stateDir, projectRoot, "read");
   const write = (projectRoot: string) => libraryStore(meta.stateDir, projectRoot, "write");
@@ -358,9 +368,7 @@ async function runLibraryMeasure(measure: Measure, meta: Meta): Promise<Record<s
           },
         }),
       );
-      const keys = ("pinChanges" in pin.value ? (pin.value.pinChanges ?? []) : []).flatMap(
-        (entry) => (entry.outcome === "pinned" && entry.pin ? [entry.pin.citationKey] : []),
-      );
+      const keys = pinnedKeys(pin.value);
       const unpin = await time(() =>
         organizeLibrarySources(store, {
           change: {
@@ -369,10 +377,44 @@ async function runLibraryMeasure(measure: Measure, meta: Meta): Promise<Record<s
           },
         }),
       );
+      // Again in the panel's requests of 2,000 (`libraryActions.ts`).
+      const inParts = async (changes: ReadonlyArray<ScientPinChangeRequest>) => {
+        const requests: number[] = [];
+        const started = performance.now();
+        const pinned: string[] = [];
+        for (let start = 0; start < changes.length; start += PIN_CHANGES_PER_REQUEST) {
+          const part = await time(() =>
+            organizeLibrarySources(store, {
+              change: {
+                action: "change-pins",
+                changes: changes.slice(start, start + PIN_CHANGES_PER_REQUEST),
+              },
+            }),
+          );
+          requests.push(part.ms);
+          pinned.push(...pinnedKeys(part.value));
+        }
+        return {
+          value: pinned,
+          summary: {
+            requests: requests.length,
+            totalMs: round2(performance.now() - started),
+            slowestRequestMs: Math.max(...requests),
+          },
+        };
+      };
+      const pinParts = await inParts(
+        others.map((sourceId) => ({ action: "pin" as const, sourceId })),
+      );
+      const unpinParts = await inParts(
+        pinParts.value.map((citationKey) => ({ action: "unpin" as const, citationKey })),
+      );
       return {
         clientTimeoutMs: 15_000,
         pin: { changes: others.length, pinned: keys.length, ms: pin.ms },
         unpin: { changes: keys.length, ms: unpin.ms },
+        pinInRequests: pinParts.summary,
+        unpinInRequests: unpinParts.summary,
       };
     }
     default:
@@ -516,8 +558,11 @@ async function spawnMeasure(input: {
   readonly resultPath: string;
   readonly moveRoot?: string;
   readonly interrupt?: { readonly phase: string; readonly fraction: number };
+  readonly heapMiB?: number | undefined;
 }): Promise<{ readonly interruptedAt: unknown; readonly code: number | null }> {
   const args = [
+    // A bound to test, not to tune: a measure that needs more heap fails instead of growing.
+    ...(input.heapMiB ? [`--max-old-space-size=${input.heapMiB}`] : []),
     SCRIPT,
     "--child",
     input.measure,
@@ -593,6 +638,7 @@ async function driver() {
       label: { type: "string" },
       keep: { type: "boolean", default: false },
       "interrupt-phase": { type: "string", default: "files" },
+      "heap-mib": { type: "string" },
     },
   });
   if (!values.out) throw new Error("Give --out <folder>.");
@@ -603,6 +649,7 @@ async function driver() {
   const records = Number.parseInt(values.records, 10);
   const only = values.only ? new Set(values.only.split(",")) : null;
   const wanted = (measure: Measure) => !only || only.has(measure);
+  const heapMiB = values["heap-mib"] ? Number.parseInt(values["heap-mib"], 10) : undefined;
   const work = values.work
     ? NodePath.resolve(values.work)
     : await NodeFSP.realpath(
@@ -655,7 +702,7 @@ async function driver() {
       for (const measure of LIBRARY_MEASURES.filter(wanted)) {
         log(`Round ${round}: ${measure}.`);
         const resultPath = NodePath.join(work, `${measure}.json`);
-        await spawnMeasure({ measure, metaPath, resultPath });
+        await spawnMeasure({ measure, metaPath, resultPath, heapMiB });
         await record(measure, round, resultPath);
       }
       for (const measure of MOVE_MEASURES.filter(wanted)) {
@@ -671,7 +718,7 @@ async function driver() {
         );
         const resultPath = NodePath.join(work, `${measure}.json`);
         if (measure === "move") {
-          await spawnMeasure({ measure, metaPath, resultPath, moveRoot });
+          await spawnMeasure({ measure, metaPath, resultPath, moveRoot, heapMiB });
           await record(measure, round, resultPath, { copyMs: copied.ms });
         } else {
           const killed = await time(() =>
@@ -681,13 +728,14 @@ async function driver() {
               resultPath: NodePath.join(work, "move-killed.json"),
               moveRoot,
               interrupt: { phase: values["interrupt-phase"], fraction: 0.5 },
+              heapMiB,
             }),
           );
           const library = scientLibraryLocation(
             scientLibraryRootFor(NodePath.join(runBase, "state")),
           );
           const after = await readScientLibraryMoveState({ library, projectRoot: moveRoot });
-          await spawnMeasure({ measure, metaPath, resultPath, moveRoot });
+          await spawnMeasure({ measure, metaPath, resultPath, moveRoot, heapMiB });
           await record(measure, round, resultPath, {
             interrupted: {
               at: killed.value.interruptedAt,
@@ -706,7 +754,7 @@ async function driver() {
     );
     await NodeFSP.writeFile(
       NodePath.join(out, "summary.json"),
-      `${JSON.stringify({ machine: machine(), rounds, summary }, null, 2)}\n`,
+      `${JSON.stringify({ machine: machine(), rounds, ...(heapMiB ? { heapMiB } : {}), summary }, null, 2)}\n`,
     );
     log(`Done: ${out}.`);
   } finally {
