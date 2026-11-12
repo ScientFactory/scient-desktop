@@ -29,6 +29,9 @@ export const LIBRARY_LABELS = {
   readingFailed: "Reading status was not changed",
   stayInLibrary: "They stay in your Library.",
   staysInLibrary: "It stays in your Library.",
+  removeSnapshot: "Remove a source this Library does not have?",
+  removeSnapshotHelp:
+    "This computer's Library does not have it: it is only kept for this project. Removing it cannot be undone here, and it cannot be added back from this computer.",
 } as const;
 
 const sources = (count: number) => (count === 1 ? "1 source" : `${count} sources`);
@@ -46,6 +49,25 @@ export function addedToProjectLabel(count: number): string {
 
 export function removedFromProjectLabel(count: number): string {
   return `Removed ${sources(count)} from this project`;
+}
+
+export function removeSnapshotsLabel(count: number): string {
+  return count === 1
+    ? LIBRARY_LABELS.removeSnapshot
+    : `Remove ${sources(count)} this Library does not have?`;
+}
+
+export function removeSnapshotsHelp(count: number): string {
+  return count === 1
+    ? LIBRARY_LABELS.removeSnapshotHelp
+    : "This computer's Library does not have them: they are only kept for this project. Removing them cannot be undone here, and they cannot be added back from this computer.";
+}
+
+/** Toast line when removed sources were only kept for this project; any others stay in the Library. */
+export function goneFromComputerLabel(count: number): string {
+  return count === 1
+    ? "It is gone from this computer: this Library does not have it."
+    : `${count} of them are gone from this computer: this Library does not have them.`;
 }
 
 /** After a move to Trash: other projects keep the source as their saved citation details. */

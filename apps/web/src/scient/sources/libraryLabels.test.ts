@@ -3,10 +3,13 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   addedToProjectLabel,
   alsoInOtherProjectsLabel,
+  goneFromComputerLabel,
   inLibraryNotProjectLabel,
   LIBRARY_LABELS,
   readingResultLabel,
   removedFromProjectLabel,
+  removeSnapshotsHelp,
+  removeSnapshotsLabel,
   someAlsoInOtherProjectsLabel,
 } from "./libraryLabels";
 import { sourcePinLabel } from "./sourceLabels";
@@ -28,6 +31,9 @@ describe("library labels", () => {
         alsoInOtherProjectsLabel(count) ?? "",
         someAlsoInOtherProjectsLabel(count),
         inLibraryNotProjectLabel(count),
+        removeSnapshotsLabel(count),
+        removeSnapshotsHelp(count),
+        goneFromComputerLabel(count),
       ]),
       sourcePinLabel({ pinned: true }, "library"),
       sourcePinLabel({ pinned: true, fromSnapshot: true }, "project"),

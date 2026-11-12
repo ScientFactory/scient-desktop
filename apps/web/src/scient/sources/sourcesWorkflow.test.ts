@@ -483,6 +483,66 @@ describe("sources workflow on a personal Library", () => {
     });
     expect(next.overview?.records[0]).toMatchObject({ readingStatus: "unread", starred: true });
   });
+  it("keeps a landed reading change when an older overview answer arrives", () => {
+    const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
+      type: "overviewRequestStarted",
+      request: 1,
+    });
+    const marked = sourcesWorkflowReducer(started, {
+      type: "readingStateArrived",
+      result: {
+        sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: true }],
+      },
+    });
+    const stale = sourcesWorkflowReducer(marked, {
+      type: "overviewArrived",
+      request: 1,
+      overview: overviewWith([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+      ]),
+    });
+    expect(stale.overview?.records[0]).toMatchObject({ readingStatus: "read", starred: true });
+
+    const refreshed = reduceAll(
+      stale,
+      { type: "overviewRequestStarted", request: 2 },
+      {
+        type: "overviewArrived",
+        request: 2,
+        overview: overviewWith([
+          { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+    );
+    expect(refreshed.overview?.records[0]).toMatchObject({
+      readingStatus: "unread",
+      starred: false,
+    });
+  });
+
+  it("keeps a landed reading change on a late detail answer", () => {
+    const base = sourcesWorkflowReducer(
+      library([
+        { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+      ]),
+      {
+        type: "readingStateArrived",
+        result: {
+          sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: true }],
+        },
+      },
+    );
+    const late = sourcesWorkflowReducer(base, {
+      type: "sourceDetailArrived",
+      sourceId: "a",
+      detail: {
+        ...detail({ sourceId: "a", revision: 4 }),
+        readingStatus: "unread",
+        starred: false,
+      },
+    });
+    expect(late.sourceDetails["a"]).toMatchObject({ readingStatus: "read", starred: true });
+  });
 });
 
 describe("sources workflow import transitions", () => {

@@ -48,6 +48,7 @@ export interface SourcesWorkflowState {
   readonly zoteroCheckFeedback: string | null;
   readonly cancelling: boolean;
   readonly error: string | null;
+  readonly readingOverrides: Readonly<Record<string, ReadingOverride>>;
 }
 
 export const initialSourcesWorkflowState: SourcesWorkflowState = {
@@ -70,6 +71,7 @@ export const initialSourcesWorkflowState: SourcesWorkflowState = {
   zoteroCheckFeedback: null,
   cancelling: false,
   error: null,
+  readingOverrides: {},
 };
 
 export type SourcesWorkflowAction =
@@ -177,6 +179,13 @@ function acceptRecordIntoOverview(
   return { ...overview, records };
 }
 
+type ReadingChange = Partial<
+  Pick<ScientSourcesReadingStateResult["sources"][number], "outcome" | "readingStatus" | "starred">
+>;
+
+/** A reading change that landed, kept until an overview that started after it lands. */
+type ReadingOverride = ReadingChange & { readonly atOverviewRequest: number };
+
 type LibraryFields = Pick<
   ScientSourceDetailResult,
   "pinned" | "projectNote" | "fromSnapshot" | "readingStatus" | "starred"
@@ -225,7 +234,7 @@ function withReadingState<
     readonly readingStatus?: unknown;
     readonly starred?: unknown;
   },
->(record: T, changes: ReadonlyMap<string, ScientSourcesReadingStateResult["sources"][number]>): T {
+>(record: T, changes: ReadonlyMap<string, ReadingChange>): T {
   const change = changes.get(record.sourceId);
   if (!change || change.outcome === "not-found" || record.readingStatus === undefined) {
     return record;
@@ -249,6 +258,19 @@ function pruneSourceDetails(
       return summary ? [[sourceId, withSummaryReadingState(detail, summary)]] : [];
     }),
   );
+}
+
+/** The newest reading change wins over an answer to a read that started before it. */
+function withReadingOverride<
+  A extends {
+    readonly sourceId: string;
+    readonly readingStatus?: unknown;
+    readonly starred?: unknown;
+  },
+>(record: A, overrides: Readonly<Record<string, ReadingOverride>>): A {
+  const override = overrides[record.sourceId];
+  if (!override) return record;
+  return withReadingState(record, new Map([[record.sourceId, override]]));
 }
 
 /** Reading state changes no revision, so a kept detail takes it from the newer overview. */
@@ -293,11 +315,28 @@ export function sourcesWorkflowReducer(
       // Only the newest overview load wins; import progress and Zotero
       // browsing run on their own lanes and are unaffected by this check.
       if (action.request !== state.overviewRequest) return state;
+      const pending = new Map(
+        Object.entries(state.readingOverrides).filter(
+          ([, override]) => override.atOverviewRequest >= action.request,
+        ),
+      );
+      const overview =
+        pending.size > 0
+          ? {
+              ...action.overview,
+              records: action.overview.records.map((record) => withReadingState(record, pending)),
+            }
+          : action.overview;
       return {
         ...state,
-        overview: action.overview,
-        sourceDetails: pruneSourceDetails(state.sourceDetails, action.overview),
-        operation: action.overview.activeOperation ?? state.operation,
+        overview,
+        sourceDetails: pruneSourceDetails(state.sourceDetails, overview),
+        operation: overview.activeOperation ?? state.operation,
+        readingOverrides: Object.fromEntries(
+          Object.entries(state.readingOverrides).filter(
+            ([, override]) => override.atOverviewRequest > action.request,
+          ),
+        ),
       };
     }
     case "sourceDetailArrived": {
@@ -305,23 +344,19 @@ export function sourcesWorkflowReducer(
         ...state,
         sourceDetails: {
           ...state.sourceDetails,
-          [action.sourceId]: action.detail,
+          [action.sourceId]: withReadingOverride(action.detail, state.readingOverrides),
         },
       };
     }
     case "sourceRecordAccepted": {
+      const record = withReadingOverride(action.record, state.readingOverrides);
       return {
         ...state,
         sourceDetails: {
           ...state.sourceDetails,
-          [action.record.sourceId]: keepPersonalFields(
-            action.record,
-            state.sourceDetails[action.record.sourceId],
-          ),
+          [record.sourceId]: keepPersonalFields(record, state.sourceDetails[record.sourceId]),
         },
-        ...(state.overview
-          ? { overview: acceptRecordIntoOverview(state.overview, action.record) }
-          : {}),
+        ...(state.overview ? { overview: acceptRecordIntoOverview(state.overview, record) } : {}),
       };
     }
     case "sourceRemoved": {
@@ -345,8 +380,20 @@ export function sourcesWorkflowReducer(
     }
     case "readingStateArrived": {
       const changes = new Map(action.result.sources.map((entry) => [entry.sourceId, entry]));
+      const readingOverrides = { ...state.readingOverrides };
+      for (const entry of action.result.sources) {
+        if (entry.outcome === "not-found") continue;
+        if (entry.readingStatus === undefined && entry.starred === undefined) continue;
+        readingOverrides[entry.sourceId] = {
+          ...readingOverrides[entry.sourceId],
+          ...(entry.readingStatus !== undefined ? { readingStatus: entry.readingStatus } : {}),
+          ...(entry.starred !== undefined ? { starred: entry.starred } : {}),
+          atOverviewRequest: state.overviewRequest,
+        };
+      }
       return {
         ...state,
+        readingOverrides,
         sourceDetails: Object.fromEntries(
           Object.entries(state.sourceDetails).map(([sourceId, detail]) => [
             sourceId,

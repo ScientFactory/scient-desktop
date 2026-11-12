@@ -39,6 +39,15 @@ import {
   type ReactNode,
 } from "react";
 
+import {
+  AlertDialog,
+  AlertDialogClose,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogPopup,
+  AlertDialogTitle,
+} from "../../components/ui/alert-dialog";
 import { Button } from "../../components/ui/button";
 import { ManagedBibliographyNotice } from "./ManagedBibliographyNotice";
 import { useManagedBibliography } from "./useManagedBibliography";
@@ -117,11 +126,14 @@ import {
 } from "./libraryActions";
 import {
   addedToProjectLabel,
+  goneFromComputerLabel,
   inLibraryNotProjectLabel,
   LIBRARY_LABELS,
   matchesReadingFilter,
   readingResultLabel,
   removedFromProjectLabel,
+  removeSnapshotsHelp,
+  removeSnapshotsLabel,
   type ReadingStateChange,
 } from "./libraryLabels";
 import { accountsState } from "../accounts/accountsState";
@@ -131,6 +143,10 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useAccountCommand, useAccounts } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
+type ProjectRemoval = {
+  readonly citationKey?: string | undefined;
+  readonly fromSnapshot?: boolean | undefined;
+};
 type SourceContextAction =
   | "view"
   | "edit"
@@ -439,6 +455,10 @@ export function ScientSourcesPanel(props: {
     readonly file: File;
     readonly report: ScientSourcesFileImportResult["report"];
   } | null>(null);
+  const [snapshotRemoval, setSnapshotRemoval] = useState<{
+    readonly records: ReadonlyArray<ProjectRemoval>;
+    readonly snapshots: number;
+  } | null>(null);
   const panelContext = `${props.environmentId}\0${props.root}`;
   const [recentSourcesStore] = useState(() =>
     createRecentSourcesStore(readRecentSourceAdds(panelContext)),
@@ -640,7 +660,11 @@ export function ScientSourcesPanel(props: {
     sources.zoteroGroups.find((group) => group.groupId === sources.zoteroGroupId)?.name ??
     "My Library";
 
-  const announceProjectChange = (kind: "add" | "remove", outcome: ProjectSourcesOutcome) => {
+  const announceProjectChange = (
+    kind: "add" | "remove",
+    outcome: ProjectSourcesOutcome,
+    snapshots = 0,
+  ) => {
     if (outcome.changed > 0) {
       toastManager.add({
         type: "success",
@@ -651,9 +675,11 @@ export function ScientSourcesPanel(props: {
         ...(kind === "remove"
           ? {
               description:
-                outcome.changed === 1
-                  ? LIBRARY_LABELS.staysInLibrary
-                  : LIBRARY_LABELS.stayInLibrary,
+                snapshots > 0
+                  ? goneFromComputerLabel(snapshots)
+                  : outcome.changed === 1
+                    ? LIBRARY_LABELS.staysInLibrary
+                    : LIBRARY_LABELS.stayInLibrary,
             }
           : {}),
       });
@@ -673,6 +699,7 @@ export function ScientSourcesPanel(props: {
   const changeProject = async (
     kind: "add" | "remove",
     changes: ReadonlyArray<ProjectSourcesChange>,
+    snapshots = 0,
   ) => {
     const outcome = await changeProjectSources({
       environmentId: props.environmentId,
@@ -680,22 +707,30 @@ export function ScientSourcesPanel(props: {
       changes,
     });
     await sources.refreshOverview().catch(() => undefined);
-    announceProjectChange(kind, outcome);
+    announceProjectChange(kind, outcome, snapshots);
   };
   const addToProject = (records: ReadonlyArray<{ readonly sourceId: string }>) =>
     changeProject(
       "add",
       records.map((record) => ({ action: "pin", sourceId: record.sourceId })),
     );
-  const removeFromProject = (
-    records: ReadonlyArray<{ readonly citationKey?: string | undefined }>,
-  ) =>
+  const unpinFromProject = (records: ReadonlyArray<ProjectRemoval>, snapshots: number) =>
     changeProject(
       "remove",
       records.flatMap((record) =>
         record.citationKey ? [{ action: "unpin" as const, citationKey: record.citationKey }] : [],
       ),
+      snapshots,
     );
+  // A snapshot is only kept for this project, so its removal asks first and reports differently.
+  const removeFromProject = (records: ReadonlyArray<ProjectRemoval>) => {
+    const snapshots = records.filter((record) => record.fromSnapshot === true).length;
+    if (snapshots > 0) {
+      setSnapshotRemoval({ records, snapshots });
+      return Promise.resolve();
+    }
+    return unpinFromProject(records, 0);
+  };
   const setReadingState = async (
     sourceIds: ReadonlyArray<string>,
     change: ReadingStateChange,
@@ -1866,6 +1901,35 @@ export function ScientSourcesPanel(props: {
         />
       ) : null}
       <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
+      <AlertDialog
+        open={snapshotRemoval !== null}
+        onOpenChange={(open) => (!open ? setSnapshotRemoval(null) : undefined)}
+      >
+        <AlertDialogPopup>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              {removeSnapshotsLabel(snapshotRemoval?.snapshots ?? 1)}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {removeSnapshotsHelp(snapshotRemoval?.snapshots ?? 1)}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
+            <Button
+              onClick={() => {
+                const pendingRemoval = snapshotRemoval;
+                setSnapshotRemoval(null);
+                if (pendingRemoval) {
+                  void unpinFromProject(pendingRemoval.records, pendingRemoval.snapshots);
+                }
+              }}
+            >
+              {LIBRARY_LABELS.removeFromProject}
+            </Button>
+          </AlertDialogFooter>
+        </AlertDialogPopup>
+      </AlertDialog>
       {sources.overview.records.length === 0 ? (
         <>
           <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
