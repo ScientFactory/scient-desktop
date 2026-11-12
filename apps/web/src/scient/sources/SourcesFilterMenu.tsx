@@ -36,6 +36,7 @@ import {
   MenuTrigger,
 } from "../../components/ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
+import { ScientTooltip } from "../presentation/ScientTooltip";
 import { orderedCollections } from "./collectionTree";
 import { LIBRARY_LABELS } from "./libraryLabels";
 import { SCIENT_SOURCE_STUDY_DESIGN_LABELS, SCIENT_SOURCE_TYPE_LABELS } from "./sourceLabels";
@@ -222,7 +223,8 @@ export function SourcesFilterMenu(props: {
               {organize.collection?.name ?? (scopes ? SCOPE_LABELS[scopes.listed] : "All")}
             </SubmenuValue>
           </MenuSubTrigger>
-          <MenuSubPopup>
+          {/* A long name would stretch the submenu over its parent menu; it truncates instead. */}
+          <MenuSubPopup className="max-w-64">
             <MenuRadioGroup
               value={
                 organize.collection?.collectionId ??
@@ -268,7 +270,9 @@ export function SourcesFilterMenu(props: {
                         : "flex min-w-0 items-center gap-2"
                     }
                   >
-                    <span className="min-w-0 flex-1 truncate">{collection.name}</span>
+                    <ScientTooltip content={collection.name}>
+                      <span className="min-w-0 flex-1 truncate">{collection.name}</span>
+                    </ScientTooltip>
                     <Count
                       value={
                         scientSourceCollectionMemberIds(organization, collection.collectionId).size
