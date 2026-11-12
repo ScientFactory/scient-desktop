@@ -24,6 +24,7 @@
     "speech:catalog:sync": "node scripts/sync-speech-catalog.ts",
     "speech:catalog:check": "node scripts/sync-speech-catalog.ts --check",
     "test": "vp test run",
+    "measure:sources-scale": "node scripts/measureSourcesScale.ts",
     "test:performance": "vp test bench --run --fileParallelism=false --maxWorkers=1 src/scient/conversationImport/ConversationImportNotices.bench.ts src/scient/conversationImport/ConversationImportBenchmark.bench.ts src/scient/operations/AgentCapabilityBudget.bench.ts src/orchestration-v2/scient-fork/NativeForkHeavy.bench.ts src/orchestration-v2/scient-fork/stress/Scale.native.bench.ts src/scient/compute/ManagedPythonProduct.bench.ts src/provider/omp/OmpCustomModels.barrier.bench.ts src/scient/extensions/connectors/ConnectorRedaction.bench.ts src/scient/overleaf/OverleafSync.bench.ts",
     "record:codex-replay": "bun scripts/record-codex-app-server-replay-fixture.ts",
     "record:claude-replay": "bun scripts/record-claude-agent-sdk-replay-fixture.ts",
