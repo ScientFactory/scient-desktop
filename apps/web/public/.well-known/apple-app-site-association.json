@@ -3,11 +3,15 @@
     "details": [
       {
         "appIDs": [
-          "ARK85ZXQ4Z.com.t3tools.t3code",
-          "ARK85ZXQ4Z.com.t3tools.t3code.preview",
-          "ARK85ZXQ4Z.com.t3tools.t3code.dev"
+          "XR49G75382.com.scientfactory.mobile",
+          "XR49G75382.com.scientfactory.mobile.preview",
+          "XR49G75382.com.scientfactory.mobile.dev"
         ],
-        "components": [{ "/": "/threads/*" }]
+        "components": [
+          {
+            "/": "/threads/*"
+          }
+        ]
       }
     ]
   }

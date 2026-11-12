@@ -475,7 +475,19 @@ export function spawnClaudeProcessGroup(
     // SCIENT-FORK:START — descendants that left the CLI's group stop when it exits.
     if (sampling !== undefined && ownedTree !== undefined) {
       Effect.runFork(
-        Fiber.interrupt(sampling).pipe(Effect.andThen(ownedTree.reap(CLAUDE_TREE_REAP_GRACE))),
+        Fiber.interrupt(sampling).pipe(
+          Effect.andThen(ownedTree.reap(CLAUDE_TREE_REAP_GRACE)),
+          Effect.tap(({ unverified }) =>
+            unverified > 0
+              ? Effect.logWarning(
+                  "Claude processes may still be running: the process table was unreadable",
+                  {
+                    unverified,
+                  },
+                )
+              : Effect.void,
+          ),
+        ),
       );
     }
     // SCIENT-FORK:END

@@ -2,7 +2,7 @@ name: Mobile EAS Preview (Fork)
 
 # EAS previews for fork PRs. This runs the PR's code with an Expo token: the
 # app config and plugins run on this runner, the iOS client builds on EAS and
-# the Android one on Blacksmith (android-build), with preview signing credentials. The label is the maintainer's sign-off
+# the Android one on a GitHub-hosted runner (android-build), with preview signing credentials. The label is the maintainer's sign-off
 # that they reviewed that code, so it covers exactly the commit it was applied
 # to: this pins that commit and consumes the label before running anything. A
 # later push deploys nothing until the label is applied again.
@@ -16,13 +16,25 @@ on:
 permissions:
   contents: read
 
+# SCIENT-FORK:START mobile-release-gate
+# Scient's Expo project. app.config.ts reads these; without a project id OTA updates stay off.
+env:
+  T3CODE_EAS_OWNER: ${{ vars.T3CODE_EAS_OWNER }}
+  T3CODE_EAS_PROJECT_ID: ${{ vars.T3CODE_EAS_PROJECT_ID }}
+  T3CODE_EAS_SLUG: ${{ vars.T3CODE_EAS_SLUG || 'scient' }}
+# SCIENT-FORK:END mobile-release-gate
+
 jobs:
   preview:
     name: EAS Preview
-    # SCIENT-FORK: fork EAS previews stay off with mobile-eas-preview.yml until the mobile
-    # release owner explicitly enables them.
-    if: ${{ false }}
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # SCIENT-FORK: this runs fork code with the preview Expo token, so it needs its own
+    # SCIENT_MOBILE_FORK_PREVIEWS variable on top of SCIENT_MOBILE_RELEASE.
+    if: >-
+      vars.SCIENT_MOBILE_RELEASE == 'true' &&
+      vars.SCIENT_MOBILE_FORK_PREVIEWS == 'true' &&
+      github.event.pull_request.head.repo.full_name != github.repository &&
+      github.event.label.name == '🚀 Mobile Continuous Deployment'
+    runs-on: ubuntu-24.04
     concurrency:
       group: mobile-eas-preview-fork-${{ github.event.pull_request.number }}
       cancel-in-progress: true
@@ -176,7 +188,7 @@ jobs:
         with:
           profile: preview:dev
           branch: pr-${{ github.event.pull_request.number }}
-          # Android is below: its client builds on Blacksmith (android-build).
+          # Android is below: its client builds on a GitHub-hosted runner (android-build).
           platform: ios
           environment: preview
           working-directory: apps/mobile
@@ -201,7 +213,7 @@ jobs:
           else
             link="$(eas build:list --platform android --build-profile preview:dev --runtime-version "$hash" --status finished --limit 5 --json --non-interactive \
               | sed -n '/^\[/,$p' \
-              | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" '[.[] | select((.expirationDate // "9999") > $now)][0] | select(. != null) | "https://expo.dev/accounts/pingdotgg/projects/t3-code/builds/\(.id)"')"
+              | jq -r --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --arg project "https://expo.dev/accounts/$T3CODE_EAS_OWNER/projects/$T3CODE_EAS_SLUG" '[.[] | select((.expirationDate // "9999") > $now)][0] | select(. != null) | "\($project)/builds/\(.id)"')"
           fi
           echo "link=$link" >> "$GITHUB_OUTPUT"
           if [ -z "$link" ]; then echo "build=true" >> "$GITHUB_OUTPUT"; fi
@@ -235,8 +247,9 @@ jobs:
     name: Android preview client
     needs: preview
     if: needs.preview.outputs.build == 'true'
-    runs-on: blacksmith-32vcpu-ubuntu-2404
-    timeout-minutes: 60
+    # SCIENT-FORK: GitHub-hosted runner.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
     permissions:
       contents: read
       pull-requests: write
@@ -286,6 +299,10 @@ jobs:
             echo "::error::a checkout credential file is still present"
             exit 1
           fi
+
+      # SCIENT-FORK: GitHub-hosted runners need the disk space a React Native build uses.
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/.ghcup /opt/ghc /opt/hostedtoolcache/CodeQL
 
       - name: Setup Node
         uses: actions/setup-node@v6

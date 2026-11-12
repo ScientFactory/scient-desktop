@@ -10,6 +10,7 @@ import {
   descendantsOf,
   makeOwnedProcessTree,
   parseProcessTable,
+  ProcessTableUnavailable,
   readProcessTable,
   type OwnedProcess,
 } from "./scientOwnedProcessTree.ts";
@@ -92,7 +93,7 @@ describe("makeOwnedProcessTree", () => {
         entry(30, 1),
       ];
       const result = yield* tree.reap("10 millis");
-      assert.deepStrictEqual(result, { terminated: 3, killed: 2 });
+      assert.deepStrictEqual(result, { terminated: 3, killed: 2, unverified: 0 });
       assert.deepStrictEqual(signals, [
         [11, "SIGTERM"],
         [12, "SIGTERM"],
@@ -118,7 +119,11 @@ describe("makeOwnedProcessTree", () => {
       });
       yield* tree.sample;
       table = [entry(12, 1, 12)];
-      assert.deepStrictEqual(yield* tree.reap("10 millis"), { terminated: 1, killed: 2 });
+      assert.deepStrictEqual(yield* tree.reap("10 millis"), {
+        terminated: 1,
+        killed: 2,
+        unverified: 0,
+      });
       assert.deepStrictEqual(signals, [
         [12, "SIGTERM"],
         [14, "SIGKILL"],
@@ -138,7 +143,11 @@ describe("makeOwnedProcessTree", () => {
       });
       yield* tree.sample;
       table = [entry(11, 1, 11, "a later start or another command")];
-      assert.deepStrictEqual(yield* tree.reap("10 millis"), { terminated: 0, killed: 0 });
+      assert.deepStrictEqual(yield* tree.reap("10 millis"), {
+        terminated: 0,
+        killed: 0,
+        unverified: 0,
+      });
       assert.deepStrictEqual(signals, []);
     }),
   );
@@ -156,8 +165,87 @@ describe("makeOwnedProcessTree", () => {
       table = [entry(10, 1)];
       yield* tree.sample;
       table = [entry(11, 1)];
-      assert.deepStrictEqual(yield* tree.reap("10 millis"), { terminated: 0, killed: 0 });
+      assert.deepStrictEqual(yield* tree.reap("10 millis"), {
+        terminated: 0,
+        killed: 0,
+        unverified: 0,
+      });
       assert.deepStrictEqual(signals, []);
+    }),
+  );
+});
+
+describe("makeOwnedProcessTree when ps fails", () => {
+  const unavailable = Effect.fail(new ProcessTableUnavailable({ cause: "ps timed out" }));
+
+  it.live("a failed sample forgets nothing, and a failed reap read is retried", () =>
+    Effect.gen(function* () {
+      let failures = 0;
+      let table: ReadonlyArray<OwnedProcess> = [entry(10, 1), entry(11, 10, 11)];
+      const signals: Array<[number, string]> = [];
+      const tree = makeOwnedProcessTree(10, {
+        readTable: Effect.suspend(() =>
+          failures > 0 ? (failures--, unavailable) : Effect.succeed(table),
+        ),
+        parentPid: 1,
+        readRetrySpacing: "1 milli",
+        signal: (pid, name) => {
+          signals.push([pid, name]);
+          table = [];
+        },
+      });
+      yield* tree.sample;
+      failures = 1;
+      yield* tree.sample;
+      table = [entry(11, 1, 11)];
+      failures = 2;
+      assert.deepStrictEqual(yield* tree.reap("10 millis"), {
+        terminated: 1,
+        killed: 0,
+        unverified: 0,
+      });
+      assert.deepStrictEqual(signals, [[11, "SIGTERM"]]);
+    }),
+  );
+
+  it.live("signals nothing it could not see", () =>
+    Effect.gen(function* () {
+      let readable = true;
+      const table = [entry(10, 1), entry(11, 10, 11)];
+      const signals: Array<[number, string]> = [];
+      const tree = makeOwnedProcessTree(10, {
+        readTable: Effect.suspend(() => (readable ? Effect.succeed(table) : unavailable)),
+        parentPid: 1,
+        readRetrySpacing: "1 milli",
+        signal: (pid, name) => {
+          signals.push([pid, name]);
+          readable = false;
+        },
+      });
+      yield* tree.sample;
+      // The table fails after SIGTERM: 11 may have exited and its PID been reused, so no SIGKILL.
+      assert.deepStrictEqual(yield* tree.reap("10 millis"), {
+        terminated: 1,
+        killed: 0,
+        unverified: 1,
+      });
+      assert.deepStrictEqual(signals, [[11, "SIGTERM"]]);
+
+      readable = true;
+      const blind = makeOwnedProcessTree(10, {
+        readTable: Effect.suspend(() => (readable ? Effect.succeed(table) : unavailable)),
+        parentPid: 1,
+        readRetrySpacing: "1 milli",
+        signal: (pid, name) => signals.push([pid, name]),
+      });
+      yield* blind.sample;
+      readable = false;
+      assert.deepStrictEqual(yield* blind.reap("10 millis"), {
+        terminated: 0,
+        killed: 0,
+        unverified: 1,
+      });
+      assert.lengthOf(signals, 1);
     }),
   );
 });
@@ -173,7 +261,11 @@ describe("makeOwnedProcessTree safety", () => {
         parentPid: 1,
       });
       yield* tree.sample;
-      assert.deepStrictEqual(yield* tree.reap("10 millis"), { terminated: 0, killed: 0 });
+      assert.deepStrictEqual(yield* tree.reap("10 millis"), {
+        terminated: 0,
+        killed: 0,
+        unverified: 0,
+      });
       assert.deepStrictEqual(signals, []);
     }),
   );
@@ -183,7 +275,11 @@ describe("makeOwnedProcessTree safety", () => {
       const table = [entry(1, 0), entry(11, 1, 11)];
       const tree = makeOwnedProcessTree(1, { readTable: Effect.succeed(table), parentPid: 0 });
       yield* tree.sample;
-      assert.deepStrictEqual(yield* tree.reap("10 millis"), { terminated: 0, killed: 0 });
+      assert.deepStrictEqual(yield* tree.reap("10 millis"), {
+        terminated: 0,
+        killed: 0,
+        unverified: 0,
+      });
     }),
   );
 
@@ -198,7 +294,11 @@ describe("makeOwnedProcessTree safety", () => {
       yield* tree.sample;
       table = [entry(10, 1, 10, "a later start"), entry(11, 10, 11)];
       yield* tree.sample;
-      assert.deepStrictEqual(yield* tree.reap("10 millis"), { terminated: 0, killed: 0 });
+      assert.deepStrictEqual(yield* tree.reap("10 millis"), {
+        terminated: 0,
+        killed: 0,
+        unverified: 0,
+      });
     }),
   );
 });
@@ -242,7 +342,7 @@ describe.skipIf(Context.get(Context.empty(), HostProcess.Platform) === "win32")(
         });
         assert.isTrue(yield* alive(grandchild), "the grandchild survived its parent's group kill");
         const result = yield* tree.reap("2 seconds");
-        assert.deepStrictEqual(result, { terminated: 1, killed: 0 });
+        assert.deepStrictEqual(result, { terminated: 1, killed: 0, unverified: 0 });
         yield* Effect.promise(() =>
           expect
             .poll(

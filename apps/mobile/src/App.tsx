@@ -97,6 +97,7 @@ import { pruneNewTaskBranchCheckouts } from "./features/threads/NewTaskDraftRout
 import { installAppUpdateChecks } from "./features/updates/app-updates";
 
 import "../global.css";
+import { SCIENT_APP_SCHEMES } from "./lib/scientAppSchemes";
 
 if (process.env.EXPO_PUBLIC_SHOWCASE === "1") {
   prepareNativeShowcaseCapture();
@@ -126,9 +127,9 @@ function getAppStateFromPath(path: string, options: Parameters<typeof getStateFr
 const appLinking = {
   prefixes: [
     Linking.createURL("/"),
-    "t3code://",
-    "t3code-dev://",
-    "t3code-preview://",
+    // SCIENT-FORK:START
+    ...SCIENT_APP_SCHEMES.map((scheme) => `${scheme}://`),
+    // SCIENT-FORK:END
     DEFAULT_HOSTED_APP_URL,
   ],
   config: { initialRouteName: "Home" },
