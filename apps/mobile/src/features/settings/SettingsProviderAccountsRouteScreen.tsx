@@ -33,6 +33,12 @@ import { SettingsScreen } from "./components/SettingsScreen";
 import { SettingsSection } from "./components/SettingsSection";
 import { AddClaudeAccount, ClaudeAccount } from "./ClaudeAccounts";
 import { CLAUDE_DRIVER } from "./claude-accounts";
+// SCIENT-FORK:START — Scient provider names and order
+import {
+  orderProvidersForDisplay,
+  scientProviderLabel,
+} from "@t3tools/client-runtime/scient-provider-clients";
+// SCIENT-FORK:END
 import { useSettingsEnvironmentFilter, type SettingsTarget } from "./settings-environment-filter";
 
 export function SettingsProviderAccountsRouteScreen() {
@@ -119,9 +125,13 @@ function managedProviders(
   environment: SettingsTarget,
   providersByEnvironment: ReadonlyMap<string, ReadonlyArray<ServerProvider>>,
 ) {
-  return (providersByEnvironment.get(environment.environmentId) ?? []).filter((provider) =>
+  // SCIENT-FORK:START — Scient provider names and order
+  return orderProvidersForDisplay(
+    providersByEnvironment.get(environment.environmentId) ?? [],
+  ).filter((provider) =>
     isManagedDriverAllowed(environment.serverConfig.managedPolicy, provider.driver),
   );
+  // SCIENT-FORK:END
 }
 
 function canManageProvider(provider: ServerProvider) {
@@ -225,7 +235,9 @@ function ProviderAccount({
       />
     );
   }
-  const name = provider.displayName ?? provider.driver;
+  // SCIENT-FORK:START — Scient provider names and order
+  const name = provider.displayName ?? scientProviderLabel(provider.driver) ?? provider.driver;
+  // SCIENT-FORK:END
   const email = signedIn && !active && provider.enabled ? provider.auth.email?.trim() : undefined;
   const methods = state?.methods ?? [];
   // The status line says why a provider that is missing or turned off can't sign in.
