@@ -443,14 +443,14 @@ function MergedRow(props: {
           {DUPLICATE_LABELS.mergedSide}:{" "}
           {sideSummary({ ...merge.merged, otherProjects: [] }, { projects: false })}
         </p>
-        {merge.differences.map((difference) => (
-          <p
-            key={difference.field}
-            className="mt-0.5 line-clamp-2 break-words text-muted-foreground"
-          >
-            {mergeDifferenceLabel(difference)}
-          </p>
-        ))}
+        {merge.differences
+          // The first line already names both titles while the kept source is here.
+          .filter((difference) => difference.field !== "title" || !merge.kept)
+          .map((difference) => (
+            <p key={difference.field} className="mt-0.5 break-words text-muted-foreground">
+              {mergeDifferenceLabel(difference)}
+            </p>
+          ))}
         <p className="mt-0.5 text-muted-foreground">
           {[
             mergedDateLabel(merge.mergedAt),
