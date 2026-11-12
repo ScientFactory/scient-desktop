@@ -149,7 +149,7 @@ export function LibraryDuplicatesView(props: {
         description:
           result.outcome === "already-merged"
             ? "They were already merged."
-            : "One of them is no longer in the Library.",
+            : DUPLICATE_LABELS.oneGone,
       });
       return;
     }
@@ -177,6 +177,14 @@ export function LibraryDuplicatesView(props: {
     );
     if (!result) return;
     settle(pair);
+    if (result.outcome === "not-found") {
+      toastManager.add({
+        type: "info",
+        title: DUPLICATE_LABELS.notDuplicatesFailed,
+        description: DUPLICATE_LABELS.oneGone,
+      });
+      return;
+    }
     const id = toastManager.add({
       type: "success",
       title: DUPLICATE_LABELS.markedNotDuplicates,

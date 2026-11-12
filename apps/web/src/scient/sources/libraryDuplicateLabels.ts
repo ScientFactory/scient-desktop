@@ -25,6 +25,7 @@ export const DUPLICATE_LABELS = {
   cancel: "Cancel",
   mergeFailed: "The sources were not merged",
   notDuplicatesFailed: "The sources were not marked",
+  oneGone: "One of them is no longer in the Library.",
   undoFailed: "The merge was not undone",
   markedNotDuplicates: "Marked as not duplicates",
   markedHelp: "They are not listed here again.",
