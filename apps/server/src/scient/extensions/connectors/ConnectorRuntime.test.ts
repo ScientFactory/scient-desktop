@@ -3342,6 +3342,11 @@ describe("connectors agents run", () => {
         const ownApp = hosted("Vendor App", "/noprm/mcp", { oauthClientRequired: true });
         const discover = Layer.mock(ExtensionsDiscover)({
           entry: ({ name }) => Effect.succeed(name === keyed.name ? keyed : ownApp),
+          search: ({ scope }) =>
+            Effect.succeed({
+              entries: scope === "registry" ? [keyed] : [],
+              fetchedAt: "2026-11-11T00:00:00.000Z",
+            }),
         });
         const agent = <A, E>(effect: Effect.Effect<A, E>) =>
           effect.pipe(
@@ -3373,6 +3378,13 @@ describe("connectors agents run", () => {
         // promised tools by a name only some agents use.
         expect(added.message).toContain(`scient_connector_check {"connector":"${added.connector}"`);
         expect(added.message).not.toContain("mcp__");
+        // regression: agents couldn't tell who runs a hosted connector, so one offered to pass the
+        // user's mail through a third party.
+        const host = new URL(vendor.base).host;
+        expect(yield* agent(listConnectors({ query: "vendor" }))).toMatchObject({
+          connectors: [{ connector: added.connector, kind: "hosted", host }],
+          found: [{ name: keyed.name, host }],
+        });
         const used = yield* agent(
           testConnector(added.connector, undefined, [
             { tool: "search", arguments: { query: "tp53" } },

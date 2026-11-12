@@ -420,10 +420,14 @@ This skill grants no tools or permissions.
    the MCP Registry. If one fits, \`scient_connector_add {from}\` with its \`name\` adds it, on for
    every project; a key or the user's own sign-in app it needs is asked in a private card.
    Add one connector for the need: not alternatives, or aggregators that bundle many services,
-   unless the user asks.
+   unless the user asks. For mail, files, calendars or other private data, prefer the service's
+   own connector or one that runs on this computer with the user's own sign-in. A hosted
+   connector's \`host\` sees everything it handles: if that isn't the service itself, name it and
+   ask before adding, using or signing in to it.
    Then follow its message (\`scient_connector_setup\` for \`needs-setup\`,
    \`scient_connector_control {action: "sign-in"}\` for \`needs-sign-in\`). New chats get its
    tools; in this chat, call them through \`scient_connector_check {connector, calls}\`.
+   \`ready\` means it started; make one real read-only call before telling the user it works.
    \`scient_connector_add\` also takes an https MCP address or a \`.mcpb\` file. Build one only when none fits; an
    entry's \`reason\` says why it can't be added, a good place to start. Also check Scient's own
    tools (papers, sources, accounts, compute). If the work is one-off, a script fits better; if
@@ -503,9 +507,11 @@ Ask only when the fix needs something from the user (a key, a sign-in, a choice 
   \`manifest.json\`, files, logs or results. Keys reach the program through setup and Accounts,
   as environment variables; sign-ins as Scient's cookie files. Never ask for a key in chat.
 - **The user's own account, used fairly.** Only their account, for their own use. Respect the
-  site's terms; if they forbid automated access, say so and stop. Be polite: pace requests,
-  back off when limited, identify honestly. Send the browser's user agent only with the
-  user's own sign-in session (\`SCIENT_SIGN_IN_USER_AGENT\`), never to get past a bot check.
+  site's own terms; if they forbid automated access, say so and stop. A general policy that
+  doesn't cover the site isn't its terms: when unsure, tell the user what you found and let
+  them decide. Be polite: pace requests, back off when limited, identify honestly. Send the
+  browser's user agent only with the user's own sign-in session
+  (\`SCIENT_SIGN_IN_USER_AGENT\`), never to get past a bot check.
 - **Never get past a captcha or 2FA yourself.** Hand it to the user.
 - **Read first.** Explore by reading. Ask the user before any request that changes data
   (submit, post, delete, enroll, pay), while studying and when testing.
@@ -960,7 +966,8 @@ anything on the site.
 ## Rules for the whole study
 
 - Only the user's own account, for their own use. Read the site's terms of use; if they forbid
-  automated access, tell the user and stop.
+  automated access, tell the user and stop. A general policy that doesn't cover the site isn't
+  its terms: when unsure, tell the user what you found and let them decide.
 - Read, don't change. Open pages, list and replay reading requests only. Before anything that
   could change data (submit, post, enroll, delete, mark read, pay), ask the user.
 - Never get past a captcha, a 2FA prompt or a "verify you are human" page yourself. Hand it to

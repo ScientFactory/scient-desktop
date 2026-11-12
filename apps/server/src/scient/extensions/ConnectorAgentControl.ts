@@ -66,7 +66,11 @@ const requireSummary = Effect.fn("ConnectorAgentControl.find")(function* (name: 
   return found;
 });
 
+/** Who runs a hosted connector, and so sees what passes through it. */
+const hostOf = (url: string) => (URL.canParse(url) ? new URL(url).host : undefined);
+
 const rowOf = (summary: ConnectorSummary) => {
+  const host = summary.local === undefined ? hostOf(summary.url) : undefined;
   const missing = [
     ...(summary.local?.missing ?? []),
     ...(summary.status === "needs-credential" ? ["its key"] : []),
@@ -75,6 +79,7 @@ const rowOf = (summary: ConnectorSummary) => {
     connector: summary.serverName,
     name: summary.displayName,
     kind: summary.local === undefined ? ("hosted" as const) : ("local" as const),
+    ...(host === undefined ? {} : { host }),
     on: summary.enabled,
     status: agentStatusOf(summary),
     ...(summary.lastError === undefined ? {} : { lastError: oneLine(summary.lastError) }),
@@ -138,10 +143,12 @@ const foundRow = (entry: DiscoverEntry, connectors: ReadonlyArray<ConnectorSumma
   const choice = agentAddTarget(entry);
   const added = connectors.find((item) => item.connectorId === entry.installedConnectorId);
   const description = entry.tagline ?? entry.description;
+  const host = "target" in choice && "url" in choice.target ? hostOf(choice.target.url) : undefined;
   return {
     name: entry.name,
     ...(entry.title === undefined ? {} : { title: entry.title }),
     ...(description === undefined ? {} : { description: oneLine(description, 200) }),
+    ...(host === undefined ? {} : { host }),
     addable: "target" in choice && added === undefined,
     ...("reason" in choice ? { reason: choice.reason } : {}),
     ...(added === undefined ? {} : { added: added.serverName }),

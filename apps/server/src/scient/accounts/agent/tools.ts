@@ -328,7 +328,7 @@ const connectorList = metadata(
     failure: AccountsError,
     dependencies: common.dependencies,
     description:
-      "The user's connectors, hosted and local: on or off, status, last error, what is missing. query: also connectors Scient can add (its picks and the MCP Registry). Add one that fits with scient_connector_add before making a new one.",
+      "The user's connectors, hosted and local: on or off, status, last error, what is missing; host = who runs a hosted one and sees what passes through it. query: also connectors Scient can add (its picks and the MCP Registry). Add one that fits with scient_connector_add before making a new one.",
     parameters: Schema.Struct({
       query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({
         description: "e.g. gmail.",
@@ -340,6 +340,7 @@ const connectorList = metadata(
           connector: Schema.String,
           name: Schema.String,
           kind: Schema.Literals(["hosted", "local"]),
+          host: Schema.optional(Schema.String),
           on: Schema.Boolean,
           status: ConnectorStatus,
           lastError: Schema.optional(Schema.String),
@@ -352,6 +353,7 @@ const connectorList = metadata(
             name: Schema.String,
             title: Schema.optional(Schema.String),
             description: Schema.optional(Schema.String),
+            host: Schema.optional(Schema.String),
             addable: Schema.Boolean,
             reason: Schema.optional(Schema.String),
             added: Schema.optional(Schema.String),

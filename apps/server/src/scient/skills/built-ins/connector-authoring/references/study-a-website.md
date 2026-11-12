@@ -8,7 +8,8 @@ anything on the site.
 ## Rules for the whole study
 
 - Only the user's own account, for their own use. Read the site's terms of use; if they forbid
-  automated access, tell the user and stop.
+  automated access, tell the user and stop. A general policy that doesn't cover the site isn't
+  its terms: when unsure, tell the user what you found and let them decide.
 - Read, don't change. Open pages, list and replay reading requests only. Before anything that
   could change data (submit, post, enroll, delete, mark read, pay), ask the user.
 - Never get past a captcha, a 2FA prompt or a "verify you are human" page yourself. Hand it to
