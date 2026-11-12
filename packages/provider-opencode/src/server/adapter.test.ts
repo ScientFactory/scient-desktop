@@ -183,6 +183,35 @@ function providerTurn(input: {
   };
 }
 
+// SCIENT-FORK:START — a fake without `session.update` accepts Scient's permission write and
+// reads it back through `session.get`.
+function withSessionUpdate(client: object, nativeSessionId: string): object {
+  const session = (client as { session?: Record<string, unknown> }).session;
+  if (session === undefined || typeof session.update === "function") return client;
+  let permission: unknown;
+  const stored = () => ({
+    id: nativeSessionId,
+    time: { created: 1, updated: 2 },
+    ...(permission === undefined ? {} : { permission }),
+  });
+  return {
+    ...client,
+    session: {
+      ...session,
+      update: async (input: { readonly permission?: unknown }) => {
+        permission = input.permission;
+        return { data: stored() };
+      },
+      get: async (...args: ReadonlyArray<unknown>) => {
+        if (typeof session.get !== "function") return { data: stored() };
+        const read = (await session.get(...args)) as { readonly data: object };
+        return permission === undefined ? read : { ...read, data: { ...read.data, permission } };
+      },
+    },
+  };
+}
+// SCIENT-FORK:END
+
 const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(function* (
   suffix: string,
   nativeSessionId: string,
@@ -232,7 +261,8 @@ const makeOpenCodeRuntimeHarness = Effect.fn("makeOpenCodeRuntimeHarness")(funct
     Effect.provideService(OpenCodeRuntime.OpenCodeRuntime, {
       connectToOpenCodeServer: () =>
         Effect.succeed({ url: "http://test.invalid", external, exitCode: null }),
-      createOpenCodeSdkClient: () => client,
+      // SCIENT-FORK: Scient writes the turn's permission rules first; T3's fakes have no update.
+      createOpenCodeSdkClient: () => withSessionUpdate(client, nativeSessionId),
     } as unknown as OpenCodeRuntime.OpenCodeRuntime["Service"]),
     Effect.provideService(ProviderHost.ProviderHost, {
       paths: { cwd: "/workspace" },

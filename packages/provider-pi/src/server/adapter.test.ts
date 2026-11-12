@@ -4081,8 +4081,14 @@ describe("PiAdapterV2", () => {
         (request) => request.type === "switch_session" && request.sessionPath === sessionFile,
       );
       const forkIndex = requests.findIndex((request) => request.type === "fork");
-      assert.isAtLeast(switchIndex, 0, "fresh runtime never switched to the persisted session");
-      assert.isAbove(forkIndex, switchIndex, "fork ran before switching to the persisted session");
+      // SCIENT-FORK: Scient launches Pi on the persisted session file, so a fresh runtime confirms
+      // it with get_state instead of switching to it.
+      const boundIndex =
+        switchIndex >= 0
+          ? switchIndex
+          : requests.findIndex((request) => request.type === "get_state");
+      assert.isAtLeast(boundIndex, 0, "fresh runtime never loaded the persisted session");
+      assert.isAbove(forkIndex, boundIndex, "fork ran before loading the persisted session");
       assert.equal(requests[forkIndex]?.entryId, "u2");
       if (result._tag !== "Success") return;
       assert.equal(
