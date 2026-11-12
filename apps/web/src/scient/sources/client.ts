@@ -13,10 +13,13 @@ import {
   listEnvironmentScientSourceRevisions,
   listEnvironmentScientSourceTrash,
   exportEnvironmentScientSources,
+  readEnvironmentScientCitationStyles,
 } from "@t3tools/client-runtime/state/scient-sources";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import type {
   EnvironmentId,
+  ScientCitationStyleSetRequest,
+  ScientCitationStylesRequest,
   ScientManagedBibliographyFileName,
   ScientSourceMetadataRefreshRequest,
   ScientSourceMetadataUpdateRequest,
@@ -398,4 +401,20 @@ export function syncScientBibliography(
   },
 ) {
   return runSourcesCommand(sourcesCommands.syncBibliography, environmentId, input);
+}
+
+export function readCitationStyles(
+  environmentId: EnvironmentId,
+  input: ScientCitationStylesRequest,
+) {
+  return runtime.runPromise(
+    readEnvironmentScientCitationStyles({ prepared: prepared(environmentId), ...input }),
+  );
+}
+
+export function setCitationStyle(
+  environmentId: EnvironmentId,
+  input: ScientCitationStyleSetRequest,
+) {
+  return runSourcesCommand(sourcesCommands.citationStyleSet, environmentId, input);
 }

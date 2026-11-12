@@ -1,6 +1,8 @@
 import bundledLocales from "@citation-js/plugin-csl/lib-mjs/locales.json" with { type: "json" };
 import bundledStyles from "@citation-js/plugin-csl/lib-mjs/styles.json" with { type: "json" };
 
+import extraLocales from "./bundledLocales.json" with { type: "json" };
+
 import type { ScientReferenceStyleId } from "./styles.ts";
 
 interface CslItem {
@@ -42,16 +44,24 @@ type BibliographyEntryRenderer = ((item: CslItem) => string) & { readonly seen: 
 // citeproc keeps a little bookkeeping for every ID it has seen, even after the
 // item is removed, so an engine is rebuilt after this many different sources.
 const MAX_SOURCES_PER_ENGINE = 500;
-const renderersByStyle = new Map<ScientReferenceStyleId, BibliographyEntryRenderer>();
+const MAX_ENGINES = 8;
+const renderersByStyle = new Map<string, BibliographyEntryRenderer>();
 
-function createRenderer(style: ScientReferenceStyleId): BibliographyEntryRenderer {
+const locales: Readonly<Record<string, string>> = { ...bundledLocales, ...extraLocales.locales };
+
+/** A locale the engine does not have renders in US English, as citeproc processors do. */
+function retrieveLocale(language: string): string {
+  return locales[language] ?? bundledLocales["en-US"];
+}
+
+function createRenderer(style: string): BibliographyEntryRenderer {
   let current: CslItem | null = null;
   const engine = new Citeproc.Engine(
     {
-      retrieveLocale: () => bundledLocales["en-US"],
+      retrieveLocale,
       retrieveItem: (id) => (current !== null && id === current.id ? current : null),
     },
-    bundledStyles[style],
+    style,
     "en-US",
   );
   engine.setOutputFormat("text");
@@ -78,7 +88,11 @@ export function bundledCslStyle(style: ScientReferenceStyleId): string {
   return bundledStyles[style];
 }
 
-export function renderCslBibliographyEntry(item: CslItem, style: ScientReferenceStyleId): string {
+/** Renders with a built-in style or with a style's CSL XML. */
+export type CslStyleSource = ScientReferenceStyleId | { readonly xml: string };
+
+export function renderCslBibliographyEntry(item: CslItem, source: CslStyleSource): string {
+  const style = typeof source === "string" ? bundledStyles[source] : source.xml;
   let render = renderersByStyle.get(style);
   if (render && !render.seen.has(item.id) && render.seen.size >= MAX_SOURCES_PER_ENGINE) {
     render = undefined;
@@ -86,6 +100,10 @@ export function renderCslBibliographyEntry(item: CslItem, style: ScientReference
   if (!render) {
     render = createRenderer(style);
     renderersByStyle.set(style, render);
+    const oldest = renderersByStyle.keys().next().value;
+    if (renderersByStyle.size > MAX_ENGINES && oldest !== undefined) {
+      renderersByStyle.delete(oldest);
+    }
   }
   try {
     render.seen.add(item.id);

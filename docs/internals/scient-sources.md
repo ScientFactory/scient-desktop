@@ -285,7 +285,11 @@ Sources MCP toolkit:
 - `scient_sources_restore` puts a trashed source back; and
 - `scient_sources_revert` makes a kept revision current again; and
 - `scient_sources_check` checks a source's DOI or PMID with its registry again
-  and records the verification and editorial status (below).
+  and records the verification and editorial status (below). With `refresh`
+  it first does what **Refresh metadata** does, through the same
+  `refreshAndCheckSourceMetadata` call credited to the agent: metadata from the
+  DOI or PMID registry, or from the PDF when there is neither, then the check,
+  and it reports `changedFields`.
   `scient_sources_get` returns the kept revisions with who saved each and which
   fields changed.
 
@@ -336,7 +340,7 @@ Retraction Watch; for PMIDs, from PubMed's `Retracted Publication` type.
 Unrecognized or malformed entries are skipped without losing the metadata.
 
 `checkSourceIdentifier` (the `scient_sources_check` tool, and the end of every
-user metadata refresh) re-resolves a source's identifier without touching its
+metadata refresh) re-resolves a source's identifier without touching its
 metadata: found and matching the stored title is `verified` with fresh
 editorial status; not found, or found with a different title, is `unverified`
 with `problem` `not-found` or `mismatch` and no editorial status; an
@@ -619,9 +623,86 @@ the citation.
 
 Markdown Word export passes a CSL style to Pandoc: the document's `csl:`
 front matter (a bundled `apa` or `vancouver`, or a project `.csl` file), else
-the request's `citationStyle` from Settings, else Pandoc's default. Library
+the project's citation style, else the request's `citationStyle` from
+Settings, else Pandoc's default. A project style that cannot be read becomes a
+`resource-unresolved` warning naming it and the style used instead. Library
 sources are the lowest-precedence references (`fallbackCitations`), after the
 document's front matter and named bibliographies. Export only reads records.
+
+### Citation styles
+
+A project has at most one CSL style, owned by
+`apps/server/src/scient/sources/CitationStyles.ts`. It lives in
+`.scient/citations/` (never `.scient/sources`): `style.json` names the style
+(`formatVersion`, `id`, `title`, `parent`, `updatedAt`, `updatedBy`) and
+`styles/<id>.csl` holds the style file, plus its independent parent for a
+dependent style. Files are written with `publishScientProjectFile`, parent
+first and `style.json` last, so a reader never sees a setting whose files are
+not there yet. `readProjectCitationStyle` returns `none`, `ready` with the XML
+both engines render, or `unavailable` with a message naming the missing or
+broken file; callers report `unavailable` and never substitute another style
+silently.
+
+A style is usable when `readCslStyle` accepts it, on save and on every read:
+one CSL root, the identity in that root's `info`, every element closed in
+order, and every macro a layout names defined. citeproc-js reports neither
+fault itself: it renders markup that Pandoc rejects, and prints nothing for an
+undefined macro. The check reads the text, so it covers branches for every
+source type, and it does not print a sample, because a valid style may print
+nothing for some types. It is one pass that reads the text as XML does:
+comments skipped, CDATA kept as text, attributes in either quote with spaces
+around `=` and character references decoded. A macro name therefore matches
+its definition however each is written, and `renderableCslStyle` writes the
+dependent style's locale at the root that pass found.
+
+The web keeps one copy of the project's style per project
+(`useProjectCitationStyle`). It reads the style when a reference or the picker
+opens, on the live-refresh schedule the Library list uses, and when the pointer
+or keyboard focus reaches an open reference, so a style an agent or another
+window set is the one copied. A read that fails with nothing loaded shows a
+notice naming the style shown instead.
+
+Neither engine resolves a dependent style's parent here: citeproc-js has no
+network, and Pandoc runs with `--sandbox`. `renderableCslStyle`
+(`packages/scient-citations/src/cslStyle.ts`) gives both the parent's layout
+with the dependent's `default-locale`, as CSL processors apply dependent
+styles. Locales: Pandoc ships every CSL locale; citeproc-js gets
+`@citation-js/plugin-csl`'s five plus the bundled `en-GB` (the default of
+Nature, BMJ and The Lancet), and any other locale renders in `en-US`, as
+citeproc processors do.
+
+The catalogue is the Zotero Style Repository index
+(`https://www.zotero.org/styles-files/styles.json`, about 3 MB, the same
+styles as the CSL repository's release branch) and its style files
+(`https://www.zotero.org/styles/<id>`). The server fetches them with the
+Sources user agent and raised size and time limits, caches the index in
+`<stateDir>/scient/citation-styles/v1/styles.json` for seven days, shares one
+download among concurrent searches and waits a minute after a failure. A search
+that cannot reach the catalogue uses the last saved index, else only the
+bundled styles, and says so (`catalogueMessage`). Search and ranking are pure
+(`searchCslCatalog` in `packages/scient-citations/src/catalog.ts`): an exact
+name first, then bundled styles, then names starting with the query, with
+independent styles before dependent ones.
+
+The twenty bundled styles and the `en-GB` locale are byte-for-byte copies from
+pinned commits of the CSL styles and locales repositories
+(`packages/scient-citations/src/bundledStyles.json` and `bundledLocales.json`,
+written by `pnpm run styles:bundle` in that package). They are CC BY-SA 3.0;
+the attribution the repositories ask for is `packages/scient-citations/CSL-NOTICE`,
+listed in `third-party-licenses.config.json`. The styles load only on the
+server (`@scientfactory/scient-citations/catalog`); the web receives the one
+style it renders from the `citationStyles` endpoint. `pnpm run
+styles:live-check` in that package is the opt-in live check against the real
+catalogue; no test touches the network.
+
+HTTP: `scientSources.citationStyles` (read; the project's style and search
+results) and `scientSources.citationStyleSet` (Library write; a failed download
+or unknown ID comes back as `error` beside the unchanged style). Agents:
+`scient_sources_list` with `citationStyles` searches, and
+`scient_sources_bibliography` with `citationStyle` sets or clears (null) the
+style and always reports it. The web keeps the copied-reference choice it used
+before (`scient:sources:reference-style:<projectId>:v1`) only for projects
+without a style.
 
 ## Annotations
 
@@ -1138,6 +1219,56 @@ ambiguous instead of choosing one.
 OpenAlex full text is not used: its content downloads need a key and are paid
 per file.
 
+### Answering from the Library
+
+The Library awareness block (`buildScientLibraryAwareness` in
+`apps/server/src/provider/ScientAwareness.ts`, sent with `sources:read` in a
+verified project) carries four standing rules for literature questions: answer
+from the papers' full text (`scient_sources_search`,
+`scient_sources_read_text`), not memory; give the paper and page for each
+claim; check quotes with `scient_sources_quote_check`; say when the Library
+does not answer, and say when the web was then used. They are the rules the N7
+evaluation measured (`reviews/sources-roadmap-20261110/ask-my-library` in the
+workspace): with them, 19 of 19 paper questions got a correct page per claim
+against 4 of 19 without, and the quote checker ran in 26 of 30 runs against 0.
+Every driver composition builds its text through `buildScientAwareness`, so no
+provider carries its own copy. They cost 299 bytes in the canonical tool names
+(`scientAwarenessAllCapabilitiesBytes` 4,940 to 5,239), more where the provider
+prefixes tool names.
+
+With `skills:read` as well, the block ends by sending reference checks to the
+`references` skill by name, as the Overleaf block does for `overleaf-sync`. The
+turn's skill scope note carries only a count, and an agent that already has
+the Library rules starts on the Library tools without listing skills: in the
+support-check pilot the plain request "Check the references in X" loaded the
+skill in 0 of 3 runs, and with the sentence in 3 of 3
+(`reviews/sources-roadmap-20261110/support-check/followup-1` in the
+workspace). It costs 76 bytes (`scientAwarenessAllCapabilitiesBytes` 5,239 to
+5,315).
+
+The `references` skill keeps a check-only request out of the project:
+`scient_paper_get` saves a PDF and a queue file there, so the skill forbids it
+for a check and reports a paper without a Library PDF as not read. It also asks
+for every page as "PDF page N" (or "printed page N"). Before this, one of the
+three plain check-only runs fetched four papers into the project and no reply
+labelled its pages; after it, six runs fetched nothing, the project stayed
+unchanged, and the last three labelled every page
+(`reviews/sources-roadmap-20261110/support-check/followup-2` in the workspace).
+The rule is about fetching, not about writing nothing: reading a Library PDF
+whose text is not cached yet still writes that cache, and the runs started with
+the caches built. The page is the 1-based position in the file, which is what
+`scient_sources_read_text` returns; a viewer set to show a PDF's own page
+labels can show a different number.
+The skill text lives in both `built-ins/references/SKILL.md` and its embedded
+copy in `BuiltInSkillSources.ts`; a test keeps them identical.
+
+The Library menu's **Ask the Library** puts the same rules, as the tested
+sentence (`ASK_LIBRARY_PROMPT` in `apps/web/src/scient/sources/askLibrary.ts`),
+at the start of the open thread's draft through the composer handle's
+`insertTextAtStart`. It never sends, keeps the draft that was there, and does
+nothing to a draft that already starts with the sentence. Agents need no
+equivalent: for them the rules are standing.
+
 The attachment-preview endpoint returns the attachment's content-addressed
 hash and size; the Sources PDF reader carries them as the descriptor's
 `material`, so quotes from Library PDFs record proven bytes. A Library search
@@ -1166,12 +1297,33 @@ response must have a PDF media type and `%PDF-` bytes, and its body is read
 within 100 MB and cancelled once over, before it goes to the Library's normal
 PDF import.
 
+## Interface and agent parity
+
+Agents can do everything a person can in the Library. The table in
+`apps/server/src/mcp/toolkits/sources/libraryParity.ts` gives every Library
+change command (`SCIENT_SOURCES_HTTP_COMMANDS`) and every read endpoint of the
+`scientSources`, `scientPdf` annotation and `scientReferences` groups the agent
+tool that does the same thing, with the tool input that selects it when the
+tool does more. The only exemptions are one step of an interactive flow that a
+single tool call covers (`flow-step`), a browser upload whose tool takes a
+project path instead (`upload`), and an endpoint that serves pixels or files
+for display (`display`); each names its tool or reason. "Not built yet" is not
+an exemption: such a command is a `gap` with its reason, and
+`libraryParity.test.ts` lists each gap as a named test. No gaps are left.
+
+Adding a Library command or read endpoint fails typecheck until the table has
+its entry. `libraryParity.test.ts` then checks that each named tool is
+registered by a Library toolkit and listed in the `scient.sources` plugin
+(`BuiltInPlugins.ts`), that a tool named for a change command requires
+`sources:write`, and that a named input is in the tool's input schema. Add the
+tool, or the input on an existing tool, in the same change as the button.
+
 ## Deliberate exclusions
 
 This slice does not implement two-way Zotero sync, Zotero group libraries,
 uploading PDFs to Zotero, attaching PDFs named in a reference file's `file`
 field, source merging, automatic possible-duplicate merging, multi-source
-bibliographies, arbitrary CSL style installation, evidence claims, OCR of
+bibliographies, per-document style pickers, LaTeX bibliography styles, evidence claims, OCR of
 scanned PDFs, fuzzy metadata search, mobile UI, or a separate Studio route.
 Later source systems should add adapters into the same domain and store rather
 than add provider-shaped fields to the host application.
@@ -1187,5 +1339,5 @@ coverage proves legacy abstract normalization and attachment
 preview resolution without a persisted chat thread. Right-panel and General
 Chat policy tests cover the only inherited UI-state seam. Citation regressions
 prove the canonical CSL mapping and exact Vancouver and APA 7 output for a
-journal article. Visual and interactive acceptance remains a manual user gate
+journal article, and a dependent style rendering through its parent. Visual and interactive acceptance remains a manual user gate
 in an isolated Scient (Dev) candidate.

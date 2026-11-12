@@ -1090,6 +1090,7 @@ export function ScientSourcesPanel(props: {
           key={selectedRecord.sourceId}
           record={selectedRecord}
           readOnly={!canChange}
+          citationProject={{ environmentId: props.environmentId, root: props.root }}
           diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
           organize={
             <SourceOrganizeSection

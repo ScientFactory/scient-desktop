@@ -63,7 +63,8 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
       expect(tool.annotations?.readOnlyHint).toBe(true);
       expect(tool.annotations?.destructiveHint).toBe(false);
       expect(tool.annotations?.idempotentHint).toBe(true);
-      expect(tool.annotations?.openWorldHint).toBe(false);
+      // Searching citation styles may download the style catalogue.
+      expect(tool.annotations?.openWorldHint).toBe(tool.name === "scient_sources_list");
     }
     const writeTools = sourceTools.filter(({ tool }) =>
       [
@@ -92,6 +93,7 @@ it.effect("registers one shared Sources toolkit with explicit read and note-writ
         idempotentHint: true,
         openWorldHint: [
           "scient_sources_add",
+          "scient_sources_bibliography",
           "scient_sources_check",
           "scient_sources_cite",
           "scient_sources_save_page",

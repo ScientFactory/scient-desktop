@@ -98,7 +98,7 @@ describe("Scient awareness", () => {
   });
 
   it("points literature work at the Library only with Library access in a verified project", () => {
-    expect(wordCount(SCIENT_LIBRARY_AWARENESS)).toBeLessThanOrEqual(80);
+    expect(wordCount(SCIENT_LIBRARY_AWARENESS)).toBeLessThanOrEqual(95);
     expect(buildScientAwareness(new Set(["sources:read"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_LIBRARY_AWARENESS}`,
     );
@@ -109,6 +109,11 @@ describe("Scient awareness", () => {
     const claude = buildScientAwareness(new Set(["sources:read"]), CLAUDE_SCIENT_TOOL_PROJECTION);
     expect(claude).toContain("`mcp__scient__scient_sources_add`");
     expect(claude).toContain("through `ToolSearch` first");
+    // Only a session that can load skills is sent to one.
+    expect(SCIENT_LIBRARY_AWARENESS).not.toContain("skill");
+    expect(buildScientAwareness(new Set(["skills:read", "sources:read"]))).toContain(
+      "load the `references` skill first",
+    );
   });
 
   it("recommends Compute runs only with compute authority", () => {
