@@ -1,7 +1,8 @@
 import { ChevronDownIcon } from "lucide-react";
-import { useState } from "react";
+import { useContext, useState } from "react";
 import { catalogueFont } from "@scientfactory/scient-markdown";
 import { Input } from "~/components/ui/input";
+import { DockPanelCloseContext } from "./dockChrome";
 import {
   NumberField,
   NumberFieldDecrement,
@@ -42,17 +43,33 @@ export function FontControls(props: {
     ...group,
     fonts: group.fonts.filter((font) => font.name.toLowerCase().includes(needle)),
   })).filter((group) => group.fonts.length > 0);
+  const closePanel = useContext(DockPanelCloseContext);
   const choose = (family: string | null) => {
     props.onFamily(family);
     setOpen(false);
     setQuery("");
+    closePanel?.();
   };
   return (
     <div
       className="grid w-64 gap-3 p-2 text-sm"
       data-keybinding-capture=""
       onKeyDown={(event) => {
-        if (event.key !== "Escape") event.stopPropagation();
+        if (event.key === "Escape") return;
+        event.stopPropagation();
+        // The number field only commits on blur, so Enter blurs it (which applies the size) and
+        // closes the panel: the result shows in the document at once.
+        if (
+          event.key === "Enter" &&
+          event.target instanceof HTMLInputElement &&
+          event.target.hasAttribute("data-font-size-input")
+        ) {
+          // The editor gets focus back before the key finishes: without this its Enter would
+          // replace the selected text with a new paragraph.
+          event.preventDefault();
+          event.target.blur();
+          closePanel?.();
+        }
       }}
     >
       <div className="grid gap-1.5">
@@ -127,7 +144,7 @@ export function FontControls(props: {
           }}
         >
           <NumberFieldDecrement aria-label="Smaller" />
-          <NumberFieldInput aria-label="Font size in points" />
+          <NumberFieldInput aria-label="Font size in points" data-font-size-input="" />
           <NumberFieldIncrement aria-label="Larger" />
           <button
             type="button"

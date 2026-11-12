@@ -119,6 +119,7 @@ import {
   DockOverflowRow,
   MenuRow,
   dockButtonClass,
+  DockPanelCloseContext,
   type DockGroup,
 } from "../../writing/dockChrome";
 import { ScientFindBar } from "../../writing/ScientFindBar";
@@ -379,8 +380,13 @@ function FontSizeButton({
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
 }) {
+  const [open, setOpen] = useState(false);
+  const close = () => {
+    setOpen(false);
+    controller.focus();
+  };
   return (
-    <Popover>
+    <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <button
@@ -393,7 +399,9 @@ function FontSizeButton({
         }
       />
       <PopoverPopup side="bottom" padding="none" data-keybinding-capture="">
-        <MarkdownFontControls controller={controller} snapshot={snapshot} />
+        <DockPanelCloseContext value={close}>
+          <MarkdownFontControls controller={controller} snapshot={snapshot} />
+        </DockPanelCloseContext>
       </PopoverPopup>
     </Popover>
   );
