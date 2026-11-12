@@ -321,14 +321,24 @@ export const ScientSourceRemovalRequest = Schema.Struct({
 });
 export type ScientSourceRemovalRequest = typeof ScientSourceRemovalRequest.Type;
 
+const PinAction = Schema.Struct({
+  action: Schema.Literal("pin"),
+  sourceId: NonEmptyString,
+  note: Schema.optionalKey(Schema.NullOr(Schema.String.check(Schema.isMaxLength(20_000)))),
+});
+const UnpinAction = Schema.Struct({ action: Schema.Literal("unpin"), citationKey: NonEmptyString });
+
 /** Pins and merges act on the personal library; a project server refuses them. */
 export const ScientSourcesLibraryOrganizeAction = Schema.Union([
+  PinAction,
+  UnpinAction,
+  /** Many pins and unpins in one request, each answered in `pinChanges` in order. */
   Schema.Struct({
-    action: Schema.Literal("pin"),
-    sourceId: NonEmptyString,
-    note: Schema.optionalKey(Schema.NullOr(Schema.String.check(Schema.isMaxLength(20_000)))),
+    action: Schema.Literal("change-pins"),
+    changes: Schema.Array(Schema.Union([PinAction, UnpinAction])).pipe(
+      Schema.check(Schema.isMinLength(1), Schema.isMaxLength(20_000)),
+    ),
   }),
-  Schema.Struct({ action: Schema.Literal("unpin"), citationKey: NonEmptyString }),
   Schema.Struct({
     action: Schema.Literal("merge"),
     sourceIds: Schema.Array(NonEmptyString).pipe(
@@ -353,6 +363,12 @@ export const ScientSourcesOrganizeRequest = Schema.Struct({
 });
 export type ScientSourcesOrganizeRequest = typeof ScientSourcesOrganizeRequest.Type;
 
+const PinSummary = Schema.Struct({
+  citationKey: NonEmptyString,
+  sourceId: NonEmptyString,
+  note: Schema.optionalKey(Schema.String),
+});
+
 export const ScientSourcesOrganizeResult = Schema.Struct({
   ...ScientSourcesOrganizeResultFields.fields,
   outcome: Schema.Literals([
@@ -372,12 +388,21 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "dismissed",
     "nothing-to-dismiss",
   ]),
-  pin: Schema.optionalKey(
-    Schema.Struct({
-      citationKey: NonEmptyString,
-      sourceId: NonEmptyString,
-      note: Schema.optionalKey(Schema.String),
-    }),
+  pin: Schema.optionalKey(PinSummary),
+  pinChanges: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        outcome: Schema.Literals([
+          "pinned",
+          "existing",
+          "unpinned",
+          "not-pinned",
+          "not-found",
+          "refused",
+        ]),
+        pin: Schema.optionalKey(PinSummary),
+      }),
+    ),
   ),
   /** Each merge that landed; Undo takes its mergeId. */
   merges: Schema.optionalKey(

@@ -16,6 +16,7 @@ import { setScientSourcesReadingState } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import {
   changeProjectSources,
+  removedSnapshotCount,
   type ProjectSourcesChange,
   type ProjectSourcesOutcome,
 } from "./libraryActions";
@@ -104,7 +105,6 @@ export function useLibraryProjectActions(input: {
       "add",
       records.map((record) => ({ action: "pin", sourceId: record.sourceId })),
     );
-  // Only snapshots whose unpin succeeded count as gone from this computer in the toast.
   const unpinFromProject = async (records: ReadonlyArray<ProjectRemoval>) => {
     const outcome = await changeProjectSources({
       environmentId: input.environmentId,
@@ -114,18 +114,7 @@ export function useLibraryProjectActions(input: {
       ),
     });
     await input.refreshOverview().catch(() => undefined);
-    const removedKeys = new Set(
-      outcome.succeeded.flatMap((change) =>
-        change.action === "unpin" ? [change.citationKey] : [],
-      ),
-    );
-    const removedSnapshots = records.filter(
-      (record) =>
-        record.fromSnapshot === true &&
-        record.citationKey !== undefined &&
-        removedKeys.has(record.citationKey),
-    ).length;
-    announceProjectChange("remove", outcome, removedSnapshots);
+    announceProjectChange("remove", outcome, removedSnapshotCount(records, outcome));
   };
   // A snapshot is only kept for this project, so its removal asks first; false means cancelled.
   const removeFromProject = (records: ReadonlyArray<ProjectRemoval>): Promise<boolean> => {

@@ -107,7 +107,7 @@ export async function resolveLibrarySourceId(
 }
 
 /** Many IDs as `resolveLibrarySourceId` resolves one, reading aliases and pins once; unresolved IDs stay. */
-async function resolveLibrarySourceIds(
+export async function resolveLibrarySourceIds(
   store: ScientSourcesLibraryStore,
   sourceIds: ReadonlyArray<string>,
 ): Promise<ReadonlyArray<readonly [requested: string, libraryId: string]>> {

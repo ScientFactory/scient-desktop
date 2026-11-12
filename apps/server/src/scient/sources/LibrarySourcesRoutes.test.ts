@@ -36,6 +36,7 @@ import {
   libraryOverview,
   libraryReview,
   librarySourceDetail,
+  organizeLibrarySources,
   updateLibraryPersonalNote,
   updateLibraryProjectNote,
   updateLibrarySourceMetadata,
@@ -520,6 +521,58 @@ describe("Library routes on the library backend", () => {
         expect(
           await librarySourceDetail(read, { sourceId: a.sourceId, personal: true }),
         ).toMatchObject({ personalNote: "PERSONAL-NOTE-SECRET", note: "Project reason." });
+      });
+    }),
+  );
+
+  it.effect("adds and removes many sources in one request, answering each as alone", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const { a, b, c } = yield* Effect.promise(() => threeSources(fixture));
+      const write = yield* storeFor(fixture, "write");
+      yield* Effect.promise(async () => {
+        const snapshotKey = (await readScientProjectPins(fixture.root)).find(
+          (entry) => entry.sourceId === c.sourceId,
+        )!.citationKey;
+        const result = await organizeLibrarySources(write, {
+          change: {
+            action: "change-pins",
+            changes: [
+              { action: "pin", sourceId: b.sourceId },
+              { action: "pin", sourceId: a.sourceId },
+              { action: "pin", sourceId: "source_missing" },
+              { action: "unpin", citationKey: snapshotKey },
+              { action: "unpin", citationKey: "nobody2026" },
+            ],
+          },
+        });
+        expect(result).toEqual({
+          outcome: "updated",
+          pinChanges: [
+            { outcome: "pinned", pin: { citationKey: b.citationKey, sourceId: b.sourceId } },
+            {
+              outcome: "existing",
+              pin: {
+                citationKey: "vasopressinHere",
+                sourceId: a.sourceId,
+                note: "Why this project cites it.",
+              },
+            },
+            { outcome: "not-found" },
+            { outcome: "unpinned", pin: { citationKey: snapshotKey, sourceId: c.sourceId } },
+            { outcome: "not-pinned" },
+          ],
+        });
+        const listed = await libraryOverview(write, { scope: "project", background: false });
+        expect(listed.records.map((record) => record.sourceId).toSorted()).toEqual(
+          [a.sourceId, b.sourceId].toSorted(),
+        );
+        const bibliography = await NodeFSP.readFile(
+          NodePath.join(fixture.root, "references.bib"),
+          "utf8",
+        );
+        expect(bibliography).toContain(`{${b.citationKey},`);
+        expect(bibliography).not.toContain(`{${snapshotKey},`);
       });
     }),
   );

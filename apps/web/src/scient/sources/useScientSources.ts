@@ -222,7 +222,12 @@ export function useScientSources(input: {
     return result;
   };
 
-  const removeSource = async (sourceId: string, expectedRevision: number) => {
+  /** `refresh: false` leaves reading the list again to the caller, once after many removals. */
+  const removeSource = async (
+    sourceId: string,
+    expectedRevision: number,
+    options: { readonly refresh?: boolean } = {},
+  ) => {
     dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "errorCleared" });
     return await (async () => {
@@ -234,7 +239,7 @@ export function useScientSources(input: {
       if (isCurrentContext() && result.outcome !== "stale") {
         dispatch({ type: "sourceRemoved", sourceId });
       }
-      if (isCurrentContext()) {
+      if (isCurrentContext() && options.refresh !== false) {
         await refreshOverview().catch((cause: unknown) =>
           dispatch({ type: "errorArrived", error: message(cause) }),
         );

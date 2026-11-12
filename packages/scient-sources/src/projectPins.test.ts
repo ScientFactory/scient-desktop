@@ -13,6 +13,7 @@ import { mergeScientLibrarySources } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
 import type { ScientSourceCandidate, ScientSourceRecord } from "./model.ts";
 import {
+  changeScientProjectPins,
   listScientProjectPinnedWorks,
   pinScientLibrarySource,
   readScientProjectPins,
@@ -53,8 +54,8 @@ async function newLibrary(base: string, name: string) {
   return { root, library: scientLibraryLocation(root) };
 }
 
-async function newProject(base: string): Promise<string> {
-  const root = NodePath.join(base, "project");
+async function newProject(base: string, name = "project"): Promise<string> {
+  const root = NodePath.join(base, name);
   await NodeFSP.mkdir(root);
   await initializeScientProject({ root });
   return root;
@@ -192,6 +193,91 @@ describe("project pins", () => {
     expect((await readScientProjectPins(projectRoot)).map((pin) => pin.citationKey)).toEqual([
       "smith2020deep",
     ]);
+  });
+
+  it("pins and unpins many at once with the outcomes and pins.json one at a time gives", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const [first, second, kept, gone] = [
+      await addRecord(library, "A"),
+      await addRecord(library, "B"),
+      await addRecord(library, "C"),
+      await addRecord(library, "D"),
+    ];
+    const one = await newProject(base, "one-by-one");
+    const many = await newProject(base, "at-once");
+    for (const projectRoot of [one, many]) {
+      for (const record of [kept, gone]) {
+        await pinScientLibrarySource({
+          projectRoot,
+          library,
+          sourceId: record.sourceId,
+          actor: "user",
+        });
+      }
+    }
+    const goneKey = (await readScientProjectPins(one)).find(
+      (pin) => pin.sourceId === gone.sourceId,
+    )!.citationKey;
+    // The pin of a source removed from the Library is now a snapshot row.
+    await removeScientSource({
+      root: library,
+      sourceId: gone.sourceId,
+      expectedRevision: gone.revision,
+    });
+    const changes = [
+      { action: "pin", sourceId: first.sourceId },
+      { action: "pin", sourceId: second.sourceId },
+      { action: "pin", sourceId: kept.sourceId },
+      { action: "pin", sourceId: "src_missing" },
+      { action: "pin", sourceId: "../outside" },
+      { action: "unpin", citationKey: goneKey },
+      { action: "unpin", citationKey: "nobody2020" },
+      { action: "pin", sourceId: first.sourceId },
+    ] as const;
+
+    const loop = [];
+    for (const change of changes) {
+      loop.push(
+        await (
+          change.action === "pin"
+            ? pinScientLibrarySource({
+                projectRoot: one,
+                library,
+                sourceId: change.sourceId,
+                actor: "user",
+              })
+            : unpinScientLibrarySource({ projectRoot: one, citationKey: change.citationKey })
+        ).catch(() => ({ outcome: "refused" as const })),
+      );
+    }
+    const batch = await changeScientProjectPins({
+      projectRoot: many,
+      library,
+      changes,
+      actor: "user",
+    });
+
+    const summary = (
+      results: ReadonlyArray<{
+        readonly outcome: string;
+        readonly pin?: { readonly citationKey: string };
+      }>,
+    ) => results.map((result) => [result.outcome, result.pin?.citationKey]);
+    expect(summary(batch)).toEqual(summary(loop));
+    expect(summary(batch).map(([outcome]) => outcome)).toEqual([
+      "pinned",
+      "pinned",
+      "existing",
+      "not-found",
+      "refused",
+      "unpinned",
+      "not-pinned",
+      "existing",
+    ]);
+    const pinsOf = async (projectRoot: string) =>
+      (await readScientProjectPins(projectRoot)).map(({ pinnedAt: _at, ...pin }) => pin);
+    expect(await pinsOf(many)).toEqual(await pinsOf(one));
   });
 
   it("rewrites pins.json byte for byte and keeps fields from a newer Scient", async () => {

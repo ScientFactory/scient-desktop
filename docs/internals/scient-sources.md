@@ -1043,8 +1043,8 @@ offer "Add to project" (organize `pin`), as do details and the bulk bar, and
 Move to Trash stays there. Details offer Move to Trash in either view, except
 for a pin's snapshot, which this library lacks. A move to Trash says in its
 toast how many other projects have the source (`alsoPinnedIn` from the removal
-result); Undo restores it as before. Add and remove send one organize request
-per source and then read the overview again. An import begun from "All"
+result); Undo restores it as before. Add and remove send one organize `change-pins`
+request for the whole selection and then read the overview again. An import begun from "All"
 (no `pinInstanceId` on the operation) ends with "They are in your Library, not
 in this project." and an "Add to project" button for what it brought in; add
 by identifier from "All" says the same in its toast.
@@ -1081,6 +1081,36 @@ renders 3,000 rows over the real `useScientSources` and checks the window, a
 star kept against an older overview through the reading overrides, the
 snapshot dialog from a row reached by scrolling, and the project backend
 keeping every row in the shared scroll area.
+
+#### Bulk edits at Library size (F6)
+
+A bulk tag or type edit reads the store once, not once per source.
+`updateScientSourcesMetadata` takes the source-write lock and scans the
+records once for the whole batch, and looks up the records an edited source
+could duplicate by identifier and title key (`sourceMetadataMatchIndex` in
+`duplicates.ts`), then runs `assessSourceMetadataDuplicate` on those only, so
+each source gets the outcome `updateScientSourceMetadata` gives it alone. The
+Undo receipt is written three times per edit (empty, every planned write,
+every finished write) instead of twice per source; Undo writes it twice. Both
+backends use the same path. What is left per source is two durable writes,
+the record and its history revision, each with `fsync` (F_FULLFSYNC on macOS,
+about 4 ms); running them concurrently gained 1.26x at best on an M5 Pro, so
+they stay serial.
+
+Add to project and Remove from this project send one organize
+`change-pins` request (up to 20,000 changes) and get one answer per change in
+`pinChanges`, in order: `pinned`, `existing`, `unpinned`, `not-pinned`,
+`not-found` or `refused`. `changeScientProjectPins` reads and writes
+`pins.json` once and the route syncs the bibliography once; a refusal's
+reason stays on the server, as a failed request's does.
+
+Bulk Trash still sends one removal per source; the list is read again once
+after the last instead of after each. One request for it would need a
+one-request restore as well: Undo restores each source by its own request,
+and each restore scans the store for a duplicate.
+
+`pnpm run measure:bulk-edits` in `packages/scient-sources` times a bulk tag,
+its Undo, and pinning and unpinning, on a synthetic store.
 
 ## Source truth and provenance
 
@@ -1758,18 +1788,24 @@ an agent.
 - `bulkUpdateScientSources` applies tag (case-insensitive, existing spelling
   kept) and type changes as ordinary metadata revisions, one per source with
   one retry on a stale revision, then membership changes. Each source is
-  reported; one failure does not stop the rest. Bulk removal is the trash
+  reported; one failure does not stop the rest. The revisions go through
+  `updateScientSourcesMetadata`: one lock and one scan of the store for the
+  batch, duplicates looked up by identifier and title key
+  (`sourceMetadataMatchIndex`), each source with the outcome
+  `updateScientSourceMetadata` would give it alone. Bulk removal is the trash
   removal per source, with one Undo for the batch in the panel.
 - A bulk edit keeps a receipt in
   `.scient/sources/bulk-edits/<batch-id>.json` (latest 50 kept): each updated
   source's type, custom type and tags before and after with the revision it
   replaced, and each collection's exact added and removed members with the
   `updatedAt` it wrote. The receipt is published before anything changes, so
-  an unsafe or unwritable folder stops the edit first. Each change is then
-  written ahead as a `pending` entry (a collection's inside its write lock) and
-  refused if that fails; once made, the entry is finished. If finishing fails,
-  the entry stays pending, the rest is not changed and reported as failed, and
-  the result still carries Undo. A receipt with nothing in it is removed.
+  an unsafe or unwritable folder stops the edit first. Every source revision
+  is then written ahead as a `pending` entry in one receipt write (a
+  collection's inside its write lock) and all are refused if that fails; once
+  made, the entries are finished in one more write. If finishing fails, the
+  entries stay pending, the first changed source carries the message, the
+  collection changes are not made and are reported as failed, and the result
+  still carries Undo. A receipt with nothing in it is removed.
 - The result's `undo.batchId` passed back as `{ undoBatchId }` (HTTP and
   `scient_sources_bulk_update`) reverses it, credited to the actor: a type is
   restored only while it still has the bulk value, tags and memberships are
@@ -1778,12 +1814,13 @@ an agent.
   `conflicts`. A pending entry is checked first: still at the recorded
   revision (or an older `updatedAt`) means it never landed and is skipped;
   changed to something else is a conflict. Each restore is written ahead as
-  `restoring` with the revision it replaces (the `updatedAt` it writes); on a
-  retry, a source past that revision with the restored values (a collection at
-  that `updatedAt`) is done, anything newer is a conflict and kept. Each entry
-  gets `undoneAt` when done; failed entries stay open, so the same batch can be
-  undone again and only what is left is tried. If a receipt write fails during
-  Undo, the rest is reported as failed. The receipt itself is marked undone
+  `restoring` with the revision it replaces (the `updatedAt` it writes), the
+  sources' restores together in one receipt write; on a retry, a source past
+  that revision with the restored values (a collection at that `updatedAt`) is
+  done, anything newer is a conflict and kept. Each entry gets `undoneAt` when
+  done, the sources' in one write; failed entries stay open, so the same batch
+  can be undone again and only what is left is tried. If a receipt write fails
+  during Undo, the rest is reported as failed. The receipt itself is marked undone
   when no entry is left.
 - `{ themes: [{ name, parent?, sourceIds }] }` is the same bulk edit for
   sorting sources into collections: each named collection (and its parent, at

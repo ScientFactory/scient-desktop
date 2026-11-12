@@ -1464,13 +1464,15 @@ export function ScientSourcesPanel(props: {
           onRemove={async (records) => {
             const removed: string[] = [];
             let alsoElsewhere = 0;
+            // Each removal is its own request; the list is read again once, after the last.
             for (const record of records) {
               const result = await sources
-                .removeSource(record.sourceId, record.revision)
+                .removeSource(record.sourceId, record.revision, { refresh: false })
                 .catch(() => null);
               if (result?.outcome === "removed") removed.push(record.sourceId);
               if (result?.outcome === "removed" && result.alsoPinnedIn) alsoElsewhere += 1;
             }
+            await sources.reloadOverview();
             announceSourcesMovedToTrash({
               environmentId: props.environmentId,
               root: props.root,

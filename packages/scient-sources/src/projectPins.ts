@@ -362,6 +362,123 @@ export async function unpinScientLibrarySource(input: {
   });
 }
 
+const PIN_READ_AHEAD = 64;
+
+export type ScientPinChangeResult =
+  | ScientPinResult
+  | { readonly outcome: "unpinned"; readonly pin: ScientProjectPin }
+  | { readonly outcome: "not-pinned" }
+  | { readonly outcome: "refused"; readonly message: string };
+
+export type ScientPinChange =
+  | { readonly action: "pin"; readonly sourceId: string; readonly note?: string | null }
+  | { readonly action: "unpin"; readonly citationKey: string };
+
+/**
+ * Pins and unpins in order, each with the outcome `pinScientLibrarySource` or
+ * `unpinScientLibrarySource` gives it alone, reading and writing `pins.json` once. A change that
+ * cannot be made is `refused` and the rest still run.
+ */
+export async function changeScientProjectPins(input: {
+  readonly projectRoot: string;
+  readonly library: ScientLibraryLocation;
+  readonly changes: ReadonlyArray<ScientPinChange>;
+  readonly actor: ScientSourceActor;
+}): Promise<ReadonlyArray<ScientPinChangeResult>> {
+  const root = await projectRootFor(input.projectRoot);
+  return withPinsLock(root, async () => {
+    const document = await readPinsDocument(root);
+    const pins = [...document.pins];
+    let changed = false;
+    const taken = new Set(
+      document.pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)),
+    );
+    const pinning = input.changes.some((change) => change.action === "pin");
+    const aliases = pinning ? await readScientLibraryAliases(input.library) : null;
+    // Resolutions depend on the library only; pins added here are found by their own ID.
+    const resolutions = pinning
+      ? new Map(
+          (await resolvePinsRead(input.library, root, document.pins)).map(
+            (resolution, index) => [document.pins[index]!, resolution] as const,
+          ),
+        )
+      : new Map<StoredPin, ScientProjectSourceResolution>();
+    const prefetched = new Map<string, Promise<ScientSourceRecord | null>>();
+    const pinChange = async (
+      change: Extract<ScientPinChange, { readonly action: "pin" }>,
+    ): Promise<ScientPinChangeResult> => {
+      const record = await prefetched.get(change.sourceId)!;
+      if (!record) return { outcome: "not-found" };
+      const sameId = pins.find(
+        ({ pin }) => pin.sourceId === change.sourceId || pin.sourceId === record.sourceId,
+      );
+      if (sameId) return { outcome: "existing", pin: sameId.pin };
+      const resolved = pins.find((stored) => {
+        const resolution = resolutions.get(stored);
+        return resolution?.kind === "resolved" && resolution.sourceId === record.sourceId;
+      });
+      if (resolved) return { outcome: "existing", pin: resolved.pin };
+      const note = normalizePinNote(change.note);
+      const pin: ScientProjectPin = {
+        citationKey: assignCitationKey({
+          preferred: record.citationKey ?? null,
+          creators: record.creators,
+          issuedYear: record.issuedYear,
+          title: record.title,
+          taken,
+        }),
+        sourceId: record.sourceId,
+        pinnedAt: new Date().toISOString(),
+        pinnedBy: input.actor,
+        ...(note !== undefined ? { note } : {}),
+        work: scientPinWorkFromRecord(record),
+      };
+      pins.push({ pin, extra: {}, workExtra: {} });
+      changed = true;
+      taken.add(citationKeyComparisonValue(pin.citationKey));
+      return { outcome: "pinned", pin };
+    };
+    const results: ScientPinChangeResult[] = [];
+    for (const [index, change] of input.changes.entries()) {
+      // Reads only: the next records are read together, then applied one by one in order.
+      if (index % PIN_READ_AHEAD === 0) {
+        prefetched.clear();
+        for (const next of input.changes.slice(index, index + PIN_READ_AHEAD)) {
+          if (next.action !== "pin" || prefetched.has(next.sourceId)) continue;
+          const read = readScientSourceRecord(
+            input.library,
+            resolveScientLibraryAlias(aliases!, next.sourceId),
+          );
+          read.catch(() => undefined);
+          prefetched.set(next.sourceId, read);
+        }
+      }
+      try {
+        if (change.action === "pin") {
+          results.push(await pinChange(change));
+          continue;
+        }
+        const found = findPin(pins, change.citationKey);
+        if (!found) {
+          results.push({ outcome: "not-pinned" });
+          continue;
+        }
+        pins.splice(pins.indexOf(found), 1);
+        changed = true;
+        taken.delete(citationKeyComparisonValue(found.pin.citationKey));
+        results.push({ outcome: "unpinned", pin: found.pin });
+      } catch (error) {
+        results.push({
+          outcome: "refused",
+          message: error instanceof Error ? error.message : "The change could not be made.",
+        });
+      }
+    }
+    if (changed) await writePinsDocument(root, document, pins);
+    return results;
+  });
+}
+
 /** A deliberate rename of a pin's project key; the caller rewrites this project's documents. */
 export async function renameScientProjectPinKey(input: {
   readonly projectRoot: string;

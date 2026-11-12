@@ -37,6 +37,7 @@ import {
   type ScientLibraryReviewRecord,
 } from "@scientfactory/scient-sources/library-reviews";
 import {
+  changeScientProjectPins,
   listScientProjectPinnedWorks,
   pinScientLibrarySource,
   renameScientProjectPinKey,
@@ -75,6 +76,7 @@ import {
   projectPinsByLibraryId,
   refreshProjectAfterLibraryChange,
   resolveLibrarySourceId,
+  resolveLibrarySourceIds,
   syncProjectBibliography,
 } from "./LibraryProjectSources.ts";
 import {
@@ -543,6 +545,7 @@ export const isLibraryOrganizeAction = (
 ): change is ScientSourcesLibraryOrganizeAction =>
   change.action === "pin" ||
   change.action === "unpin" ||
+  change.action === "change-pins" ||
   change.action === "merge" ||
   change.action === "undo-merge" ||
   change.action === "move-back" ||
@@ -603,6 +606,8 @@ export async function organizeLibrarySources(
       await syncProjectBibliography(store, ACTOR);
       return { outcome: "unpinned" as const, pin: pinSummary(unpinned.pin) };
     }
+    case "change-pins":
+      return changeLibraryPins(store, change);
     case "merge":
       return mergeLibrarySources(store, change);
     case "undo-merge": {
@@ -635,6 +640,65 @@ export async function organizeLibrarySources(
         }),
       };
   }
+}
+
+/** Each pin and unpin answered as alone, with one write of the pins and of the bibliography. */
+async function changeLibraryPins(
+  store: Store,
+  change: Extract<ScientSourcesLibraryOrganizeAction, { readonly action: "change-pins" }>,
+) {
+  const requested = change.changes.flatMap((entry) =>
+    entry.action === "pin" ? [entry.sourceId] : [],
+  );
+  // One unreadable ID fails the batched lookup; then each is looked up alone, as one pin would be.
+  const libraryIds = new Map(
+    await resolveLibrarySourceIds(store, requested).catch(async () => {
+      const each: Array<readonly [string, string]> = [];
+      for (const sourceId of requested) {
+        each.push([sourceId, await libraryIdOf(store, sourceId).catch(() => sourceId)]);
+      }
+      return each;
+    }),
+  );
+  const results = await changeScientProjectPins({
+    projectRoot: store.root,
+    library: store.library,
+    actor: ACTOR,
+    changes: change.changes.map((entry) =>
+      entry.action === "pin"
+        ? {
+            action: "pin" as const,
+            sourceId: libraryIds.get(entry.sourceId) ?? entry.sourceId,
+            ...(entry.note !== undefined ? { note: entry.note } : {}),
+          }
+        : entry,
+    ),
+  });
+  const pinChanges = [];
+  for (const [index, result] of results.entries()) {
+    const entry = change.changes[index]!;
+    if (result.outcome === "existing" && entry.action === "pin" && entry.note !== undefined) {
+      const noted = await setScientProjectPinNote({
+        projectRoot: store.root,
+        citationKey: result.pin.citationKey,
+        note: entry.note,
+      });
+      const pin = noted.outcome !== "not-pinned" ? noted.pin : result.pin;
+      pinChanges.push({ outcome: result.outcome, pin: pinSummary(pin) });
+      continue;
+    }
+    // A refusal's reason stays on the server, as a failed request's does.
+    pinChanges.push(
+      "pin" in result
+        ? { outcome: result.outcome, pin: pinSummary(result.pin) }
+        : { outcome: result.outcome },
+    );
+  }
+  const changed = results.some(
+    (result) => result.outcome === "pinned" || result.outcome === "unpinned",
+  );
+  if (changed) await syncProjectBibliography(store, ACTOR);
+  return { outcome: changed ? ("updated" as const) : ("unchanged" as const), pinChanges };
 }
 
 export const moveBackResult = (moved: Awaited<ReturnType<typeof moveProjectBackIntoProject>>) =>
