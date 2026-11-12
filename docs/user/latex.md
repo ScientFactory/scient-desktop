@@ -993,6 +993,17 @@ columns, line/paragraph spacing, custom paper dimensions, binding and mirrored
 margins, supported fonts and engine, heading/title defaults and simple running
 headers and footers. Custom executable definitions stay in Source.
 
+The **Font** list sets the font of the whole document: Default, three generic
+families, then the same named fonts as **Text > Font / Size**. In a pdfLaTeX
+document it writes `\renewcommand{\familydefault}{qtm}` (the family code of a free
+look-alike), so only fonts that have one are offered; the others are greyed with
+"needs XeLaTeX or LuaLaTeX". Under XeLaTeX or LuaLaTeX it writes
+`\setmainfont{Garamond}` and loads `fontspec`; the font must be installed on the
+machine that compiles. Change the compiler and the font in the same card and
+**Apply** writes both. **Default** removes only the active `\familydefault` line (never
+one in a comment or inside a macro) and a `\setmainfont` that names a listed font;
+a font you wrote yourself stays.
+
 Each setting starts from the document's current setup. **Apply** writes only
 changed settings; **Cancel** discards the draft. Blank custom margin fields retain
 the current source. Existing package options are retained and packages are never

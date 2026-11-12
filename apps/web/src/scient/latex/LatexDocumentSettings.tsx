@@ -1,3 +1,4 @@
+import { FONT_CATALOGUE } from "@scientfactory/scient-markdown";
 import { useState } from "react";
 import { XIcon } from "lucide-react";
 import { Button } from "~/components/ui/button";
@@ -292,10 +293,21 @@ export function LatexDocumentSettings(props: {
               width="fluid"
               aria-label="Document font"
               value={changes.fontFamily ?? extended.fontFamily}
-              options={[{ value: "default", label: "Default" }, ...GENERIC_FAMILIES]}
-              onValueChange={(value) =>
-                setLayout("fontFamily", value as DocumentLayoutSettings["fontFamily"])
-              }
+              options={[
+                { value: "default", label: "Default" },
+                ...GENERIC_FAMILIES,
+                ...FONT_CATALOGUE.map((font) => {
+                  const unavailable =
+                    (changes.engine ?? extended.engine) === "pdflatex" &&
+                    font.latex.pdftex === null;
+                  return {
+                    value: font.name,
+                    label: unavailable ? `${font.name} (needs XeLaTeX or LuaLaTeX)` : font.name,
+                    disabled: unavailable,
+                  };
+                }),
+              ]}
+              onValueChange={(value) => setLayout("fontFamily", value)}
             />
           </DocumentSettingsField>
           <DocumentSettingsField label="Language">

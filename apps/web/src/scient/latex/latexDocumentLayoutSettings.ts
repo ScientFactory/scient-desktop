@@ -1,3 +1,4 @@
+import { FONT_CATALOGUE, catalogueFont } from "@scientfactory/scient-markdown";
 import { latexPreambleEnd, latexSourceArgument, latexSourceCommands } from "./latexSourceSyntax";
 import { latexLengthInches, latexVisualLayoutProfile } from "./latexVisualLayout";
 import { latexRunningPageSourceFields, latexRunningPageStyle } from "./latexPageLayouts";
@@ -16,7 +17,8 @@ export interface DocumentLayoutSettings {
   gutter?: string;
   mirroredMargins?: boolean;
   engine?: "pdflatex" | "xelatex" | "lualatex";
-  fontFamily?: "default" | "serif" | "sans-serif" | "monospace";
+  /** "default", a generic family, or the name of a catalogue font (written for the document's engine). */
+  fontFamily?: string;
   mainFont?: string;
   sansFont?: string;
   monoFont?: string;
@@ -41,12 +43,24 @@ export interface DocumentLayoutSettings {
 
 /** The default-family declaration written for each generic family. */
 const FAMILY_DEFAULTS = { serif: "rmdefault", "sans-serif": "sfdefault", monospace: "ttdefault" };
-const FAMILY_DEFAULT_PATTERN =
-  /\\renewcommand\s*\{\\familydefault\}\s*\{\\(rmdefault|sfdefault|ttdefault)\}/gu;
+/** `\familydefault` holds a generic (`\rmdefault`) or a font family code (`qtm`) for a catalogue font. */
+const FAMILY_DEFAULT_PATTERN = /\\renewcommand\s*\{\\familydefault\}\s*\{\\?([A-Za-z0-9]+)\}/gu;
+const MAIN_FONT_PATTERN = /\\setmainfont\s*\{([^{}]+)\}/gu;
+const isGenericFamily = (value: string) => value === "default" || value in FAMILY_DEFAULTS;
 
 const length = (value: string) =>
   /^(?:\d+(?:\.\d*)?|\.\d+)\s*(?:in|cm|mm|pt|bp|em|ex)$/u.test(value.trim());
 const plain = (value: string) => !/[\\{}%#$&_~^\r\n]/u.test(value);
+
+/** What the Font select shows: a generic family, or the catalogue font the declarations name. */
+function documentFontChoice(familyDefault: string | undefined, mainFont: string | undefined) {
+  const generic = Object.entries(FAMILY_DEFAULTS).find(([, command]) => command === familyDefault);
+  if (generic) return generic[0];
+  const named = FONT_CATALOGUE.find(
+    (font) => font.latex.fontspec === mainFont?.trim() || font.latex.pdftex === familyDefault,
+  );
+  return named?.name ?? "default";
+}
 
 /** Current literal settings, scoped to active preamble declarations rather than macro bodies. */
 export function documentLayoutSettings(source: string) {
@@ -91,9 +105,7 @@ export function documentLayoutSettings(source: string) {
     gutter: `${profile.bindingOffsetIn.toFixed(4)}in`,
     mirroredMargins: profile.twoSided,
     engine,
-    fontFamily: (Object.entries(FAMILY_DEFAULTS).find(
-      ([, command]) => command === familyDefault,
-    )?.[0] ?? "default") as NonNullable<DocumentLayoutSettings["fontFamily"]>,
+    fontFamily: documentFontChoice(familyDefault, last(MAIN_FONT_PATTERN)?.[1]),
     mainFont: latexDocumentLanguage(source).mainFont ?? family("main"),
     sansFont: family("sans"),
     monoFont: family("mono"),
@@ -268,14 +280,34 @@ export function updateDocumentLayoutSettings(
       update.alignment === "left" ? "\\RaggedRight" : "\\justifying",
     );
   }
-  if (update.fontFamily === "default") {
-    for (const match of activeMatches(FAMILY_DEFAULT_PATTERN).reverse())
-      result = result.slice(0, match.index) + result.slice(match.index + match[0].length);
-  } else if (update.fontFamily !== undefined) {
-    replace(
-      FAMILY_DEFAULT_PATTERN,
-      `\\renewcommand{\\familydefault}{\\${FAMILY_DEFAULTS[update.fontFamily]}}`,
-    );
+  // Named fonts are written for the document's engine: a family code under pdfLaTeX, `\setmainfont`
+  // under XeLaTeX and LuaLaTeX. The select only ever touches what it can show, so a
+  // `\setmainfont` naming a catalogue font is cleared whenever the choice changes.
+  let mainFontFromChoice: string | undefined;
+  if (update.fontFamily !== undefined) {
+    for (const match of activeMatches(MAIN_FONT_PATTERN).reverse()) {
+      if (FONT_CATALOGUE.some((font) => font.latex.fontspec === match[1]?.trim()))
+        result = result.slice(0, match.index) + result.slice(match.index + match[0].length);
+    }
+    const named = isGenericFamily(update.fontFamily) ? null : catalogueFont(update.fontFamily);
+    if (named === null && !isGenericFamily(update.fontFamily)) return null;
+    const engine = update.engine ?? documentLayoutSettings(source).engine;
+    if (named !== null && engine !== "pdflatex") {
+      for (const match of activeMatches(FAMILY_DEFAULT_PATTERN).reverse())
+        result = result.slice(0, match.index) + result.slice(match.index + match[0].length);
+      mainFontFromChoice = named.latex.fontspec;
+    } else if (named !== null) {
+      if (named.latex.pdftex === null) return null;
+      replace(FAMILY_DEFAULT_PATTERN, `\\renewcommand{\\familydefault}{${named.latex.pdftex}}`);
+    } else if (update.fontFamily === "default") {
+      for (const match of activeMatches(FAMILY_DEFAULT_PATTERN).reverse())
+        result = result.slice(0, match.index) + result.slice(match.index + match[0].length);
+    } else {
+      replace(
+        FAMILY_DEFAULT_PATTERN,
+        `\\renewcommand{\\familydefault}{\\${FAMILY_DEFAULTS[update.fontFamily as keyof typeof FAMILY_DEFAULTS]}}`,
+      );
+    }
   }
   if (update.engine !== undefined) {
     if (
@@ -296,7 +328,7 @@ export function updateDocumentLayoutSettings(
     ["sansFont", "setsansfont"],
     ["monoFont", "setmonofont"],
   ] as const) {
-    const value = update[key];
+    const value = key === "mainFont" ? (update.mainFont ?? mainFontFromChoice) : update[key];
     if (value === undefined) continue;
     if (
       !value.trim() ||
