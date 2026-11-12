@@ -442,7 +442,11 @@ project's sources (`LibraryProjectSources.ts` `distinctPinnedWorks` and
 details, export and the agent list) shows the source once, under the key
 pinned first, the one its documents have had longest; the other keys travel
 as `alsoCitedAs` ("Also cited as" in the details). Remove from this project
-unpins every key.
+unpins every key. Every answer that carries a record (metadata edit, refresh,
+revert, both notes) carries these project fields too
+(`ScientSourceProjectRecord`), the panel keeps `citationKey` and
+`alsoCitedAs` when it rebuilds a row from one, and a kept detail takes both
+from a newer overview, since pins change without a new revision.
 
 ### Review record snapshots
 
@@ -743,8 +747,10 @@ deletes v1 files; a `pins.json` on its own never does.
    sits beside it as `<name>.~<sha12>`.
 4. `mergeScientLibraryDuplicates`, then collections and saved searches move in.
    A collection already in the library under the same ID gains the members; a
-   name another collection uses gets the project folder's name, "Methods
-   (Thesis)".
+   name another collection or saved search uses gets the project's title,
+   "Methods (Fjord field notes)". The server passes the title from its project
+   list (`projectTitle`, matched by real path); the folder name stands in when
+   the list does not know the checkout.
 5. Stage under `.scient/library/.staging/<runId>/`: each review (its v1 bytes),
    its record snapshot (built from the library records, captured at each
    record's last change so a rerun stages the same bytes), the bibliography
@@ -1216,10 +1222,15 @@ Systematic reviews does, with two sections: the possible pairs and **Merged**.
   `requested` is false for the move's automatic merges. `keptSourceId` is the
   source the merge kept; `kept` is its row, or null when it was merged again
   or removed, and Undo then answers `survivor-missing`. `merged` is the
-  merged-away source's summary and `filledIn` the fields the kept one took
-  from it, so a Merged row tells two copies apart: each side's authors,
-  journal and identifiers, and for one title "Their authors and journal
-  differed." from `keptDifferent` and `filledIn`.
+  merged-away source's summary and `differences` each work field the two
+  differed in, kept or filled in, with the kept one's value before the merge
+  and the other's as text (null for none), from the merge file's `conflicts`
+  and `changes`. The file records identifiers and PDFs only as added, so the
+  kept one's own are what it holds now less those, listed while it is still in
+  the Library. A Merged row tells two copies apart: each side's authors,
+  journal and identifiers, for one title "Their authors and volume differed.",
+  and one line per field, "Volume: none (kept), 12 (merged away)". The
+  agent's duplicates list keeps `keptDifferent` only.
 - **Cost at 20,000 records** (M5 Pro, Node 26, load 2): the assessment alone
   46 ms, the whole read 57 ms warm and 1.2 s cold (the cold part is the
   record listing the overview pays too). The assessment is not on the overview
