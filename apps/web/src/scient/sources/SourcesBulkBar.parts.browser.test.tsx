@@ -127,6 +127,7 @@ describe("A bulk edit larger than one request", () => {
     });
     await using screen = await render(<Harness />, { router: false });
     using add = vi.spyOn(toastManager, "add");
+    using close = vi.spyOn(toastManager, "close");
     const changeType = async () => {
       await userEvent.click(page.getByRole("button", { name: "Type" }));
       await userEvent.click(page.getByRole("menuitem", { name: "Book" }));
@@ -141,6 +142,7 @@ describe("A bulk edit larger than one request", () => {
     const undoFirstEdit = add.mock.calls[0]![0].actionProps?.onClick as () => void;
     undoFirstEdit();
     expect(add.mock.calls[1]![0]).toMatchObject({ title: "Another change is still running" });
+    expect(close).not.toHaveBeenCalled();
     expect(calls).toBe(7);
     await expect.element(screen.getByRole("button", { name: "Stop" })).toBeVisible();
 
