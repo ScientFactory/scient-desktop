@@ -1169,7 +1169,14 @@ describe("the library lock during a move", () => {
     );
     await editTitle(library, outside.record!.sourceId, "Edited during the move");
     pause.release();
-    expect((await moving).outcome).toBe("moved");
+    const moved = await moving;
+    expect(moved.outcome).toBe("moved");
+    // The check counts the records, v1 files and highlights it backs up, not only the PDFs.
+    const checking = progress.filter((entry) => entry.phase === "verifying").at(-1)!;
+    expect(checking.done).toBe(checking.total);
+    expect(checking.total).toBeGreaterThan(
+      moved.journal!.pdfs.length + moved.journal!.sources.length,
+    );
     await expectDone(library, project, {
       sourceIds: [a.sourceId, b.sourceId],
       reviewIds: [reviewId],
