@@ -1969,6 +1969,11 @@ export interface ScientLibraryMoveInput {
   readonly library: ScientLibraryLocation;
   readonly projectRoot: string;
   readonly actor: ScientSourceActor;
+  /**
+   * The project's title, for naming a moved collection or saved search that clashes with one in
+   * the library. The folder name when absent.
+   */
+  readonly projectTitle?: string | undefined;
   /** `git ls-files .scient/sources` through the server's git driver; untracked when absent. */
   readonly gitTracked?: () => Promise<boolean>;
   readonly faults?: ScientLibraryMoveFaults;
@@ -2018,7 +2023,7 @@ async function moveContext(
   return {
     root,
     projectId,
-    title: NodePath.basename(root),
+    title: input.projectTitle?.trim() || NodePath.basename(root),
     library: input.library,
     libraryRoot,
     libraryId,

@@ -21,6 +21,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
+import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 
 /**
@@ -126,6 +127,19 @@ function scientLibraryMoveBusyMessage(run: Pick<MoveRun, "kind" | "progress">): 
 
 const canonicalRoot = (root: string) => NodeFSP.realpath(root).catch(() => NodePath.resolve(root));
 
+/** The project list's title for a checkout, matched by real path; none without the list. */
+const projectTitleFor = Effect.fn("ScientLibraryMove.projectTitle")(function* (root: string) {
+  const store = yield* Effect.serviceOption(ProjectStoreV2);
+  if (Option.isNone(store)) return undefined;
+  const projects = yield* store.value.list().pipe(Effect.orElseSucceed(() => []));
+  for (const project of projects) {
+    if ((yield* Effect.promise(() => canonicalRoot(project.workspaceRoot))) === root) {
+      return project.title;
+    }
+  }
+  return undefined;
+});
+
 /**
  * `git ls-files .scient/sources` through the server's git driver. Without the driver, or outside
  * a repository, nothing is tracked. Scient never commits; the status line asks the person to.
@@ -205,11 +219,13 @@ export const moveProjectIntoLibrary = Effect.fn("ScientLibraryMove.run")(functio
     // Another caller may have started while the state was read.
     if (runs.has(key)) continue;
     faults.onRun?.();
+    const projectTitle = yield* projectTitleFor(key);
     const { run, result } = track(key, "move", (onProgress) =>
       runScientLibraryMove({
         library: input.library,
         projectRoot: key,
         actor: input.actor,
+        projectTitle,
         gitTracked: () => Effect.runPromiseWith(context)(libraryMoveGitTracked(key)),
         faults,
         onProgress,

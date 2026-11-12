@@ -19,6 +19,10 @@ import {
   scientLibraryLocation,
   scientLibraryRootFor,
 } from "@scientfactory/scient-sources/library-root";
+import {
+  organizeScientSources,
+  readScientSourcesOrganization,
+} from "@scientfactory/scient-sources/collections";
 import { readScientProjectPins } from "@scientfactory/scient-sources/project-pins";
 import {
   attachScientSourcePdf,
@@ -33,6 +37,7 @@ import * as Layer from "effect/Layer";
 import type * as PlatformError from "effect/PlatformError";
 
 import * as ServerConfig from "../../config.ts";
+import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../../vcs/GitVcsDriver.ts";
 import {
   moveProjectBackIntoProject,
@@ -213,6 +218,41 @@ describe("the lazy move on the library backend", () => {
       const journal = yield* Effect.promise(() => journalOf(fixture));
       expect(journal?.state).toBe("done");
       expect(scientLibraryMoveStatusLines(journal)).toEqual([]);
+    }),
+  );
+
+  it.effect("names a moved collection that clashes after the project's title, not its folder", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(() => setup());
+      const fjord = { ...fixture, root: NodePath.join(fixture.base, "fjord-field-notes") };
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(fjord.root);
+        await initializeScientProject({ root: fjord.root });
+        for (const [root, key] of [
+          [fixture.root, "a"],
+          [fjord.root, "b"],
+        ] as const) {
+          const source = await addV1Source(root, key);
+          await organizeScientSources({
+            root,
+            change: { action: "create-collection", name: "Methods", sourceIds: [source.sourceId] },
+            actor: "user",
+          });
+        }
+      });
+      yield* writeStore(fixture);
+      yield* writeStore(fjord).pipe(
+        Effect.provideService(ProjectStoreV2, {
+          list: () => Effect.succeed([{ workspaceRoot: fjord.root, title: "Fjord field notes" }]),
+        } as unknown as ProjectStoreV2["Service"]),
+      );
+      const organization = yield* Effect.promise(() =>
+        readScientSourcesOrganization(fixture.library),
+      );
+      expect(organization.collections.map((collection) => collection.name).toSorted()).toEqual([
+        "Methods",
+        "Methods (Fjord field notes)",
+      ]);
     }),
   );
 
