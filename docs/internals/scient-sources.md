@@ -1049,6 +1049,35 @@ per source and then read the overview again. An import begun from "All"
 in this project." and an "Add to project" button for what it brought in; add
 by identifier from "All" says the same in its toast.
 
+#### The sources list at Library size (F5)
+
+The list in `ScientSourcesPanel.tsx` is a virtual list (`SourcesList.tsx`,
+`@legendapp/list/react`) on both backends: only the rows near the view are
+mounted, so a Library of thousands of sources renders a few dozen rows. Each
+row (`SourceRow.tsx`) draws its own divider, since mounted rows are positioned
+rather than stacked; the university row is the list's header and the full-text
+matches its footer. The estimate (`SOURCE_ROW_ESTIMATED_SIZE`, 63 px) is the
+shortest row, a one-line title and one line of details, with or without the
+star slot; real rows are taller, so the first render never leaves a gap, and
+the list then uses the average of the rows it measured.
+
+Data is not paged. The overview still carries every record, and sorting,
+grouping and every filter, the reading filter included (`matchesReadingFilter`),
+run in the panel over all of them; the virtual list bounds rendering only. A
+server-paged list would send the overview's `readingStatus` / `starred` and
+keep `scopes` for the counts.
+
+The panel's pieces live beside it: the row menu (`sourceRowMenu.ts`), the
+Library's project and reading actions with the snapshot-removal dialog
+(`useLibraryProjectActions.tsx`), the import summary with its "in your Library,
+not in this project" sentence (`ImportSummary.tsx`), the import review
+(`ImportReview.tsx`) and the panel's header and empty states
+(`PanelChrome.tsx`). The dialog is the panel's, not a row's, so a row scrolled
+out of view and unmounted does not close it. `SourcesList.browser.test.tsx`
+renders 3,000 rows over the real `useScientSources` and checks the window, a
+star kept against an older overview through the reading overrides, and the
+snapshot dialog from a row reached by scrolling.
+
 ## Source truth and provenance
 
 The persisted record has a first-class Scient source type and normalized

@@ -1,17 +1,13 @@
 import type {
-  ContextMenuItem,
   EnvironmentId,
   ScientSourcesFileImportResult,
   ScientSourcesOverviewResult,
-  ScientSourcesPreflightResult,
   ThreadId,
 } from "@t3tools/contracts";
-import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   AlertCircle,
   ArrowDownUp,
   BookOpen,
-  CheckCircle2,
   ChevronLeft,
   Download,
   ExternalLink,
@@ -21,33 +17,13 @@ import {
   Hash,
   Library,
   LoaderCircle,
-  Info,
-  MoreVertical,
   RefreshCw,
   Search,
-  Star,
   Users,
   X,
 } from "lucide-react";
-import {
-  useEffect,
-  useLayoutEffect,
-  useSyncExternalStore,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore, useRef, useState } from "react";
 
-import {
-  AlertDialog,
-  AlertDialogClose,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogPopup,
-  AlertDialogTitle,
-} from "../../components/ui/alert-dialog";
 import { Button } from "../../components/ui/button";
 import { ManagedBibliographyNotice } from "./ManagedBibliographyNotice";
 import { useManagedBibliography } from "./useManagedBibliography";
@@ -72,21 +48,20 @@ import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { initializeScientProjectForOpening } from "../../lib/scientProjectInitialization";
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
-import { ScientTooltip } from "../presentation/ScientTooltip";
 import { SourceAnnotations } from "../annotations/SourceAnnotations";
 import { AddByIdentifier } from "./AddByIdentifier";
+import { ImportReview } from "./ImportReview";
+import { AlreadyPresentSummary, ImportSummary } from "./ImportSummary";
+import { CenteredState, PanelHeader, SourceErrorBanner } from "./PanelChrome";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
 import { SourceFullTextResults } from "./SourceFullTextResults";
-import { SourceJournalIcon } from "./SourceJournalIcon";
+import type { SourceRowContext } from "./SourceRow";
+import { showSourceRowMenu } from "./sourceRowMenu";
+import { SourcesList } from "./SourcesList";
 import { requestSourceTextReveal } from "./sourceTextReveal";
 import { useLibraryFileImport } from "./libraryFileHandoff";
-import {
-  agentVerificationLabel,
-  newlyObservedSourceIds,
-  sourceAddedLabel,
-  sourcePinLabel,
-} from "./sourceLabels";
+import { newlyObservedSourceIds } from "./sourceLabels";
 import {
   filterScientSourceSearchIndex,
   indexScientSourceSummaries,
@@ -95,13 +70,11 @@ import {
   type ScientSourceSort,
 } from "./filterSources";
 import {
-  completedImportCounts,
   importedSourceIdToReveal,
   importedSourceIds,
   type ScientSourcesImportOutcome,
 } from "./importOutcome";
 import { SourceHistoryDialog } from "./SourceHistory";
-import { sourceTrustLabel } from "./sourceLifecycleLabels";
 import { SourceStoreNotice } from "./SourceStoreNotice";
 import { LibraryMoveNotice } from "./LibraryMoveNotice";
 import { useLibraryMoveStatus } from "./useLibraryMoveStatus";
@@ -118,24 +91,13 @@ import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
 import { sourcesCommands, useCanChangeLibrary, useCanRunSourcesCommand } from "./sourcesCommands";
-import { setScientSourcesReadingState, updateScientSourcePersonalNote } from "./client";
+import { updateScientSourcePersonalNote } from "./client";
 import {
-  changeProjectSources,
-  type ProjectSourcesChange,
-  type ProjectSourcesOutcome,
-} from "./libraryActions";
-import {
-  addedToProjectLabel,
-  goneFromComputerLabel,
   inLibraryNotProjectLabel,
-  LIBRARY_LABELS,
   matchesReadingFilter,
-  readingResultLabel,
-  removedFromProjectLabel,
-  removeSnapshotsHelp,
-  removeSnapshotsLabel,
   type ReadingStateChange,
 } from "./libraryLabels";
+import { SnapshotRemovalDialog, useLibraryProjectActions } from "./useLibraryProjectActions";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest, UniversityRow } from "../accounts/University";
 import { PaperQueueBand } from "../accounts/PaperRequests";
@@ -143,22 +105,6 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useAccountCommand, useAccounts } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
-type ProjectRemoval = {
-  readonly citationKey?: string | undefined;
-  readonly fromSnapshot?: boolean | undefined;
-};
-type SourceContextAction =
-  | "view"
-  | "edit"
-  | "open-pdf"
-  | "select"
-  | "remove"
-  | "add-to-project"
-  | "remove-from-project"
-  | "mark-read"
-  | "mark-unread";
-type SourceDiagnostic =
-  ScientSourcesOverviewResult["recordDiagnostics"][number]["diagnostics"][number];
 const RECENT_SOURCE_ADD_TTL_MS = 10 * 60 * 1000;
 const recentSourceAdds = new Map<string, Map<string, number>>();
 function createRecentSourcesStore(initial: ReadonlySet<string>) {
@@ -199,132 +145,6 @@ function rememberRecentSourceAdds(
   for (const sourceId of sourceIds) entries.set(sourceId, expiresAt);
   if (entries.size > 0) recentSourceAdds.set(contextKey, entries);
   return readRecentSourceAdds(contextKey);
-}
-
-function MetadataReviewIndicator(props: {
-  readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
-  readonly onOpen: () => void;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className="rounded-full text-amber-600 outline-none hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:text-amber-400 dark:hover:text-amber-300"
-            aria-label="Metadata needs review"
-            onClick={(event) => {
-              event.stopPropagation();
-              props.onOpen();
-            }}
-          >
-            <AlertCircle className="size-4" />
-          </button>
-        }
-      />
-      <TooltipPopup side="top" align="end" className="max-w-72" variant="glass">
-        <div className="space-y-1 px-3 py-2">
-          <div className="font-medium">Metadata needs review</div>
-          <div className="text-muted-foreground">
-            {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
-          </div>
-          <div className="pt-1 text-muted-foreground">Click to view source details.</div>
-        </div>
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
-
-/** A personal Library's star on a row: shown when set, offered on hover to a session that may change it. */
-function RowStar(props: {
-  readonly title: string | null;
-  readonly starred: boolean;
-  readonly onToggle?: () => Promise<void>;
-}) {
-  const [pending, setPending] = useState(false);
-  const onToggle = props.onToggle;
-  if (!onToggle) {
-    return (
-      <span className="flex size-7 shrink-0 items-center justify-center text-muted-foreground">
-        {props.starred ? (
-          <Star role="img" aria-label={LIBRARY_LABELS.starred} className="size-3.5 fill-current" />
-        ) : null}
-      </span>
-    );
-  }
-  const label = props.starred ? LIBRARY_LABELS.removeStar : LIBRARY_LABELS.star;
-  return (
-    <span
-      className={
-        props.starred
-          ? "flex size-7 shrink-0 items-center justify-center"
-          : "flex size-7 shrink-0 items-center justify-center opacity-0 focus-within:opacity-100 group-hover:opacity-100"
-      }
-    >
-      <ScientTooltip content={label}>
-        <Button
-          variant="ghost"
-          size="icon-sm"
-          aria-label={`${label}: ${props.title ?? "Untitled source"}`}
-          aria-pressed={props.starred}
-          disabled={pending}
-          onClick={() => {
-            setPending(true);
-            void onToggle().finally(() => setPending(false));
-          }}
-        >
-          <Star className={props.starred ? "fill-current" : undefined} />
-        </Button>
-      </ScientTooltip>
-    </span>
-  );
-}
-
-function SourceErrorBanner(props: { readonly message: string; readonly onDismiss: () => void }) {
-  return (
-    <div className="m-3 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-      <span className="min-w-0 flex-1">{props.message}</span>
-      <Button
-        size="icon-xs"
-        variant="ghost-destructive"
-        className="shrink-0"
-        aria-label="Dismiss source notification"
-        onClick={props.onDismiss}
-      >
-        <X />
-      </Button>
-    </div>
-  );
-}
-
-function creatorLabel(record: ScientSourcesOverviewResult["records"][number]): string {
-  const creator = record.creators[0];
-  return creator?.familyName ?? creator?.literalName ?? creator?.givenName ?? "Unknown creator";
-}
-
-function candidateMetadataSummary(
-  candidate: ScientSourcesPreflightResult["items"][number]["candidate"],
-): string | null {
-  const leadCreator = candidate.creators[0];
-  const creatorName =
-    leadCreator?.familyName ?? leadCreator?.literalName ?? leadCreator?.givenName ?? null;
-  const creator = creatorName
-    ? `${creatorName}${candidate.creators.length > 1 ? " et al." : ""}`
-    : null;
-  const hasDoi = candidate.identifiers.some(
-    (identifier) => identifier.scheme.toLowerCase() === "doi",
-  );
-  const values = [
-    creator,
-    candidate.issuedYear === null ? null : String(candidate.issuedYear),
-    candidate.containerTitle,
-    hasDoi ? "DOI" : null,
-  ].filter((value): value is string => Boolean(value));
-  return values.length > 0 ? values.join(" · ") : null;
-}
-
-function importedCount(operation: NonNullable<ReturnType<typeof useScientSources>["operation"]>) {
-  return operation.items.filter((item) => item.state !== "pending").length;
 }
 
 function ZoteroMark() {
@@ -454,11 +274,6 @@ export function ScientSourcesPanel(props: {
   const [referenceFileImport, setReferenceFileImport] = useState<{
     readonly file: File;
     readonly report: ScientSourcesFileImportResult["report"];
-  } | null>(null);
-  const [snapshotRemoval, setSnapshotRemoval] = useState<{
-    readonly records: ReadonlyArray<ProjectRemoval>;
-    readonly snapshots: number;
-    readonly resolve: (ran: boolean) => void;
   } | null>(null);
   const panelContext = `${props.environmentId}\0${props.root}`;
   const [recentSourcesStore] = useState(() =>
@@ -661,113 +476,13 @@ export function ScientSourcesPanel(props: {
     sources.zoteroGroups.find((group) => group.groupId === sources.zoteroGroupId)?.name ??
     "My Library";
 
-  const announceProjectChange = (
-    kind: "add" | "remove",
-    outcome: ProjectSourcesOutcome,
-    snapshots = 0,
-  ) => {
-    if (outcome.changed > 0) {
-      toastManager.add({
-        type: "success",
-        title:
-          kind === "add"
-            ? addedToProjectLabel(outcome.changed)
-            : removedFromProjectLabel(outcome.changed),
-        ...(kind === "remove"
-          ? {
-              description:
-                snapshots > 0
-                  ? goneFromComputerLabel(snapshots)
-                  : outcome.changed === 1
-                    ? LIBRARY_LABELS.staysInLibrary
-                    : LIBRARY_LABELS.stayInLibrary,
-            }
-          : {}),
-      });
-    }
-    if (outcome.failed > 0) {
-      toastManager.add({
-        type: "error",
-        title: kind === "add" ? LIBRARY_LABELS.addFailed : LIBRARY_LABELS.removeFailed,
-        description:
-          outcome.error ??
-          (outcome.failed === 1
-            ? "1 source is no longer in the Library."
-            : `${outcome.failed} sources are no longer in the Library.`),
-      });
-    }
-  };
-  const changeProject = async (
-    kind: "add" | "remove",
-    changes: ReadonlyArray<ProjectSourcesChange>,
-  ) => {
-    const outcome = await changeProjectSources({
-      environmentId: props.environmentId,
-      root: props.root,
-      changes,
-    });
-    await sources.refreshOverview().catch(() => undefined);
-    announceProjectChange(kind, outcome);
-  };
-  const addToProject = (records: ReadonlyArray<{ readonly sourceId: string }>) =>
-    changeProject(
-      "add",
-      records.map((record) => ({ action: "pin", sourceId: record.sourceId })),
-    );
-  // Only snapshots whose unpin succeeded count as gone from this computer in the toast.
-  const unpinFromProject = async (records: ReadonlyArray<ProjectRemoval>) => {
-    const outcome = await changeProjectSources({
-      environmentId: props.environmentId,
-      root: props.root,
-      changes: records.flatMap((record) =>
-        record.citationKey ? [{ action: "unpin" as const, citationKey: record.citationKey }] : [],
-      ),
-    });
-    await sources.refreshOverview().catch(() => undefined);
-    const removedKeys = new Set(
-      outcome.succeeded.flatMap((change) =>
-        change.action === "unpin" ? [change.citationKey] : [],
-      ),
-    );
-    const removedSnapshots = records.filter(
-      (record) =>
-        record.fromSnapshot === true &&
-        record.citationKey !== undefined &&
-        removedKeys.has(record.citationKey),
-    ).length;
-    announceProjectChange("remove", outcome, removedSnapshots);
-  };
-  // A snapshot is only kept for this project, so its removal asks first; false means cancelled.
-  const removeFromProject = (records: ReadonlyArray<ProjectRemoval>): Promise<boolean> => {
-    const snapshots = records.filter((record) => record.fromSnapshot === true).length;
-    if (snapshots > 0) {
-      return new Promise<boolean>((resolve) => {
-        setSnapshotRemoval({ records, snapshots, resolve });
-      });
-    }
-    return unpinFromProject(records).then(() => true);
-  };
-  const setReadingState = async (
-    sourceIds: ReadonlyArray<string>,
-    change: ReadingStateChange,
-    announce: boolean,
-  ) => {
-    const result = await setScientSourcesReadingState(props.environmentId, {
-      root: props.root,
-      sourceIds: [...sourceIds],
-      ...change,
-    }).catch((cause: unknown) => {
-      toastManager.add({
-        type: "error",
-        title: LIBRARY_LABELS.readingFailed,
-        description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
-      });
-      return null;
-    });
-    if (!result) return;
-    sources.applyReadingState(result);
-    if (announce) toastManager.add({ type: "success", ...readingResultLabel(change, result) });
-  };
+  const libraryActions = useLibraryProjectActions({
+    environmentId: props.environmentId,
+    root: props.root,
+    refreshOverview: sources.refreshOverview,
+    applyReadingState: sources.applyReadingState,
+  });
+  const { addToProject, removeFromProject, setReadingState } = libraryActions;
 
   const moveToTrash = async (record: {
     readonly sourceId: string;
@@ -796,118 +511,60 @@ export function ScientSourcesPanel(props: {
     }
   };
 
-  const showSourceContextMenuAt = async (
+  const showSourceContextMenuAt = (
     record: SourceRecord,
     anchorPoint: { readonly x: number; readonly y: number },
-  ) => {
-    const api = readLocalApi();
-    if (!api) return;
-    const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
-    const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
-    const listed = scopes?.listed;
-    type Item = ContextMenuItem<SourceContextAction>;
-    const readingItems: Item[] =
-      listed && canSetReading && record.readingStatus !== undefined
-        ? [
-            record.readingStatus === "unread"
-              ? { id: "mark-read", label: LIBRARY_LABELS.markRead }
-              : { id: "mark-unread", label: LIBRARY_LABELS.markUnread },
-          ]
-        : [];
-    const addItems: Item[] =
-      listed === "library" && record.pinned === false
-        ? [
-            {
-              id: "add-to-project",
-              label: LIBRARY_LABELS.addToProject,
-              disabled: sources.busy || !canChangeProject,
-            },
-          ]
-        : [];
-    // In "This project" the source leaves the project and stays in the Library.
-    const removeItem: Item =
-      listed === "project"
-        ? {
-            id: "remove-from-project",
-            label: LIBRARY_LABELS.removeFromProject,
-            disabled: sources.busy || !canChangeProject,
-          }
-        : {
-            id: "remove",
-            label: "Move to Trash",
-            destructive: true,
-            disabled: sources.busy || !canChange,
-            icon: "trash",
-          };
-    const items: Item[] = [
-      { id: "view", label: "View source details" },
-      { id: "edit", label: "Edit source details", icon: "pencil", disabled: !canChange },
-      ...(pdf ? ([{ id: "open-pdf", label: "Open PDF" }] as const) : []),
-      {
-        id: "select",
-        label: organize.selection.has(record.sourceId) ? "Deselect" : "Select",
-      },
-      ...readingItems,
-      ...addItems,
-      removeItem,
-    ];
-    const action = await api.contextMenu.show(items, {
-      x: anchorPoint.x,
-      y: anchorPoint.y,
-    });
-    if (!panelMounted.current || panelContextRef.current !== panelContext) return;
-    switch (action) {
-      case "view":
+  ) =>
+    void showSourceRowMenu({
+      record,
+      anchorPoint,
+      listed: scopes?.listed,
+      selected: organize.selection.has(record.sourceId),
+      busy: sources.busy,
+      canChange,
+      canSetReading,
+      canChangeProject,
+      isCurrent: () => panelMounted.current && panelContextRef.current === panelContext,
+      onView: () => {
         setEditingSource(false);
         openSourceDetails(record.sourceId);
-        break;
-      case "edit":
+      },
+      onEdit: () => {
         openSourceDetails(record.sourceId);
         setEditingSource(true);
-        break;
-      case "open-pdf":
-        if (pdf) {
-          props.onOpenPdf({
-            sourceId: record.sourceId,
-            attachmentId: pdf.attachmentId,
-            fileName: pdf.fileName,
-          });
-        }
-        break;
-      case "select":
-        organize.toggleSelected(record.sourceId);
-        break;
-      case "mark-read":
-      case "mark-unread":
-        void setReadingState(
-          [record.sourceId],
-          { readingStatus: action === "mark-read" ? "read" : "unread" },
-          false,
-        );
-        break;
-      case "add-to-project":
-        void addToProject([record]);
-        break;
-      case "remove-from-project":
-        void removeFromProject([record]);
-        break;
-      case "remove":
+      },
+      onOpenPdf: props.onOpenPdf,
+      onToggleSelected: () => organize.toggleSelected(record.sourceId),
+      onSetReadingStatus: (readingStatus) =>
+        void setReadingState([record.sourceId], { readingStatus }, false),
+      onAddToProject: () => void addToProject([record]),
+      onRemoveFromProject: () => void removeFromProject([record]),
+      onMoveToTrash: () =>
         void moveToTrash(record).catch((cause: unknown) => {
           toastManager.add({
             type: "error",
             title: "Source could not be moved to Trash",
             description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
           });
-        });
-        break;
-      case null:
-        break;
-    }
-  };
-  const showSourceContextMenu = (event: ReactMouseEvent<HTMLElement>, record: SourceRecord) => {
-    event.preventDefault();
-    event.stopPropagation();
-    void showSourceContextMenuAt(record, { x: event.clientX, y: event.clientY });
+        }),
+    });
+  const sourceRow: SourceRowContext = {
+    environmentId: props.environmentId,
+    root: props.root,
+    listed: scopes?.listed,
+    selection: organize.selection,
+    recentlyAddedSourceIds,
+    diagnosticsBySourceId,
+    onToggleSelected: organize.toggleSelected,
+    onOpenDetails: openSourceDetails,
+    onOpenPdf: props.onOpenPdf,
+    onShowMenu: showSourceContextMenuAt,
+    ...(canSetReading
+      ? {
+          onToggleStar: (record: SourceRecord) =>
+            setReadingState([record.sourceId], { starred: record.starred !== true }, false),
+        }
+      : {}),
   };
 
   if (sources.overview === null) {
@@ -1917,41 +1574,7 @@ export function ScientSourcesPanel(props: {
         />
       ) : null}
       <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
-      <AlertDialog
-        open={snapshotRemoval !== null}
-        onOpenChange={(open) => {
-          if (!open) {
-            snapshotRemoval?.resolve(false);
-            setSnapshotRemoval(null);
-          }
-        }}
-      >
-        <AlertDialogPopup>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {removeSnapshotsLabel(snapshotRemoval?.snapshots ?? 1)}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {removeSnapshotsHelp(snapshotRemoval?.snapshots ?? 1)}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-            <Button
-              onClick={() => {
-                const pendingRemoval = snapshotRemoval;
-                setSnapshotRemoval(null);
-                if (pendingRemoval) {
-                  pendingRemoval.resolve(true);
-                  void unpinFromProject(pendingRemoval.records);
-                }
-              }}
-            >
-              {LIBRARY_LABELS.removeFromProject}
-            </Button>
-          </AlertDialogFooter>
-        </AlertDialogPopup>
-      </AlertDialog>
+      <SnapshotRemovalDialog actions={libraryActions} />
       {sources.overview.records.length === 0 ? (
         <>
           <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
@@ -1962,171 +1585,15 @@ export function ScientSourcesPanel(props: {
           />
         </>
       ) : (
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="divide-y divide-border">
-            {sourceQuery ? null : (
+        <SourcesList
+          records={filteredSourceRecords}
+          row={sourceRow}
+          header={
+            sourceQuery ? null : (
               <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
-            )}
-            {filteredSourceRecords.map((record) => {
-              const materialSelection = selectScientSourceMaterial({
-                materials: record.attachments,
-              });
-              const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
-              const hasPdf =
-                materialSelection._tag === "Selected" ||
-                materialSelection._tag === "SeveralMaterials";
-              const metadataDiagnostics = diagnosticsBySourceId.get(record.sourceId);
-              return (
-                <div
-                  key={record.sourceId}
-                  className={`group flex w-full items-start gap-2 px-2 py-1.5 hover:bg-accent/40 ${organize.selection.has(record.sourceId) ? "bg-accent/35" : ""}`}
-                  onContextMenu={(event) => void showSourceContextMenu(event, record)}
-                >
-                  {organize.selection.size > 0 ? (
-                    <span className="mt-2.5 ml-1 flex shrink-0">
-                      <Checkbox
-                        checked={organize.selection.has(record.sourceId)}
-                        aria-label={`Select ${record.title ?? "Untitled source"}`}
-                        onCheckedChange={() => organize.toggleSelected(record.sourceId)}
-                      />
-                    </span>
-                  ) : null}
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                          onClick={(event) =>
-                            organize.selection.size > 0 ||
-                            event.metaKey ||
-                            event.ctrlKey ||
-                            event.shiftKey
-                              ? organize.toggleSelected(record.sourceId)
-                              : openSourceDetails(record.sourceId)
-                          }
-                        >
-                          <SourceJournalIcon
-                            environmentId={props.environmentId}
-                            root={props.root}
-                            record={record}
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-medium">
-                              {record.readingStatus === "unread" ? (
-                                <span
-                                  role="img"
-                                  aria-label={LIBRARY_LABELS.unread}
-                                  className="me-1.5 inline-block size-1.5 rounded-full bg-sky-500 align-middle"
-                                />
-                              ) : null}
-                              {record.title ?? "Untitled source"}
-                            </span>
-                            <span className="mt-0.5 block text-xs text-muted-foreground">
-                              {creatorLabel(record)}
-                              {record.issuedYear ? ` · ${record.issuedYear}` : ""}
-                              {hasPdf ? " · PDF" : " · Metadata only"}
-                              {" · "}
-                              <span
-                                className={
-                                  recentlyAddedSourceIds.has(record.sourceId)
-                                    ? "font-medium text-sky-600 dark:text-sky-400"
-                                    : undefined
-                                }
-                              >
-                                {sourceAddedLabel(
-                                  record.importedAt,
-                                  recentlyAddedSourceIds.has(record.sourceId),
-                                  record.origin?.actor === "agent",
-                                )}
-                              </span>
-                              {agentVerificationLabel(record)}
-                              {sourceTrustLabel(record)}
-                              {sourcePinLabel(record, sources.overview?.scopes?.listed)}
-                            </span>
-                          </span>
-                        </button>
-                      }
-                    />
-                    <TooltipPopup side="top">View source details</TooltipPopup>
-                  </Tooltip>
-                  <div className="mt-0.5 mr-1 flex shrink-0 items-center gap-1">
-                    {record.readingStatus !== undefined ? (
-                      <RowStar
-                        title={record.title}
-                        starred={record.starred === true}
-                        {...(canSetReading
-                          ? {
-                              onToggle: () =>
-                                setReadingState(
-                                  [record.sourceId],
-                                  { starred: record.starred !== true },
-                                  false,
-                                ),
-                            }
-                          : {})}
-                      />
-                    ) : null}
-                    <span className="flex size-7 shrink-0 items-center justify-center">
-                      {metadataDiagnostics && metadataDiagnostics.length > 0 ? (
-                        <MetadataReviewIndicator
-                          diagnostics={metadataDiagnostics}
-                          onOpen={() => openSourceDetails(record.sourceId)}
-                        />
-                      ) : null}
-                    </span>
-                    <span className="flex size-7 shrink-0 items-center justify-center">
-                      {pdf ? (
-                        <ScientTooltip content="Open PDF">
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Open PDF: ${pdf.fileName}`}
-                            onClick={() => {
-                              props.onOpenPdf({
-                                sourceId: record.sourceId,
-                                attachmentId: pdf.attachmentId,
-                                fileName: pdf.fileName,
-                              });
-                            }}
-                          >
-                            <FileText />
-                          </Button>
-                        </ScientTooltip>
-                      ) : materialSelection._tag === "SeveralMaterials" ? (
-                        <ScientTooltip content="Choose a PDF in source details">
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Choose a PDF to open: ${record.title ?? "Untitled source"}`}
-                            onClick={() => openSourceDetails(record.sourceId)}
-                          >
-                            <FileText />
-                          </Button>
-                        </ScientTooltip>
-                      ) : null}
-                    </span>
-                    <ScientTooltip content="More source actions">
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label="More source actions"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          const bounds = event.currentTarget.getBoundingClientRect();
-                          void showSourceContextMenuAt(record, {
-                            x: bounds.right,
-                            y: bounds.bottom,
-                          });
-                        }}
-                      >
-                        <MoreVertical />
-                      </Button>
-                    </ScientTooltip>
-                  </div>
-                </div>
-              );
-            })}
+            )
+          }
+          footer={
             <SourceFullTextResults
               environmentId={props.environmentId}
               root={props.root}
@@ -2149,402 +1616,9 @@ export function ScientSourcesPanel(props: {
                 props.onOpenPdf(hit);
               }}
             />
-          </div>
-        </ScrollArea>
+          }
+        />
       )}
-    </div>
-  );
-}
-
-function ImportReview(props: {
-  readonly preflight: NonNullable<ReturnType<typeof useScientSources>["preflight"]>;
-  readonly adapter: "zotero" | "local-files";
-  readonly busy: boolean;
-  readonly readOnly: boolean;
-  readonly error: string | null;
-  readonly onDismissError: () => void;
-  readonly onBack: () => void;
-  readonly onImport: (
-    itemKeys: ReadonlyArray<string>,
-    possibleMetadataMatchOverrides: ReadonlyArray<string>,
-  ) => void;
-}) {
-  const [possibleMatchOverrides, setPossibleMatchOverrides] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const itemKeys = props.preflight.items.flatMap((item) => {
-    const itemKey = item.candidate.sourceKey;
-    return item.duplicate.kind === "new" || possibleMatchOverrides.has(itemKey) ? [itemKey] : [];
-  });
-  const overrideKeys = props.preflight.items.flatMap((item) => {
-    const itemKey = item.candidate.sourceKey;
-    return item.duplicate.kind === "possible-metadata-match" && possibleMatchOverrides.has(itemKey)
-      ? [itemKey]
-      : [];
-  });
-  const importableKeys = new Set(itemKeys);
-  const selectedCount = props.preflight.items.length;
-  const localFiles = props.adapter === "local-files";
-  const hasMetadataWarnings = props.preflight.items.some(
-    (item) => importableKeys.has(item.candidate.sourceKey) && item.metadataDiagnostics.length > 0,
-  );
-  const localActionLabel = props.busy
-    ? "Adding…"
-    : hasMetadataWarnings
-      ? itemKeys.length > 1
-        ? `Add ${itemKeys.length} anyway`
-        : "Add anyway"
-      : "Add to Library";
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <PanelHeader
-        title={
-          localFiles
-            ? selectedCount === 1
-              ? "Review PDF"
-              : `Review ${selectedCount} PDFs`
-            : "Review import"
-        }
-        onBack={props.onBack}
-        action={
-          !localFiles && itemKeys.length > 0 ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={props.busy || props.readOnly}
-              onClick={() => props.onImport(itemKeys, overrideKeys)}
-            >
-              <Download />
-              Import {itemKeys.length}
-            </Button>
-          ) : null
-        }
-      />
-      {props.error ? (
-        <SourceErrorBanner message={props.error} onDismiss={props.onDismissError} />
-      ) : null}
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        <span>
-          {itemKeys.length > 0
-            ? localFiles
-              ? `${itemKeys.length} PDF${itemKeys.length === 1 ? "" : "s"} ready`
-              : `${itemKeys.length} of ${selectedCount} selected ${selectedCount === 1 ? "reference is" : "references are"} ready to import`
-            : localFiles
-              ? "Nothing new to add"
-              : "Nothing new to import"}
-        </span>
-        {localFiles && itemKeys.length > 0 ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={props.busy || props.readOnly}
-            aria-busy={props.busy}
-            onClick={() => props.onImport(itemKeys, overrideKeys)}
-          >
-            {props.busy ? <LoaderCircle className="animate-spin" /> : <Download />}
-            {localActionLabel}
-          </Button>
-        ) : null}
-      </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="divide-y divide-border">
-          {props.preflight.items.map((item) => {
-            const itemKey = item.candidate.sourceKey;
-            const possibleMatch = item.duplicate.kind === "possible-metadata-match";
-            const importingPossibleMatch = possibleMatchOverrides.has(itemKey);
-            const willImport = item.duplicate.kind === "new" || importingPossibleMatch;
-            const metadataSummary = candidateMetadataSummary(item.candidate);
-            const duplicateStatus =
-              item.duplicate.kind === "same-origin"
-                ? "Already in the Library"
-                : item.duplicate.kind === "same-identifier"
-                  ? "A source with this identifier is already in the Library"
-                  : item.duplicate.kind === "same-pdf"
-                    ? "This PDF is already in the Library"
-                    : item.duplicate.reason;
-            return (
-              <div key={itemKey} className={willImport ? "bg-accent/20 px-3 py-3" : "px-3 py-3"}>
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">
-                      {item.candidate.title ?? "Untitled source"}
-                    </div>
-                    {localFiles && item.duplicate.kind === "new" ? (
-                      metadataSummary ? (
-                        <div className="mt-1 text-xs text-muted-foreground">{metadataSummary}</div>
-                      ) : null
-                    ) : (
-                      <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                        {item.duplicate.kind === "new" || importingPossibleMatch ? (
-                          <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" />
-                        ) : possibleMatch ? (
-                          <AlertCircle
-                            className="size-3.5 shrink-0 text-amber-600"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" />
-                        )}
-                        <span>
-                          {item.duplicate.kind === "new"
-                            ? "Ready to import"
-                            : importingPossibleMatch
-                              ? "Will import as a separate source"
-                              : duplicateStatus}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  {possibleMatch ? (
-                    <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-                      <Checkbox
-                        checked={importingPossibleMatch}
-                        className="size-4"
-                        onCheckedChange={() => {
-                          setPossibleMatchOverrides((current) => {
-                            const next = new Set(current);
-                            if (next.has(itemKey)) next.delete(itemKey);
-                            else next.add(itemKey);
-                            return next;
-                          });
-                        }}
-                      />
-                      Import separately
-                    </label>
-                  ) : null}
-                </div>
-                {willImport &&
-                props.adapter === "zotero" &&
-                item.candidate.pdfAttachmentCount > 1 ? (
-                  <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
-                    <FileText className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-                    <span>
-                      {item.candidate.pdfAttachmentCount} PDFs in Zotero · importing{" "}
-                      {item.candidate.pdfFileName ?? "one PDF"}
-                    </span>
-                  </div>
-                ) : null}
-                {willImport && item.metadataDiagnostics.length > 0 ? (
-                  <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
-                    <AlertCircle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-                    <span>
-                      {item.metadataDiagnostics.map((diagnostic) => diagnostic.message).join(" ")}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-
-function PanelHeader(props: {
-  readonly title: ReactNode;
-  readonly description?: string;
-  readonly action?: ReactNode;
-  readonly onBack?: () => void;
-}) {
-  return (
-    <div className="@container flex shrink-0 items-center gap-3 border-b border-border px-3 py-2.5">
-      {props.onBack ? (
-        <Button variant="ghost" size="icon-sm" onClick={props.onBack} aria-label="Go back">
-          <ChevronLeft />
-        </Button>
-      ) : (
-        <Library className="size-4 shrink-0" />
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="truncate text-sm font-medium">{props.title}</div>
-        {props.description ? (
-          <div className="truncate text-xs text-muted-foreground">{props.description}</div>
-        ) : null}
-      </div>
-      {props.action}
-    </div>
-  );
-}
-
-function ImportSummary(props: {
-  readonly operation: NonNullable<ReturnType<typeof useScientSources>["operation"]>;
-  readonly outcome: ScientSourcesImportOutcome | null;
-  readonly onDismiss: () => void;
-  readonly onCancel: () => void;
-  readonly cancelling: boolean;
-  readonly onRetryFailed?: () => void;
-  /** On a personal Library, an import that added its sources to the Library only. */
-  readonly libraryOnly?: { readonly onAddToProject?: (sourceIds: ReadonlyArray<string>) => void };
-}) {
-  const counts = props.outcome?.counts ?? completedImportCounts(props.operation);
-  const imported = counts.imported;
-  const alreadyPresent = counts.alreadyPresent;
-  const reviewRequired = counts.reviewRequired;
-  const failed = counts.failed;
-  const unprocessed = props.operation.items.filter((item) => item.state === "pending").length;
-  const running = props.operation.state === "running";
-  const stopped = props.operation.state === "cancelled";
-  const notes = [...new Set(props.operation.items.flatMap((item) => item.note ?? []))];
-  const importedIds = props.operation.items.flatMap((item) =>
-    item.state === "imported" && item.sourceId ? [item.sourceId] : [],
-  );
-  const libraryOnly = props.libraryOnly && !running && importedIds.length > 0;
-  if (
-    !libraryOnly &&
-    !running &&
-    !stopped &&
-    failed === 0 &&
-    unprocessed === 0 &&
-    alreadyPresent === 0 &&
-    reviewRequired === 0 &&
-    notes.length === 0
-  )
-    return null;
-  const details = running
-    ? [`${importedCount(props.operation)} of ${props.operation.items.length} items processed`]
-    : [
-        `${imported} imported`,
-        alreadyPresent > 0 ? `${alreadyPresent} already present` : null,
-        reviewRequired > 0 ? `${reviewRequired} need review` : null,
-        failed > 0 ? `${failed} failed` : null,
-        unprocessed > 0 ? `${unprocessed} not processed` : null,
-      ].filter((value): value is string => value !== null);
-  return (
-    <div
-      className={
-        failed > 0
-          ? "m-3 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
-          : "m-3 flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-3"
-      }
-    >
-      {running ? (
-        <LoaderCircle className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
-      ) : failed > 0 ? (
-        <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
-      ) : (
-        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">
-          {stopped ? "Import stopped" : running ? "Importing sources" : "Import complete"}
-        </div>
-        <div className="mt-0.5 text-xs text-muted-foreground">{details.join(" · ")}</div>
-        {notes.slice(0, 3).map((note) => (
-          <div key={note} className="mt-1 text-xs text-muted-foreground">
-            {note}
-          </div>
-        ))}
-        {libraryOnly ? (
-          <div className="mt-1 text-xs text-muted-foreground">
-            {inLibraryNotProjectLabel(importedIds.length)}
-          </div>
-        ) : null}
-        {libraryOnly && props.libraryOnly?.onAddToProject ? (
-          <Button
-            className="mt-2"
-            size="xs"
-            variant="outline"
-            onClick={() => props.libraryOnly?.onAddToProject?.(importedIds)}
-          >
-            {LIBRARY_LABELS.addToProject}
-          </Button>
-        ) : null}
-        {failed > 0 ? (
-          <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-            {props.operation.items
-              .filter((item) => item.state === "failed")
-              .slice(0, 3)
-              .map((item) => (
-                <div key={item.itemKey} className="truncate">
-                  {item.itemKey}: {item.message ?? "Import failed."}
-                </div>
-              ))}
-          </div>
-        ) : null}
-        {failed > 0 && props.onRetryFailed ? (
-          <Button className="mt-2" size="xs" variant="outline" onClick={props.onRetryFailed}>
-            Try failed items again
-          </Button>
-        ) : null}
-        {running ? (
-          <Button
-            className="mt-2"
-            size="xs"
-            variant="ghost"
-            disabled={props.cancelling}
-            onClick={props.onCancel}
-          >
-            {props.cancelling ? <LoaderCircle className="animate-spin" /> : <X />}
-            {props.cancelling ? "Stopping…" : "Cancel after current item"}
-          </Button>
-        ) : null}
-      </div>
-      {running ? null : (
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Dismiss import summary"
-          onClick={props.onDismiss}
-        >
-          <X />
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function AlreadyPresentSummary(props: {
-  readonly outcome: ScientSourcesImportOutcome;
-  readonly onDismiss: () => void;
-  readonly onViewExisting?: () => void;
-}) {
-  const count = props.outcome.counts.alreadyPresent;
-  return (
-    <div className="m-3 flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-3">
-      <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">Already in the Library</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">
-          {count === 1
-            ? "This source is already in this project."
-            : `${count} selected sources are already in this project.`}
-        </div>
-        {props.onViewExisting ? (
-          <Button className="mt-2" size="xs" variant="ghost" onClick={props.onViewExisting}>
-            View existing source
-          </Button>
-        ) : null}
-      </div>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Dismiss import result"
-        onClick={props.onDismiss}
-      >
-        <X />
-      </Button>
-    </div>
-  );
-}
-
-function CenteredState(props: {
-  readonly icon: ReactNode;
-  readonly title: string;
-  readonly description?: string;
-  readonly action?: ReactNode;
-}) {
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-      <div className="flex max-w-sm flex-col items-center text-center">
-        <div className="mb-3 text-muted-foreground [&_svg]:size-6">{props.icon}</div>
-        <h2 className="text-base font-medium">{props.title}</h2>
-        {props.description ? (
-          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{props.description}</p>
-        ) : null}
-        {props.action ? <div className="mt-4">{props.action}</div> : null}
-      </div>
     </div>
   );
 }
