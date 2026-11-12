@@ -98,7 +98,7 @@ When you set this field, Scient points Claude Code at that directory with the
 the rest of your environment stay as they are.
 
 File paths in the `--settings` and `--append-system-prompt-file` launch arguments
-can start with `~` for the home directory of the machine running T3 Code. Any
+can start with `~` for the home directory of the machine running Scient. Any
 other relative path is read from the thread's project folder, or its worktree.
 
 Claude Code's verbose mode can stay enabled when you use Claude for text generation, including

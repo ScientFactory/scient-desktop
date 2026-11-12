@@ -59,8 +59,8 @@ If another app already downloaded one of these models, you don’t need a second
 environment and uses a copy it finds there instead of downloading. For a copy anywhere
 else, on web or desktop, paste the path of the model file or its folder under the model
 list and choose **Use existing**. The path is on the environment
-that transcribes, not on the device you are using. T3 Code checks that the file is exactly a
-model from its list and then uses it in place. Removing the model in T3 Code leaves your file
+that transcribes, not on the device you are using. Scient checks that the file is exactly a
+model from its list and then uses it in place. Removing the model in Scient leaves your file
 alone; if the other app deletes it, download or link the model again. Files in another
 format, such as Core ML, ONNX, or MLX builds of the same model, can’t be used.
 
