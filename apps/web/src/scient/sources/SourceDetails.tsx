@@ -759,6 +759,8 @@ export function SourceDetails(props: {
   ];
   const tags = [...new Set(record.tags)];
   const hasDoi = identifiers.some((identifier) => identifier.scheme.toLowerCase() === "doi");
+  // A source this project cites under two keys, after merging two sources it used.
+  const otherKeys = record.alsoCitedAs ?? [];
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -997,9 +999,15 @@ export function SourceDetails(props: {
             </section>
           ) : null}
 
-          {identifiers.length > 0 || (externalUrl && !hasDoi) ? (
+          {identifiers.length > 0 || (externalUrl && !hasDoi) || otherKeys.length > 0 ? (
             <DetailsSection title="Identifiers and links">
               <div className="space-y-2">
+                {otherKeys.length > 0 && record.citationKey ? (
+                  <>
+                    <DetailRow label={LIBRARY_LABELS.citedAs}>{record.citationKey}</DetailRow>
+                    <DetailRow label={LIBRARY_LABELS.alsoCitedAs}>{otherKeys.join(", ")}</DetailRow>
+                  </>
+                ) : null}
                 {identifiers.map((identifier) => {
                   return identifier.scheme.toLowerCase() === "doi" ? (
                     <DoiRow

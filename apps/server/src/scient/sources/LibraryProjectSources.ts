@@ -65,10 +65,58 @@ export async function syncProjectBibliography(
   });
 }
 
-/** This project's pins by the library record each resolves to; reading writes nothing. */
-export async function projectPinsByLibraryId(
+/**
+ * Two pins can name one source: a project that used both sides of a pair keeps both pins after
+ * they are merged, so documents citing either key still work. The project lists the source once,
+ * under the key it pinned first (the one its documents have had longest); `alsoCitedAs` holds the
+ * other keys, which stay in the bibliography. Entries keep the order of their first pin.
+ */
+function groupPins<Entry>(
+  entries: ReadonlyArray<Entry>,
+  groupOf: (entry: Entry) => string,
+  pinOf: (entry: Entry) => { readonly citationKey: string; readonly pinnedAt: string },
+): ReadonlyArray<{ readonly entry: Entry; readonly alsoCitedAs: ReadonlyArray<string> }> {
+  const groups = new Map<string, Entry[]>();
+  for (const entry of entries) {
+    const group = groups.get(groupOf(entry));
+    if (group) group.push(entry);
+    else groups.set(groupOf(entry), [entry]);
+  }
+  return [...groups.values()].map((group) => {
+    const entry = group.reduce((first, next) =>
+      pinOf(next).pinnedAt < pinOf(first).pinnedAt ? next : first,
+    );
+    return {
+      entry,
+      alsoCitedAs: group
+        .filter((other) => other !== entry)
+        .map((other) => pinOf(other).citationKey),
+    };
+  });
+}
+
+/** This project's pinned works, one per source, as `groupPins` describes. */
+export function distinctPinnedWorks(
+  works: ReadonlyArray<ScientProjectPinnedWork>,
+): ReadonlyArray<ScientProjectPinnedWork & { readonly alsoCitedAs: ReadonlyArray<string> }> {
+  return groupPins(
+    works,
+    // A snapshot names no library record, so each stays its own source.
+    (work) =>
+      work.from === "library" ? `library\0${work.record.sourceId}` : `pin\0${work.projectSourceId}`,
+    (work) => work,
+  ).map(({ entry, alsoCitedAs }) => ({ ...entry, alsoCitedAs }));
+}
+
+export interface ProjectPinGroup {
+  readonly pin: ScientProjectPin;
+  readonly alsoCitedAs: ReadonlyArray<string>;
+}
+
+/** This project's pins by the library record each resolves to, with the keys `groupPins` folds. */
+export async function projectPinGroupsByLibraryId(
   store: ScientSourcesLibraryStore,
-): Promise<ReadonlyMap<string, ScientProjectPin>> {
+): Promise<ReadonlyMap<string, ProjectPinGroup>> {
   if (!store.exists) return new Map();
   const resolved = await resolveScientProjectPins({
     projectRoot: store.root,
@@ -76,11 +124,24 @@ export async function projectPinsByLibraryId(
     mode: "read",
     actor: "agent",
   });
-  return new Map(
-    resolved.flatMap(({ pin, resolution }) =>
-      resolution.kind === "resolved" ? [[resolution.sourceId, pin] as const] : [],
-    ),
+  const pinned = resolved.flatMap(({ pin, resolution }) =>
+    resolution.kind === "resolved" ? [{ pin, sourceId: resolution.sourceId }] : [],
   );
+  return new Map(
+    groupPins(
+      pinned,
+      (entry) => entry.sourceId,
+      (entry) => entry.pin,
+    ).map(({ entry, alsoCitedAs }) => [entry.sourceId, { pin: entry.pin, alsoCitedAs }] as const),
+  );
+}
+
+/** This project's pin of each library record it uses (the first pinned); reading writes nothing. */
+export async function projectPinsByLibraryId(
+  store: ScientSourcesLibraryStore,
+): Promise<ReadonlyMap<string, ScientProjectPin>> {
+  const groups = await projectPinGroupsByLibraryId(store);
+  return new Map([...groups].map(([sourceId, group]) => [sourceId, group.pin] as const));
 }
 
 /**

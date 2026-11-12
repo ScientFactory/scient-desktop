@@ -714,6 +714,7 @@ export interface ScientProjectPinnedWork {
   /** The library record, or one built from the snapshot; `citationKey` is the project's key. */
   readonly record: ScientSourceRecord;
   readonly projectNote: string | null;
+  readonly pinnedAt: string;
 }
 
 function recordFromSnapshot(pin: ScientProjectPin): ScientSourceRecord {
@@ -779,6 +780,7 @@ export async function listScientProjectPinnedWorks(input: {
         from: "snapshot",
         record: recordFromSnapshot(pin),
         projectNote,
+        pinnedAt: pin.pinnedAt,
       };
     }
     const { note: _personal, ...record } = found;
@@ -788,6 +790,7 @@ export async function listScientProjectPinnedWorks(input: {
       from: "library",
       record: { ...record, citationKey: pin.citationKey },
       projectNote,
+      pinnedAt: pin.pinnedAt,
     };
   });
 }

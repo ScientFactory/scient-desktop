@@ -844,6 +844,61 @@ describe("Library routes on the library backend", () => {
       }),
   );
 
+  it.effect(
+    "lists a source once after merging two sources this project both pins, keeping both keys",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const { first, second, firstPin, secondPin } = yield* Effect.promise(async () => {
+          const one = await libraryRecord(fixture, "pair1", { title: "Shock trial" });
+          const two = await libraryRecord(fixture, "pair2", {
+            title: "Shock trial",
+            publisher: "South",
+          });
+          return {
+            first: one,
+            second: two,
+            firstPin: await pin(fixture, one.sourceId),
+            secondPin: await pin(fixture, two.sourceId),
+          };
+        });
+        const store = yield* storeFor(fixture, "write");
+        yield* Effect.promise(async () => {
+          const merged = await organizeLibrarySources(store, {
+            change: {
+              action: "merge",
+              sourceIds: [first.sourceId, second.sourceId],
+              survivorId: second.sourceId,
+            },
+          });
+          expect(merged.outcome).toBe("merged");
+
+          const here = await libraryOverview(store, { scope: "project", background: false });
+          expect(here.scopes.project).toBe(1);
+          // The key pinned first, whichever side the merge kept.
+          expect(
+            here.records.map((row) => [row.sourceId, row.citationKey, row.alsoCitedAs]),
+          ).toEqual([[second.sourceId, firstPin.citationKey, [secondPin.citationKey]]]);
+          const everything = await libraryOverview(store, { scope: "library", background: false });
+          expect(everything.records).toMatchObject([
+            { citationKey: firstPin.citationKey, alsoCitedAs: [secondPin.citationKey] },
+          ]);
+          expect(await librarySourceDetail(store, { sourceId: first.sourceId })).toMatchObject({
+            citationKey: firstPin.citationKey,
+            alsoCitedAs: [secondPin.citationKey],
+          });
+          expect((await exportLibrarySources(store, { format: "bibtex" })).sourceCount).toBe(1);
+          // Documents may cite either key, so the bibliography keeps both.
+          const bibliography = await NodeFSP.readFile(
+            NodePath.join(fixture.root, "references.bib"),
+            "utf8",
+          );
+          expect(bibliography).toContain(`{${firstPin.citationKey},`);
+          expect(bibliography).toContain(`{${secondPin.citationKey},`);
+        });
+      }),
+  );
+
   it("counts both distinct actions as Library-only, which a project server refuses", () => {
     const sourceIds = ["source_a", "source_b"] as const;
     expect(isLibraryOrganizeAction({ action: "mark-distinct", sourceIds })).toBe(true);

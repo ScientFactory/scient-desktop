@@ -24,6 +24,8 @@ export const LIBRARY_LABELS = {
   star: "Star",
   removeStar: "Remove star",
   readingMenu: "Mark",
+  citedAs: "Cited as",
+  alsoCitedAs: "Also cited as",
   addFailed: "Not added to this project",
   removeFailed: "Not removed from this project",
   readingFailed: "Reading status was not changed",

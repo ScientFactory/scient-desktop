@@ -1,7 +1,12 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { changeProjectSources, removedSnapshotCount } from "./libraryActions";
+import {
+  changeProjectSources,
+  projectKeys,
+  removedSnapshotCount,
+  removedSourceCount,
+} from "./libraryActions";
 
 const mocks = vi.hoisted(() => ({ organizeScientSources: vi.fn() }));
 vi.mock("./client", () => ({ organizeScientSources: mocks.organizeScientSources }));
@@ -46,6 +51,23 @@ describe("changeProjectSources", () => {
     });
     // Only the snapshot whose unpin landed is gone from this computer.
     expect(removedSnapshotCount(records, outcome)).toBe(1);
+  });
+
+  it("removes a source cited under two keys by both, and counts it once", () => {
+    const merged = { citationKey: "lovelace2026", alsoCitedAs: ["lovelace2026a"] };
+    const changes = projectKeys(merged).map((citationKey) => ({
+      action: "unpin" as const,
+      citationKey,
+    }));
+    expect(changes.map((change) => change.citationKey)).toEqual(["lovelace2026", "lovelace2026a"]);
+    expect(
+      removedSourceCount([merged, { citationKey: "other2020" }], {
+        changed: 2,
+        failed: 0,
+        error: null,
+        succeeded: changes,
+      }),
+    ).toBe(1);
   });
 
   it("counts every change failed when the request itself fails", async () => {

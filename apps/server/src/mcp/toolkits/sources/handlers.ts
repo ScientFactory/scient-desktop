@@ -73,6 +73,7 @@ import {
 } from "../../../scient/sources/SourcesBackend.ts";
 import {
   alsoPinnedIn,
+  distinctPinnedWorks,
   listProjectPinnedWorks,
   projectPinsByLibraryId,
   refreshProjectAfterLibraryChange,
@@ -544,7 +545,9 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
           ? new Map<string, Awaited<ReturnType<typeof readScientSourceTrashEntries>>[number]>()
           : null;
     const pinnedWorks =
-      listsPins && library ? yield* attempt(() => listProjectPinnedWorks(library, "agent")) : null;
+      listsPins && library
+        ? distinctPinnedWorks(yield* attempt(() => listProjectPinnedWorks(library, "agent")))
+        : null;
     const records = trash
       ? [...trash.values()].map((entry) => entry.record)
       : pinnedWorks
@@ -1927,7 +1930,7 @@ async function exportableRecords(
   sourceIds: ReadonlyArray<string> | undefined,
 ) {
   if (!sourceIds) {
-    const works = await listProjectPinnedWorks(store, "agent");
+    const works = distinctPinnedWorks(await listProjectPinnedWorks(store, "agent"));
     const records = store.exists
       ? new Map(
           (await listScientSourceRecords(store.library)).map((record) => [record.sourceId, record]),

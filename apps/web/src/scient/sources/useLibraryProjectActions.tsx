@@ -16,7 +16,9 @@ import { setScientSourcesReadingState } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import {
   changeProjectSources,
+  projectKeys,
   removedSnapshotCount,
+  removedSourceCount,
   type ProjectSourcesChange,
   type ProjectSourcesOutcome,
 } from "./libraryActions";
@@ -33,6 +35,7 @@ import {
 
 type ProjectRemoval = {
   readonly citationKey?: string | undefined;
+  readonly alsoCitedAs?: ReadonlyArray<string> | undefined;
   readonly fromSnapshot?: boolean | undefined;
 };
 
@@ -110,11 +113,15 @@ export function useLibraryProjectActions(input: {
       environmentId: input.environmentId,
       root: input.root,
       changes: records.flatMap((record) =>
-        record.citationKey ? [{ action: "unpin" as const, citationKey: record.citationKey }] : [],
+        projectKeys(record).map((citationKey) => ({ action: "unpin" as const, citationKey })),
       ),
     });
     await input.refreshOverview().catch(() => undefined);
-    announceProjectChange("remove", outcome, removedSnapshotCount(records, outcome));
+    announceProjectChange(
+      "remove",
+      { ...outcome, changed: removedSourceCount(records, outcome) },
+      removedSnapshotCount(records, outcome),
+    );
   };
   // A snapshot is only kept for this project, so its removal asks first; false means cancelled.
   const removeFromProject = (records: ReadonlyArray<ProjectRemoval>): Promise<boolean> => {

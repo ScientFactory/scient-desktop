@@ -67,3 +67,21 @@ export function removedSnapshotCount(
       removedKeys.has(record.citationKey),
   ).length;
 }
+
+/** Every key this project cites the source under: two after it merged two sources it used. */
+export const projectKeys = (record: {
+  readonly citationKey?: string | undefined;
+  readonly alsoCitedAs?: ReadonlyArray<string> | undefined;
+}): ReadonlyArray<string> =>
+  record.citationKey ? [record.citationKey, ...(record.alsoCitedAs ?? [])] : [];
+
+/** Sources with at least one key removed, so a source cited under two keys counts once. */
+export function removedSourceCount(
+  records: ReadonlyArray<Parameters<typeof projectKeys>[0]>,
+  outcome: ProjectSourcesOutcome,
+): number {
+  const removedKeys = new Set(
+    outcome.succeeded.flatMap((change) => (change.action === "unpin" ? [change.citationKey] : [])),
+  );
+  return records.filter((record) => projectKeys(record).some((key) => removedKeys.has(key))).length;
+}

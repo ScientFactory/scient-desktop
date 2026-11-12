@@ -105,6 +105,11 @@ const ScientSourcePinFields = {
   fromSnapshot: Schema.optionalKey(Schema.Literal(true)),
   /** The pin's note ("why I cite this here"); the person's own note is `personalNote`. */
   projectNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
+   * This project's other keys for the source, after it merged two sources the project both used.
+   * `citationKey` is the one pinned first; every key stays in the bibliography.
+   */
+  alsoCitedAs: Schema.optionalKey(Schema.Array(NonEmptyString)),
   /** The person's reading state; absent for a pin's snapshot, which this library lacks. */
   readingStatus: Schema.optionalKey(ScientSourceReadingStatus),
   starred: Schema.optionalKey(Schema.Boolean),

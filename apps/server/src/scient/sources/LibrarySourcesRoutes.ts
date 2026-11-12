@@ -81,13 +81,16 @@ import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./Li
 import { moveProjectBackIntoProject } from "./LibraryMove.ts";
 import {
   alsoPinnedIn,
+  distinctPinnedWorks,
   listProjectPinnedWorks,
   otherProjectsUsing,
+  projectPinGroupsByLibraryId,
   projectPinsByLibraryId,
   refreshProjectAfterLibraryChange,
   resolveLibrarySourceId,
   resolveLibrarySourceIds,
   syncProjectBibliography,
+  type ProjectPinGroup,
 } from "./LibraryProjectSources.ts";
 import {
   bulkUpdateSources,
@@ -145,6 +148,14 @@ const afterChange = (store: Store, sourceIds: ReadonlyArray<string>) =>
 const reach = (store: Store, sourceId: string) => alsoPinnedIn(store, sourceId).catch(() => ({}));
 
 type Categories = Awaited<ReturnType<typeof readScientSourceCategories>>;
+/** A library record as this project sees it: under its key here when it is pinned. */
+const pinnedEntry = (record: ScientSourceRecord, group: ProjectPinGroup | undefined) => ({
+  record: group ? { ...record, citationKey: group.pin.citationKey } : record,
+  pinned: group !== undefined,
+  projectNote: group ? (group.pin.note ?? null) : undefined,
+  fromSnapshot: false,
+  alsoCitedAs: group?.alsoCitedAs,
+});
 
 /** One row of the Library list. */
 function overviewRow(
@@ -153,10 +164,11 @@ function overviewRow(
     readonly pinned: boolean;
     readonly projectNote?: string | null | undefined;
     readonly fromSnapshot: boolean;
+    readonly alsoCitedAs?: ReadonlyArray<string> | undefined;
   },
   categories: Categories,
 ) {
-  const { record, pinned, projectNote, fromSnapshot } = entry;
+  const { record, pinned, projectNote, fromSnapshot, alsoCitedAs } = entry;
   const category = scientSourceCategorySummaryFor(record, categories);
   return {
     ...scientSourceSummaryFromRecord(record),
@@ -165,6 +177,7 @@ function overviewRow(
     pinned,
     ...(projectNote !== undefined ? { projectNote } : {}),
     ...(fromSnapshot ? { fromSnapshot: true as const } : {}),
+    ...(alsoCitedAs && alsoCitedAs.length > 0 ? { alsoCitedAs } : {}),
   };
 }
 
@@ -181,8 +194,8 @@ export async function libraryOverview(
   const inspected = store.exists
     ? await inspectScientLibrarySources(store.library)
     : { records: [], activeOperation: null };
-  const works = await listProjectPinnedWorks(store, ACTOR);
-  const pins = await projectPinsByLibraryId(store);
+  const works = distinctPinnedWorks(await listProjectPinnedWorks(store, ACTOR));
+  const pins = await projectPinGroupsByLibraryId(store);
   const scoped =
     input.scope === "project"
       ? works.map((work) => ({
@@ -190,16 +203,9 @@ export async function libraryOverview(
           pinned: true,
           projectNote: work.projectNote,
           fromSnapshot: work.from === "snapshot",
+          alsoCitedAs: work.alsoCitedAs,
         }))
-      : inspected.records.map((record) => {
-          const pin = pins.get(record.sourceId);
-          return {
-            record: pin ? { ...record, citationKey: pin.citationKey } : record,
-            pinned: pin !== undefined,
-            projectNote: pin ? (pin.note ?? null) : undefined,
-            fromSnapshot: false,
-          };
-        });
+      : inspected.records.map((record) => pinnedEntry(record, pins.get(record.sourceId)));
   // A filter on reading state lists only library records; a snapshot has none.
   const listed = scoped.filter(({ record }) => {
     if (input.readingStatus === undefined && input.starred === undefined) return true;
@@ -265,25 +271,14 @@ export async function libraryDuplicates(store: Store): Promise<ScientSourcesDupl
     ...listing.merges.map(({ merge }) => merge.survivorId),
   ]);
   const [pins, categories, others] = await Promise.all([
-    projectPinsByLibraryId(store),
+    projectPinGroupsByLibraryId(store),
     readScientSourceCategories(store.library).catch((): Categories => ({})),
     otherProjectsUsing(store, shown),
   ]);
-  const row = (record: ScientSourceRecord) => {
-    const pin = pins.get(record.sourceId);
-    return {
-      ...overviewRow(
-        {
-          record: pin ? { ...record, citationKey: pin.citationKey } : record,
-          pinned: pin !== undefined,
-          projectNote: pin ? (pin.note ?? null) : undefined,
-          fromSnapshot: false,
-        },
-        categories,
-      ),
-      otherProjects: others.get(record.sourceId) ?? [],
-    };
-  };
+  const row = (record: ScientSourceRecord) => ({
+    ...overviewRow(pinnedEntry(record, pins.get(record.sourceId)), categories),
+    otherProjects: others.get(record.sourceId) ?? [],
+  });
   return {
     pairs: pairs.map((pair) => {
       // The default kept source first, so the two read left to right as "keep, merge away".
@@ -341,11 +336,13 @@ export async function librarySourceDetail(
   const sourceId = await libraryIdOf(store, input.sourceId);
   const record = store.exists ? await readScientSourceRecord(store.library, sourceId) : null;
   if (record) {
-    const pin = await pinOf(store, sourceId);
+    const group = (await projectPinGroupsByLibraryId(store)).get(sourceId);
+    const pin = group?.pin;
     return {
       ...normalizeSourceRecordForRead(routeRecord(record, pin)),
       pinned: pin !== undefined,
       ...(pin ? { projectNote: pin.note ?? null } : {}),
+      ...(group && group.alsoCitedAs.length > 0 ? { alsoCitedAs: group.alsoCitedAs } : {}),
       ...(input.personal ? { personalNote: record.note ?? null } : {}),
       ...scientSourceReadingState(record),
     };
@@ -957,9 +954,9 @@ export async function changeLibraryReview(
 }
 
 /**
- * Exports this project's pinned works by default, or the named sources from the library. A
- * source pinned here is written under its project key, and the only note it carries is the
- * project's.
+ * Exports this project's pinned works by default (each source once, under its first key), or the
+ * named sources from the library. A source pinned here is written under its project key, and the
+ * only note it carries is the project's.
  */
 export async function exportLibrarySources(
   store: Store,
@@ -969,7 +966,7 @@ export async function exportLibrarySources(
     readonly includeNotes?: boolean;
   },
 ) {
-  const works = await listProjectPinnedWorks(store, ACTOR);
+  const works = distinctPinnedWorks(await listProjectPinnedWorks(store, ACTOR));
   const pinnedRecords = works.map((work) =>
     routeRecord(work.record, {
       citationKey: work.citationKey,
