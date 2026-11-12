@@ -228,21 +228,9 @@ export async function alsoPinnedIn(
 }
 
 /**
- * Projects whose snapshots were all refreshed in this process with nothing failing since. Only
- * these refresh just the changed sources; any other refreshes every snapshot, so a refresh that
- * failed earlier (or before a restart) is caught up by the next change.
- */
-const snapshotsCurrent = new Set<string>();
-/**
- * Failed refreshes in this process, of any project, so a refresh running beside a failed one
- * cannot mark its project current. Counting all projects costs at most an extra full refresh.
- */
-let snapshotFailures = 0;
-
-/**
- * After library records change, refreshes this project's pin snapshots, the snapshots of its
- * reviews that name them, and its managed bibliography. Each writes only when bytes change;
- * other projects refresh when they are next opened with write authority.
+ * After library records change, refreshes every pin snapshot of this project (so one left stale
+ * by a failure or another project is caught up), the snapshots of its reviews that name them,
+ * and its managed bibliography. Each writes only when bytes change.
  */
 export async function refreshProjectAfterLibraryChange(
   store: ScientSourcesLibraryStore,
@@ -250,41 +238,17 @@ export async function refreshProjectAfterLibraryChange(
   actor: ScientSourceActor,
 ): Promise<void> {
   if (store.access !== "write" || sourceIds.length === 0) return;
-  // The project's real path, as the snapshot locks use: one project reached through a link is
-  // still one project here. Without one (the folder is gone) no project counts as current.
-  const root = await NodeFSP.realpath(store.root).catch(() => null);
-  const failuresBefore = snapshotFailures;
-  const changed = root !== null && snapshotsCurrent.has(root) ? new Set(sourceIds) : undefined;
-  try {
-    await refreshProjectSnapshots(store, changed);
-  } catch (cause) {
-    if (root === null) snapshotsCurrent.clear();
-    else snapshotsCurrent.delete(root);
-    snapshotFailures += 1;
-    throw cause;
-  }
-  if (root !== null && snapshotFailures === failuresBefore) snapshotsCurrent.add(root);
-  await syncProjectBibliography(store, actor);
-}
-
-/** Every pin and review snapshot when `changed` is undefined; otherwise only those it names. */
-async function refreshProjectSnapshots(
-  store: ScientSourcesLibraryStore,
-  changed: ReadonlySet<string> | undefined,
-): Promise<void> {
-  await refreshScientProjectPinSnapshots({
-    projectRoot: store.root,
-    library: store.library,
-    ...(changed ? { sourceIds: changed } : {}),
-  });
+  const changed = new Set(sourceIds);
+  await refreshScientProjectPinSnapshots({ projectRoot: store.root, library: store.library });
   for (const reviewId of await listScientLibraryReviewIds(store.root)) {
     await refreshScientLibraryReviewSnapshot({
       projectRoot: store.root,
       library: store.library,
       reviewId,
-      ...(changed ? { naming: changed } : {}),
+      naming: changed,
     });
   }
+  await syncProjectBibliography(store, actor);
 }
 
 /** Read or unread, starred or not, for one source or many; each answers under its own ID. */

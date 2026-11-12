@@ -43,10 +43,7 @@ import {
   updateLibraryProjectNote,
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
-import {
-  refreshProjectAfterLibraryChange,
-  setLibraryReadingState,
-} from "./LibraryProjectSources.ts";
+import { setLibraryReadingState } from "./LibraryProjectSources.ts";
 import { advanceSourceImport, beginZoteroImport } from "./ScientSourcesCoordinator.ts";
 import {
   ScientSourcesBackend,
@@ -392,36 +389,10 @@ describe("Library routes on the library backend", () => {
           expect(await titleOf(stale.sourceId)).toBe("Vasopressin timing");
           expect(await titleOf(edited.sourceId)).toBe("Lactate clearance, corrected");
 
+          // Every change refreshes every pin, so it is caught up again the next time too.
           await makeStale();
           await retitle(edited.revision + 1, "Lactate clearance, again");
           expect(await titleOf(edited.sourceId)).toBe("Lactate clearance, again");
-          expect(await titleOf(stale.sourceId)).toBe("Old title");
-        });
-
-        // A refresh that fails through a link to the project marks the project itself. A junction
-        // on Windows needs no privilege; other systems ignore the type.
-        const link = NodePath.join(fixture.base, "project-link");
-        yield* Effect.promise(() => NodeFSP.symlink(fixture.root, link, "junction"));
-        const viaLink = yield* storeFor(fixture, "write", link);
-        yield* Effect.promise(async () => {
-          const kept = await NodeFSP.readFile(pinsFile, "utf8");
-          await NodeFSP.writeFile(pinsFile, "not json");
-          await expect(
-            refreshProjectAfterLibraryChange(viaLink, [edited.sourceId], "user"),
-          ).rejects.toThrow();
-          await NodeFSP.writeFile(pinsFile, kept);
-          await retitle(edited.revision + 2, "Lactate clearance, third");
-          expect(await titleOf(stale.sourceId)).toBe("Vasopressin timing");
-
-          // The same when the project is gone for a moment, so the link has no real path.
-          await makeStale();
-          const away = `${fixture.root}-away`;
-          await NodeFSP.rename(fixture.root, away);
-          await expect(
-            refreshProjectAfterLibraryChange(viaLink, [edited.sourceId], "user"),
-          ).rejects.toThrow();
-          await NodeFSP.rename(away, fixture.root);
-          await retitle(edited.revision + 3, "Lactate clearance, fourth");
           expect(await titleOf(stale.sourceId)).toBe("Vasopressin timing");
         });
       }),

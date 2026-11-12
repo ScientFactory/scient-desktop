@@ -653,32 +653,14 @@ export async function setScientProjectPinNote(input: {
 export async function refreshScientProjectPinSnapshots(input: {
   readonly projectRoot: string;
   readonly library: ScientLibraryLocation;
-  readonly sourceIds?: ReadonlySet<string>;
 }): Promise<{ readonly changed: boolean; readonly pins: ReadonlyArray<ScientProjectPin> }> {
   const root = await projectRootFor(input.projectRoot);
   return withPinsLock(root, async () => {
     const document = await readPinsDocument(root);
     const resolutions = await resolvePinsRead(input.library, root, document.pins);
-    const only = input.sourceIds;
-    const records = only
-      ? new Map(
-          (
-            await Promise.all(
-              [
-                ...new Set(
-                  resolutions.flatMap((resolution) =>
-                    resolution.kind === "resolved" && only.has(resolution.sourceId)
-                      ? [resolution.sourceId]
-                      : [],
-                  ),
-                ),
-              ].map((sourceId) => readScientSourceRecord(input.library, sourceId)),
-            )
-          ).flatMap((record) => (record ? [[record.sourceId, record] as const] : [])),
-        )
-      : new Map(
-          (await listScientSourceRecords(input.library)).map((record) => [record.sourceId, record]),
-        );
+    const records = new Map(
+      (await listScientSourceRecords(input.library)).map((record) => [record.sourceId, record]),
+    );
     const pins = document.pins.map((stored, index) => {
       const resolution = resolutions[index]!;
       const record = resolution.kind === "resolved" ? records.get(resolution.sourceId) : undefined;

@@ -586,13 +586,14 @@ share operations and handlers.
 - After a metadata edit, revert, merge or undo, the same call refreshes this
   project's pin snapshots, the snapshots of its reviews that name the record,
   and its managed files; each writes only when bytes change. Other projects
-  refresh the next time a call with write authority opens them. Once this
-  project has had a full refresh that succeeded in this server process, only
-  the pins of the changed records are refreshed, reading just those records,
-  and each live review's snapshot is loaded once and written only when the
-  review names a changed record. The first refresh after start, and the next
-  one after a refresh failed, refresh every snapshot, so a refresh that failed
-  is caught up by the next change (`refreshProjectAfterLibraryChange`). The bulk route refreshes after a type change and after the
+  refresh the next time a call with write authority opens them. Every pin is
+  refreshed each time, so a snapshot that a failed refresh, another project or
+  another process left behind is caught up by this project's next change
+  (refreshing only the changed pins was tried in the scale gate; with the
+  record index warm it saved about 6% of a type change in parts, not worth the
+  stale snapshots it allowed). Each live review's snapshot is loaded once and
+  written only when the review names a changed record. The bulk route
+  refreshes after a type change and after the
   Undo of a bulk edit that changed a type (`scientBulkEditChangedType`), never
   after tag-only edits or their Undo: tags are in no snapshot and not in the
   bibliography. With one 10,000-record review the refresh costs about 1.4 s
@@ -1300,8 +1301,8 @@ once, about 11 ms per source), a part under 5 s.
 **Changed by the scale gate:**
 
 - The record index stats and reads 32 files at a time (above).
-- After a bulk Undo or a type change the route refreshes only what changed
-  (Pins and project keys, above); a tag-only Undo refreshes nothing.
+- A tag-only bulk Undo refreshes nothing, and each review snapshot is loaded
+  once per refresh (Pins and project keys, above).
 - `changeScientProjectPins` looks pins up by source ID, resolved ID and key
   instead of scanning them per change, and `pins.json` may be 64 MiB.
 - `resolveLibrarySourceIds` reads records 32 at a time.
