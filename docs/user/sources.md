@@ -582,7 +582,11 @@ Agents check references with the same tool the dialog uses
 `scient_references_resolve`. The built-in **references** skill guides an agent
 through a full reference review: records first, then whether each source
 supports its sentence, missing citations, newer versions and contrary evidence.
-It applies only fixes you asked for and proposes the rest.
+It applies only fixes you asked for and proposes the rest. When you ask only
+for a check, it leaves your draft, your bibliography and your Library as they
+are: it reads the papers already in your Library, fetches none, and lists the
+ones it could not read. A page it names is the PDF page, counted from the first
+page of the file, unless it says "printed page".
 
 Results from the PubMed, Semantic Scholar and OpenAlex connectors become
 sources the same way: the agent passes the paper's PMID, Semantic Scholar ID or
