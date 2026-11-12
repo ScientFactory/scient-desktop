@@ -7,16 +7,28 @@ import {
   AlertDialogPopup,
   AlertDialogTitle,
 } from "../../components/ui/alert-dialog";
+import { SCIENT_LIBRARY_MERGES_TO_REVIEW } from "@scientfactory/scient-sources";
+
 import { Button } from "../../components/ui/button";
+import { DUPLICATE_LABELS } from "./libraryDuplicateLabels";
 import type { LibraryMoveStatus } from "./useLibraryMoveStatus";
 
 /** One line for the project's move into the personal Library, beside the store notices. */
-export function LibraryMoveNotice(props: { readonly move: LibraryMoveStatus }) {
+export function LibraryMoveNotice(props: {
+  readonly move: LibraryMoveStatus;
+  /** Opens the merges the move made, for a line that says some kept different values. */
+  readonly onReview?: () => void;
+}) {
   const { line } = props.move;
   if (!line) return null;
   return (
     <div className="mx-3 mt-2 flex items-center gap-2 text-xs text-muted-foreground">
       <span className="min-w-0 flex-1 break-words tabular-nums">{line.text}</span>
+      {props.onReview && line.text.includes(SCIENT_LIBRARY_MERGES_TO_REVIEW) ? (
+        <Button size="xs" variant="ghost" onClick={props.onReview}>
+          {DUPLICATE_LABELS.review}
+        </Button>
+      ) : null}
       {line.action === "dismiss" && props.move.canChange ? (
         <Button size="xs" variant="ghost" onClick={() => void props.move.dismiss()}>
           Dismiss

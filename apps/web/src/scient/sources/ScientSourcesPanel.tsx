@@ -76,6 +76,7 @@ import {
 } from "./importOutcome";
 import { SourceHistoryDialog } from "./SourceHistory";
 import { SourceStoreNotice } from "./SourceStoreNotice";
+import { LibraryDuplicatesView, type DuplicatesSection } from "./LibraryDuplicates";
 import { LibraryMoveNotice } from "./LibraryMoveNotice";
 import { useLibraryMoveStatus } from "./useLibraryMoveStatus";
 import { announceSourceMovedToTrash } from "./SourceTrash";
@@ -263,6 +264,7 @@ export function ScientSourcesPanel(props: {
   });
   const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
   const [showingReviews, setShowingReviews] = useState(false);
+  const [showingDuplicates, setShowingDuplicates] = useState<DuplicatesSection | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
@@ -358,6 +360,7 @@ export function ScientSourcesPanel(props: {
   if (previousPanelContext.context !== panelContext) {
     setPreviousPanelContext({ context: panelContext });
     setShowingReviews(false);
+    setShowingDuplicates(null);
     setSelectedSourceId(null);
     setEditingSource(false);
     setImportOutcome(null);
@@ -483,6 +486,12 @@ export function ScientSourcesPanel(props: {
     applyReadingState: sources.applyReadingState,
   });
   const { addToProject, removeFromProject, setReadingState } = libraryActions;
+  // A merged-away source has left the Library, so it leaves the selection too.
+  const leaveSelection = useStableCallback((sourceId: string) => {
+    if (organize.selection.has(sourceId)) {
+      organize.setSelection([...organize.selection].filter((selected) => selected !== sourceId));
+    }
+  });
 
   const moveToTrash = async (record: {
     readonly sourceId: string;
@@ -1172,6 +1181,20 @@ export function ScientSourcesPanel(props: {
     );
   }
 
+  if (showingDuplicates && scopes) {
+    return (
+      <LibraryDuplicatesView
+        environmentId={props.environmentId}
+        root={props.root}
+        organize={organize}
+        canChange={canChangeProject}
+        initialSection={showingDuplicates}
+        onBack={() => setShowingDuplicates(null)}
+        onMerged={leaveSelection}
+      />
+    );
+  }
+
   if (showingReviews) {
     return (
       <SystematicReviewsView
@@ -1320,6 +1343,7 @@ export function ScientSourcesPanel(props: {
               missingPdfCount={canChange ? missingPdfs.length : 0}
               onGetMissingPdfs={() => void requestPapers({ root: props.root, papers: missingPdfs })}
               onOpenReviews={() => setShowingReviews(true)}
+              {...(scopes ? { onOpenDuplicates: () => setShowingDuplicates("pairs") } : {})}
               onOpenSource={setSelectedSourceId}
               {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
               {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
@@ -1349,7 +1373,10 @@ export function ScientSourcesPanel(props: {
       {sources.error ? (
         <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
       ) : null}
-      <LibraryMoveNotice move={move} />
+      <LibraryMoveNotice
+        move={move}
+        {...(scopes ? { onReview: () => setShowingDuplicates("merged") } : {})}
+      />
       <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
       <ZoteroRefreshDialog
         state={zoteroSync.refresh}

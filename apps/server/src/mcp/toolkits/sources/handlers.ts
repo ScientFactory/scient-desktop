@@ -29,6 +29,8 @@ import {
   scientSourceCategorySummaryFor,
 } from "@scientfactory/scient-sources/categories-store";
 import {
+  clearScientLibrarySourcesDistinct,
+  markScientLibrarySourcesDistinct,
   mergeScientLibrarySources,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
@@ -142,7 +144,7 @@ import {
   readLibraryMoveStatus,
   scientLibraryMoveNotice,
 } from "../../../scient/sources/LibraryMove.ts";
-import { moveBackResult } from "../../../scient/sources/LibrarySourcesRoutes.ts";
+import { libraryDuplicates, moveBackResult } from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import { ReferenceIdentifierLookup } from "../../../scient/references/ReferenceCheck.ts";
 import {
   checkSourceQuotes,
@@ -385,12 +387,14 @@ async function pinSources(
   return keys;
 }
 
-const creatorName = (record: Awaited<ReturnType<typeof listScientSourceRecords>>[number]) => {
+type ListedRecord = Awaited<ReturnType<typeof listScientSourceRecords>>[number];
+
+const creatorName = (record: Pick<ListedRecord, "creators">) => {
   const creator = record.creators[0];
   return creator?.familyName ?? creator?.literalName ?? creator?.givenName ?? null;
 };
 
-const doiValue = (record: Awaited<ReturnType<typeof listScientSourceRecords>>[number]) =>
+const doiValue = (record: Pick<ListedRecord, "identifiers">) =>
   record.identifiers.find((identifier) => identifier.scheme.toLowerCase() === "doi")?.value ?? null;
 
 /** Without the server's state folder (tests), the style catalogue is kept in memory only. */
@@ -400,6 +404,35 @@ const citationStyleDependencies = Effect.map(
     cacheRoot: Option.isSome(config) ? citationStyleCacheRoot(config.value.stateDir) : null,
   }),
 );
+
+/** At most this many pairs and merges in a list call with duplicates; totals count them all. */
+const AGENT_DUPLICATE_PAIRS = 25;
+const AGENT_UNDOABLE_MERGES = 10;
+
+type DuplicateRow = Awaited<ReturnType<typeof libraryDuplicates>>["pairs"][number]["sources"][0];
+
+/** A Library row of the duplicates screen, as the list tool summarizes a source. */
+const agentSummaryOfRow = (row: DuplicateRow) => ({
+  sourceId: row.sourceId,
+  revision: row.revision,
+  ...(row.citationKey ? { citationKey: row.citationKey } : {}),
+  type: row.type,
+  title: row.title,
+  creator: creatorName(row),
+  issuedYear: row.issuedYear,
+  containerTitle: row.containerTitle,
+  doi: doiValue(row),
+  hasPdf: row.attachments.some((attachment) => attachment.kind === "pdf"),
+  addedBy: row.origin?.actor ?? "user",
+  ...(row.verification ? { verification: row.verification.state } : {}),
+  ...(row.editorialStatus && row.editorialStatus.state !== "none"
+    ? { editorialStatus: row.editorialStatus.state }
+    : {}),
+  ...(row.tags && row.tags.length > 0 ? { tags: row.tags } : {}),
+  pinned: row.pinned === true,
+  ...(row.readingStatus ? { readingStatus: row.readingStatus } : {}),
+  ...(row.starred !== undefined ? { starred: row.starred } : {}),
+});
 
 const agentCitationStyle = (style: ScientProjectCitationStyle) =>
   style._tag === "none"
@@ -436,10 +469,45 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly scope?: "project" | "library";
     readonly readingStatus?: ScientSourceReadingStatus;
     readonly starred?: boolean;
+    readonly duplicates?: boolean;
   }) {
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
     const library = store.kind === "library" ? store : null;
+    if (input.duplicates) {
+      if (!library) {
+        return yield* toolError(
+          "operation-failed",
+          "Possible duplicates need the personal Library.",
+        );
+      }
+      const found = yield* attempt(() => libraryDuplicates(library));
+      return {
+        records: [],
+        total: found.pairsTotal,
+        nextOffset: null,
+        duplicates: {
+          pairs: found.pairs.slice(0, AGENT_DUPLICATE_PAIRS).map((pair) => ({
+            kind: pair.kind,
+            sources: [
+              agentSummaryOfRow(pair.sources[0]),
+              agentSummaryOfRow(pair.sources[1]),
+            ] as const,
+            keptByDefault: pair.keptByDefault,
+          })),
+          pairsTotal: found.pairsTotal,
+          merges: found.merges.slice(0, AGENT_UNDOABLE_MERGES).map((merge) => ({
+            mergeId: merge.mergeId,
+            mergedAt: merge.mergedAt,
+            survivorId: merge.kept?.sourceId ?? merge.mergedSourceId,
+            mergedSourceId: merge.mergedSourceId,
+            mergedTitle: merge.mergedTitle,
+            keptDifferent: merge.keptDifferent,
+          })),
+          mergesTotal: found.mergesTotal,
+        },
+      };
+    }
     if (input.citationStyles !== undefined) {
       const query = input.citationStyles;
       const deps = yield* citationStyleDependencies;
@@ -649,6 +717,8 @@ const isLibraryOrganizeChange = (
   change.action === "unpin" ||
   change.action === "merge" ||
   change.action === "undo-merge" ||
+  change.action === "mark-distinct" ||
+  change.action === "clear-distinct" ||
   change.action === "move-back" ||
   change.action === "dismiss-move-summary";
 
@@ -777,6 +847,22 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
         survivorId: undone.survivor.sourceId,
         unrevertedFields: undone.unrevertedFields,
       };
+    }
+    case "mark-distinct":
+    case "clear-distinct": {
+      const sourceIds = [
+        yield* sourceIdIn(store, change.sourceIds[0]!),
+        yield* sourceIdIn(store, change.sourceIds[1]!),
+      ] as const;
+      if (change.action === "mark-distinct") {
+        return yield* attempt(() =>
+          markScientLibrarySourcesDistinct({ library: store.library, sourceIds, actor: "agent" }),
+        );
+      }
+      const cleared = yield* attempt(() =>
+        clearScientLibrarySourcesDistinct({ library: store.library, sourceIds }),
+      );
+      return { outcome: cleared.outcome === "cleared" ? cleared.outcome : ("unchanged" as const) };
     }
     case "move-back":
       return moveBackResult(

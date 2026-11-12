@@ -146,6 +146,31 @@ export const ScientSourcesListResult = Schema.Struct({
   citationStyle: Schema.optionalKey(ScientAgentCitationStyle),
   citationStyles: Schema.optionalKey(Schema.Array(ScientCitationStyleSummary)),
   catalogueMessage: Schema.optionalKey(Schema.String),
+  /** Library mode, with duplicates: the first pairs and the newest undoable merges. */
+  duplicates: Schema.optionalKey(
+    Schema.Struct({
+      pairs: Schema.Array(
+        Schema.Struct({
+          kind: Schema.Literals(["possible-metadata-match", "possible-container-match"]),
+          sources: Schema.Tuple([ScientSourceAgentSummary, ScientSourceAgentSummary]),
+          /** The one a merge keeps without survivorId. */
+          keptByDefault: NonEmptyString,
+        }),
+      ),
+      pairsTotal: Schema.Int,
+      merges: Schema.Array(
+        Schema.Struct({
+          mergeId: NonEmptyString,
+          mergedAt: NonEmptyString,
+          survivorId: NonEmptyString,
+          mergedSourceId: NonEmptyString,
+          mergedTitle: NullableText,
+          keptDifferent: Schema.Array(Schema.String),
+        }),
+      ),
+      mergesTotal: Schema.Int,
+    }),
+  ),
 });
 
 export const ScientSourceAgentDetail = Schema.Struct({
@@ -222,7 +247,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
     description:
       mode === "project"
         ? `List a page of this project's Library; total is its size. Use it before literature or citation work and web search; never edit .scient/sources directly.${listFilters(mode)}`
-        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${listFilters(mode)}`,
+        : `List a page of the sources this project pins (scope library: the whole Library); total counts the scope. Use it before literature or citation work and web search; never edit .scient files directly.${listFilters(mode)} duplicates: possible duplicate pairs and undoable merges instead.`,
     parameters:
       mode === "project"
         ? Schema.Struct(listParameters)
@@ -231,6 +256,7 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
             readingStatus: Schema.optionalKey(ReadingStatus),
             starred: Schema.optionalKey(Schema.Boolean),
             scope: Schema.optionalKey(Schema.Literals(["project", "library"])),
+            duplicates: Schema.optionalKey(Schema.Boolean),
           }),
     success: ScientSourcesListResult,
     failure: ScientSourcesToolError,
@@ -1042,6 +1068,10 @@ const LibrarySourceIds = Schema.Array(NonEmptyString).pipe(
   Schema.check(Schema.isMinLength(2), Schema.isMaxLength(20)),
 );
 
+const DistinctPair = Schema.Array(NonEmptyString).pipe(
+  Schema.check(Schema.isMinLength(2), Schema.isMaxLength(2)),
+);
+
 /** Library mode adds pins and merges to the same action list. */
 export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   ...ScientSourcesOrganizeAction.members,
@@ -1057,6 +1087,8 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     survivorId: Schema.optionalKey(NonEmptyString),
   }),
   Schema.Struct({ action: Schema.Literal("undo-merge"), mergeId: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("mark-distinct"), sourceIds: DistinctPair }),
+  Schema.Struct({ action: Schema.Literal("clear-distinct"), sourceIds: DistinctPair }),
   Schema.Struct({ action: Schema.Literal("move-back") }),
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
 ]);
@@ -1080,6 +1112,8 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     "project-store-present",
     "dismissed",
     "nothing-to-dismiss",
+    "marked",
+    "cleared",
   ]),
   pin: Schema.optionalKey(
     Schema.Struct({
@@ -1108,7 +1142,7 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; pinning again returns the pin, with the new note); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list.`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; pinning again returns the pin, with the new note); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list.`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );

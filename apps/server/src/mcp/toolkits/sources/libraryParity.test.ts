@@ -10,12 +10,13 @@ import { ScientSystematicReviewsToolkit } from "../systematicReviews/tools.ts";
 import {
   LIBRARY_COMMAND_PARITY,
   LIBRARY_ENDPOINT_GROUPS,
+  LIBRARY_ORGANIZE_ACTION_PARITY,
   LIBRARY_READ_PARITY,
   NON_LIBRARY_ENDPOINTS,
   type LibraryAgentTool,
   type LibraryParityEntry,
 } from "./libraryParity.ts";
-import { ScientSourcesToolkit } from "./tools.ts";
+import { ScientSourcesLibraryToolkit, ScientSourcesToolkit } from "./tools.ts";
 
 const TABLE = "apps/server/src/mcp/toolkits/sources/libraryParity.ts";
 
@@ -78,6 +79,19 @@ it("gives every Library command and read endpoint an agent tool or a stated reas
   for (const tag of Object.keys(readTable).filter((tag) => !reads.includes(tag)))
     problems.push(`${TABLE} lists ${tag}, which is not a Library read endpoint.`);
   expect(problems).toEqual([]);
+});
+
+it("gives every Library-only organize action an action of the library organize tool", () => {
+  const schema = Tool.getJsonSchema(ScientSourcesLibraryToolkit.tools.scient_sources_organize);
+  const agentActions = new Set(
+    JSON.stringify(schema)
+      .matchAll(/"action":\{"type":"string","enum":(\[[^\]]+\])\}/gu)
+      .flatMap((match) => JSON.parse(match[1]!) as ReadonlyArray<string>),
+  );
+  const missing = Object.entries(LIBRARY_ORGANIZE_ACTION_PARITY).flatMap(([action, tools]) =>
+    tools.filter((name) => !agentActions.has(name)).map((name) => `${action} -> ${name}`),
+  );
+  expect(missing).toEqual([]);
 });
 
 // Gaps pass, one named test each, so every run lists them; the orchestrator decides how each closes.

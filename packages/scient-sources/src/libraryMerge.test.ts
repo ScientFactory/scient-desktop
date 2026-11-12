@@ -14,6 +14,7 @@ import {
   markScientLibrarySourcesDistinct,
   mergeScientLibraryDuplicates,
   mergeScientLibrarySources,
+  readScientLibraryDuplicates,
   undoScientLibraryMerge,
 } from "./libraryMerge.ts";
 import { ensureScientLibrary, scientLibraryLocation } from "./libraryRoot.ts";
@@ -496,5 +497,60 @@ describe("library merge engine", () => {
 
     expect(undone.outcome).toBe("undone");
     expect(await membership()).toEqual(["source_gone"]);
+  });
+
+  it("reads possible pairs and undoable merges without merging anything", async () => {
+    const { root, library } = await newLibrary();
+    const doi = { scheme: "doi", value: "10.1000/auto" };
+    await seed(root, [
+      record("source_auto1", { identifiers: [doi] }),
+      record("source_auto2", { identifiers: [doi], importedAt: "2026-02-01T00:00:00.000Z" }),
+      record("source_pair1", { title: "Same study", publisher: "North Press" }),
+      record("source_pair2", {
+        title: "Same study",
+        publisher: "South Press",
+        importedAt: "2026-03-01T00:00:00.000Z",
+      }),
+      record("source_apart1", { title: "Apart" }),
+      record("source_apart2", { title: "Apart", importedAt: "2026-03-01T00:00:00.000Z" }),
+    ]);
+    await markScientLibrarySourcesDistinct({
+      library,
+      sourceIds: ["source_apart1", "source_apart2"],
+    });
+    const read = () => readScientLibraryDuplicates({ library, mergeLimit: 10 });
+
+    const before = await read();
+    expect(before.possibleDuplicates).toEqual([
+      {
+        sourceIds: ["source_pair1", "source_pair2"],
+        kind: "possible-metadata-match",
+        survivorId: "source_pair1",
+      },
+    ]);
+    expect(before.merges).toEqual([]);
+    expect(await liveIds(library)).toHaveLength(6);
+
+    const merged = await mergeScientLibrarySources({
+      library,
+      sourceIds: ["source_pair1", "source_pair2"],
+      survivorId: "source_pair2",
+    });
+    const mergeId = merged.outcome === "merged" ? merged.merge.mergeId : "";
+    const after = await read();
+    expect(after.possibleDuplicates).toEqual([]);
+    expect(after.mergesTotal).toBe(1);
+    expect(after.merges.map(({ merge, merged: away }) => [merge.mergeId, away.sourceId])).toEqual([
+      [mergeId, "source_pair1"],
+    ]);
+    expect(after.merges[0]?.merge.conflicts).toEqual([
+      { field: "publisher", kept: "South Press", other: "North Press" },
+    ]);
+
+    await undoScientLibraryMerge({ library, mergeId });
+    const undone = await read();
+    expect(undone.merges).toEqual([]);
+    expect(undone.possibleDuplicates).toEqual(before.possibleDuplicates);
+    expect(await liveIds(library)).toHaveLength(6);
   });
 });

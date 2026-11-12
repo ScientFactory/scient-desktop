@@ -1,6 +1,7 @@
 import type { EnvironmentId } from "@t3tools/contracts";
 import {
   ClipboardList,
+  CopyCheck,
   FileDown,
   ListChecks,
   LoaderCircle,
@@ -26,6 +27,7 @@ import { useComposerHandleContext } from "../../composerHandleContext";
 import { ReferenceCheckDialog } from "../references/ReferenceCheckDialog";
 import { askLibraryInsertion } from "./askLibrary";
 import { CitationStylePicker } from "./CitationStylePicker";
+import { DUPLICATE_LABELS } from "./libraryDuplicateLabels";
 import { MoveBackDialog } from "./LibraryMoveNotice";
 import { SourceTrashPopover } from "./SourceTrash";
 import {
@@ -45,6 +47,8 @@ export function SourcesHeaderMenu(props: {
   readonly missingPdfCount: number;
   readonly onGetMissingPdfs: () => void;
   readonly onOpenReviews: () => void;
+  /** Present only on a personal Library. */
+  readonly onOpenDuplicates?: () => void;
   readonly onOpenSource: (sourceId: string) => void;
   readonly onOpenFile?: (path: string, line: number) => void;
   /** Present only on a moved project and for a session that may change the Library. */
@@ -137,6 +141,12 @@ export function SourcesHeaderMenu(props: {
             <ClipboardList />
             Systematic reviews
           </MenuItem>
+          {props.onOpenDuplicates ? (
+            <MenuItem onClick={props.onOpenDuplicates}>
+              <CopyCheck />
+              {DUPLICATE_LABELS.menuItem}
+            </MenuItem>
+          ) : null}
           <MenuItem onClick={() => setPickingStyle(true)}>
             <PenLine />
             Citation style…

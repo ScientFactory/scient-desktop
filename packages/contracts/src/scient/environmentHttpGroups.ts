@@ -96,6 +96,8 @@ import {
   ScientSourcesLocalPdfUploadRequest,
   ScientSourcesLocalPdfUploadResult,
   ScientSourcesMoveStatus,
+  ScientSourcesDuplicatesRequest,
+  ScientSourcesDuplicatesResult,
   ScientSourcesMoveStatusRequest,
   ScientSourcesOverviewResult,
   ScientSourcesOverviewRequest,
@@ -472,6 +474,14 @@ export function makeScientEnvironmentHttpGroups({
           error: EnvironmentHttpCommonError,
         },
       ).middleware(EnvironmentAuthenticatedAuth),
+    )
+    .add(
+      HttpApiEndpoint.post("duplicates", "/api/scient/sources/duplicates", {
+        headers: OptionalBearerHeaders,
+        payload: ScientSourcesDuplicatesRequest,
+        success: ScientSourcesDuplicatesResult,
+        error: EnvironmentHttpCommonError,
+      }).middleware(EnvironmentAuthenticatedAuth),
     )
     .add(
       HttpApiEndpoint.post("moveStatus", "/api/scient/sources/move/status", {

@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Library-mode Sources read other checkouts' pin files through the Promise-based store.
 import * as NodeFSP from "node:fs/promises";
+import * as NodePath from "node:path";
 
 import type { ScientSourceActor, ScientSourceReadingStatus } from "@scientfactory/scient-sources";
 import {
@@ -176,6 +177,36 @@ async function otherProjectsPinning(
     }
   }
   return count;
+}
+
+/**
+ * For each of `sourceIds`, the other checkouts on this computer that pin it, by folder name.
+ * One pin resolution per checkout, whatever the number of sources asked about.
+ */
+export async function otherProjectsUsing(
+  store: ScientSourcesLibraryStore,
+  sourceIds: ReadonlySet<string>,
+): Promise<ReadonlyMap<string, ReadonlyArray<string>>> {
+  const names = new Map<string, string[]>();
+  if (!store.exists || sourceIds.size === 0) return names;
+  const here = await NodeFSP.realpath(store.root);
+  for (const instance of await listScientLibraryInstances(store.library)) {
+    if (instance.path === here || !(await folderExists(instance.path))) continue;
+    const pinned = await resolveScientProjectPins({
+      projectRoot: instance.path,
+      library: store.library,
+      mode: "read",
+      actor: "agent",
+    }).catch(() => []);
+    const name = NodePath.basename(instance.path);
+    for (const { resolution } of pinned) {
+      if (resolution.kind !== "resolved" || !sourceIds.has(resolution.sourceId)) continue;
+      const list = names.get(resolution.sourceId) ?? [];
+      if (!list.includes(name)) list.push(name);
+      names.set(resolution.sourceId, list);
+    }
+  }
+  return names;
 }
 
 /** The reach field an edit result carries; absent when no other project pins the record. */

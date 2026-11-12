@@ -1,4 +1,8 @@
-import type { EnvironmentHttpApi, ScientSourcesHttpCommandTag } from "@t3tools/contracts";
+import type {
+  EnvironmentHttpApi,
+  ScientSourcesHttpCommandTag,
+  ScientSourcesLibraryOrganizeAction,
+} from "@t3tools/contracts";
 import type * as HttpApi from "effect/http-api/HttpApi";
 import type * as HttpApiEndpoint from "effect/http-api/HttpApiEndpoint";
 import type * as HttpApiGroup from "effect/http-api/HttpApiGroup";
@@ -115,6 +119,25 @@ export const LIBRARY_COMMAND_PARITY: Record<ScientSourcesHttpCommandTag, Library
   "scientReferences.resolve": tool("scient_references_resolve"),
 };
 
+/**
+ * Every Library-only organize action and the action of the library organize tool that does the
+ * same; `change-pins` is the panel's batch of the tool's pin and unpin.
+ */
+export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
+  ScientSourcesLibraryOrganizeAction["action"],
+  ReadonlyArray<ScientSourcesLibraryOrganizeAction["action"]>
+> = {
+  pin: ["pin"],
+  unpin: ["unpin"],
+  "change-pins": ["pin", "unpin"],
+  merge: ["merge"],
+  "undo-merge": ["undo-merge"],
+  "mark-distinct": ["mark-distinct"],
+  "clear-distinct": ["clear-distinct"],
+  "move-back": ["move-back"],
+  "dismiss-move-summary": ["dismiss-move-summary"],
+};
+
 /** Every Library read endpoint and the agent tool that reads the same thing. */
 export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEntry> = {
   "scientSources.overview": {
@@ -133,6 +156,8 @@ export const LIBRARY_READ_PARITY: Record<LibraryReadEndpointTag, LibraryParityEn
   "scientSources.systematicReviews": tool("scient_sources_systematic_reviews"),
   "scientSources.systematicReview": tool("scient_sources_systematic_reviews", "reviewId"),
   "scientSources.systematicReviewConflicts": tool("scient_sources_systematic_reviews", "reviewId"),
+  // Library mode only: the list tool's duplicates.
+  "scientSources.duplicates": tool("scient_sources_list"),
   "scientSources.moveStatus": tool("scient_sources_list"),
   "scientSources.revisions": tool("scient_sources_get"),
   "scientSources.zoteroStatus": tool("scient_sources_zotero_browse"),

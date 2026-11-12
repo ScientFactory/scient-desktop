@@ -15,6 +15,7 @@ import type {
   ScientSourcesOrganizeRequest,
   ScientSourcesReadingStateRequest,
   ScientSourcesScope,
+  ScientSourcesDuplicatesRequest,
   ScientSourcesMoveStatusRequest,
   ScientSystematicReviewChangeRequest,
   ScientSystematicReviewConflictRequest,
@@ -639,6 +640,24 @@ export const changeEnvironmentScientSystematicReviewConflict = Effect.fn(
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
     request: ({ client, headers }) => client.systematicReviewConflict({ headers, payload }),
+  });
+});
+
+export const getEnvironmentScientSourcesDuplicates = Effect.fn(
+  "clientRuntime.state.getEnvironmentScientSourcesDuplicates",
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourcesDuplicatesRequest) {
+  const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
+  const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
+  return yield* executeAuthenticatedEnvironmentHttpRequest({
+    prepared,
+    signer,
+    remoteAuthorization,
+    method: "POST",
+    url: (urls) => urls.duplicates(),
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    group: "scientSources",
+    request: ({ client, headers }) => client.duplicates({ headers, payload }),
   });
 });
 

@@ -32,6 +32,8 @@ import { beginBibliographyFileImport } from "./BibliographyFileAdapter.ts";
 import { libraryImportPinInstance } from "./LibraryImportPins.ts";
 import {
   exportLibrarySources,
+  isLibraryOrganizeAction,
+  libraryDuplicates,
   libraryImportTarget,
   libraryOverview,
   libraryReview,
@@ -128,6 +130,7 @@ async function libraryRecord(
       pdfAttachmentCount: 0,
       ...overrides,
     },
+    allowPossibleMetadataMatch: true,
   });
   if (!imported.record) throw new Error(`Expected ${sourceKey} to import.`);
   return imported.record;
@@ -696,4 +699,85 @@ describe("Library routes on the library backend", () => {
       });
     }),
   );
+
+  it.effect(
+    "lists possible duplicates without merging, marks a pair not duplicates and undoes it",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const other = yield* Effect.promise(() => project(fixture.base, "Grant"));
+        const [first, second] = yield* Effect.promise(async () => {
+          const one = await libraryRecord(fixture, "pair1", {
+            title: "Shock trial",
+            publisher: "North",
+          });
+          const two = await libraryRecord(fixture, "pair2", {
+            title: "Shock trial",
+            publisher: "South",
+          });
+          await pin(fixture, one.sourceId);
+          await pin(fixture, two.sourceId, other);
+          await libraryImportPinInstance(fixture.library, other);
+          return [one, two] as const;
+        });
+        const store = yield* storeFor(fixture, "write");
+        const records = () => listScientSourceRecords(fixture.library);
+
+        const listed = yield* Effect.promise(() => libraryDuplicates(store));
+        expect(listed.pairsTotal).toBe(1);
+        expect(
+          listed.pairs[0]!.sources.map((side) => [side.sourceId, side.pinned, side.otherProjects]),
+        ).toEqual([
+          [first.sourceId, true, []],
+          [second.sourceId, false, ["Grant"]],
+        ]);
+        expect(listed.pairs[0]!.keptByDefault).toBe(first.sourceId);
+        expect((yield* Effect.promise(records)).length).toBe(2);
+
+        const pair = [first.sourceId, second.sourceId] as const;
+        const marked = yield* Effect.promise(() =>
+          organizeLibrarySources(store, { change: { action: "mark-distinct", sourceIds: pair } }),
+        );
+        expect(marked.outcome).toBe("marked");
+        expect((yield* Effect.promise(() => libraryDuplicates(store))).pairs).toEqual([]);
+        const cleared = yield* Effect.promise(() =>
+          organizeLibrarySources(store, { change: { action: "clear-distinct", sourceIds: pair } }),
+        );
+        expect(cleared.outcome).toBe("cleared");
+        expect((yield* Effect.promise(() => libraryDuplicates(store))).pairsTotal).toBe(1);
+
+        const merged = yield* Effect.promise(() =>
+          organizeLibrarySources(store, {
+            change: { action: "merge", sourceIds: [...pair], survivorId: second.sourceId },
+          }),
+        );
+        expect(merged.outcome).toBe("merged");
+        const afterMerge = yield* Effect.promise(() => libraryDuplicates(store));
+        expect(afterMerge.pairs).toEqual([]);
+        expect(afterMerge.merges).toMatchObject([
+          {
+            requested: true,
+            kept: { sourceId: second.sourceId },
+            mergedSourceId: first.sourceId,
+            mergedTitle: "Shock trial",
+            keptDifferent: ["publisher"],
+          },
+        ]);
+        yield* Effect.promise(() =>
+          organizeLibrarySources(store, {
+            change: { action: "undo-merge", mergeId: afterMerge.merges[0]!.mergeId },
+          }),
+        );
+        const afterUndo = yield* Effect.promise(() => libraryDuplicates(store));
+        expect(afterUndo.merges).toEqual([]);
+        expect(afterUndo.pairsTotal).toBe(1);
+        expect((yield* Effect.promise(records)).length).toBe(2);
+      }),
+  );
+
+  it("counts both distinct actions as Library-only, which a project server refuses", () => {
+    const sourceIds = ["source_a", "source_b"] as const;
+    expect(isLibraryOrganizeAction({ action: "mark-distinct", sourceIds })).toBe(true);
+    expect(isLibraryOrganizeAction({ action: "clear-distinct", sourceIds })).toBe(true);
+  });
 });

@@ -1164,6 +1164,58 @@ loaded); Trash and its Undo go one source per request; Zotero send and refresh
 from the panel name one source or none; Empty Trash names none; a systematic
 review adds a selection in parts of 500.
 
+#### Possible duplicates and merges (5f, switched off)
+
+The Library panel's "More" menu offers **Possible duplicates** on a personal
+Library (only when the overview has `scopes`). It opens a full-panel view, as
+Systematic reviews does, with two sections: the possible pairs and **Merged**.
+
+- **The read** is its own endpoint, `scientSources.duplicates`
+  (`LibrarySourcesRoutes.ts` `libraryDuplicates`, engine
+  `readScientLibraryDuplicates`). It lists the live records once, runs
+  `assessScientLibraryDuplicates` with the stored distinct pairs and reports
+  only `possibleDuplicates`. It never merges, never settles an interrupted
+  merge and takes no lock; `mergeScientLibraryDuplicates` stays on the move's
+  path only. Each pair carries both sides as overview rows plus
+  `otherProjects` (other checkouts on this computer that use it, by folder
+  name; one pin resolution per checkout) and `keptByDefault`, the design's
+  survivor rule. The default side comes first. At most 200 pairs are sent;
+  `pairsTotal` counts them all. A project server refuses the read.
+- **Merges Undo can still reverse** come from `merges/*.json` with state
+  `done` whose merged-away source is still in the trash under that merge,
+  newest first, at most 100, with `mergesTotal`. `requested` is false for the
+  move's automatic merges. `kept` is null when the kept source was merged
+  again or removed; Undo then answers `survivor-missing`.
+- **Cost at 20,000 records** (M5 Pro, Node 26, load 2): the assessment alone
+  46 ms, the whole read 57 ms warm and 1.2 s cold (the cold part is the
+  record listing the overview pays too). The assessment is not on the overview
+  path; the view asks when it opens and after each change it makes.
+- **Not duplicates** is `mark-distinct` on organize and its Undo
+  `clear-distinct` (engine `markScientLibrarySourcesDistinct` /
+  `clearScientLibrarySourcesDistinct`, `distinct-pairs.json`). A project
+  server refuses both like pins and merges (`isLibraryOrganizeAction`).
+- **The view's changes** (Merge with the chosen side as `survivorId`, Undo,
+  Not duplicates and its Undo) all go through `useSourcesOrganize`'s
+  `organize`, one request per pair, so they are refused while a change in
+  parts runs and then change nothing: the pair and the merge dialog stay. Toast
+  actions are wrapped in `whenFree`. A successful change reads the overview
+  again (through the hook) and the duplicates list again. A merged-away source
+  leaves the selection; an open detail of it closes because its row left the
+  overview. Reading overrides are keyed by source ID and dropped by the next
+  overview, so one held for the merged-away source neither shows on the kept
+  source nor returns after Undo.
+- **The move's line** "… kept different values: Review." gets a **Review**
+  button that opens the view at Merged; the phrase is
+  `SCIENT_LIBRARY_MERGES_TO_REVIEW`, shared by the line and the button.
+- **Agents**: `scient_sources_list` with `duplicates: true` (library mode)
+  returns the first 25 pairs and 10 undoable merges with both totals; project
+  mode refuses it. `scient_sources_organize` takes `mark-distinct` and
+  `clear-distinct` with two source IDs. The library tool list grew from
+  112,563 to 112,832 bytes. `LIBRARY_ORGANIZE_ACTION_PARITY` maps every
+  Library-only organize action to the tool's action(s), and its test checks
+  the tool's schema names them.
+- Not built: merging two sources the assessment did not pair.
+
 ## Source truth and provenance
 
 The persisted record has a first-class Scient source type and normalized

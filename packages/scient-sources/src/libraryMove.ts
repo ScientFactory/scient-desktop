@@ -10,6 +10,7 @@ import * as Schema from "effect/Schema";
 
 import { assignCitationKey, citationKeyComparisonValue } from "./citationKeys.ts";
 import { scientSourceCollectionsInternals } from "./collections.ts";
+import { SCIENT_LIBRARY_MERGES_TO_REVIEW } from "./duplicates.ts";
 import {
   readLibraryAliasesAt,
   resolveScientLibraryAlias,
@@ -2489,7 +2490,7 @@ export function scientLibraryMoveStatusLines(journal: ScientLibraryMoveJournal |
     const kept = journal.merges.keptDifferent;
     lines.push(
       `Merged ${journal.merges.merged} ${journal.merges.merged === 1 ? "duplicate" : "duplicates"}.${
-        kept > 0 ? ` ${kept} kept different values: Review.` : ""
+        kept > 0 ? ` ${kept} ${SCIENT_LIBRARY_MERGES_TO_REVIEW}` : ""
       }`,
     );
   }

@@ -6,9 +6,12 @@ import {
   type ScientSourceFilter,
   type ScientSourcesBulkChange,
   type ScientSourcesOrganization,
-  type ScientSourcesOrganizeAction,
 } from "@scientfactory/scient-sources";
-import type { EnvironmentId, ScientSourcesBulkResult } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScientSourcesBulkResult,
+  ScientSourcesOrganizeRequest,
+} from "@t3tools/contracts";
 import { useRef, useState } from "react";
 
 import { toastManager } from "../../components/ui/toast";
@@ -192,7 +195,7 @@ export function useSourcesOrganize(input: {
     });
   };
 
-  const organize = (change: ScientSourcesOrganizeAction, failureTitle: string) =>
+  const organize = (change: ScientSourcesOrganizeRequest["change"], failureTitle: string) =>
     run(
       () => organizeScientSources(input.environmentId, { root: input.root, change }),
       failureTitle,
@@ -464,6 +467,8 @@ export function useSourcesOrganize(input: {
     setSelection: (sourceIds: Iterable<string>) => update({ selection: new Set(sourceIds) }),
     clearSelection: () => update({ selection: new Set() }),
     organize,
+    /** Wraps a toast's action so it is refused, with its toast kept, while a change in parts runs. */
+    whenFree,
     bulk,
     createCollection: async (
       name: string,

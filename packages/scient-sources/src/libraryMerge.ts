@@ -888,3 +888,76 @@ export async function undoScientLibraryMerge(input: {
     return { outcome: "undone", survivor, loser, unrevertedFields };
   });
 }
+
+interface ScientLibraryUndoableMerge {
+  readonly merge: ScientLibraryMerge;
+  /** The merged-away record as it went to the trash. */
+  readonly merged: ScientSourceRecord;
+}
+
+interface ScientLibraryDuplicatesListing {
+  /** The live records the pairs were assessed on, so a caller builds rows without listing again. */
+  readonly records: ReadonlyArray<ScientSourceRecord>;
+  /** Each with the source a merge keeps by the design's rule. */
+  readonly possibleDuplicates: ReadonlyArray<
+    ScientLibraryPossibleDuplicate & { readonly survivorId: string }
+  >;
+  /** Merges Undo can still reverse, newest first, at most `mergeLimit`. */
+  readonly merges: ReadonlyArray<ScientLibraryUndoableMerge>;
+  readonly mergesTotal: number;
+}
+
+/**
+ * What the possible-duplicates screen shows. Reads only: it merges nothing, settles no
+ * interrupted merge and takes no lock, so a merge running meanwhile may show half done.
+ */
+export async function readScientLibraryDuplicates(input: {
+  readonly library: ScientLibraryLocation;
+  readonly mergeLimit: number;
+}): Promise<ScientLibraryDuplicatesListing> {
+  const paths = await libraryPaths(input.library);
+  const records = await listScientSourceRecordsFromPaths(paths);
+  const aliases = await readLibraryAliasesAt(paths.root);
+  const assessment = assessScientLibraryDuplicates({
+    records,
+    ...distinctIndex(await readDistinctPairs(paths), aliases),
+  });
+  const byId = new Map(records.map((record) => [record.sourceId, record]));
+  const possibleDuplicates = assessment.possibleDuplicates.map((pair) => {
+    const [left, right] = pair.sourceIds.map((sourceId) => byId.get(sourceId)!);
+    return {
+      ...pair,
+      survivorId: (compareScientLibrarySurvivors(left!, right!) <= 0 ? left! : right!).sourceId,
+    };
+  });
+  const directory = NodePath.join(paths.root, MERGES_DIRECTORY);
+  const fileNames = async (path: string) =>
+    (await snapshot(path)) === "directory"
+      ? (await NodeFSP.readdir(path, { withFileTypes: true }))
+          .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+          .map((entry) => entry.name)
+      : [];
+  // Undo needs the merged-away record in the trash; emptying the trash ends a merge's Undo.
+  const trashed = new Set(await fileNames(paths.trash));
+  const done: ScientLibraryMerge[] = [];
+  for (const name of await fileNames(directory)) {
+    const merge = await readBoundedJson(
+      NodePath.join(directory, name),
+      MAX_MERGE_BYTES,
+      ScientLibraryMerge,
+    ).catch(() => null);
+    if (merge?.state === "done" && trashed.has(`${merge.loserId}.json`)) done.push(merge);
+  }
+  done.sort(
+    (left, right) =>
+      right.mergedAt.localeCompare(left.mergedAt) || left.mergeId.localeCompare(right.mergeId),
+  );
+  const merges: ScientLibraryUndoableMerge[] = [];
+  let gone = 0;
+  for (const merge of done.slice(0, Math.max(0, input.mergeLimit))) {
+    const entry = await readTrashEntry(paths, merge.loserId).catch(() => null);
+    if (entry?.mergedInto?.mergeId === merge.mergeId) merges.push({ merge, merged: entry.record });
+    else gone += 1;
+  }
+  return { records, possibleDuplicates, merges, mergesTotal: done.length - gone };
+}

@@ -14,6 +14,9 @@ type SourceMetadata = Pick<ScientSourceRecord, "creators" | "identifiers" | "iss
 // work in their catalogue.
 const WORK_LEVEL_IDENTIFIER_SCHEMES = new Set(["arxiv", "doi", "pmcid", "pmid", "openalex", "s2"]);
 
+/** Ends the move's merge line when some merges kept different values; the Library offers Review. */
+export const SCIENT_LIBRARY_MERGES_TO_REVIEW = "kept different values: Review.";
+
 export function workLevelIdentifierKey(scheme: string, value: string): string | null {
   const normalizedScheme = scheme.trim().toLowerCase();
   if (!WORK_LEVEL_IDENTIFIER_SCHEMES.has(normalizedScheme)) return null;

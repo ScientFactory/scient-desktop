@@ -53,7 +53,7 @@ function overview(libraryBackend: boolean): ScientSourcesOverviewResult {
   };
 }
 
-function Harness(props: { readonly libraryBackend: boolean }) {
+function Harness(props: { readonly libraryBackend: boolean; readonly onReview?: () => void }) {
   const move = useLibraryMoveStatus({
     environmentId,
     root: "/project",
@@ -62,7 +62,7 @@ function Harness(props: { readonly libraryBackend: boolean }) {
   });
   return (
     <>
-      <LibraryMoveNotice move={move} />
+      <LibraryMoveNotice move={move} {...(props.onReview ? { onReview: props.onReview } : {})} />
       <SourcesHeaderMenu
         environmentId={environmentId}
         root="/project"
@@ -102,14 +102,19 @@ function setup(statuses: ReadonlyArray<ScientSourcesMoveStatus>) {
 const summary = "Merged 3 duplicates. 1 kept different values: Review.";
 
 describe("the Library's move line", () => {
-  it("shows the summary in library mode and Dismiss removes it", async () => {
+  it("shows the summary in library mode, Review opens the merges and Dismiss removes it", async () => {
     setup([
       { state: "done", lines: [summary] },
       { state: "done", lines: [] },
     ]);
-    await using screen = await render(<Harness libraryBackend />, { router: false });
+    const onReview = vi.fn();
+    await using screen = await render(<Harness libraryBackend onReview={onReview} />, {
+      router: false,
+    });
 
     await expect.element(screen.getByText(summary, { exact: false })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(onReview).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Dismiss" }));
 
     await vi.waitFor(() =>

@@ -1,4 +1,5 @@
 import {
+  getEnvironmentScientSourcesDuplicates,
   getEnvironmentScientSourcesMoveStatus,
   getEnvironmentScientSystematicReview,
   listEnvironmentScientSystematicReviewConflicts,
@@ -175,6 +176,12 @@ export function changeSystematicReviewConflict(
 }
 
 /** Where this project's move into the personal Library is; a project server has nothing to move. */
+export function readLibraryDuplicates(environmentId: EnvironmentId, root: string) {
+  return runtime.runPromise(
+    getEnvironmentScientSourcesDuplicates({ prepared: prepared(environmentId), root }),
+  );
+}
+
 export function readLibraryMoveStatus(environmentId: EnvironmentId, root: string) {
   return runtime.runPromise(
     getEnvironmentScientSourcesMoveStatus({ prepared: prepared(environmentId), root }),

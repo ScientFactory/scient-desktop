@@ -91,6 +91,7 @@ import {
   librarySourceRevisions,
   libraryTrash,
   libraryZoteroSourceIds,
+  libraryDuplicates,
   organizeLibrarySources,
   pinLibraryIntake,
   refreshAfterLibraryChange,
@@ -477,6 +478,17 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 throw new Error("Versions of a review from copies of a project need the Library.");
               }
               return changeLibraryReviewConflict(library, args.payload);
+            },
+          ),
+        )
+        .handle("duplicates", (args) =>
+          route(
+            args.endpoint.name,
+            AuthOrchestrationReadScope,
+            args.payload.root,
+            async (library) => {
+              if (!library) throw new Error("Possible duplicates need the personal Library.");
+              return libraryDuplicates(library);
             },
           ),
         )

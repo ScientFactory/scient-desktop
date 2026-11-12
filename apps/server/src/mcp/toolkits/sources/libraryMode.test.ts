@@ -550,6 +550,38 @@ describe("Sources tools on the library backend", () => {
       }),
   );
 
+  it.effect("lists possible duplicates and marks a pair not duplicates; project mode refuses", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const [one, two] = yield* Effect.promise(() =>
+        Promise.all([
+          libraryRecord(fixture, "copy-a", { title: "Shock trial" }),
+          libraryRecord(fixture, "copy-b", { title: "Shock trial", publisher: "Press" }),
+        ]),
+      );
+      const listed = yield* run(listScientSourcesForInvocation({ duplicates: true }), fixture);
+      expect(listed.duplicates).toMatchObject({ pairsTotal: 1, merges: [], mergesTotal: 0 });
+      expect(listed.duplicates?.pairs[0]?.sources.map((side) => side.sourceId).toSorted()).toEqual(
+        [one.sourceId, two.sourceId].toSorted(),
+      );
+
+      const marked = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "mark-distinct", sourceIds: [one.sourceId, two.sourceId] },
+        }),
+        fixture,
+      );
+      expect(marked.outcome).toBe("marked");
+      const after = yield* run(listScientSourcesForInvocation({ duplicates: true }), fixture);
+      expect(after.duplicates?.pairsTotal).toBe(0);
+
+      const refused = yield* run(listScientSourcesForInvocation({ duplicates: true }), fixture, {
+        backend: "project",
+      }).pipe(Effect.flip);
+      expect(refused.message).toBe("Possible duplicates need the personal Library.");
+    }),
+  );
+
   it.effect("an edit refreshes this project's pin and review snapshots once", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

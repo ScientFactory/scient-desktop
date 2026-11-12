@@ -18,7 +18,10 @@ import {
 } from "@scientfactory/scient-sources/categories-store";
 import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
 import {
+  clearScientLibrarySourcesDistinct,
+  markScientLibrarySourcesDistinct,
   mergeScientLibrarySources,
+  readScientLibraryDuplicates,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
 import { dismissScientLibraryMoveSummary } from "@scientfactory/scient-sources/library-move";
@@ -58,12 +61,15 @@ import {
   updateScientSourceMetadata,
   updateScientSourceNote,
 } from "@scientfactory/scient-sources/store";
-import type {
-  ScientSourcesLibraryOrganizeAction,
-  ScientSourcesScope,
-  ScientSystematicReviewConflictChange,
-  ScientSystematicReviewRecord,
-  ScientSystematicReviewResult,
+import {
+  SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT,
+  SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT,
+  type ScientSourcesDuplicatesResult,
+  type ScientSourcesLibraryOrganizeAction,
+  type ScientSourcesScope,
+  type ScientSystematicReviewConflictChange,
+  type ScientSystematicReviewRecord,
+  type ScientSystematicReviewResult,
 } from "@t3tools/contracts";
 
 import { exportBibliography } from "./BibliographyFileAdapter.ts";
@@ -73,6 +79,7 @@ import { moveProjectBackIntoProject } from "./LibraryMove.ts";
 import {
   alsoPinnedIn,
   listProjectPinnedWorks,
+  otherProjectsUsing,
   projectPinsByLibraryId,
   refreshProjectAfterLibraryChange,
   resolveLibrarySourceId,
@@ -133,6 +140,30 @@ const afterChange = (store: Store, sourceIds: ReadonlyArray<string>) =>
   refreshProjectAfterLibraryChange(store, sourceIds, ACTOR).catch(() => undefined);
 
 const reach = (store: Store, sourceId: string) => alsoPinnedIn(store, sourceId).catch(() => ({}));
+
+type Categories = Awaited<ReturnType<typeof readScientSourceCategories>>;
+
+/** One row of the Library list. */
+function overviewRow(
+  entry: {
+    readonly record: ScientSourceRecord;
+    readonly pinned: boolean;
+    readonly projectNote?: string | null | undefined;
+    readonly fromSnapshot: boolean;
+  },
+  categories: Categories,
+) {
+  const { record, pinned, projectNote, fromSnapshot } = entry;
+  const category = scientSourceCategorySummaryFor(record, categories);
+  return {
+    ...scientSourceSummaryFromRecord(record),
+    ...(category ? { categories: category } : {}),
+    ...scientSourceReadingState(record),
+    pinned,
+    ...(projectNote !== undefined ? { projectNote } : {}),
+    ...(fromSnapshot ? { fromSnapshot: true as const } : {}),
+  };
+}
 
 /** This project's pins, or the whole library, with the totals the scope filter shows. */
 export async function libraryOverview(
@@ -200,18 +231,7 @@ export async function libraryOverview(
     ...("trashedCount" in inspected && inspected.trashedCount !== undefined
       ? { trashedCount: inspected.trashedCount }
       : {}),
-    records: listed.map(({ record, pinned, projectNote, fromSnapshot }) => {
-      const summary = scientSourceSummaryFromRecord(record);
-      const category = scientSourceCategorySummaryFor(record, categories);
-      return {
-        ...summary,
-        ...(category ? { categories: category } : {}),
-        ...scientSourceReadingState(record),
-        pinned,
-        ...(projectNote !== undefined ? { projectNote } : {}),
-        ...(fromSnapshot ? { fromSnapshot: true as const } : {}),
-      };
-    }),
+    records: listed.map((entry) => overviewRow(entry, categories)),
     recordDiagnostics: listed.map(({ record }) => ({
       sourceId: record.sourceId,
       diagnostics: sourceMetadataDiagnostics(record),
@@ -222,6 +242,72 @@ export async function libraryOverview(
       project: works.length,
       library: inspected.records.length,
     },
+  };
+}
+
+/**
+ * The possible duplicates of the whole library and the merges Undo can still reverse. Reading
+ * never merges: the automatic merges run with the move, not here.
+ */
+export async function libraryDuplicates(store: Store): Promise<ScientSourcesDuplicatesResult> {
+  if (!store.exists) return { pairs: [], pairsTotal: 0, merges: [], mergesTotal: 0 };
+  const listing = await readScientLibraryDuplicates({
+    library: store.library,
+    mergeLimit: SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT,
+  });
+  const pairs = listing.possibleDuplicates.slice(0, SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT);
+  const byId = new Map(listing.records.map((record) => [record.sourceId, record]));
+  const shown = new Set([
+    ...pairs.flatMap((pair) => pair.sourceIds),
+    ...listing.merges.map(({ merge }) => merge.survivorId),
+  ]);
+  const [pins, categories, others] = await Promise.all([
+    projectPinsByLibraryId(store),
+    readScientSourceCategories(store.library).catch((): Categories => ({})),
+    otherProjectsUsing(store, shown),
+  ]);
+  const row = (record: ScientSourceRecord) => {
+    const pin = pins.get(record.sourceId);
+    return {
+      ...overviewRow(
+        {
+          record: pin ? { ...record, citationKey: pin.citationKey } : record,
+          pinned: pin !== undefined,
+          projectNote: pin ? (pin.note ?? null) : undefined,
+          fromSnapshot: false,
+        },
+        categories,
+      ),
+      otherProjects: others.get(record.sourceId) ?? [],
+    };
+  };
+  return {
+    pairs: pairs.map((pair) => {
+      // The default kept source first, so the two read left to right as "keep, merge away".
+      const [first, second] =
+        pair.sourceIds[0] === pair.survivorId
+          ? pair.sourceIds
+          : [pair.sourceIds[1], pair.sourceIds[0]];
+      return {
+        kind: pair.kind,
+        sources: [row(byId.get(first)!), row(byId.get(second)!)] as const,
+        keptByDefault: pair.survivorId,
+      };
+    }),
+    pairsTotal: listing.possibleDuplicates.length,
+    merges: listing.merges.map(({ merge, merged }) => {
+      const kept = byId.get(merge.survivorId);
+      return {
+        mergeId: merge.mergeId,
+        mergedAt: merge.mergedAt,
+        requested: merge.kind === "requested",
+        kept: kept ? row(kept) : null,
+        mergedSourceId: merge.loserId,
+        mergedTitle: merged.title,
+        keptDifferent: merge.conflicts.map((conflict) => conflict.field),
+      };
+    }),
+    mergesTotal: listing.mergesTotal,
   };
 }
 
@@ -548,6 +634,8 @@ export const isLibraryOrganizeAction = (
   change.action === "change-pins" ||
   change.action === "merge" ||
   change.action === "undo-merge" ||
+  change.action === "mark-distinct" ||
+  change.action === "clear-distinct" ||
   change.action === "move-back" ||
   change.action === "dismiss-move-summary";
 
@@ -624,6 +712,19 @@ export async function organizeLibrarySources(
         unrevertedFields: undone.unrevertedFields,
       };
     }
+    case "mark-distinct":
+      return markScientLibrarySourcesDistinct({
+        library: store.library,
+        sourceIds: await distinctPair(store, change.sourceIds),
+        actor: ACTOR,
+      });
+    case "clear-distinct": {
+      const cleared = await clearScientLibrarySourcesDistinct({
+        library: store.library,
+        sourceIds: await distinctPair(store, change.sourceIds),
+      });
+      return { outcome: cleared.outcome === "cleared" ? cleared.outcome : ("unchanged" as const) };
+    }
     case "move-back":
       return moveBackResult(
         await moveProjectBackIntoProject({
@@ -686,6 +787,9 @@ async function changeLibraryPins(
   if (changed) await syncProjectBibliography(store, ACTOR);
   return { outcome: changed ? ("updated" as const) : ("unchanged" as const), pinChanges };
 }
+
+const distinctPair = async (store: Store, sourceIds: readonly [string, string]) =>
+  [await libraryIdOf(store, sourceIds[0]), await libraryIdOf(store, sourceIds[1])] as const;
 
 export const moveBackResult = (moved: Awaited<ReturnType<typeof moveProjectBackIntoProject>>) =>
   moved.outcome === "moved-back"

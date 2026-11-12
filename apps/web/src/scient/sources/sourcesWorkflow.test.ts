@@ -489,6 +489,55 @@ describe("sources workflow on a personal Library", () => {
     });
     expect(next.overview?.records[0]).toMatchObject({ readingStatus: "unread", starred: true });
   });
+  it("keeps a merged-away source's reading change off the kept one and drops it after Undo", () => {
+    const marked = sourcesWorkflowReducer(
+      library([
+        { sourceId: "kept", revision: 2, readingStatus: "unread", starred: false, pinned: true },
+        { sourceId: "away", revision: 1, readingStatus: "unread", starred: false, pinned: true },
+      ]),
+      {
+        type: "readingStateArrived",
+        atDetailFetch: 1,
+        result: {
+          sources: [{ sourceId: "away", outcome: "updated", readingStatus: "read", starred: true }],
+        },
+      },
+    );
+    const merged = reduceAll(
+      marked,
+      { type: "overviewRequestStarted", request: 2 },
+      {
+        type: "overviewArrived",
+        request: 2,
+        overview: overviewWith([
+          { sourceId: "kept", revision: 3, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+    );
+    expect(merged.overview?.records).toMatchObject([
+      { sourceId: "kept", readingStatus: "unread", starred: false },
+    ]);
+
+    // Marked unread elsewhere before Undo brought it back: the server's state shows.
+    const undone = reduceAll(
+      merged,
+      { type: "overviewRequestStarted", request: 3 },
+      {
+        type: "overviewArrived",
+        request: 3,
+        overview: overviewWith([
+          { sourceId: "kept", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+          { sourceId: "away", revision: 2, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+    );
+    expect(undone.overview?.records[1]).toMatchObject({
+      sourceId: "away",
+      readingStatus: "unread",
+      starred: false,
+    });
+  });
+
   it("keeps a landed reading change when an older overview answer arrives", () => {
     const started = sourcesWorkflowReducer(initialSourcesWorkflowState, {
       type: "overviewRequestStarted",

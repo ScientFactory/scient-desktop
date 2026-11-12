@@ -328,6 +328,8 @@ const PinAction = Schema.Struct({
 });
 const UnpinAction = Schema.Struct({ action: Schema.Literal("unpin"), citationKey: NonEmptyString });
 
+const DistinctPair = Schema.Tuple([NonEmptyString, NonEmptyString]);
+
 /** Pins and merges act on the personal library; a project server refuses them. */
 export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   PinAction,
@@ -347,6 +349,10 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     survivorId: Schema.optionalKey(NonEmptyString),
   }),
   Schema.Struct({ action: Schema.Literal("undo-merge"), mergeId: NonEmptyString }),
+  /** "Not duplicates": the pair is never merged automatically or listed as possible again. */
+  Schema.Struct({ action: Schema.Literal("mark-distinct"), sourceIds: DistinctPair }),
+  /** Undo of mark-distinct. */
+  Schema.Struct({ action: Schema.Literal("clear-distinct"), sourceIds: DistinctPair }),
   /** The move's Undo: the project's Sources go back into `.scient/sources`. */
   Schema.Struct({ action: Schema.Literal("move-back") }),
   /** Hides the move's summary lines in this checkout's status, until a later run. */
@@ -387,6 +393,8 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "project-store-present",
     "dismissed",
     "nothing-to-dismiss",
+    "marked",
+    "cleared",
   ]),
   pin: Schema.optionalKey(PinSummary),
   pinChanges: Schema.optionalKey(
@@ -854,3 +862,48 @@ export const ScientSourcesOverviewResult = Schema.Struct({
   libraryBackend: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ScientSourcesOverviewResult = typeof ScientSourcesOverviewResult.Type;
+
+/** Library servers only; a project server refuses it. */
+export const ScientSourcesDuplicatesRequest = Schema.Struct({ root: NonEmptyString });
+export type ScientSourcesDuplicatesRequest = typeof ScientSourcesDuplicatesRequest.Type;
+
+/** An overview row, with the other checkouts on this computer that use it, by folder name. */
+const ScientSourcesDuplicateSource = Schema.Struct({
+  ...ScientSourcesOverviewRecord.fields,
+  otherProjects: Schema.Array(Schema.String),
+});
+export type ScientSourcesDuplicateSource = typeof ScientSourcesDuplicateSource.Type;
+
+/** At most this many pairs and merges are sent; the totals count them all. */
+export const SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT = 200;
+export const SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT = 100;
+
+/** The possible duplicates of the whole Library, and the merges Undo can still reverse. */
+export const ScientSourcesDuplicatesResult = Schema.Struct({
+  pairs: Schema.Array(
+    Schema.Struct({
+      kind: Schema.Literals(["possible-metadata-match", "possible-container-match"]),
+      sources: Schema.Tuple([ScientSourcesDuplicateSource, ScientSourcesDuplicateSource]),
+      /** The one a merge keeps unless the person picks the other. */
+      keptByDefault: NonEmptyString,
+    }),
+  ).pipe(Schema.check(Schema.isMaxLength(SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT))),
+  pairsTotal: Count,
+  /** Newest first. */
+  merges: Schema.Array(
+    Schema.Struct({
+      mergeId: NonEmptyString,
+      mergedAt: NonEmptyString,
+      /** False for the automatic merges of the move into the Library. */
+      requested: Schema.Boolean,
+      /** Null when the kept source was merged on or removed since: Undo explains. */
+      kept: Schema.NullOr(ScientSourcesDuplicateSource),
+      mergedSourceId: NonEmptyString,
+      mergedTitle: Schema.NullOr(Schema.String),
+      /** Fields where the two had different values and the kept source's value stayed. */
+      keptDifferent: Schema.Array(Schema.String),
+    }),
+  ).pipe(Schema.check(Schema.isMaxLength(SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT))),
+  mergesTotal: Count,
+});
+export type ScientSourcesDuplicatesResult = typeof ScientSourcesDuplicatesResult.Type;
