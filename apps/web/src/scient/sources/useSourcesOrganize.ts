@@ -55,6 +55,21 @@ function bulkResultSummary(result: ScientSourcesBulkResult): string | null {
   return [parts.length > 0 ? `${parts.join(", ")}.` : null, note].filter(Boolean).join(" ");
 }
 
+// Outside the hook, as below. `running` refuses a second change until this one ends.
+async function runPartsWork<A>(input: {
+  readonly running: { current: boolean };
+  readonly work: () => Promise<A>;
+  readonly end: () => void;
+}): Promise<A> {
+  input.running.current = true;
+  try {
+    return await input.work();
+  } finally {
+    input.running.current = false;
+    input.end();
+  }
+}
+
 // Outside the hook: the React Compiler does not compile try/finally.
 async function runOrganizeWork<A>(input: {
   readonly work: () => Promise<A>;
@@ -95,12 +110,13 @@ export function useSourcesOrganize(input: {
     selection: new Set<string>() as ReadonlySet<string>,
   });
   const [pending, setPending] = useState(false);
-  const [progress, setProgress] = useState<SourcesBulkProgress | null>(null);
+  const [running, setProgress] = useState<
+    (SourcesBulkProgress & { readonly context: string }) | null
+  >(null);
+  // The line and its Stop belong to the project the run was started in.
+  const progress = running?.context === context ? running : null;
+  const partsRunning = useRef(false);
   const stopRequested = useRef(false);
-  const startProgress = (kind: SourcesBulkProgress["kind"], total: number) => {
-    stopRequested.current = false;
-    setProgress({ kind, done: 0, total, stopping: false });
-  };
   const showDone = (done: number) =>
     setProgress((current) => (current ? { ...current, done } : current));
   const current =
@@ -134,8 +150,47 @@ export function useSourcesOrganize(input: {
   const update = (next: Partial<typeof current>) => setState({ ...current, ...next });
   const setFilter = (next: SourcesListFilter) => update({ filter: next, savedSearchId: null });
 
-  const run = <A>(work: () => Promise<A>, failureTitle: string) =>
-    runOrganizeWork({ work, failureTitle, refresh: input.refreshOverview, setPending });
+  const refuse = () => {
+    toastManager.add({
+      type: "info",
+      title: "Another change is still running",
+      description: "Try again when it finishes.",
+    });
+  };
+  /** A toast's action: kept, with its toast, while a change in parts is running. */
+  const whenFree = (act: () => void) => () => {
+    if (partsRunning.current) refuse();
+    else act();
+  };
+
+  const run = <A>(work: () => Promise<A>, failureTitle: string): Promise<A | null> => {
+    if (partsRunning.current) {
+      refuse();
+      return Promise.resolve(null);
+    }
+    return runOrganizeWork({ work, failureTitle, refresh: input.refreshOverview, setPending });
+  };
+
+  /** One change in parts at a time, with the progress line from its first part to its last. */
+  const runInParts = <A>(
+    kind: SourcesBulkProgress["kind"],
+    total: number,
+    work: () => Promise<A>,
+    failureTitle: string,
+  ): Promise<A | null> => {
+    if (partsRunning.current) {
+      refuse();
+      return Promise.resolve(null);
+    }
+    stopRequested.current = false;
+    setProgress({ context, kind, done: 0, total, stopping: false });
+    return runPartsWork({
+      running: partsRunning,
+      work: () =>
+        runOrganizeWork({ work, failureTitle, refresh: input.refreshOverview, setPending }),
+      end: () => setProgress(null),
+    });
+  };
 
   const organize = (change: ScientSourcesOrganizeAction, failureTitle: string) =>
     run(
@@ -166,10 +221,10 @@ export function useSourcesOrganize(input: {
             : `${failed.length} changes could not be undone.`,
         actionProps: {
           children: "Try again",
-          onClick: () => {
+          onClick: whenFree(() => {
             toastManager.close(id);
             void undoBulk(batchId);
-          },
+          }),
         },
       });
       return;
@@ -188,12 +243,10 @@ export function useSourcesOrganize(input: {
   };
 
   const undoInParts = async (parts: ReadonlyArray<BulkUndoPart>) => {
-    startProgress(
+    let undone = 0;
+    const outcome = await runInParts(
       "undoing",
       parts.reduce((sum, part) => sum + part.sourceCount, 0),
-    );
-    let undone = 0;
-    const outcome = await run(
       () =>
         undoBulkParts({
           parts,
@@ -210,7 +263,6 @@ export function useSourcesOrganize(input: {
         }),
       "Changes were not undone",
     );
-    setProgress(null);
     if (!outcome) return;
     const announcement = undoPartsAnnouncement(outcome, message);
     if (!announcement) return;
@@ -221,10 +273,10 @@ export function useSourcesOrganize(input: {
         ? {
             actionProps: {
               children: "Try again",
-              onClick: () => {
+              onClick: whenFree(() => {
                 toastManager.close(id);
                 void undoInParts(retry);
-              },
+              }),
             },
           }
         : {}),
@@ -233,11 +285,9 @@ export function useSourcesOrganize(input: {
 
   const bulkInParts = async (change: ScientSourcesBulkChange, failureTitle: string) => {
     const parts = bulkChangeParts(change);
-    startProgress(
+    const outcome = await runInParts(
       "changing",
       parts.reduce((sum, part) => sum + part.sourceIds.length, 0),
-    );
-    const outcome = await run(
       () =>
         runParts({
           parts: parts.map((part) => part.sourceIds),
@@ -252,16 +302,14 @@ export function useSourcesOrganize(input: {
         }),
       failureTitle,
     );
-    setProgress(null);
     if (!outcome) return null;
     const sum = sumBulkResults(outcome.results);
-    const problem = bulkResultSummary(sum.result);
-    if (problem) toastManager.add({ type: "warning", title: failureTitle, description: problem });
     const announcement = bulkPartsAnnouncement({
       outcome,
       changed: sum.changed,
       failureTitle,
       message,
+      problem: bulkResultSummary(sum.result),
     });
     if (announcement) {
       const undo = sum.undo;
@@ -271,16 +319,16 @@ export function useSourcesOrganize(input: {
           ? {
               actionProps: {
                 children: "Undo",
-                onClick: () => {
+                onClick: whenFree(() => {
                   toastManager.close(id);
                   void undoInParts(undo);
-                },
+                }),
               },
             }
           : {}),
       });
     }
-    return outcome.answered === 0 && outcome.end.kind === "failed" ? null : sum.result;
+    return outcome.answered === 0 ? null : sum.result;
   };
 
   const createCollectionInParts = async (
@@ -293,8 +341,7 @@ export function useSourcesOrganize(input: {
       SCIENT_SOURCES_BULK_SOURCE_LIMIT,
     );
     const total = first.length + rest.reduce((sum, part) => sum + part.length, 0);
-    startProgress("changing", total);
-    const outcome = await run(async () => {
+    const work = async () => {
       const created = await organizeScientSources(input.environmentId, {
         root: input.root,
         change: {
@@ -321,8 +368,8 @@ export function useSourcesOrganize(input: {
         totalBefore: first.length,
       });
       return { created, filled };
-    }, "Collection was not created");
-    setProgress(null);
+    };
+    const outcome = await runInParts("changing", total, work, "Collection was not created");
     if (!outcome) return null;
     const announcement = outcome.filled
       ? collectionPartsAnnouncement({ outcome: outcome.filled, name, message })
@@ -348,10 +395,10 @@ export function useSourcesOrganize(input: {
         title: undo.sourceCount === 1 ? "Changed 1 source" : `Changed ${undo.sourceCount} sources`,
         actionProps: {
           children: "Undo",
-          onClick: () => {
+          onClick: whenFree(() => {
             toastManager.close(id);
             void undoBulk(undo.batchId);
-          },
+          }),
         },
       });
     }
@@ -360,7 +407,7 @@ export function useSourcesOrganize(input: {
 
   return {
     organization,
-    pending,
+    pending: pending || running !== null,
     progress,
     stopProgress: () => {
       stopRequested.current = true;

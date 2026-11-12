@@ -155,13 +155,19 @@ describe("bulk edits in parts", () => {
         "1 change could not be undone. No answer came back for 20 changes, so whether they were undone is unknown.",
     });
 
+    // The lost request did land: the server now answers that this part was already undone.
+    const used = (text: string): ScientSourcesBulkResult => ({
+      sources: [],
+      collections: [],
+      conflicts: [{ message: text }],
+    });
     order.length = 0;
     const again = await undoBulkParts({
       parts: first.retry,
       isLost,
       send: async (batchId) => {
         order.push(batchId);
-        return undone(batchId);
+        return batchId === "bulk_2" ? used("This bulk edit was already undone.") : undone(batchId);
       },
     });
     expect(order).toEqual(["bulk_3", "bulk_2", "bulk_1"]);
@@ -169,7 +175,20 @@ describe("bulk edits in parts", () => {
     expect(undoPartsAnnouncement(again, message)).toEqual({
       type: "warning",
       title: "Some later changes were kept",
-      description: "A later tag was kept. 2 more were kept as well.",
+      description: "A later tag was kept. 1 more were kept as well.",
+    });
+
+    const gone = await undoBulkParts({
+      parts,
+      isLost,
+      send: async (batchId) =>
+        batchId === "bulk_1" ? used("This bulk edit was not found.") : undone(batchId),
+    });
+    expect(gone.retry).toEqual([]);
+    expect(undoPartsAnnouncement(gone, message)).toEqual({
+      type: "warning",
+      title: "Some changes were not undone",
+      description: "10 changes could not be undone. This bulk edit was not found.",
     });
   });
 });

@@ -88,6 +88,8 @@ export function bulkChangeParts(
 export interface BulkUndoPart {
   readonly batchId: string;
   readonly sourceCount: number;
+  /** Its Undo was sent before and got no answer, so it may already be undone. */
+  readonly resent?: true;
 }
 
 /** The parts' answers as one: per-source and per-collection outcomes, and each part's Undo. */
@@ -116,8 +118,17 @@ export interface BulkUndoOutcome {
   readonly retry: ReadonlyArray<BulkUndoPart>;
   /** Changes in parts whose Undo was not answered or not sent. */
   readonly unanswered: number;
+  /** Changes in parts whose Undo record is gone or was used elsewhere, with the server's words. */
+  readonly unavailable: number;
+  readonly unavailableMessage?: string;
   readonly end: { readonly kind: "done" | "failed" | "lost"; readonly error?: unknown };
 }
+
+/** The server's words when a part's Undo record is gone or already used: it undid nothing. */
+const nothingToUndo = (result: ScientSourcesBulkResult) =>
+  result.sources.length === 0 && result.collections.length === 0
+    ? result.conflicts?.[0]?.message
+    : undefined;
 
 /** Undoes the parts newest first and stops at the first request that fails or gets no answer. */
 export async function undoBulkParts(input: {
@@ -129,25 +140,42 @@ export async function undoBulkParts(input: {
   const newestFirst = input.parts.toReversed();
   const answered: ScientSourcesBulkResult[] = [];
   const retry: BulkUndoPart[] = [];
-  const sum = () => (answered.length > 0 ? sumBulkResults(answered).result : null);
+  let unavailable = 0;
+  let unavailableMessage: string | undefined;
+  const sums = () => ({
+    result: answered.length > 0 ? sumBulkResults(answered).result : null,
+    unavailable,
+    ...(unavailableMessage === undefined ? {} : { unavailableMessage }),
+  });
   for (const [index, part] of newestFirst.entries()) {
     let result: ScientSourcesBulkResult;
     try {
       result = await input.send(part.batchId);
     } catch (error) {
-      const left = newestFirst.slice(index);
+      const lost = input.isLost(error);
+      const unsent = newestFirst.slice(index + 1);
+      const left = [lost ? { ...part, resent: true as const } : part, ...unsent];
       return {
-        result: sum(),
+        ...sums(),
         retry: [...retry, ...left].toReversed(),
         unanswered: left.reduce((total, entry) => total + entry.sourceCount, 0),
-        end: { kind: input.isLost(error) ? "lost" : "failed", error },
+        end: { kind: lost ? "lost" : "failed", error },
       };
     }
-    answered.push(result);
-    if (failedEntries(result) > 0) retry.push(part);
+    const nothing = nothingToUndo(result);
+    if (nothing === undefined) {
+      answered.push(result);
+      if (failedEntries(result) > 0) {
+        retry.push({ batchId: part.batchId, sourceCount: part.sourceCount });
+      }
+    } else if (!part.resent) {
+      // A part sent again after a lost answer was undone by the first request.
+      unavailable += part.sourceCount;
+      unavailableMessage ??= nothing;
+    }
     input.onPartDone?.(part);
   }
-  return { result: sum(), retry: retry.toReversed(), unanswered: 0, end: { kind: "done" } };
+  return { ...sums(), retry: retry.toReversed(), unanswered: 0, end: { kind: "done" } };
 }
 
 function failedEntries(result: ScientSourcesBulkResult): number {
@@ -203,20 +231,24 @@ export function bulkPartsAnnouncement(input: {
   readonly changed: number;
   readonly failureTitle: string;
   readonly message: (error: unknown) => string;
+  /** What went wrong for single sources in the answered parts, in the one-request words. */
+  readonly problem?: string | null;
 }): PartsAnnouncement | null {
   const { end } = input.outcome;
-  const detail = partsDetail(input.outcome, "changed", input.message);
+  const problem = input.problem ?? null;
+  const detail = sentences(problem, partsDetail(input.outcome, "changed", input.message));
   const description = detail ? { description: detail } : {};
+  const clean = problem === null && (end.kind === "done" || end.kind === "stopped");
   if (input.changed > 0) {
     return {
-      type: end.kind === "done" || end.kind === "stopped" ? "success" : "warning",
+      type: clean ? "success" : "warning",
       title: `Changed ${sources(input.changed)}`,
       ...description,
     };
   }
-  if (end.kind === "done") return null;
+  if (clean && end.kind === "done") return null;
   return {
-    type: end.kind === "stopped" ? "info" : end.kind === "lost" ? "warning" : "error",
+    type: end.kind === "failed" ? "error" : clean ? "info" : "warning",
     title: input.failureTitle,
     ...description,
   };
@@ -242,30 +274,34 @@ export function undoPartsAnnouncement(
   outcome: BulkUndoOutcome,
   message: (error: unknown) => string,
 ): PartsAnnouncement | null {
-  const { result, end } = outcome;
+  const { result, end, unavailable } = outcome;
   const failed = result ? failedEntries(result) : 0;
   const couldNot = (value: number) =>
     value === 1 ? "1 change could not be undone." : `${count(value)} changes could not be undone.`;
+  const why = outcome.unavailableMessage ?? null;
   if (end.kind === "lost") {
     return {
       type: "warning",
       title: "Undo did not finish",
       description: sentences(
-        failed > 0 ? couldNot(failed) : null,
+        failed + unavailable > 0 ? couldNot(failed + unavailable) : null,
+        why,
         noAnswer(outcome.unanswered, "change", "undone"),
       ),
     };
   }
-  if (end.kind === "failed" && result === null) {
+  if (end.kind === "failed" && result === null && unavailable === 0) {
     return { type: "error", title: "Changes were not undone", description: message(end.error) };
   }
-  const notUndone = failed + outcome.unanswered;
+  const notUndone = failed + outcome.unanswered + unavailable;
   if (notUndone > 0) {
+    const nothingUndone = result === null && outcome.unanswered === 0;
     return {
       type: "warning",
-      title: "Some changes were not undone",
+      title: nothingUndone ? "Changes were not undone" : "Some changes were not undone",
       description: sentences(
-        couldNot(notUndone),
+        nothingUndone ? null : couldNot(notUndone),
+        why,
         end.kind === "failed" ? message(end.error) : null,
       ),
     };

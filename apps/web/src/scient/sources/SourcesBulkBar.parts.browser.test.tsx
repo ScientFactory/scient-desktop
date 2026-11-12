@@ -2,6 +2,7 @@ import { render } from "../../../test/render";
 import "../../index.css";
 
 import type { EnvironmentId, ScientSourcesOverviewResult } from "@t3tools/contracts";
+import { useState } from "react";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -37,9 +38,10 @@ const records: SourceSummary[] = Array.from({ length: 600 }, (_, index) => ({
 }));
 
 function Harness() {
+  const [root, setRoot] = useState("/project");
   const organize = useSourcesOrganize({
     environmentId: "environment-1" as EnvironmentId,
-    root: "/project",
+    root,
     organization: { collections: [], savedSearches: [] },
     query: "",
     setQuery: () => undefined,
@@ -49,6 +51,9 @@ function Harness() {
     <>
       <button type="button" onClick={() => organize.setSelection(records.map((r) => r.sourceId))}>
         Select every source
+      </button>
+      <button type="button" onClick={() => setRoot("/other")}>
+        Other project
       </button>
       {organize.selection.size > 0 || organize.progress ? (
         <SourcesBulkBar
@@ -63,10 +68,14 @@ function Harness() {
   );
 }
 
-const answer = (sourceIds: ReadonlyArray<string>, batchId: string) => ({
-  sources: sourceIds.map((sourceId) => ({ sourceId, outcome: "updated", revision: 2 })),
+const answer = (sourceIds: ReadonlyArray<string>, batchId: string, failed = 0) => ({
+  sources: sourceIds.map((sourceId, index) => ({
+    sourceId,
+    outcome: index < failed ? "failed" : "updated",
+    revision: 2,
+  })),
   collections: [],
-  undo: { batchId, sourceCount: sourceIds.length },
+  undo: { batchId, sourceCount: sourceIds.length - failed },
 });
 
 describe("A bulk edit larger than one request", () => {
@@ -74,7 +83,7 @@ describe("A bulk edit larger than one request", () => {
     mocks.bulkUpdateScientSources.mockReset();
     let answerSecond = () => undefined as void;
     mocks.bulkUpdateScientSources
-      .mockImplementationOnce(async (_id, input) => answer(input.change.sourceIds, "bulk_1"))
+      .mockImplementationOnce(async (_id, input) => answer(input.change.sourceIds, "bulk_1", 1))
       .mockImplementationOnce(
         (_id, input) =>
           new Promise((resolve) => {
@@ -94,12 +103,51 @@ describe("A bulk edit larger than one request", () => {
 
     await expect.element(screen.getByText("600 selected")).toBeVisible();
     expect(mocks.bulkUpdateScientSources).toHaveBeenCalledTimes(2);
+    // regression: one toast, also when a source in an answered part could not be changed
     expect(add).toHaveBeenCalledTimes(1);
     expect(add.mock.calls[0]![0]).toMatchObject({
-      type: "success",
-      title: "Changed 200 sources",
-      description: "Stopped. 400 other sources were not changed.",
+      type: "warning",
+      title: "Changed 199 sources",
+      description: "1 could not be changed. Stopped. 400 other sources were not changed.",
       actionProps: { children: "Undo" },
     });
+  });
+
+  it("refuses another change while one runs and shows its line only in its own project", async () => {
+    mocks.bulkUpdateScientSources.mockReset();
+    let calls = 0;
+    let answerHeld = () => undefined as void;
+    mocks.bulkUpdateScientSources.mockImplementation((_id, input) => {
+      calls += 1;
+      const result = answer(input.change.sourceIds ?? [], `bulk_${calls}`);
+      if (calls !== 7) return Promise.resolve(result);
+      return new Promise((resolve) => {
+        answerHeld = () => resolve(result);
+      });
+    });
+    await using screen = await render(<Harness />, { router: false });
+    using add = vi.spyOn(toastManager, "add");
+    const changeType = async () => {
+      await userEvent.click(page.getByRole("button", { name: "Type" }));
+      await userEvent.click(page.getByRole("menuitem", { name: "Book" }));
+    };
+
+    await userEvent.click(screen.getByRole("button", { name: "Select every source" }));
+    await changeType();
+    await vi.waitFor(() => expect(add).toHaveBeenCalledTimes(1));
+    await changeType();
+    await expect.element(screen.getByText("Changing 0 of 600 sources")).toBeVisible();
+
+    const undoFirstEdit = add.mock.calls[0]![0].actionProps?.onClick as () => void;
+    undoFirstEdit();
+    expect(add.mock.calls[1]![0]).toMatchObject({ title: "Another change is still running" });
+    expect(calls).toBe(7);
+    await expect.element(screen.getByRole("button", { name: "Stop" })).toBeVisible();
+
+    await userEvent.click(screen.getByRole("button", { name: "Other project" }));
+    await expect.element(screen.getByText("Changing 0 of 600 sources")).not.toBeInTheDocument();
+    answerHeld();
+    await vi.waitFor(() => expect(add).toHaveBeenCalledTimes(3));
+    expect(calls).toBe(12);
   });
 });

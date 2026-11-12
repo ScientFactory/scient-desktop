@@ -1132,16 +1132,25 @@ A larger selection in the bar is sent in parts by `apps/web` `bulkParts.ts`;
   **Stop**, which takes effect once the part in flight is answered. Undo of a
   multi-part edit shows "Undoing … sources" the same way, without Stop.
 - **At the end** one toast gives the sum of `undo.sourceCount` over the parts
-  and one Undo that undoes the parts newest first; the per-source problems
-  (`bulkResultSummary`) and Undo's failures and conflicts are summed with the
-  one-request words. **Try again** after an Undo repeats only the parts with a
-  failed entry or no answer; a part already undone answers that it was.
+  and one Undo that undoes the parts newest first. The per-source problems of
+  the answered parts (`bulkResultSummary`) are in that same toast, and Undo's
+  failures and conflicts are summed with the one-request words. **Try again**
+  after an Undo repeats only the parts with a failed entry or no answer. A
+  repeated part that answers "already undone" was undone by the request whose
+  answer was lost and is counted as undone. Any other part whose record is
+  gone or was undone elsewhere is counted as not undone, with the server's
+  reason.
 - **A part that fails** ends the run: the toast says how many changed and how
   many other sources were not. **A part with no answer** (`isLostAnswerError`)
   ends it too and is counted as neither: the toast says its outcome is
-  unknown. Its receipt exists on the server but the client has no batch ID for
-  it and no route lists receipts, so the one Undo does not cover it. The
-  overview is read once at the end in every case, and the selection stays.
+  unknown. If the request reached the server its receipt exists there, but
+  the client has no batch ID for it and no route lists receipts, so the one
+  Undo does not cover it. The overview is read once at the end in every case,
+  and the selection stays.
+- **One at a time.** While a change in parts runs, another bulk edit, organize
+  action or toast Undo is refused with "Another change is still running", and
+  a refused toast stays open. The progress line and Stop show only in the
+  project the run was started in.
 - **New collection from a selection** over 500 sends `create-collection` with
   the first 500, then `add-to-collection` in parts of 500 (about 0.45 s each
   at 20,000 records). It has no Undo, as before; a run that does not finish

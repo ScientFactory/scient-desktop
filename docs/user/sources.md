@@ -375,8 +375,10 @@ source since then is kept, and the message says what was kept. If part of an
 Undo fails, the message says so and **Try again** finishes the rest. With more
 than 500 sources selected, the bar shows how far the change is and **Stop** ends
 it after the sources in progress; what changed by then stays changed, and one
-**Undo** reverses it. The latest 250 bulk changes can be undone; a change to more
-than 500 sources counts as one for every 100 of them.
+**Undo** reverses it. If the connection drops in the middle, the message says
+which sources have an unknown outcome, and Undo does not cover those. Another
+change to sources is refused until this one finishes. The latest 250 bulk changes can
+be undone; a change to more than 500 sources counts as one for every 100 of them.
 
 Collections and saved searches are kept in `.scient/sources/collections.json`
 with the rest of the project's Library; study designs and topics in
