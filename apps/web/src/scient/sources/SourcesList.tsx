@@ -2,6 +2,7 @@ import type { ScientSourcesOverviewResult } from "@t3tools/contracts";
 import { LegendList } from "@legendapp/list/react";
 import type { ReactNode } from "react";
 
+import { ScrollArea } from "../../components/ui/scroll-area";
 import { SourceRow, type SourceRowContext } from "./SourceRow";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
@@ -19,9 +20,25 @@ export const SOURCE_ROW_ESTIMATED_SIZE = 63;
 export function SourcesList(props: {
   readonly records: ReadonlyArray<SourceRecord>;
   readonly row: SourceRowContext;
+  readonly virtualized: boolean;
   readonly header?: ReactNode;
   readonly footer?: ReactNode;
 }) {
+  // The project backend keeps the shared overlay scrollbar and every row mounted; only a
+  // Library scope virtualizes. Project users must see no change before the flip.
+  if (!props.virtualized) {
+    return (
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="divide-y divide-border">
+          {props.header}
+          {props.records.map((record) => (
+            <SourceRow key={record.sourceId} record={record} row={props.row} />
+          ))}
+          {props.footer}
+        </div>
+      </ScrollArea>
+    );
+  }
   const divided = props.records.length > 0;
   return (
     <LegendList<SourceRecord>
@@ -35,6 +52,7 @@ export function SourcesList(props: {
       )}
       estimatedItemSize={SOURCE_ROW_ESTIMATED_SIZE}
       drawDistance={SOURCE_ROW_ESTIMATED_SIZE * 8}
+      recycleItems={false}
       ListHeaderComponent={
         props.header ? (
           <div className={divided ? "[&>*]:border-b [&>*]:border-border" : undefined}>

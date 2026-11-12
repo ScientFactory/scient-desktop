@@ -117,6 +117,7 @@ function Harness() {
       </button>
       <SourcesList
         records={sources.overview?.records ?? []}
+        virtualized={sources.overview?.scopes !== undefined}
         row={{
           environmentId,
           root: "/project",
@@ -183,6 +184,20 @@ function scrollerOf(element: HTMLElement): HTMLElement {
 }
 
 describe("Sources list at Library size", () => {
+  it("keeps the project backend in the shared scroll area with every row mounted", async () => {
+    setup();
+    const { scopes: _scopes, libraryBackend: _backend, ...project } = overview();
+    mocks.readScientSources.mockResolvedValue({ ...project, libraryBackend: false });
+    await using screen = await render(<Harness />, { router: false });
+
+    await expect.element(screen.getByText("Source 0001")).toBeVisible();
+    expect(mountedRows(screen.container).length).toBe(SOURCE_COUNT);
+    expect(rowTitled(screen.container, "Source 2999")).not.toBeNull();
+    expect(
+      rowTitled(screen.container, "Source 0001")!.closest('[data-slot="scroll-area-viewport"]'),
+    ).not.toBeNull();
+  });
+
   it("mounts only a window of 3,000 rows, each at the estimated height", async () => {
     setup();
     mocks.readScientSources.mockResolvedValue(overview());

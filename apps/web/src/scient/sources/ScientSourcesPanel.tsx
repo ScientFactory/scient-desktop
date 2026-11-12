@@ -1588,6 +1588,7 @@ export function ScientSourcesPanel(props: {
         <SourcesList
           records={filteredSourceRecords}
           row={sourceRow}
+          virtualized={scopes !== undefined}
           header={
             sourceQuery ? null : (
               <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
