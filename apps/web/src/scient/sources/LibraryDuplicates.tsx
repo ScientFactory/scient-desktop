@@ -58,7 +58,7 @@ const message = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta
 export function LibraryDuplicatesView(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
-  readonly organize: Pick<SourcesOrganize, "organize" | "whenFree" | "pending">;
+  readonly organize: Pick<SourcesOrganize, "organize" | "whenFree" | "pending" | "changes">;
   readonly canChange: boolean;
   readonly initialSection: DuplicatesSection;
   readonly onBack: () => void;
@@ -81,15 +81,19 @@ export function LibraryDuplicatesView(props: {
     null,
   );
   const current = reading?.context === context ? reading : null;
+  // Try again. A change that lands (here, from a toast, or from a view that has closed since)
+  // moves `changes`, which reads again too.
   const reload = () => setAsks((value) => value + 1);
+  // Both only grow, so their sum moves whenever either does.
+  const ask = asks + props.organize.changes;
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the possible duplicates from the environment server when the screen opens and after each change made here
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the possible duplicates from the environment server when the screen opens and after each change that lands through the organize hook
   useEffect(() => {
     let live = true;
     void readLibraryDuplicates(props.environmentId, props.root).then(
       (result) => {
         if (!live) return;
-        setReading({ context, result, error: null, ask: asks });
+        setReading({ context, result, error: null, ask });
         setSettled(new Set());
       },
       (cause: unknown) => {
@@ -98,14 +102,14 @@ export function LibraryDuplicatesView(props: {
           context,
           result: previous?.context === context ? previous.result : null,
           error: message(cause),
-          ask: asks,
+          ask,
         }));
       },
     );
     return () => {
       live = false;
     };
-  }, [props.environmentId, props.root, context, asks]);
+  }, [props.environmentId, props.root, context, ask]);
 
   const { organize, whenFree } = props.organize;
   const settle = (pair: Pair) => setSettled((previous) => new Set([...previous, pairKey(pair)]));
@@ -113,7 +117,6 @@ export function LibraryDuplicatesView(props: {
   const undoMerge = async (mergeId: string) => {
     const result = await organize({ action: "undo-merge", mergeId }, DUPLICATE_LABELS.undoFailed);
     if (!result) return;
-    reload();
     const problem = undoProblem(result);
     toastManager.add(
       problem
@@ -138,7 +141,6 @@ export function LibraryDuplicatesView(props: {
     if (!result) return;
     setMerging(null);
     settle(pair);
-    reload();
     const landed = result.outcome === "merged" ? result.merges?.[0] : undefined;
     if (!landed) {
       toastManager.add({
@@ -175,7 +177,6 @@ export function LibraryDuplicatesView(props: {
     );
     if (!result) return;
     settle(pair);
-    reload();
     const id = toastManager.add({
       type: "success",
       title: DUPLICATE_LABELS.markedNotDuplicates,
@@ -187,7 +188,6 @@ export function LibraryDuplicatesView(props: {
           void organize({ action: "clear-distinct", sourceIds }, DUPLICATE_LABELS.undoFailed).then(
             (cleared) => {
               if (!cleared) return;
-              reload();
               toastManager.add({ type: "success", title: DUPLICATE_LABELS.unmarked });
             },
           );

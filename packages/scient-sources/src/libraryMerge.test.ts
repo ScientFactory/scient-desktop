@@ -547,7 +547,16 @@ describe("library merge engine", () => {
       { field: "publisher", kept: "South Press", other: "North Press" },
     ]);
 
-    await undoScientLibraryMerge({ library, mergeId });
+    // An Undo that stopped after bringing the merged-away source back stays listed; Undo finishes it.
+    const trashFile = NodePath.join(root, "trash", "source_pair1.json");
+    const trashed = JSON.parse(await NodeFSP.readFile(trashFile, "utf8")) as {
+      readonly record: ScientSourceRecord;
+    };
+    await seed(root, [trashed.record]);
+    await NodeFSP.rm(trashFile);
+    expect((await read()).merges.map(({ merge }) => merge.mergeId)).toEqual([mergeId]);
+
+    expect((await undoScientLibraryMerge({ library, mergeId })).outcome).toBe("undone");
     const undone = await read();
     expect(undone.merges).toEqual([]);
     expect(undone.possibleDuplicates).toEqual(before.possibleDuplicates);

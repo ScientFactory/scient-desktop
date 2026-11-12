@@ -48,6 +48,7 @@ const FIELD_WORDS: Readonly<Record<string, string>> = {
   issuedRaw: "date",
   issuedYear: "year",
   abstract: "abstract",
+  abstractSections: "abstract",
   containerTitle: "journal",
   publisher: "publisher",
   volume: "volume",
@@ -56,6 +57,12 @@ const FIELD_WORDS: Readonly<Record<string, string>> = {
   language: "language",
   url: "web address",
   identifiers: "identifiers",
+  note: "note",
+  readingStatus: "reading state",
+  starred: "star",
+  citationKey: "citation key",
+  verification: "registry check",
+  editorialStatus: "editorial notices",
 };
 
 function joinWords(words: ReadonlyArray<string>): string {
@@ -64,7 +71,7 @@ function joinWords(words: ReadonlyArray<string>): string {
 }
 
 function fieldWords(fields: ReadonlyArray<string>): string {
-  return joinWords([...new Set(fields.map((field) => FIELD_WORDS[field] ?? field))]);
+  return joinWords([...new Set(fields.map((field) => FIELD_WORDS[field] ?? "other details"))]);
 }
 
 const quoted = (title: string | null) => `“${title ?? DUPLICATE_LABELS.untitled}”`;

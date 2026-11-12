@@ -79,17 +79,24 @@ function Harness(props: { readonly onMerged: (sourceId: string) => void }) {
     setQuery,
     refreshOverview: async () => undefined,
   });
+  const [open, setOpen] = useState(true);
   return (
     <div className="flex h-[640px] flex-col">
-      <LibraryDuplicatesView
-        environmentId={"environment-1" as EnvironmentId}
-        root="/project"
-        organize={organize}
-        canChange
-        initialSection="pairs"
-        onBack={() => undefined}
-        onMerged={props.onMerged}
-      />
+      {open ? (
+        <LibraryDuplicatesView
+          environmentId={"environment-1" as EnvironmentId}
+          root="/project"
+          organize={organize}
+          canChange
+          initialSection="pairs"
+          onBack={() => setOpen(false)}
+          onMerged={props.onMerged}
+        />
+      ) : (
+        <button type="button" onClick={() => setOpen(true)}>
+          Open duplicates
+        </button>
+      )}
     </div>
   );
 }
@@ -104,7 +111,9 @@ function setup(...reads: ReadonlyArray<ScientSourcesDuplicatesResult>) {
 
 describe("Possible duplicates", () => {
   it("merges keeping the side the person chose; the toast's Undo brings the pair back", async () => {
-    const { onMerged } = setup(withPair, empty, withPair);
+    // Opened, after the merge, reopened, after the Undo.
+    const { onMerged } = setup(withPair, empty, empty, withPair);
+    let answerUndo = (_value: unknown) => {};
     mocks.organizeScientSources
       .mockResolvedValueOnce({
         outcome: "merged",
@@ -118,7 +127,11 @@ describe("Possible duplicates", () => {
           },
         ],
       })
-      .mockResolvedValueOnce({ outcome: "undone", survivorId: "b", unrevertedFields: [] });
+      .mockReturnValueOnce(
+        new Promise((resolve) => {
+          answerUndo = resolve;
+        }),
+      );
     await using screen = await render(<Harness onMerged={onMerged} />, { router: false });
     using add = vi.spyOn(toastManager, "add");
 
@@ -142,9 +155,18 @@ describe("Possible duplicates", () => {
       actionProps: { children: "Undo" },
     });
 
+    // The toast outlives the view: closed and opened again, the new view shows the Undo.
+    await userEvent.click(screen.getByRole("button", { name: "Go back" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open duplicates" }));
+    await expect.element(screen.getByText("No possible duplicates in your Library.")).toBeVisible();
     const undo = add.mock.calls[0]![0].actionProps?.onClick as () => void;
     undo();
+    // A second Undo while the first is in flight (the toast and the Merged row) is refused.
+    undo();
+    expect(add.mock.calls.at(-1)![0]).toMatchObject({ title: "Another change is still running" });
+    answerUndo({ outcome: "undone", survivorId: "b", unrevertedFields: [] });
     await expect.element(screen.getByText("Different journal and projects.")).toBeVisible();
+    expect(mocks.organizeScientSources).toHaveBeenCalledTimes(2);
     expect(mocks.organizeScientSources.mock.calls[1]![1].change).toEqual({
       action: "undo-merge",
       mergeId: "merge_1",

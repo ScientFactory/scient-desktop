@@ -144,7 +144,11 @@ import {
   readLibraryMoveStatus,
   scientLibraryMoveNotice,
 } from "../../../scient/sources/LibraryMove.ts";
-import { libraryDuplicates, moveBackResult } from "../../../scient/sources/LibrarySourcesRoutes.ts";
+import {
+  bothInLibrary,
+  libraryDuplicates,
+  moveBackResult,
+} from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import { ReferenceIdentifierLookup } from "../../../scient/references/ReferenceCheck.ts";
 import {
   checkSourceQuotes,
@@ -499,7 +503,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
           merges: found.merges.slice(0, AGENT_UNDOABLE_MERGES).map((merge) => ({
             mergeId: merge.mergeId,
             mergedAt: merge.mergedAt,
-            survivorId: merge.kept?.sourceId ?? merge.mergedSourceId,
+            survivorId: merge.keptSourceId,
             mergedSourceId: merge.mergedSourceId,
             mergedTitle: merge.mergedTitle,
             keptDifferent: merge.keptDifferent,
@@ -855,6 +859,9 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
         yield* sourceIdIn(store, change.sourceIds[1]!),
       ] as const;
       if (change.action === "mark-distinct") {
+        if (!(yield* attempt(() => bothInLibrary(store, sourceIds)))) {
+          return { outcome: "not-found" as const };
+        }
         return yield* attempt(() =>
           markScientLibrarySourcesDistinct({ library: store.library, sourceIds, actor: "agent" }),
         );

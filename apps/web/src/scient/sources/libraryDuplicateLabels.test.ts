@@ -39,5 +39,9 @@ describe("possible-duplicate labels", () => {
       "Where they differed, the kept one's journal, year and date stayed.",
     );
     expect(keptDifferentLabel([])).toBeNull();
+    // Undo can name any field the merge set; none is shown by its key.
+    expect(unrevertedLabel(["abstract", "abstractSections", "note", "someNewField"])).toBe(
+      "Changes made after the merge were kept: abstract, note and other details.",
+    );
   });
 });

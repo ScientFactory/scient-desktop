@@ -735,6 +735,13 @@ describe("Library routes on the library backend", () => {
         expect((yield* Effect.promise(records)).length).toBe(2);
 
         const pair = [first.sourceId, second.sourceId] as const;
+        const unknown = yield* Effect.promise(() =>
+          organizeLibrarySources(store, {
+            change: { action: "mark-distinct", sourceIds: [first.sourceId, "source_typo"] },
+          }),
+        );
+        expect(unknown.outcome).toBe("not-found");
+        expect((yield* Effect.promise(() => libraryDuplicates(store))).pairsTotal).toBe(1);
         const marked = yield* Effect.promise(() =>
           organizeLibrarySources(store, { change: { action: "mark-distinct", sourceIds: pair } }),
         );
@@ -757,6 +764,7 @@ describe("Library routes on the library backend", () => {
         expect(afterMerge.merges).toMatchObject([
           {
             requested: true,
+            keptSourceId: second.sourceId,
             kept: { sourceId: second.sourceId },
             mergedSourceId: first.sourceId,
             mergedTitle: "Shock trial",

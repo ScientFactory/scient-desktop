@@ -79,16 +79,23 @@ async function runOrganizeWork<A>(input: {
   readonly failureTitle: string;
   readonly refresh: () => Promise<unknown>;
   readonly setPending: (pending: boolean) => void;
+  /** Requests in flight, read synchronously by toast actions. */
+  readonly inFlight: { current: number };
+  /** Called once the change landed, before the overview is read again. */
+  readonly changed: () => void;
 }): Promise<A | null> {
   input.setPending(true);
+  input.inFlight.current += 1;
   try {
     const result = await input.work();
+    input.changed();
     await input.refresh().catch(() => undefined);
     return result;
   } catch (cause) {
     toastManager.add({ type: "error", title: input.failureTitle, description: message(cause) });
     return null;
   } finally {
+    input.inFlight.current -= 1;
     input.setPending(false);
   }
 }
@@ -119,6 +126,11 @@ export function useSourcesOrganize(input: {
   // The line and its Stop belong to the project the run was started in.
   const progress = running?.context === context ? running : null;
   const partsRunning = useRef(false);
+  const inFlight = useRef(0);
+  // Counts changes that landed, so a view that reads more than the overview reads again,
+  // also after a toast's action from a view that has closed since.
+  const [changes, setChanges] = useState(0);
+  const changed = () => setChanges((value) => value + 1);
   const stopRequested = useRef(false);
   const showDone = (done: number) =>
     setProgress((current) => (current ? { ...current, done } : current));
@@ -160,9 +172,12 @@ export function useSourcesOrganize(input: {
       description: "Try again when it finishes.",
     });
   };
-  /** A toast's action: kept, with its toast, while a change in parts is running. */
+  /**
+   * A toast's action: kept, with its toast, while another change is running, so a toast cannot
+   * repeat a request that is still in flight (a merge's Undo from its toast and its row).
+   */
   const whenFree = (act: () => void) => () => {
-    if (partsRunning.current) refuse();
+    if (partsRunning.current || inFlight.current > 0) refuse();
     else act();
   };
 
@@ -171,7 +186,14 @@ export function useSourcesOrganize(input: {
       refuse();
       return Promise.resolve(null);
     }
-    return runOrganizeWork({ work, failureTitle, refresh: input.refreshOverview, setPending });
+    return runOrganizeWork({
+      work,
+      failureTitle,
+      refresh: input.refreshOverview,
+      setPending,
+      inFlight,
+      changed,
+    });
   };
 
   /** One change in parts at a time, with the progress line from its first part to its last. */
@@ -190,7 +212,14 @@ export function useSourcesOrganize(input: {
     return runPartsWork({
       running: partsRunning,
       work: () =>
-        runOrganizeWork({ work, failureTitle, refresh: input.refreshOverview, setPending }),
+        runOrganizeWork({
+          work,
+          failureTitle,
+          refresh: input.refreshOverview,
+          setPending,
+          inFlight,
+          changed,
+        }),
       end: () => setProgress(null),
     });
   };
@@ -411,6 +440,8 @@ export function useSourcesOrganize(input: {
   return {
     organization,
     pending: pending || running !== null,
+    /** Changes that landed through this hook; read again when it moves. */
+    changes,
     progress,
     stopProgress: () => {
       stopRequested.current = true;
@@ -467,7 +498,7 @@ export function useSourcesOrganize(input: {
     setSelection: (sourceIds: Iterable<string>) => update({ selection: new Set(sourceIds) }),
     clearSelection: () => update({ selection: new Set() }),
     organize,
-    /** Wraps a toast's action so it is refused, with its toast kept, while a change in parts runs. */
+    /** Wraps a toast's action so it is refused, with its toast kept, while another change runs. */
     whenFree,
     bulk,
     createCollection: async (

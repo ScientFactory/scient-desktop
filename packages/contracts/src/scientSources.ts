@@ -896,6 +896,8 @@ export const ScientSourcesDuplicatesResult = Schema.Struct({
       mergedAt: NonEmptyString,
       /** False for the automatic merges of the move into the Library. */
       requested: Schema.Boolean,
+      /** The source the merge kept, whether or not it is still in the Library. */
+      keptSourceId: NonEmptyString,
       /** Null when the kept source was merged on or removed since: Undo explains. */
       kept: Schema.NullOr(ScientSourcesDuplicateSource),
       mergedSourceId: NonEmptyString,

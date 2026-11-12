@@ -891,7 +891,7 @@ export async function undoScientLibraryMerge(input: {
 
 interface ScientLibraryUndoableMerge {
   readonly merge: ScientLibraryMerge;
-  /** The merged-away record as it went to the trash. */
+  /** The merged-away record as it went to the trash, or live after an Undo that stopped halfway. */
   readonly merged: ScientSourceRecord;
 }
 
@@ -902,7 +902,7 @@ interface ScientLibraryDuplicatesListing {
   readonly possibleDuplicates: ReadonlyArray<
     ScientLibraryPossibleDuplicate & { readonly survivorId: string }
   >;
-  /** Merges Undo can still reverse, newest first, at most `mergeLimit`. */
+  /** Merges Undo can still reverse (Undo's own rule), newest first, at most `mergeLimit`. */
   readonly merges: ReadonlyArray<ScientLibraryUndoableMerge>;
   readonly mergesTotal: number;
 }
@@ -937,27 +937,36 @@ export async function readScientLibraryDuplicates(input: {
           .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
           .map((entry) => entry.name)
       : [];
-  // Undo needs the merged-away record in the trash; emptying the trash ends a merge's Undo.
+  // Undo's own rule: the merged-away source is live (an Undo that stopped halfway) or in the
+  // trash under this merge. Emptying the trash ends a merge's Undo.
   const trashed = new Set(await fileNames(paths.trash));
-  const done: ScientLibraryMerge[] = [];
+  const undoable: ScientLibraryUndoableMerge[] = [];
   for (const name of await fileNames(directory)) {
     const merge = await readBoundedJson(
       NodePath.join(directory, name),
       MAX_MERGE_BYTES,
       ScientLibraryMerge,
     ).catch(() => null);
-    if (merge?.state === "done" && trashed.has(`${merge.loserId}.json`)) done.push(merge);
-  }
-  done.sort(
-    (left, right) =>
-      right.mergedAt.localeCompare(left.mergedAt) || left.mergeId.localeCompare(right.mergeId),
-  );
-  const merges: ScientLibraryUndoableMerge[] = [];
-  let gone = 0;
-  for (const merge of done.slice(0, Math.max(0, input.mergeLimit))) {
+    if (merge?.state !== "done") continue;
+    const live = byId.get(merge.loserId);
+    if (live) {
+      undoable.push({ merge, merged: live });
+      continue;
+    }
+    if (!trashed.has(`${merge.loserId}.json`)) continue;
     const entry = await readTrashEntry(paths, merge.loserId).catch(() => null);
-    if (entry?.mergedInto?.mergeId === merge.mergeId) merges.push({ merge, merged: entry.record });
-    else gone += 1;
+    if (entry?.mergedInto?.mergeId === merge.mergeId)
+      undoable.push({ merge, merged: entry.record });
   }
-  return { records, possibleDuplicates, merges, mergesTotal: done.length - gone };
+  undoable.sort(
+    (left, right) =>
+      right.merge.mergedAt.localeCompare(left.merge.mergedAt) ||
+      left.merge.mergeId.localeCompare(right.merge.mergeId),
+  );
+  return {
+    records,
+    possibleDuplicates,
+    merges: undoable.slice(0, Math.max(0, input.mergeLimit)),
+    mergesTotal: undoable.length,
+  };
 }

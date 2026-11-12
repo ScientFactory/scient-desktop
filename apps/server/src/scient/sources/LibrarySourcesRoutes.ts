@@ -301,6 +301,7 @@ export async function libraryDuplicates(store: Store): Promise<ScientSourcesDupl
         mergeId: merge.mergeId,
         mergedAt: merge.mergedAt,
         requested: merge.kind === "requested",
+        keptSourceId: merge.survivorId,
         kept: kept ? row(kept) : null,
         mergedSourceId: merge.loserId,
         mergedTitle: merged.title,
@@ -712,12 +713,11 @@ export async function organizeLibrarySources(
         unrevertedFields: undone.unrevertedFields,
       };
     }
-    case "mark-distinct":
-      return markScientLibrarySourcesDistinct({
-        library: store.library,
-        sourceIds: await distinctPair(store, change.sourceIds),
-        actor: ACTOR,
-      });
+    case "mark-distinct": {
+      const sourceIds = await distinctPair(store, change.sourceIds);
+      if (!(await bothInLibrary(store, sourceIds))) return { outcome: "not-found" as const };
+      return markScientLibrarySourcesDistinct({ library: store.library, sourceIds, actor: ACTOR });
+    }
     case "clear-distinct": {
       const cleared = await clearScientLibrarySourcesDistinct({
         library: store.library,
@@ -790,6 +790,13 @@ async function changeLibraryPins(
 
 const distinctPair = async (store: Store, sourceIds: readonly [string, string]) =>
   [await libraryIdOf(store, sourceIds[0]), await libraryIdOf(store, sourceIds[1])] as const;
+
+/** "Not duplicates" names two live Library sources; an unknown ID is not-found, as for merge. */
+export const bothInLibrary = async (store: Store, sourceIds: readonly [string, string]) =>
+  store.exists &&
+  (
+    await Promise.all(sourceIds.map((sourceId) => readScientSourceRecord(store.library, sourceId)))
+  ).every((record) => record !== null);
 
 export const moveBackResult = (moved: Awaited<ReturnType<typeof moveProjectBackIntoProject>>) =>
   moved.outcome === "moved-back"
