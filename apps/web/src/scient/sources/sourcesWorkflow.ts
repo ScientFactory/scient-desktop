@@ -363,7 +363,9 @@ export function sourcesWorkflowReducer(
       };
     }
     case "sourceRecordAccepted": {
-      const record = withReadingOverride(action.record, state.readingOverrides);
+      // No reading override here: the record was read after this window's own write,
+      // so an older override would mask fresher server state.
+      const record = action.record;
       return {
         ...state,
         sourceDetails: {

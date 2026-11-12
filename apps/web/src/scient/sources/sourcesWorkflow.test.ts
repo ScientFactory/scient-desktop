@@ -620,6 +620,38 @@ describe("sources workflow on a personal Library", () => {
     });
     expect(fresh.sourceDetails["a"]).toMatchObject({ readingStatus: "unread" });
   });
+
+  it("keeps the server's reading state when a note save answers after another window's change", () => {
+    const marked = reduceAll(
+      initialSourcesWorkflowState,
+      { type: "overviewRequestStarted", request: 1 },
+      {
+        type: "overviewArrived",
+        request: 1,
+        overview: overviewWith([
+          { sourceId: "a", revision: 4, readingStatus: "unread", starred: false, pinned: true },
+        ]),
+      },
+      {
+        type: "readingStateArrived",
+        atDetailFetch: 1,
+        result: {
+          sources: [{ sourceId: "a", outcome: "updated", readingStatus: "read", starred: false }],
+        },
+      },
+    );
+    const accepted = sourcesWorkflowReducer(marked, {
+      type: "sourceRecordAccepted",
+      record: {
+        ...detail({ sourceId: "a", revision: 4 }),
+        readingStatus: "unread",
+        starred: false,
+        personalNote: "Mine",
+      },
+    });
+    expect(accepted.sourceDetails["a"]).toMatchObject({ readingStatus: "unread" });
+    expect(accepted.overview?.records[0]).toMatchObject({ readingStatus: "unread" });
+  });
 });
 
 describe("sources workflow import transitions", () => {
