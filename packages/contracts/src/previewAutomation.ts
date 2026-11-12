@@ -52,6 +52,10 @@ export const PREVIEW_AUTOMATION_SERVER_OPERATIONS = [
   "accountType",
   "accountWaitForLoad",
   // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
+  "networkList",
+  "networkRequest",
+  // SCIENT-FORK:END
 ] as const;
 export const PreviewAutomationOperation = Schema.Literals([
   ...PREVIEW_AUTOMATION_SERVER_OPERATIONS,

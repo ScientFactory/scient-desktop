@@ -274,6 +274,63 @@ describe("MCP Registry discover", () => {
     expect(Discover.parseRegistryPage("<html>")).toBeUndefined();
   });
 
+  it("runs the packages it can and says why it can't run the rest", () => {
+    const entry = (...packages: ReadonlyArray<object>) =>
+      Discover.parseRegistryPage(
+        JSON.stringify({
+          servers: [
+            {
+              server: { name: "example/local", version: "1.0.0", packages },
+              _meta: { "io.modelcontextprotocol.registry/official": { status: "active" } },
+            },
+          ],
+        }),
+      )!.entries[0]!;
+    const npm = { registryType: "npm", identifier: "@acme/mcp", version: "2.3.3" };
+    // npx -y is what Scient runs already, so it is not passed again.
+    expect(entry({ ...npm, runtimeArguments: [{ type: "named", name: "-y" }] })).toMatchObject({
+      installable: true,
+      localPackage: { runner: "npx", identifier: "@acme/mcp", args: [] },
+    });
+    const sha256 = "a".repeat(64);
+    expect(
+      entry({ registryType: "mcpb", identifier: "https://example.com/a.mcpb", fileSha256: sha256 }),
+    ).toMatchObject({
+      installable: true,
+      localBundle: { url: "https://example.com/a.mcpb", sha256 },
+    });
+    // The first package's reason is shown when none of them can run.
+    for (const [packages, reason] of [
+      [[{ registryType: "oci", identifier: "acme/mcp" }, npm], undefined],
+      [[{ registryType: "oci", identifier: "acme/mcp" }], "Runs in Docker"],
+      [[{ registryType: "nuget", identifier: "Acme.Mcp" }], "Runs from .NET (NuGet) packages"],
+      [[{ ...npm, transport: { type: "sse" } }], "Runs here as a sse server"],
+      [
+        [{ ...npm, runtimeArguments: [{ type: "named", name: "--package" }] }],
+        "Needs runner options Scient doesn't pass (--package)",
+      ],
+      // regression: an option that did not decode skipped the package: "Publishes no remote endpoint".
+      [
+        [{ ...npm, runtimeArguments: [{ type: "named", name: "--registry", isRequired: "yes" }] }],
+        "Needs runner options Scient doesn't pass (an option it can't read)",
+      ],
+      [[{ registryType: "npm" }], "listed in a form Scient can't read"],
+      [
+        [{ ...npm, packageArguments: [{ type: "named", name: "--root", isRequired: true }] }],
+        "Needs a value for --root",
+      ],
+      [[{ registryType: "mcpb", identifier: "http://example.com/a.mcpb" }], "checksum"],
+    ] as const) {
+      const shown = entry(...packages);
+      if (reason === undefined) expect(shown.installable).toBe(true);
+      else
+        expect(shown).toMatchObject({
+          installable: false,
+          unsupportedReason: expect.stringContaining(reason),
+        });
+    }
+  });
+
   it.effect("serves a query from cache for ten minutes and keeps installed state live", () => {
     const http = harness(() => Response.json(recordedPage));
     let installed: ReadonlyArray<ConnectorSummary> = [];

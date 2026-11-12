@@ -73,6 +73,10 @@ export const SCIENT_PAPERS_AWARENESS = buildScientPapersAwareness(
   true,
 );
 
+const buildScientConnectorsAwareness = (tools: ScientToolProjection): string =>
+  `## Scient connectors
+When the user needs a service, find one with \`${tools.name("scient_connector_list")}\` and add it with \`${tools.name("scient_connector_add")}\`; if none fits, offer to build one with the \`connector-authoring\` skill. When a connector fails, offer to fix it (\`${tools.name("scient_connector_copy")}\`) or sign it in again (\`${tools.name("scient_connector_control")}\`).`;
+
 /**
  * Compose only the blocks whose tools this session's list can show. The
  * capabilities are the session's provider-facing manifest, which omits project
@@ -98,7 +102,9 @@ export function buildScientAwareness(
       ? [buildScientDocumentAwareness(tools), buildScientOverleafAwareness(tools)]
       : []),
     ...(has("skills:read") ? [buildScientSkillsAwareness(tools)] : []),
-    ...(has("accounts") ? [buildScientPapersAwareness(tools, has("preview"))] : []),
+    ...(has("accounts")
+      ? [buildScientPapersAwareness(tools, has("preview")), buildScientConnectorsAwareness(tools)]
+      : []),
   ].join("\n\n");
 }
 

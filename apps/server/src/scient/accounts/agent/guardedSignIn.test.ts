@@ -250,6 +250,27 @@ it.effect("an automatic caller won't sign in again right after a sign-in that wo
   }),
 );
 
+it.effect("a connector signs in again once its session outlived the short pause", () =>
+  Effect.gen(function* () {
+    const rows = [row("worked", at("signed-in"))];
+    const { run, resolved } = world(rows);
+    const connector: SignInCaller = { kind: "connector" };
+    // Ended right after signing in: something keeps ending it.
+    expect(yield* run(rows[0]!, connector)).toMatchObject({
+      message: expect.stringContaining("moments ago"),
+    });
+    expect(resolved).toEqual([]);
+    // A session that lasted a few minutes ended normally; the page caller still waits longer.
+    yield* TestClock.adjust("3 minutes");
+    expect(yield* run(rows[0]!, page)).toMatchObject({
+      message: expect.stringContaining("moments ago"),
+    });
+    const renewed = yield* run(rows[0]!, connector);
+    expect("message" in renewed ? renewed.message : "").not.toContain("moments ago");
+    expect(resolved).not.toEqual([]);
+  }),
+);
+
 it.effect("account controls decide every resolve, read again when the attempt starts", () =>
   Effect.gen(function* () {
     const controls = (access: "allowed" | "ask" | "off") => ({

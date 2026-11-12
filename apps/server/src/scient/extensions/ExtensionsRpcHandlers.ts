@@ -314,6 +314,18 @@ export const makeExtensionsRpcHandlers = ({
         connectorRuntime.remove(input).pipe(Effect.andThen(inventory())),
         traceAttributes,
       ),
+    [WS_METHODS.extensionsConnectorUndo]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsConnectorUndo,
+        connectorRuntime.undo(input).pipe(Effect.andThen(inventory())),
+        traceAttributes,
+      ),
+    [WS_METHODS.extensionsConnectorExport]: (input) =>
+      observeRpcEffect(
+        WS_METHODS.extensionsConnectorExport,
+        connectorRuntime.exportLocal(input),
+        traceAttributes,
+      ),
     [WS_METHODS.extensionsConnectorTest]: (input) =>
       observeRpcEffect(
         WS_METHODS.extensionsConnectorTest,

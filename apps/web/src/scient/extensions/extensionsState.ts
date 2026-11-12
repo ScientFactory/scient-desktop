@@ -165,6 +165,18 @@ export function createExtensionsAtoms<R, E>(
       tag: WS_METHODS.extensionsConnectorRemove,
       ...mutationLane,
     }),
+    /** Undoes the last change to a local connector's folder, or brings a removed one back. */
+    undoConnector: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:undo-connector",
+      tag: WS_METHODS.extensionsConnectorUndo,
+      ...mutationLane,
+    }),
+    /** A local connector as an .mcpb file; changes nothing. */
+    exportConnector: createEnvironmentRpcCommand(runtime, {
+      label: "environment-command:extensions:export-connector",
+      tag: WS_METHODS.extensionsConnectorExport,
+      concurrency: perConnector,
+    }),
     installScientPlugin: createEnvironmentRpcCommand(runtime, {
       label: "environment-command:extensions:install-plugin",
       tag: WS_METHODS.extensionsPluginInstall,
@@ -258,6 +270,8 @@ export const extensionsDiscoverPage = extensionsAtoms.discoverPage;
 export const addConnector = extensionsAtoms.addConnector;
 export const updateConnector = extensionsAtoms.updateConnector;
 export const removeConnector = extensionsAtoms.removeConnector;
+export const undoConnector = extensionsAtoms.undoConnector;
+export const exportConnector = extensionsAtoms.exportConnector;
 export const installScientPlugin = extensionsAtoms.installScientPlugin;
 export const removeScientPlugin = extensionsAtoms.removeScientPlugin;
 export const setScientPluginEnabled = extensionsAtoms.setScientPluginEnabled;

@@ -23,6 +23,7 @@ import { PreviewAutomationBroker } from "../../../mcp/PreviewAutomationBroker.ts
 import type { PaperRequester } from "../../papers/paperAttempt.ts";
 import { AgentInvocationContext } from "../../operations/AgentInvocationContext.ts";
 import {
+  agentAccessOff,
   authorizationDecision,
   siteMatches as siteMatchesOrigin,
   signedInMomentsAgo,
@@ -52,6 +53,8 @@ export type SignInCaller =
       readonly scope: AccountSessionScope;
       readonly requester: Pick<PaperRequester, "accounts">;
     }
+  /** A local connector the user linked this sign-in to: signed in again, unattended, when it ends. */
+  | { readonly kind: "connector" }
   /** The user's own press, in the invocation's thread: they see the tab and finish what's left. */
   | {
       readonly kind: "person";
@@ -92,12 +95,15 @@ interface SignInRequest {
   readonly caller: SignInCaller;
 }
 
-const automatic = (caller: SignInCaller) => caller.kind === "page" || caller.kind === "paper";
+const automatic = (caller: SignInCaller) =>
+  caller.kind === "page" || caller.kind === "paper" || caller.kind === "connector";
 const userPress = (caller: SignInCaller) => caller.kind === "check" || caller.kind === "person";
 
 /** A person has fifteen minutes, looked at often enough to close a university's return at once. */
 const PERSON = { waitMs: 15 * 60_000, lookGapMs: 400 };
 const MOST_PENDING = 4;
+/** A connector's session that ends sooner than this after a sign-in is not signed in again. */
+const CONNECTOR_SIGN_IN_PAUSE_MS = 2 * 60_000;
 
 type Invocation = AgentInvocationContext["Service"];
 
@@ -229,6 +235,9 @@ const mayType = Effect.fn("AccountsAgent.mayType")(function* (
       return account.controls.access !== "off";
     case "check":
       return account.controls.access !== "off";
+    case "connector":
+      // The user linked it to the connector; the connector already checked Off and scope.
+      return !agentAccessOff(agentAccess, account.controls.access);
   }
 });
 
@@ -301,7 +310,13 @@ const attempt = Effect.fn("AccountsAgent.signInAttempt")(function* (
       outcome: "limited",
       message: "The site is limiting access from this network. Try again in an hour.",
     } satisfies SignInAttempt;
-  if (automatic(caller) && signedInMomentsAgo(account, now))
+  const endedTooSoon =
+    caller.kind === "connector"
+      ? // A connector retries each call once; only a session that ends right away is a loop.
+        account.signIn?.state === "signed-in" &&
+        now - Date.parse(account.signIn.at) < CONNECTOR_SIGN_IN_PAUSE_MS
+      : signedInMomentsAgo(account, now);
+  if (automatic(caller) && endedTooSoon)
     return {
       outcome: "failed",
       message: `${account.name} signed in moments ago, so something keeps ending it. Scient won't repeat it by itself.`,

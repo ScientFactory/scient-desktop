@@ -35,6 +35,14 @@ import { page, userEvent } from "vite-plus/test/browser";
 vi.mock("../accounts/useAccountBrowser", () => ({ useAccountBrowser: () => async () => false }));
 vi.mock("../accounts/useScratchThread", () => ({ useScratchThread: () => async () => null }));
 vi.mock("../skills/composerSkills", () => ({ useTryComposerSkill: () => undefined }));
+vi.mock("./connectorAgentChat", () => ({
+  useConnectorAgentChat: () => undefined,
+  MAKE_CONNECTOR_PROMPT: "",
+  fixConnectorPrompt: () => "",
+  improveConnectorPrompt: () => "",
+  makeFromEntryPrompt: () => "",
+}));
+vi.mock("../accounts/useSignIn", () => ({ useSignIn: () => async () => false }));
 vi.mock("../skills/skillAgentChat", () => ({
   useSkillAgentChat: () => undefined,
   finishSkillPrompt: () => "",
@@ -84,6 +92,8 @@ const state = vi.hoisted(() => ({
     add: vi.fn(),
     update: vi.fn(),
     remove: vi.fn(),
+    undo: vi.fn(),
+    export: vi.fn(),
     test: vi.fn(),
     startSignIn: vi.fn(),
     install: vi.fn(),
@@ -368,6 +378,8 @@ vi.mock("./extensionsState", async () => {
     addConnector: "add",
     updateConnector: "update",
     removeConnector: "remove",
+    undoConnector: "undo",
+    exportConnector: "export",
     testConnector: "test",
     inspectLocalBundle: "inspect",
     listImportableConnectors: "importable",
@@ -1841,6 +1853,59 @@ describe("Detail pages", () => {
     });
   });
 
+  it("removes a local connector without asking, keeps it for Undo, and undoes the last change", async () => {
+    await using fixture = setup();
+    const moodle = connector("moodle0001", {
+      displayName: "Course portal",
+      serverName: "course-portal",
+      url: "scient-local:con_moodle0001",
+      source: { type: "local" },
+      auth: { type: "none" },
+      updatedAt: "2026-11-10T09:00:00.000Z",
+      local: {
+        kind: "bundle",
+        directory: "/state/connectors/course-portal-moodle",
+        setup: [],
+        missing: [],
+        running: 0,
+        owned: true,
+        changedBy: "agent",
+        forkedFrom: "Moodle",
+        canUndo: true,
+      },
+    });
+    state.inventory = inventory({ connectors: [moodle] });
+    state.commands.remove.mockResolvedValue({ _tag: "Success", value: inventory() });
+    state.commands.undo.mockResolvedValue({ _tag: "Success", value: inventory() });
+    await fixture.render(<ConnectorDetailPage connectorId="con_moodle0001" />);
+    expect(fixture.section("Connection").textContent).toContain(
+      "Your copy of Moodle. Changed by an agent on",
+    );
+
+    await userEvent.click(buttonIn(fixture.section("Connection"), "Undo last change")!);
+    expect(state.commands.undo).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "local",
+      input: { connectorId: "con_moodle0001" },
+    });
+
+    await userEvent.click(buttonIn(fixture.header(), "Remove")!);
+    expect(state.confirm).not.toHaveBeenCalled();
+    expect(state.commands.remove).toHaveBeenCalledExactlyOnceWith({
+      environmentId: "local",
+      input: { connectorId: "con_moodle0001" },
+    });
+    const toast = state.toast.mock.calls.at(-1)?.[0] as {
+      title: string;
+      actionProps: { children: string; onClick: () => void };
+    };
+    expect(toast).toMatchObject({
+      title: "Removed Course portal",
+      actionProps: { children: "Undo" },
+    });
+    toast.actionProps.onClick();
+    expect(state.commands.undo).toHaveBeenCalledTimes(2);
+  });
+
   it("explains why a server cannot be added and adds one that can", async () => {
     await using fixture = setup();
     await fixture.render(<ServerDetailPage name="io.github.acme/local" />);
@@ -1855,6 +1920,28 @@ describe("Detail pages", () => {
     await userEvent.click(buttonIn(fixture.header(), "Add")!);
     expect(state.commands.add).toHaveBeenCalledOnce();
     expect(state.toast).toHaveBeenCalledWith({ type: "success", title: "Notion added" });
+
+    // A registry bundle is added in one step, by its address and checksum.
+    const bundle = { url: "https://example.com/echo.mcpb", sha256: "a".repeat(64) };
+    state.entries = {
+      "io.github.acme/echo": entry("io.github.acme/echo", {
+        title: "Echo",
+        remotes: [],
+        localBundle: bundle,
+      }),
+    };
+    state.commands.add.mockResolvedValueOnce({
+      _tag: "Success",
+      value: { connector: connector("echo000001", { displayName: "Echo" }), nextStep: "ready" },
+    });
+    await fixture.render(<ServerDetailPage name="io.github.acme/echo" />);
+    await userEvent.click(buttonIn(fixture.header(), "Add")!);
+    expect(state.commands.add).toHaveBeenLastCalledWith({
+      environmentId: "local",
+      input: expect.objectContaining({
+        target: { type: "registry-bundle", name: "io.github.acme/echo", version: "1.0.0", bundle },
+      }),
+    });
   });
 
   it("shows an added catalog server as its connector", async () => {

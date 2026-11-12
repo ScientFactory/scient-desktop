@@ -537,6 +537,31 @@
       "path": "apps/server/src/scient/extensions/connectors/LocalConnectors.ts",
       "anchor": "kind: \"local-connector\"",
       "purpose": "Resolve a local connector's linked Accounts keys at start and when Accounts changes."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/browserNetwork/handlers.ts",
+      "anchor": "AccountSessionFiles",
+      "purpose": "Save a large response body an agent studies to the thread's private files."
+    },
+    {
+      "path": "apps/server/src/mcp/toolkits/browserNetwork/tools.ts",
+      "anchor": "AccountSessionFiles",
+      "purpose": "Declare preview_network, whose large bodies go to the thread's private files."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/connectors/LocalConnectorAuthoring.ts",
+      "anchor": "ConnectorSessionsShape",
+      "purpose": "Check a folder signed in with an Accounts sign-in, and drop a removed connector's session files."
+    },
+    {
+      "path": "apps/server/src/scient/skills/BuiltInSkillSources.ts",
+      "anchor": "scient_account_add",
+      "purpose": "The connector-authoring skill tells agents to add a missing sign-in through Accounts."
+    },
+    {
+      "path": "apps/server/src/scient/extensions/ConnectorAgentControl.ts",
+      "anchor": "scient_account_sign_in",
+      "purpose": "Send an agent signing in a local connector to the user's linked Accounts sign-in."
     }
   ]
 }

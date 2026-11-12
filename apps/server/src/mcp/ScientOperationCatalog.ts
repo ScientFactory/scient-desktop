@@ -5,6 +5,7 @@ import { makeOperationRegistry } from "@scientfactory/operations";
 import type { Tool } from "effect/ai";
 
 import { operationDefinitionForTool } from "./ScientOperationTool.ts";
+import { ScientBrowserNetworkToolkit } from "./toolkits/browserNetwork/tools.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientDocumentsToolkit } from "./toolkits/documents/tools.ts";
 import { ScientOverleafToolkit } from "./toolkits/overleaf/tools.ts";
@@ -41,6 +42,7 @@ export const scientTools = [
   ...Object.values(ScientOverleafToolkit.tools),
   ...Object.values(ScientComputeToolkit.tools),
   ...Object.values(ScientThreadsToolkit.tools),
+  ...Object.values(ScientBrowserNetworkToolkit.tools),
 ];
 export type ScientToolName = (typeof scientTools)[number]["name"];
 export const scientOperationCatalog = makeScientOperationCatalog(scientTools);

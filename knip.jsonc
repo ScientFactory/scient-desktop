@@ -87,6 +87,8 @@
         // graphqlgen reads its config.
         "graphql.config.ts",
       ],
+      // Example programs in skills: agents copy them into connector folders; nothing imports them.
+      "ignore": ["src/scient/skills/built-ins/*/templates/**"],
       // The generated operations export every selection's class.
       "ignoreIssues": { "**/*.graphql.ts": ["exports", "types", "namespaceMembers"] },
       // Keep the transitive Effect runtime pinned for standalone npm installs.

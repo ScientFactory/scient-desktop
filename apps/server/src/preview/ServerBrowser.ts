@@ -66,6 +66,9 @@ import {
   type ProfileCookieJar,
 } from "../scient/accounts/profileCookieJar.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
+import { networkStudyOf } from "../scient/browser/NetworkStudy.ts";
+// SCIENT-FORK:END
 import { publishBrowserPdfExport } from "../scient/documentArtifacts/BrowserPdfExportPublication.ts";
 import type { GeneratedDocumentStore } from "../scient/documentArtifacts/GeneratedDocumentStore.ts";
 import { AgentScope, agentScopeLauncherScript } from "@t3tools/shared/AgentScope";
@@ -925,6 +928,9 @@ const make = Effect.gen(function* () {
     const page = adopted?.page ?? desktop?.page ?? (await context.newPage());
     if (!desktop) opened.push(() => page.close());
     const cdp = await context.newCDPSession(page);
+    // SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
+    await networkStudyOf(page).watch(cdp);
+    // SCIENT-FORK:END
     await installPdfDocumentNavigation(cdp);
     // The desktop's page is already a normal browser. A popup's first request
     // went out before it became a tab; everything after presents as Chrome.
@@ -1008,6 +1014,9 @@ const make = Effect.gen(function* () {
       request.isNavigationRequest() && request.frame() === page.mainFrame();
     const navigationGenerations = new WeakMap<object, number>();
     page.on("request", (request) => {
+      // SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
+      networkStudyOf(page).onRequest(request);
+      // SCIENT-FORK:END
       if (!isMainNavigation(request)) return;
       navigationGenerations.set(request, ++tab.navigationGeneration);
       clearAbortedNavigation(tab);
@@ -1047,6 +1056,9 @@ const make = Effect.gen(function* () {
     // An adopted popup's frames may have loaded before the tab listened.
     if (adopted) for (const frame of page.frames()) void recordFrameCopies(tab, frame);
     page.on("requestfailed", (request) => {
+      // SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
+      networkStudyOf(page).onFailed(request);
+      // SCIENT-FORK:END
       const errorText = request.failure()?.errorText ?? "";
       pushBounded(tab.networkEntries, {
         url: ServerBrowserPage.withoutDataPayload(request.url()),
@@ -1083,6 +1095,9 @@ const make = Effect.gen(function* () {
       report(tab, { _tag: "LoadFailed", url, title: "", code, description });
     });
     page.on("response", (response) => {
+      // SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
+      networkStudyOf(page).onResponse(response);
+      // SCIENT-FORK:END
       pushBounded(tab.networkEntries, {
         url: ServerBrowserPage.withoutDataPayload(response.url()),
         method: response.request().method(),
@@ -2328,6 +2343,12 @@ const make = Effect.gen(function* () {
         return typeAccountValue(tab.page, input);
       case "accountWaitForLoad":
         return waitForAccountPage(tab.page, input, request.timeoutMs);
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — Scient Browser: request details for agents studying a site.
+      case "networkList":
+        return networkStudyOf(tab.page).list((input as { filter?: string }).filter);
+      case "networkRequest":
+        return networkStudyOf(tab.page).detail((input as { requestId: string }).requestId);
       // SCIENT-FORK:END
       case "navigate": {
         const navigateInput = input as PreviewAutomationNavigateInput;
