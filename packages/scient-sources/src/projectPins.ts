@@ -376,8 +376,8 @@ export type ScientPinChange =
 
 /**
  * Pins and unpins in order, each with the outcome `pinScientLibrarySource` or
- * `unpinScientLibrarySource` gives it alone, reading and writing `pins.json` once. A change that
- * cannot be made is `refused` and the rest still run.
+ * `unpinScientLibrarySource` gives it alone, reading and writing `pins.json` once. A note sent
+ * for a source already pinned replaces its note. A change that cannot be made is `refused`.
  */
 export async function changeScientProjectPins(input: {
   readonly projectRoot: string;
@@ -404,6 +404,23 @@ export async function changeScientProjectPins(input: {
         )
       : new Map<StoredPin, ScientProjectSourceResolution>();
     const prefetched = new Map<string, Promise<ScientSourceRecord | null>>();
+    // In order: a later change in this batch may give the pin's key to another source.
+    const withNote = (
+      stored: StoredPin,
+      requested: string | null | undefined,
+    ): ScientProjectPin => {
+      if (requested === undefined) return stored.pin;
+      const note = normalizePinNote(requested);
+      if (note === stored.pin.note) return stored.pin;
+      const { note: _previous, ...rest } = stored.pin;
+      const pin: ScientProjectPin = note === undefined ? rest : { ...rest, note };
+      const next = { ...stored, pin };
+      pins[pins.indexOf(stored)] = next;
+      const resolution = resolutions.get(stored);
+      if (resolution) resolutions.set(next, resolution);
+      changed = true;
+      return pin;
+    };
     const pinChange = async (
       change: Extract<ScientPinChange, { readonly action: "pin" }>,
     ): Promise<ScientPinChangeResult> => {
@@ -412,12 +429,12 @@ export async function changeScientProjectPins(input: {
       const sameId = pins.find(
         ({ pin }) => pin.sourceId === change.sourceId || pin.sourceId === record.sourceId,
       );
-      if (sameId) return { outcome: "existing", pin: sameId.pin };
+      if (sameId) return { outcome: "existing", pin: withNote(sameId, change.note) };
       const resolved = pins.find((stored) => {
         const resolution = resolutions.get(stored);
         return resolution?.kind === "resolved" && resolution.sourceId === record.sourceId;
       });
-      if (resolved) return { outcome: "existing", pin: resolved.pin };
+      if (resolved) return { outcome: "existing", pin: withNote(resolved, change.note) };
       const note = normalizePinNote(change.note);
       const pin: ScientProjectPin = {
         citationKey: assignCitationKey({

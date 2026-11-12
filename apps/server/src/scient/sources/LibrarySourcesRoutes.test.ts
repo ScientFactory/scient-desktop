@@ -577,6 +577,56 @@ describe("Library routes on the library backend", () => {
     }),
   );
 
+  it.effect(
+    "applies a note in its place in the request, not to a source that takes the key later",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const a = yield* Effect.promise(() =>
+          libraryRecord(fixture, "a", { title: "Vasopressin timing" }),
+        );
+        const b = yield* Effect.promise(() =>
+          libraryRecord(fixture, "b", { title: "Lactate clearance" }),
+        );
+        const write = yield* storeFor(fixture, "write");
+        yield* Effect.promise(async () => {
+          const key = b.citationKey!;
+          const first = await pin(fixture, a.sourceId);
+          await renameScientProjectPinKey({
+            projectRoot: fixture.root,
+            citationKey: first.citationKey,
+            to: key,
+          });
+          const noted = { citationKey: key, sourceId: a.sourceId, note: "About the first paper." };
+          const result = await organizeLibrarySources(write, {
+            change: {
+              action: "change-pins",
+              changes: [
+                { action: "pin", sourceId: a.sourceId, note: noted.note },
+                { action: "unpin", citationKey: key },
+                { action: "pin", sourceId: b.sourceId },
+              ],
+            },
+          });
+          expect(result).toEqual({
+            outcome: "updated",
+            pinChanges: [
+              { outcome: "existing", pin: noted },
+              { outcome: "unpinned", pin: noted },
+              { outcome: "pinned", pin: { citationKey: key, sourceId: b.sourceId } },
+            ],
+          });
+          expect(
+            (await readScientProjectPins(fixture.root)).map((entry) => [
+              entry.citationKey,
+              entry.sourceId,
+              entry.note,
+            ]),
+          ).toEqual([[key, b.sourceId, undefined]]);
+        });
+      }),
+  );
+
   it.effect("sets reading state on one source or many and filters the list by it", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

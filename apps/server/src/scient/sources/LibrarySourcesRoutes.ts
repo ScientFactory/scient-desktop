@@ -674,26 +674,12 @@ async function changeLibraryPins(
         : entry,
     ),
   });
-  const pinChanges = [];
-  for (const [index, result] of results.entries()) {
-    const entry = change.changes[index]!;
-    if (result.outcome === "existing" && entry.action === "pin" && entry.note !== undefined) {
-      const noted = await setScientProjectPinNote({
-        projectRoot: store.root,
-        citationKey: result.pin.citationKey,
-        note: entry.note,
-      });
-      const pin = noted.outcome !== "not-pinned" ? noted.pin : result.pin;
-      pinChanges.push({ outcome: result.outcome, pin: pinSummary(pin) });
-      continue;
-    }
-    // A refusal's reason stays on the server, as a failed request's does.
-    pinChanges.push(
-      "pin" in result
-        ? { outcome: result.outcome, pin: pinSummary(result.pin) }
-        : { outcome: result.outcome },
-    );
-  }
+  // A refusal's reason stays on the server, as a failed request's does.
+  const pinChanges = results.map((result) =>
+    "pin" in result
+      ? { outcome: result.outcome, pin: pinSummary(result.pin) }
+      : { outcome: result.outcome },
+  );
   const changed = results.some(
     (result) => result.outcome === "pinned" || result.outcome === "unpinned",
   );
