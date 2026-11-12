@@ -249,17 +249,37 @@ async function otherProjectsPinning(
   return count;
 }
 
+/** A project the server knows, as the project list names it. */
+export interface KnownProject {
+  readonly workspaceRoot: string;
+  readonly title: string;
+}
+
 /**
- * For each of `sourceIds`, the other checkouts on this computer that pin it, by folder name.
- * One pin resolution per checkout, whatever the number of sources asked about.
+ * For each of `sourceIds`, the other checkouts on this computer that pin it, by their title in
+ * `projects` or else their folder name. One pin resolution per checkout, whatever the number of
+ * sources asked about.
  */
 export async function otherProjectsUsing(
   store: ScientSourcesLibraryStore,
   sourceIds: ReadonlySet<string>,
+  projects: ReadonlyArray<KnownProject> = [],
 ): Promise<ReadonlyMap<string, ReadonlyArray<string>>> {
   const names = new Map<string, string[]>();
   if (!store.exists || sourceIds.size === 0) return names;
   const here = await NodeFSP.realpath(store.root);
+  // Checkouts are registered by real path; the project list keeps the path it was opened with.
+  const titles = new Map(
+    await Promise.all(
+      projects.map(
+        async (project) =>
+          [
+            await NodeFSP.realpath(project.workspaceRoot).catch(() => project.workspaceRoot),
+            project.title,
+          ] as const,
+      ),
+    ),
+  );
   for (const instance of await listScientLibraryInstances(store.library)) {
     if (instance.path === here || !(await folderExists(instance.path))) continue;
     const pinned = await resolveScientProjectPins({
@@ -268,7 +288,7 @@ export async function otherProjectsUsing(
       mode: "read",
       actor: "agent",
     }).catch(() => []);
-    const name = NodePath.basename(instance.path);
+    const name = titles.get(instance.path) ?? NodePath.basename(instance.path);
     for (const { resolution } of pinned) {
       if (resolution.kind !== "resolved" || !sourceIds.has(resolution.sourceId)) continue;
       const list = names.get(resolution.sourceId) ?? [];

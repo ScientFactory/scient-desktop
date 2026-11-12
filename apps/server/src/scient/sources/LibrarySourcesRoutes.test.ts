@@ -792,6 +792,10 @@ describe("Library routes on the library backend", () => {
           [first.sourceId, true, []],
           [second.sourceId, false, ["Grant"]],
         ]);
+        const titled = yield* Effect.promise(() =>
+          libraryDuplicates(store, [{ workspaceRoot: other, title: "Grant proposal" }]),
+        );
+        expect(titled.pairs[0]!.sources[1].otherProjects).toEqual(["Grant proposal"]);
         expect(listed.pairs[0]!.keptByDefault).toBe(first.sourceId);
         expect((yield* Effect.promise(records)).length).toBe(2);
 

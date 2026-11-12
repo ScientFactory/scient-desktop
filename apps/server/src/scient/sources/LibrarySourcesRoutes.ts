@@ -90,6 +90,7 @@ import {
   resolveLibrarySourceId,
   resolveLibrarySourceIds,
   syncProjectBibliography,
+  type KnownProject,
   type ProjectPinGroup,
 } from "./LibraryProjectSources.ts";
 import {
@@ -258,7 +259,11 @@ export async function libraryOverview(
  * The possible duplicates of the whole library and the merges Undo can still reverse. Reading
  * never merges: the automatic merges run with the move, not here.
  */
-export async function libraryDuplicates(store: Store): Promise<ScientSourcesDuplicatesResult> {
+export async function libraryDuplicates(
+  store: Store,
+  /** The projects the server knows, to name other projects by title rather than folder. */
+  projects?: ReadonlyArray<KnownProject>,
+): Promise<ScientSourcesDuplicatesResult> {
   if (!store.exists) return { pairs: [], pairsTotal: 0, merges: [], mergesTotal: 0 };
   const listing = await readScientLibraryDuplicates({
     library: store.library,
@@ -273,7 +278,7 @@ export async function libraryDuplicates(store: Store): Promise<ScientSourcesDupl
   const [pins, categories, others] = await Promise.all([
     projectPinGroupsByLibraryId(store),
     readScientSourceCategories(store.library).catch((): Categories => ({})),
-    otherProjectsUsing(store, shown),
+    otherProjectsUsing(store, shown, projects),
   ]);
   const row = (record: ScientSourceRecord) => ({
     ...overviewRow(pinnedEntry(record, pins.get(record.sourceId)), categories),

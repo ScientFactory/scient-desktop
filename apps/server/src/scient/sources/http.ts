@@ -18,6 +18,7 @@ import {
   failEnvironmentInternal,
   requireEnvironmentScope,
 } from "../../auth/http.ts";
+import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
 import { searchSourceFullText } from "./SourceFullText.ts";
@@ -189,6 +190,7 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
   "scientSources",
   Effect.fnUntraced(function* (handlers) {
     const observeImport = yield* makeSourceImportAnalytics("user");
+    const projectStore = yield* ProjectStoreV2;
     startManagedBibliographySync();
     const zotero = {
       ...(yield* ZoteroTransports),
@@ -482,15 +484,20 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("duplicates", (args) =>
-          route(
-            args.endpoint.name,
-            AuthOrchestrationReadScope,
-            args.payload.root,
-            async (library) => {
-              if (!library) throw new Error("Possible duplicates need the personal Library.");
-              return libraryDuplicates(library);
-            },
-          ),
+          Effect.gen(function* () {
+            yield* requireEnvironmentScope(AuthOrchestrationReadScope);
+            // Only for naming other projects; without the list they keep their folder names.
+            const projects = yield* projectStore.list().pipe(Effect.orElseSucceed(() => []));
+            return yield* route(
+              args.endpoint.name,
+              AuthOrchestrationReadScope,
+              args.payload.root,
+              async (library) => {
+                if (!library) throw new Error("Possible duplicates need the personal Library.");
+                return libraryDuplicates(library, projects);
+              },
+            );
+          }),
         )
         .handle("moveStatus", (args) =>
           Effect.gen(function* () {
