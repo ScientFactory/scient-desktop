@@ -40,8 +40,11 @@ export function filterScientSourceSearchIndex(
     .map((entry) => entry.source);
 }
 
+// One collator: `localeCompare` with options builds one per call, 0.5 s per sort of 20,000 rows.
+const textCollator = new Intl.Collator(undefined, { sensitivity: "base" });
+
 function compareText(left: string | null, right: string | null): number {
-  return (left ?? "").localeCompare(right ?? "", undefined, { sensitivity: "base" });
+  return textCollator.compare(left ?? "", right ?? "");
 }
 
 function compareNullableNumber(left: number | null, right: number | null): number {
