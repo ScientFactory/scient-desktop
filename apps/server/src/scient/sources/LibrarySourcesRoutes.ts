@@ -16,7 +16,10 @@ import {
   readScientSourceCategories,
   scientSourceCategorySummaryFor,
 } from "@scientfactory/scient-sources/categories-store";
-import { readScientSourcesOrganization } from "@scientfactory/scient-sources/collections";
+import {
+  readScientSourcesOrganization,
+  scientBulkEditChangedType,
+} from "@scientfactory/scient-sources/collections";
 import {
   clearScientLibrarySourcesDistinct,
   markScientLibrarySourcesDistinct,
@@ -616,9 +619,13 @@ export async function bulkUpdateLibrarySources(
           ),
         }
       : input.change;
+  // A type change, or the undo of one, changes what pin and review snapshots hold; tags do not.
+  const changesSnapshots =
+    "type" in change ||
+    ("undoBatchId" in change &&
+      (await scientBulkEditChangedType(store.library, change.undoBatchId)) !== false);
   const result = await bulkUpdateSources({ root: store.library, change, actor: ACTOR });
-  // A type change, or the undo of one, changes what pin and review snapshots hold.
-  if ("type" in change || "undoBatchId" in change) {
+  if (changesSnapshots) {
     await afterChange(
       store,
       result.sources.flatMap((entry) => (entry.outcome === "updated" ? [entry.sourceId] : [])),

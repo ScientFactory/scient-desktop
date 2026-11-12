@@ -1129,6 +1129,21 @@ async function readBulkReceipt(
   return receipt;
 }
 
+/**
+ * Whether a bulk edit changed any source's type, the one bulk field pin and review snapshots
+ * hold; null when its receipt is gone.
+ */
+export async function scientBulkEditChangedType(
+  root: ScientSourceStoreLocation,
+  batchId: string,
+): Promise<boolean | null> {
+  const receipt = await readBulkReceipt(await sourceStorePaths(root), batchId);
+  if (!receipt) return null;
+  return receipt.sources.some(
+    ({ before, after }) => before.type !== after.type || before.customType !== after.customType,
+  );
+}
+
 function newBatchId(now: string): string {
   // Sortable by time, so pruning keeps the newest.
   return `bulk_${now.replace(/[^0-9]/gu, "")}_${NodeCrypto.randomUUID().slice(0, 8)}`;

@@ -327,6 +327,34 @@ describe("project pins", () => {
     });
   });
 
+  it("refreshes only the pins of the changed sources when told which changed", async () => {
+    const base = await fixture();
+    const { library } = await newLibrary(base, "state");
+    const projectRoot = await newProject(base);
+    const records = [await addRecord(library, "A"), await addRecord(library, "B")];
+    await changeScientProjectPins({
+      projectRoot,
+      library,
+      changes: records.map((record) => ({ action: "pin" as const, sourceId: record.sourceId })),
+      actor: "user",
+    });
+    for (const record of records) {
+      await updateScientSourceMetadata({
+        root: library,
+        sourceId: record.sourceId,
+        expectedRevision: record.revision,
+        metadata: { ...editableMetadataFromRecord(record), title: `${record.title}, revised` },
+      });
+    }
+    const refreshed = await refreshScientProjectPinSnapshots({
+      projectRoot,
+      library,
+      sourceIds: new Set([records[1]!.sourceId]),
+    });
+    expect(refreshed.changed).toBe(true);
+    expect(refreshed.pins.map((pin) => pin.work.title)).toEqual(["Study A", "Study B, revised"]);
+  });
+
   it("resolves project source IDs in the design's order", async () => {
     const base = await fixture();
     const { library, root } = await newLibrary(base, "state");

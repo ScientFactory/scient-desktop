@@ -29,7 +29,8 @@ import {
 import { atomicWriteJson, snapshot } from "./storeFiles.ts";
 
 const SCIENT_PROJECT_PINS_PATH = [".scient", "library", "pins.json"] as const;
-const MAX_PINS_BYTES = 16 * 1024 * 1024;
+// 20,000 pins with long author lists are about 26 MiB (scale gate); 16 MiB refused them.
+const MAX_PINS_BYTES = 64 * 1024 * 1024;
 const MAX_PIN_NOTE_LENGTH = 100_000;
 const NonEmptyString = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
 const NullableText = Schema.NullOr(Schema.String);
@@ -388,7 +389,6 @@ export async function changeScientProjectPins(input: {
   const root = await projectRootFor(input.projectRoot);
   return withPinsLock(root, async () => {
     const document = await readPinsDocument(root);
-    const pins = [...document.pins];
     let changed = false;
     const taken = new Set(
       document.pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)),
@@ -403,6 +403,7 @@ export async function changeScientProjectPins(input: {
           ),
         )
       : new Map<StoredPin, ScientProjectSourceResolution>();
+    const pins = new OrderedPins(document.pins, resolutions);
     const prefetched = new Map<string, Promise<ScientSourceRecord | null>>();
     // In order: a later change in this batch may give the pin's key to another source.
     const withNote = (
@@ -414,10 +415,7 @@ export async function changeScientProjectPins(input: {
       if (note === stored.pin.note) return stored.pin;
       const { note: _previous, ...rest } = stored.pin;
       const pin: ScientProjectPin = note === undefined ? rest : { ...rest, note };
-      const next = { ...stored, pin };
-      pins[pins.indexOf(stored)] = next;
-      const resolution = resolutions.get(stored);
-      if (resolution) resolutions.set(next, resolution);
+      pins.replace(stored, { ...stored, pin });
       changed = true;
       return pin;
     };
@@ -426,14 +424,9 @@ export async function changeScientProjectPins(input: {
     ): Promise<ScientPinChangeResult> => {
       const record = await prefetched.get(change.sourceId)!;
       if (!record) return { outcome: "not-found" };
-      const sameId = pins.find(
-        ({ pin }) => pin.sourceId === change.sourceId || pin.sourceId === record.sourceId,
-      );
+      const sameId = pins.firstWithSourceId(change.sourceId, record.sourceId);
       if (sameId) return { outcome: "existing", pin: withNote(sameId, change.note) };
-      const resolved = pins.find((stored) => {
-        const resolution = resolutions.get(stored);
-        return resolution?.kind === "resolved" && resolution.sourceId === record.sourceId;
-      });
+      const resolved = pins.firstResolvedTo(record.sourceId);
       if (resolved) return { outcome: "existing", pin: withNote(resolved, change.note) };
       const note = normalizePinNote(change.note);
       const pin: ScientProjectPin = {
@@ -450,7 +443,7 @@ export async function changeScientProjectPins(input: {
         ...(note !== undefined ? { note } : {}),
         work: scientPinWorkFromRecord(record),
       };
-      pins.push({ pin, extra: {}, workExtra: {} });
+      pins.add({ pin, extra: {}, workExtra: {} });
       changed = true;
       taken.add(citationKeyComparisonValue(pin.citationKey));
       return { outcome: "pinned", pin };
@@ -475,12 +468,12 @@ export async function changeScientProjectPins(input: {
           results.push(await pinChange(change));
           continue;
         }
-        const found = findPin(pins, change.citationKey);
+        const found = pins.firstWithKey(change.citationKey);
         if (!found) {
           results.push({ outcome: "not-pinned" });
           continue;
         }
-        pins.splice(pins.indexOf(found), 1);
+        pins.remove(found);
         changed = true;
         taken.delete(citationKeyComparisonValue(found.pin.citationKey));
         results.push({ outcome: "unpinned", pin: found.pin });
@@ -491,9 +484,111 @@ export async function changeScientProjectPins(input: {
         });
       }
     }
-    if (changed) await writePinsDocument(root, document, pins);
+    if (changed) await writePinsDocument(root, document, pins.list());
     return results;
   });
+}
+
+/**
+ * A batch's pins in file order, with the lookups `changeScientProjectPins` makes for every
+ * change: each answers the first pin in order, as a scan would, without scanning 20,000 pins.
+ */
+class OrderedPins {
+  private readonly slots: Array<StoredPin | null>;
+  private readonly slotOf = new Map<StoredPin, number>();
+  private readonly bySourceId = new Map<string, Set<StoredPin>>();
+  private readonly byTarget = new Map<string, Set<StoredPin>>();
+  private readonly byKey = new Map<string, Set<StoredPin>>();
+
+  private readonly resolutions: Map<StoredPin, ScientProjectSourceResolution>;
+
+  constructor(
+    pins: ReadonlyArray<StoredPin>,
+    resolutions: Map<StoredPin, ScientProjectSourceResolution>,
+  ) {
+    this.slots = [];
+    this.resolutions = resolutions;
+    for (const stored of pins) this.add(stored);
+  }
+
+  private static put(index: Map<string, Set<StoredPin>>, key: string, stored: StoredPin) {
+    const entries = index.get(key) ?? new Set<StoredPin>();
+    entries.add(stored);
+    index.set(key, entries);
+  }
+
+  private static drop(index: Map<string, Set<StoredPin>>, key: string, stored: StoredPin) {
+    index.get(key)?.delete(stored);
+  }
+
+  private target(stored: StoredPin): string | null {
+    const resolution = this.resolutions.get(stored);
+    return resolution?.kind === "resolved" ? resolution.sourceId : null;
+  }
+
+  private index(stored: StoredPin) {
+    OrderedPins.put(this.bySourceId, stored.pin.sourceId, stored);
+    OrderedPins.put(this.byKey, citationKeyComparisonValue(stored.pin.citationKey), stored);
+    const target = this.target(stored);
+    if (target !== null) OrderedPins.put(this.byTarget, target, stored);
+  }
+
+  private unindex(stored: StoredPin) {
+    OrderedPins.drop(this.bySourceId, stored.pin.sourceId, stored);
+    OrderedPins.drop(this.byKey, citationKeyComparisonValue(stored.pin.citationKey), stored);
+    const target = this.target(stored);
+    if (target !== null) OrderedPins.drop(this.byTarget, target, stored);
+  }
+
+  private first(candidates: ReadonlyArray<Set<StoredPin> | undefined>): StoredPin | undefined {
+    let found: StoredPin | undefined;
+    for (const entries of candidates) {
+      for (const stored of entries ?? []) {
+        if (!found || this.slotOf.get(stored)! < this.slotOf.get(found)!) found = stored;
+      }
+    }
+    return found;
+  }
+
+  firstWithSourceId(...sourceIds: ReadonlyArray<string>): StoredPin | undefined {
+    return this.first(sourceIds.map((sourceId) => this.bySourceId.get(sourceId)));
+  }
+
+  firstResolvedTo(sourceId: string): StoredPin | undefined {
+    return this.first([this.byTarget.get(sourceId)]);
+  }
+
+  firstWithKey(citationKey: string): StoredPin | undefined {
+    return this.first([this.byKey.get(citationKeyComparisonValue(citationKey))]);
+  }
+
+  add(stored: StoredPin) {
+    this.slotOf.set(stored, this.slots.length);
+    this.slots.push(stored);
+    this.index(stored);
+  }
+
+  /** The same place in the file; a resolution carries over. */
+  replace(stored: StoredPin, next: StoredPin) {
+    const slot = this.slotOf.get(stored)!;
+    this.unindex(stored);
+    this.slotOf.delete(stored);
+    const resolution = this.resolutions.get(stored);
+    if (resolution) this.resolutions.set(next, resolution);
+    this.slots[slot] = next;
+    this.slotOf.set(next, slot);
+    this.index(next);
+  }
+
+  remove(stored: StoredPin) {
+    this.unindex(stored);
+    this.slots[this.slotOf.get(stored)!] = null;
+    this.slotOf.delete(stored);
+  }
+
+  list(): ReadonlyArray<StoredPin> {
+    return this.slots.filter((stored): stored is StoredPin => stored !== null);
+  }
 }
 
 /** A deliberate rename of a pin's project key; the caller rewrites this project's documents. */
@@ -551,20 +646,39 @@ export async function setScientProjectPinNote(input: {
 }
 
 /**
- * Refreshes each resolvable pin's `work` from its library record. Keys and notes never change.
- * Writes nothing when no snapshot changed.
+ * Refreshes each resolvable pin's `work` from its library record, or only the pins that resolve
+ * to `sourceIds`, reading just those records. Keys and notes never change. Writes nothing when
+ * no snapshot changed.
  */
 export async function refreshScientProjectPinSnapshots(input: {
   readonly projectRoot: string;
   readonly library: ScientLibraryLocation;
+  readonly sourceIds?: ReadonlySet<string>;
 }): Promise<{ readonly changed: boolean; readonly pins: ReadonlyArray<ScientProjectPin> }> {
   const root = await projectRootFor(input.projectRoot);
   return withPinsLock(root, async () => {
     const document = await readPinsDocument(root);
     const resolutions = await resolvePinsRead(input.library, root, document.pins);
-    const records = new Map(
-      (await listScientSourceRecords(input.library)).map((record) => [record.sourceId, record]),
-    );
+    const only = input.sourceIds;
+    const records = only
+      ? new Map(
+          (
+            await Promise.all(
+              [
+                ...new Set(
+                  resolutions.flatMap((resolution) =>
+                    resolution.kind === "resolved" && only.has(resolution.sourceId)
+                      ? [resolution.sourceId]
+                      : [],
+                  ),
+                ),
+              ].map((sourceId) => readScientSourceRecord(input.library, sourceId)),
+            )
+          ).flatMap((record) => (record ? [[record.sourceId, record] as const] : [])),
+        )
+      : new Map(
+          (await listScientSourceRecords(input.library)).map((record) => [record.sourceId, record]),
+        );
     const pins = document.pins.map((stored, index) => {
       const resolution = resolutions[index]!;
       const record = resolution.kind === "resolved" ? records.get(resolution.sourceId) : undefined;

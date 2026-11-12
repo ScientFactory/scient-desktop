@@ -9,8 +9,7 @@ import {
 } from "@scientfactory/scient-sources/library-aliases";
 import { resolveScientProjectSources } from "@scientfactory/scient-sources/library-instance-map";
 import {
-  listScientLibraryReviewRecords,
-  listScientLibraryReviews,
+  listScientLibraryReviewIds,
   refreshScientLibraryReviewSnapshot,
 } from "@scientfactory/scient-sources/library-reviews";
 import { listScientLibraryInstances } from "@scientfactory/scient-sources/library-root";
@@ -230,29 +229,18 @@ export async function refreshProjectAfterLibraryChange(
 ): Promise<void> {
   if (store.access !== "write" || sourceIds.length === 0) return;
   const changed = new Set(sourceIds);
-  await refreshScientProjectPinSnapshots({ projectRoot: store.root, library: store.library });
-  const { reviews } = await listScientLibraryReviews({
+  await refreshScientProjectPinSnapshots({
     projectRoot: store.root,
     library: store.library,
-    mode: "read",
+    sourceIds: changed,
   });
-  for (const { reviewId } of reviews) {
-    const records = await listScientLibraryReviewRecords({
+  for (const reviewId of await listScientLibraryReviewIds(store.root)) {
+    await refreshScientLibraryReviewSnapshot({
       projectRoot: store.root,
       library: store.library,
       reviewId,
-      mode: "read",
+      naming: changed,
     });
-    const names = records?.some(
-      (entry) => entry.from === "library" && entry.record && changed.has(entry.record.sourceId),
-    );
-    if (names) {
-      await refreshScientLibraryReviewSnapshot({
-        projectRoot: store.root,
-        library: store.library,
-        reviewId,
-      });
-    }
   }
   await syncProjectBibliography(store, actor);
 }

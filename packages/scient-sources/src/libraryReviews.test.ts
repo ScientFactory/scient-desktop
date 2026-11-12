@@ -326,7 +326,15 @@ describe("review record snapshots", () => {
     });
 
     const refresh = { projectRoot, library, reviewId };
-    expect(await refreshScientLibraryReviewSnapshot(refresh)).toEqual({ changed: true });
+    expect(
+      await refreshScientLibraryReviewSnapshot({ ...refresh, naming: new Set(["source_other"]) }),
+    ).toEqual({ changed: false });
+    expect((await snapshotEntries(projectRoot, reviewId))[record.sourceId]).toMatchObject({
+      title: "Randomised trial number 1",
+    });
+    expect(
+      await refreshScientLibraryReviewSnapshot({ ...refresh, naming: new Set([record.sourceId]) }),
+    ).toEqual({ changed: true });
     expect((await snapshotEntries(projectRoot, reviewId))[record.sourceId]).toMatchObject({
       title: "Corrected title",
       abstract: "Imported abstract.",

@@ -793,6 +793,14 @@ export async function readScientLibraryReviewRecord(
   return reviewRecord(input.sourceId, view.entries, view.resolved);
 }
 
+/** The IDs of the project's live reviews, reading only the review files. */
+export async function listScientLibraryReviewIds(
+  projectRoot: string,
+): Promise<ReadonlyArray<string>> {
+  const { reviews } = await readAllReviews(libraryFolder(await projectRootFor(projectRoot)));
+  return reviews.flatMap((review) => (review.deletedAt === undefined ? [review.reviewId] : []));
+}
+
 /**
  * Live reviews, newest change first. With `write`, a snapshot whose review was never created
  * (a crash between the two) is removed.
@@ -853,6 +861,8 @@ export async function refreshScientLibraryReviewSnapshot(input: {
   readonly projectRoot: string;
   readonly library: ScientLibraryLocation;
   readonly reviewId: string;
+  /** Only when the review names one of these library records; otherwise nothing is written. */
+  readonly naming?: ReadonlySet<string>;
 }): Promise<{ readonly changed: boolean } | null> {
   const root = await projectRootFor(input.projectRoot);
   const folder = libraryFolder(root);
@@ -868,6 +878,16 @@ export async function refreshScientLibraryReviewSnapshot(input: {
       sourceIds: named,
       entries: document.entries,
     });
+    const naming = input.naming;
+    if (
+      naming &&
+      !named.some((sourceId) => {
+        const record = libraryRecordFor(resolved, sourceId);
+        return record !== undefined && naming.has(record.sourceId);
+      })
+    ) {
+      return { changed: false };
+    }
     const now = new Date().toISOString();
     const entries = new Map<string, StoredWork>();
     for (const sourceId of named) {

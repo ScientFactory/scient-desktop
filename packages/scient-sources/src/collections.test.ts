@@ -21,6 +21,7 @@ import {
   restoreScientSourceCollection,
   saveScientSourceSearch,
   SCIENT_SOURCE_COLLECTIONS_FILE,
+  scientBulkEditChangedType,
 } from "./collections.ts";
 import { editableMetadataFromRecord } from "./editable.ts";
 import type { ScientSourceCandidate, ScientSourceType } from "./model.ts";
@@ -546,6 +547,15 @@ describe("Scient source collections", () => {
       actor: "agent",
     });
     expect(again.conflicts).toEqual([{ message: "This bulk edit was already undone." }]);
+
+    // Whether Undo has pin and review snapshots to refresh.
+    expect(await scientBulkEditChangedType(root, bulk.undo?.batchId ?? "")).toBe(true);
+    const tagsOnly = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addTags: ["Second look"] },
+      actor: "user",
+    });
+    expect(await scientBulkEditChangedType(root, tagsOnly.undo?.batchId ?? "")).toBe(false);
   });
   it("changes nothing when the bulk edit receipt folder is unsafe", async () => {
     const { root, sourceIds } = await project(["First"]);
