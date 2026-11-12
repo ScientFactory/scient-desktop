@@ -181,6 +181,21 @@ describe("runMigrations", () => {
       }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
   );
 
+  // T3's peer link migrations 70-72 are Scient's 74-76.
+  it.effect("reapplies peer link migrations whose ledger rows are missing", () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      yield* runMigrations({ toMigrationInclusive: 76 });
+      yield* sql`DELETE FROM effect_sql_migrations WHERE migration_id BETWEEN 74 AND 76`;
+
+      assert.deepStrictEqual(
+        yield* runMigrations(),
+        migrationManifest.filter(([id]) => id >= 74),
+      );
+      assert.deepStrictEqual(yield* history, migrationManifest);
+    }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" }))),
+  );
+
   it.effect("refuses a database whose ledger is newer than this build", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;

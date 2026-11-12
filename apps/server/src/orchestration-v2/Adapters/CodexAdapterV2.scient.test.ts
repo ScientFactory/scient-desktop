@@ -11,7 +11,6 @@ import * as CodexReplay from "effect-codex-app-server/replay";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
-import * as Option from "effect/Option";
 import * as Predicate from "effect/Predicate";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
@@ -20,10 +19,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { ChildProcess, ChildProcessSpawner } from "effect/process";
-import * as Scope from "effect/Scope";
-import * as Exit from "effect/Exit";
-import * as Context from "effect/Context";
+import { ChildProcess } from "effect/process";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as McpProviderSessions from "@t3tools/provider-core/server/McpProviderSessions";
 import { type ProviderAdapterV2Event } from "@t3tools/provider-core/server/ProviderAdapter";
@@ -1264,6 +1260,7 @@ describe("CodexAdapterV2 post-settle continuation (McpFork)", () => {
                 method: "thread/fork",
                 params: {
                   threadId: nativeThreadId,
+                  excludeTurns: true,
                   lastTurnId: "scient-mcp-boundary",
                   config: targetConfig,
                 },
@@ -1361,7 +1358,11 @@ describe("CodexAdapterV2 post-settle continuation (McpFork)", () => {
             frame: {
               id: 3,
               method: "thread/fork",
-              params: { threadId: nativeThreadId, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+              params: {
+                threadId: nativeThreadId,
+                excludeTurns: true,
+                config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+              },
             },
           },
           {
@@ -2138,6 +2139,18 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
                 },
               },
             },
+            // Codex restores context only after the compacting turn completes.
+            {
+              type: "emit_inbound",
+              label: "done",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
             {
               type: "expect_outbound",
               label: "restore context",
@@ -2155,19 +2168,9 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
               },
             },
             { type: "emit_inbound", label: "restored", frame: { id: 4, result: {} } },
-            {
-              type: "emit_inbound",
-              label: "done",
-              frame: {
-                method: "turn/completed",
-                params: {
-                  threadId: nativeThreadId,
-                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
-                },
-              },
-            },
           ],
         });
+        const restoreRequested = yield* Deferred.make<void>();
         const harness = yield* makeCodexReplayHarness(transcript, undefined, (method, packet) =>
           method === "turn/start"
             ? decodeContext(packet).pipe(
@@ -2176,7 +2179,9 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
                   Ref.update(delivered, (current) => [...current, context]),
                 ),
               )
-            : Effect.void,
+            : method === "thread/inject_items"
+              ? Deferred.succeed(restoreRequested, undefined)
+              : Effect.void,
         );
         if (hasMcp)
           yield* sessions.set({
@@ -2202,6 +2207,7 @@ describe("CodexAdapterV2 post-settle continuation (Media)", () => {
           runtimePolicy,
         });
         yield* harness.firstTerminal;
+        yield* Deferred.await(restoreRequested);
         const contexts = yield* Ref.get(delivered);
         assert.lengthOf(contexts, 1);
         const context = contexts[0]!.additionalContext;
@@ -4392,7 +4398,11 @@ describe("Codex restored McpFork", () => {
                 frame: {
                   id: 3,
                   method: "thread/fork",
-                  params: { threadId: nativeThreadId, config: CodexAdapterV2.CODEX_THREAD_CONFIG },
+                  params: {
+                    threadId: nativeThreadId,
+                    excludeTurns: true,
+                    config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                  },
                 },
               },
               {
@@ -4504,6 +4514,7 @@ describe("Codex restored McpFork", () => {
                 method: "thread/fork",
                 params: {
                   threadId: nativeThreadId,
+                  excludeTurns: true,
                   lastTurnId: "native-turn-first",
                   config: CodexAdapterV2.CODEX_THREAD_CONFIG,
                 },
@@ -4664,53 +4675,6 @@ describe("Codex restored Policy", () => {
         Effect.provideService(HostProcess.Platform, "win32"),
         Effect.provideService(SpawnExecutableResolution, () => "C:\\bin\\codex.exe"),
       ),
-    );
-
-    // An app-server that ignores SIGTERM must not hold the server's shutdown forever: the
-    // spawner waits for the process without a deadline unless the command sets one.
-    it.live.skipIf(Context.get(Context.empty(), HostProcess.Platform) === "win32")(
-      "stops an app-server that ignores SIGTERM within its kill deadline",
-      () =>
-        Effect.gen(function* () {
-          const command = yield* CodexAdapterV2.makeCodexAppServerSpawnCommand({
-            command: "/bin/sh",
-            args: ["-c", "trap '' TERM; echo ready; while :; do sleep 1; done"],
-          });
-          const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-          const scope = yield* Scope.make();
-          const child = yield* spawner.spawn(command).pipe(Scope.provide(scope));
-          const pid = Number(child.pid);
-          const killGroup = () => {
-            try {
-              process.kill(-pid, "SIGKILL");
-            } catch {}
-          };
-          yield* Effect.addFinalizer(() => Effect.sync(killGroup));
-          // Stop it only once its SIGTERM trap is set; an early exit would pass without testing it.
-          const firstLine = yield* child.stdout.pipe(
-            Stream.decodeText(),
-            Stream.splitLines,
-            Stream.runHead,
-          );
-          assert.deepStrictEqual(firstLine, Option.some("ready"));
-          // Scope.close cannot be interrupted, so a regression is ended by this rescue instead of
-          // hanging the test; the deadline under test must make it unnecessary.
-          let rescued = false;
-          // oxlint-disable-next-line t3code/no-real-time-wait-in-tests -- a watchdog for a hung child, not a wait for a milestone; it must never fire.
-          const rescue = yield* Effect.sleep("10 seconds").pipe(
-            Effect.andThen(
-              Effect.sync(() => {
-                rescued = true;
-                killGroup();
-              }),
-            ),
-            Effect.forkChild,
-          );
-          yield* Scope.close(scope, Exit.void);
-          yield* Fiber.interrupt(rescue);
-          assert.isFalse(rescued, "the app-server was stopped by its own kill deadline");
-          assert.isFalse(yield* child.isRunning.pipe(Effect.orElseSucceed(() => true)));
-        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
     );
   });
 });

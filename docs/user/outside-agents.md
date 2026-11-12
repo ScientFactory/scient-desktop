@@ -55,6 +55,22 @@ without a code starts at **Read only**:
   threads in every project. A thread it starts or steers cannot run with more
   permissions than the mode you chose.
 
+## What outside agents can call
+
+Some tools only work for an agent running inside a Scient thread, because they act
+as that thread: subagents, secret requests, rendered HTML, the browser preview,
+devices, and worktree handoff. They still appear in an outside agent's tool
+list, but calling one returns an error saying it needs an agent running inside
+Scient.
+
+- To hand off work, start a thread with `scient_thread_launch`, then follow it with
+  `scient_thread_wait` or `scient_thread_inspect`, instead of `create_threads` or
+  `delegate_task`.
+- Tools that default to the caller's own project or thread need an explicit
+  `projectId` or `threadId`.
+- To list threads across projects, call `scient_thread_list` with
+  `allProjects: true`, or use `scient_thread_search`.
+
 ## Claude Code
 
 ```sh

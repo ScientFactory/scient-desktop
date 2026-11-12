@@ -112,7 +112,7 @@ const installed = (
       } as unknown as ElectronWindow["Service"]),
       Effect.provide([
         ElectronApp.layer,
-        DesktopIpc.layer({
+        DesktopIpc.layerTest({
           handle: (channel, handler) => {
             handlers.set(channel, handler);
           },

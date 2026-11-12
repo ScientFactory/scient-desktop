@@ -209,6 +209,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
   // SCIENT-FORK:START — visible acknowledgement while cancellation finishes.
   isStopping?: boolean;
   // SCIENT-FORK:END
+  runId: string | null;
   followUpBehavior: "queue" | "steer";
   canSteer: boolean;
   alternateShortcutLabel: string | null;
@@ -240,6 +241,7 @@ export const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryA
         // SCIENT-FORK:START — visible acknowledgement while cancellation finishes.
         isStopping={props.isStopping ?? false}
         // SCIENT-FORK:END
+        runId={props.runId}
         followUpBehavior={props.followUpBehavior}
         canSteer={props.canSteer}
         alternateShortcutLabel={props.alternateShortcutLabel}

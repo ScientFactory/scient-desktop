@@ -624,7 +624,7 @@ it.effect(
           ).pipe(Layer.provide(pruning));
           yield* Effect.gen(function* () {
             const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-            expect(yield* worker.runOnce).toBe(true);
+            expect(yield* worker.runOnce()).toBe(true);
             const pending = yield* outbox.get("retry-prune");
             expect(Option.isSome(pending) && pending.value.status).toBe("pending");
             expect(Option.isSome(pending) && pending.value.attemptCount).toBe(1);
@@ -633,12 +633,12 @@ it.effect(
               "rolled_back",
             );
             yield* TestClock.adjust(100);
-            expect(yield* worker.runOnce).toBe(true);
+            expect(yield* worker.runOnce()).toBe(true);
             expect(yield* fs.exists(removed.filename)).toBe(false);
             const completed = yield* outbox.get("retry-prune");
             expect(Option.isSome(completed) && completed.value.status).toBe("succeeded");
             expect(attempts).toBe(2);
-            expect(yield* worker.runOnce).toBe(false);
+            expect(yield* worker.runOnce()).toBe(false);
           }).pipe(
             Effect.provide(
               EffectWorker.layerWithOptions({ maxAttempts: 1 }).pipe(Layer.provide(executor)),

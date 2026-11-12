@@ -1,12 +1,6 @@
 const STATUS_SHOW_DELAY_MS = 400;
 const STATUS_MIN_VISIBLE_MS = 400;
 
-// SCIENT-FORK:START delayed-status-show-delay
-export interface DelayedStatusOptions {
-  readonly showDelayMs?: number;
-}
-// SCIENT-FORK:END delayed-status-show-delay
-
 /**
  * A status shows only after it has stayed set for a moment, then stays shown
  * for a minimum time so a quick flicker never flashes on screen.
@@ -39,17 +33,12 @@ export function stepDelayedStatus<A>(
   state: DelayedStatusState<A> | null,
   { key, value, deadlinePassed, showDelayMs = STATUS_SHOW_DELAY_MS }: DelayedStatusInput<A>,
   now: () => number,
-  // SCIENT-FORK:START delayed-status-show-delay
-  options?: DelayedStatusOptions,
-  // SCIENT-FORK:END delayed-status-show-delay
 ): DelayedStatusState<A> {
   const idle = (): DelayedStatusState<A> => ({ phase: "idle", key });
   const pending = (): DelayedStatusState<A> => ({
     phase: "pending",
     key,
-    // SCIENT-FORK:START delayed-status-show-delay
-    showAt: now() + (options?.showDelayMs ?? showDelayMs),
-    // SCIENT-FORK:END delayed-status-show-delay
+    showAt: now() + showDelayMs,
   });
   const shown = (shownValue: A): DelayedStatusState<A> => ({
     phase: "shown",

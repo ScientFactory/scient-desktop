@@ -189,6 +189,11 @@ import {
   shellFleetEvents as transferV2ShellFleetEvents,
   SHELL_IDLE_SUBAGENTS as TRANSFER_V2_SHELL_IDLE_SUBAGENTS,
   SHELL_SETTLED_THREADS as TRANSFER_V2_SHELL_SETTLED_THREADS,
+  STALE_TODO_LAST_FINISHED_CHECKPOINT_ID as TRANSFER_V2_STALE_TODO_LAST_FINISHED_CHECKPOINT_ID,
+  STALE_TODO_LIVE_RUN_ID as TRANSFER_V2_STALE_TODO_LIVE_RUN_ID,
+  STALE_TODO_SUBAGENTS_PER_RUN as TRANSFER_V2_STALE_TODO_SUBAGENTS_PER_RUN,
+  STALE_TODO_THREAD_ID as TRANSFER_V2_STALE_TODO_THREAD_ID,
+  staleTodoListThreadBatches as transferV2StaleTodoListThreadBatches,
 } from "../integration/TransferBudgetV2Fixture.integration.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
@@ -810,6 +815,8 @@ const buildAppUnderTest = (options?: {
       ...options?.layers?.serverSettings,
     });
     const gitVcsDriverLayer = Layer.mock(GitVcsDriver.GitVcsDriver)({
+      // Worktree launches read the local branch names first; none block by default.
+      listLocalBranchNames: () => Effect.succeed([]),
       ...options?.layers?.gitVcsDriver,
     });
     const gitManagerLayer = Layer.mock(GitManager.GitManager)({
@@ -13299,84 +13306,82 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
-    it.effect.each([
-      "non-repository",
-      "base-without-commit",
-      "fetch-failure",
-      "checkout-defect",
-    ] as const)("native required worktree preserves a failed first send for %s", (failure) =>
-      Effect.gen(function* () {
-        const createWorktree = vi.fn<GitManager.GitManager["Service"]["createWorktree"]>(() =>
-          failure === "checkout-defect"
-            ? Effect.die(new Error("checkout exploded"))
-            : Effect.fail(
-                new GitCommandError({
-                  operation: "create-worktree",
-                  command: "git worktree add",
-                  cwd: "/synthetic",
-                  detail:
-                    failure === "non-repository" ? "not a git repository" : "base has no commit",
-                }),
-              ),
-        );
-        const runForThread = vi.fn<
-          ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
-        >(() => Effect.die("Failed checkout must not run setup"));
-        const fixture = yield* makeNativeLaunchFixture(failure, {
-          layers: {
-            vcsDriver: { isInsideWorkTree: () => Effect.succeed(failure !== "non-repository") },
-            gitVcsDriver: {
-              resolveWorktreeBaseRemote: () =>
-                Effect.succeed(
-                  failure === "fetch-failure" ? { remoteName: "origin", branchName: "main" } : null,
-                ),
-              fetchWorktreeBaseCommit: () =>
-                Effect.fail(
+    // A non-Git project is refused at launch, before any send (ThreadLaunchService tests).
+    it.effect.each(["base-without-commit", "fetch-failure", "checkout-defect"] as const)(
+      "native required worktree preserves a failed first send for %s",
+      (failure) =>
+        Effect.gen(function* () {
+          const createWorktree = vi.fn<GitManager.GitManager["Service"]["createWorktree"]>(() =>
+            failure === "checkout-defect"
+              ? Effect.die(new Error("checkout exploded"))
+              : Effect.fail(
                   new GitCommandError({
-                    operation: "fetch",
-                    command: "git fetch",
+                    operation: "create-worktree",
+                    command: "git worktree add",
                     cwd: "/synthetic",
-                    detail: "fetch failed",
+                    detail: "base has no commit",
                   }),
                 ),
+          );
+          const runForThread = vi.fn<
+            ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
+          >(() => Effect.die("Failed checkout must not run setup"));
+          const fixture = yield* makeNativeLaunchFixture(failure, {
+            layers: {
+              gitVcsDriver: {
+                resolveWorktreeBaseRemote: () =>
+                  Effect.succeed(
+                    failure === "fetch-failure"
+                      ? { remoteName: "origin", branchName: "main" }
+                      : null,
+                  ),
+                fetchWorktreeBaseCommit: () =>
+                  Effect.fail(
+                    new GitCommandError({
+                      operation: "fetch",
+                      command: "git fetch",
+                      cwd: "/synthetic",
+                      detail: "fetch failed",
+                    }),
+                  ),
+              },
+              gitManager: { createWorktree },
+              projectSetupScriptRunner: { runForThread },
             },
-            gitManager: { createWorktree },
-            projectSetupScriptRunner: { runForThread },
-          },
-        });
-        const launched = yield* fixture.launch({
-          ...fixture.input,
-          workspaceStrategy: {
-            ...fixture.input.workspaceStrategy,
-            startFromOrigin: failure === "fetch-failure",
-          },
-        });
-        const failed = yield* fixture.awaitRun("failed");
-        assert.equal(launched.threadId, fixture.threadId);
-        assert.deepEqual(
-          failed.messages.map((message) => message.id),
-          [fixture.input.initialMessage.messageId],
-        );
-        assert.equal(failed.runs.length, 1);
-        assert.equal(failed.runs[0]?.status, "failed");
-        assert.isNull(failed.thread.deletedAt);
-        assert.isTrue(failed.runs.every((run) => run.status === "failed"));
-        assert.isNull(failed.thread.worktreePath);
-        assert.equal(runForThread.mock.calls.length, 0);
-        assert.equal(createWorktree.mock.calls.length, failure === "fetch-failure" ? 0 : 1);
-        const snapshot = yield* fixture.snapshotWhere((current) => current.phase === "failed");
-        assert.isString(snapshot.error);
-        if (failure === "fetch-failure") {
-          assert.include(snapshot.error!, "fetch failed");
-        }
-        // Retrying an accepted command reuses its durable message/run, not a second launch.
-        const retried = yield* fixture.launch();
-        assert.equal(retried.threadId, fixture.threadId);
-        assert.equal(
-          (yield* fixture.app.v2.threads.getThreadProjection(fixture.threadId)).messages.length,
-          1,
-        );
-      }).pipe(Effect.provide(NodeHttpServerTest)),
+          });
+          const launched = yield* fixture.launch({
+            ...fixture.input,
+            workspaceStrategy: {
+              ...fixture.input.workspaceStrategy,
+              startFromOrigin: failure === "fetch-failure",
+            },
+          });
+          const failed = yield* fixture.awaitRun("failed");
+          assert.equal(launched.threadId, fixture.threadId);
+          assert.deepEqual(
+            failed.messages.map((message) => message.id),
+            [fixture.input.initialMessage.messageId],
+          );
+          assert.equal(failed.runs.length, 1);
+          assert.equal(failed.runs[0]?.status, "failed");
+          assert.isNull(failed.thread.deletedAt);
+          assert.isTrue(failed.runs.every((run) => run.status === "failed"));
+          assert.isNull(failed.thread.worktreePath);
+          assert.equal(runForThread.mock.calls.length, 0);
+          assert.equal(createWorktree.mock.calls.length, failure === "fetch-failure" ? 0 : 1);
+          const snapshot = yield* fixture.snapshotWhere((current) => current.phase === "failed");
+          assert.isString(snapshot.error);
+          if (failure === "fetch-failure") {
+            assert.include(snapshot.error!, "fetch failed");
+          }
+          // Retrying an accepted command reuses its durable message/run, not a second launch.
+          const retried = yield* fixture.launch();
+          assert.equal(retried.threadId, fixture.threadId);
+          assert.equal(
+            (yield* fixture.app.v2.threads.getThreadProjection(fixture.threadId)).messages.length,
+            1,
+          );
+        }).pipe(Effect.provide(NodeHttpServerTest)),
     );
 
     it.effect("native launch rejects a missing project before creating a thread", () =>
@@ -14904,6 +14909,39 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                     TRANSFER_V2_SHELL_IDLE_SUBAGENTS,
                 );
 
+                for (const events of transferV2StaleTodoListThreadBatches(provider)) {
+                  yield* app.v2.eventSink.write({ events });
+                }
+                const staleTodoHttp = yield* getTransferPath(
+                  `/api/orchestration/threads/${TRANSFER_V2_STALE_TODO_THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
+                );
+                const staleTodo = (yield* decodeTransferThreadSnapshot(
+                  Buffer.from(staleTodoHttp.decodedBody).toString("utf8"),
+                )).projection;
+                // Clients show the diff of the last finished turn from this record.
+                assert.include(
+                  staleTodo.checkpoints.map((checkpoint) => checkpoint.id),
+                  TRANSFER_V2_STALE_TODO_LAST_FINISHED_CHECKPOINT_ID,
+                );
+                // The caps below also pass when the running turn loses its own tasks.
+                assert.lengthOf(
+                  staleTodo.subagents.filter(
+                    (subagent) => subagent.runId === TRANSFER_V2_STALE_TODO_LIVE_RUN_ID,
+                  ),
+                  TRANSFER_V2_STALE_TODO_SUBAGENTS_PER_RUN,
+                );
+                const staleTodoColdOpen = {
+                  http: staleTodoHttp,
+                  rows: staleTodo.visibleTurnItems.length,
+                  records: {
+                    nodes: staleTodo.nodes.length,
+                    subagents: staleTodo.subagents.length,
+                    plans: staleTodo.plans.length,
+                    providerTurns: staleTodo.providerTurns.length,
+                    checkpoints: staleTodo.checkpoints.length,
+                  },
+                };
+
                 return {
                   provider,
                   startupTransport: "bounded-compact-http-with-live-cursor",
@@ -14928,6 +14966,7 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   longTurnHistoryPage,
                   fleetShellLegacy,
                   fleetShell,
+                  staleTodoColdOpen,
                 } satisfies TransferBudgetRun;
               }),
             );

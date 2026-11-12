@@ -301,6 +301,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       acknowledgeActiveThreadWoke: noop,
       handleNewThreadInActiveProject: noop,
       persistThreadSettingsForNextTurn: async () => AsyncResult.success(undefined),
+      linkCheckoutPullRequest: noop,
       ...overrides,
     };
     let send: ReturnType<typeof useComposerSend>["onSend"] | undefined;

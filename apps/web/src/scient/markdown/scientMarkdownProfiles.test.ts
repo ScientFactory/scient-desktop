@@ -30,10 +30,14 @@ describe("Scient Markdown profiles", () => {
       CHAT_MARKDOWN_REMARK_PLUGINS,
       CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS,
     ]) {
-      // Exact function identity catches a stale copied helper, not just matching names.
-      expect(plugins.slice(0, SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS.length)).toEqual(
+      // Exact function identity catches a stale copied helper, not just matching names. Chat
+      // also runs render-only steps documents must not save (linked file paths, kept list
+      // numbers), so the grammar is checked in order among them.
+      const grammar = new Set<unknown>(SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS);
+      expect(plugins.filter((plugin) => grammar.has(plugin))).toEqual(
         SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS,
       );
+      expect(plugins[0]).toBe(SCIENT_MARKDOWN_GRAMMAR_REMARK_PLUGINS[0]);
     }
   });
 

@@ -165,9 +165,11 @@ export function QueueAdmissionStatus(props: {
   readonly messageId: string;
   readonly accepted: boolean;
 }) {
-  const status = useDelayedStatus(props.messageId, props.accepted ? null : "Queuing…", {
-    showDelayMs: QUEUE_ADMISSION_STATUS_DELAY_MS,
-  });
+  const status = useDelayedStatus(
+    props.messageId,
+    props.accepted ? null : "Queuing…",
+    QUEUE_ADMISSION_STATUS_DELAY_MS,
+  );
   return status === null ? null : (
     <span role="status" className="shrink-0 text-muted-foreground">
       {status}

@@ -241,8 +241,11 @@ describe("MessagesTimeline activity announcements", () => {
   it("keeps one announcer from the empty view into the first turn", async () => {
     const props = baseProps();
     await using screen = await render(<MessagesTimeline {...props} timelineEntries={[]} />);
-    const region = screen.container.querySelector<HTMLElement>('[aria-live="polite"].sr-only')!;
-    expect(region).not.toBeNull();
+    // The status region follows the messages-and-steps one.
+    const statusRegion = () =>
+      [...screen.container.querySelectorAll<HTMLElement>('[aria-live="polite"].sr-only')].at(-1);
+    const region = statusRegion()!;
+    expect(region).not.toBeUndefined();
     expect(region.textContent).toBe("");
     const running = {
       ...props,
@@ -250,7 +253,7 @@ describe("MessagesTimeline activity announcements", () => {
       announcedRun: { runId: RunId.make("first-announced-run"), status: "running" as const },
     };
     await screen.rerender(<MessagesTimeline {...running} timelineEntries={[]} />);
-    expect(screen.container.querySelector('[aria-live="polite"].sr-only')).toBe(region);
+    expect(statusRegion()).toBe(region);
     await expect.element(region).toHaveTextContent("Working");
     await screen.rerender(
       <MessagesTimeline

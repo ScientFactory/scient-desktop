@@ -85,11 +85,17 @@ export const make = Effect.gen(function* () {
     return handle.driver.checkpoints satisfies VcsCheckpointOps;
   });
 
-  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = (cwd) =>
-    vcsRegistry.detect({ cwd, requestedKind: "git" }).pipe(
-      Effect.map((repository) => repository !== null),
-      Effect.catchTags({ VcsExecutableUnavailableError: () => Effect.succeed(false) }),
-    );
+  // The registry reads an unreadable repository as none; ask Git again so that fails here.
+  const isGitRepository: CheckpointStore["Service"]["isGitRepository"] = Effect.fn(
+    "CheckpointStore.isGitRepository",
+  )(
+    function* (cwd) {
+      if ((yield* vcsRegistry.detect({ cwd, requestedKind: "git" })) !== null) return true;
+      const git = yield* vcsRegistry.get("git");
+      return (yield* git.detectRepository(cwd)) !== null;
+    },
+    Effect.catchTags({ VcsExecutableUnavailableError: () => Effect.succeed(false) }),
+  );
 
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
     "captureCheckpoint",

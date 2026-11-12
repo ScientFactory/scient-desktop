@@ -78,6 +78,8 @@ export class DiskSpaceCheckError extends Schema.TaggedError<DiskSpaceCheckError>
   }
 }
 
+export type DatabaseCompactStep = "prune-events" | "vacuum" | "rebuild-search" | "checkpoint";
+
 export class DatabaseMaintenance extends Context.Service<
   DatabaseMaintenance,
   {
@@ -93,8 +95,14 @@ export class DatabaseMaintenance extends Context.Service<
       },
       DatabaseMissingError | DatabaseInspectError
     >;
-    /** Compacts history, then VACUUMs into incremental auto_vacuum. Refuses while a server has it open. */
-    readonly compact: (databasePath: string) => Effect.Effect<
+    /**
+     * Compacts history, then VACUUMs into incremental auto_vacuum. Refuses while a server has it open.
+     * Calls `onStep` as each step starts; VACUUM time grows with the whole database size.
+     */
+    readonly compact: (
+      databasePath: string,
+      onStep?: (step: DatabaseCompactStep) => Effect.Effect<void>,
+    ) => Effect.Effect<
       {
         readonly beforeBytes: number;
         readonly afterBytes: number;
@@ -186,13 +194,17 @@ const make = Effect.gen(function* () {
   );
 
   const compact = Effect.fn("DatabaseMaintenance.compact")(
-    function* (databasePath: string) {
+    function* (
+      databasePath: string,
+      onStep: (step: DatabaseCompactStep) => Effect.Effect<void> = () => Effect.void,
+    ) {
       yield* locate(databasePath);
       const beforeBytes = Number((yield* fs.stat(databasePath)).size);
       const result = yield* Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* lockExclusively(databasePath);
         const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        yield* onStep("prune-events");
         const summary = yield* maintenance.pruneEventStore();
         // SCIENT-FORK:START — recheck space under the lock; a marker covers a stop after VACUUM.
         // Space was checked when the repair was requested; check again now that nothing else
@@ -215,10 +227,13 @@ const make = Effect.gen(function* () {
         const marker = searchRebuildMarker(path, databasePath);
         yield* writeDurably(marker, path.dirname(marker));
         // SCIENT-FORK:END
+        yield* onStep("vacuum");
         // VACUUM is required to enable incremental auto_vacuum on existing databases.
         yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
         yield* sql`VACUUM`;
+        yield* onStep("rebuild-search");
         yield* rebuildMessageSearch(sql);
+        yield* onStep("checkpoint");
         yield* sql`PRAGMA wal_checkpoint(TRUNCATE)`;
         // SCIENT-FORK:START — search is rebuilt and checkpointed.
         yield* fs.remove(marker, { force: true });

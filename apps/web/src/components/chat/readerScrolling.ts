@@ -82,6 +82,7 @@ export function useReaderScrollInput({
   scrollbarHeldRef,
   stillFramesRef,
   scheduleBookkeepingRef,
+  readerInputCountRef,
 }: {
   listRef: RefObject<LegendListRef | null>;
   viewport: HTMLDivElement | null;
@@ -89,6 +90,8 @@ export function useReaderScrollInput({
   scrollbarHeldRef: RefObject<boolean>;
   stillFramesRef: RefObject<number>;
   scheduleBookkeepingRef: RefObject<() => void>;
+  /** Counts the reader's scrolling inputs, so a later one can be told from an earlier one. */
+  readerInputCountRef?: RefObject<number>;
 }) {
   // Any click or key in the timeline can expand or collapse content (a long
   // message, a plan, tool output). Idle end pinning pauses briefly after one,
@@ -109,6 +112,7 @@ export function useReaderScrollInput({
     };
     // The reader's own scrolling input; idle end keeping never acts on it.
     const input = () => {
+      if (readerInputCountRef) readerInputCountRef.current += 1;
       readerInputRef.current = true;
       stillFramesRef.current = 0;
       scheduleBookkeepingRef.current();
@@ -167,7 +171,15 @@ export function useReaderScrollInput({
       ownerDocument.removeEventListener("mouseup", released);
     };
     // The refs are the caller's stable useRef objects; listing them changes nothing.
-  }, [listRef, viewport, readerInputRef, scrollbarHeldRef, stillFramesRef, scheduleBookkeepingRef]);
+  }, [
+    listRef,
+    viewport,
+    readerInputRef,
+    scrollbarHeldRef,
+    stillFramesRef,
+    scheduleBookkeepingRef,
+    readerInputCountRef,
+  ]);
 
   return interactionSettling;
 }

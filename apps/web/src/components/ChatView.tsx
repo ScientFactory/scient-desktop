@@ -109,6 +109,7 @@ import {
   presentThreadShellFromProjection,
 } from "./ChatView.logic";
 import { usePullRequestDraftThread } from "./chat/usePullRequestDraftThread";
+import { usePullRequestLinking } from "../hooks/usePullRequestLinking";
 import { useComposerSelection } from "./chat/useComposerSelection";
 import { useProjectCloneBanner } from "./chat/useProjectCloneBanner";
 import { useAttachmentPreviewHandoff } from "./chat/useAttachmentPreviewHandoff";
@@ -187,8 +188,10 @@ import {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   getUserQueuedThreadRuns,
+  threadSteersDuringCompaction,
   threadSupportsProviderHandoff,
 } from "@t3tools/client-runtime/state/thread-workflows";
+import { compactionBlocksSteering } from "@t3tools/client-runtime/state/composer-dispatch";
 import { resolvePendingHandoff } from "@t3tools/client-runtime/handoff";
 import { HandoffRow } from "./chat/V2LifecycleRow";
 import {
@@ -230,7 +233,6 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
-import { useDiffPanelStore } from "../diffPanelStore";
 import { useActiveThreadRef } from "../hooks/useActiveThreadRef";
 import { composerRequiresModifier } from "../composer-logic";
 import {
@@ -338,11 +340,8 @@ import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../termina
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQueryRefresh } from "../state/query";
 import { useEnvironmentScope } from "~/state/session";
-import {
-  primaryServerAvailableEditorsAtom,
-  primaryServerKeybindingsAtom,
-  serverEnvironment,
-} from "../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
+import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { threadEnvironment } from "../state/threads";
 import { chatGitStatusAtom, NO_CHAT_GIT_STATUS_ATOM, vcsEnvironment } from "../state/vcs";
 import {
@@ -651,7 +650,7 @@ function ChatViewContent(props: ChatViewProps) {
   const delayedThreadSyncing = useDelayedStatus(
     routeThreadKey,
     threadSyncPhase === "syncing" ? threadSyncPhase : null,
-    { showDelayMs: 2_000 },
+    2_000,
   );
   const delayedThreadSyncPhase = delayedThreadLoading ?? delayedThreadSyncing;
   // SCIENT-FORK:END
@@ -1251,20 +1250,6 @@ function ChatViewContent(props: ChatViewProps) {
     selectActiveRightPanel(state.byThreadKey, activeThreadRef),
   );
   const diffOpen = activeRightPanelKind === "diff";
-  const explicitDiffOpenRef = useRef<ScopedThreadRef | null>(null);
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- resets the diff panel store to branch scope when the diff opens without an explicit request
-  useLayoutEffect(() => {
-    const explicitThreadRef = explicitDiffOpenRef.current;
-    explicitDiffOpenRef.current = null;
-    if (
-      diffOpen &&
-      activeThreadRef &&
-      explicitThreadRef !== activeThreadRef &&
-      !useDiffPanelStore.getState().consumeKeepSelectionOnOpen(activeThreadRef)
-    ) {
-      useDiffPanelStore.getState().selectGitScope(activeThreadRef, "branch");
-    }
-  }, [activeThreadRef, diffOpen]);
   const rightPanelState = useRightPanelStore((state) =>
     selectThreadRightPanelState(state.byThreadKey, activeThreadRef),
   );
@@ -1511,7 +1496,6 @@ function ChatViewContent(props: ChatViewProps) {
       .reconcileFileSurfaces(activeThreadRef, activeWorkspaceKeyRoot !== undefined);
   }, [activeEnvironmentBootstrapComplete, activeThreadRef, activeWorkspaceKeyRoot]);
 
-  const primaryEnvironmentId = primaryEnvironment?.environmentId ?? null;
   // SCIENT-FORK:START — browser visits are filed under the thread's project again
   useBrowserHistoryProjectLink({
     threadRef: activeThreadRef,
@@ -1558,6 +1542,13 @@ function ChatViewContent(props: ChatViewProps) {
     canPickEnvironment: hasMultipleEnvironments,
   });
 
+  const pullRequestLinking = usePullRequestLinking(environmentId);
+  // Best effort: the thread already exists, so a failed link is only logged.
+  const linkCheckoutPullRequest = useStableCallback((threadRef: ScopedThreadRef, url: string) => {
+    pullRequestLinking.changeLink(threadRef, url, true).catch((error: unknown) => {
+      console.warn("Failed to link the checked-out pull request to its thread.", error);
+    });
+  });
   const { handlePreparedPullRequestThreadStable, openPullRequestDialogStable } =
     usePullRequestDraftThread({
       routeKind,
@@ -1828,9 +1819,17 @@ function ChatViewContent(props: ChatViewProps) {
       item.runId === activeRuntime?.activeRunId &&
       item.status === "running",
   );
+  const compactCommandIsActive = compactRequestIsActive && !compactionSettled;
   const isCompacting =
     (isSendBusy || phase === "connecting" || phase === "running") &&
-    (compactionRunning || (compactRequestIsActive && !compactionSettled));
+    (compactionRunning || compactCommandIsActive);
+  const compactionBlocksSteer = compactionBlocksSteering({
+    compactCommandIsActive,
+    compactionRunning,
+    steersDuringCompaction: threadSteersDuringCompaction(serverProjection),
+    run: serverProjection?.runs.find((run) => run.id === activeRuntime?.activeRunId),
+    messages: serverProjection?.messages,
+  });
   const activeRunPreparing = activeActivityRun?.status === "preparing";
   // Once the server owns the setup run, follow-ups queue behind it.
   const sendQueuesBehindSetup =
@@ -2052,7 +2051,7 @@ function ChatViewContent(props: ChatViewProps) {
   // SCIENT-FORK:END
   const availableRevertTurnCounts = deriveAvailableRevertTurnCounts(serverProjection ?? null);
   // A paged history window cannot identify the first loaded run as the thread start.
-  const threadStartCheckpointReady =
+  const threadStartCheckpointAvailable =
     !serverThreadHistory.hasMoreHistory &&
     findRevertCheckpoint(serverProjection?.checkpoints ?? [], 0) !== undefined;
   // SCIENT-FORK:START — without a captured snapshot only the conversation rewinds.
@@ -2106,17 +2105,21 @@ function ChatViewContent(props: ChatViewProps) {
   const scriptKeybindings =
     useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
     DEFAULT_RESOLVED_KEYBINDINGS;
-  const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
-  const remoteOpenState = useRemoteOpenState(activeThread?.environmentId ?? environmentId);
+  const openInEnvironmentId = activeThread?.environmentId ?? environmentId;
+  const availableEditors =
+    useAtomValue(serverEnvironment.configValueAtom(openInEnvironmentId))?.availableEditors ?? [];
+  const hostEnvironmentId = useAtomValue(hostEnvironmentIdAtom);
+  const remoteOpenState = useRemoteOpenState(openInEnvironmentId);
   const showOpenInPicker = shouldShowOpenInPicker({
     activeProjectName: activeProject?.title,
-    activeThreadEnvironmentId: activeThread?.environmentId ?? environmentId,
-    primaryEnvironmentId,
+    activeThreadEnvironmentId: openInEnvironmentId,
+    primaryEnvironmentId: primaryEnvironment?.environmentId ?? null,
+    hostEnvironmentId,
     remoteOpenMode: remoteOpenState.mode,
   });
   useOpenFavoriteEditorShortcut({
     enabled: showOpenInPicker && !backgroundThread,
-    environmentId: activeThread?.environmentId ?? environmentId,
+    environmentId: openInEnvironmentId,
     keybindings,
     availableEditors,
     openInCwd: gitCwd,
@@ -3103,7 +3106,6 @@ function ChatViewContent(props: ChatViewProps) {
     rightPanelMaximized,
     supportsPullRequests,
     pullRequestsSurfaceAvailable,
-    explicitDiffOpenRef,
     onDiffPanelOpen,
     closeRightPanelSurface,
   });
@@ -3737,6 +3739,7 @@ function ChatViewContent(props: ChatViewProps) {
     sideChatDisabledReason,
     handleNewThreadInActiveProject,
     persistThreadSettingsForNextTurn,
+    linkCheckoutPullRequest,
   });
 
   const onWorktreeSetupWorkLocally = () => {
@@ -4323,7 +4326,7 @@ function ChatViewContent(props: ChatViewProps) {
                   parentThreadLink={parentThreadLink}
                   workflowOpening={workflowOpening}
                   supportsConversationRollback={supportsConversationRollback}
-                  threadStartCheckpointReady={threadStartCheckpointReady}
+                  threadStartCheckpointAvailable={threadStartCheckpointAvailable}
                   availableRevertTurnCounts={availableRevertTurnCounts}
                   onRevertToTurnCount={onRevertTimelineTurnStable}
                   onUseArtifactTemplate={insertArtifactTemplateStable}
@@ -4567,7 +4570,7 @@ function ChatViewContent(props: ChatViewProps) {
                                   activeProject === null
                                 }
                                 phase={phase}
-                                isCompacting={isCompacting}
+                                canSteer={!compactionBlocksSteer}
                                 canInterrupt={canInterruptRunningThread}
                                 // SCIENT-FORK:START — explicit Stop acknowledgement.
                                 isStopping={isStopping}
@@ -4843,6 +4846,7 @@ function ChatViewContent(props: ChatViewProps) {
                     )
                   }
                   gitCwd={gitCwd}
+                  workspaceMutationId={workspaceMutationId}
                   isGitRepo={isGitRepo}
                   envLocked={envLocked}
                   availableEnvironments={logicalProjectEnvironments}

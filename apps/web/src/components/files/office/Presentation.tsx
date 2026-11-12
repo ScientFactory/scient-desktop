@@ -138,7 +138,10 @@ export default function Presentation(props: {
     const show = (next: SlideState) => {
       if (next.error !== undefined) onError(next.error);
       setState(next);
-      if (next.opened) onDetails(`${next.opened.slides.length} slides`);
+      if (next.opened) {
+        const count = next.opened.slides.length;
+        onDetails(`${count} slide${count === 1 ? "" : "s"}`);
+      }
     };
     show(session.state());
     const unsubscribe = session.subscribe(show);

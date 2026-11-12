@@ -194,6 +194,7 @@ Follow their linked successors for current behavior.
 - [Scient local dev app](./operations/local-dev-app.md)
 - [Compute backend qualification](./operations/compute-backend-qualification.md)
 - [Windows dev app](./operations/local-dev-app-windows.md)
+- [Scenarios: real-app proof for a fix](./operations/scenarios.md)
 - [Release](./operations/release.md)
 - [Managed provider runtime updates](./operations/managed-provider-runtime-updates.md)
 - [Observability](./operations/observability.md)

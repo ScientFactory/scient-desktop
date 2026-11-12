@@ -100,7 +100,7 @@ import type {
   ProjectionRecordField,
   ProjectionRecordFilter,
 } from "../orchestration-v2/ProjectionStore.ts";
-import { runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
+import { delegatedTaskResultRun, runOutcome } from "../orchestration-v2/RestartBackgroundNote.ts";
 import { DelegatedStopHandledByCaller } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -356,6 +356,23 @@ function capabilityModelOption(descriptor: ProviderOptionDescriptor): Orchestrat
     ...(defaultValue === undefined ? {} : { default: defaultValue }),
   };
 }
+
+const advertisedModel = (provider: ServerProvider, model: string) =>
+  provider.models.find((candidate) => candidate.slug === model) ??
+  provider.models.find((candidate) =>
+    candidate.aliases?.some((alias) => alias.toLowerCase() === model.toLowerCase()),
+  );
+
+/** A provider that lists no models accepts any slug. */
+export const requireAdvertisedModel = (provider: ServerProvider, model: string) =>
+  provider.models.length > 0 && advertisedModel(provider, model) === undefined
+    ? Effect.fail(
+        failure(
+          "model_unavailable",
+          `Model ${model} is not advertised by provider ${provider.instanceId}.`,
+        ),
+      )
+    : Effect.void;
 
 function providerConstraints(
   provider: ServerProvider | undefined,
@@ -978,8 +995,8 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return `Asked the user for ${item.label}: ${item.secretStatus}.`;
     case "link_request":
       return item.linkStatus === "linked"
-        ? `Linked ${item.linkedLabel ?? item.label ?? item.url ?? "an environment"} (${item.linkedAccess}).`
-        : `Asked the user to link ${item.label ?? item.url ?? "an environment"}: ${item.linkStatus}.`;
+        ? `Linked ${item.linkedLabel ?? item.url ?? "an environment"} (${item.linkedAccess}).`
+        : `Asked the user to link ${item.url ?? "an environment"}: ${item.linkStatus}.`;
     case "subagent":
       return item.result ?? item.progress ?? item.prompt;
     case "dynamic_tool":
@@ -1171,17 +1188,13 @@ const make = Effect.gen(function* () {
   const resolveProjectTarget = (
     parent: Pick<OrchestrationV2ThreadProjection, "thread"> | undefined,
     projectId: ProjectId | undefined,
+    missingMessage = "Pass projectId: this MCP client is not running inside a Scient thread.",
   ) =>
     projectId !== undefined
       ? Effect.succeed(projectId)
       : parent !== undefined
         ? Effect.succeed(parent.thread.projectId)
-        : Effect.fail(
-            failure(
-              "target_required",
-              "Pass projectId: this MCP client is not running inside a Scient thread.",
-            ),
-          );
+        : Effect.fail(failure("target_required", missingMessage));
 
   const loadTargetThread = Effect.fn("OrchestratorMcpService.loadTargetThread")(function* (
     threadId: ThreadId,
@@ -1473,19 +1486,9 @@ const make = Effect.gen(function* () {
         `Provider ${instanceId} has no model available for inheritance.`,
       );
     }
-    if (
-      requestedModel !== undefined &&
-      provider.models.length > 0 &&
-      !provider.models.some((candidate) => candidate.slug === requestedModel)
-    ) {
-      return yield* failure(
-        "model_unavailable",
-        `Model ${requestedModel} is not advertised by provider ${instanceId}.`,
-      );
-    }
-
-    const descriptors = provider.models.find((candidate) => candidate.slug === model)?.capabilities
-      ?.optionDescriptors;
+    if (requestedModel !== undefined) yield* requireAdvertisedModel(provider, requestedModel);
+    const advertised = advertisedModel(provider, model);
+    const descriptors = advertised?.capabilities?.optionDescriptors;
     const requestedOptions = withLegacyUltracodeEffort(descriptors, input.target?.options);
     if (requestedOptions !== undefined) {
       const invalid = invalidOptionSelections(requestedOptions, descriptors);
@@ -1498,7 +1501,9 @@ const make = Effect.gen(function* () {
     }
 
     const inheritsOptions =
-      instanceId === inheritedSelection.instanceId && model === inheritedSelection.model;
+      instanceId === inheritedSelection.instanceId &&
+      (advertised?.slug ?? model) ===
+        (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
     let options = inheritsOptions
       ? knownOptions(
           withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
@@ -1588,8 +1593,15 @@ const make = Effect.gen(function* () {
           },
       taskRunIds === undefined ? undefined : { includeUnstartedResults: true },
     );
-    const taskResultRun = progress.resultRun;
-    const taskWorkState = progress.state;
+    const taskResultRun =
+      taskRunIds !== undefined
+        ? delegatedTaskResultRun(childControls.runs, task.id)
+        : progress.resultRun;
+    // SCIENT-FORK: the task's own runs settle it only once their live native child turns end too.
+    const taskWorkState =
+      taskRunIds !== undefined && !isTerminalTaskStatus(taskStatusForRun(taskResultRun))
+        ? "working"
+        : progress.state;
     const resultRunIds = [
       ...new Set(
         [taskResultRun?.id, terminalRun?.id].filter((id): id is RunId => id !== undefined),
@@ -1627,7 +1639,11 @@ const make = Effect.gen(function* () {
               : childRun,
           )
         : workState === "result_available"
-          ? taskStatusForRun(taskResultRun ?? childRun)
+          ? // A cancelled task's finished turn settles it as interrupted.
+            task.cancelledRunId !== undefined &&
+            taskStatusForRun(taskResultRun ?? childRun) === "completed"
+            ? "interrupted"
+            : taskStatusForRun(taskResultRun ?? childRun)
           : taskStatusForRun(taskResultRun ?? childRun) === "queued"
             ? "queued"
             : "running";
@@ -1751,33 +1767,61 @@ const make = Effect.gen(function* () {
     return response;
   });
 
-  /** `mode=wait` on a task already recorded, as `delegateTask` does for its own. */
+  /**
+   * Blocks for `mode=wait`. A wait that ends without a terminal result, including an
+   * interrupted tools/call, upgrades the wake so a later result still reaches the parent.
+   */
   const awaitTask = Effect.fn("OrchestratorMcpService.awaitTask")(function* (
     scope: McpThreadInvocationScope,
     taskId: NodeId,
+    wakePolicyRequestKey: string,
     requestedTimeoutMs: number | undefined,
   ): Effect.fn.Return<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> {
     const timeoutMs = Math.min(
       MAX_WAIT_TIMEOUT_MS,
       Math.max(1, requestedTimeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
     );
-    const waited = yield* waitForTask(scope, taskId, timeoutMs);
-    if (Option.isSome(waited)) return waited.value;
-    // As for a local task: once the blocking wait ends, a later result wakes the parent.
-    yield* threadManagement
+    const upgradeWake = threadManagement
       .dispatch({
         type: "delegated_task.wake-policy",
         commandId: stableCommandId({
           scope,
-          requestKey: taskId,
+          requestKey: wakePolicyRequestKey,
           operation: "delegate-task-wake-policy",
         }),
         parentThreadId: scope.thread.threadId,
         taskId,
         completionWake: "always",
       })
-      .pipe(Effect.ignoreCause({ log: true }));
-    return yield* readTask(scope, taskId, true, true);
+      .pipe(
+        Effect.catch((error) =>
+          Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
+            taskId,
+            outcome:
+              error._tag === "OrchestratorCommandPreviouslyRejectedError"
+                ? "previously_rejected"
+                : "dispatch_failed",
+            error,
+          }),
+        ),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
+            taskId,
+            outcome: "defect",
+            cause,
+          }),
+        ),
+      );
+    const delivered = (waited: Option.Option<OrchestratorMcpDelegateTaskResult>) =>
+      Option.isSome(waited) && isTerminalTaskStatus(waited.value.status);
+    // The finalizer runs uninterruptibly, so a cancel right after the wait returns still upgrades.
+    const waited = yield* waitForTask(scope, taskId, timeoutMs).pipe(
+      Effect.onExit((exit) =>
+        Exit.isSuccess(exit) && delivered(exit.value) ? Effect.void : upgradeWake,
+      ),
+    );
+    if (Option.isSome(waited) && delivered(waited)) return waited.value;
+    return yield* readTask(scope, taskId, Option.isNone(waited), true);
   });
 
   /**
@@ -2180,11 +2224,11 @@ const make = Effect.gen(function* () {
           yield* resolveRuntimeMode(limits.runtimeMode, parent!.thread.runtimeMode);
           yield* resolveInteractionMode(limits.interactionMode, parent!.thread.interactionMode);
         }
-        // Update workspace strategy on rebinding so unbound root tasks cannot run in the shared checkout.
+        // Reset the workspace only when the binding flips, so unbinding cannot leave runs in the shared checkout.
         const workspaceStrategy =
-          input.bindToCurrentThread === undefined
+          (threadId === null) === (existing.threadId === null)
             ? existing.workspaceStrategy
-            : yield* scheduledTaskWorkspaceStrategy(input.bindToCurrentThread, existing.projectId);
+            : yield* scheduledTaskWorkspaceStrategy(threadId !== null, existing.projectId);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -2487,7 +2531,7 @@ const make = Effect.gen(function* () {
           target: { ...input.target, environmentId },
         });
         return yield* input.mode === "wait"
-          ? awaitTask(scope, taskId, input.timeoutMs)
+          ? awaitTask(scope, taskId, taskId, input.timeoutMs)
           : readTask(scope, taskId, false, true);
       }
       const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
@@ -2582,8 +2626,8 @@ const make = Effect.gen(function* () {
           interactionMode,
           ...(workspaceStrategy === undefined ? {} : { workspaceStrategy }),
           // Async delegations wake the parent on every child terminal; wait
-          // delegations deliver through the blocking tool call, so a wake is
-          // only needed if the parent settled first (timeout, disconnect).
+          // delegations deliver through the blocking tool call until `awaitTask`
+          // gives up the wait (timeout, cancelled call) and upgrades the wake.
           completionWake: input.mode === "wait" ? "settled_only" : "always",
         })
         .pipe(
@@ -2623,51 +2667,9 @@ const make = Effect.gen(function* () {
         });
       }
 
-      if (input.mode !== "wait") {
-        return yield* readTask(scope, taskId, false, true);
-      }
-      const timeoutMs = Math.min(
-        MAX_WAIT_TIMEOUT_MS,
-        Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
-      );
-      const waited = yield* waitForTask(scope, taskId, timeoutMs);
-      if (Option.isSome(waited) && isTerminalTaskStatus(waited.value.status)) {
-        return waited.value;
-      }
-      // An incomplete wait gives up delivery: upgrade so a later terminal
-      // wakes the parent even mid-turn.
-      yield* threadManagement
-        .dispatch({
-          type: "delegated_task.wake-policy",
-          commandId: stableCommandId({
-            scope,
-            requestKey: key,
-            operation: "delegate-task-wake-policy",
-          }),
-          parentThreadId: scope.thread.threadId,
-          taskId,
-          completionWake: "always",
-        })
-        .pipe(
-          Effect.catch((error) =>
-            Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
-              taskId,
-              outcome:
-                error._tag === "OrchestratorCommandPreviouslyRejectedError"
-                  ? "previously_rejected"
-                  : "dispatch_failed",
-              error,
-            }),
-          ),
-          Effect.catchCause((cause) =>
-            Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
-              taskId,
-              outcome: "defect",
-              cause,
-            }),
-          ),
-        );
-      return yield* readTask(scope, taskId, Option.isNone(waited), true);
+      return yield* input.mode === "wait"
+        ? awaitTask(scope, taskId, key, input.timeoutMs)
+        : readTask(scope, taskId, false, true);
     }),
     taskStatus: Effect.fn("OrchestratorMcpService.taskStatus")(function* (callerScope, taskId) {
       const scope = yield* requireThreadScope(callerScope, "task_status");
@@ -2749,12 +2751,25 @@ const make = Effect.gen(function* () {
       const stopChild = Effect.gen(function* () {
         const commandId = stableCommandId({ scope, requestKey: key, operation: "cancel-task" });
         const reason = agentStopReason(input.reason);
+        // SCIENT-FORK: Scient's Stop has no stopDelegatedTasks flag; DelegatedStopHandledByCaller below suppresses the walk.
+        const command = {
+          type: "thread.stop" as const,
+          commandId,
+          threadId: childThreadId,
+          reason,
+        };
         yield* threadManagement
-          .dispatch({
-            type: "thread.stop",
-            commandId,
-            threadId: childThreadId,
-            reason,
+          .cancelDelegatedTask({
+            parentThreadId: scope.thread.threadId,
+            taskId: input.taskId,
+            command,
+            stopDescendants: (remoteDispatch) =>
+              threadManagement.stopDelegatedTasks({
+                threadId: childThreadId,
+                commandId,
+                reason,
+                remoteDispatch,
+              }),
           })
           .pipe(
             Effect.provideService(DelegatedStopHandledByCaller, childThreadId),
@@ -2762,16 +2777,6 @@ const make = Effect.gen(function* () {
               failure(
                 "task_not_cancellable",
                 `Unable to stop delegated task ${input.taskId}: ${errorMessage(error)}`,
-              ),
-            ),
-          );
-        yield* threadManagement
-          .stopDelegatedTasks({ threadId: childThreadId, commandId, reason })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "task_not_cancellable",
-                `Stopped delegated task ${input.taskId}, but not every task it delegated: ${errorMessage(error)}`,
               ),
             ),
           );
@@ -3061,7 +3066,11 @@ const make = Effect.gen(function* () {
       const { parent } = yield* loadCaller(scope, []);
       const projectId = input.allProjects
         ? null
-        : yield* resolveProjectTarget(parent, input.projectId);
+        : yield* resolveProjectTarget(
+            parent,
+            input.projectId,
+            "Pass projectId, or allProjects: true for every project. This MCP client is not running inside a Scient thread.",
+          );
       // SCIENT-FORK:START — Explicit list targets, including allProjects, do not widen a thread credential's project.
       if (projectId === null && parent !== undefined) {
         return yield* failure("thread_not_found", "allProjects is outside the calling project.");

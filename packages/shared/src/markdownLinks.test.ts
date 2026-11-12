@@ -53,6 +53,16 @@ describe("inlineCodeFilePathCandidate", () => {
     ["/tmp/.../scratchpad/notes.md", null],
     ["~/projects/…/notes.md", null],
     ["src/.../main.ts", null],
+    // regression: #22181 a `:line` suffix does not make an extensionless basename a file
+    ["I/W217:220", null],
+    ["bin/run:12", null],
+    ["docs/README:12", "docs/README:12"],
+    ["./bin/run:12", "./bin/run:12"],
+    // SCIENT-FORK:START — relative inline code stays to ASCII path characters, as docs/סיכום.md
+    // above; upstream reads these two as files.
+    ["src/資料.備份:12", null],
+    ["src/foo.c++:12", null],
+    // SCIENT-FORK:END
   ])("distinguishes file paths from code and hostnames in %s", (source, candidate) => {
     expect(inlineCodeFilePathCandidate(source)).toBe(candidate);
   });
@@ -123,6 +133,9 @@ describe("parseMarkdownFileLink", () => {
     "me@example.com",
     "foo(bar)",
     "$HOME",
+    "/tmp/claude-1000/...",
+    "/tmp/claude-1000/....:12",
+    "/tmp/claude-1000/%2E%2E%2E",
     // SCIENT-FORK:START
     "",
     "#anchor",

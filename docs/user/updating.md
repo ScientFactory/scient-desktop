@@ -98,14 +98,14 @@ are ready. A server that is still restarting finishes on its own.
 If a connected environment uses a different server version, the update control
 at the bottom of the sidebar and **Settings → Environments** offer to update it.
 
-**Settings → Maintenance → Continue threads after restarts** is off by default.
+**Settings → Maintenance → Continue threads after restarts** is on by default. Scient once
+shipped it off; the first start of a version with the new default turns it on everywhere, including
+where it was switched off. Switch it off again and that choice is kept.
 When enabled, supported active threads can resume after an update, crash, or machine restart.
 Scient must start again on that machine; this does not enable automatic startup. Threads without
 saved provider resume state need a new message, and terminal commands may still be interrupted.
 Changes apply to connected environments that support the setting. After an offline environment
 reconnects, use **Apply to all** to reconcile a different value; older servers need updating first.
-If you previously enabled continuation only for updates, enable this setting once to allow recovery
-without a connected client.
 A thread that finished its turn to wait on a subagent, a background task, or a
 command or monitor the agent said it was waiting on is woken and told that this work
 stopped. Other background shells and monitors, such as a dev server and its
@@ -162,6 +162,11 @@ newer release; see [Run a Scient server without the desktop app](./background-se
    older version or changing its release URL.
 4. If a desktop update cannot be checked or downloaded, install the same or a
    newer official release manually; do not remove the existing data directory.
+
+A background service installed by an older release refuses **Update server**
+until you update it once on the host and let that update restart it. If you
+decline the restart, the service can stay down after a crash or reboot until you
+run `scient service restart`.
 
 Only one server can use a Scient data directory at a time. If startup reports
 that another server owns it, stop that server before retrying, or use a separate

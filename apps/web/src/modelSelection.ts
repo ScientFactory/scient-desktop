@@ -333,7 +333,8 @@ export function resolveAppModelSelectionForInstance(
   return options.length > 0 ? (resolveAutomaticModel(entry.driverKind, options) ?? null) : null;
 }
 
-function resolveEffectiveDefaultModelSelection(
+// New drafts carry the stored selection; capabilities resolve its raw options later.
+export function resolveEffectiveDefaultModelSelection(
   settings: UnifiedSettings,
   providers: ReadonlyArray<ServerProvider>,
   selection: ModelSelection,

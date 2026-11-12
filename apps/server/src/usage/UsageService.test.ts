@@ -52,7 +52,11 @@ import { totalTokens, type UsageRecord } from "@t3tools/provider-core/server/usa
 import * as UsageService from "./UsageService.ts";
 import * as MuseSdk from "../../../../packages/provider-muse/src/server/sdk.ts";
 import { MuseUsageHome } from "@t3tools/provider-muse/server";
-import { makeScanCacheWriter, SCAN_CACHE_FILE_NAME } from "./usageScanCache.ts";
+import {
+  LEGACY_SCAN_CACHE_FILE_NAMES,
+  makeScanCacheWriter,
+  SCAN_CACHE_FILE_NAME,
+} from "./usageScanCache.ts";
 
 vi.mock("node:fs/promises", { spy: true });
 vi.mock("../../../../packages/provider-muse/src/server/sdk.ts", async (importOriginal) => {
@@ -92,6 +96,42 @@ function claudeLine(
     },
   })}\n`;
 }
+
+/** One content-block line of message `msg_1`; Claude Code writes several per message. */
+function claudeCopy(usage: Readonly<Record<string, number>>): string {
+  return `${JSON.stringify({
+    type: "assistant",
+    timestamp: "2026-08-01T10:00:00Z",
+    requestId: "req_1",
+    sessionId: "session-1",
+    message: { id: "msg_1", model: "claude-fable-5", usage },
+  })}\n`;
+}
+
+// A subagent message: its stream-start copy, then its final copy.
+const PARTIAL_USAGE = {
+  input_tokens: 2,
+  cache_creation_input_tokens: 1097,
+  cache_read_input_tokens: 67934,
+  output_tokens: 3,
+};
+const COMPLETE_USAGE = { ...PARTIAL_USAGE, output_tokens: 264 };
+const COPY_RATES = {
+  "claude-fable-5": {
+    input_cost_per_token: 1e-5,
+    output_cost_per_token: 5e-5,
+    cache_read_input_token_cost: 1e-6,
+    cache_creation_input_token_cost: 1.25e-5,
+  },
+};
+const COMPLETE_COST_USD = 2 * 1e-5 + 67934 * 1e-6 + 1097 * 1.25e-5 + 264 * 5e-5;
+const COMPLETE_TOTALS = {
+  uncachedInputTokens: 2,
+  cachedInputTokens: 67934,
+  cacheCreationTokens: 1097,
+  outputTokens: 264,
+  reasoningTokens: 0,
+};
 
 const WINDOW: UsageSummaryInput = {
   timeZone: "UTC",
@@ -2534,6 +2574,65 @@ describe("UsageService", () => {
   );
 
   it.live(
+    "merges partial Claude copies through tail replacement, newline completion and restart",
+    () =>
+      Effect.gen(function* () {
+        const { transcript, settings, home } = yield* setup;
+        const partial = claudeCopy(PARTIAL_USAGE);
+        const complete = claudeCopy(COMPLETE_USAGE);
+        yield* Effect.promise(() => NodeFSP.writeFile(transcript, partial));
+        yield* Effect.gen(function* () {
+          const first = yield* UsageService.make;
+          assert.strictEqual(totalOutputTokens(yield* first.readSummary(WINDOW)), 3);
+          yield* first.awaitPersisted;
+
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, complete.trimEnd()));
+          const resumed = yield* UsageService.make;
+          const tail = yield* resumed.readSummary(WINDOW);
+          assert.deepStrictEqual(tail.buckets[0]?.totals, COMPLETE_TOTALS);
+          assert.strictEqual(tail.buckets[0]?.records, 1);
+          assert.closeTo(tail.buckets[0]?.costUsd ?? 0, COMPLETE_COST_USD, 1e-12);
+          yield* resumed.awaitPersisted;
+          const restarted = yield* UsageService.make;
+          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, tail.buckets);
+
+          // Grow the file without changing its settled prefix: the old tail must be discarded.
+          yield* Effect.promise(() =>
+            NodeFSP.writeFile(transcript, partial + claudeLine(2, 7) + claudeLine(3, 5)),
+          );
+          const replaced = yield* restarted.readSummary(WINDOW);
+          assert.strictEqual(totalOutputTokens(replaced), 3 + 7 + 5);
+          assert.strictEqual(replaced.buckets[0]?.records, 3);
+
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, complete.trimEnd()));
+          const grown = yield* restarted.readSummary(WINDOW);
+          assert.deepStrictEqual(grown.buckets[0]?.totals, {
+            ...COMPLETE_TOTALS,
+            uncachedInputTokens: 22,
+            outputTokens: 264 + 7 + 5,
+          });
+          assert.strictEqual(grown.buckets[0]?.records, 3);
+          yield* Effect.promise(() => NodeFSP.appendFile(transcript, "\n"));
+          assert.deepStrictEqual((yield* restarted.readSummary(WINDOW)).buckets, grown.buckets);
+          yield* restarted.awaitPersisted;
+          assert.deepStrictEqual(
+            (yield* (yield* UsageService.make).readSummary(WINDOW)).buckets,
+            grown.buckets,
+          );
+        }).pipe(
+          Effect.provide(
+            layerService({
+              prefix: "usage-service-copy-lifecycle-test",
+              home,
+              settings,
+              ratesDocument: COPY_RATES,
+            }),
+          ),
+        );
+      }).pipe(Effect.scoped),
+  );
+
+  it.live(
     "keeps large-record totals and costs exact through append, dedupe, restart and cleanup",
     () =>
       Effect.gen(function* () {
@@ -2658,7 +2757,7 @@ describe("UsageService", () => {
             const document = decodeUnknownJsonString(await NodeFSP.readFile(cachePath, "utf8")) as {
               version: number;
             };
-            assert.strictEqual(document.version, 11);
+            assert.strictEqual(document.version, 12);
             assert.strictEqual(await NodeFSP.readFile(priorPath, "utf8"), priorText);
             assert.strictEqual(await NodeFSP.readFile(v4Path, "utf8"), v4Text);
           });
@@ -2778,7 +2877,7 @@ describe("UsageService", () => {
           await NodeFSP.writeFile(v4Path, v4Text);
           await NodeFSP.rm(transcript);
         });
-        for (const version of [12, "unknown", undefined]) {
+        for (const version of [13, "unknown", undefined]) {
           yield* Effect.promise(() =>
             NodeFSP.writeFile(cachePath, encodeUnknownJsonString({ ...document, version })),
           );
@@ -2888,6 +2987,9 @@ describe("UsageService", () => {
               }
             }
             await NodeFSP.rm(deleted);
+            await NodeFSP.mkdir(`${cachePath}.stale`);
+            await NodeFSP.utimes(`${cachePath}.stale`, 0, 0);
+            await NodeFSP.mkdir(`${cachePath}.active`);
             return text;
           });
 
@@ -2899,7 +3001,7 @@ describe("UsageService", () => {
               const persisted = decodeUnknownJsonString(
                 await NodeFSP.readFile(cachePath, "utf8"),
               ) as { version: number };
-              assert.strictEqual(persisted.version, 11);
+              assert.strictEqual(persisted.version, 12);
               assert.strictEqual(await NodeFSP.readFile(legacyPath, "utf8"), legacy);
             }),
           );
@@ -2912,10 +3014,17 @@ describe("UsageService", () => {
             60 + 20 * (version === 4 ? 1 : 2),
           );
           yield* upgraded.awaitPersisted;
-          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v11.json");
-          assert.strictEqual(
-            yield* Effect.promise(() => NodeFSP.readFile(legacyPath, "utf8")),
-            legacy,
+          assert.strictEqual(SCAN_CACHE_FILE_NAME, "usage-scan-cache-v12.json");
+          // SCIENT-FORK: older cache files stay for older Scient builds; stale temp folders go.
+          assert.deepStrictEqual(
+            (yield* Effect.promise(() => NodeFSP.readdir(stateDir)))
+              .filter(
+                (name) =>
+                  name.startsWith("usage-scan-cache") &&
+                  !(LEGACY_SCAN_CACHE_FILE_NAMES as ReadonlyArray<string>).includes(name),
+              )
+              .toSorted(),
+            [SCAN_CACHE_FILE_NAME, `${SCAN_CACHE_FILE_NAME}.active`],
           );
         }).pipe(
           // SCIENT-FORK:START — drain service writers inside the provided state-directory lifetime.

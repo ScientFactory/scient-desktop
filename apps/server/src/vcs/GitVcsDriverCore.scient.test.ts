@@ -28,9 +28,7 @@ const isUntrackedListing = (command: ChildProcess.Command) =>
   command.args.includes("ls-files") &&
   command.args.includes("--others");
 
-// The listing walks the whole untracked tree before the 5,000-path cap applies, so a folder
-// that failed once costs the same on every status poll. Branch totals remember the failure and
-// back off until the untracked roots change.
+// GitVcsDriverCore.test.ts covers the backoff for a listing over the 5,000-path cap.
 it.layer(layerTest)("branch change totals", (it) => {
   // A listing that fails (here: output past the limit) backs off like one over the cap.
   it.effect("do not repeat an untracked listing that failed", () =>
@@ -102,64 +100,6 @@ it.layer(layerTest)("branch change totals", (it) => {
       yield* TestClock.adjust("1 minute");
       yield* read;
       assert.strictEqual(listings, 2);
-    }),
-  );
-
-  it.effect("do not list untracked files again on every status read after a failed listing", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const outer = yield* GitVcsDriver.GitVcsDriver;
-      const git = (cwd: string, args: ReadonlyArray<string>) =>
-        outer.execute({ operation: "GitVcsDriver.test.git", cwd, args, timeoutMs: 10_000 });
-      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "git-untracked-totals-" });
-      yield* git(cwd, ["init", "--quiet"]);
-      yield* git(cwd, ["config", "user.email", "test@test.com"]);
-      yield* git(cwd, ["config", "user.name", "Test"]);
-      yield* fs.writeFileString(path.join(cwd, "README.md"), "# test\n");
-      yield* git(cwd, ["add", "."]);
-      yield* git(cwd, ["commit", "--quiet", "-m", "initial"]);
-      const many = path.join(cwd, "many");
-      yield* fs.makeDirectory(many);
-      yield* Effect.forEach(
-        Array.from({ length: 5_001 }, (_, index) => index),
-        (index) => fs.writeFileString(path.join(many, `file-${index}`), ""),
-        { concurrency: 64, discard: true },
-      );
-
-      let listings = 0;
-      const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const spawner = ChildProcessSpawner.make((command) =>
-        Effect.suspend(() => {
-          if (isUntrackedListing(command)) listings++;
-          return delegate.spawn(command);
-        }),
-      );
-      const driver = yield* makeGitVcsDriverCore().pipe(
-        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-        Effect.provide(layerServerConfig),
-      );
-      const read = driver.statusDetailsLocal(cwd, { includeBranchChanges: true });
-
-      assert.strictEqual((yield* read).branchChanges, undefined, "too many files to count");
-      assert.strictEqual(listings, 1);
-      yield* read;
-      yield* read;
-      assert.strictEqual(listings, 1, "the failed listing is not repeated within the backoff");
-
-      yield* TestClock.adjust("1 minute");
-      yield* read;
-      assert.strictEqual(listings, 2, "it is retried once the backoff passes");
-      yield* TestClock.adjust("1 minute");
-      yield* read;
-      assert.strictEqual(listings, 2, "and the next backoff is longer");
-
-      // A change at the untracked-roots level scans again at once and counts again.
-      yield* fs.remove(many, { recursive: true });
-      yield* fs.writeFileString(path.join(cwd, "notes.txt"), "one\ntwo\n");
-      const status = yield* read;
-      assert.strictEqual(listings, 3);
-      assert.deepStrictEqual(status.branchChanges, { baseRef: null, insertions: 2, deletions: 0 });
     }),
   );
 

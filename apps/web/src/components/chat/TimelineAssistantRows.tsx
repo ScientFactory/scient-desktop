@@ -39,7 +39,10 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
   // SCIENT-FORK:START — an answer that is only images is not empty.
   const assistantImages = (row.message.attachments ?? []).filter(isImageAttachment);
   const messageText =
-    text || (row.message.streaming || assistantImages.length > 0 ? "" : "(empty response)");
+    text ||
+    (row.message.streaming || row.suppressEmptyResponse || assistantImages.length > 0
+      ? ""
+      : "(empty response)");
   // SCIENT-FORK:END
 
   return (
@@ -61,6 +64,7 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
             <>
               <ChatMarkdown
                 text={messageText}
+                renderInsights
                 cwd={ctx.markdownCwd}
                 threadRef={ctx.threadRef ?? undefined}
                 isStreaming={Boolean(row.message.streaming)}
@@ -82,9 +86,8 @@ export function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind
                   if (preview) ctx.onImageExpand(preview);
                 }}
               />
-              {/* SCIENT-FORK:START — the end of the answer's readable content (withReadingEnd). */}
+              {/* The end of the answer's readable content (withReadingEnd). */}
               <span data-reading-end="true" aria-hidden="true" className="block h-0" />
-              {/* SCIENT-FORK:END */}
             </>
             {/* SCIENT-FORK:END */}
           </AssistantCitationSource>

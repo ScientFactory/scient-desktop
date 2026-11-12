@@ -401,6 +401,13 @@ if the browser takes it first.
 Many defaults include `!terminalFocus` so they do not intercept terminal input.
 Keep that condition when remapping them if you want the same behavior.
 
+## Find on a browser page
+
+`preview.find` (`mod+f` while a browser has focus) searches the open page in the desktop app. It
+is also in the browser's **⋮** menu and the command palette. A page that handles `mod+f` itself,
+such as a code editor, keeps its own find. Use the **⋮** menu to reach the browser's find there.
+Streamed browser tabs and Scient in a web browser do not support it.
+
 ## `when` Conditions
 
 A `when` expression is evaluated against context keys describing the current UI state. The keys

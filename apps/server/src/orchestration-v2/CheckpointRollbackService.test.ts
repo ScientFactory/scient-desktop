@@ -949,15 +949,20 @@ it.layer(ProjectionStore.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMe
           SET status = 'error', payload_json = json_set(payload_json, '$.status', 'error')
           WHERE checkpoint_id IN (${history.checkpointId(2)}, ${history.checkpointId(4)},
             ${history.checkpointId(7)})`;
-        const expectRefused = (ordinal: number, restoreFiles?: boolean) =>
+        const expectRefused = (
+          ordinal: number,
+          restoreFiles?: boolean,
+          reason: CheckpointRollbackService.CheckpointRollbackExecutionError["reason"] = "rollback-target-invalid",
+        ) =>
           Effect.gen(function* () {
             const refused = yield* Effect.flip(history.rollback(ordinal, restoreFiles));
             assert.instanceOf(refused, CheckpointRollbackService.CheckpointRollbackExecutionError);
-            assert.equal(refused.reason, "rollback-target-invalid");
+            assert.equal(refused.reason, reason);
           });
 
         yield* expectRefused(2);
-        yield* expectRefused(7, false);
+        // The rollback context reads no attempt of a rolled-back run.
+        yield* expectRefused(7, false, "provider-turn-unavailable");
         assert.deepEqual(history.rollbackCounts, []);
 
         yield* history.rollback(2, false);

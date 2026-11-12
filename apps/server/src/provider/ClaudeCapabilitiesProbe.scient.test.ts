@@ -326,6 +326,8 @@ it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {
           "      behaviors: null,",
           "    });",
           "  }",
+          "  // It also reads Claude's settings for effort caps, which this account has none of.",
+          '  if (message.request?.subtype === "get_settings") reply({ effective: {}, sources: [] });',
           "});",
           "const keepAlive = setInterval(() => {}, 1_000);",
           'lines.on("close", () => clearInterval(keepAlive));',
