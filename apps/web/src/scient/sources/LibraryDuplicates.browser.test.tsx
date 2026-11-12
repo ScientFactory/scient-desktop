@@ -50,6 +50,8 @@ function side(sourceId: string, journal: string): ScientSourcesDuplicateSource {
   };
 }
 
+type Pair = ScientSourcesDuplicatesResult["pairs"][number];
+
 const withPair: ScientSourcesDuplicatesResult = {
   pairs: [
     {
@@ -188,8 +190,8 @@ describe("Possible duplicates", () => {
   });
 
   it("keeps the person's choice when a new read lists the pair's sides the other way round", async () => {
-    const fever = {
-      kind: "possible-metadata-match" as const,
+    const fever: Pair = {
+      kind: "possible-metadata-match",
       sources: [
         { ...side("c", "East Journal"), title: "Fever trial" },
         { ...side("d", "West Journal"), title: "Fever trial" },
@@ -198,7 +200,11 @@ describe("Possible duplicates", () => {
     };
     const pair = withPair.pairs[0]!;
     // Another session made "b" the suggested side, which the server lists first.
-    const swapped = { ...pair, sources: [pair.sources[1]!, pair.sources[0]!], keptByDefault: "b" };
+    const swapped: Pair = {
+      ...pair,
+      sources: [pair.sources[1], pair.sources[0]],
+      keptByDefault: "b",
+    };
     setup({ ...withPair, pairs: [pair, fever], pairsTotal: 2 }, { ...withPair, pairs: [swapped] });
     mocks.organizeScientSources
       .mockResolvedValueOnce({ outcome: "marked" })
