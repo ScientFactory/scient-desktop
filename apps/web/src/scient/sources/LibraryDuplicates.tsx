@@ -40,7 +40,12 @@ type Merge = ScientSourcesDuplicatesResult["merges"][number];
 /** A pair is about this tall with one-line fields; real pairs measure themselves. */
 const PAIR_ESTIMATED_SIZE = 200;
 
-const pairKey = (pair: Pair) => pair.sources.map((side) => side.sourceId).join("\0");
+// Sorted: a new read may list the sides the other way round, and the choice must follow the pair.
+const pairKey = (pair: Pair) =>
+  pair.sources
+    .map((side) => side.sourceId)
+    .toSorted()
+    .join("\0");
 const message = (cause: unknown) => scientSourcesErrorMessage(cause, import.meta.env.DEV);
 
 /**
@@ -70,7 +75,7 @@ export function LibraryDuplicatesView(props: {
   } | null>(null);
   // Pairs settled here leave the list at once; the next read confirms it.
   const [settled, setSettled] = useState<ReadonlySet<string>>(new Set());
-  // The side to keep, by pair, when the person chose other than the suggested one.
+  // The source ID to keep, by pair, once the person chose a side.
   const [chosen, setChosen] = useState<ReadonlyMap<string, string>>(new Map());
   const current = reading?.context === context ? reading : null;
   // Try again. A change that lands (here, from a toast, or from a view that has closed since)

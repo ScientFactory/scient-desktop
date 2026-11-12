@@ -187,6 +187,38 @@ describe("Possible duplicates", () => {
     expect(onMerged).not.toHaveBeenCalled();
   });
 
+  it("keeps the person's choice when a new read lists the pair's sides the other way round", async () => {
+    const fever = {
+      kind: "possible-metadata-match" as const,
+      sources: [
+        { ...side("c", "East Journal"), title: "Fever trial" },
+        { ...side("d", "West Journal"), title: "Fever trial" },
+      ],
+      keptByDefault: "c",
+    };
+    const pair = withPair.pairs[0]!;
+    // Another session made "b" the suggested side, which the server lists first.
+    const swapped = { ...pair, sources: [pair.sources[1]!, pair.sources[0]!], keptByDefault: "b" };
+    setup({ ...withPair, pairs: [pair, fever], pairsTotal: 2 }, { ...withPair, pairs: [swapped] });
+    mocks.organizeScientSources
+      .mockResolvedValueOnce({ outcome: "marked" })
+      .mockResolvedValueOnce({ outcome: "merged", survivorId: "a", merges: [] });
+    await using screen = await render(<Harness onMerged={vi.fn()} />, { router: false });
+
+    await userEvent.click(screen.getByRole("radio", { name: /South Journal/u }));
+    await userEvent.click(screen.getByRole("radio", { name: /North Journal/u }));
+    // Settling another pair reads the list again.
+    const other = screen.getByRole("region", { name: "Fever trial" });
+    await userEvent.click(other.getByRole("button", { name: "Not duplicates" }));
+    await expect.element(other).not.toBeInTheDocument();
+
+    await expect.element(screen.getByRole("radio", { name: /North Journal/u })).toBeChecked();
+    await userEvent.click(screen.getByRole("button", { name: "Merge" }));
+    expect(mocks.organizeScientSources.mock.calls[1]![1].change).toMatchObject({
+      survivorId: "a",
+    });
+  });
+
   it("takes a pair off the list as not duplicates, with Undo", async () => {
     const { onMerged } = setup(withPair, empty);
     mocks.organizeScientSources.mockResolvedValueOnce({ outcome: "marked" });
