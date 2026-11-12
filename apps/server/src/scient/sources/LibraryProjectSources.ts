@@ -233,6 +233,8 @@ export async function alsoPinnedIn(
  * failed earlier (or before a restart) is caught up by the next change.
  */
 const snapshotsCurrent = new Set<string>();
+/** Failed refreshes per project, so a refresh running beside a failed one cannot mark it current. */
+const snapshotFailures = new Map<string, number>();
 
 /**
  * After library records change, refreshes this project's pin snapshots, the snapshots of its
@@ -245,8 +247,25 @@ export async function refreshProjectAfterLibraryChange(
   actor: ScientSourceActor,
 ): Promise<void> {
   if (store.access !== "write" || sourceIds.length === 0) return;
-  const changed = snapshotsCurrent.has(store.root) ? new Set(sourceIds) : undefined;
-  snapshotsCurrent.delete(store.root);
+  const root = store.root;
+  const failuresBefore = snapshotFailures.get(root) ?? 0;
+  const changed = snapshotsCurrent.has(root) ? new Set(sourceIds) : undefined;
+  try {
+    await refreshProjectSnapshots(store, changed);
+  } catch (cause) {
+    snapshotsCurrent.delete(root);
+    snapshotFailures.set(root, (snapshotFailures.get(root) ?? 0) + 1);
+    throw cause;
+  }
+  if ((snapshotFailures.get(root) ?? 0) === failuresBefore) snapshotsCurrent.add(root);
+  await syncProjectBibliography(store, actor);
+}
+
+/** Every pin and review snapshot when `changed` is undefined; otherwise only those it names. */
+async function refreshProjectSnapshots(
+  store: ScientSourcesLibraryStore,
+  changed: ReadonlySet<string> | undefined,
+): Promise<void> {
   await refreshScientProjectPinSnapshots({
     projectRoot: store.root,
     library: store.library,
@@ -260,8 +279,6 @@ export async function refreshProjectAfterLibraryChange(
       ...(changed ? { naming: changed } : {}),
     });
   }
-  snapshotsCurrent.add(store.root);
-  await syncProjectBibliography(store, actor);
 }
 
 /** Read or unread, starred or not, for one source or many; each answers under its own ID. */
