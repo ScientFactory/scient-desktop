@@ -674,6 +674,8 @@ describe("PreviewView", () => {
       },
     ];
     await using _screen = await render(<ToastProvider timeout={0}>{view()}</ToastProvider>);
+    // SCIENT-FORK: a server outside this thread waits under "Find another local server".
+    await page.getByRole("button", { name: /Find another local server/ }).click();
     const card = page.getByRole("button", { name: /localhost:8081/ });
     await expect.element(card).toBeVisible();
 

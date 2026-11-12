@@ -111,10 +111,12 @@ describe("Scient Markdown shortcut catalog", () => {
       const mac = platform === "MacIntel";
       const collisions: string[] = [];
       for (const rule of DEFAULT_KEYBINDINGS) {
-        // The document editor is editable, but is not the chat composer.
+        // The document editor is editable, but is neither the chat composer nor a browser page.
         if (
           rule.when?.includes("!editableFocus") ||
-          rule.when?.split("&&").some((condition) => condition.trim() === "composerFocus")
+          rule.when
+            ?.split("&&")
+            .some((condition) => ["composerFocus", "previewFocus"].includes(condition.trim()))
         )
           continue;
         const binding = parseKeybindingShortcut(rule.key);

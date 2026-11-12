@@ -1375,7 +1375,8 @@ describe("surroundSelectionWithMark", () => {
   it("keeps markers inside math literal across draft restoration", () => {
     const doc = schema.node("doc", null, [schema.node("paragraph", null, schema.text("$x$"))]);
     const state = EditorState.create({ doc, selection: TextSelection.create(doc, 2, 3) });
-    expect(surroundSelectionWithMark(state, 2, 3, "*")).toBeNull();
+    // SCIENT-FORK: Scient's math rules read `$*x*$` as text, so the marked span round-trips.
+    expect(surroundSelectionWithMark(state, 2, 3, "*")).not.toBeNull();
   });
 
   it.each([

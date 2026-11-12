@@ -1293,7 +1293,7 @@ it("treats only the strict list end as the live edge", async () => {
       isAtEnd: false,
     }),
   ).toBe(false);
-  expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, calc(100vh - 18rem))");
+  expect(resolveTimelineMinimapHeightStyle(5)).toBe("min(32px, max(4rem, calc(100% - 14.75rem)))");
   expect(resolveTimelineMinimapTopPercent(2, 5)).toBe(50);
   expect(
     resolveTimelineMinimapIndexFromPointer({
