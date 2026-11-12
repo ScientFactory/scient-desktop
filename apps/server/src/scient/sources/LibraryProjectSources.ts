@@ -106,6 +106,8 @@ export async function resolveLibrarySourceId(
   return resolution?.kind === "resolved" ? resolution.sourceId : null;
 }
 
+const RECORD_READS_AT_ONCE = 32;
+
 /** Many IDs as `resolveLibrarySourceId` resolves one, reading aliases and pins once; unresolved IDs stay. */
 export async function resolveLibrarySourceIds(
   store: ScientSourcesLibraryStore,
@@ -115,10 +117,18 @@ export async function resolveLibrarySourceIds(
   const aliases = await readScientLibraryAliases(store.library);
   const found = new Map<string, string>();
   const unresolved: string[] = [];
-  for (const sourceId of new Set(sourceIds)) {
-    const target = resolveScientLibraryAlias(aliases, sourceId);
-    if (await readScientSourceRecord(store.library, target)) found.set(sourceId, target);
-    else unresolved.push(sourceId);
+  const unique = [...new Set(sourceIds)];
+  // One read at a time took 2.6 s for 19,000 IDs (scale gate).
+  for (let start = 0; start < unique.length; start += RECORD_READS_AT_ONCE) {
+    const part = unique.slice(start, start + RECORD_READS_AT_ONCE);
+    const targets = part.map((sourceId) => resolveScientLibraryAlias(aliases, sourceId));
+    const records = await Promise.all(
+      targets.map((target) => readScientSourceRecord(store.library, target)),
+    );
+    for (const [index, sourceId] of part.entries()) {
+      if (records[index]) found.set(sourceId, targets[index]!);
+      else unresolved.push(sourceId);
+    }
   }
   if (unresolved.length > 0) {
     const pins = new Map(
