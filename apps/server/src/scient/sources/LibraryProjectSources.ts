@@ -247,7 +247,9 @@ export async function refreshProjectAfterLibraryChange(
   actor: ScientSourceActor,
 ): Promise<void> {
   if (store.access !== "write" || sourceIds.length === 0) return;
-  const root = store.root;
+  // The project's real path, as the snapshot locks use: one project reached through a link is
+  // still one project here.
+  const root = await NodeFSP.realpath(store.root).catch(() => NodePath.resolve(store.root));
   const failuresBefore = snapshotFailures.get(root) ?? 0;
   const changed = snapshotsCurrent.has(root) ? new Set(sourceIds) : undefined;
   try {

@@ -43,7 +43,10 @@ import {
   updateLibraryProjectNote,
   updateLibrarySourceMetadata,
 } from "./LibrarySourcesRoutes.ts";
-import { setLibraryReadingState } from "./LibraryProjectSources.ts";
+import {
+  refreshProjectAfterLibraryChange,
+  setLibraryReadingState,
+} from "./LibraryProjectSources.ts";
 import { advanceSourceImport, beginZoteroImport } from "./ScientSourcesCoordinator.ts";
 import {
   ScientSourcesBackend,
@@ -393,6 +396,21 @@ describe("Library routes on the library backend", () => {
           await retitle(edited.revision + 1, "Lactate clearance, again");
           expect(await titleOf(edited.sourceId)).toBe("Lactate clearance, again");
           expect(await titleOf(stale.sourceId)).toBe("Old title");
+        });
+
+        // A refresh that fails through a link to the project marks the project itself.
+        const link = NodePath.join(fixture.base, "project-link");
+        yield* Effect.promise(() => NodeFSP.symlink(fixture.root, link, "dir"));
+        const viaLink = yield* storeFor(fixture, "write", link);
+        yield* Effect.promise(async () => {
+          const kept = await NodeFSP.readFile(pinsFile, "utf8");
+          await NodeFSP.writeFile(pinsFile, "not json");
+          await expect(
+            refreshProjectAfterLibraryChange(viaLink, [edited.sourceId], "user"),
+          ).rejects.toThrow();
+          await NodeFSP.writeFile(pinsFile, kept);
+          await retitle(edited.revision + 2, "Lactate clearance, third");
+          expect(await titleOf(stale.sourceId)).toBe("Vasopressin timing");
         });
       }),
   );
