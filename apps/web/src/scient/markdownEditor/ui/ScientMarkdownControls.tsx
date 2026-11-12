@@ -378,11 +378,19 @@ function MarkdownFontControls({
 function FontSizeButton({
   controller,
   snapshot,
+  onOpenChange,
 }: {
   readonly controller: ScientMarkdownEditorView;
   readonly snapshot: ScientMarkdownEditorSnapshot;
+  readonly onOpenChange: (open: boolean) => void;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpenState] = useState(false);
+  const setOpen = (next: boolean) => {
+    setOpenState(next);
+    onOpenChange(next);
+  };
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- releases the toolbar freeze if the button unmounts while its panel is open
+  useEffect(() => () => onOpenChange(false), [onOpenChange]);
   const close = () => {
     setOpen(false);
     controller.focus();
@@ -1094,6 +1102,8 @@ function SelectionToolbar({
   const [anchor, setAnchor] = useState<{ left: number; top: number; bottom: number } | null>(null);
   const [place, setPlace] = useState<"above" | "below">("above");
   const [selectingWithPointer, setSelectingWithPointer] = useState(false);
+  // While the size panel is open the toolbar stays put, so repeated + clicks hit the same spot.
+  const [sizePanelOpen, setSizePanelOpen] = useState(false);
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- tracks pointer-driven text selection via window pointer and blur listeners
   useEffect(() => {
@@ -1118,7 +1128,7 @@ function SelectionToolbar({
 
   const measuredSelectionAnchor = useRef<ReturnType<typeof measureSelectionToolbarAnchor>>(null);
   const synchronizeSelectionAnchor = useEffectEvent((..._changes: readonly unknown[]) => {
-    if (selectingWithPointer) return;
+    if (selectingWithPointer || sizePanelOpen) return;
     measuredSelectionAnchor.current = measureSelectionToolbarAnchor(
       controller,
       snapshot.editable,
@@ -1132,6 +1142,7 @@ function SelectionToolbar({
       synchronizeSelectionAnchor(
         controller,
         selectingWithPointer,
+        sizePanelOpen,
         snapshot.version,
         snapshot.editable,
         snapshot.selectionEmpty,
@@ -1139,6 +1150,7 @@ function SelectionToolbar({
     [
       controller,
       selectingWithPointer,
+      sizePanelOpen,
       snapshot.version,
       snapshot.editable,
       snapshot.selectionEmpty,
@@ -1225,7 +1237,7 @@ function SelectionToolbar({
         active={active.has("code")}
         shortcut="inlineCode"
       />
-      <FontSizeButton controller={controller} snapshot={snapshot} />
+      <FontSizeButton controller={controller} snapshot={snapshot} onOpenChange={setSizePanelOpen} />
       <LinkEditorTrigger
         controller={controller}
         active={active.has("link")}
