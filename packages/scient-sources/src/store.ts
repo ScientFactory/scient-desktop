@@ -103,6 +103,9 @@ const SCIENT_LIBRARY_ZOTERO_SYNC_DIRECTORY = "zotero";
 
 const MAX_RECORD_BYTES = 2 * 1024 * 1024;
 const MAX_TRASH_ENTRY_BYTES = MAX_RECORD_BYTES + 64 * 1024;
+
+/** The library folder of tombstones, one `<sourceId>.json` per source deleted for good. */
+const SCIENT_LIBRARY_DELETED_DIRECTORY = "deleted";
 const MAX_OPERATION_BYTES = 4 * 1024 * 1024;
 const MAX_PDF_BYTES = 512 * 1024 * 1024;
 const COPY_CHUNK_BYTES = 1024 * 1024;
@@ -242,6 +245,8 @@ interface SourceStorePaths {
   readonly receipts: string;
   readonly staging: string;
   readonly trash: string;
+  /** Library only: what was deleted for good, so no project snapshot brings it back. */
+  readonly deleted: string;
   readonly zotero: string;
 }
 
@@ -255,6 +260,7 @@ function storeFolders(base: string, zotero: string) {
     receipts: NodePath.join(base, "receipts"),
     staging: NodePath.join(base, "staging"),
     trash: NodePath.join(base, "trash"),
+    deleted: NodePath.join(base, SCIENT_LIBRARY_DELETED_DIRECTORY),
     zotero: NodePath.join(base, zotero),
   };
 }
@@ -1000,6 +1006,45 @@ async function scanTrash(paths: SourceStorePaths): Promise<{
   };
 }
 
+/**
+ * A source deleted for good, kept as its trash entry with the record cut to what identifies the
+ * work: no abstract, note, PDFs or history. Hydration and the move treat it as removed.
+ */
+function tombstoneOf(entry: ScientSourceTrashEntry) {
+  const { note: _note, abstractSections: _sections, ...record } = entry.record;
+  return {
+    ...entry,
+    deletedAt: new Date().toISOString(),
+    record: { ...record, abstract: null, attachments: [], fieldProvenance: [] },
+  };
+}
+
+/** Tombstones of a library's sources deleted for good; unreadable files are skipped. */
+export async function readScientSourceTombstones(
+  root: ScientSourceStoreLocation,
+): Promise<ReadonlyArray<ScientSourceTrashEntry>> {
+  const paths = await sourceStorePaths(root);
+  if ((await snapshot(paths.deleted)) !== "directory") return [];
+  const entries: ScientSourceTrashEntry[] = [];
+  for (const file of await NodeFSP.readdir(paths.deleted, { withFileTypes: true })) {
+    if (!file.isFile() || !file.name.endsWith(".json")) continue;
+    try {
+      entries.push(
+        decodePersistedTrashEntry(
+          await readBoundedJson(
+            NodePath.join(paths.deleted, file.name),
+            MAX_TRASH_ENTRY_BYTES,
+            Schema.Unknown,
+          ),
+        ),
+      );
+    } catch {
+      // One damaged tombstone must not hide the others.
+    }
+  }
+  return entries;
+}
+
 /** Whole trashed records, newest removal first, for callers that need more than the summary. */
 export async function readScientSourceTrashEntries(
   root: ScientSourceStoreLocation,
@@ -1121,6 +1166,14 @@ async function deleteTrashEntries(
   entries: ReadonlyArray<ScientSourceTrashEntry>,
 ): Promise<ScientSourcePermanentDeletionResult> {
   for (const entry of entries) {
+    // The tombstone lands before the trash entry goes, so removal evidence is never absent.
+    if (paths.owner.kind === "library") {
+      await atomicWriteJson(
+        NodePath.join(paths.deleted, `${entry.sourceId}.json`),
+        tombstoneOf(entry),
+        MAX_TRASH_ENTRY_BYTES,
+      );
+    }
     await NodeFSP.rm(trashEntryPath(paths, entry.sourceId), { force: true });
     await NodeFSP.rm(NodePath.dirname(sourceHistoryPath(paths, entry.sourceId, 1)), {
       recursive: true,

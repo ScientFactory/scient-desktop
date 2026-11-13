@@ -104,6 +104,7 @@ import {
   distinctPinnedWorks,
   listProjectPinnedWorks,
   otherProjectsUsing,
+  projectsCitingRemoved,
   projectPinGroupsByLibraryId,
   projectPinsByLibraryId,
   refreshProjectAfterLibraryChange,
@@ -897,8 +898,22 @@ export async function removeLibrarySource(
   return { ...result, ...reached };
 }
 
-export async function libraryTrash(store: Store) {
-  return store.exists ? listScientSourceTrash(store.library) : { entries: [], issues: [] };
+/** The trash, each entry with the projects that would keep citing it from their own copy. */
+export async function libraryTrash(store: Store, projects?: ReadonlyArray<KnownProject>) {
+  if (!store.exists) return { entries: [], issues: [] };
+  const listing = await listScientSourceTrash(store.library);
+  const citing = await projectsCitingRemoved(
+    store,
+    new Set(listing.entries.map((entry) => entry.sourceId)),
+    projects,
+  ).catch(() => new Map<string, ReadonlyArray<string>>());
+  return {
+    ...listing,
+    entries: listing.entries.map((entry) => {
+      const citedBy = citing.get(entry.sourceId);
+      return citedBy ? { ...entry, citedBy } : entry;
+    }),
+  };
 }
 
 export async function restoreLibrarySource(store: Store, input: { readonly sourceId: string }) {

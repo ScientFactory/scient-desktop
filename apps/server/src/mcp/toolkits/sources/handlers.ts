@@ -76,6 +76,7 @@ import {
 } from "../../../scient/sources/SourcesBackend.ts";
 import {
   alsoPinnedIn,
+  projectsCitingRemoved,
   distinctPinnedWorks,
   listProjectPinnedWorks,
   projectPinsByLibraryId,
@@ -1391,6 +1392,14 @@ export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
     if (input.permanent) {
+      const citing =
+        store.kind === "library"
+          ? yield* attempt(() =>
+              projectsCitingRemoved(store, new Set([input.sourceId])).catch(
+                () => new Map<string, ReadonlyArray<string>>(),
+              ),
+            )
+          : null;
       const deleted = yield* attempt(() =>
         deleteTrashedScientSource({
           root,
@@ -1398,10 +1407,12 @@ export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
           expectedRevision: input.expectedRevision,
         }),
       );
+      const stillCitedBy = deleted.outcome === "deleted" ? citing?.get(input.sourceId) : undefined;
       return {
         outcome: deleted.outcome,
         sourceId: input.sourceId,
         revision: deleted.outcome === "stale" ? deleted.revision : null,
+        ...(stillCitedBy ? { stillCitedBy } : {}),
       };
     }
     const sourceId = yield* sourceIdIn(store, input.sourceId);

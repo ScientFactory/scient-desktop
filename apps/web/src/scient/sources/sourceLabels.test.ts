@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   agentVerificationLabel,
+  fileNameTitleLabel,
   newlyObservedSourceIds,
   sourceAddedLabel,
   sourcePinLabel,
@@ -88,6 +89,16 @@ describe("newlyObservedSourceIds", () => {
       ),
     ).toEqual(["new-user"]);
   });
+
+  it("never marks a pin served from its snapshot, as one moved to the Trash is", () => {
+    expect(
+      newlyObservedSourceIds(
+        [olderSource, { ...newlyAddedUserSource, fromSnapshot: true as const }],
+        new Set([olderSource.sourceId]),
+        recentCutoff,
+      ),
+    ).toEqual([]);
+  });
 });
 
 describe("sourcePinLabel", () => {
@@ -99,5 +110,24 @@ describe("sourcePinLabel", () => {
     expect(sourcePinLabel({ pinned: true, fromSnapshot: true }, "project")).toBe(
       " · Not in this Library",
     );
+  });
+});
+
+describe("fileNameTitleLabel", () => {
+  it("speaks only while the title is still the PDF's file name", () => {
+    const fromFile = { field: "title", origin: "local-pdf", sourceField: "file-name" };
+    expect(fileNameTitleLabel({ fieldProvenance: [fromFile] })).not.toBeNull();
+    expect(
+      fileNameTitleLabel({
+        fieldProvenance: [fromFile, { field: "title", origin: "doi", sourceField: "title" }],
+      }),
+    ).toBeNull();
+    expect(
+      fileNameTitleLabel({
+        fieldProvenance: [
+          { field: "title", origin: "local-pdf", sourceField: "document-info/title" },
+        ],
+      }),
+    ).toBeNull();
   });
 });

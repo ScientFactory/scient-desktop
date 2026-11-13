@@ -55,10 +55,15 @@ import {
 } from "./projectPins.ts";
 import {
   attachScientSourcePdf,
+  deleteTrashedScientSource,
+  detachScientSourcePdf,
   importScientSource,
   listScientSourceRecords,
+  readScientSourceAttachmentPdf,
   readScientSourceRecord,
+  readScientSourceTrashEntries,
   removeScientSource,
+  restoreScientSource,
   updateScientSourceMetadata,
   updateScientSourceNote,
 } from "./store.ts";
@@ -1258,6 +1263,105 @@ describe("the library lock during a move", () => {
     });
     expect((await readScientSourceRecord(library, first))?.title).toBe("Edited between batches");
     expect((await listScientSourceRecords(library)).length).toBe(2);
+  });
+
+  it.each(["trash", "deleted-for-good"] as const)(
+    "crash-after-first-batch: a source put in %s keeps only restorable payloads on resume",
+    async (removal) => {
+      const { library, project, a, sha256 } = await seededMove();
+      const record = (await readScientSourceRecord(project, a.sourceId))!;
+      const attachment = record.attachments[0]!;
+      const pdf = await readScientSourceAttachmentPdf(project, attachment);
+      const text = await seedFullText(library, project, sha256);
+      const annotationPath = NodePath.join("annotations/v1", `${sha256}.json`);
+      const highlights = await NodeFSP.readFile(NodePath.join(project, ".scient", annotationPath));
+      await crashAt(library, project, { crashAt: "after-first-batch" });
+      expect(await exists(NodePath.join(library.root, attachment.relativePath))).toBe(false);
+      await removeScientSource({
+        root: library,
+        sourceId: a.sourceId,
+        expectedRevision: record.revision,
+      });
+      if (removal === "deleted-for-good") {
+        expect(
+          await deleteTrashedScientSource({
+            root: library,
+            sourceId: a.sourceId,
+            expectedRevision: record.revision,
+          }),
+        ).toMatchObject({ outcome: "deleted" });
+      }
+
+      expect(await move(library, project)).toMatchObject({ outcome: "moved" });
+      expect(await readScientSourceRecord(library, a.sourceId)).toBeNull();
+      const retained = (await readScientSourceTrashEntries(library)).find(
+        (entry) => entry.sourceId === a.sourceId,
+      );
+      if (removal === "deleted-for-good") {
+        expect(retained).toBeUndefined();
+        for (const path of [attachment.relativePath, text.relative, annotationPath]) {
+          expect(await exists(NodePath.join(library.root, path))).toBe(false);
+        }
+        return;
+      }
+      expect(retained?.record).toMatchObject({ attachments: record.attachments });
+      const restored = await restoreScientSource({ root: library, sourceId: a.sourceId });
+      expect(restored.outcome).toBe("restored");
+      expect(
+        await readScientSourceAttachmentPdf(library, restored.record!.attachments[0]!),
+      ).toEqual(pdf);
+      expect(await NodeFSP.readFile(text.libraryPath)).toEqual(text.projectText);
+      expect(
+        JSON.parse(await NodeFSP.readFile(NodePath.join(library.root, annotationPath), "utf8")),
+      ).toEqual(JSON.parse(highlights.toString("utf8")));
+    },
+  );
+
+  it("a retained same-ID Trash entry moves its own attachments, excluding the incoming orphan", async () => {
+    const { base, library, project, a } = await seededMove();
+    const current = (await readScientSourceRecord(project, a.sourceId))!;
+    const original = current.attachments[0]!;
+    const pdfPath = NodePath.join(base, "retained.pdf");
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nretained trash attachment\n");
+    const attached = await attachScientSourcePdf({
+      root: project,
+      sourceId: a.sourceId,
+      expectedRevision: current.revision,
+      pdfPath,
+    });
+    const retained = attached.record.attachments.at(-1)!;
+    await crashAt(library, project, { crashAt: "after-first-batch" });
+    for (const [root, attachment] of [
+      [project, retained],
+      [library, original],
+    ] as const) {
+      const detached = await detachScientSourcePdf({
+        root,
+        sourceId: a.sourceId,
+        expectedRevision: attached.record.revision,
+        attachmentId: attachment.attachmentId,
+      });
+      await removeScientSource({
+        root,
+        sourceId: a.sourceId,
+        expectedRevision: detached.record!.revision,
+      });
+    }
+    const before = await NodeFSP.readFile(
+      NodePath.join(library.root, "trash", `${a.sourceId}.json`),
+    );
+
+    expect(await move(library, project)).toMatchObject({ outcome: "moved" });
+    expect(await readScientSourceRecord(library, a.sourceId)).toBeNull();
+    expect(
+      await NodeFSP.readFile(NodePath.join(library.root, "trash", `${a.sourceId}.json`)),
+    ).toEqual(before);
+    expect(await exists(NodePath.join(library.root, original.relativePath))).toBe(false);
+    const restored = await restoreScientSource({ root: library, sourceId: a.sourceId });
+    expect(restored.record?.attachments).toEqual([retained]);
+    expect(await readScientSourceAttachmentPdf(library, retained)).toEqual(
+      new Uint8Array(await NodeFSP.readFile(pdfPath)),
+    );
   });
 
   it("the move back restores a library edit and a PDF added while its PDFs were copied", async () => {

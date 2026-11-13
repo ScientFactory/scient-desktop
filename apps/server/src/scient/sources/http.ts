@@ -21,6 +21,7 @@ import {
 import { ProjectStoreV2 } from "../../orchestration-v2/ProjectStore.ts";
 import { issueAssetUrl } from "../../assets/AssetAccess.ts";
 import * as ServerConfig from "../../config.ts";
+import { sourceAttachmentPreview } from "./SourceAttachmentPreview.ts";
 import { searchSourceFullText } from "./SourceFullText.ts";
 import { saveWebPageSource } from "./SourceWebPage.ts";
 import { makeSourceImportAnalytics } from "../../telemetry/SourceImportAnalytics.ts";
@@ -40,7 +41,6 @@ import {
   discardLocalPdfSources,
   getScientSourcesOverview,
   getScientSourceDetail,
-  getScientSourceAttachmentPreviewMaterial,
   getScientSourceJournalIconMaterial,
   inspectZoteroConnection,
   listZoteroCollections,
@@ -82,7 +82,6 @@ import {
   libraryReviewConflicts,
   deleteLibrarySourcesPermanently,
   exportLibrarySources,
-  libraryAttachmentMaterial,
   libraryImportTarget,
   libraryJournalIconMaterial,
   libraryOverview,
@@ -263,35 +262,11 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
             yield* annotateEnvironmentRequest(args.endpoint.name);
             yield* requireEnvironmentScope(AuthOrchestrationReadScope);
             const library = yield* libraryFor(args.payload.root, AuthOrchestrationReadScope);
-            const material = yield* sourcesOperation(() =>
-              library
-                ? libraryAttachmentMaterial(library, args.payload)
-                : getScientSourceAttachmentPreviewMaterial(args.payload).then((found) => ({
-                    ...found,
-                    folder: args.payload.root,
-                  })),
-            ).pipe(
+            return yield* sourceAttachmentPreview(library, args.payload).pipe(
               Effect.catch((cause) =>
                 failEnvironmentInternal("scient_sources_operation_failed", cause),
               ),
             );
-            const path = yield* Path.Path;
-            const { folder } = material;
-            const asset = yield* issueAssetUrl({
-              resource: {
-                _tag: "workspace-file",
-                cwd: folder,
-                relativePath: path.relative(folder, material.absolutePath),
-              },
-            }).pipe(
-              Effect.catch((cause) =>
-                failEnvironmentInternal("scient_sources_operation_failed", cause),
-              ),
-            );
-            const { sha256, byteLength } = material.attachment;
-            return /^[0-9a-f]{64}$/u.test(sha256) && byteLength >= 1
-              ? { ...asset, material: { sha256, byteLength } }
-              : asset;
           }),
         )
         .handle("fullTextSearch", (args) =>
@@ -561,9 +536,17 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("trash", (args) =>
-          route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
-            library ? libraryTrash(library) : listSourceTrash(args.payload),
-          ),
+          Effect.gen(function* () {
+            // Only for naming the projects that cite a trashed source.
+            const projects = yield* projectStore.list().pipe(Effect.orElseSucceed(() => []));
+            return yield* route(
+              args.endpoint.name,
+              AuthOrchestrationReadScope,
+              args.payload.root,
+              (library) =>
+                library ? libraryTrash(library, projects) : listSourceTrash(args.payload),
+            );
+          }),
         )
         .handle("restore", (args) =>
           route(args.endpoint.name, AuthOrchestrationOperateScope, args.payload.root, (library) =>

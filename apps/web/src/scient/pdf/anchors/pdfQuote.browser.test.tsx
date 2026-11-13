@@ -269,6 +269,30 @@ describe("PDF quotes in the reader", () => {
     expect(highlightedText().join("")).toBe(QUOTE);
   });
 
+  it("shows a quote another PDF.js version stored at its place, without a notice", async (context) => {
+    await using fixture = setup();
+    const { container, citeText } = fixture;
+    await fixture.render(
+      pdfBytes([["Introduction"], ["Results", `The ${QUOTE} as the inverse square.`]]),
+    );
+    await waitForText(container, QUOTE);
+    const button = await askAbout(textNode(container, QUOTE), QUOTE, context);
+    await act(async () => button.click());
+    const { target } = citeText.mock.calls[0]![0] as PdfCitation;
+
+    using notices = vi.spyOn(toastManager, "add");
+    using highlight = observeQuoteHighlight(QUOTE);
+    await act(async () => {
+      requestPdfReveal(pdfRevealDocumentKey(source), {
+        ...target,
+        extractor: { ...target.extractor, version: "6.2.108" },
+      });
+    });
+    await waitForTestReceipt(context.signal, highlight.receipt);
+    expect(highlightedText().join("")).toBe(QUOTE);
+    expect(notices).not.toHaveBeenCalled();
+  });
+
   it("records the proven bytes of a Sources PDF on its quote", async (context) => {
     await using fixture = setup();
     const { container, citeText } = fixture;

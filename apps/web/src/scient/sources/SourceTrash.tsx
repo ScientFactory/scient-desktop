@@ -16,7 +16,7 @@ import {
   restoreScientSource,
 } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
-import { alsoInOtherProjectsLabel } from "./libraryLabels";
+import { alsoInOtherProjectsLabel, stillCitedInLabel } from "./libraryLabels";
 import { removedLabel, restoreProblem } from "./sourceLifecycleLabels";
 import { useCanChangeLibrary } from "./sourcesCommands";
 import { settleAfter } from "./settleAfter";
@@ -114,6 +114,9 @@ export function SourceTrashPopover(props: {
   };
 
   const entries = listing?.entries ?? [];
+  const stillCited = stillCitedInLabel([
+    ...new Set(entries.flatMap((entry) => entry.citedBy ?? [])),
+  ]);
   return (
     <Popover
       open={props.open}
@@ -169,7 +172,7 @@ export function SourceTrashPopover(props: {
         {confirmingEmpty ? (
           <p className="px-3 pt-2 text-xs text-muted-foreground">
             Sources in the trash, their saved versions and PDFs nothing else uses are deleted. This
-            cannot be undone.
+            cannot be undone. {stillCited}
           </p>
         ) : null}
         {problem ? (

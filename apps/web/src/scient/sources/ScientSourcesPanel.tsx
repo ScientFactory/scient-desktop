@@ -1060,6 +1060,8 @@ export function ScientSourcesPanel(props: {
     return (
       <>
         <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
+        {/* Each view that can remove a source this Library lacks mounts its question. */}
+        <SnapshotRemovalDialog actions={libraryActions} />
         <SourceDetails
           key={selectedRecord.sourceId}
           record={selectedRecord}

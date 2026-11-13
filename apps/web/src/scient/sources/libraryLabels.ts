@@ -121,6 +121,15 @@ export function alsoInOtherProjectsLabel(projects: number | undefined): string |
     : `Also in ${projects} other projects, which keep its citation details.`;
 }
 
+/** Before deleting for good: the projects that keep citing the sources from their own copy. */
+export function stillCitedInLabel(projects: ReadonlyArray<string>): string | null {
+  if (projects.length === 0) return null;
+  const names = new Intl.ListFormat("en", { type: "conjunction" }).format(projects);
+  return projects.length === 1
+    ? `Still cited in ${names}: it keeps the citation details from its own copy.`
+    : `Still cited in ${names}: they keep the citation details from their own copies.`;
+}
+
 export function someAlsoInOtherProjectsLabel(sourceCount: number): string {
   return sourceCount === 1
     ? "1 of them is also in other projects, which keep its citation details."

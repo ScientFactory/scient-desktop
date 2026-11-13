@@ -13,9 +13,14 @@ import {
 } from "@scientfactory/scient-sources";
 import { bibtexEntries } from "@scientfactory/scient-sources/bibtex";
 import { resolveScientProjectFile } from "@scientfactory/scient-sources/project-files";
-import { readScientSourceRecord } from "@scientfactory/scient-sources/store";
+import {
+  readScientSourceRecord,
+  updateScientSourceMetadata,
+} from "@scientfactory/scient-sources/store";
 
+import { refreshProjectAfterLibraryChange } from "../sources/LibraryProjectSources.ts";
 import { updateScientSource } from "../sources/ScientSourcesCoordinator.ts";
+import type { ScientSourcesLibraryStore } from "../sources/SourcesBackend.ts";
 import {
   canonicalRoot,
   isReferenceCheckError,
@@ -102,11 +107,12 @@ type SourceFix = Extract<ScientReferenceFix, { readonly kind: "source-field" }>;
  */
 async function applySourceFixes(
   root: string,
+  library: ScientSourcesLibraryStore | null,
   fixes: ReadonlyArray<SourceFix>,
   actor: ScientSourceActor,
 ): Promise<ReadonlyArray<FixResult>> {
   const { sourceId, expectedRevision } = fixes[0]!;
-  const record = await readScientSourceRecord(root, sourceId);
+  const record = await readScientSourceRecord(library ? library.library : root, sourceId);
   if (!record) {
     return fixes.map(() => ({
       outcome: "not-found",
@@ -143,14 +149,19 @@ async function applySourceFixes(
   const pending = (result: FixResult): ReadonlyArray<FixResult> =>
     results.map((entry) => (entry === "pending" ? result : entry));
   if (!results.includes("pending")) return results as ReadonlyArray<FixResult>;
-  const result = await updateScientSource({
-    root,
+  const update = {
     sourceId,
     expectedRevision,
     metadata,
     allowExistingValidationIssues: true,
     actor,
-  });
+  };
+  const result = library
+    ? await updateScientSourceMetadata({ ...update, root: library.library })
+    : await updateScientSource({ ...update, root });
+  if (library && result.outcome === "updated") {
+    await refreshProjectAfterLibraryChange(library, [sourceId], actor).catch(() => undefined);
+  }
   switch (result.outcome) {
     case "updated":
       return results.map((entry, index) =>
@@ -191,6 +202,8 @@ function oneAtATime<A>(root: string, run: () => Promise<A>): Promise<A> {
 
 type ResolveInput = {
   readonly root: string;
+  /** On the library backend, source fixes change the Library's records (write access). */
+  readonly library?: ScientSourcesLibraryStore | null;
   readonly apply?: ReadonlyArray<ScientReferenceFix>;
   readonly ignore?: ReadonlyArray<string>;
   readonly restore?: ReadonlyArray<string>;
@@ -236,6 +249,7 @@ async function resolveInProject(
     sourceGroups.delete(groupKey);
     const results = await applySourceFixes(
       root,
+      input.library ?? null,
       group.map((member) => member.fix),
       input.actor,
     ).catch((error: unknown) => group.map(() => failed(error)));

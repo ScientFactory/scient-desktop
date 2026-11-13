@@ -13,6 +13,8 @@ function isSameCalendarDay(left: Date, right: Date): boolean {
 type ObservableSourceRecord = {
   readonly sourceId: string;
   readonly importedAt: string;
+  /** A pin this Library lacks, such as one whose source is in the Trash: never just added. */
+  readonly fromSnapshot?: true;
   readonly origin?:
     | {
         readonly actor?: string;
@@ -28,6 +30,7 @@ export function newlyObservedSourceIds(
 ): ReadonlyArray<string> {
   return records
     .filter((record) => {
+      if (record.fromSnapshot) return false;
       if (previousIds) return !previousIds.has(record.sourceId);
       return record.origin?.actor === "agent" && Date.parse(record.importedAt) >= recentCutoff;
     })
@@ -63,6 +66,20 @@ export function sourcePinLabel(
 ): string {
   if (record.fromSnapshot) return ` · ${LIBRARY_LABELS.notInThisLibrary}`;
   return listed === "library" && record.pinned ? ` · ${LIBRARY_LABELS.inThisProject}` : "";
+}
+
+/** A PDF that names no title is titled by its file name until its details are found. */
+export function fileNameTitleLabel(record: {
+  readonly fieldProvenance?: ReadonlyArray<{
+    readonly field: string;
+    readonly origin: string;
+    readonly sourceField: string | null;
+  }>;
+}): string | null {
+  const title = record.fieldProvenance?.findLast((entry) => entry.field === "title");
+  return title?.origin === "local-pdf" && title.sourceField === "file-name"
+    ? "The title is the file name until this paper's details are found."
+    : null;
 }
 
 export function sourceAddedLabel(

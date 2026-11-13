@@ -641,9 +641,30 @@ pin's key as preferred key), recorded as `hydrated` in the map. Its source ID
 is derived from the library ID and the project source ID, so a repeat after a
 lost map finds the same record. `ambiguous` and `removed` pins are never
 hydrated, so hydration never adds a duplicate or brings back a record in the
-trash. A record deleted for good (Empty trash, `deletePermanently`) leaves its
-pins `no-match`, so the next write in a project that still pins it hydrates it
-again from the pin's `work` (seen in the review pack of 2026-11-13).
+trash. A record deleted for good (Empty trash, `deletePermanently`, the agent's
+`permanent` removal) first leaves a tombstone, `deleted/<sourceId>.json` in the
+Library: its trash entry with the record cut to what identifies the work (no
+abstract, note, PDFs or history), written before the trash entry is erased and
+under the same lock. The resolver treats tombstones as it treats the trash (by
+ID, alias, hydration ID, or a corroborated match of the pin's `work`, a
+merged-away copy only while its survivor is gone), so such a pin stays
+`removed` and its snapshot serves it; a `removed` resolution names the removed
+records in `candidateIds`. The move asks the same rule
+(`scientProjectSourceRemovalCheck`) before it creates a library record or trash
+entry from a v1 store whose ID the library lacks, so neither an old copy nor
+another project that imported the same work under its own ID brings a removed
+record back; a contradicting work is still copied. PDFs, full text and
+highlights are copied only for the records and trash entries the library keeps
+(bytes a kept source shares stay). The allowlist includes the Library's retained
+live records and actual Trash entries, even when a resumed move settles a v1
+live record as `removed`. Keeping an existing same-ID Trash entry uses that
+entry's attachments, not the incoming copy's. Tombstones and unreferenced orphan
+payloads add no hashes. The rest is in the sealed pre-move archive
+and the move's backup, never in the live Library. Nothing clears a tombstone: a
+live record of the same work, imported again on purpose (by intake or a project
+package), resolves first. The Trash listing names, per entry, the checkouts that would
+keep citing it (`citedBy`), and the agent's permanent removal answers
+`stillCitedBy`.
 A `contradicted` pin is not hydrated either: the project snapshot serves it,
 with no PDF of the contradicting record, until a person or agent resolves it.
 Review records resolve through the same function, so a review record behaves
@@ -2306,6 +2327,12 @@ inside the server process, like the Sources store. On the library backend,
 highlights on library PDFs live in the library (see "Highlights, the two notes
 and reading status").
 
+A Source PDF's attachment preview names it to the reader by its project
+locator `.scient/sources/<attachment path>` on both backends; after the move
+the signed URL is rooted in the Library, and the annotation service resolves
+that locator to the Library's bytes, so the reader's path lookup finds the
+highlights the move carried into the Library.
+
 The reader paints annotations per rendered page with the CSS Custom Highlight
 API. The quote is searched on its page with its stored context, then alone, and
 shown only when it occurs once; stored offsets alone never decide between
@@ -2340,6 +2367,15 @@ same two functions.
   (relative to it, through the project-file guard in `projectFiles.ts`, which
   refuses paths in or linked into `.scient`), and the Library records whose
   `citationKey` matches an otherwise unlisted citation.
+- On a moved project both adapters resolve the Sources backend in read mode
+  (`referenceCheckSources` in `ReferenceStores.ts`): a Library check reads the
+  personal Library (none yet reads as empty; nothing is created or moved), and
+  a document's unlisted keys are matched against the works this project cites
+  under its own keys, snapshot-only pins included. Resolve resolves it in
+  write mode, so a Library fix updates the Library record at the check's
+  revision (`updateScientSourceMetadata`, credited to the actor) and refreshes
+  the project's pins and bibliography. `.bib` fixes and ignores stay in the
+  project.
 - Identifiers go to `resolveSourceIdentifierBatch` in batches; lookups not
   started within 90 seconds count as unavailable and the report says it is
   incomplete. Retractions and corrections come from Crossref `updated-by`,
@@ -2787,7 +2823,14 @@ state, and a second persistent index could drift from the files. Folding
 lowercases, strips accents and punctuation and joins line-end hyphenation.
 Terms score by rarity across PDFs and repetition inside a 360-character window,
 quoted phrases are required, and terms of four or more characters also match as
-prefixes. The cache is keyed by hash, since stored text never changes for a
+prefixes. Ranking picks the window; the range sent to the reader is the
+tightest occurrence inside it: the query's terms in order as a contiguous
+phrase when the window holds one, otherwise the shortest run covering every
+matched term. The passage shown keeps the window as context. The reader
+verifies a stored selector exactly when the live page's text hash, geometry,
+quote and context agree, whichever PDF.js version stored it (the server and
+the reader pin different versions); otherwise it relocates by text or refuses,
+and its notice does not claim the page changed. The cache is keyed by hash, since stored text never changes for a
 hash, and bounded by entries and by cost: characters plus a fixed charge per
 page and per entry. Text with no characters (a scan) is cached without pages.
 A Library filter is sent as `sourceIds` and applied before ranking and the

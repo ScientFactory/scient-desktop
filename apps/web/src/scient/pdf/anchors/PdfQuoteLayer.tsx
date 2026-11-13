@@ -80,7 +80,7 @@ function outcomeNotice(outcome: PdfRevealOutcome): { title: string; description:
     case "Relocated":
       return {
         title: "Quote found by its text",
-        description: "The page text differs from when it was quoted, so Scient searched for it.",
+        description: "Its saved place did not match this PDF, so Scient searched for the words.",
       };
     case "Ambiguous":
       return {

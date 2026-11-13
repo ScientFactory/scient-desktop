@@ -344,9 +344,12 @@ export interface FullTextSearchDocument {
 export interface FullTextSearchHit {
   readonly key: string;
   readonly page: number;
-  /** Offsets into the page's folded search text; map them with `fullTextPassage`. */
+  /** The text to reveal, as offsets into the page's folded search text; map them with `fullTextPassage`. */
   readonly foldedStart: number;
   readonly foldedEnd: number;
+  /** The ranked passage around it, shown as context. */
+  readonly contextStart: number;
+  readonly contextEnd: number;
   readonly score: number;
   readonly matchedTerms: ReadonlyArray<string>;
 }
@@ -380,6 +383,57 @@ function needleOccurrences(text: string, needle: string, prefix: boolean, index:
 }
 
 /**
+ * The occurrence to reveal inside a ranked window: the query's terms in order as a contiguous
+ * phrase when the window holds one that covers every needle the window matched, else the
+ * shortest run of occurrences covering them all (terms and quoted phrases), the earliest on a tie.
+ */
+function tightestReveal(
+  folded: string,
+  window: ReadonlyArray<Occurrence>,
+  terms: ReadonlyArray<string>,
+): { readonly start: number; readonly end: number } {
+  const windowStart = window[0]!.at;
+  const windowEnd = window.at(-1)!.end;
+  const needles = new Set(window.map((entry) => entry.needle));
+  if (terms.length > 1) {
+    const phrase = terms.join(" ");
+    const at = needleOccurrences(folded, phrase, false, 0).find(
+      (entry) =>
+        entry.at >= windowStart &&
+        entry.end <= windowEnd &&
+        [...needles].every((needle) =>
+          window.some(
+            (inside) =>
+              inside.needle === needle && inside.at >= entry.at && inside.end <= entry.end,
+          ),
+        ),
+    );
+    if (at) return { start: at.at, end: at.end };
+  }
+  const wanted = needles.size;
+  const counts = new Map<number, number>();
+  let best = { start: windowStart, end: windowEnd };
+  let left = 0;
+  for (let right = 0; right < window.length; right += 1) {
+    const entry = window[right]!;
+    counts.set(entry.needle, (counts.get(entry.needle) ?? 0) + 1);
+    while (counts.size === wanted) {
+      const first = window[left]!;
+      let end = first.end;
+      for (let index = left + 1; index <= right; index += 1) {
+        end = Math.max(end, window[index]!.end);
+      }
+      if (end - first.at < best.end - best.start) best = { start: first.at, end };
+      const remaining = counts.get(first.needle)! - 1;
+      if (remaining === 0) counts.delete(first.needle);
+      else counts.set(first.needle, remaining);
+      left += 1;
+    }
+  }
+  return best;
+}
+
+/**
  * Ranks passages across documents: each query term scores by its rarity across
  * documents and by repetition inside a window; quoted phrases must all appear
  * in the window. Terms of four or more characters also match as word prefixes.
@@ -394,6 +448,7 @@ export function searchFullText(
   const perDocument = documents.map((document) =>
     document.pages.map((page) => ({
       page: page.page,
+      folded: page.folded,
       occurrences: needles
         .flatMap((needle, index) =>
           needleOccurrences(
@@ -442,11 +497,14 @@ export function searchFullText(
         for (const [needle, count] of counts) score += weight[needle]! * (1 + Math.log(count));
         if (counts.size === needles.length && needles.length > 1) score *= 1.5;
         if (best === null || score > best.score) {
+          const reveal = tightestReveal(page.folded, entries.slice(first, last + 1), query.terms);
           best = {
             key: documents[documentIndex]!.key,
             page: page.page,
-            foldedStart: start,
-            foldedEnd: entries[last]!.end,
+            foldedStart: reveal.start,
+            foldedEnd: reveal.end,
+            contextStart: start,
+            contextEnd: entries[last]!.end,
             score,
             matchedTerms: [...counts.keys()]
               .toSorted((a, b) => a - b)
@@ -472,16 +530,28 @@ export function searchFullText(
 
 const PASSAGE_MAXIMUM = 480;
 
-/** The stored page text around a hit, as offsets into the page and a readable one-line passage. */
+/**
+ * The stored page text around a hit: the reveal's offsets into the page, and a readable one-line
+ * passage around the hit's context.
+ */
 export function fullTextPassage(
   pageText: string,
-  hit: Pick<FullTextSearchHit, "foldedStart" | "foldedEnd">,
+  hit: Pick<FullTextSearchHit, "foldedStart" | "foldedEnd" | "contextStart" | "contextEnd">,
 ): { readonly start: number; readonly end: number; readonly passage: string } {
   const folded = foldText(pageText, "search");
-  const lastUnit = Math.max(hit.foldedStart, hit.foldedEnd - 1);
-  const matchStart = folded.origin[hit.foldedStart] ?? 0;
-  const lastOrigin = folded.origin[lastUnit] ?? matchStart;
-  const matchEnd = lastOrigin + unitWidth(pageText, lastOrigin);
+  const toPage = (foldedStart: number, foldedEnd: number) => {
+    const lastUnit = Math.max(foldedStart, foldedEnd - 1);
+    const from = folded.origin[foldedStart] ?? 0;
+    const lastOrigin = folded.origin[lastUnit] ?? from;
+    return { from, to: lastOrigin + unitWidth(pageText, lastOrigin) };
+  };
+  const reveal = toPage(hit.foldedStart, hit.foldedEnd);
+  const context = toPage(
+    Math.min(hit.contextStart, hit.foldedStart),
+    Math.max(hit.contextEnd, hit.foldedEnd),
+  );
+  const matchStart = context.from;
+  const matchEnd = context.to;
   const spare = Math.max(0, PASSAGE_MAXIMUM - (matchEnd - matchStart));
   let start = Math.max(0, matchStart - Math.floor(spare / 3));
   let end = Math.min(pageText.length, matchEnd + spare - (matchStart - start));
@@ -491,8 +561,8 @@ export function fullTextPassage(
     end += 1;
   const body = pageText.slice(start, end).replace(/\s+/gu, " ").trim();
   return {
-    start: matchStart,
-    end: matchEnd,
+    start: reveal.from,
+    end: reveal.to,
     passage: `${start > 0 ? "…" : ""}${body}${end < pageText.length ? "…" : ""}`,
   };
 }

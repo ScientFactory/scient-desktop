@@ -18,6 +18,7 @@ import {
   ReferenceIdentifierLookup,
   type ResolveIdentifierBatch,
 } from "../../../scient/references/ReferenceCheck.ts";
+import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
 import { checkReferencesForInvocation, resolveReferencesForInvocation } from "./handlers.ts";
 
 const lookup: ResolveIdentifierBatch = async (identifiers) =>
@@ -65,6 +66,7 @@ const withProject = <A, E, R>(root: string, effect: Effect.Effect<A, E, R>) =>
       ),
       Effect.provideService(WorkspaceBindingResolver, resolver),
       Effect.provideService(ReferenceIdentifierLookup, lookup),
+      Effect.provideService(ScientSourcesBackend, "project"),
     );
   });
 

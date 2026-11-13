@@ -133,6 +133,7 @@ export function SourceRow(props: {
   const hasPdf =
     materialSelection._tag === "Selected" || materialSelection._tag === "SeveralMaterials";
   const metadataDiagnostics = row.diagnosticsBySourceId.get(record.sourceId);
+  const justAdded = row.recentlyAddedSourceIds.has(record.sourceId) && !record.fromSnapshot;
   const onToggleStar = row.onToggleStar;
   return (
     <div
@@ -186,15 +187,11 @@ export function SourceRow(props: {
                   {hasPdf ? " · PDF" : " · Metadata only"}
                   {" · "}
                   <span
-                    className={
-                      row.recentlyAddedSourceIds.has(record.sourceId)
-                        ? "font-medium text-sky-600 dark:text-sky-400"
-                        : undefined
-                    }
+                    className={justAdded ? "font-medium text-sky-600 dark:text-sky-400" : undefined}
                   >
                     {sourceAddedLabel(
                       record.importedAt,
-                      row.recentlyAddedSourceIds.has(record.sourceId),
+                      justAdded,
                       record.origin?.actor === "agent",
                     )}
                   </span>

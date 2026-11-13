@@ -7,7 +7,10 @@ import {
   readScientLibraryAliases,
   resolveScientLibraryAlias,
 } from "@scientfactory/scient-sources/library-aliases";
-import { resolveScientProjectSources } from "@scientfactory/scient-sources/library-instance-map";
+import {
+  resolveScientProjectSources,
+  type ScientProjectSourceResolution,
+} from "@scientfactory/scient-sources/library-instance-map";
 import {
   listScientLibraryReviewIds,
   refreshScientLibraryReviewSnapshot,
@@ -256,14 +259,16 @@ export interface KnownProject {
 }
 
 /**
- * For each of `sourceIds`, the other checkouts on this computer that pin it, by their title in
- * `projects` or else their folder name. One pin resolution per checkout, whatever the number of
- * sources asked about.
+ * Names checkouts on this computer by the Library IDs `idsOf` reads from each of their pin
+ * resolutions, by their title in `projects` or else their folder name. One pin resolution per
+ * checkout, whatever the number of sources asked about.
  */
-export async function otherProjectsUsing(
+async function projectsNamedBy(
   store: ScientSourcesLibraryStore,
   sourceIds: ReadonlySet<string>,
-  projects: ReadonlyArray<KnownProject> = [],
+  projects: ReadonlyArray<KnownProject>,
+  includeHere: boolean,
+  idsOf: (resolution: ScientProjectSourceResolution) => ReadonlyArray<string>,
 ): Promise<ReadonlyMap<string, ReadonlyArray<string>>> {
   const names = new Map<string, string[]>();
   if (!store.exists || sourceIds.size === 0) return names;
@@ -281,7 +286,7 @@ export async function otherProjectsUsing(
     ),
   );
   for (const instance of await listScientLibraryInstances(store.library)) {
-    if (instance.path === here || !(await folderExists(instance.path))) continue;
+    if ((!includeHere && instance.path === here) || !(await folderExists(instance.path))) continue;
     const pinned = await resolveScientProjectPins({
       projectRoot: instance.path,
       library: store.library,
@@ -290,13 +295,42 @@ export async function otherProjectsUsing(
     }).catch(() => []);
     const name = titles.get(instance.path) ?? NodePath.basename(instance.path);
     for (const { resolution } of pinned) {
-      if (resolution.kind !== "resolved" || !sourceIds.has(resolution.sourceId)) continue;
-      const list = names.get(resolution.sourceId) ?? [];
-      if (!list.includes(name)) list.push(name);
-      names.set(resolution.sourceId, list);
+      for (const sourceId of idsOf(resolution)) {
+        if (!sourceIds.has(sourceId)) continue;
+        const list = names.get(sourceId) ?? [];
+        if (!list.includes(name)) list.push(name);
+        names.set(sourceId, list);
+      }
     }
   }
   return names;
+}
+
+/** For each of `sourceIds`, the other checkouts on this computer that pin it. */
+export function otherProjectsUsing(
+  store: ScientSourcesLibraryStore,
+  sourceIds: ReadonlySet<string>,
+  projects: ReadonlyArray<KnownProject> = [],
+): Promise<ReadonlyMap<string, ReadonlyArray<string>>> {
+  return projectsNamedBy(store, sourceIds, projects, false, (resolution) =>
+    resolution.kind === "resolved" ? [resolution.sourceId] : [],
+  );
+}
+
+/**
+ * For each of `sourceIds` in the trash, the checkouts on this computer, this one included, that
+ * still cite it: deleted for good, they keep citing it from their own snapshot.
+ */
+export function projectsCitingRemoved(
+  store: ScientSourcesLibraryStore,
+  sourceIds: ReadonlySet<string>,
+  projects: ReadonlyArray<KnownProject> = [],
+): Promise<ReadonlyMap<string, ReadonlyArray<string>>> {
+  return projectsNamedBy(store, sourceIds, projects, true, (resolution) =>
+    resolution.kind === "unresolved" && resolution.reason === "removed"
+      ? resolution.candidateIds
+      : [],
+  );
 }
 
 /** The reach field an edit result carries; absent when no other project pins the record. */
