@@ -141,6 +141,7 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "keep-pin-separate": ["keep-pin-separate"],
   "clear-pin-separate": ["clear-pin-separate"],
   "restore-pre-move": ["restore-pre-move"],
+  // Packages use the same environment authority and canonical path checks for person and agent.
   "export-package": ["export-package"],
   "import-package": ["import-package"],
   "undo-import": ["undo-import"],

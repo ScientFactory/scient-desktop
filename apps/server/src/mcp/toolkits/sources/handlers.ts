@@ -1050,7 +1050,7 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
     case "restore-pre-move":
       return yield* restorePreMove(store.root, change);
     case "export-package":
-      return yield* attempt(() => exportLibraryProjectPackage(store, change, "agent"));
+      return yield* attempt(() => exportLibraryProjectPackage(store, change));
     case "import-package":
       return yield* attempt(() => importLibraryProjectPackage(store, change, "agent"));
     case "undo-import":

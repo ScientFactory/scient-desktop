@@ -1196,7 +1196,7 @@ export async function organizeLibrarySources(
         ...(change.abandon ? { abandon: true } : {}),
       });
     case "export-package":
-      return exportLibraryProjectPackage(store, change, "person");
+      return exportLibraryProjectPackage(store, change);
     case "list-packages":
       return listLibraryProjectPackages(store);
     case "import-package":

@@ -1206,10 +1206,13 @@ describe("Sources tools on the library backend", () => {
           }),
           other,
         ),
-      ).toMatchObject({ outcome: "undone", packageReport: { kept: [] } });
+      ).toMatchObject({
+        outcome: "undone",
+        packageReport: { kept: [], retainedSources: 1, retainedSourceIds: [expect.any(String)] },
+      });
       expect(yield* Effect.promise(() => readScientProjectPins(other.root))).toEqual([]);
 
-      // An agent writes only in the project, or where the person saved a package before.
+      // The first outside path works with the same environment authority as a person.
       const refused = (change: { relativePath?: string; inFolder?: string }) =>
         run(
           organizeLibrarySourcesForInvocation({ change: { action: "export-package", ...change } }),
@@ -1217,17 +1220,34 @@ describe("Sources tools on the library backend", () => {
         ).pipe(Effect.flip);
       const elsewhere = NodePath.join(fixture.base, "elsewhere");
       yield* Effect.promise(() => NodeFSP.mkdir(elsewhere));
+      expect(
+        yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: {
+              action: "export-package",
+              relativePath: "../elsewhere/handoff",
+            },
+          }),
+          fixture,
+        ),
+      ).toMatchObject({ outcome: "exported", packageReport: { insideProject: false } });
       yield* refused({ relativePath: "../elsewhere/handoff" });
-      yield* refused({ inFolder: elsewhere });
       yield* Effect.promise(() =>
         NodeFSP.symlink(elsewhere, NodePath.join(fixture.root, "linked")),
       );
       yield* refused({ relativePath: "linked/handoff" });
       yield* refused({ relativePath: ".scient/handoff" });
-      expect(yield* Effect.promise(() => NodeFSP.readdir(elsewhere))).toEqual([]);
+      yield* refused({ inFolder: "relative-folder" });
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(
+          NodePath.join(fixture.root, ".scient"),
+          NodePath.join(fixture.root, "internal-link"),
+        ),
+      );
+      yield* refused({ relativePath: "internal-link/handoff" });
+      expect(yield* Effect.promise(() => NodeFSP.readdir(elsewhere))).toEqual(["handoff"]);
 
-      // It reads a package only from the project or a folder the person chose, and never through
-      // a link out of either or out of the package.
+      // Outside packages are readable; payload links still cannot escape the package.
       const importing = (relativePath: string) =>
         run(
           organizeLibrarySourcesForInvocation({
@@ -1241,10 +1261,13 @@ describe("Sources tools on the library backend", () => {
           recursive: true,
         }),
       );
-      yield* importing(NodePath.join(away, "handoff")).pipe(Effect.flip);
-      yield* importing("../away/handoff").pipe(Effect.flip);
+      expect(yield* importing(NodePath.join(away, "handoff"))).toMatchObject({
+        outcome: "imported",
+      });
+      expect(yield* importing("../away/handoff")).toMatchObject({ outcome: "imported" });
       yield* Effect.promise(() => NodeFSP.symlink(away, NodePath.join(fixture.root, "away-link")));
-      yield* importing("away-link/handoff").pipe(Effect.flip);
+      expect(yield* importing("away-link/handoff")).toMatchObject({ outcome: "imported" });
+      yield* importing(".scient/handoff").pipe(Effect.flip);
       yield* Effect.promise(async () => {
         const pins = NodePath.join(fixture.root, "handoff", "project", "pins.json");
         await NodeFSP.rm(pins);
@@ -1255,7 +1278,7 @@ describe("Sources tools on the library backend", () => {
         packageReport: { changedFiles: ["project/pins.json"] },
       });
 
-      // Saved outside the project by the person: nothing for Git; the agent may use it then.
+      // Both callers use server paths, including an absolute parent folder.
       const store = yield* resolveScientLibraryStoreAt(fixture.root, "write").pipe(
         Effect.provideService(ServerConfig, {
           stateDir: fixture.stateDir,
@@ -1263,9 +1286,7 @@ describe("Sources tools on the library backend", () => {
         Effect.provideService(ScientSourcesBackend, "library"),
       );
       if (!store) throw new Error("Expected the library backend.");
-      yield* Effect.promise(() =>
-        exportLibraryProjectPackage(store, { inFolder: fixture.base }, "person"),
-      );
+      yield* Effect.promise(() => exportLibraryProjectPackage(store, { inFolder: fixture.base }));
       const outside = yield* run(
         organizeLibrarySourcesForInvocation({
           change: { action: "export-package", inFolder: fixture.base },

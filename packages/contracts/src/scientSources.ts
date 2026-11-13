@@ -519,7 +519,10 @@ export const ScientProjectPackageReport = Schema.Struct({
       Schema.Struct({ part: Schema.String, item: Schema.String, message: Schema.String }),
     ),
   ),
-  /** Undo: what the import created that changed since, or that another import uses; it stays. */
+  /** Undo: imported papers still in the Library, including survivors of later merges. */
+  retainedSourceIds: Schema.optionalKey(Schema.Array(NonEmptyString)),
+  retainedSources: Schema.optionalKey(Count),
+  /** Undo: project additions changed since or used by another import; they stay. */
   kept: Schema.optionalKey(Schema.Array(Schema.String)),
   /** Undo: what the import joined into what was here, and the highlights and reviews it brought. */
   left: Schema.optionalKey(Schema.Array(Schema.String)),

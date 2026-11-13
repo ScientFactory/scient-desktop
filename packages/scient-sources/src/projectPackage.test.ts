@@ -960,7 +960,7 @@ describe("importing a project package", () => {
     }
   });
 
-  it("keeps a receipt, and Undo removes what the import added", async () => {
+  it("Undo keeps imported papers and PDFs used by another project", async () => {
     const { base, mine, source } = await setup();
     const paper = await add(mine, "paper");
     await withPdf(mine, base, paper.sourceId);
@@ -992,12 +992,35 @@ describe("importing a project package", () => {
         importId: imported.importId,
         actor: "user",
       });
-    expect(await undo()).toEqual({ outcome: "undone", kept: [], left: [] });
+    const importedPaper = (await listScientSourceRecords(theirs)).find(
+      (record) => record.sourceId !== kept.sourceId,
+    )!;
+    const projectB = await project(base, "project-b");
+    await pinned(theirs, projectB, importedPaper.sourceId);
+    expect(await undo()).toMatchObject({
+      outcome: "undone",
+      retainedSourceIds: [importedPaper.sourceId],
+    });
     expect(await readScientProjectPins(received)).toEqual([]);
-    expect((await listScientSourceRecords(theirs)).map((record) => record.sourceId)).toEqual([
-      kept.sourceId,
-    ]);
-    expect((await listScientSourceTrash(theirs)).entries).toHaveLength(1);
+    const [pinB] = await readScientProjectPins(projectB);
+    const [inB] = await resolveScientProjectSources({
+      projectRoot: projectB,
+      library: theirs,
+      mode: "read",
+      sources: [{ projectSourceId: pinB!.sourceId, work: pinB!.work }],
+    });
+    expect(inB?.kind).toBe("resolved");
+    expect(inB?.kind === "resolved" && inB.sourceId).toBe(importedPaper.sourceId);
+    const live = await readScientSourceRecord(theirs, importedPaper.sourceId);
+    expect(live?.attachments).toHaveLength(1);
+    expect(
+      await NodeFSP.readFile(
+        NodePath.join(theirs.root, live!.attachments[0]!.relativePath),
+        "utf8",
+      ),
+    ).toContain("%PDF");
+    expect(await listScientSourceRecords(theirs)).toHaveLength(2);
+    expect((await listScientSourceTrash(theirs)).entries).toHaveLength(0);
     expect((await readScientSourcesOrganization(theirs)).collections).toEqual([]);
     expect(await undo()).toEqual({ outcome: "already-undone" });
   });
@@ -1064,6 +1087,9 @@ describe("importing a project package", () => {
     const editedHere = (await listScientSourceRecords(theirs)).find(
       (record) => record.title === edited.title,
     )!;
+    const notedHere = (await listScientSourceRecords(theirs)).find(
+      (record) => record.title === noted.title,
+    )!;
     const notedPin = (await readScientProjectPins(received)).find(
       (pin) => pin.work.title === noted.title,
     )!;
@@ -1075,17 +1101,15 @@ describe("importing a project package", () => {
     });
     const result = await undoOf(received, theirs, imported);
     if (result.outcome !== "undone") throw new Error("Expected Undo.");
-    expect(result.kept.toSorted()).toEqual(
-      [`pin ${notedPin.citationKey}`, `source ${editedHere.sourceId}`].toSorted(),
-    );
+    expect(result.kept.toSorted()).toEqual([`pin ${notedPin.citationKey}`]);
     expect(result.left.filter((entry) => entry.startsWith("PDF "))).toHaveLength(2);
     const after = await listScientSourceRecords(theirs);
     expect(after.map((record) => record.sourceId).toSorted()).toEqual(
-      [editedHere.sourceId, local.sourceId].toSorted(),
+      [editedHere.sourceId, notedHere.sourceId, local.sourceId].toSorted(),
     );
     expect(after.find((record) => record.sourceId === local.sourceId)?.attachments).toHaveLength(2);
-    expect((await readScientProjectPins(received)).map((pin) => pin.citationKey)).toEqual([
-      notedPin.citationKey,
+    expect(await readScientProjectPins(received)).toMatchObject([
+      { citationKey: notedPin.citationKey, note: "Mine now" },
     ]);
 
     // Another project's later import reuses what this one created: Undo keeps those papers.
@@ -1096,7 +1120,7 @@ describe("importing a project package", () => {
       sources: { added: 0, matched: 3 },
     });
     const undone = await undoOf(first, other, firstImport);
-    expect(undone.outcome === "undone" && undone.kept).toHaveLength(3);
+    expect(undone.outcome === "undone" && undone.retainedSourceIds).toHaveLength(3);
     expect(await listScientSourceRecords(other)).toHaveLength(3);
     expect(await readScientProjectPins(first)).toEqual([]);
   });

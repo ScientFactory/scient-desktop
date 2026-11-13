@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off -- An import receipt is a file in the Library; Undo removes files it names.
+// @effect-diagnostics nodeBuiltinImport:off -- Import receipts are files in the Library.
 // @effect-diagnostics globalDate:off -- Receipts use interoperable ISO timestamps.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
@@ -13,7 +13,8 @@ import {
   clearScientProjectPinNoteIfUnchanged,
   unpinScientProjectPinIfUnchanged,
 } from "./projectPins.ts";
-import { removeScientSource } from "./store.ts";
+import { readScientSourceRecord } from "./store.ts";
+import { readScientLibraryAliases, resolveScientLibraryAlias } from "./libraryAliases.ts";
 import { atomicWriteJson, isNodeError, readBoundedJson } from "./storeFiles.ts";
 
 const RECEIPTS_DIRECTORY = "package-imports";
@@ -38,8 +39,7 @@ const PinVersion = Schema.Struct({
 });
 
 /**
- * Each object the import created, as its own write left it (taken from that write's result under
- * its lock, never read back later): Undo removes it only while it is still so.
+ * Versions from each owning write; Undo checks project additions and collections, never papers.
  */
 const Created = Schema.Struct({
   sources: Schema.Array(Schema.Struct({ sourceId: Schema.String, revision: Schema.Int })),
@@ -52,9 +52,8 @@ const Created = Schema.Struct({
 });
 
 /**
- * What one package import did, kept in the Library. Undo removes only what it created (`created`);
- * what it joined into what was here (`joined.evidence`) stays. A receipt without `created` is from
- * before Undo kept versions, and its Undo keeps everything.
+ * Undo checks versions of created project additions; Library papers and joined evidence stay.
+ * Receipts without `created` keep everything.
  */
 export const ScientProjectPackageReceipt = Schema.Struct({
   formatVersion: Schema.Literal(1),
@@ -162,6 +161,8 @@ export type ScientProjectPackageUndo =
       readonly outcome: "undone";
       /** What it created that changed since, or that another import uses: it stays. */
       readonly kept: ReadonlyArray<string>;
+      /** Imported Library papers still available, after following later merges. */
+      readonly retainedSourceIds: ReadonlyArray<string>;
       /** What it put into what was already here, and the highlights and review files it brought: they stay. */
       readonly left: ReadonlyArray<string>;
     }
@@ -182,9 +183,8 @@ function everythingAdded(receipt: ScientProjectPackageReceipt): ReadonlyArray<st
 }
 
 /**
- * Removes only what the import created, each while exactly as its own write left it (checked under
- * its lock) and unused by any other import not undone (Library-wide for sources and collections).
- * What it joined stays and is listed. A failed step leaves the import not undone, to run again.
+ * Removes unchanged project additions and collections under their locks; Library papers stay.
+ * Joined evidence stays and is listed. A failed step leaves the import available to retry.
  */
 export async function undoScientProjectPackageImport(input: {
   readonly projectRoot: string;
@@ -196,6 +196,13 @@ export async function undoScientProjectPackageImport(input: {
   const receipt = await readScientProjectPackageReceipt(input.library, input.importId);
   if (!receipt || receipt.projectId !== input.projectId) return { outcome: "not-found" };
   if (receipt.undone) return { outcome: "already-undone" };
+  const aliases = await readScientLibraryAliases(input.library);
+  const retainedSourceIds: string[] = [];
+  for (const id of new Set(
+    receipt.added.sources.map((id) => resolveScientLibraryAlias(aliases, id)),
+  )) {
+    if (await readScientSourceRecord(input.library, id)) retainedSourceIds.push(id);
+  }
   const created = receipt.added.created;
   const left = created
     ? [
@@ -210,15 +217,9 @@ export async function undoScientProjectPackageImport(input: {
       ...receipt,
       undone: { at: new Date().toISOString(), by: input.actor, kept: [...kept] },
     });
-    return { outcome: "undone", kept, left };
+    return { outcome: "undone", kept, left, retainedSourceIds };
   }
   const others = await otherImports(input.library, receipt);
-  const usedSources = new Set(
-    others.flatMap((other) => [
-      ...(other.joined.sourceIds ?? []),
-      ...other.added.pdfs.map((pdf) => pdf.sourceId),
-    ]),
-  );
   const usedCollections = new Set(others.flatMap((other) => other.joined.collectionIds ?? []));
   const usedKeys = new Set(
     others
@@ -277,18 +278,6 @@ export async function undoScientProjectPackageImport(input: {
       );
     });
   }
-  // A source goes with the PDFs it came with; one edited since (its revision moved) stays.
-  for (const { sourceId, revision } of created.sources) {
-    await step(`source ${sourceId}`, usedSources.has(sourceId), async () => {
-      const removed = await removeScientSource({
-        root: input.library,
-        sourceId,
-        expectedRevision: revision,
-        actor: input.actor,
-      });
-      return removed.outcome !== "stale";
-    });
-  }
   if (unfinished.length > 0) {
     throw new Error(
       `Undo stopped before it finished (${unfinished.join("; ")}); run it again to finish.`,
@@ -298,5 +287,5 @@ export async function undoScientProjectPackageImport(input: {
     ...receipt,
     undone: { at: new Date().toISOString(), by: input.actor, kept },
   });
-  return { outcome: "undone", kept, left };
+  return { outcome: "undone", kept, left, retainedSourceIds };
 }
