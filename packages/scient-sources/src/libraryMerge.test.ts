@@ -550,13 +550,17 @@ describe("library merge engine", () => {
     ).toMatchObject({ reason: "merge-undone" });
   });
 
-  it("never reuses its own key's record when supplied facts or Library decisions say otherwise", async () => {
+  it("never reuses its own key's record when supplied facts, missing facts or Library decisions leave it unclear", async () => {
     const { root, library } = await newLibrary();
     const doi = { scheme: "doi", value: "10.1000/own-key" };
-    const add = (sourceKey: string, fields: Partial<ScientSourceRecord>) =>
+    const add = (
+      sourceKey: string,
+      fields: Partial<ScientSourceRecord>,
+      operationId = `op_${NodeCrypto.randomUUID()}`,
+    ) =>
       importScientSource({
         root: library,
-        operationId: `op_${NodeCrypto.randomUUID()}`,
+        operationId,
         candidate: {
           ...record("x", { creators: [], ...fields }),
           sourceKey,
@@ -570,33 +574,29 @@ describe("library merge engine", () => {
       });
     const first = await add("identifier_doi", { title: "Registry title A", identifiers: [doi] });
     const firstId = first.record!.sourceId;
+    const bare = { title: null, type: "other" as const, identifiers: [doi] };
+    // Fewer facts select the one copy there is.
+    await expect(add("identifier_doi", bare)).resolves.toMatchObject({
+      outcome: "duplicate",
+      duplicate: { matchingSourceIds: [firstId] },
+    });
 
     // The same identifier key, after its registry answer changed: a contradiction, not a retry.
-    const changed = await add("identifier_doi", { title: "Registry title B", identifiers: [doi] });
+    const changed = await add(
+      "identifier_doi",
+      { title: "Registry title B", identifiers: [doi] },
+      "op_changed",
+    );
     expect(changed).toMatchObject({
       outcome: "imported",
       duplicate: { kind: "new", matchingSourceIds: expect.arrayContaining([firstId]) },
     });
-    expect(changed.record!.sourceId).not.toBe(firstId);
-    // A retry with the same facts, or with fewer, is the same import.
-    for (const fields of [
-      { title: "Registry title A", identifiers: [doi] },
-      { title: null, type: "other" as const, identifiers: [doi] },
-    ]) {
-      await expect(add("identifier_doi", fields)).resolves.toMatchObject({
-        outcome: "duplicate",
-        duplicate: { matchingSourceIds: [firstId] },
-      });
-    }
-
-    // An agent key leaves out the type; two known types that differ are two works.
-    const dataset = { title: "Trial data", identifiers: [{ scheme: "pmid", value: "77" }] };
-    const article = await add("agent_same", { ...dataset, type: "article" });
-    expect(await add("agent_same", { ...dataset, type: "dataset" })).toMatchObject({
-      outcome: "imported",
-      duplicate: { kind: "new", matchingSourceIds: [article.record!.sourceId] },
-    });
-
+    const changedId = changed.record!.sourceId;
+    expect(changedId).not.toBe(firstId);
+    // A retry with the facts that tell the copies apart is that import.
+    await expect(
+      add("identifier_doi", { title: "Registry title A", identifiers: [doi] }),
+    ).resolves.toMatchObject({ outcome: "duplicate", duplicate: { matchingSourceIds: [firstId] } });
     // A damaged receipt naming the import's own record holds it back from reuse too.
     await NodeFSP.mkdir(NodePath.join(root, "merges"), { recursive: true });
     await NodeFSP.writeFile(
@@ -606,6 +606,41 @@ describe("library merge engine", () => {
     expect(
       await add("identifier_doi", { title: "Registry title A", identifiers: [doi] }),
     ).toMatchObject({ outcome: "imported", duplicate: { kind: "new" } });
+    // Fewer facts cannot tell two disagreeing copies apart, so the key does not choose either.
+    const unclear = await add("identifier_doi", bare);
+    expect(unclear).toMatchObject({
+      outcome: "imported",
+      duplicate: { kind: "new", matchingSourceIds: expect.arrayContaining([firstId, changedId]) },
+    });
+    const listed = await readScientLibraryDuplicates({ library, pairLimit: 20, mergeLimit: 10 });
+    expect(
+      listed.possibleDuplicates.some((entry) => entry.sourceIds.includes(unclear.record!.sourceId)),
+    ).toBe(true);
+    // The operation that wrote a copy recognises its own retry by that record.
+    await expect(add("identifier_doi", bare, "op_changed")).resolves.toMatchObject({
+      outcome: "duplicate",
+      duplicate: { matchingSourceIds: [changedId] },
+    });
+
+    // An agent key leaves out the type; two known types that differ are two works.
+    const dataset = { title: "Trial data", identifiers: [{ scheme: "pmid", value: "77" }] };
+    const article = await add("agent_same", { ...dataset, type: "article" });
+    const datasetCopy = await add("agent_same", { ...dataset, type: "dataset" });
+    expect(datasetCopy).toMatchObject({
+      outcome: "imported",
+      duplicate: { kind: "new", matchingSourceIds: [article.record!.sourceId] },
+    });
+    // A retry with the type unknown names neither.
+    expect(await add("agent_same", { ...dataset, type: "other" })).toMatchObject({
+      outcome: "imported",
+      duplicate: {
+        kind: "new",
+        matchingSourceIds: expect.arrayContaining([
+          article.record!.sourceId,
+          datasetCopy.record!.sourceId,
+        ]),
+      },
+    });
   });
 
   it("holds back what a receipt the engine cannot decode names, at intake too", async () => {
@@ -647,7 +682,7 @@ describe("library merge engine", () => {
     });
   });
 
-  it("merges outward from the survivor, so each receipt names evidence the survivor holds", async () => {
+  it("merges outward from the survivor, so each receipt names evidence the survivor holds, and stops at a failed bridge", async () => {
     const { root, library } = await newLibrary();
     const doi = { scheme: "doi", value: "10.1000/chain" };
     const pmid = { scheme: "pmid", value: "4040" };
@@ -665,6 +700,12 @@ describe("library merge engine", () => {
         importedAt: "2026-03-01T00:00:00.000Z",
       }),
     ]);
+
+    // The bridge's merge fails: C's only link to A was B's PMID, which A never gained.
+    failNext("rename", /pending[\\/]merge_[^\\/]+\.json$/u);
+    const failed = await mergeScientLibraryDuplicates({ library });
+    expect(failed.merges).toEqual([]);
+    expect(failed.failures.map(({ loserId }) => loserId)).toEqual(["source_b", "source_c"]);
 
     const { merges } = await mergeScientLibraryDuplicates({ library });
 

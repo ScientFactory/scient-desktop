@@ -100,7 +100,8 @@ function bookIsbns(source: Pick<ScientSourceRecord, "type" | "identifiers">): Se
 /**
  * Intake's shared identity assessment: a shared item, import, identifier (a book's ISBN) or PDF
  * reuses a record only if nothing supplied contradicts it and no Library decision keeps them
- * apart; its own key's record too. Several such records, or only disagreeing ones, leave it new.
+ * apart; its own key's record too. Of several such records it takes this operation's accepted
+ * import, else its own key's record unless two of them disagree; otherwise it is new.
  */
 export function assessSourceDuplicate(input: {
   readonly candidate: ScientSourceCandidate;
@@ -108,6 +109,8 @@ export function assessSourceDuplicate(input: {
   readonly pdfSha256?: string;
   /** The ID the store derives from the candidate's source key; a record with it is the same import. */
   readonly sourceId?: string;
+  /** The record this same operation already imported for the candidate: a genuine retry. */
+  readonly acceptedSourceId?: string;
   readonly exclusions?: ScientSourceIntakeExclusions;
 }): ScientSourceDuplicateAssessment {
   const { candidate } = input;
@@ -139,14 +142,14 @@ export function assessSourceDuplicate(input: {
             record.attachments.some((attachment) => attachment.sha256 === input.pdfSha256) &&
             scientSourcePdfIsEvidence(candidate, record)
           ? "same-pdf"
-          : record.sourceId === input.sourceId
+          : record.sourceId === input.sourceId || record.sourceId === input.acceptedSourceId
             ? "same-origin"
             : null;
     if (kind) matches.push({ record, kind });
   }
   const problemOf = (record: ScientSourceRecord) => {
     if (input.exclusions) {
-      const own = input.sourceId ?? "";
+      const own = input.acceptedSourceId ?? input.sourceId ?? "";
       if (input.exclusions.isDistinct(own, record.sourceId)) return "distinct" as const;
       const apart = input.exclusions.keptApart(own, record.sourceId);
       if (apart) return apart;
@@ -155,8 +158,19 @@ export function assessSourceDuplicate(input: {
   };
   const assessed = matches.map((match) => ({ ...match, problem: problemOf(match.record) }));
   const corroborated = assessed.filter((match) => match.problem === null);
+  const apart = (left: ScientSourceRecord, right: ScientSourceRecord) =>
+    input.exclusions?.isDistinct(left.sourceId, right.sourceId) ||
+    input.exclusions?.keptApart(left.sourceId, right.sourceId) ||
+    scientSourceIntakeProblem(left, right) !== null;
+  // Missing facts can make copies that disagree with each other look alike; then no key chooses.
+  const indistinguishable = corroborated.some((match, index) =>
+    corroborated.slice(index + 1).some((other) => apart(match.record, other.record)),
+  );
   const reused =
-    corroborated.find((match) => match.record.sourceId === input.sourceId) ??
+    corroborated.find((match) => match.record.sourceId === input.acceptedSourceId) ??
+    (indistinguishable
+      ? undefined
+      : corroborated.find((match) => match.record.sourceId === input.sourceId)) ??
     (corroborated.length === 1 ? corroborated[0] : undefined);
   if (reused) {
     return {

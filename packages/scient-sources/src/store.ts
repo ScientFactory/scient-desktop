@@ -2739,16 +2739,30 @@ function intakeAssessor(
   paths: SourceStorePaths,
   existing: ReadonlyArray<ScientSourceRecord>,
   exclusions: ScientLibraryExclusions | undefined,
+  operationId?: string,
 ) {
   const owner = storeOwnerId(paths);
-  return (candidate: ScientSourceCandidate, pdfSha256?: string) =>
-    assessSourceDuplicate({
+  return (candidate: ScientSourceCandidate, pdfSha256?: string) => {
+    const sourceId = scientSourceIdFor(owner, candidate.sourceKey);
+    const alternate =
+      operationId && scientSourceIdFor(owner, `${candidate.sourceKey}\0${operationId}`);
+    // Only a record this operation wrote proves a retry; the derived key alone does not.
+    const accepted = alternate
+      ? existing.find(
+          (record) =>
+            record.sourceId === alternate ||
+            (record.sourceId === sourceId && record.origin?.operationId === operationId),
+        )
+      : undefined;
+    return assessSourceDuplicate({
       candidate,
       existing,
-      sourceId: scientSourceIdFor(owner, candidate.sourceKey),
+      sourceId,
+      ...(accepted ? { acceptedSourceId: accepted.sourceId } : {}),
       ...(pdfSha256 ? { pdfSha256 } : {}),
       ...(exclusions ? { exclusions } : {}),
     });
+  };
 }
 
 /**
@@ -2796,7 +2810,7 @@ async function importScientSourceWithRecordLookup(
         : await listScientSourceRecordsFromPaths(paths);
     const exclusions = await intakeExclusions(paths, existing);
     const assess = (records: ReadonlyArray<ScientSourceRecord>, pdfSha256?: string) =>
-      intakeAssessor(paths, records, exclusions)(input.candidate, pdfSha256);
+      intakeAssessor(paths, records, exclusions, input.operationId)(input.candidate, pdfSha256);
     const importedAt = new Date().toISOString();
     const preliminaryDuplicate = assess(existing, input.expectedPdf?.sha256);
     if (duplicateBlocksImport(preliminaryDuplicate, input.allowPossibleMetadataMatch ?? false)) {

@@ -14,6 +14,7 @@ import {
   assessScientLibraryDuplicates,
   compareScientLibrarySurvivors,
   pairKey,
+  scientLibraryJoiningLink,
   type ScientLibraryPossibleDuplicate,
 } from "./libraryDuplicates.ts";
 import {
@@ -657,7 +658,18 @@ export async function mergeScientLibraryDuplicates(input: {
     const failures: Array<ScientLibraryDuplicateMergeResult["failures"][number]> = [];
     for (const group of assessment.groups) {
       let survivor = byId.get(group.survivorId)!;
-      for (const { sourceId, kind } of group.losers) {
+      const joined = new Set([group.survivorId]);
+      for (const { sourceId, links } of group.losers) {
+        // Only evidence a successful merge moved to the survivor can join the next loser.
+        const kind = scientLibraryJoiningLink(links, joined);
+        if (!kind) {
+          failures.push({
+            survivorId: survivor.sourceId,
+            loserId: sourceId,
+            message: "Not merged: the source linking it to this one could not be merged.",
+          });
+          continue;
+        }
         try {
           const merged = await mergeRecords({
             paths,
@@ -669,6 +681,7 @@ export async function mergeScientLibraryDuplicates(input: {
           });
           pending.push(merged.merge);
           survivor = merged.survivor;
+          joined.add(sourceId);
         } catch (cause) {
           // The survivor's revision may have landed before the failure.
           survivor = (await readScientSourceRecordIfPresent(paths, survivor.sourceId)) ?? survivor;
