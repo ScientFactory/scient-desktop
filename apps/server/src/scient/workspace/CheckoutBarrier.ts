@@ -168,7 +168,13 @@ async function locate(path: string, skipMissing: boolean): Promise<Located | nul
   if (roots.length === 0) roots.push(current);
   const keys: string[] = [];
   for (const root of roots) {
-    keys.push(await platformFileIdentity.key(root));
+    try {
+      keys.push(await platformFileIdentity.key(root));
+    } catch (error) {
+      // Removed while being examined: as if it had been gone before.
+      if (skipMissing && missing(error)) return null;
+      throw error;
+    }
   }
   return { root: roots[0]!, keys };
 }

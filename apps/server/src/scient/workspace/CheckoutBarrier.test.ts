@@ -23,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import { vi } from "vite-plus/test";
 
 import * as CheckpointStore from "../../checkpointing/CheckpointStore.ts";
 import * as ServerConfig from "../../config.ts";
@@ -36,6 +37,7 @@ import {
   makeCheckoutBarrier,
   type CheckoutSection,
 } from "./CheckoutBarrier.ts";
+import { platformFileIdentity } from "./PlatformFileIdentity.ts";
 
 /** A temporary folder holding `repo` (a checkout: it has `.git`) and `other`. */
 const folders = Effect.acquireRelease(
@@ -97,6 +99,26 @@ const waitForBulkAdmission = Effect.fn("test.CheckoutBarrier.waitForBulkAdmissio
   );
 });
 
+/**
+ * Forks a bulk change of `path` and returns once it has located its checkout and announced
+ * itself (the checkout's epoch rose), so it holds or waits for the checkout it found. Locating
+ * reads the disk, so a fixed number of scheduler turns is not enough on a slow runner.
+ */
+const forkBulk = <A, E>(
+  barrier: CheckoutBarrierShape,
+  path: string,
+  effect: Effect.Effect<A, E>,
+  options?: { readonly missing?: "nearest" | "skip" },
+) =>
+  Effect.gen(function* () {
+    const before = (yield* barrier.current(path)).epoch;
+    const fiber = yield* barrier.bulk(path, effect, options).pipe(Effect.forkChild);
+    yield* barrier
+      .current(path)
+      .pipe(Effect.repeat({ until: (section) => section.epoch > before }));
+    return fiber;
+  });
+
 describe("CheckoutBarrier", () => {
   it.effect("refuses an application while a bulk change runs, and admits one after", () =>
     Effect.gen(function* () {
@@ -120,15 +142,13 @@ describe("CheckoutBarrier", () => {
       const release = yield* Deferred.make<void>();
       const application = yield* holdApplication(barrier, repo, release);
       let mutated = false;
-      const bulk = yield* barrier
-        .bulk(
-          repo,
-          Effect.sync(() => {
-            mutated = true;
-          }),
-        )
-        .pipe(Effect.forkChild);
-      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      const bulk = yield* forkBulk(
+        barrier,
+        repo,
+        Effect.sync(() => {
+          mutated = true;
+        }),
+      );
       assert.isFalse(mutated);
       // The waiting bulk change already refuses a new application.
       assert.isTrue(
@@ -248,15 +268,13 @@ describe("CheckoutBarrier", () => {
       const release = yield* Deferred.make<void>();
       const application = yield* holdApplication(barrier, submodule, release);
       let mutated = false;
-      const bulk = yield* barrier
-        .bulk(
-          repo,
-          Effect.sync(() => {
-            mutated = true;
-          }),
-        )
-        .pipe(Effect.forkChild);
-      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      const bulk = yield* forkBulk(
+        barrier,
+        repo,
+        Effect.sync(() => {
+          mutated = true;
+        }),
+      );
       assert.isFalse(mutated);
       assert.isTrue(
         Exit.isFailure(yield* Effect.exit(barrier.application(submodule, () => Effect.void))),
@@ -316,15 +334,13 @@ describe("CheckoutBarrier", () => {
       const release = yield* Deferred.make<void>();
       const outer = yield* holdBulk(barrier, repo, release);
       let mutated = false;
-      const queued = yield* barrier
-        .bulk(
-          repo,
-          Effect.sync(() => {
-            mutated = true;
-          }),
-        )
-        .pipe(Effect.forkChild);
-      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      const queued = yield* forkBulk(
+        barrier,
+        repo,
+        Effect.sync(() => {
+          mutated = true;
+        }),
+      );
       // The checkout moves away and another takes its path.
       yield* Effect.promise(async () => {
         await NodeFSP.rename(repo, NodePath.join(root, "moved"));
@@ -421,16 +437,14 @@ describe("CheckoutBarrier", () => {
           const release = yield* Deferred.make<void>();
           const outer = yield* holdBulk(barrier, worktree, release);
           let removed = false;
-          const queued = yield* barrier
-            .bulk(
-              worktree,
-              Effect.sync(() => {
-                removed = true;
-              }),
-              { missing: "skip" },
-            )
-            .pipe(Effect.forkChild);
-          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          const queued = yield* forkBulk(
+            barrier,
+            worktree,
+            Effect.sync(() => {
+              removed = true;
+            }),
+            { missing: "skip" },
+          );
           // Gone meanwhile; a settler that would refuse its vanished checkout never runs.
           yield* Effect.promise(() => NodeFSP.rm(worktree, { recursive: true, force: true }));
           yield* barrier.settleBeforeBulk((section) =>
@@ -474,6 +488,33 @@ describe("CheckoutBarrier", () => {
       assert.equal((yield* barrier.current(repo)).epoch, 0);
       yield* barrier.bulk(gone, Effect.void);
       assert.equal((yield* barrier.current(repo)).epoch, 2);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("skips a path removed while it is being examined, when told to skip", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const worktree = NodePath.join(repo, "worktree");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(worktree, ".git"), { recursive: true }),
+      );
+      // Gone after its `.git` was seen and before its identity is read.
+      const key = platformFileIdentity.key.bind(platformFileIdentity);
+      const spy = vi.spyOn(platformFileIdentity, "key").mockImplementationOnce(async (path) => {
+        await NodeFSP.rm(worktree, { recursive: true, force: true });
+        return key(path);
+      });
+      yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
+      let ran = false;
+      yield* makeCheckoutBarrier().bulk(
+        worktree,
+        Effect.sync(() => {
+          ran = true;
+        }),
+        { missing: "skip" },
+      );
+      assert.isTrue(ran);
+      assert.equal(spy.mock.calls[0]?.[0], worktree);
     }).pipe(Effect.scoped),
   );
 
