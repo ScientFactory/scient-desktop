@@ -210,8 +210,8 @@ const thinkingLevel = {
 const agentModels = [
   "Gemini 4 Argon",
   "Gemini 4 Hydrogen",
-  "Gemini 3.8 Flash",
   "Claude Opus 5.5",
+  "Claude Fable 5.2",
 ].map((name) => ({
   slug: name.toLowerCase().replaceAll(" ", "-"),
   name,
@@ -242,15 +242,15 @@ const jumpKeys = compileResolvedKeybindingsConfig(
     when: "modelPickerOpen",
   })),
 );
-// The selected row is a shorter name: that row also holds a check and a star, and in Linux CI's
-// wider font a selected "Gemini 4 Hydrogen" wraps by about 5 px.
+// A selected row also holds a check: "Claude Fable 5.2" wrapped there before the list widened.
+// In Linux CI's wider font a selected "Gemini 4 Hydrogen" still wraps by about 5 px.
 function AgentPicker() {
   const [options, setOptions] = useState<ReadonlyArray<ProviderOptionSelection>>([]);
   const traits = {
     provider: ProviderDriverKind.make("antigravity"),
     instanceId: agentInstanceId,
     models: agentModels,
-    model: agentModels[2]!.slug,
+    model: agentModels[3]!.slug,
     modelOptions: options,
     onModelOptionsChange: (next: ReadonlyArray<ProviderOptionSelection> | undefined) =>
       setOptions(next ?? []),
@@ -260,7 +260,7 @@ function AgentPicker() {
       <ProviderModelPicker
         environmentId={null}
         activeInstanceId={agentInstanceId}
-        model={agentModels[2]!.slug}
+        model={agentModels[3]!.slug}
         lockedProvider={null}
         instanceEntries={agentEntries}
         modelOptionsByInstance={new Map([[agentInstanceId, agentModels]])}
