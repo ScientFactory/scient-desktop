@@ -1,4 +1,4 @@
-import type { BrowserImportSourceId } from "../browserImport.ts";
+import type { BrowserImportResult, BrowserImportSourceId } from "../browserImport.ts";
 import type { SessionCookie } from "./accounts.ts";
 
 /** A profile found in another browser on this machine; metadata only, never its sign-ins. */
@@ -100,6 +100,11 @@ export interface DesktopFillMainResult {
   }>;
   /** Cookies Scient can't carry exactly, such as opaque partitions; left out. */
   readonly unsupported: number;
+  /**
+   * For an import into Main: the import's cookie rows, before the copy judged them by site.
+   * Cookie counts, never added to the units' site counts.
+   */
+  readonly importSummary?: Pick<BrowserImportResult, "imported" | "skipped" | "skippedByReason">;
 }
 
 /**
@@ -140,16 +145,27 @@ export interface DesktopChromeSignInInput {
   >;
 }
 
+/**
+ * Google's answer right after a copy of its cookies: `accepted` means it takes the session now, not
+ * that it will keep doing so; `unknown` means it couldn't be asked.
+ */
+export type DesktopGoogleCopyCheck = "accepted" | "rejected" | "unknown";
+
 export type DesktopChromeSignInResult =
   | { readonly outcome: "no-browser" }
   /** `nothing`: the window held no sign-in when it closed. */
   | { readonly outcome: "busy" | "failed" | "cancelled" | "nothing"; readonly browser?: string }
   | {
-      readonly outcome: "signed-in";
+      /** Cookies copied, not a sign-in proven; into Main, `main` says what each unit did. */
+      readonly outcome: "copied";
       readonly browser: string;
       readonly sites: ReadonlyArray<string>;
       /** Into Main: what the copy did to each site. */
       readonly main?: DesktopFillMainResult;
+      /** Present only when Google's cookies were written. */
+      readonly google?: DesktopGoogleCopyCheck;
+      /** Google already accepted a session in the profile before the copy wrote over it. */
+      readonly googleHeldBefore?: true;
     };
 
 /**

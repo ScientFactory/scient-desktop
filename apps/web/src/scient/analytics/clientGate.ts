@@ -197,6 +197,20 @@ export function createAnalyticsClientGate<Connection extends object>(transport: 
       const state = readyState(connection);
       if (state) enqueue(connection, state, event);
     },
+    /**
+     * The collection context product-level events may be recorded under now, if any. Work that
+     * ends later keeps it and records with `recordInContext`; the server drops the event when
+     * consent has changed or the server restarted since.
+     */
+    productContext(connection: Connection): string | undefined {
+      const state = readyState(connection);
+      return state?.status?.consent === "essential" ? undefined : state?.status?.collectionContext;
+    },
+    recordInContext(connection: Connection, context: string, event: ScientAnalyticsUiEvent) {
+      const state = readyState(connection);
+      if (state && state.status?.collectionContext === context)
+        enqueue(connection, state, { ...event, collectionContext: context });
+    },
     beginVoiceOperation(connection: Connection): RecordVoiceAnalytics {
       const state = stateFor(connection);
       // Refresh on new work so a restarted server does not leave voice using an

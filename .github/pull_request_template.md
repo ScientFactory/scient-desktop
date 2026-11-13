@@ -25,6 +25,17 @@ we may close it without merging it, or never review it.
 
 Documentation impact:
 
+## Platforms
+
+<!-- Expected behavior on each, the checks that ran there, and what is still unproven.
+     Lead with any difference between platforms. "Unaffected" needs its reason. -->
+
+| Platform | Expected behavior | Checks run | Unproven |
+| -------- | ----------------- | ---------- | -------- |
+| macOS    |                   |            |          |
+| Windows  |                   |            |          |
+| Linux    |                   |            |          |
+
 ## UI Changes
 
 <!-- If this PR changes UI, include clear before/after screenshots.

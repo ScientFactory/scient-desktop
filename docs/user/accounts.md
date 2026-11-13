@@ -105,16 +105,43 @@ needs Full Disk Access). A CAPTCHA or passkey needs the desktop.
 
 **Check my accounts** opens your browser sign-ins one at a time and marks each signed in, signed
 out, needs you or rejected. It counts as your own press, so it tries a saved password once more.
-A Google sign-in copied from Chrome can stop working while you use Chrome. Google doesn't allow
-signing in from inside Scient, so sign in to Google in Chrome, then choose **Refresh from Chrome**
-on the profile's row. A profile that didn't come from a browser offers **Import from a browser…**
-instead. When a site's sign-in doesn't work in Main but works in another profile, the site's row in
-Main says which profile is used; for Google it offers **Copy from** that profile.
+A profile that didn't come from a browser offers **Import from a browser…** instead. When a site's
+sign-in doesn't work in Main but works in another profile, the site's row in Main says which
+profile is used; for Google it offers **Copy from** that profile.
 
 **Apps and connectors** lists connections you sign in to elsewhere: Claude, Codex, Droid, Source
 Control and [Extensions](extensions.md). Connections that use a key are under API keys. A
 connector reported by two agents signed in to the same account is one row. Each GitHub login is one
 row, with its own chip for Source Control and for the GitHub connector.
+
+### Google
+
+Google doesn't allow signing in inside the browsers built into apps, Scient's included, on any
+computer. So when a tab reaches Google's sign-in, or a site's **Continue with Google** opens it,
+Scient stops Google's sign-in pages it recognizes before they load, and the tab offers two ways
+that work:
+
+- **Sign in in a Chrome window** opens a small window of your own Chrome, Edge, Brave or Chromium,
+  with a separate profile that is deleted afterwards. Sign in there and click **Done** (on Linux,
+  close the window); the tab's profile gets the sign-in. For **Continue with Google**, the window
+  opens the site you were on: press **Continue with Google** there again.
+- **Open in my browser** opens Google, or the site you were on, in your usual browser, and you
+  carry on there. Nothing comes back into Scient's profile.
+
+A profile already holding a Google sign-in keeps using it: Google's account chooser and other
+sites' **Continue with Google** work in it without asking for anything.
+
+If Google asks for a passkey you don't have (on Windows, a **Windows Security** window asking for a
+passkey, a phone or a security key), cancel it and choose **Try another way** on Google's page.
+Google then offers your password or another way it knows, such as a phone prompt. You don't need
+an authenticator app for this.
+
+A Google sign-in copied into Scient, from the window or from a browser import, is a copy: Google
+may stop accepting it, sooner where Google ties sign-ins to the browser that made them, which
+Chrome does on Windows. After the window copies a Google sign-in, Scient asks Google right away
+and says whether Google accepted it; after a browser import, the profile's row shows it at the
+next check. When it stops working, the profile's row says so and offers **Refresh from Chrome**
+or the window again. For Google you use all day, your own browser is the reliable place.
 
 ## Other computers
 

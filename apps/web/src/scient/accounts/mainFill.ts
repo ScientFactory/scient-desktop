@@ -2,6 +2,7 @@ import {
   BrowserProfileId,
   DEFAULT_BROWSER_PROFILE_ID,
   defaultBrowserProfileRecord,
+  GOOGLE_SITE,
   resolveBrowserProfiles,
   type AccountsSnapshot,
   type AccountSummary,
@@ -29,6 +30,8 @@ import { readPrimaryEnvironmentId } from "~/state/environments";
 import { accountsState } from "./accountsState";
 import { activeProfiles } from "./activeProfiles";
 import { loadSourceProfiles, matchExistingProfile, signedOutOfGoogle } from "./accountsView";
+import { beginAccountBrowserObservation } from "../analytics/accountBrowserAnalytics";
+import { noteGoogleCopy } from "./googleCopyObservation";
 import type { CookieMetadata } from "./sessionDetection";
 
 type FillMain = NonNullable<DesktopAccountsBridge["fillMain"]>;
@@ -116,7 +119,10 @@ function mainSignedOutSince(accounts: ReadonlyArray<AccountSummary>) {
 const replaceGoogleIn = (accounts: ReadonlyArray<AccountSummary>) =>
   signedOutOfGoogle(accounts, DEFAULT_BROWSER_PROFILE_ID) ? { replaceGoogle: true } : {};
 
-/** After a copy, each unit copied or already the same gets Main's row for the sign-in. */
+/**
+ * After a copy, each unit copied or already the same gets Main's row for the sign-in; a Google
+ * unit written into Main starts being followed.
+ */
 async function recordCopies(
   registry: AtomRegistry.AtomRegistry,
   environmentId: EnvironmentId,
@@ -124,6 +130,16 @@ async function recordCopies(
   rows: ReadonlyArray<AccountSummary>,
   fromProfile: string,
 ) {
+  if (
+    result.units.some(({ sites, outcome }) => outcome === "copied" && sites.includes(GOOGLE_SITE))
+  )
+    // A copy into Main takes a moment, so it is observed under the consent in force as it lands.
+    noteGoogleCopy(
+      environmentId,
+      DEFAULT_BROWSER_PROFILE_ID,
+      "main_copy",
+      beginAccountBrowserObservation(environmentId),
+    );
   const landed = result.units.filter(({ outcome }) => outcome === "copied" || outcome === "same");
   for (const row of rows) {
     const sites = website(row)?.sites ?? [];
@@ -857,8 +873,7 @@ export async function chromeSignInIntoMain(environmentId: EnvironmentId, url: st
     url,
     main: rules,
   });
-  if (result.outcome === "signed-in")
-    await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);
+  if (result.outcome === "copied") await resendImported(environmentId, DEFAULT_BROWSER_PROFILE_ID);
   return result;
 }
 

@@ -8,6 +8,9 @@ import {
   BrowserImportFailureReason,
   type ManagedPolicyDocument,
   managedPolicyDeniedMessage,
+  // SCIENT-FORK:START — Scient Accounts: whether an import brought Google's cookies.
+  GOOGLE_SITE,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import type { Session } from "electron";
@@ -42,6 +45,9 @@ import {
   sourcePathContext,
   type BrowserImportPathContext,
   type BrowserImportSourceDefinition,
+  // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+  windowsImportBlockReason,
+  // SCIENT-FORK:END
 } from "./Sources.ts";
 // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
 import { countSites } from "../../scient/accounts/signedInSites.ts";
@@ -143,7 +149,11 @@ const unavailableReason = Effect.fn("BrowserImport.unavailableReason")(function*
   never,
   FileSystem.FileSystem | ChildProcessSpawner.ChildProcessSpawner
 > {
-  if (!definition.platforms.includes(context.platform)) return "unsupportedPlatform";
+  if (!definition.platforms.includes(context.platform)) {
+    // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+    return (yield* windowsImportBlockReason(definition, context)) ?? "unsupportedPlatform";
+    // SCIENT-FORK:END
+  }
   if (!(yield* isSourceInstalled(definition, context))) return "notInstalled";
   // SCIENT-FORK:START — Scient Accounts: Chromium on macOS and Linux is read from a copy while it runs.
   const readWhileRunning = definition.engine === "chromium" && context.platform !== "win32";
@@ -188,6 +198,7 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
   let imported = 0;
   // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
   const importedHosts = new Set<string>();
+  let writeFailed = 0;
   // SCIENT-FORK:END
   let skipped = read.undecryptable;
   const skippedDomains = new Set(read.undecryptableHosts);
@@ -200,6 +211,7 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
         importedHosts.add(cookieHost(cookie.url));
       } else {
         skipped += 1;
+        writeFailed += 1;
         skippedDomains.add(cookieHost(cookie.url));
       }
       continue;
@@ -233,6 +245,9 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
       // SCIENT-FORK:END
     } else {
       skipped += 1;
+      // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+      writeFailed += 1;
+      // SCIENT-FORK:END
       skippedDomains.add(cookieHost(cookie.url));
     }
   }
@@ -254,8 +269,17 @@ export const writeCookies = Effect.fn("BrowserImport.writeCookies")(function* (
     skippedDomains: [...skippedDomains].slice(0, 20),
     // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
     importedSites: countSites(importedHosts),
+    skippedByReason: {
+      appBoundEncryption: read.skippedByReason?.appBoundEncryption ?? 0,
+      decryptFailed: read.skippedByReason?.decryptFailed ?? 0,
+      partitionUnsupported: read.skippedByReason?.partitionUnsupported ?? 0,
+      writeFailed,
+    },
+    importedGoogle: [...importedHosts].some(
+      (host) => host === GOOGLE_SITE || host.endsWith(`.${GOOGLE_SITE}`),
+    ),
     // SCIENT-FORK:END
-  };
+  } satisfies BrowserImportResult;
 });
 
 /** @public */

@@ -34,6 +34,10 @@ import { previewRuntimeTabId } from "./previewRuntimeTabId";
 // SCIENT-FORK:START — one app window hosts each desktop preview tab's webview.
 import { hostsPreviewTab, PreviewWindowHost } from "../scient/multiWindow/PreviewWindowHost";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+import type { DesktopPreviewSignInBlockedEvent } from "@t3tools/contracts";
+import { noteGoogleSignInBlocked } from "../scient/accounts/googleSignInBlocked";
+// SCIENT-FORK:END
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
 function hostedBrowserSessions(
@@ -115,6 +119,17 @@ function openLinkInPreview({ tabId, url, background }: DesktopPreviewOpenLinkEve
   });
 }
 
+// SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+function signInBlockedInPreview(event: DesktopPreviewSignInBlockedEvent): void {
+  if (!hostsPreviewTab(event.tabId)) return;
+  const source = hostedBrowserSessions(
+    readActivePreviewSessions(),
+    appAtomRegistry.get(primaryEnvironmentIdAtom),
+  ).find((session) => session.runtimeTabId === event.tabId);
+  if (source) noteGoogleSignInBlocked(source.threadRef.environmentId, event);
+}
+// SCIENT-FORK:END
+
 /** App-lifetime listeners for the desktop preview bridge: annotation theme, agent pointer, links. */
 export function startElectronBrowserHost(): () => void {
   const preview = window.desktopBridge?.preview;
@@ -125,6 +140,9 @@ export function startElectronBrowserHost(): () => void {
       useBrowserPointerStore.getState().apply(event);
     }),
     preview.onOpenLink(openLinkInPreview),
+    // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+    preview.onSignInBlocked(signInBlockedInPreview),
+    // SCIENT-FORK:END
   ];
   return () => {
     for (const dispose of disposers) dispose();

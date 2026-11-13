@@ -209,15 +209,30 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
     const cookies: ImportedCookie[] = [];
     let undecryptable = 0;
     const undecryptableHosts = new Set<string>();
+    // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+    const skippedByReason = { appBoundEncryption: 0, decryptFailed: 0, partitionUnsupported: 0 };
+    const skip = (row: (typeof result.rows)[number], reason: keyof typeof skippedByReason) => {
+      undecryptable += 1;
+      skippedByReason[reason] += 1;
+      undecryptableHosts.add(bareHost(row.host_key));
+    };
+    // SCIENT-FORK:END
     for (const row of result.rows) {
       // SCIENT-FORK:START — Scient Accounts: keep partitioned cookies with their stored ancestor bit.
       // Without the stored bit the key can't be rebuilt; guessing it would make a different cookie.
       if (row.top_frame_site_key !== "" && row.has_cross_site_ancestor === null) {
-        // SCIENT-FORK:END
-        undecryptable += 1;
-        undecryptableHosts.add(bareHost(row.host_key));
+        skip(row, "partitionUnsupported");
         continue;
       }
+      // Windows app-bound rows are counted before any decryption; their key never leaves the browser.
+      if (
+        platform === "win32" &&
+        Buffer.from(row.encrypted_value.subarray(0, 3)).toString("latin1") === "v20"
+      ) {
+        skip(row, "appBoundEncryption");
+        continue;
+      }
+      // SCIENT-FORK:END
       const value =
         row.encrypted_value.length === 0
           ? row.value
@@ -229,8 +244,9 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
               platform,
             );
       if (value === null) {
-        undecryptable += 1;
-        undecryptableHosts.add(bareHost(row.host_key));
+        // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+        skip(row, "decryptFailed");
+        // SCIENT-FORK:END
         continue;
       }
       const secure = row.is_secure === 1;
@@ -272,6 +288,9 @@ export const readChromiumCookieDatabase = Effect.fn("ChromiumCookies.readChromiu
       cookies,
       undecryptable,
       undecryptableHosts: [...undecryptableHosts],
+      // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+      skippedByReason,
+      // SCIENT-FORK:END
     } satisfies CookieReadResult;
   },
 );

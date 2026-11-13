@@ -67,6 +67,29 @@ export function recordScientAnalytics(
   gate.record(prepared, event);
 }
 
+/**
+ * The consent context product-level work beginning now belongs to, or undefined when it may not
+ * be collected. Its outcome is recorded with `recordScientAnalyticsInContext`.
+ */
+export function scientAnalyticsProductContext(environmentId: EnvironmentId): string | undefined {
+  try {
+    const prepared = readPreparedConnection(environmentId);
+    return prepared === null ? undefined : gate.productContext(prepared);
+  } catch {
+    return undefined;
+  }
+}
+
+/** Records an outcome only under the consent context its work began in; the server checks too. */
+export function recordScientAnalyticsInContext(
+  environmentId: EnvironmentId,
+  context: string,
+  event: ScientAnalyticsUiEvent,
+): void {
+  const prepared = readPreparedConnection(environmentId);
+  if (prepared !== null) gate.recordInContext(prepared, context, event);
+}
+
 export function useRecordScientAnalytics() {
   const environmentId = usePrimaryEnvironmentId();
   const prepared = usePreparedConnection(environmentId);

@@ -2,6 +2,12 @@
 import { importProfileName } from "~/scient/accounts/accountsView";
 import { AccountsSettingsLink } from "~/scient/accounts/AccountsSettingsLink";
 import { fillMainFromProfile, importIntoMain } from "~/scient/accounts/mainFill";
+import { noteGoogleCopy } from "~/scient/accounts/googleCopyObservation";
+import { browserImportEvent, importShortfall } from "~/scient/accounts/importSummary";
+import {
+  beginAccountBrowserObservation,
+  type AccountBrowserObservation,
+} from "~/scient/analytics/accountBrowserAnalytics";
 // SCIENT-FORK:END
 import { DeviceHostUpdates } from "../device/DeviceHostUpdates";
 import { DeviceToolVersions } from "../device/DeviceToolVersions";
@@ -40,6 +46,10 @@ import {
   type PreviewAppearancePreference,
   type PreviewViewportSetting,
   managedCapabilityDenial,
+  // SCIENT-FORK:START — Scient Accounts: whether an import brought Google's cookies.
+  GOOGLE_SITE,
+  BROWSER_IMPORT_FAILURE_COPY,
+  // SCIENT-FORK:END
 } from "@t3tools/contracts";
 import { usePrimaryManagedPolicy } from "~/state/managedPolicy";
 import { isValidSearchUrlTemplate } from "@t3tools/shared/preview";
@@ -215,43 +225,76 @@ export const importPolicyRefusal = (cause: unknown): string | undefined => {
 };
 
 // SCIENT-FORK:START — Scient Accounts: reuse the browser import and registration transaction.
+type TargetImportInput = {
+  readonly sourceProfileDirectory: string;
+  readonly target: WizardTarget;
+  readonly profileName?: string;
+  // A refresh leaves working sign-ins alone.
+  readonly keepSites?: ReadonlyArray<string>;
+  /** False when the caller fills Main itself, once the import's rows exist. */
+  readonly fillMain?: boolean;
+};
+
+type TargetImportOutcome = ImportOutcome & {
+  /** The sites the import brought cookies for. */
+  readonly importedSites?: number;
+  /** Windows app-bound cookie rows left behind. */
+  readonly protectedSkipped?: number;
+};
+
+type TargetImportBridge = Pick<
+  NonNullable<typeof previewBridge>,
+  "importBrowserCookies" | "clearCookies" | "clearCache"
+>;
+
+/** One import or refresh of a browser profile's sign-ins, observed once whatever its outcome. */
 export async function importBrowserCookiesIntoTarget(
-  bridge: Pick<
-    NonNullable<typeof previewBridge>,
-    "importBrowserCookies" | "clearCookies" | "clearCache"
-  >,
+  bridge: TargetImportBridge,
   source: BrowserImportSource,
   environmentId: EnvironmentId,
-  input: {
-    readonly sourceProfileDirectory: string;
-    readonly target: WizardTarget;
-    readonly profileName?: string;
-    // SCIENT-FORK:START — Scient Accounts: a refresh leaves working sign-ins alone.
-    readonly keepSites?: ReadonlyArray<string>;
-    /** False when the caller fills Main itself, once the import's rows exist. */
-    readonly fillMain?: boolean;
-    // SCIENT-FORK:END
-  },
-  // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
-): Promise<ImportOutcome & { readonly importedSites?: number }> {
-  // SCIENT-FORK:END
+  input: TargetImportInput,
+): Promise<TargetImportOutcome> {
+  const observation = beginAccountBrowserObservation(environmentId);
+  const outcome = await importIntoTarget(bridge, source, environmentId, input, observation);
+  observation.record("accounts.browser_import", browserImportEvent(source.id, outcome));
+  return outcome;
+}
+
+async function importIntoTarget(
+  bridge: TargetImportBridge,
+  source: BrowserImportSource,
+  environmentId: EnvironmentId,
+  input: TargetImportInput,
+  observation: AccountBrowserObservation,
+): Promise<TargetImportOutcome> {
   try {
     // Main is written only by the desktop's one coordinator, which fills what it lacks.
     if (input.target.profileId === DEFAULT_BROWSER_PROFILE_ID) {
       const filled = await importIntoMain(environmentId, source.id, input.sourceProfileDirectory);
       if (!filled) return { kind: "blocked", reason: "readFailed" };
+      const summary = filled.importSummary;
+      const protectedSkipped = summary?.skippedByReason?.appBoundEncryption ?? 0;
+      const shortfall = summary && importShortfall(summary);
+      if (shortfall) return { kind: "blocked", reason: shortfall, protectedSkipped };
       const missed = filled.units.filter(
         ({ outcome }) => outcome !== "copied" && outcome !== "same",
       );
-      // Each unit is a site, so the count is per site, like an import elsewhere.
-      const copied = filled.units.filter(({ outcome }) => outcome === "copied").length;
+      const copiedUnits = filled.units.filter(({ outcome }) => outcome === "copied");
+      if (copiedUnits.some(({ sites }) => sites.includes(GOOGLE_SITE)))
+        noteGoogleCopy(environmentId, DEFAULT_BROWSER_PROFILE_ID, "browser_import", observation);
+      // Main's coordinator reports sign-ins it copied, not the cookies it wrote, so that is the count.
+      const copied = copiedUnits.length;
       return {
         kind: "imported",
         imported: copied,
+        importedUnit: "signIns",
         importedSites: copied,
-        skipped: missed.length + filled.unsupported,
+        // Cookie rows only; the sign-ins the copy left are listed, never counted with them.
+        skipped: (summary?.skipped ?? 0) + filled.unsupported,
         skippedDomains: missed.flatMap(({ sites }) => sites).slice(0, 20),
         targetName: input.target.kind === "existing" ? input.target.name : "Main",
+        ...(missed.length > 0 ? { partial: true as const } : {}),
+        ...(protectedSkipped ? { protectedSkipped } : {}),
       };
     }
     const result = await bridge.importBrowserCookies({
@@ -271,6 +314,10 @@ export async function importBrowserCookiesIntoTarget(
     ) {
       return { kind: "blocked", reason: "readFailed" };
     }
+    const protectedSkipped = result.skippedByReason?.appBoundEncryption ?? 0;
+    // Nothing written: a new target stays unregistered rather than an empty profile.
+    const shortfall = importShortfall(result);
+    if (shortfall) return { kind: "blocked", reason: shortfall, protectedSkipped };
     let targetName: string;
     if (input.target.kind === "new") {
       if (result.imported > 0 || input.profileName !== undefined) {
@@ -316,6 +363,8 @@ export async function importBrowserCookiesIntoTarget(
     } else {
       targetName = input.target.name;
     }
+    if (result.importedGoogle)
+      noteGoogleCopy(environmentId, input.target.profileId, "browser_import", observation);
     // The import stands even when Main can't be filled now; a later sign-in or Refresh does it.
     if (result.imported > 0 && input.fillMain !== false)
       await fillMainFromProfile(environmentId, input.target.profileId).catch(() => undefined);
@@ -325,9 +374,8 @@ export async function importBrowserCookiesIntoTarget(
       skipped: result.skipped,
       skippedDomains: result.skippedDomains,
       targetName,
-      // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
       ...(result.importedSites === undefined ? {} : { importedSites: result.importedSites }),
-      // SCIENT-FORK:END
+      ...(protectedSkipped ? { protectedSkipped } : {}),
     };
   } catch (cause) {
     const policyRefusal = importPolicyRefusal(cause);
@@ -1408,7 +1456,13 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                   {importableSources.map((source) => (
                     <MenuItem
                       key={source.id}
-                      disabled={!settingsHydrated || primaryEnvironment == null}
+                      disabled={
+                        !settingsHydrated ||
+                        primaryEnvironment == null ||
+                        // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+                        source.unavailable === "appBoundEncryption"
+                        // SCIENT-FORK:END
+                      }
                       onClick={() => {
                         if (!settingsHydrated || primaryEnvironment == null) return;
                         setImportSession({
@@ -1422,7 +1476,18 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
                         });
                       }}
                     >
-                      {source.name}
+                      {/* SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps. */}
+                      {source.unavailable === "appBoundEncryption" ? (
+                        <span className="grid">
+                          <span>{source.name}</span>
+                          <span className="text-xs text-muted-foreground">
+                            {BROWSER_IMPORT_FAILURE_COPY.appBoundEncryption}
+                          </span>
+                        </span>
+                      ) : (
+                        source.name
+                      )}
+                      {/* SCIENT-FORK:END */}
                     </MenuItem>
                   ))}
                   {primaryEnvironment == null ? (

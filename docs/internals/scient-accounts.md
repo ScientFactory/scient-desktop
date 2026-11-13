@@ -701,21 +701,64 @@ new ones encrypted with the same Safe Storage key `safeStorage` uses. The fuse i
 it off later loses every encrypted cookie. Agents are unaffected: they use profiles through the
 browser, and scripts get cookies through the browser host.
 
+## Google sign-in in Scient's browser
+
+Google refuses sign-in inside Scient's browser ("This browser or app may not be secure",
+`/v3/signin/rejected`), even with the page reporting Chrome's identity (Electron 44, 2026-11-04),
+on every platform. On Windows its passkey step came first: Chromium hands WebAuthn to Windows,
+so a person whose Google passkey lives on a phone or in Google Password Manager met the Windows
+Security dialog before the refusal.
+
+So every preview partition runs `guardGoogleSignIn` (desktop `scient/browser/googleSignInGuard.ts`,
+pages classified by `@t3tools/shared/scientGoogleSignIn`) on `webRequest.onBeforeRequest`, for
+page and frame loads on accounts.google.com only, redirects included. Credential pages
+(identifier, challenges, `AddSession`) and the refusal page are cancelled before they load, in a
+tab, a popup or a frame. Pages that pass a session on
+(`ServiceLogin`, `AccountChooser`, `/`, OAuth `o/oauth2/auth` and `signin/oauth`) load only when the
+partition holds a Google session cookie (`SID`, `__Secure-1PSID`, `__Secure-3PSID`, `LSID`,
+`__Host-1PLSID`, `__Host-3PLSID`), so a profile with a working Google session keeps its account
+chooser and other sites' "Continue with Google". Cookie presence is only a hint; a stale session
+reaches a credential page and is stopped there. In a frame those pages always load: sites check
+silently with one, and without a session Google redirects the frame to a credential page. Session upkeep (`ListAccounts`, `CheckCookie`,
+`RotateCookies`), sign-out and Google's apps are never touched, nor are other sites' passkeys.
+
+A cancelled load fails with `ERR_BLOCKED_BY_CLIENT` (-20). `PreviewManager` gives it a
+description an agent can act on and emits `DesktopPreviewSignInBlockedEvent`; a popup a page
+opened (`watchSignInPopup`, desktop `scient/browser/googleSignInRecovery.ts`) closes and reports to
+its opener's tab; a stopped frame reports to the tab holding it. The tab shows the recovery in place
+of the page, or as a notice over the page whose popup or frame was stopped
+(`GoogleSignInRecovery.tsx`): **Sign in in a Chrome window** into the tab's profile, or **Open in my
+browser**. Each event names the page it is about (`pageUrl`: for a popup, the opener's page when
+the popup opened); once the tab shows another page the notice no longer applies. Google's own
+sign-in starts at accounts.google.com; another site's "Continue with Google" starts again at that
+site's https origin, never at a Google URL carrying OAuth state, because state, PKCE and the opener
+belong to the stopped attempt. `followTabSignIn` keeps that origin from the moment the tab enters an
+OAuth page, across Google's redirects, so a stale session sent on to credentials or the refusal
+still starts again at the site. Nothing opens by itself. Server-hosted tabs
+don't run the guard.
+
 ## Passkeys
 
-Upstream passkeys need Apple's restricted `com.apple.developer.web-browser.public-key-credential`
-entitlement in the release signing profile; Scient has requested it. Passkeys in Apple Passwords
-always need Touch ID or the Mac password. Nothing else in Accounts depends on the entitlement.
+On macOS, upstream passkeys need Apple's restricted
+`com.apple.developer.web-browser.public-key-credential` entitlement in the release signing
+profile; Scient has requested it. Passkeys in Apple Passwords always need Touch ID or the Mac
+password. On Windows Chromium hands WebAuthn to Windows Hello and its phone or security-key
+choices, which can't reach passkeys in Google Password Manager. Nothing else in Accounts depends
+on any of these.
 
 ## Honest limits
 
 - Hidden values stay out of the model's context, not out of reach of a same-user process.
 - An agent signed in to a site can do what that account can do there.
 - CAPTCHAs, push approvals, new-device checks and passkeys need the user.
-- Google's sign-in reaches its password step in this browser, with the default user agent; the rest
-  of the sign-in is unproven. Google sessions imported from Chrome don't reliably last: on 2026-10-30,
-  four of five imported profiles were signed out within four days, and the fifth came from a Chrome
-  profile idle for 12 days. Chrome's continued use is the likely cause, not yet proven.
+- Google can't be signed into inside Scient's browser; its sign-in pages are stopped and explained
+  (above). A Google sign-in copied in from a browser (import, Refresh, or the sign-in window) is a
+  copy of cookies, not a session Scient can renew. Google may tie a session to the browser and
+  computer that made it (Device Bound Session Credentials, Chrome on Windows since 2026, macOS
+  following); a copy then works until its short-lived cookie needs renewing. On 2026-10-30, four of
+  five Google profiles imported on macOS were signed out within four days; the fifth came from a
+  Chrome profile idle for 12 days. Whether binding is the cause is unproven: the
+  `accounts.google_copy.*` observations measure how long copies last, by source and platform.
 - Known values are not masked in chat or logs, and commits are not checked. These can get in the way
   of real work, so they follow one at a time.
 - With the system keychain denied, a private card can't be sealed, so it reports that and saves
@@ -803,9 +846,8 @@ provider environment. The existing proxy redacts reflected values in responses.
   written by `accounts.profiles.choose` from the profile menu, cleared with a removed profile. The
   menu names the profiles with a sign-in on the page. The toolbar makes no claim about the tab's
   own profile: Scient has no record of most sites a profile is signed in to, so a missing record
-  doesn't mean signed out. Google refuses signing in from Scient's browser ("This browser or app
-  may not be secure", `/v3/signin/rejected`), even with the page reporting Chrome's identity
-  (Electron 44, 2026-11-04). Scient never offers a Google sign-in here as a way back
+  doesn't mean signed out. Google refuses signing in from Scient's browser (see Google sign-in in
+  Scient's browser), so Scient never offers a Google sign-in here as a way back
   (`googleRecovery`). A signed-out profile imported from a browser says to sign in there and
   offers Refresh from that browser; one with no source says to sign in in a browser and offers
   Import from a browser…. When Main's Google doesn't work, its browser sign-in row offers Copy

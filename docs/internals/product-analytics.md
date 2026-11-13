@@ -612,6 +612,39 @@ imports and code runs keep their existing operation events, so they are not coun
 measure a new Scient feature, add its method, route or tool to that file; its test fails if a
 route or tool name no longer exists.
 
+### Sign-in and browser-import observations
+
+The desktop renderer records what Accounts and the browser observe about sign-ins, as
+`feature.used` through [`accountBrowserAnalytics.ts`](../../apps/web/src/scient/analytics/accountBrowserAnalytics.ts),
+whose closed field types are the full list. Every event carries `browserPlatform`, the desktop
+app's own platform (`getClientPlatform`), not the server's, which can be another computer.
+
+- `accounts.google_signin.blocked`: Scient's browser stopped a Google sign-in page (`variant`:
+  credentials, transit or rejected; `context`: tab, popup or frame), recorded once by the window hosting
+  the tab. It is not the person's screen: what Google would have shown is unknown.
+- `accounts.browser_window`: one run of the sign-in window in the person's own Chromium browser,
+  with its outcome, the browser kind, its purpose and, when Google cookies came back, Google's
+  answer right after the copy. `copied` means cookies were written, not that a sign-in will last.
+- `accounts.browser_import`: one import or refresh from a browser on this computer, with coarse
+  counts of what it imported (`importedUnit`: cookies, or sign-ins for an import into Main) and of
+  protected (app-bound) cookies that couldn't be. `partial` includes an import into Main that left
+  one of Main's own sign-ins in place.
+- `accounts.google_copy.checked` and `.ended`: Google's first definite answer about a copied Google
+  sign-in, and the first time Google stopped accepting one it had accepted (no account it accepts,
+  an empty list included), with coarse age buckets of the copy and of the last time it was seen
+  working. A copy Google never accepted is `checked` invalid and never `ended`; no answer from
+  Google counts as neither. This is an interval observed while Scient ran, not an exact
+  lifetime, and it says nothing about why a session ended.
+
+Each of these carries the collection context in force when its work began
+(`beginAccountBrowserObservation`), and `AnalyticsUiAdapter` drops it when consent changed or the
+server restarted since, as it does for voice and operation outcomes. A sign-in window opened while
+collection was off therefore records nothing, even if it closes after collection was turned on. A
+copy's lifetime is followed only when the copy was made under the consent still in force; the
+local record of copies (versioned, per environment and profile, in the window that owns Accounts)
+keeps that context, forgets a copy once it differs, and holds times and source kinds only, never
+addresses or cookies.
+
 ## Whose failure, and what agents run outside Scient
 
 A failure count mixes Scient's bugs with ordinary bad code. Failed `scient.operation.*` events and
