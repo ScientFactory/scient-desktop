@@ -1,178 +1,42 @@
 // @effect-diagnostics nodeBuiltinImport:off
-/**
- * Recovery after real process death. A child process runs the apply and kills
- * itself at a native publication hook; this process then resumes the same
- * durable apply. A thrown hook cannot stand in for this: it runs the file
- * layer's failure handler, which a crash never does.
- */
-import * as HostProcess from "@t3tools/shared/HostProcess";
+// Linux and macOS; WorkspaceApplier.crash.platform.test.ts holds the cases Windows runs too.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
-import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { afterAll, describe, expect, it } from "@effect/vitest";
-import * as Effect from "effect/Effect";
+import { describe, expect, it } from "@effect/vitest";
 
+import { privateFoldersAndIdentityHost } from "../workspace/fileExchange.testkit.ts";
 import {
-  filePublicationTestHelper,
-  filePublicationProbeHelper,
-  privateFoldersAndIdentityHost,
-} from "../workspace/fileExchange.testkit.ts";
-import { bytesRevision, type MutationPoint } from "../workspace/RetainedFileMutation.ts";
-import type { CrashJob } from "./WorkspaceApplier.crash-child.ts";
-import type { WorkspaceApplyPlan } from "./WorkspaceApplier.ts";
+  crashAt,
+  edit,
+  editorReads,
+  planOf,
+  put,
+  read,
+  revisions,
+  type Scenario,
+} from "./WorkspaceApplier.crash.testkit.ts";
 import { fixture } from "./WorkspaceApplier.testkit.ts";
 
 const hasPrivateFoldersAndIdentity = await privateFoldersAndIdentityHost();
-const child = NodePath.join(import.meta.dirname, "WorkspaceApplier.crash-child.ts");
-// Every case starts a child that loads the same modules; Node's compile cache, keyed by their
-// content, spares each child after the first most of that load.
-const compileCache = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-crash-compile-"));
-afterAll(() => NodeFSP.rm(compileCache, { recursive: true, force: true }));
-const revisions = (files: Record<string, string>) =>
-  Object.fromEntries(
-    Object.entries(files).map(([name, text]) => [name, bytesRevision(Buffer.from(text))]),
-  );
-const read = (cwd: string, name: string) =>
-  NodeFSP.readFile(NodePath.join(cwd, name), "utf8").catch(() => null);
-async function put(cwd: string, files: Record<string, string>) {
-  for (const [name, text] of Object.entries(files)) {
-    await NodeFSP.mkdir(NodePath.dirname(NodePath.join(cwd, name)), { recursive: true });
-    await NodeFSP.writeFile(NodePath.join(cwd, name), text);
-  }
-}
-
-interface Scenario {
-  /** The last synchronized files, when they differ from what the folder held. */
-  readonly base?: Record<string, string>;
-  readonly captured: Record<string, string>;
-  readonly target: Record<string, string>;
-  readonly renames?: WorkspaceApplyPlan["renames"];
-}
-/** `a.tex` changes and `guard.tex` stays; both are one unit, applied together or not at all. */
-const edit: Scenario = {
-  captured: { "a.tex": "base", "guard.tex": "guard" },
-  target: { "a.tex": "remote", "guard.tex": "guard" },
-};
-
-/** Every path the scenario names, in one conflict group: applied together or not at all. */
-const groupOf = (scenario: Scenario) => [
-  {
-    paths: [
-      ...new Set([
-        ...Object.keys(scenario.base ?? {}),
-        ...Object.keys(scenario.captured),
-        ...Object.keys(scenario.target),
-      ]),
-    ],
-    types: ["content"],
-    origins: ["merge" as const],
-  },
-];
-/** The scenario's plan, for an apply in this process. */
-const planOf = (scenario: Scenario): WorkspaceApplyPlan => ({
-  base: new Map(Object.entries(revisions(scenario.base ?? scenario.captured))),
-  remote: new Map(Object.entries(revisions(scenario.target))),
-  captured: new Map(Object.entries(revisions(scenario.captured))),
-  target: new Map(
-    Object.entries(scenario.target).map(([name, text]) => [name, { bytes: Buffer.from(text) }]),
-  ),
-  renames: scenario.renames ?? [],
-  conflicts: groupOf(scenario),
-  markerPaths: [],
-});
-
-/**
- * Writes `scenario.captured` to the folder and runs its apply, every path in one
- * unit, in a child that dies the `occurrence`th time it reaches `killAt`.
- */
-async function crashAt(
-  h: { root: string; cwd: string; owner: string },
-  killAt: MutationPoint,
-  scenario: Scenario = edit,
-  occurrence = 1,
-  killIn?: CrashJob["killIn"],
-) {
-  await put(h.cwd, scenario.captured);
-  const job: CrashJob = {
-    root: h.root,
-    cwd: h.cwd,
-    owner: h.owner,
-    helper: (await filePublicationTestHelper())!,
-    ...(HostProcess.Platform.defaultValue() === "win32"
-      ? { terminationHelper: (await filePublicationProbeHelper())! }
-      : {}),
-    id: "crash",
-    killAt,
-    occurrence,
-    ...(killIn ? { killIn } : {}),
-    plan: {
-      base: revisions(scenario.base ?? scenario.captured),
-      remote: revisions(scenario.target),
-      captured: revisions(scenario.captured),
-      target: Object.fromEntries(
-        Object.entries(scenario.target).map(([name, text]) => [
-          name,
-          Buffer.from(text).toString("base64"),
-        ]),
-      ),
-      renames: scenario.renames ?? [],
-      conflicts: groupOf(scenario),
-      markerPaths: [],
-    },
-  };
-  const jobPath = NodePath.join(h.root, "crash.json");
-  await NodeFSP.writeFile(jobPath, JSON.stringify(job));
-  const run = NodeChildProcess.spawnSync(process.execPath, [child, jobPath], {
-    encoding: "utf8",
-    timeout: 60_000,
-    env: { ...process.env, NODE_COMPILE_CACHE: compileCache },
-  });
-  if (HostProcess.Platform.defaultValue() === "win32") expect(run.status, run.stderr).toBe(73);
-  else expect(run.signal, run.stderr).toBe("SIGKILL");
-}
-type Harness = Parameters<Parameters<typeof fixture>[0]>[0];
-/** A settled read of the whole folder, as an editor makes, which settles every pending record. */
-const editorReads = (h: Harness) =>
-  h.run(h.files.withSettledWorkspaceRead({ cwd: h.cwd }, () => Effect.void));
 
 describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real process death", () => {
-  it.live.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-    "recovers an unpublished destination stage after real process death",
-    () =>
-      fixture(async (h) => {
-        const added: Scenario = {
-          captured: { "guard.tex": "guard" },
-          target: { "a.tex": "new", "guard.tex": "guard" },
-        };
-        await crashAt(h, "create-staged", added);
-        expect(await read(h.cwd, "a.tex")).toBeNull();
-        await h.restart();
-        expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
-        expect(await read(h.cwd, "a.tex")).toBe("new");
-        expect(
-          (await NodeFSP.readdir(h.cwd)).filter((name) =>
-            name.startsWith(".scient-overleaf-apply-"),
-          ),
-        ).toEqual([]);
-      }),
-  );
-
-  // Nothing was visible yet: the group's changed file must stop the staged write.
-  it.live.each(["intent", "prepared"] as const)(
-    "publishes nothing into a group changed after a crash at %s",
-    (point) =>
-      fixture(async (h) => {
-        await crashAt(h, point);
-        await NodeFSP.writeFile(NodePath.join(h.cwd, "guard.tex"), "later");
-        await h.restart();
-        const result = await h.apply("crash");
-        expect(result.interrupted).toEqual([]);
-        expect([...result.base]).toEqual(Object.entries(revisions(edit.captured)));
-        expect(await read(h.cwd, "a.tex")).toBe("base");
-        expect(await read(h.cwd, "guard.tex")).toBe("later");
-      }),
+  it.live("recovers an unpublished destination stage after real process death", () =>
+    fixture(async (h) => {
+      const added: Scenario = {
+        captured: { "guard.tex": "guard" },
+        target: { "a.tex": "new", "guard.tex": "guard" },
+      };
+      await crashAt(h, "create-staged", added);
+      expect(await read(h.cwd, "a.tex")).toBeNull();
+      await h.restart();
+      expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
+      expect(await read(h.cwd, "a.tex")).toBe("new");
+      expect(
+        (await NodeFSP.readdir(h.cwd)).filter((name) => name.startsWith(".scient-overleaf-apply-")),
+      ).toEqual([]);
+    }),
   );
 
   it.live("publishes nothing into a changed group when an editor reads first", () =>
@@ -188,57 +52,53 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
   );
 
   // A peer is checked by what stands there, not only by its bytes.
-  it.live.each(
-    HostProcess.Platform.defaultValue() === "win32"
-      ? (["empty folder", "folder with a file", "link"] as const)
-      : (["empty folder", "folder with a file", "link", "named pipe"] as const),
-  )("publishes nothing when a peer that should be absent becomes a %s", (occupant) =>
-    fixture(async (h) => {
-      await crashAt(h, "prepared", {
-        captured: { "guard.tex": "guard" },
-        target: { "a.tex": "remote", "b.tex": "B", "guard.tex": "guard" },
-      });
-      const peer = NodePath.join(h.cwd, "b.tex");
-      if (occupant === "link") {
-        await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "B");
-        await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
-      } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
-      else {
-        await NodeFSP.mkdir(peer);
-        if (occupant === "folder with a file") await put(peer, { "later.tex": "later" });
-      }
-      await h.restart();
-      await editorReads(h);
-      expect(await read(h.cwd, "a.tex")).toBeNull();
-      await h.apply("crash").catch(() => undefined);
-      expect(await read(h.cwd, "a.tex")).toBeNull();
-    }),
+  it.live.each(["empty folder", "folder with a file", "link", "named pipe"] as const)(
+    "publishes nothing when a peer that should be absent becomes a %s",
+    (occupant) =>
+      fixture(async (h) => {
+        await crashAt(h, "prepared", {
+          captured: { "guard.tex": "guard" },
+          target: { "a.tex": "remote", "b.tex": "B", "guard.tex": "guard" },
+        });
+        const peer = NodePath.join(h.cwd, "b.tex");
+        if (occupant === "link") {
+          await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "B");
+          await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
+        } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
+        else {
+          await NodeFSP.mkdir(peer);
+          if (occupant === "folder with a file") await put(peer, { "later.tex": "later" });
+        }
+        await h.restart();
+        await editorReads(h);
+        expect(await read(h.cwd, "a.tex")).toBeNull();
+        await h.apply("crash").catch(() => undefined);
+        expect(await read(h.cwd, "a.tex")).toBeNull();
+      }),
   );
 
-  it.live.each(
-    HostProcess.Platform.defaultValue() === "win32"
-      ? (["empty folder", "folder with a file", "link"] as const)
-      : (["empty folder", "folder with a file", "link", "named pipe"] as const),
-  )("publishes nothing when a peer that should be a file becomes a %s", (occupant) =>
-    fixture(async (h) => {
-      await crashAt(h, "prepared", {
-        captured: { "a.tex": "base", "z.tex": "guard" },
-        target: { "a.tex": "remote", "z.tex": "guard" },
-      });
-      const peer = NodePath.join(h.cwd, "z.tex");
-      await NodeFSP.unlink(peer);
-      if (occupant === "link") {
-        await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "guard");
-        await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
-      } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
-      else {
-        await NodeFSP.mkdir(peer);
-        if (occupant === "folder with a file") await put(peer, { foreign: "foreign" });
-      }
-      await h.restart();
-      await editorReads(h);
-      expect(await read(h.cwd, "a.tex")).toBe("base");
-    }),
+  it.live.each(["empty folder", "folder with a file", "link", "named pipe"] as const)(
+    "publishes nothing when a peer that should be a file becomes a %s",
+    (occupant) =>
+      fixture(async (h) => {
+        await crashAt(h, "prepared", {
+          captured: { "a.tex": "base", "z.tex": "guard" },
+          target: { "a.tex": "remote", "z.tex": "guard" },
+        });
+        const peer = NodePath.join(h.cwd, "z.tex");
+        await NodeFSP.unlink(peer);
+        if (occupant === "link") {
+          await NodeFSP.writeFile(NodePath.join(h.root, "outside"), "guard");
+          await NodeFSP.symlink(NodePath.join(h.root, "outside"), peer);
+        } else if (occupant === "named pipe") NodeChildProcess.execFileSync("mkfifo", [peer]);
+        else {
+          await NodeFSP.mkdir(peer);
+          if (occupant === "folder with a file") await put(peer, { foreign: "foreign" });
+        }
+        await h.restart();
+        await editorReads(h);
+        expect(await read(h.cwd, "a.tex")).toBe("base");
+      }),
   );
 
   it.live("publishes nothing when a file blocks the folder of a path the group adds", () =>
@@ -315,19 +175,6 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
     }),
   );
 
-  // Settling a step killed before staging closes it without its bytes; the apply
-  // tries it again from its plan. One killed after its bytes landed goes on from there.
-  it.live.each(["intent", "prepared", "checked", "displaced"] as const)(
-    "finishes the unit after a crash at %s when nothing else changed",
-    (point) =>
-      fixture(async (h) => {
-        await crashAt(h, point);
-        await h.restart();
-        expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
-        expect(await read(h.cwd, "a.tex")).toBe("remote");
-      }),
-  );
-
   // Inside a plain save: its temporary file just opened, or written but not yet renamed in.
   it.live.each([
     { moment: "its temporary file was opened", operation: "open", suffix: ".scient-tmp" },
@@ -356,19 +203,6 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
       await h.restart();
       expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
       expect(await read(h.root, "other-name")).toBe("remote");
-    }),
-  );
-
-  // Already visible: the group is reported, the base stays, and the later edit survives.
-  it.live("reports a group changed after a crash once the new file was visible", () =>
-    fixture(async (h) => {
-      await crashAt(h, "displaced");
-      await NodeFSP.writeFile(NodePath.join(h.cwd, "guard.tex"), "later");
-      await h.restart();
-      const result = await h.apply("crash");
-      expect(result.interrupted).toEqual([["a.tex", "guard.tex"]]);
-      expect([...result.base]).toEqual(Object.entries(revisions(edit.captured)));
-      expect(await read(h.cwd, "guard.tex")).toBe("later");
     }),
   );
 

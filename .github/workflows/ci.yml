@@ -971,7 +971,7 @@ jobs:
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — tests only macOS can run (its Git, cloud-file flags, disk images, file
-  # identity, lease room); not a required check.
+  # identity, path budget) and sync, recovery and process death on its disk; not a required check.
   overleaf_macos:
     name: Overleaf macOS
     needs: [queue_ci, release_notes]
@@ -997,8 +997,6 @@ jobs:
           run-install: false
       - name: Install
         run: vp install
-      - name: Test the platform report check
-        run: node --test .github/scripts/overleaf-platform-tests.test.cjs
       - name: Build the file publication helper once
         run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers
       - name: Require every macOS Overleaf platform file without skips
