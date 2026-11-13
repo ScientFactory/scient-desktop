@@ -413,6 +413,19 @@ async function resolveAt(
       });
       continue;
     }
+    // The decision outlives its candidates: nothing hydrates until Ask again withdraws it.
+    if (separate) {
+      results.push({
+        kind: "unresolved",
+        projectSourceId,
+        reason: "contradicted",
+        candidateIds: [
+          ...new Set(separate.sourceIds.map((sourceId) => liveTarget(sourceId) ?? sourceId)),
+        ],
+        keptSeparate: true,
+      });
+      continue;
+    }
     if (mapped || (await wasRemoved(request))) {
       results.push({ kind: "unresolved", projectSourceId, reason: "removed", candidateIds: [] });
       continue;

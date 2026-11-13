@@ -269,4 +269,81 @@ describe("resolving a copied project's sources", () => {
       unresolved: { keptSeparate: true },
     });
   });
+
+  it("holds Keep separate after its candidates stop matching, until Ask again", async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-instance-map-")),
+    );
+    fixtures.push(base);
+    const author = await newLibrary(base, "author");
+    const project = NodePath.join(base, "project");
+    await NodeFSP.mkdir(project);
+    await initializeScientProject({ root: project });
+    const cited = await add(author, work("Early therapy in sepsis"));
+    await pinScientLibrarySource({
+      projectRoot: project,
+      library: author,
+      sourceId: cited.sourceId,
+      actor: "user",
+    });
+    const { reviewId } = await changeScientLibraryReview({
+      projectRoot: project,
+      library: author,
+      change: { action: "create-review", title: "Sepsis" },
+      actor: "user",
+    });
+    await changeScientLibraryReview({
+      projectRoot: project,
+      library: author,
+      change: { action: "add-sources", reviewId: reviewId!, sourceIds: [cited.sourceId] },
+      actor: "user",
+    });
+    const collaborator = await newLibrary(base, "collaborator");
+    const nearMatch = await add(collaborator, work("Soil carbon under drought"));
+    const repair = { library: collaborator, projectRoot: project, projectSourceId: cited.sourceId };
+    await keepScientProjectSourceSeparate({
+      ...repair,
+      sourceIds: [nearMatch.sourceId],
+      separate: true,
+      actor: "user",
+    });
+    // Its wrong DOI is corrected: nothing in this Library matches the pin any more.
+    await updateScientSourceMetadata({
+      root: collaborator,
+      sourceId: nearMatch.sourceId,
+      expectedRevision: nearMatch.revision,
+      metadata: {
+        ...editableMetadataFromRecord(nearMatch),
+        identifiers: [{ scheme: "doi", value: "10.1000/soil" }],
+      },
+      actor: "user",
+    });
+    const held = { keptSeparate: true, candidateIds: [nearMatch.sourceId] };
+    const [record] = (await listScientLibraryReviewRecords({
+      projectRoot: project,
+      library: collaborator,
+      reviewId: reviewId!,
+      mode: "read",
+    }))!;
+    expect(record).toMatchObject({ from: "snapshot", unresolved: held });
+    const resolvePin = async () =>
+      (
+        await resolveScientProjectPins({
+          projectRoot: project,
+          library: collaborator,
+          mode: "write",
+          actor: "user",
+        })
+      )[0]!.resolution;
+    expect(await resolvePin()).toMatchObject(held);
+    expect(await listScientSourceRecords(collaborator)).toHaveLength(1);
+
+    await keepScientProjectSourceSeparate({
+      ...repair,
+      sourceIds: [],
+      separate: false,
+      actor: "user",
+    });
+    expect(await resolvePin()).toMatchObject({ kind: "resolved", by: "hydrated" });
+  });
 });
