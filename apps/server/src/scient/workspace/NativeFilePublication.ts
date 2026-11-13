@@ -4,6 +4,7 @@ import {
   armNativeCheckDeadline,
   NativeCheckDeadlineError,
   validatePublicationArtifact,
+  WindowsPermissionsRefusedError,
 } from "@t3tools/shared/scientPublicationArtifact";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NodeChildProcess from "node:child_process";
@@ -149,10 +150,7 @@ type NativeHelperFailureReport = (failure: NativeHelperCheckFailure) => void;
 async function checkHelperCandidate(
   candidate: string,
   onFailure: NativeHelperFailureReport | undefined,
-  checks: Record<NativeHelperCheckFailure["stage"], (helper: string) => Promise<unknown>> = {
-    artifact: validatePublicationArtifact,
-    capabilities: (helper) => nativeFilePublicationCapabilities(helper),
-  },
+  checks: Record<NativeHelperCheckFailure["stage"], (helper: string) => Promise<unknown>>,
 ): Promise<boolean> {
   for (let attempt = 1; ; attempt++) {
     const startedAt = performance.now();
@@ -172,7 +170,26 @@ async function checkHelperCandidate(
     }
   }
 }
-export const nativeFilePublicationInternals = { checkHelperCandidate };
+/** Installed servers only inspect their own resources; cwd, PATH and project files grant no authority. */
+function helperCandidate(configuredPath: string | undefined) {
+  const platform = HostProcess.Platform.defaultValue();
+  const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
+  const moduleDirectory = NodeSea.isSea()
+    ? NodePath.dirname(process.execPath)
+    : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+  // Source development has a separate, explicit build location.
+  const source = moduleDirectory.endsWith(NodePath.join("src", "scient", "workspace"));
+  const desktop = isPackagedServerDirectory(moduleDirectory);
+  return (
+    configuredPath ??
+    (desktop
+      ? NodePath.resolve(moduleDirectory, "../../../../file-exchange", binary)
+      : (HostProcess.Environment.defaultValue().SCIENT_FILE_PUBLICATION_HELPER ??
+        (source
+          ? NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary)
+          : NodePath.join(moduleDirectory, "file-exchange", binary))))
+  );
+}
 
 /**
  * Explicit host configuration never falls through to a different executable. `onFailure`
@@ -182,26 +199,123 @@ export async function resolveNativeFilePublicationHelperPath(
   configuredPath?: string,
   onFailure?: NativeHelperFailureReport,
 ): Promise<string | undefined> {
-  const platform = HostProcess.Platform.defaultValue();
-  const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
-  const moduleDirectory = NodeSea.isSea()
-    ? NodePath.dirname(process.execPath)
-    : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-  // Source development has a separate, explicit build location. Installed servers
-  // only inspect their own resources; cwd, PATH and project files grant no authority.
-  const source = moduleDirectory.endsWith(NodePath.join("src", "scient", "workspace"));
-  const desktop = isPackagedServerDirectory(moduleDirectory);
-  const candidate =
-    configuredPath ??
-    (desktop
-      ? NodePath.resolve(moduleDirectory, "../../../../file-exchange", binary)
-      : (HostProcess.Environment.defaultValue().SCIENT_FILE_PUBLICATION_HELPER ??
-        (source
-          ? NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary)
-          : NodePath.join(moduleDirectory, "file-exchange", binary))));
-  // Explicit configuration never falls through to another helper.
-  return (await checkHelperCandidate(candidate, onFailure)) ? candidate : undefined;
+  const candidate = helperCandidate(configuredPath);
+  return (await checkHelperCandidate(candidate, onFailure, {
+    artifact: validatePublicationArtifact,
+    capabilities: (helper) => nativeFilePublicationCapabilities(helper),
+  }))
+    ? candidate
+    : undefined;
 }
+
+/** How long a pass is used before it is checked again, in the background. */
+export const HELPER_RECHECK_MS = 10 * 60_000;
+/**
+ * How long a refusal stands before an ordinary ask checks again. On Windows a check launches
+ * PowerShell, so without it every save would wait for one before being refused.
+ */
+export const HELPER_REFUSAL_RECHECK_MS = 60_000;
+interface HelperCheck {
+  readonly result: Promise<string | undefined>;
+  /** Holds every caller until it settles. */
+  readonly suspect: boolean;
+  started: boolean;
+}
+/**
+ * A pass is used at once and checked again in the background once old; a permission refusal
+ * stands a minute, any other refusal is asked again at once. A suspect check, asked after a
+ * failure, waits for any check under way and gives the helper to nobody until it settles.
+ */
+function helperAcceptance(
+  check: (
+    candidate: string,
+  ) => Promise<{ readonly helper: string | undefined; readonly holdRefusal: boolean }>,
+) {
+  /** When each accepted helper's passing check began. */
+  const accepted = new Map<string, number>();
+  /** When each refused helper's last check ended. */
+  const refused = new Map<string, number>();
+  /** The check running, or waiting for the one before it, by helper. */
+  const checks = new Map<string, HelperCheck>();
+  const start = (candidate: string, suspect: boolean, after?: Promise<unknown>) => {
+    const entry: HelperCheck = {
+      suspect,
+      started: false,
+      result: (after ?? Promise.resolve())
+        .then(async () => {
+          entry.started = true;
+          const startedAt = performance.now();
+          const { helper, holdRefusal } = await check(candidate);
+          if (helper === undefined) {
+            accepted.delete(candidate);
+            if (holdRefusal) refused.set(candidate, performance.now());
+            else refused.delete(candidate);
+          } else {
+            accepted.set(candidate, startedAt);
+            refused.delete(candidate);
+          }
+          return helper;
+        })
+        .finally(() => {
+          if (checks.get(candidate) === entry) checks.delete(candidate);
+        }),
+    };
+    checks.set(candidate, entry);
+    return entry.result;
+  };
+  const passed = (candidate: string) => {
+    const acceptedAt = accepted.get(candidate);
+    if (acceptedAt === undefined) return undefined;
+    if (!checks.has(candidate) && performance.now() - acceptedAt >= HELPER_RECHECK_MS)
+      void start(candidate, false);
+    return candidate;
+  };
+  const helper = (candidate: string, revalidate: boolean): Promise<string | undefined> => {
+    const running = checks.get(candidate);
+    if (revalidate)
+      return running?.suspect && !running.started
+        ? running.result
+        : start(candidate, true, running?.result);
+    if (running?.suspect) return running.result;
+    const current = passed(candidate);
+    if (current !== undefined) return Promise.resolve(current);
+    if (running) return running.result;
+    const refusedAt = refused.get(candidate);
+    if (refusedAt !== undefined && performance.now() - refusedAt < HELPER_REFUSAL_RECHECK_MS)
+      return Promise.resolve(undefined);
+    return start(candidate, false);
+  };
+  return {
+    helper,
+    accepted: (candidate: string) =>
+      checks.get(candidate)?.suspect ? undefined : passed(candidate),
+    launchFailed: (candidate: string) => {
+      if (accepted.has(candidate)) void helper(candidate, true);
+    },
+  };
+}
+export const nativeFilePublicationInternals = { checkHelperCandidate, helperAcceptance };
+const acceptance = helperAcceptance(async (candidate) => {
+  // Only a refusal PowerShell gave is held; a missing file or a deadline is asked again at once.
+  let holdRefusal = false;
+  const helper = await resolveNativeFilePublicationHelperPath(candidate, (failure) => {
+    holdRefusal = failure.error instanceof WindowsPermissionsRefusedError;
+  });
+  return { helper, holdRefusal };
+});
+/** The helper `resolveNativeFilePublicationHelperPath` finds, as `helperAcceptance` keeps it. */
+export function nativeFilePublicationHelper(
+  configuredPath?: string,
+  { revalidate = false } = {},
+): Promise<string | undefined> {
+  return acceptance.helper(helperCandidate(configuredPath), revalidate);
+}
+/** The helper for `configuredPath` if it has passed its checks and is not being checked again. */
+export function acceptedNativeFilePublicationHelper(configuredPath?: string) {
+  return acceptance.accepted(helperCandidate(configuredPath));
+}
+/** An accepted helper that could not be launched may have been removed or replaced. */
+const helperLaunchFailed = (helperPath: string) => acceptance.launchFailed(helperPath);
 /** Helper commands the Windows helper's `--serve=1` process answers; they only read. */
 const servedQuery = (args: ReadonlyArray<string>) =>
   (args[0] === "--windows=1" && ["info", "flags", "private"].includes(args[1] ?? "")) ||
@@ -248,7 +362,9 @@ function helperServer(helperPath: string): HelperServer {
     child.once("close", exited);
     // A helper that never started emits no `close`.
     child.once("error", () => {
-      if (child.pid === undefined) exited();
+      if (child.pid !== undefined) return;
+      helperLaunchFailed(helperPath);
+      exited();
     });
   });
   let answering: PromiseWithResolvers<string> | undefined;
@@ -382,6 +498,7 @@ export async function invokeNativeHelper(
   });
   child.on("error", (error) => {
     spawnError = error;
+    if (child.pid === undefined) helperLaunchFailed(helperPath);
   });
   // No abort/timeout race: even an abandoned waiter leaves this owner awaiting real retirement.
   child.on("close", (code, signal) => {
@@ -938,6 +1055,7 @@ export async function withNativeFilePublicationLease<T>(
     }
   });
   child.on("error", (error) => {
+    if (child.pid === undefined) helperLaunchFailed(helperPath);
     failProtocol(`Native lease process failed: ${error.message}`);
   });
   child.stdin.on("error", (error) => {
@@ -1160,7 +1278,7 @@ export async function nativeLinuxFileIdentity(
   directoryOnly: boolean,
   helperPath?: string,
 ) {
-  const helper = helperPath ?? (await resolveNativeFilePublicationHelperPath());
+  const helper = helperPath ?? (await nativeFilePublicationHelper());
   if (helper === undefined) return null;
   const { identity, reason } = decodeLinuxFolderInquiry(
     await invokeNativeHelper(helper, [

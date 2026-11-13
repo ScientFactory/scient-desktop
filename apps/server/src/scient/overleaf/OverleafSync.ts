@@ -3,7 +3,10 @@
  * authority and the stored token. Only a conflict stops a sync; editors are saved
  * in every window before any folder write, holding the connection throughout.
  * A connection is used only in its recorded checkout by its host project. */
-import { resolveNativeFilePublicationHelperPath } from "../workspace/NativeFilePublication.ts";
+import {
+  acceptedNativeFilePublicationHelper,
+  nativeFilePublicationHelper,
+} from "../workspace/NativeFilePublication.ts";
 import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -380,6 +383,7 @@ const sha256 = (value: string) => NodeCrypto.createHash("sha256").update(value).
 export interface OverleafSyncOptions {
   readonly stateRoot: string;
   readonly environmentId: string;
+  /** Read at each use, never kept: the server's helper is null until it passes its checks. */
   readonly publicationHelper: string | null;
   /** Running threads with their checkout path and lineage; null when they could not be read. */
   readonly activeThreads: Effect.Effect<ReadonlyArray<{
@@ -434,7 +438,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const gitUrl = options.gitUrl ?? ((projectId: string) => `https://git.overleaf.com/${projectId}`);
   const coordinator = yield* OverleafCoordinator.make({
     stateRoot: options.stateRoot,
-    publicationHelper: options.publicationHelper,
+    get publicationHelper() {
+      return options.publicationHelper;
+    },
     reservations,
     volumeUuid,
     ...(options.hooks ? { hooks: options.hooks } : {}),
@@ -492,7 +498,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const connections = yield* makeOverleafConnections({
     stateRoot: options.stateRoot,
     environmentId: options.environmentId,
-    publicationHelper: options.publicationHelper,
+    get publicationHelper() {
+      return options.publicationHelper;
+    },
     reservations,
     volumeUuid,
     gitUrl,
@@ -1455,9 +1463,9 @@ export const layer = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
     const stateRoot = NodePath.join(config.stateDir, "overleaf");
-    const publicationHelper = yield* Effect.promise(() =>
-      resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-    );
+    const helperPath = config.filePublicationHelperPath;
+    // Checked before the service runs, as every later use expects; a refusal is checked again.
+    yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
     const engine = Layer.mergeAll(
       OverleafStateStoreModule.layer,
       WorkspaceApplierModule.layer,
@@ -1465,7 +1473,7 @@ export const layer = Layer.unwrap(
         Layer.provide(
           OverleafGitExecutor.layer({
             runtimeRoot: NodePath.join(stateRoot, "runtime"),
-            publicationHelper,
+            filePublicationHelperPath: helperPath,
           }),
         ),
       ),
@@ -1506,7 +1514,10 @@ export const layer = Layer.unwrap(
         const service = yield* make({
           stateRoot,
           environmentId,
-          publicationHelper: publicationHelper ?? null,
+          // Read at each use: a helper refused at startup is used once a later check passes.
+          get publicationHelper() {
+            return acceptedNativeFilePublicationHelper(helperPath) ?? null;
+          },
           activeThreads,
         });
         yield* Effect.forkScoped(service.recordGenerations);
@@ -1514,10 +1525,8 @@ export const layer = Layer.unwrap(
           <I, A, E, R>(operation: (input: I) => Effect.Effect<A, E, R>) =>
           (input: I) =>
             Effect.gen(function* () {
-              const helper = yield* Effect.promise(() =>
-                resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-              );
-              if (helper === undefined || helper !== publicationHelper)
+              const helper = yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
+              if (helper === undefined)
                 return yield* new OverleafSyncRefusedError({ reason: "helper-unavailable" });
               return yield* operation(input);
             });

@@ -237,8 +237,6 @@ export function refusalText(
       return "The disk holding this project is not connected.";
     case "no-volume-identity":
       return "This disk does not report a stable identity, so Scient cannot keep replaced files safely on it.";
-    case "unsupported-filesystem":
-      return "This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as APFS.";
     case "read-only-parent":
       return "Scient cannot create its folder for kept files beside this project, because that location is read-only.";
     case "shared-parent":
