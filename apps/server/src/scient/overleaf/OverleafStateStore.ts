@@ -50,7 +50,7 @@ import { overleafCloudRoot } from "./overleafCloudRoots.ts";
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
 import {
   ensureNativePrivateRetentionDirectory,
-  resolveNativeFilePublicationHelperPath,
+  nativeFilePublicationHelper,
 } from "../workspace/NativeFilePublication.ts";
 
 export class OverleafStateLockedError extends Schema.TaggedError<OverleafStateLockedError>()(
@@ -386,13 +386,13 @@ const errorCode = (error: unknown) => (error as NodeJS.ErrnoException | undefine
 async function privateDirectory(
   directory: string,
   userId: number | undefined,
-  configuredHelper?: string,
+  publicationHelper: () => Promise<string | undefined>,
 ): Promise<boolean> {
   if (await overleafCloudRoot(directory))
     throw new OverleafRetentionUnavailableError({ reason: "sync-managed-folder" });
   const platform = HostProcess.Platform.defaultValue();
   if (platform === "linux" || platform === "win32") {
-    const helper = configuredHelper ?? (await resolveNativeFilePublicationHelperPath());
+    const helper = await publicationHelper();
     if (!helper) return false;
     if (platform === "win32") await windowsPrivateDirectory(directory, true, helper);
     else await ensureNativePrivateRetentionDirectory(helper, directory);
@@ -419,6 +419,8 @@ async function privateDirectory(
 export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   readonly root: string;
   readonly publicationHelper?: string | undefined;
+  /** Without `publicationHelper`: the host's configured helper, looked for when first needed. */
+  readonly filePublicationHelperPath?: string | undefined;
   readonly hooks?: OverleafStateStoreHooks;
   /** Test seam for macOS volume discovery; Linux uses the held native object. */
   readonly volumeUuid?: OverleafVolumeIdentityResolver;
@@ -429,6 +431,9 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   const receipts = NodePath.join(root, "receipts");
   const quarantine = NodePath.join(root, "quarantine");
   const retained = NodePath.join(root, "retained");
+  const publicationHelper = async () =>
+    options.publicationHelper ??
+    (await nativeFilePublicationHelper(options.filePublicationHelperPath));
   const hook = (point: Parameters<NonNullable<OverleafStateStoreHooks["at"]>>[0], file: string) =>
     options.hooks?.at?.(point, file) ?? Promise.resolve();
 
@@ -459,7 +464,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
   const acquireLease = Effect.gen(function* () {
     yield* io("prepare-directory", async () => {
       for (const directory of [root, connections, receipts, quarantine])
-        if (!(await privateDirectory(directory, userId, options.publicationHelper)))
+        if (!(await privateDirectory(directory, userId, publicationHelper)))
           throw new Error("Overleaf state directory is not private.");
     });
     // Record which file SQLite is about to open. Create it first (never
@@ -551,15 +556,6 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     }
     yield* acquireLease;
   });
-  let publicationHelper: Promise<string | undefined> | undefined;
-  const resolvePublicationHelper = () => {
-    if (publicationHelper === undefined)
-      publicationHelper =
-        options.publicationHelper !== undefined
-          ? Promise.resolve(options.publicationHelper)
-          : resolveNativeFilePublicationHelperPath();
-    return publicationHelper;
-  };
   /**
    * Re-check on every write: a folder can become sync-managed after the lease
    * was taken. Windows registrations are not in config files, so the helper
@@ -569,7 +565,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
     try: async () => {
       if (await overleafCloudRoot(root)) return true;
       if (HostProcess.Platform.defaultValue() !== "win32") return false;
-      const helper = await resolvePublicationHelper();
+      const helper = await publicationHelper();
       if (!helper) return false;
       return (await windowsNativeFile(root, "private", helper)).syncManaged === true;
     },
@@ -788,7 +784,7 @@ export const make = Effect.fn("OverleafStateStore.make")(function* (options: {
         yield* requireValid("receipt", receipt);
         const file = yield* io("write", async () => {
           const file = receiptFile(receipt.connectionId, receipt.requestId);
-          if (!(await privateDirectory(NodePath.dirname(file), userId, options.publicationHelper)))
+          if (!(await privateDirectory(NodePath.dirname(file), userId, publicationHelper)))
             throw new Error("Overleaf receipt directory is not private.");
           return file;
         });
@@ -874,9 +870,7 @@ export const layer = Layer.effect(
     const config = yield* ServerConfig.ServerConfig;
     return yield* make({
       root: NodePath.join(config.stateDir, "overleaf"),
-      publicationHelper: yield* Effect.promise(() =>
-        resolveNativeFilePublicationHelperPath(config.filePublicationHelperPath),
-      ),
+      filePublicationHelperPath: config.filePublicationHelperPath,
     });
   }),
 );

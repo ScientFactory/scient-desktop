@@ -149,10 +149,7 @@ type NativeHelperFailureReport = (failure: NativeHelperCheckFailure) => void;
 async function checkHelperCandidate(
   candidate: string,
   onFailure: NativeHelperFailureReport | undefined,
-  checks: Record<NativeHelperCheckFailure["stage"], (helper: string) => Promise<unknown>> = {
-    artifact: validatePublicationArtifact,
-    capabilities: (helper) => nativeFilePublicationCapabilities(helper),
-  },
+  checks: Record<NativeHelperCheckFailure["stage"], (helper: string) => Promise<unknown>>,
 ): Promise<boolean> {
   for (let attempt = 1; ; attempt++) {
     const startedAt = performance.now();
@@ -172,7 +169,38 @@ async function checkHelperCandidate(
     }
   }
 }
-export const nativeFilePublicationInternals = { checkHelperCandidate };
+export const nativeFilePublicationInternals = { checkHelperCandidate, helperCandidate };
+
+/**
+ * The helper to use, and whether it sits in the running server's own install tree. Installed
+ * servers only inspect their own resources; cwd, PATH and project files grant no authority.
+ */
+function helperCandidate(
+  configuredPath: string | undefined,
+  moduleDirectory = NodeSea.isSea()
+    ? NodePath.dirname(process.execPath)
+    : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
+) {
+  const platform = HostProcess.Platform.defaultValue();
+  const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
+  const source = moduleDirectory.endsWith(NodePath.join("src", "scient", "workspace"));
+  const desktop = isPackagedServerDirectory(moduleDirectory);
+  const installed = desktop
+    ? NodePath.resolve(moduleDirectory, "../../../../file-exchange", binary)
+    : source
+      ? undefined
+      : NodePath.join(moduleDirectory, "file-exchange", binary);
+  // Source development has a separate, explicit build location.
+  const candidate =
+    configuredPath ??
+    (desktop ? undefined : HostProcess.Environment.defaultValue().SCIENT_FILE_PUBLICATION_HELPER) ??
+    installed ??
+    NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary);
+  return {
+    candidate,
+    installedWithServer: installed !== undefined && NodePath.relative(installed, candidate) === "",
+  };
+}
 
 /**
  * Explicit host configuration never falls through to a different executable. `onFailure`
@@ -182,25 +210,46 @@ export async function resolveNativeFilePublicationHelperPath(
   configuredPath?: string,
   onFailure?: NativeHelperFailureReport,
 ): Promise<string | undefined> {
-  const platform = HostProcess.Platform.defaultValue();
-  const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
-  const moduleDirectory = NodeSea.isSea()
-    ? NodePath.dirname(process.execPath)
-    : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
-  // Source development has a separate, explicit build location. Installed servers
-  // only inspect their own resources; cwd, PATH and project files grant no authority.
-  const source = moduleDirectory.endsWith(NodePath.join("src", "scient", "workspace"));
-  const desktop = isPackagedServerDirectory(moduleDirectory);
-  const candidate =
-    configuredPath ??
-    (desktop
-      ? NodePath.resolve(moduleDirectory, "../../../../file-exchange", binary)
-      : (HostProcess.Environment.defaultValue().SCIENT_FILE_PUBLICATION_HELPER ??
-        (source
-          ? NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary)
-          : NodePath.join(moduleDirectory, "file-exchange", binary))));
-  // Explicit configuration never falls through to another helper.
-  return (await checkHelperCandidate(candidate, onFailure)) ? candidate : undefined;
+  const { candidate, installedWithServer } = helperCandidate(configuredPath);
+  return (await checkHelperCandidate(candidate, onFailure, {
+    artifact: (helper) => validatePublicationArtifact(helper, { installedWithServer }),
+    capabilities: (helper) => nativeFilePublicationCapabilities(helper),
+  }))
+    ? candidate
+    : undefined;
+}
+
+/** Helpers that passed their checks in this process. */
+const acceptedHelpers = new Set<string>();
+const resolvingHelpers = new Map<string, Promise<string | undefined>>();
+/**
+ * The helper `resolveNativeFilePublicationHelperPath` finds. A pass holds for the process; a
+ * refusal is checked again on the next call. `revalidate` checks an accepted helper again,
+ * and a helper that then fails is no longer accepted anywhere.
+ */
+export function nativeFilePublicationHelper(
+  configuredPath?: string,
+  { revalidate = false } = {},
+): Promise<string | undefined> {
+  const { candidate } = helperCandidate(configuredPath);
+  if (!revalidate && acceptedHelpers.has(candidate)) return Promise.resolve(candidate);
+  let resolving = resolvingHelpers.get(candidate);
+  if (!resolving) {
+    resolving = resolveNativeFilePublicationHelperPath(configuredPath)
+      .then((helper) => {
+        if (helper === undefined) acceptedHelpers.delete(candidate);
+        else acceptedHelpers.add(helper);
+        return helper;
+      })
+      .finally(() => resolvingHelpers.delete(candidate));
+    resolvingHelpers.set(candidate, resolving);
+  }
+  return resolving;
+}
+/** The helper for `configuredPath` if it has passed its checks in this process. */
+export function acceptedNativeFilePublicationHelper(configuredPath?: string) {
+  const { candidate } = helperCandidate(configuredPath);
+  return acceptedHelpers.has(candidate) ? candidate : undefined;
 }
 /** Helper commands the Windows helper's `--serve=1` process answers; they only read. */
 const servedQuery = (args: ReadonlyArray<string>) =>
@@ -1159,7 +1208,7 @@ export async function nativeLinuxFileIdentity(
   directoryOnly: boolean,
   helperPath?: string,
 ) {
-  const helper = helperPath ?? (await resolveNativeFilePublicationHelperPath());
+  const helper = helperPath ?? (await nativeFilePublicationHelper());
   if (helper === undefined) return null;
   const { identity, reason } = decodeLinuxFolderInquiry(
     await invokeNativeHelper(helper, [

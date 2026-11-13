@@ -299,7 +299,14 @@ server defaults to its own installed resources and may explicitly set the
 absolute host-owned `SCIENT_FILE_PUBLICATION_HELPER`. Both paths require the
 production receipt, SHA-256 digest, matching host architecture, native executable
 format, executable permissions and protocol capabilities. Symlinks and resources
-writable by another user are refused; Windows checks owner and write ACLs. The
+writable by another user are refused. Windows checks owner and write ACLs with
+PowerShell for a helper configured outside the server's own install tree, and
+keeps a pass for the process while the helper, its receipt and its folder are
+unchanged. The helper installed beside the server skips that check: it sits
+under the same ACLs as `Scient.exe` and `server.asar`, so the check could refuse
+only what is already exposed, and Constrained Language Mode (AppLocker, WDAC)
+refuses the check's .NET calls. The helper is looked for when first needed; a
+pass holds for the process and a refusal is checked again at the next use. The
 helper is never discovered from the workspace or PATH. Development uses the
 helper staged beside its server bundle.
 

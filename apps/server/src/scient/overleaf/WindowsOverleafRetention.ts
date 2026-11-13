@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import { windowsPrivateDirectory } from "../workspace/WindowsNativeFile.ts";
 import {
   ensureNativePrivateRetentionDirectory,
-  resolveNativeFilePublicationHelperPath,
+  nativeFilePublicationHelper,
   observedDirectoryBinding,
   removeNativeRetainedEntry,
   withNativeFilePublicationLease,
@@ -24,7 +24,7 @@ export async function windowsPrivateRetention(
 ) {
   const helper =
     configuredHelper ??
-    (await resolveNativeFilePublicationHelperPath(process.env.SCIENT_FILE_PUBLICATION_HELPER));
+    (await nativeFilePublicationHelper(process.env.SCIENT_FILE_PUBLICATION_HELPER));
   if (!helper) throw new Error("Windows retention requires the publication helper.");
   await windowsPrivateDirectory(directory, create, helper);
 }

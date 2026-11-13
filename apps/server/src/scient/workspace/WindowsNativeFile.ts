@@ -5,7 +5,7 @@ import { ScientOverleafFilesystemRefusalReason } from "@t3tools/contracts";
 import {
   ensureNativePrivateRetentionDirectory,
   invokeNativeHelper,
-  resolveNativeFilePublicationHelperPath,
+  nativeFilePublicationHelper,
 } from "./NativeFilePublication.ts";
 
 export class WindowsNativeFileError extends Schema.TaggedError<WindowsNativeFileError>()(
@@ -37,8 +37,7 @@ const decodeReply = Schema.decodeUnknownSync(Schema.fromJsonString(Reply));
 
 async function invokeWindows(args: string[], helper?: string) {
   const executable =
-    helper ??
-    (await resolveNativeFilePublicationHelperPath(process.env.SCIENT_FILE_PUBLICATION_HELPER));
+    helper ?? (await nativeFilePublicationHelper(process.env.SCIENT_FILE_PUBLICATION_HELPER));
   if (!executable) throw new WindowsNativeFileError({ reason: "helper-unavailable" });
   return invokeNativeHelper(executable, args);
 }

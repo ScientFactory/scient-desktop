@@ -80,14 +80,25 @@ afterEach(() => vi.restoreAllMocks());
 
 // Each case uses its own version numbers, so passes cached by an earlier case never match.
 describe("the Windows helper permission check", () => {
-  it("is not repeated for an unchanged helper within a minute", async () => {
+  it("is not repeated for an unchanged helper, however long ago it passed", async () => {
     version = 10;
     await validatePublicationArtifact(helper);
     await validatePublicationArtifact(helper);
-    expect(checks).toBe(1);
-    now += 61_000;
+    now += 24 * 60 * 60_000;
     await validatePublicationArtifact(helper);
-    expect(checks).toBe(2);
+    expect(checks).toBe(1);
+  });
+
+  it("is not run for a helper installed with the server, whose receipt still counts", async () => {
+    version = 70;
+    await validatePublicationArtifact(helper, { installedWithServer: true });
+    expect(checks).toBe(0);
+    const intact = vi.mocked(NodeFSP.readFile).getMockImplementation()!;
+    vi.mocked(NodeFSP.readFile).mockImplementation((async (path: string) =>
+      path === helper ? Buffer.alloc(128) : intact(path)) as never);
+    await expect(
+      validatePublicationArtifact(helper, { installedWithServer: true }),
+    ).rejects.toThrow("hash differs");
   });
 
   it("checks a replaced helper again", async () => {

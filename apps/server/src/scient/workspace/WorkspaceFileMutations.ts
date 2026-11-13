@@ -298,7 +298,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly workspacePaths: WorkspacePaths.WorkspacePaths["Service"];
   readonly workspaceEntries: WorkspaceEntries.WorkspaceEntries["Service"];
   readonly readFile: WorkspaceFileSystem["Service"]["readFile"];
-  readonly nativePublicationHelper?: string;
+  /** Read at each use: a host can accept its helper after these methods are made. */
+  readonly nativePublicationHelper?: string | undefined;
   readonly resolveRetentionStorageDirectory: () => Promise<string>;
   readonly retentionDirectoryFor: (canonicalRoot: string, parentPath: string) => Promise<string>;
   readonly retentionLimitBytes?: number | null;
@@ -4650,23 +4651,25 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     };
   };
   // Retained publication needs the host's advertised authority and every ownership primitive.
-  // An unqualified helper leaves ordinary saves on the plain publication path.
-  const capabilities =
-    deps.nativePublicationHelper === undefined
-      ? null
-      : yield* Effect.promise(() =>
-          nativeFilePublicationCapabilities(deps.nativePublicationHelper!).catch(() => null),
-        );
-  if (
-    capabilities === null ||
-    !hasNativeFileAuthority(capabilities) ||
-    !capabilities.publicationLease ||
-    !capabilities.sharedPublicationLease ||
-    !capabilities.exclusiveMove ||
-    !capabilities.exclusiveLink
-  )
-    return withFileHistory(makePlainHostMethods());
-  if (deps.nativeSaves)
+  // An unqualified helper leaves ordinary saves on the plain publication path. A helper that
+  // arrives later, once the host accepts it, is asked then.
+  let qualified = false;
+  let unqualifiedHelper: string | undefined;
+  const qualify = async () => {
+    const helper = deps.nativePublicationHelper;
+    if (qualified || helper === undefined || helper === unqualifiedHelper) return qualified;
+    const capabilities = await nativeFilePublicationCapabilities(helper).catch(() => null);
+    if (capabilities === null) return false;
+    qualified =
+      hasNativeFileAuthority(capabilities) &&
+      capabilities.publicationLease &&
+      capabilities.sharedPublicationLease &&
+      capabilities.exclusiveMove &&
+      capabilities.exclusiveLink;
+    if (!qualified) unqualifiedHelper = helper;
+    return qualified;
+  };
+  if (deps.nativeSaves && (yield* Effect.promise(qualify)))
     return withFileHistory({
       prepareRetainedDirectory: preparePrivateDirectory,
       inspectWriteTarget,
@@ -4735,10 +4738,23 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
    * A write never overtakes that work, since it could finish over the write. If it stalls the
    * write is refused and goes again. A read only waits a moment.
    */
+  const whenQualified = <A, E, R>(
+    retained: () => Effect.Effect<A, E, R>,
+    otherwise: () => Effect.Effect<A, E, R>,
+  ) => Effect.promise(qualify).pipe(Effect.flatMap((ready) => (ready ? retained() : otherwise())));
   const afterOlderPublications = <A, E, R>(
     input: { readonly cwd: string; readonly relativePath?: string },
     next: Effect.Effect<A, E, R>,
     { writes = true } = {},
+  ) =>
+    whenQualified(
+      () => finishingOlderPublications(input, next, writes),
+      () => next,
+    );
+  const finishingOlderPublications = <A, E, R>(
+    input: { readonly cwd: string; readonly relativePath?: string },
+    next: Effect.Effect<A, E, R>,
+    writes: boolean,
   ) =>
     Effect.tryPromise({
       try: async () => {
@@ -4769,11 +4785,22 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     // No bytes means recovering a step an older build began, which only it can finish.
     replaceFileRetained: (input) =>
       input.bytes === undefined
-        ? replaceFileRetained(input)
+        ? whenQualified(
+            () => replaceFileRetained(input),
+            () => plain.replaceFileRetained(input),
+          )
         : afterOlderPublications(input, plain.replaceFileRetained(input)),
     removeFileRetained: (input) => afterOlderPublications(input, plain.removeFileRetained(input)),
-    prepareRetainedDirectory: preparePrivateDirectory,
-    registerRetainedFileHistory,
+    prepareRetainedDirectory: (input) =>
+      whenQualified(
+        () => preparePrivateDirectory(input),
+        () => plain.prepareRetainedDirectory(input),
+      ),
+    registerRetainedFileHistory: (input) =>
+      whenQualified(
+        () => registerRetainedFileHistory(input),
+        () => plain.registerRetainedFileHistory(input),
+      ),
     withSettledFileRead: (input, read) =>
       afterOlderPublications(input, plain.withSettledFileRead(input, read), { writes: false }),
     withSettledWorkspaceRead: (input, read) =>
@@ -4781,8 +4808,20 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         writes: false,
       }),
     listFileVersions: (input) =>
-      listFileVersions(input).pipe(Effect.map((listed) => ({ ...listed, attention: null }))),
-    discardFileVersion,
-    resolveFileMutation,
+      whenQualified(
+        () =>
+          listFileVersions(input).pipe(Effect.map((listed) => ({ ...listed, attention: null }))),
+        () => plain.listFileVersions(input),
+      ),
+    discardFileVersion: (input) =>
+      whenQualified(
+        () => discardFileVersion(input),
+        () => plain.discardFileVersion(input),
+      ),
+    resolveFileMutation: (input) =>
+      whenQualified(
+        () => resolveFileMutation(input),
+        () => plain.resolveFileMutation(input),
+      ),
   });
 });

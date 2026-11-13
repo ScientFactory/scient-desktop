@@ -382,6 +382,28 @@ describe("the packaged server's own resources", () => {
       );
   });
 
+  it("skip Windows' permission check only for the helper beside the server", () => {
+    const { helperCandidate } = nativeFilePublicationInternals;
+    const binary =
+      HostProcess.Platform.defaultValue() === "win32"
+        ? "scient-file-publication.exe"
+        : "scient-file-publication";
+    const resources = NodePath.join(NodePath.sep, "opt", "Scient", "resources");
+    const server = NodePath.join(resources, "server.asar", "apps/server/dist");
+    const installed = NodePath.join(resources, "file-exchange", binary);
+    expect(helperCandidate(undefined, server)).toEqual({
+      candidate: installed,
+      installedWithServer: true,
+    });
+    // The desktop app names that same helper explicitly.
+    expect(helperCandidate(installed, server).installedWithServer).toBe(true);
+    expect(
+      helperCandidate(NodePath.join(NodePath.sep, "elsewhere", binary), server).installedWithServer,
+    ).toBe(false);
+    const source = NodePath.join(NodePath.sep, "work", "apps/server/src/scient/workspace");
+    expect(helperCandidate(undefined, source).installedWithServer).toBe(false);
+  });
+
   it("are not looked for in a source checkout or an unpacked build", () => {
     expect(isPackagedServerDirectory(NodePath.join("/work", "apps/server/dist"))).toBe(false);
     expect(isPackagedServerDirectory(NodePath.join("/work", "resources", "apps/server/dist"))).toBe(

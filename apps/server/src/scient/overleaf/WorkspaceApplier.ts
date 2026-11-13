@@ -6,8 +6,11 @@ import * as NodePath from "node:path";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as ServerConfig from "../../config.ts";
 import { WorkspaceFileSystem } from "../../workspace/WorkspaceFileSystem.ts";
 import {
   bytesRevision,
@@ -20,7 +23,10 @@ import {
   recheckRetainedFile,
   type RetainedMutationResult,
 } from "../workspace/RetainedFileMutation.ts";
-import { NATIVE_LEASE_FOLDER_LIMIT } from "../workspace/NativeFilePublication.ts";
+import {
+  NATIVE_LEASE_FOLDER_LIMIT,
+  nativeFilePublicationHelper,
+} from "../workspace/NativeFilePublication.ts";
 import { assertOverleafApplyPaths, assertOverleafHostPath } from "./overleafHostPaths.ts";
 import { manuscriptCollisionKey } from "./unicodeCaseFold.ts";
 import { manuscriptTreeProblem, manuscriptPathProblem } from "./manuscriptPaths.ts";
@@ -326,12 +332,15 @@ async function unitHasDurableMutation(
   state: State,
   unit: readonly string[],
   retentionRoot: string,
+  helper: string | undefined,
 ) {
   const paths = state.plan.units.flat();
   for (const name of unit) {
     if (["done", "attention"].includes(ownValue(state.steps, name) ?? "")) return true;
     for (const attempt of await stepAttempts(retentionRoot, paths.indexOf(name)))
-      if (await attemptHasDurableMutation(state, name, NodePath.join(retentionRoot, attempt)))
+      if (
+        await attemptHasDurableMutation(state, name, NodePath.join(retentionRoot, attempt), helper)
+      )
         return true;
   }
   // A step that turns a folder into a file first removes the folder, under records
@@ -352,7 +361,12 @@ async function unitHasDurableMutation(
   }
   return false;
 }
-async function attemptHasDurableMutation(state: State, name: string, directory: string) {
+async function attemptHasDurableMutation(
+  state: State,
+  name: string,
+  directory: string,
+  helper: string | undefined,
+) {
   const record = await readStepRecord(directory);
   if (record === null) return false;
   if (
@@ -364,7 +378,7 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
   if (record.version === 2 && record.publication === "staged-create") {
     if (record.phase === "done") return record.sourceMutation !== false;
     if (record.phase === "preparing" || record.phase === "prepared") return false;
-    const published = await fileIdentity(record.target);
+    const published = await fileIdentity(record.target, helper);
     if (
       published &&
       record.createStageIdentity &&
@@ -374,6 +388,7 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
       return true;
     const stage = await fileIdentity(
       NodePath.join(NodePath.dirname(record.target), record.createStageName),
+      helper,
     );
     return !(
       stage &&
@@ -388,8 +403,8 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
   if (record.version === 2 && record.binding === null)
     return (await fileRevision(record.target)) !== record.expected;
   if ("originalSecurity" in record) {
-    if (await fileIdentity(NodePath.join(directory, "retained"))) return true;
-    const target = await fileIdentity(record.destination ?? record.target);
+    if (await fileIdentity(NodePath.join(directory, "retained"), helper)) return true;
+    const target = await fileIdentity(record.destination ?? record.target, helper);
     if (
       target &&
       record.stagedIdentity &&
@@ -407,9 +422,9 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
   // The syscall may have completed before the primitive's phase write. The
   // displaced file or changed staging identity is evidence even if outer
   // progress is empty. Merely staging a file is not a manuscript mutation.
-  if (await fileIdentity(NodePath.join(directory, "retained"))) return true;
+  if (await fileIdentity(NodePath.join(directory, "retained"), helper)) return true;
   if (record.desired !== null) {
-    const target = await fileIdentity(record.target);
+    const target = await fileIdentity(record.target, helper);
     if (
       target &&
       record.stagedIdentity &&
@@ -417,7 +432,7 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
       target.ino === record.stagedIdentity.ino
     )
       return true;
-    const slot = await fileIdentity(NodePath.join(directory, "slot"));
+    const slot = await fileIdentity(NodePath.join(directory, "slot"), helper);
     if (
       !record.stagedIdentity ||
       !slot ||
@@ -431,6 +446,9 @@ async function attemptHasDurableMutation(state: State, name: string, directory: 
 
 const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierHooks) {
   const files = yield* WorkspaceFileSystem;
+  const helperPath = Option.getOrUndefined(
+    yield* Effect.serviceOption(ServerConfig.ServerConfig),
+  )?.filePublicationHelperPath;
   const runPromise = Effect.runPromiseWith(yield* Effect.context<never>());
   const settledRevision = (cwd: string, relativePath: string) =>
     runPromise(
@@ -488,6 +506,11 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
         yield* files
           .registerRetainedFileHistory({ cwd: input.cwd, retentionDirectory })
           .pipe(Effect.mapError((cause) => new WorkspaceApplyError({ cause })));
+        // The helper the host's saves use; only Windows asks it for identities.
+        const helper =
+          HostProcess.Platform.defaultValue() === "win32"
+            ? yield* Effect.promise(() => nativeFilePublicationHelper(helperPath))
+            : undefined;
         const begin = yield* Effect.tryPromise({
           try: async () => {
             const cwd = await NodeFSP.realpath(input.cwd);
@@ -500,7 +523,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
               ]),
               input.id,
             );
-            const rootIdentity = await directoryIdentity(cwd);
+            const rootIdentity = await directoryIdentity(cwd, helper);
             if ((await NodeFSP.stat(retentionDirectory)).dev !== (await NodeFSP.stat(cwd)).dev)
               throw new Error("Apply retention must be on manuscript filesystem.");
             const recordPath = NodePath.join(directory, "apply.json");
@@ -578,7 +601,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
               }
             }
             if (state.cwd !== cwd) throw new Error("Apply workspace binding changed.");
-            await assertRootBinding(cwd, state.rootIdentity);
+            await assertRootBinding(cwd, state.rootIdentity, helper);
             if (input.plan && encodePlan(storePlan(input.plan)) !== encodePlan(state.plan))
               throw new Error("Apply id reused with a different plan.");
             validatePlan(state.plan);
@@ -679,7 +702,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
               ]),
             );
             const destinationsIntact = async () => {
-              await assertRootBinding(state.cwd, state.rootIdentity);
+              await assertRootBinding(state.cwd, state.rootIdentity, helper);
               for (const name of state.plan.guards[unitIndex]!) {
                 const target = ownValue(state.plan.target, name);
                 if (
@@ -819,7 +842,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
             const touched =
               failed &&
               (yield* Effect.tryPromise({
-                try: () => unitHasDurableMutation(state, unit, begin.retentionDirectory),
+                try: () => unitHasDurableMutation(state, unit, begin.retentionDirectory, helper),
                 catch: (cause) => new WorkspaceApplyError({ cause }),
               }));
             const outcome = !failed ? "done" : touched ? "interrupted" : "skipped";
@@ -867,8 +890,10 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                         if (
                           current !== null &&
                           (leaf === "retained" ||
-                            record.stagedIdentity?.ino !== (await fileIdentity(kept))?.ino ||
-                            record.stagedIdentity?.dev !== (await fileIdentity(kept))?.dev ||
+                            record.stagedIdentity?.ino !==
+                              (await fileIdentity(kept, helper))?.ino ||
+                            record.stagedIdentity?.dev !==
+                              (await fileIdentity(kept, helper))?.dev ||
                             current !== record.desired)
                         ) {
                           retained.push({
@@ -890,7 +915,7 @@ const makeEffect = Effect.fn("WorkspaceApplier.make")(function* (hooks: ApplierH
                       if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
                     }
                   }
-                await assertRootBinding(state.cwd, state.rootIdentity);
+                await assertRootBinding(state.cwd, state.rootIdentity, helper);
                 let matchesTarget = true;
                 for (const name of new Set([
                   ...Object.keys(state.plan.captured),

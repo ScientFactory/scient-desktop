@@ -35,21 +35,32 @@ export function armNativeCheckDeadline(child: NodeChildProcess.ChildProcess): ()
   };
 }
 
-/** Windows permission checks that passed, by what they looked at and when. */
-const checkedWindowsPermissions = new Map<string, { readonly key: string; readonly at: number }>();
-// PowerShell takes a second or more to start, so a pass is trusted this long while the
-// helper, its receipt and its folder stay as they were. Folders above change whenever
-// anything is created beside them, so their times say nothing about their permissions.
-const WINDOWS_PERMISSIONS_TRUSTED_MS = 60_000;
+/** Windows permission checks that passed, by helper: the key of what they looked at. */
+const checkedWindowsPermissions = new Map<string, string>();
 
 export const publicationDigest = (bytes: Uint8Array) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
-/** Validate before executing: a receipt cannot make a project/PATH candidate authoritative. */
-export function validatePublicationArtifact(helper: string) {
-  return validateArtifact(helper, 1);
+export interface PublicationArtifactOptions {
+  /**
+   * The helper sits in the server's own install tree, under the permissions that guard the
+   * server's code, so Windows' permission check could only refuse what is already exposed.
+   */
+  readonly installedWithServer?: boolean;
 }
-async function validateArtifact(helper: string, attempt: number): Promise<string> {
+
+/** Validate before executing: a receipt cannot make a project/PATH candidate authoritative. */
+export function validatePublicationArtifact(
+  helper: string,
+  options: PublicationArtifactOptions = {},
+) {
+  return validateArtifact(helper, options, 1);
+}
+async function validateArtifact(
+  helper: string,
+  options: PublicationArtifactOptions,
+  attempt: number,
+): Promise<string> {
   const platform = HostProcess.Platform.defaultValue();
   const arch = HostProcess.Architecture.defaultValue();
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
@@ -120,15 +131,39 @@ async function validateArtifact(helper: string, attempt: number): Promise<string
           );
     if (!matches) throw new Error("Native publication is not a host Mach-O executable.");
   }
-  const permissionsKey =
-    platform === "win32" ? await windowsPermissionsKey(helper, receiptPath) : "";
-  const checked = checkedWindowsPermissions.get(helper);
-  if (
-    platform === "win32" &&
-    (checked?.key !== permissionsKey ||
-      performance.now() - checked.at > WINDOWS_PERMISSIONS_TRUSTED_MS)
-  ) {
-    const command = `
+  const permissionsChecked = platform === "win32" && !options.installedWithServer;
+  const permissionsKey = permissionsChecked ? await windowsPermissionsKey(helper, receiptPath) : "";
+  // Only principals the check admits can change the folders above, so a pass holds while
+  // the helper, its receipt and its folder stay as they were.
+  if (permissionsChecked && checkedWindowsPermissions.get(helper) !== permissionsKey) {
+    // Asynchronous: PowerShell takes a second or more to start, and a synchronous launch
+    // would hold the whole server for that long. Checks asked meanwhile share this one.
+    const running = `${helper}\0${permissionsKey}`;
+    let check = runningWindowsChecks.get(running);
+    if (!check) {
+      check = checkWindowsPermissions(helper).finally(() => runningWindowsChecks.delete(running));
+      runningWindowsChecks.set(running, check);
+    }
+    await check;
+    // A file replaced while PowerShell looked was not the one checked, nor the one hashed.
+    if ((await windowsPermissionsKey(helper, receiptPath)) !== permissionsKey) {
+      if (attempt >= 3) throw new Error("Native publication resource kept changing while checked.");
+      return validateArtifact(helper, options, attempt + 1);
+    }
+    checkedWindowsPermissions.set(helper, permissionsKey);
+  }
+  await NodeFSP.access(
+    helper,
+    platform === "win32" ? NodeFSP.constants.F_OK : NodeFSP.constants.X_OK,
+  );
+  return helper;
+}
+/**
+ * Refuses a helper, its folder, its receipt or any folder above that a principal other than
+ * the user, SYSTEM, Administrators or TrustedInstaller owns or can change. It calls .NET
+ * methods, which Constrained Language Mode (AppLocker, WDAC) refuses.
+ */
+export const WINDOWS_PERMISSIONS_SCRIPT = `
 $ErrorActionPreference = 'Stop'
 $allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
 $directory = Split-Path $env:SCIENT_PUBLICATION_VALIDATE
@@ -149,30 +184,6 @@ foreach ($file in $files) {
     if ($rule.AccessControlType -eq 'Allow' -and !($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -and $rule.IdentityReference.Value -notin $allowed -and ($rule.FileSystemRights -band $mask)) { throw 'Native resource is writable by another principal' }
   }
 }`;
-    // Asynchronous: PowerShell takes a second or more to start, and a synchronous launch
-    // would hold the whole server for that long. Checks asked meanwhile share this one.
-    const running = `${helper}\0${permissionsKey}`;
-    let check = runningWindowsChecks.get(running);
-    if (!check) {
-      check = checkWindowsPermissions(helper, command).finally(() =>
-        runningWindowsChecks.delete(running),
-      );
-      runningWindowsChecks.set(running, check);
-    }
-    await check;
-    // A file replaced while PowerShell looked was not the one checked, nor the one hashed.
-    if ((await windowsPermissionsKey(helper, receiptPath)) !== permissionsKey) {
-      if (attempt >= 3) throw new Error("Native publication resource kept changing while checked.");
-      return validateArtifact(helper, attempt + 1);
-    }
-    checkedWindowsPermissions.set(helper, { key: permissionsKey, at: performance.now() });
-  }
-  await NodeFSP.access(
-    helper,
-    platform === "win32" ? NodeFSP.constants.F_OK : NodeFSP.constants.X_OK,
-  );
-  return helper;
-}
 const runningWindowsChecks = new Map<string, Promise<unknown>>();
 /** What changes when the helper, its receipt or its folder is replaced or re-permissioned. */
 const windowsPermissionsKey = async (helper: string, receiptPath: string) =>
@@ -185,7 +196,7 @@ const windowsPermissionsKey = async (helper: string, receiptPath: string) =>
     )
   ).join("|");
 /** Settles only once PowerShell has closed, so a retry never overlaps it. */
-const checkWindowsPermissions = (helper: string, command: string) =>
+const checkWindowsPermissions = (helper: string) =>
   new Promise<void>((resolve, reject) => {
     const child = NodeChildProcess.execFile(
       NodePath.join(
@@ -196,7 +207,7 @@ const checkWindowsPermissions = (helper: string, command: string) =>
         "-NoProfile",
         "-NonInteractive",
         "-EncodedCommand",
-        Buffer.from(command, "utf16le").toString("base64"),
+        Buffer.from(WINDOWS_PERMISSIONS_SCRIPT, "utf16le").toString("base64"),
       ],
       { env: { ...process.env, SCIENT_PUBLICATION_VALIDATE: helper }, windowsHide: true },
       (error) => {
