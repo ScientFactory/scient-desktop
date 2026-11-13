@@ -6,6 +6,7 @@
 //
 //   node scripts/qualify-whisper-runtime.mjs <runtime-directory>
 
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -49,6 +50,55 @@ function hostPlatform() {
   return "linux";
 }
 
+/**
+ * Records what the runtime owner's server and requests did, for a failure to explain itself:
+ * when each phase started and ended, how the server exited, and the end of its output.
+ */
+export function traceRuntime({ spawn = NodeChildProcess.spawn, fetch = globalThis.fetch } = {}) {
+  const startedAt = performance.now();
+  const at = () => `${((performance.now() - startedAt) / 1000).toFixed(1)} s`;
+  const events = [];
+  let output = "";
+  return {
+    spawn(command, args, options) {
+      const child = spawn(command, args, options);
+      events.push(`${at()} spawned server (pid ${child.pid ?? "none"})`);
+      const keep = (chunk) => {
+        output = (output + chunk).slice(-8192);
+      };
+      child.stdout.on("data", keep);
+      child.stderr.on("data", keep);
+      child.once("exit", (code, signal) =>
+        events.push(`${at()} server exited (code ${code}, signal ${signal})`),
+      );
+      return child;
+    },
+    async fetch(url, init) {
+      const request = `${init?.method ?? "GET"} ${new URL(url).pathname.split("/").pop()}`;
+      const sent = at();
+      try {
+        const response = await fetch(url, init);
+        events.push(`${sent} → ${at()} ${request}: ${response.status}`);
+        return response;
+      } catch (error) {
+        events.push(`${sent} → ${at()} ${request}: ${error instanceof Error ? error.name : error}`);
+        throw error;
+      }
+    },
+    report() {
+      // Readiness polls every 100 ms; keep the first and last few.
+      const shown =
+        events.length > 24 ? [...events.slice(0, 8), "…", ...events.slice(-16)] : events;
+      return [
+        `[voice-qualify] ${NodeOS.cpus().length} CPUs, ${Math.round(NodeOS.freemem() / 2 ** 20)} MiB free`,
+        ...shown.map((event) => `[voice-qualify] ${event}`),
+        "[voice-qualify] Server output (last 8 KiB):",
+        output.trimEnd() || "(none)",
+      ].join("\n");
+    },
+  };
+}
+
 async function qualify(runtimeDirectory) {
   const platform = hostPlatform();
   const directory = NodePath.resolve(runtimeDirectory);
@@ -66,7 +116,13 @@ async function qualify(runtimeDirectory) {
   if (platform === "win") await assertWindowsRuntimeSelfContained(directory);
 
   const workspace = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-voice-qualify-"));
-  const runtime = new LocalWhisperRuntime({ runtimeDirectory: directory, idleTimeoutMs: 60_000 });
+  const trace = traceRuntime();
+  const runtime = new LocalWhisperRuntime({
+    runtimeDirectory: directory,
+    idleTimeoutMs: 60_000,
+    spawnImpl: trace.spawn,
+    fetchImpl: trace.fetch,
+  });
   try {
     const modelPath = NodePath.join(workspace, QUALIFICATION_MODEL.fileName);
     const recordingPath = NodePath.join(workspace, QUALIFICATION_RECORDING.fileName);
@@ -88,6 +144,10 @@ async function qualify(runtimeDirectory) {
     if (!normalizeTranscript(result.text).includes(EXPECTED_PHRASE)) {
       throw new Error(`The transcript does not contain "${EXPECTED_PHRASE}".`);
     }
+  } catch (error) {
+    // Only the reference recording runs here, so the server's own output is safe to show.
+    console.error(trace.report());
+    throw error;
   } finally {
     await runtime.dispose();
     await NodeFSP.rm(workspace, { recursive: true, force: true });
