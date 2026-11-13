@@ -1,3 +1,6 @@
+// SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+import type { BrowserImportSkippedByReason } from "@t3tools/contracts";
+// SCIENT-FORK:END
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
@@ -29,6 +32,10 @@ export interface CookieReadResult {
   readonly cookies: ReadonlyArray<ImportedCookie>;
   readonly undecryptable: number;
   readonly undecryptableHosts: ReadonlyArray<string>;
+  // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+  /** `undecryptable` by cause. */
+  readonly skippedByReason?: Omit<BrowserImportSkippedByReason, "writeFailed">;
+  // SCIENT-FORK:END
 }
 
 export const cookieScope = (

@@ -2,6 +2,11 @@ import { BrowserProfileId, type EnvironmentId } from "@t3tools/contracts";
 import type { AtomRegistry } from "effect/reactivity";
 import { resolveBrowserDefaults } from "~/browser/browserDefaults";
 import { accountsState } from "./accountsState";
+import {
+  googleCopyGeneration,
+  observeGoogleCopy,
+  pruneGoogleCopies,
+} from "./googleCopyObservation";
 
 /** Coming back to the app asks again at most this often. */
 const FOCUS_CHECK_GAP_MS = 5 * 60 * 1000;
@@ -21,6 +26,8 @@ export function watchGoogleSessions(
   let lastCheck = 0;
   let checking = false;
   let checkAgain = false;
+  // Disposed mid-read (owner handoff, reload): the late answer is no longer this window's to keep.
+  let disposed = false;
   const check = async () => {
     if (checking) {
       checkAgain = true;
@@ -30,9 +37,17 @@ export function watchGoogleSessions(
     lastCheck = Date.now();
     try {
       const { profiles } = await resolveBrowserDefaults();
+      if (disposed) return;
+      pruneGoogleCopies(
+        environmentId,
+        profiles.map(({ id }) => id),
+      );
       for (const { id, kind } of profiles) {
         if (kind === "incognito") continue;
+        const generation = googleCopyGeneration(environmentId, id);
         const sessions = await read(id, environmentId).catch(() => null);
+        if (disposed) return;
+        if (generation) observeGoogleCopy(environmentId, id, generation, sessions);
         if (sessions)
           await accountsState.googleSessionsSeen.run(registry, {
             environmentId,
@@ -41,7 +56,7 @@ export function watchGoogleSessions(
       }
     } finally {
       checking = false;
-      if (checkAgain) {
+      if (checkAgain && !disposed) {
         checkAgain = false;
         void check();
       }
@@ -55,6 +70,7 @@ export function watchGoogleSessions(
   window.addEventListener("focus", onFocus);
   window.addEventListener("scient-accounts-session-changed", onChange);
   return () => {
+    disposed = true;
     clearTimeout(first);
     window.removeEventListener("focus", onFocus);
     window.removeEventListener("scient-accounts-session-changed", onChange);

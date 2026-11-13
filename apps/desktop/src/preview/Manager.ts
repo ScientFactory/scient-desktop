@@ -4,6 +4,16 @@ import { rememberAccountsSession } from "../scient/accounts/sessionIdentity.ts";
 // SCIENT-FORK:START — Multi-window: every registered app window can host preview guests.
 import { PreviewHostWindows } from "../scient/multiWindow/previewHostWindows.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+import type { DesktopPreviewSignInBlockedEvent } from "@t3tools/contracts";
+import {
+  BLOCKED_GOOGLE_SIGN_IN_DESCRIPTION,
+  blockedSignIn,
+  followTabSignIn,
+  type TabSignIn,
+  watchSignInPopup,
+} from "../scient/browser/googleSignInRecovery.ts";
+// SCIENT-FORK:END
 import * as NodeZlib from "node:zlib";
 import {
   DesktopPreviewAnnotationVoiceEventSchema,
@@ -450,6 +460,9 @@ type PointerEventListener = (event: DesktopPreviewPointerEvent) => Effect.Effect
 type OpenLinkListener = (event: DesktopPreviewOpenLinkEvent) => Effect.Effect<void>;
 
 type FindResultListener = (event: DesktopPreviewFindResultEvent) => Effect.Effect<void>;
+// SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+type SignInBlockedListener = (event: DesktopPreviewSignInBlockedEvent) => Effect.Effect<void>;
+// SCIENT-FORK:END
 
 const PAGE_FIRST_FORWARDED_COMMANDS: ReadonlySet<PreviewForwardedShortcut["command"]> = new Set([
   "preview.find",
@@ -594,6 +607,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pointerEventListenersRef = yield* Ref.make<ReadonlySet<PointerEventListener>>(new Set());
   const openLinkListenersRef = yield* Ref.make<ReadonlySet<OpenLinkListener>>(new Set());
   const findResultListenersRef = yield* Ref.make<ReadonlySet<FindResultListener>>(new Set());
+  // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+  const signInBlockedListenersRef = yield* Ref.make<ReadonlySet<SignInBlockedListener>>(new Set());
+  // SCIENT-FORK:END
   const recordingInputListenersRef = yield* Ref.make<ReadonlySet<RecordingInputListener>>(
     new Set(),
   );
@@ -877,7 +893,14 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const deliverEvent = (
-    eventKind: "state-change" | "recording-input" | "pointer-event" | "open-link" | "find-result",
+    eventKind:
+      | "state-change"
+      | "recording-input"
+      | "pointer-event"
+      | "open-link"
+      | "find-result"
+      // SCIENT-FORK: Scient Browser — Google sign-in is stopped and explained.
+      | "sign-in-blocked",
     tabId: string,
     delivery: () => Effect.Effect<void>,
   ) =>
@@ -1250,6 +1273,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const scope = yield* Scope.fork(parentScope, "sequential");
     const attachmentId = Symbol();
     let detachPasskeys = () => {};
+    // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+    let signIn: TabSignIn | null = null;
+    // SCIENT-FORK:END
     let documentId = 0;
     let nextRequestId = 0;
     let activeCapture: {
@@ -1309,7 +1335,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     const sync = () => runFork(syncState(true));
     const syncNavigation = () => runFork(syncState(false, true));
-    const syncInPageNavigation = () => runFork(syncState(false));
+    // SCIENT-FORK:START — Scient Browser: Google's refusal can arrive without a page load.
+    const syncInPageNavigation = (_event: unknown, url: string, isMainFrame: boolean) => {
+      const rejected = isMainFrame ? (signIn?.rejectedInPage(url) ?? null) : null;
+      if (rejected) runFork(emitSignInBlocked({ tabId, ...rejected }));
+      runFork(syncState(false));
+    };
+    // SCIENT-FORK:END
     const restoreRecordingCursor = () =>
       runFork(
         Effect.gen(function* () {
@@ -1433,8 +1465,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       validatedUrl: string,
       isMainFrame: boolean,
     ): void => {
+      // SCIENT-FORK:START — Scient Browser: a frame's Google sign-in is explained over its page.
+      const frame =
+        !isMainFrame && !wc.isDestroyed() ? signIn?.blockedFrame(code, validatedUrl) : null;
+      if (frame) runFork(emitSignInBlocked({ tabId, ...frame }));
+      // SCIENT-FORK:END
       if (code === -3 || !isMainFrame || wc.isDestroyed()) return;
       const url = validatedUrl || wc.getURL();
+      // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+      const blocked = signIn?.blocked(code, url) ?? null;
+      const reason = blocked ? BLOCKED_GOOGLE_SIGN_IN_DESCRIPTION : description;
+      // SCIENT-FORK:END
       runFork(
         Effect.gen(function* () {
           const updatedAt = yield* currentIso;
@@ -1450,7 +1491,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             }
             const state: PreviewTabState = {
               ...current,
-              navStatus: { kind: "LoadFailed", url, title: wc.getTitle(), code, description },
+              navStatus: {
+                kind: "LoadFailed",
+                url,
+                title: wc.getTitle(),
+                code,
+                description: reason,
+              },
               updatedAt,
             };
             return [
@@ -1463,9 +1510,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           if (current?.webContentsId !== wc.id || current.navStatus !== next.value.navStatus)
             return;
           if (current.serverTab) {
-            browserHost.loadFailed(current.serverTab, { url, code, description });
+            browserHost.loadFailed(current.serverTab, { url, code, description: reason });
           }
           yield* emitIfCurrent(tabId, next.value);
+          // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+          if (blocked) yield* emitSignInBlocked({ tabId, ...blocked });
+          // SCIENT-FORK:END
         }),
       );
     };
@@ -1549,6 +1599,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       window.webContents.on("before-input-event", (_event, input) => {
         syncMenuShortcuts(window.webContents, input);
       });
+      // SCIENT-FORK:START — Scient Browser: a stopped "Continue with Google" is explained here.
+      watchSignInPopup(window, wc, (event) => runFork(emitSignInBlocked({ tabId, ...event })));
+      // SCIENT-FORK:END
     };
     const findForwardedShortcut = (keys: Parameters<typeof matchesKeybindingShortcut>[0]) =>
       !(
@@ -1641,6 +1694,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.ipc.off(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
         detachPasskeys();
+        // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+        signIn?.dispose();
+        signIn = null;
+        // SCIENT-FORK:END
       }).pipe(Effect.ignore),
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
@@ -1662,6 +1719,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.ipc.on(PAGE_UNHANDLED_SHORTCUT_CHANNEL, pageUnhandledShortcut);
         detachPasskeys = passkeys.attachGuest(wc);
+        // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+        signIn?.dispose();
+        signIn = followTabSignIn(wc);
+        // SCIENT-FORK:END
         wc.setWindowOpenHandler((details) => {
           const action = previewWindowOpenAction(details);
           if (action === "popup") {
@@ -2029,6 +2090,12 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     yield* assertTabAudioMuted(tabId).pipe(Effect.ignore);
     runFork(restoreControlSession(tabId, wc));
     yield* emitIfCurrent(tabId, registered);
+    // SCIENT-FORK:START — Scient Browser: a sign-in stopped before the tab was registered.
+    if (registered.navStatus.kind === "LoadFailed") {
+      const blocked = blockedSignIn(registered.navStatus.code, registered.navStatus.url);
+      if (blocked) yield* emitSignInBlocked({ tabId, ...blocked });
+    }
+    // SCIENT-FORK:END
     // Ownership checks dropped pre-attach audibility events; reconcile through the event path.
     yield* syncTabAudible(tabId, wc, yield* readAudible);
     yield* attempt({ operation: "registerWebview.sendTheme", tabId, webContentsId }, () => {
@@ -2072,10 +2139,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     wc.on("did-fail-load", (_event, code, description, validatedUrl, isMainFrame) => {
       if (code === -3 || !isMainFrame) return;
+      const url = validatedUrl || wc.getURL();
       guestLoadFailures.set(webContentsId, {
-        url: validatedUrl || wc.getURL(),
+        url,
         code,
-        description,
+        // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+        description: blockedSignIn(code, url) ? BLOCKED_GOOGLE_SIGN_IN_DESCRIPTION : description,
+        // SCIENT-FORK:END
       });
     });
     wc.once("destroyed", () => {
@@ -3586,6 +3656,18 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       { discard: true },
     );
   });
+  // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+  const emitSignInBlocked = Effect.fn("PreviewManager.emitSignInBlocked")(function* (
+    event: DesktopPreviewSignInBlockedEvent,
+  ) {
+    const listeners = yield* Ref.get(signInBlockedListenersRef);
+    yield* Effect.forEach(
+      listeners,
+      (listener) => deliverEvent("sign-in-blocked", event.tabId, () => listener(event)),
+      { discard: true },
+    );
+  });
+  // SCIENT-FORK:END
   const emitFindResult = Effect.fn("PreviewManager.emitFindResult")(function* (
     event: DesktopPreviewFindResultEvent,
   ) {
@@ -3676,6 +3758,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     subscribeOpenLinks: (listener: OpenLinkListener) => subscribe(openLinkListenersRef, listener),
     subscribeFindResults: (listener: FindResultListener) =>
       subscribe(findResultListenersRef, listener),
+    // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+    subscribeSignInBlocked: (listener: SignInBlockedListener) =>
+      subscribe(signInBlockedListenersRef, listener),
+    // SCIENT-FORK:END
     subscribeRecordingInputs: (listener: RecordingInputListener) =>
       subscribe(recordingInputListenersRef, listener),
     subscribeStateChanges: (listener: Listener) => subscribe(listenersRef, listener),
@@ -3942,6 +4028,11 @@ export class PreviewManager extends Context.Service<
     readonly subscribeFindResults: (
       listener: FindResultListener,
     ) => Effect.Effect<void, never, Scope.Scope>;
+    // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+    readonly subscribeSignInBlocked: (
+      listener: SignInBlockedListener,
+    ) => Effect.Effect<void, never, Scope.Scope>;
+    // SCIENT-FORK:END
     readonly subscribeRecordingInputs: (
       listener: RecordingInputListener,
     ) => Effect.Effect<void, never, Scope.Scope>;
@@ -4082,6 +4173,9 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     subscribePointerEvents: operations.subscribePointerEvents,
     subscribeOpenLinks: operations.subscribeOpenLinks,
     subscribeFindResults: operations.subscribeFindResults,
+    // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+    subscribeSignInBlocked: operations.subscribeSignInBlocked,
+    // SCIENT-FORK:END
     subscribeRecordingInputs: operations.subscribeRecordingInputs,
   });
 }).pipe(Effect.withSpan("PreviewManager.make"));

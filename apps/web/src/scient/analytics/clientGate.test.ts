@@ -42,6 +42,46 @@ describe("UI analytics gate", () => {
       { name: "voice.transcription.completed", properties: {}, collectionContext: "after-restart" },
     ]);
   });
+  it("keeps long work's context through a routine status refresh, not across a consent change", async () => {
+    let now = 0;
+    let consent: ScientAnalyticsStatus["consent"] = "product";
+    let context = "context-a";
+    const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);
+    const gate = createAnalyticsClientGate({
+      record,
+      now: () => now,
+      status: async (): Promise<ScientAnalyticsStatus> => ({
+        available: true,
+        consent,
+        collectionContext: context,
+      }),
+    });
+    const connection = {};
+    await gate.readStatus(connection);
+    const began = gate.productContext(connection)!;
+    // A sign-in window open for minutes: the status is due for refresh when it closes.
+    now = 60_001;
+    expect(gate.productContext(connection)).toBe("context-a");
+    gate.recordInContext(connection, began, event);
+    await tick();
+    expect(record.mock.calls.map((call) => call[1])).toEqual([
+      { ...event, collectionContext: "context-a" },
+    ]);
+    // Consent turned off and on elsewhere meanwhile: a new context, so the old work records nothing.
+    consent = "essential";
+    now = 120_002;
+    gate.productContext(connection);
+    await tick();
+    expect(gate.productContext(connection)).toBeUndefined();
+    consent = "product";
+    context = "context-b";
+    now = 180_003;
+    gate.productContext(connection);
+    await tick();
+    gate.recordInContext(connection, began, event);
+    await tick();
+    expect(record).toHaveBeenCalledOnce();
+  });
   it("keeps a voice job paired during status refresh and long correction", async () => {
     let now = 0;
     const record = vi.fn(async (_connection: object, _event: ScientAnalyticsUiEvent) => undefined);

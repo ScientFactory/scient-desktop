@@ -5,6 +5,8 @@ import type {
   DesktopPreviewOpenLinkEvent,
   DesktopPreviewPointerEvent,
   DesktopPreviewRecordingInputEvent,
+  // SCIENT-FORK: Scient Browser — Google sign-in is stopped and explained.
+  DesktopPreviewSignInBlockedEvent,
   DesktopPreviewTabState,
   DesktopSnapShotEvent,
 } from "@t3tools/contracts";
@@ -561,6 +563,17 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       return () =>
         ipcRenderer.removeListener(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, wrappedListener);
     },
+    // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+    onSignInBlocked: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, blocked: unknown) => {
+        if (typeof blocked !== "object" || blocked === null) return;
+        listener(blocked as DesktopPreviewSignInBlockedEvent);
+      };
+      ipcRenderer.on(IpcChannels.PREVIEW_SIGN_IN_BLOCKED_CHANNEL, wrappedListener);
+      return () =>
+        ipcRenderer.removeListener(IpcChannels.PREVIEW_SIGN_IN_BLOCKED_CHANNEL, wrappedListener);
+    },
+    // SCIENT-FORK:END
   },
   voice: makeDesktopVoiceBridge(ipcRenderer),
   // SCIENT-FORK:START — Scient Accounts: mount the desktop accounts bridge.

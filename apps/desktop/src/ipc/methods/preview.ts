@@ -66,6 +66,11 @@ export const installPreviewEventForwarding = Effect.fn(
   yield* manager.subscribeFindResults((event) =>
     electronWindow.sendAll(IpcChannels.PREVIEW_FIND_RESULT_CHANNEL, event),
   );
+  // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+  yield* manager.subscribeSignInBlocked((event) =>
+    electronWindow.sendAll(IpcChannels.PREVIEW_SIGN_IN_BLOCKED_CHANNEL, event),
+  );
+  // SCIENT-FORK:END
 });
 
 const setForwardedShortcuts = DesktopIpc.makeIpcMethod({
