@@ -140,12 +140,16 @@ describe("the Windows helper permission check", () => {
     }) as never);
     vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
     try {
-      const outcome = validatePublicationArtifact(helper).catch((error: unknown) => error);
+      let settled = false;
+      const outcome = validatePublicationArtifact(helper)
+        .catch((error: unknown) => error)
+        .finally(() => {
+          settled = true;
+        });
       await expect.poll(() => vi.getTimerCount()).toBeGreaterThan(0);
-      vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
-      expect(await Promise.race([outcome.then(() => "settled"), Promise.resolve("running")])).toBe(
-        "running",
-      );
+      await vi.advanceTimersByTimeAsync(NATIVE_CHECK_DEADLINE_MS);
+      // Stopped but not yet closed: the check is still running.
+      expect(settled).toBe(false);
       close();
       expect(await outcome).toBeInstanceOf(NativeCheckDeadlineError);
     } finally {
