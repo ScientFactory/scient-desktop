@@ -156,7 +156,11 @@ export function overleafChipView(
       detail: "A conflict with Overleaf needs a choice.",
     };
   if (last?._tag === "refused")
-    return { state: "problem", label: "Couldn't sync", detail: refusalText(last.refusal) };
+    return {
+      state: "problem",
+      label: "Couldn't sync",
+      detail: refusalText(last.refusal, "sync", last.settled !== null || last.retried),
+    };
   if (status === null) return { state: "up-to-date", label: "Overleaf", detail: "" };
   if (status.availability === "unavailable" || status.availability === "disconnected") {
     return {

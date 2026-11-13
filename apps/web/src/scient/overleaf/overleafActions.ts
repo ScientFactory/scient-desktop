@@ -300,7 +300,9 @@ export async function readOverleafChanges(
             _tag: "failed",
             message:
               result._tag === "refused"
-                ? [settled, refusalText(result.refusal)].filter(Boolean).join(" ")
+                ? [settled, refusalText(result.refusal, "sync", settled !== null)]
+                    .filter(Boolean)
+                    .join(" ")
                 : "An interrupted sync was finished first. Read the changes again.",
           },
     );

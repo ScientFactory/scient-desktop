@@ -77,6 +77,18 @@ describe("overleafActions", () => {
     );
   });
 
+  it("never says nothing changed after a read of the changes finished an interrupted sync", async () => {
+    client.previewOverleaf.mockReset().mockResolvedValueOnce({
+      _tag: "refused",
+      refusal: { reason: "records-unreadable" },
+      settled: { outcome: "complete", interrupted: 0, markerPaths: [] },
+    });
+    await readOverleafChanges(environmentId, ROOT, "c1");
+    const error = readOverleafWorkspace(environmentId, ROOT).previewErrors.get("c1");
+    expect(error).toMatch(/^It first finished an interrupted sync/u);
+    expect(error).not.toMatch(/nothing was (linked or )?changed/iu);
+  });
+
   it("See changes refreshes an existing unapplied review and waits while a sync runs", async () => {
     client.previewOverleaf.mockReset().mockResolvedValue({
       _tag: "review",

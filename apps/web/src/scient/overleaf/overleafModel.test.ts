@@ -435,6 +435,13 @@ describe("overleafResultView", () => {
       expect(lines.join(" ")).not.toMatch(/nothing was (linked or )?changed/iu);
     }
     expect(refusalText({ reason: "editor-unsaved" })).toMatch(/nothing was changed/u);
+    const chip = overleafChipView(status(), false, {
+      _tag: "refused",
+      refusal: { reason: "records-unreadable" },
+      retried: false,
+      settled: { outcome: "complete", interrupted: 0, markerPaths: [] },
+    });
+    expect(chip.detail).not.toMatch(/nothing was (linked or )?changed/iu);
   });
 });
 
