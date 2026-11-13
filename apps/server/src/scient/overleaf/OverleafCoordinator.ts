@@ -2838,13 +2838,23 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           if (owner.keys.includes(section.key)) return yield* unreadable;
           continue;
         }
-        if (read.document.state !== "active") continue;
         const connection = read.document;
+        // Only a record holding something needs its checkout found.
+        if (connection.activeApply === null && connection.stagingPaths.length === 0) continue;
+        // An unlinked one keeps it until the folder is linked again, which finishes it.
+        const blocked =
+          connection.state === "active"
+            ? refuse
+            : new CheckoutBarrier.CheckoutRecoveryRequiredError({
+                checkout: section.root,
+                reason: "unlinked-unfinished-sync",
+              });
         // The connection's checkout, or one enclosing it, is the one changing.
         const held = yield* barrier
           .current(folderOf(connection))
-          .pipe(Effect.mapError(() => refuse));
+          .pipe(Effect.mapError(() => blocked));
         if (!held.keys.includes(section.key)) continue;
+        if (connection.state !== "active") return yield* blocked;
         // Structural source copies sit in the folder; a bulk change could erase them.
         if (connection.stagingPaths.length > 0) return yield* refuse;
         if (connection.activeApply === null) continue;

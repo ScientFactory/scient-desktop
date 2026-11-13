@@ -884,7 +884,11 @@ export const makeOverleafConnections = Effect.fn("OverleafConnections.make")(fun
       return {
         ...base,
         availability: "disconnected",
-        reasons: [],
+        // What linking the folder again finishes; until then it holds off bulk changes.
+        reasons: [
+          ...(document.activeApply === null ? [] : ["apply-pending" as const]),
+          ...(document.stagingPaths.length === 0 ? [] : ["staging" as const]),
+        ],
         local: null,
       } satisfies OverleafConnectionStatus;
 

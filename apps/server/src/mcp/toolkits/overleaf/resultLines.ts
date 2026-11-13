@@ -673,7 +673,11 @@ export const statusLines = (status: ScientOverleafStatus): string[] => {
       lines.push("Ready to sync.");
       break;
     case "disconnected":
-      lines.push("Disconnected. Connect the folder again to keep its history.");
+      lines.push(
+        status.reasons.length === 0
+          ? "Disconnected. Connect the folder again to keep its history."
+          : "Disconnected before an interrupted sync finished. Connect the folder to the same project again to finish it; until then, pulls, branch switches and checkpoint restores in this project are refused.",
+      );
       break;
     default:
       lines.push(`Needs attention: ${reasons.join("; ")}.`);

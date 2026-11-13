@@ -660,7 +660,11 @@ settles earlier sends, lists and restores kept copies, and undoes an accepted se
 - **Bulk changes.** The coordinator registers the barrier's settler: a bulk
   change of a checkout with a pending apply recovers it inline when the
   reservation is free, and is refused otherwise. Structural copies in the
-  folder always refuse it, including any the inline recovery finds.
+  folder always refuse it, including any the inline recovery finds. An unlinked
+  record with a pending apply or structural copies refuses it too
+  (`unlinked-unfinished-sync`) until the folder is linked again, which finishes
+  it; its status reports them as reasons. Only records holding something are
+  looked up, so an idle link whose folder can't be examined holds nothing back.
 - **Listing kept copies** compares each copy by its stamp and reads again only
   a changed or extra version. One listing reads at most one inventory's total;
   a file past that budget, or larger than a restore reads (a kept copy or the

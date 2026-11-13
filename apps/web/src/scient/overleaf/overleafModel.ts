@@ -163,7 +163,9 @@ export function overleafChipView(
       label: "Overleaf problem",
       detail:
         status.availability === "disconnected"
-          ? "This folder is no longer linked."
+          ? status.reasons.length === 0
+            ? "This folder is no longer linked."
+            : "This folder was unlinked before a sync finished. Link it to the same project again to finish it."
           : "The linked folder was moved, renamed, replaced or deleted. Link it again at its new place, or unlink it.",
     };
   }
