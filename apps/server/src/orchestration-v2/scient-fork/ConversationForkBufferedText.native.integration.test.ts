@@ -1118,11 +1118,19 @@ it.live.each(
             yield* Deferred.succeed(releaseEmission, undefined);
             yield* Deferred.await(filteredItemCommitted).pipe(Effect.timeout("15 seconds"));
           }
+          // A write inside a provider batch returns before the batch commits, and the writer
+          // commits off the event loop, so wait for the filtered item's publication.
           const source = yield* waitFor(
             threadId,
             (p) =>
               p.runs[0]?.status === "running" &&
-              p.providerTurns.some((turn) => turn.nativeAcceptance === "accepted"),
+              p.providerTurns.some((turn) => turn.nativeAcceptance === "accepted") &&
+              (!scenario.clean ||
+                p.turnItems.some(
+                  (item) =>
+                    item.type === "assistant_message" &&
+                    item.nativeItemRef?.nativeId === nativeItemId,
+                )),
           );
           const sourceItem = source.turnItems.find(
             (item) =>
@@ -1705,9 +1713,9 @@ it.live.each(
                 yield* Deferred.await(normalFrame).pipe(Effect.timeout("15 seconds"));
                 gate.release("after-normal-frame");
                 yield* Deferred.await(planCommitted).pipe(Effect.timeout("15 seconds"));
-                const advanced = yield* orchestrator.getThreadProjection(threadId);
-                assert.isTrue(
-                  advanced.turnItems.some(
+                // The plan's write returns inside its provider batch, before the batch commits.
+                yield* waitFor(threadId, (p) =>
+                  p.turnItems.some(
                     (item) =>
                       item.type === "assistant_message" &&
                       item.nativeItemRef?.nativeId === nativeItemId &&
@@ -2019,7 +2027,8 @@ it.live.each(
             // coalescer frame. It cannot acknowledge raw snapshot ingestion.
             gate.release("after-normal-frame");
             yield* Deferred.await(planCommitted).pipe(Effect.timeout("15 seconds"));
-            const beforeFinal = yield* orchestrator.getThreadProjection(threadId);
+            // Read only once the plan is committed; its write returns inside the provider batch.
+            const beforeFinal = yield* waitFor(threadId, (p) => p.plans.length > 0);
             assert.equal(
               beforeFinal.turnItems.find((item) => item.id === capturedItem.id)?.type,
               "assistant_message",

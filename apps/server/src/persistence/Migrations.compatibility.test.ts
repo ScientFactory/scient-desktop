@@ -21,12 +21,15 @@ for (const previousId of [49, 50, 52, 71] as const) {
           }
           if (previousId === 71) {
             // Startup always runs these first; Scient's migrations read projects through the
-            // current store, which needs the columns 80 adds.
+            // current store, which needs the columns 80 and 91 add.
             yield* sql`ALTER TABLE projection_projects ADD COLUMN pinned_at TEXT`;
             yield* sql`ALTER TABLE projection_projects ADD COLUMN archived_at TEXT`;
+            yield* sql`ALTER TABLE projection_projects
+              ADD COLUMN has_custom_title INTEGER NOT NULL DEFAULT 0`;
             yield* runScientMigrations(sql);
             yield* sql`ALTER TABLE projection_projects DROP COLUMN pinned_at`;
             yield* sql`ALTER TABLE projection_projects DROP COLUMN archived_at`;
+            yield* sql`ALTER TABLE projection_projects DROP COLUMN has_custom_title`;
           }
           const scientificBefore =
             previousId === 71
