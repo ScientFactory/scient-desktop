@@ -559,7 +559,7 @@ export async function locateOverleafRetention(input: {
       input.publicationHelper,
       checkoutIdentity,
     );
-    if (after.identity.fileId !== found.identity.fileId)
+    if (!platformFileIdentity.equal(after.identity, found.identity))
       throw new Refused({ reason: "vault-replaced" });
     return { _tag: "ready", ...found };
   } catch (error) {

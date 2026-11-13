@@ -19,9 +19,11 @@ import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 
+import type { StoredFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import { OverleafReservationOwner } from "./OverleafCoordinator.ts";
 import { hasPrivateFoldersAndIdentity } from "./OverleafCoordinator.testkit.ts";
 import {
+  linkedPaper as linked,
   OTHER_PROJECT,
   overleafSyncWorld as world,
   PROJECT,
@@ -2217,3 +2219,44 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
     );
   });
 });
+
+describe.skipIf(HostProcess.Platform.defaultValue() !== "linux" || !hasPrivateFoldersAndIdentity)(
+  "a Linux link recorded before generations were read",
+  () => {
+    it.live("still matches its folder and is given the folder's generation", () =>
+      run(
+        Effect.gen(function* () {
+          const w = yield* world();
+          const connectionId = yield* linked(w);
+          const caller = w.at(w.main);
+          const strip = (identity: StoredFileIdentity): StoredFileIdentity => {
+            if (identity.platform !== "linux") return identity;
+            const { generation: _, ...legacy } = identity;
+            return legacy;
+          };
+          const before = yield* w.store.readConnection(connectionId);
+          if (before._tag !== "ready") return yield* Effect.die(before);
+          const document = before.document;
+          expect(document.folder.identity).toMatchObject({ generation: expect.any(String) });
+          yield* w.store.replaceConnection({
+            expectedRevision: document.revision,
+            next: {
+              ...document,
+              revision: document.revision + 1,
+              checkout: { ...document.checkout, identity: strip(document.checkout.identity) },
+              folder: { ...document.folder, identity: strip(document.folder.identity) },
+            },
+          });
+          expect(yield* w.service.status({ caller, connectionId })).toMatchObject({
+            availability: "ready",
+          });
+          yield* w.service.recordGenerations;
+          const after = yield* w.store.readConnection(connectionId);
+          if (after._tag !== "ready") return yield* Effect.die(after);
+          expect(after.document.checkout.identity).toEqual(document.checkout.identity);
+          expect(after.document.folder.identity).toEqual(document.folder.identity);
+        }),
+      ),
+    );
+  },
+);

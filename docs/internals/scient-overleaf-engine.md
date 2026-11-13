@@ -473,7 +473,11 @@ volume UUID plus the folder's file ID, never the device number, so a disk mounte
 again under another path is recognized. macOS resolves the UUID through `diskutil`.
 Linux reads it from the held object with `FS_IOC_GETFSUUID`, falling back to a unique
 `/dev/disk/by-uuid` entry for the mount's block device. Btrfs identities also include
-the subvolume ID, and kept copies must share the manuscript's subvolume. Linux
+the subvolume ID, and kept copies must share the manuscript's subvolume. ext4 and XFS
+give a new file a freed inode number at once, so Linux identities also carry the inode
+generation (`FS_IOC_GETVERSION`); a folder recreated at a link's path is never taken
+for the linked one. Records written before the generation was read match by inode
+until the server records it, at startup or at the link's next operation. Linux
 admission checks held-folder `fstatfs` magic and `/proc/self/mountinfo`: ext4, XFS and
 Btrfs are accepted; memory filesystems, overlay, network/virtual filesystems, FUSE,
 FAT/exFAT and NTFS drivers are refused. New identities carry platform and version
