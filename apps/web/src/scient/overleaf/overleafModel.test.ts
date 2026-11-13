@@ -427,6 +427,11 @@ describe("refusalText", () => {
     expect(refusalText({ reason: "file-too-large", path: "data.bin" })).toBe(
       "A file is over Overleaf's 50 MB limit (data.bin).",
     );
+    expect(
+      refusalText({ reason: "path-alias", paths: ["Figure.png", "figure.png"], path: "x" }),
+    ).toBe(
+      "Two names differ only by letter case or accents (Figure.png, figure.png). Rename one and sync again.",
+    );
     expect(refusalText({ reason: "something-new" })).toBe("Sync stopped (something-new).");
     // Step 5's newer reasons each have their own words.
     for (const reason of [

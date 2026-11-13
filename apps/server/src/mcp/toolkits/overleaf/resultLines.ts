@@ -260,7 +260,8 @@ const publicationLines = (
 const refusalReason = (refusal: ScientOverleafRefusal): string => {
   const filesystem = overleafFilesystemRefusalText(refusal.reason);
   if (filesystem !== null) return filesystem;
-  const at = refusal.path === undefined ? "" : ` (${refusal.path})`;
+  const names = refusal.paths ?? (refusal.path === undefined ? [] : [refusal.path]);
+  const at = names.length === 0 ? "" : ` (${names.join(", ")})`;
   switch (refusal.reason) {
     case "access-denied":
       return "Overleaf refused this project. Check the link, that the project is shared with your account, and your Overleaf token in Settings ▸ Synced folders.";
@@ -280,8 +281,9 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
     case "remote-forbidden":
       return `Overleaf has content Scient will not write (a link, Git LFS pointer, repository or reserved name)${at}.`;
     case "path-alias":
+      return `two names differ only by letter case or Unicode spelling${at}, so they cannot be synced as separate files. Rename one.`;
     case "alias-rename":
-      return "these names cannot be synced as separate files. Rename one.";
+      return `a file's name changed only by letter case or Unicode spelling${at}. Rename it back, or rename it through another name with a sync in between.`;
     case "unreviewed-path":
     case "remote-collides-with-excluded":
       return `Overleaf has a file where this folder has something that is not synced${at}. Move or rename it here or on Overleaf.`;

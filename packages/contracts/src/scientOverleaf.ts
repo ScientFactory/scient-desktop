@@ -383,6 +383,8 @@ export type ScientOverleafReview = typeof ScientOverleafReview.Type;
 export const ScientOverleafRefusal = Schema.Struct({
   reason: Schema.String,
   path: Schema.optional(ManuscriptPath),
+  /** Every name the refusal concerns, when it is more than one (two spellings of a name). */
+  paths: Schema.optional(Schema.Array(ManuscriptPath)),
 });
 export type ScientOverleafRefusal = typeof ScientOverleafRefusal.Type;
 

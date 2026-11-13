@@ -231,7 +231,8 @@ export function refusalText(
 ): string {
   const filesystem = overleafFilesystemRefusalText(refusal.reason);
   if (filesystem !== null) return filesystem;
-  const at = refusal.path ? ` (${refusal.path})` : "";
+  const names = refusal.paths ?? (refusal.path ? [refusal.path] : []);
+  const at = names.length > 0 ? ` (${names.join(", ")})` : "";
   switch (refusal.reason) {
     case "volume-unavailable":
       return "The disk holding this project is not connected.";

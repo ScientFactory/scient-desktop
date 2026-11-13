@@ -277,6 +277,12 @@ export const overleafRefusalReason = (error: { readonly _tag: string }): string 
         );
 };
 
+/** The files an editor-save failure names, as a refusal carries them. */
+const editorUnsavedPaths = (error: OverleafEditorUnsavedError) => {
+  const paths = error.failures.map((failure) => failure.path);
+  return paths.length === 0 ? {} : { path: paths[0]!, ...(paths.length > 1 ? { paths } : {}) };
+};
+
 const isActionable = (error: unknown): error is { readonly _tag: string } =>
   typeof error === "object" &&
   error !== null &&
@@ -300,7 +306,12 @@ const refusedAfterProgress =
         (error) =>
           Effect.succeed({
             _tag: "refused" as const,
-            refusal: { reason: overleafRefusalReason(error) },
+            refusal: {
+              reason: overleafRefusalReason(error),
+              ...(error._tag === "OverleafEditorUnsavedError"
+                ? editorUnsavedPaths(error as unknown as OverleafEditorUnsavedError)
+                : {}),
+            },
             retried: progress.retried,
             settled: progress.settled,
           }),
@@ -328,7 +339,11 @@ export type OverleafSyncOutcome =
   | ({
       readonly _tag: "refused";
       /** The review's refusal, or an actionable refusal raised after progress. */
-      readonly refusal: { readonly reason: string; readonly path?: string };
+      readonly refusal: {
+        readonly reason: string;
+        readonly path?: string;
+        readonly paths?: ReadonlyArray<string>;
+      };
     } & OverleafSyncProgress)
   /** A repeated request: its receipt, never a second sync. */
   | {
