@@ -180,8 +180,10 @@ export async function undoLibraryProjectPackageImport(
 
 export async function listLibraryProjectPackageImports(store: ScientSourcesLibraryStore) {
   const { projectId } = await readScientProjectIdentity(store.root);
+  const listed = await listScientProjectPackageImports({ library: store.library, projectId });
   return {
     outcome: "listed" as const,
-    packageImports: await listScientProjectPackageImports({ library: store.library, projectId }),
+    packageImports: listed.imports,
+    packageImportDiagnostics: listed.diagnostics,
   };
 }

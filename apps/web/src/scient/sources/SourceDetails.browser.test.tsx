@@ -264,3 +264,28 @@ it("reads and restores the note of a merged source's other key on that key", asy
   expect(saveKeyNote.mock.calls[0]?.[3].base).toBe("Same text");
   expect(saveProjectNote).not.toHaveBeenCalled();
 });
+
+it("preserves a refused whitespace-only personal edit instead of reporting it saved", async () => {
+  const initial = { ...record, personalNote: "My note" };
+  const save = vi.fn(async () => ({ outcome: "stale", record: initial }));
+  await using screen = await render(
+    <SourceDetails
+      record={initial}
+      diagnostics={[]}
+      library={{ canSavePersonalNote: true, onSavePersonalNote: save }}
+      onBack={() => undefined}
+      onEdit={() => undefined}
+      onSaveNote={async () => ({ outcome: "unchanged", record: initial })}
+      onRefreshMetadata={async () => undefined}
+      onRemove={async () => undefined}
+      onOpenPdf={() => undefined}
+    />,
+  );
+  await userEvent.click(screen.getByRole("button", { name: "Edit my note" }));
+  await userEvent.keyboard(" ");
+  await userEvent.tab();
+  await expect.element(page.getByText("Saved elsewhere")).toBeVisible();
+  expect(save).toHaveBeenCalledTimes(1);
+  await userEvent.click(screen.getByRole("button", { name: "Edit my note" }));
+  expect(page.getByRole("textbox", { name: "My note" }).element().textContent).toBe("My note ");
+});

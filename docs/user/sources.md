@@ -80,6 +80,8 @@ the project, and **My note**, which follows the paper into every project and is
 not saved in any project folder. Agents read and write My note too. A paper
 that is not in this project has only My note.
 
+Notes save against the note you read. Changing metadata or attaching a PDF does
+not block a note save, including a save still finishing after you leave the editor.
 A note for this project is never overwritten by a change made elsewhere. If
 another window, another Scient on this computer or an agent changed it after
 you started typing, the note shows **Saved elsewhere** with that text next to
@@ -535,7 +537,10 @@ The import's message has **Undo**. To return later, choose **⋯** >
 dates, counts and Undo when available. Open **What stayed** after Undo for
 the full list of changed additions and evidence kept; **Show them** opens the
 papers still in your Library. The list remains after closing and reopening
-Scient. Undo removes only unchanged project additions:
+Scient. If a receipt cannot be read, the list names the skipped file and keeps
+showing the healthy imports. If a current paper cannot be read, its import and
+history still appear with a notice; the paper list may be incomplete.
+Undo removes only unchanged project additions:
 new pins, new collections, and a note it gave a pin that had none. Anything
 changed since or used by another import stays. Every paper and PDF stays in
 the Library, including papers used by other projects or by a pin whose note

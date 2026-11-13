@@ -176,7 +176,10 @@ describe("importing a project package", () => {
     const theirs = await computer(base, "theirs");
     const received = await project(base, "received");
     const { projectId } = await readScientProjectIdentity(received);
-    expect(await listScientProjectPackageImports({ library: theirs, projectId })).toEqual([]);
+    expect(await listScientProjectPackageImports({ library: theirs, projectId })).toEqual({
+      imports: [],
+      diagnostics: [],
+    });
     const imported = await importInto(received, theirs, handoff);
     if (imported.outcome !== "imported") throw new Error("Expected import");
     await importInto(await project(base, "unrelated"), theirs, handoff);
@@ -193,9 +196,9 @@ describe("importing a project package", () => {
       base: null,
       actor: "user",
     });
-    const before = (await listScientProjectPackageImports({ library: theirs, projectId })).find(
-      (entry) => entry.importId === imported.importId,
-    );
+    const before = (
+      await listScientProjectPackageImports({ library: theirs, projectId })
+    ).imports.find((entry) => entry.importId === imported.importId);
     expect(before).toMatchObject({
       importId: imported.importId,
       canUndo: true,
@@ -219,7 +222,10 @@ describe("importing a project package", () => {
     });
     if (joinedUndo.outcome !== "undone") throw new Error("Expected joined Undo");
     expect(joinedUndo.left).toEqual([expect.stringMatching(/^PDF /u)]);
-    const receipts = await listScientProjectPackageImports({ library: theirs, projectId });
+    const { imports: receipts } = await listScientProjectPackageImports({
+      library: theirs,
+      projectId,
+    });
     expect(receipts).toHaveLength(2);
     const first = receipts.find((entry) => entry.importId === imported.importId);
     const second = receipts.find((entry) => entry.importId === joined.importId);
@@ -233,6 +239,85 @@ describe("importing a project package", () => {
     expect(first?.kept).toContain(`pin ${pin!.citationKey}`);
     expect(second).toMatchObject({ canUndo: false, left: joinedUndo.left });
   });
+
+  it.each(["receipt", "paper"] as const)(
+    "keeps healthy import history usable with a broken %s",
+    async (broken) => {
+      const { base, mine, source } = await setup();
+      const paper = await add(mine, "history-corruption");
+      await pinned(mine, source, paper.sourceId);
+      const handoff = NodePath.join(base, "handoff");
+      await exportTo(source, mine, handoff);
+      const received = await project(base, "received");
+      const theirs = await computer(base, "theirs");
+      const imported = await importInto(received, theirs, handoff);
+      if (imported.outcome !== "imported") throw new Error("Expected import");
+      const joined = await importInto(received, theirs, handoff);
+      if (joined.outcome !== "imported") throw new Error("Expected second import");
+      const { projectId } = await readScientProjectIdentity(received);
+      const importedPaper = (await listScientSourceRecords(theirs))[0]!;
+      const badPath =
+        broken === "receipt"
+          ? NodePath.join(
+              theirs.root,
+              "package-imports",
+              "import_00000000000000000000000000000000.json",
+            )
+          : NodePath.join(theirs.root, "records", `${importedPaper.sourceId}.json`);
+      const bytes = broken === "paper" ? await NodeFSP.readFile(badPath) : null;
+      await NodeFSP.writeFile(badPath, "{broken");
+      const listed = await listScientProjectPackageImports({ library: theirs, projectId });
+      expect(listed.imports).toHaveLength(2);
+      expect(listed.imports.find((entry) => entry.importId === imported.importId)).toMatchObject({
+        canUndo: true,
+        added: { pins: 1 },
+      });
+      expect(listed.diagnostics).toEqual([
+        expect.stringContaining(
+          broken === "receipt"
+            ? "import_00000000000000000000000000000000.json"
+            : importedPaper.sourceId,
+        ),
+      ]);
+      if (broken === "paper") {
+        expect(
+          listed.imports.find((entry) => entry.importId === imported.importId)?.retainedSourceIds,
+        ).toEqual([]);
+        await NodeFSP.writeFile(badPath, bytes!);
+      } else {
+        // Listing is tolerant; Undo must still stop when another receipt cannot be checked.
+        await expect(
+          undoScientProjectPackageImport({
+            projectRoot: received,
+            projectId,
+            library: theirs,
+            importId: imported.importId,
+            actor: "user",
+          }),
+        ).rejects.toThrow();
+        await NodeFSP.unlink(badPath);
+      }
+      expect(
+        await undoScientProjectPackageImport({
+          projectRoot: received,
+          projectId,
+          library: theirs,
+          importId: joined.importId,
+          actor: "user",
+        }),
+      ).toMatchObject({ outcome: "undone" });
+      expect(
+        await undoScientProjectPackageImport({
+          projectRoot: received,
+          projectId,
+          library: theirs,
+          importId: imported.importId,
+          actor: "user",
+        }),
+      ).toMatchObject({ outcome: "undone" });
+      expect(await readScientProjectPins(received)).toEqual([]);
+    },
+  );
 
   it.each(["proposal", "doi-fallback"] as const)(
     "honors project Keep separate after facts agree through the %s path",

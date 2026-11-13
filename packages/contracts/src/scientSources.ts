@@ -303,7 +303,7 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
   sourceId: NonEmptyString,
   expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
   note: ScientSourceNote,
-  /** A library's project note: the note the editor saw (absent: none). Another one answers `stale`. */
+  /** The note the editor saw; checked under its owning lock. Absent: legacy revision check, or no pin note. */
   expectedNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The editor's autosave session; its saves within ten minutes are one history checkpoint. */
   noteSession: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(64))),
@@ -642,6 +642,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
   /** What an export or import of a project package did. */
   packageReport: Schema.optionalKey(ScientProjectPackageReport),
   packageImports: Schema.optionalKey(ScientProjectPackageImports),
+  packageImportDiagnostics: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ScientSourcesOrganizeResult = typeof ScientSourcesOrganizeResult.Type;
 

@@ -1231,6 +1231,7 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
   packagePath: Schema.optionalKey(NonEmptyString),
   packageReport: Schema.optionalKey(ScientProjectPackageReport),
   packageImports: Schema.optionalKey(ScientProjectPackageImports),
+  packageImportDiagnostics: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(

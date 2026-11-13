@@ -81,6 +81,7 @@ type SourceNoteSave = (
 function useSourceNoteState(input: {
   readonly record: ScientSourceDetailResult;
   readonly field: SourceNoteField;
+  readonly storage?: "source" | "pin";
   readonly onSave: SourceNoteSave;
 }) {
   const field = input.field;
@@ -109,7 +110,7 @@ function useSourceNoteState(input: {
   useEffect(() => {
     recordRef.current = input.record;
     const remote = noteText(input.record, field);
-    if (remote === draftRef.current) {
+    if (!conflictRef.current && remote === draftRef.current) {
       conflictRef.current = false;
       setSavedElsewhere(null);
       confirmedRef.current = remote;
@@ -148,7 +149,15 @@ function useSourceNoteState(input: {
       });
       recordRef.current = result.record;
       const remote = noteText(result.record, field);
-      if (remote.trim() !== submitted.trim()) {
+      const normalize = (text: string) => {
+        if (input.storage === "pin") return text.trim();
+        const lines = text.replace(/\r\n?/gu, "\n");
+        return lines.trim() ? lines : "";
+      };
+      if (
+        (result.outcome !== "updated" && result.outcome !== "unchanged") ||
+        normalize(remote) !== normalize(submitted)
+      ) {
         conflictRef.current = true;
         if (mountedRef.current) {
           setStatus("conflict");
@@ -673,6 +682,7 @@ export function useSourceNoteControls(props: {
   readonly record: ScientSourceDetailResult;
   readonly readOnly?: boolean;
   readonly field?: SourceNoteField;
+  readonly storage?: "source" | "pin";
   /** A personal Library names each of a source's two notes; elsewhere the heading is "Notes". */
   readonly heading?: string;
   readonly help?: string;

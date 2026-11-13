@@ -1096,12 +1096,13 @@ export function ScientSourcesPanel(props: {
             ? {
                 library: {
                   canSavePersonalNote,
-                  onSavePersonalNote: async (note: string | null, expectedRevision: number) => {
+                  onSavePersonalNote: async (note, expectedRevision, context) => {
                     const result = await updateScientSourcePersonalNote(props.environmentId, {
                       root: props.root,
                       sourceId: selectedRecord.sourceId,
                       expectedRevision,
                       note,
+                      expectedNote: context.base,
                     });
                     if (panelMounted.current && panelContextRef.current === panelContext) {
                       sources.acceptSourceRecord(result.record);

@@ -145,13 +145,24 @@ function joinedEvidence(receipt: ScientProjectPackageReceipt): ReadonlyArray<str
 async function retainedPapers(
   library: ScientLibraryLocation,
   receipt: ScientProjectPackageReceipt,
+  onUnreadable?: (item: string) => void,
 ) {
-  const aliases = await readScientLibraryAliases(library);
+  const aliases = await readScientLibraryAliases(library).catch((error: unknown) => {
+    if (!onUnreadable) throw error;
+    onUnreadable("aliases.json");
+    return null;
+  });
+  if (aliases === null) return [];
   const ids: string[] = [];
   for (const id of new Set(
     receipt.added.sources.map((id) => resolveScientLibraryAlias(aliases, id)),
   )) {
-    if (await readScientSourceRecord(library, id)) ids.push(id);
+    try {
+      if (await readScientSourceRecord(library, id)) ids.push(id);
+    } catch (error) {
+      if (!onUnreadable) throw error;
+      onUnreadable(`records/${id}.json`);
+    }
   }
   return ids;
 }
@@ -167,9 +178,15 @@ export async function listScientProjectPackageImports(input: {
     throw error;
   });
   const imports = [];
-  for (const name of names) {
+  const diagnostics: string[] = [];
+  for (const name of names.toSorted()) {
     if (!name.endsWith(".json")) continue;
-    const receipt = await readScientProjectPackageReceipt(input.library, name.slice(0, -5));
+    const receipt = await readScientProjectPackageReceipt(input.library, name.slice(0, -5)).catch(
+      () => {
+        diagnostics.push(`Skipped unreadable import receipt ${name}.`);
+        return null;
+      },
+    );
     if (!receipt || receipt.projectId !== input.projectId) continue;
     imports.push({
       importId: receipt.importId,
@@ -188,12 +205,19 @@ export async function listScientProjectPackageImports(input: {
       failed: receipt.failed,
       kept: receipt.undone?.kept ?? [],
       left: joinedEvidence(receipt),
-      retainedSourceIds: await retainedPapers(input.library, receipt),
+      retainedSourceIds: await retainedPapers(input.library, receipt, (item) => {
+        diagnostics.push(
+          `Could not read ${item} for import ${receipt.importId}; its current Library papers may be incomplete.`,
+        );
+      }),
     });
   }
-  return imports.sort(
-    (a, b) => b.importedAt.localeCompare(a.importedAt) || a.importId.localeCompare(b.importId),
-  );
+  return {
+    imports: imports.sort(
+      (a, b) => b.importedAt.localeCompare(a.importedAt) || a.importId.localeCompare(b.importId),
+    ),
+    diagnostics,
+  };
 }
 
 /** Every other import in this Library not undone: one may use what this one created. */

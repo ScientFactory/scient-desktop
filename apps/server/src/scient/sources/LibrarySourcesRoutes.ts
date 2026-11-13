@@ -899,6 +899,7 @@ export async function updateLibraryPersonalNote(
     readonly sourceId: string;
     readonly expectedRevision: number;
     readonly note: string | null;
+    readonly expectedNote?: string | null;
   },
 ) {
   const sourceId = await libraryIdOf(store, input.sourceId);
@@ -908,6 +909,7 @@ export async function updateLibraryPersonalNote(
     sourceId,
     expectedRevision: input.expectedRevision,
     note: input.note,
+    ...(input.expectedNote !== undefined ? { expectedNote: input.expectedNote } : {}),
     actor: ACTOR,
   });
   return {

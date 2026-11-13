@@ -1312,10 +1312,14 @@ live in the Library, following merge aliases and deduplicating survivors;
 `kept` names preserved project additions and `left` lists joined evidence.
 A receipt without `added.created` keeps everything. A failed step leaves the
 receipt available to retry. `list-package-imports`, shared by the panel and
-`scient_sources_organize`, reads only this project's receipts, newest first
+`scient_sources_organize`, lists only this project's receipts, newest first
 with the import ID as a tie-breaker. It returns dates, added counts, failures,
 Undo availability, retained paper IDs and the complete `kept` and `left` lists,
-including after Undo. Recover → Package imports reads that list on every open
+including after Undo. Receipt files are read independently: `packageImportDiagnostics`
+names skipped unreadable files. Live-paper enrichment is best effort and reports
+unreadable record or alias files separately, preserving the historical row.
+These listing diagnostics do not relax Undo's authoritative receipt and version
+checks. Recover → Package imports reads that list on every open
 and after Undo; Undo rechecks the receipt and each project's addition at apply.
 The panel reports the retained paper count and
 **Show them** selects All Library with an explicit source-ID filter and a
@@ -1426,7 +1430,8 @@ note on every route. The detail adds `projectNote` and, only for a session
 holding `orchestration:operate` on this environment, `personalNote`; list and
 overview payloads never carry it. `updatePersonalNote`
 (`POST /api/scient/sources/personal-note/update`, operate) sets it with the
-record's revision. The authorization model has no finer notion of the
+editor's `expectedNote`, checked under the source-write lock. Without that
+field, older callers still use the record revision. The authorization model has no finer notion of the
 environment's owner than this grant: every connection holding it can already
 change the library. In library mode `scient_sources_note_update` sets the
 personal note and `scient_sources_organize` pin sets the project note.
@@ -1537,8 +1542,8 @@ reason code), so the server's own "pin" messages are seen only by agents.
 edits the pin's note) and "My note" side by side, or one under the other when
 the panel is narrow (a container query on the notes). "My note" appears only
 when the detail has the `personalNote` key, which a session without operate
-never gets. It saves through `updatePersonalNote` with the library record's
-`revision`; `stale` is handled like the project note. A source not in this
+never gets. It saves through `updatePersonalNote` with the editor's checked
+note base; `stale` is handled like the project note. A source not in this
 project has no project note: details show "My note" and "Add to project". Edit
 results other than the personal note's own lack `personalNote`; the reducer
 keeps the one on screen (`keepPersonalFields`), and when the revision moved the
@@ -1549,9 +1554,14 @@ The note editor submits the draft with the last note it saw as its checked base.
 `scientSourcesHttp.ts` forwards the complete note request, including
 `expectedNote`, `noteSession` and `citationKey`, through the generated HTTP client.
 Keep mine uses the text shown under Saved elsewhere for one checked write.
-A returned note that still differs from the submitted text stops in conflict,
+Personal and project-owned notes compare that base under the source-write lock,
+so an unrelated metadata or PDF revision does not refuse the write. A supplied
+base takes precedence over the record revision; absent bases retain revision
+checks for older callers. These notes normalize line endings and preserve edge
+whitespace in nonempty text; pin notes trim it. A refused outcome or a returned
+note that differs under its owning storage normalization stops in conflict,
 including a repeated refusal with the same remote text. No automatic retry follows
-a refusal. A successful whitespace-normalized answer becomes the confirmed draft;
+a refusal. An accepted normalized answer becomes the confirmed draft;
 only text typed during a successful request can start another save. Blurring or
 unmounting a conflicted editor does not silently choose Keep mine.
 

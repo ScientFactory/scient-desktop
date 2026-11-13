@@ -25,6 +25,7 @@ export function PackageImportsDialog(props: {
   readonly onClose: () => void;
 }) {
   const [imports, setImports] = useState<Imports | null>(null);
+  const [diagnostics, setDiagnostics] = useState<ReadonlyArray<string>>([]);
   const [error, setError] = useState<string | null>(null);
   const [working, setWorking] = useState(false);
   const { environmentId, root } = props;
@@ -34,7 +35,10 @@ export function PackageImportsDialog(props: {
     let active = true;
     void organizeScientSources(environmentId, { root, change: { action: "list-package-imports" } })
       .then((result) => {
-        if (active) setImports(result.packageImports ?? []);
+        if (active) {
+          setImports(result.packageImports ?? []);
+          setDiagnostics(result.packageImportDiagnostics ?? []);
+        }
       })
       .catch((cause: unknown) => {
         if (active) setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
@@ -59,6 +63,7 @@ export function PackageImportsDialog(props: {
         change: { action: "list-package-imports" },
       });
       setImports(listed.packageImports ?? []);
+      setDiagnostics(listed.packageImportDiagnostics ?? []);
     } catch (cause) {
       setError(scientSourcesErrorMessage(cause, import.meta.env.DEV));
     } finally {
@@ -82,6 +87,13 @@ export function PackageImportsDialog(props: {
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
+          {diagnostics.length > 0 ? (
+            <ul role="status" className="list-disc pl-5 text-sm text-muted-foreground">
+              {diagnostics.map((message) => (
+                <li key={message}>{message}</li>
+              ))}
+            </ul>
+          ) : null}
           {error ? (
             <p role="alert" className="text-sm text-destructive">
               {error}

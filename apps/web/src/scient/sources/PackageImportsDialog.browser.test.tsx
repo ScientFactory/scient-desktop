@@ -46,7 +46,11 @@ it("reopens Package imports through Recover, undoes an import and revisits every
       undone = true;
       return { outcome: "undone" };
     }
-    return { outcome: "listed", packageImports: [entry()] };
+    return {
+      outcome: "listed",
+      packageImports: [entry()],
+      packageImportDiagnostics: ["Skipped unreadable import receipt import_broken.json."],
+    };
   });
   const changed = vi.fn(async () => undefined);
   await using _screen = await render(
@@ -73,6 +77,9 @@ it("reopens Package imports through Recover, undoes an import and revisits every
   };
   await openImports();
   await expect.element(page.getByText("Thesis handoff", { exact: true })).toBeVisible();
+  await expect
+    .element(page.getByText("Skipped unreadable import receipt import_broken.json."))
+    .toBeVisible();
   await userEvent.click(page.getByRole("button", { name: "Undo", exact: true }));
   await expect.element(page.getByText("What stayed")).toBeVisible();
   expect(changed).toHaveBeenCalledTimes(1);
