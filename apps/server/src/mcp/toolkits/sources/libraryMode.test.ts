@@ -1150,6 +1150,35 @@ describe("Sources tools on the library backend", () => {
       yield* refused({ relativePath: ".scient/handoff" });
       expect(yield* Effect.promise(() => NodeFSP.readdir(elsewhere))).toEqual([]);
 
+      // It reads a package only from the project or a folder the person chose, and never through
+      // a link out of either or out of the package.
+      const importing = (relativePath: string) =>
+        run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "import-package", relativePath },
+          }),
+          fixture,
+        );
+      const away = NodePath.join(fixture.base, "away");
+      yield* Effect.promise(() =>
+        NodeFSP.cp(NodePath.join(fixture.root, "handoff"), NodePath.join(away, "handoff"), {
+          recursive: true,
+        }),
+      );
+      yield* importing(NodePath.join(away, "handoff")).pipe(Effect.flip);
+      yield* importing("../away/handoff").pipe(Effect.flip);
+      yield* Effect.promise(() => NodeFSP.symlink(away, NodePath.join(fixture.root, "away-link")));
+      yield* importing("away-link/handoff").pipe(Effect.flip);
+      yield* Effect.promise(async () => {
+        const pins = NodePath.join(fixture.root, "handoff", "project", "pins.json");
+        await NodeFSP.rm(pins);
+        await NodeFSP.symlink(NodePath.join(away, "handoff", "project", "pins.json"), pins);
+      });
+      expect(yield* importing("handoff")).toMatchObject({
+        outcome: "package-changed",
+        packageReport: { changedFiles: ["project/pins.json"] },
+      });
+
       // Saved outside the project by the person: nothing for Git; the agent may use it then.
       const store = yield* resolveScientLibraryStoreAt(fixture.root, "write").pipe(
         Effect.provideService(ServerConfig, {
@@ -1171,6 +1200,9 @@ describe("Sources tools on the library backend", () => {
       expect(NodePath.dirname("packagePath" in outside ? outside.packagePath! : "")).toBe(
         fixture.base,
       );
+      expect(yield* importing("packagePath" in outside ? outside.packagePath! : "")).toMatchObject({
+        outcome: "imported",
+      });
     }),
   );
 
