@@ -113,14 +113,21 @@ const waitForBulkAnnounced = (
   before: number,
   fiber: Fiber.Fiber<unknown, unknown>,
 ) =>
-  Effect.raceFirst(
-    barrier
-      .current(path)
-      .pipe(Effect.repeat({ until: (section) => section.epoch > before }), Effect.asVoid),
-    Fiber.await(fiber).pipe(Effect.asVoid),
-  );
+  Effect.gen(function* () {
+    const outcome = yield* Effect.raceFirst(
+      barrier
+        .current(path)
+        .pipe(
+          Effect.repeat({ until: (section) => section.epoch > before }),
+          Effect.as("announced" as const),
+        ),
+      Fiber.await(fiber).pipe(Effect.map((exit) => `ended first: ${String(exit)}`)),
+    );
+    // Ending first (refused, or run without waiting) would make the caller's next steps vacuous.
+    assert.equal(outcome, "announced");
+  });
 
-/** Forks a bulk change of `path` and returns once it has announced itself (or ended). */
+/** Forks a bulk change of `path` and returns once it has announced itself. */
 const forkBulk = <A, E>(
   barrier: CheckoutBarrierShape,
   path: string,
@@ -505,13 +512,22 @@ describe("CheckoutBarrier", () => {
     }).pipe(Effect.scoped),
   );
 
-  // A skipped change runs outside the barrier: no settler, no epoch.
-  const skipsOutside = (barrier: CheckoutBarrierShape, path: string, observe: string) =>
+  // A skipped change runs outside the barrier: it neither waits for an application held on the
+  // checkout (it would hang) nor runs a settler or moves an epoch. `arm` starts the removal.
+  const skipsOutside = <R>(
+    barrier: CheckoutBarrierShape,
+    path: string,
+    observe: string,
+    arm: Effect.Effect<void, never, R>,
+  ) =>
     Effect.scoped(
       Effect.gen(function* () {
         yield* barrier.settleBeforeBulk((section) =>
           Effect.fail(new CheckoutRecoveryRequiredError({ checkout: section.root })),
         );
+        const release = yield* Deferred.make<void>();
+        const application = yield* holdApplication(barrier, path, release);
+        yield* arm;
         let ran = false;
         yield* barrier.bulk(
           path,
@@ -522,6 +538,8 @@ describe("CheckoutBarrier", () => {
         );
         assert.isTrue(ran);
         assert.equal((yield* barrier.current(observe)).epoch, 0);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(application);
       }),
     );
 
@@ -539,31 +557,33 @@ describe("CheckoutBarrier", () => {
         NodeFSP.mkdir(NodePath.join(worktree, ".git"), { recursive: true }),
       );
       const remove = () => NodeFSP.rm(worktree, { recursive: true, force: true });
-      const key = platformFileIdentity.key.bind(platformFileIdentity);
-      const identity = vi.spyOn(platformFileIdentity, "key").mockImplementation(async (path) => {
-        // Gone after its `.git` was seen: before its own identity read, or after it.
-        if (read !== "before-marker" && path === (read === "after-identity" ? repo : worktree))
-          await remove();
-        if (read === "uncoded" && path === worktree)
-          throw new Error("File identity is unavailable.");
-        return key(path);
+      const arm = Effect.gen(function* () {
+        const key = platformFileIdentity.key.bind(platformFileIdentity);
+        const identity = vi.spyOn(platformFileIdentity, "key").mockImplementation(async (path) => {
+          // Gone after its `.git` was seen: before its own identity read, or after it.
+          if (read !== "before-marker" && path === (read === "after-identity" ? repo : worktree))
+            await remove();
+          if (read === "uncoded" && path === worktree)
+            throw new Error("File identity is unavailable.");
+          return key(path);
+        });
+        // Gone after its real path was resolved and before its `.git` is looked for.
+        const promises = NodeFS.promises;
+        const lstat = promises.lstat.bind(promises);
+        const marker = vi.spyOn(promises, "lstat").mockImplementation(async (file, ...rest) => {
+          if (read === "before-marker" && file === NodePath.join(worktree, ".git")) await remove();
+          return lstat(file, ...rest);
+        });
+        NodeModule.syncBuiltinESMExports();
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            identity.mockRestore();
+            marker.mockRestore();
+            NodeModule.syncBuiltinESMExports();
+          }),
+        );
       });
-      // Gone after its real path was resolved and before its `.git` is looked for.
-      const promises = NodeFS.promises;
-      const lstat = promises.lstat.bind(promises);
-      const marker = vi.spyOn(promises, "lstat").mockImplementation(async (file, ...rest) => {
-        if (read === "before-marker" && file === NodePath.join(worktree, ".git")) await remove();
-        return lstat(file, ...rest);
-      });
-      NodeModule.syncBuiltinESMExports();
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          identity.mockRestore();
-          marker.mockRestore();
-          NodeModule.syncBuiltinESMExports();
-        }),
-      );
-      yield* skipsOutside(makeCheckoutBarrier(), worktree, repo);
+      yield* skipsOutside(makeCheckoutBarrier(), worktree, repo, arm);
     }).pipe(Effect.scoped),
   );
 
