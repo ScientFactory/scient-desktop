@@ -14,6 +14,7 @@ import {
   workspaceResolverForTest,
   workspaceScopeForTest,
 } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
+import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
 import {
   addAnnotationForInvocation,
   readAnnotationsForInvocation,
@@ -56,6 +57,8 @@ function agentContext(root: string) {
         }),
       ),
       Effect.provide(ScientAnnotationsLive),
+      // These PDFs live in an unmoved project; ScientAnnotations.library.test.ts covers the Library.
+      Effect.provideService(ScientSourcesBackend, "project"),
     );
 }
 
