@@ -12,8 +12,8 @@ import { version as pdfjsVersion } from "pdfjs-dist/legacy/build/pdf.mjs";
 
 import type { PdfSelectedPage, PdfSelectionRefusal } from "./pdfTextLayer";
 
-/** The extractor version stored with every target; a pdf.js upgrade invalidates offsets. */
-export const PDF_EXTRACTOR_VERSION = pdfjsVersion;
+/** The extractor version stored with every target, as provenance; the live page proves offsets. */
+const PDF_EXTRACTOR_VERSION = pdfjsVersion;
 
 export function pdfTextHash(text: string): string {
   return [...sha256(new TextEncoder().encode(text))]

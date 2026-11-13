@@ -144,13 +144,13 @@ export interface PdfTargetVerification {
 /**
  * Material and selector validity stay separate: identical bytes read by a
  * different extractor can still shift offsets, so offsets are reused only
- * when the live page text proves them.
+ * when the live page text proves them (text hash, geometry, quote and context),
+ * whichever extractor version stored them; the version is provenance.
  */
 export function verifyPdfTarget(
   target: PdfTarget,
   current: {
     readonly material: PdfMaterial | null;
-    readonly extractorVersion: string;
     readonly page: (page: number) => PdfCurrentPage | undefined;
   },
 ): PdfTargetVerification {
@@ -163,7 +163,6 @@ export function verifyPdfTarget(
         : "differs";
   const selectorValid =
     target.extractor.profile === PDF_TEXT_PROFILE &&
-    target.extractor.version === current.extractorVersion &&
     target.selector.pages.every((stored) => {
       const page = current.page(stored.page);
       return (
