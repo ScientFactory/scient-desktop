@@ -6722,6 +6722,13 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       WHERE item.thread_id = ${threadId}
         AND item.type = 'room_message'
         ${exceptShownByLiveFork ? sql`AND NOT ${shownByLiveFork(threadId, "item.run_id")}` : sql``}
+      UNION
+      SELECT held.value AS id
+      FROM orchestration_v2_projection_turn_items AS item,
+        json_each(item.payload_json, '$.roomMessage.heldFileIds') AS held
+      WHERE item.thread_id = ${threadId}
+        AND item.type = 'room_message'
+        ${exceptShownByLiveFork ? sql`AND NOT ${shownByLiveFork(threadId, "item.run_id")}` : sql``}
     `,
       ]).pipe(
         Effect.map(([messages, renders, answerFiles, guestFiles, roomFiles]) => [
