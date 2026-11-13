@@ -362,7 +362,7 @@
         "completionWake": "settled_only",
         "durationSeconds": 90,
         "failureClass": "permission",
-        "failureCode": "context-overflow",
+        "failureCode": "retry_stalled",
         "failurePhase": "provider",
         "httpStatus": 400,
         "appVersion": "0.6.8",
@@ -600,7 +600,7 @@
         "provider": "antigravity",
         "modelKey": "gpt-5.6-sol",
         "retryAttempts": 2,
-        "failureCode": "context-overflow",
+        "failureCode": "retry_stalled",
         "httpStatus": 400,
         "failureClass": "permission",
         "durationBucket": "5-15s",
@@ -1957,6 +1957,36 @@
         "callerProvider": "claudeAgent",
         "targetProvider": "scient",
         "failurePhase": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "provider.turn.failed:failure-code-unknown-identifier",
+      "name": "provider.turn.failed",
+      "privacyLevel": "essential",
+      "consentLevel": "essential",
+      "properties": {
+        "provider": "scient",
+        "modelKey": "gpt-5.6-sol",
+        "failureClass": "provider_error",
+        "durationBucket": "unknown",
+        "appVersion": "0.6.8",
+        "buildChannel": "stable",
+        "contractRevision": "11"
+      }
+    },
+    {
+      "case": "mcp.delegated_task.finished:delegated-failure-unknown-identifier",
+      "name": "mcp.delegated_task.finished",
+      "privacyLevel": "product",
+      "consentLevel": "product",
+      "properties": {
+        "status": "failed",
+        "callerProvider": "claudeAgent",
+        "targetProvider": "codex",
+        "failurePhase": "provider",
         "appVersion": "0.6.8",
         "buildChannel": "stable",
         "contractRevision": "11"

@@ -1,5 +1,6 @@
 export const ANALYTICS_SCHEMA_VERSION = 1 as const;
 export const ANALYTICS_SOURCE = "desktop" as const;
+import { analyticsFailureCode } from "./failureCodes.ts";
 import {
   ANALYTICS_CONTRACT_REVISION,
   EVENT_NAME_PATTERN,
@@ -689,6 +690,15 @@ function optionalProperties(
   return properties;
 }
 
+/** A failure code, kept only when it is one of `provider`'s known categories. */
+function failureCodeProperty(
+  provider: string,
+  input: Readonly<Record<string, unknown>>,
+): { failureCode?: string } {
+  const code = analyticsFailureCode(provider, property(input, "failureCode"));
+  return code === undefined ? {} : { failureCode: code };
+}
+
 /** A provider's HTTP status, kept only as a real status code. */
 function httpStatusProperty(input: Readonly<Record<string, unknown>>): { httpStatus?: number } {
   const value = property(input, "httpStatus");
@@ -1158,8 +1168,8 @@ function normalizeEvent(
             completionWake: DELEGATED_TASK_WAKES,
             durationSeconds: "count",
             failureClass: TURN_FAILURE_CLASSES,
-            failureCode: "identifier",
           }),
+          ...failureCodeProperty(normalizedProvider(property(input, "targetProvider")), input),
           ...(property(input, "failurePhase") === undefined
             ? {}
             : {
@@ -1351,8 +1361,8 @@ function normalizeEvent(
             browserToolCalls: "count",
             browserToolFailures: "count",
             retryAttempts: "count",
-            failureCode: "identifier",
           }),
+          ...failureCodeProperty(provider, input),
           ...httpStatusProperty(input),
           failureClass: normalizedEnum(property(input, "failureClass"), TURN_FAILURE_CLASSES),
           durationBucket: durationBucket(property(input, "durationMs")),

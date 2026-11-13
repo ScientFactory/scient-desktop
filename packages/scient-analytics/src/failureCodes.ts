@@ -2,6 +2,7 @@
  * Which provider failure codes may leave the computer as `failureCode`. Some adapters pass through
  * a provider's free string, and looking like an identifier does not make it a category, so each
  * provider's known codes are listed and anything else is dropped, never truncated or hashed.
+ * The contract applies this list itself, so no caller can widen it.
  */
 
 /** Codes the host itself sets, whatever the provider. */
@@ -69,16 +70,30 @@ const CODEX_CODES = new Set([
   "responseStreamDisconnected",
   "responseTooManyFailedAttempts",
   "activeTurnNotSteerable",
+  // ChatGPT sharing's own reasons, which Codex relays and `CodexManagedErrors` curates.
+  "subscription_sharing_v2_user_not_eligible",
+  "subscription_sharing_usage_limit_exceeded",
+  "subscription_sharing_workplace_individual_usage_limit_exceeded",
+  "subscription_sharing_usage_unavailable",
+  "subscription_sharing_unsupported_capability",
+  "subscription_sharing_v2_client_not_enabled",
+  "subscription_sharing_v2_route_not_supported",
+  "subscription_sharing_v2_invalid_user",
+  "subscription_sharing_v2_user_unavailable",
+  "subscription_sharing_user_not_eligible",
+  "subscription_sharing_route_not_supported",
+  "subscription_sharing_invalid_user",
+  "subscription_sharing_user_unavailable",
+  "chatpass_v2_scope_not_authorized",
+  "chatpass_v2_invalid_authorization_context",
 ]);
 
 const HTTP_CODE = /^http_[1-5]\d\d$/u;
 const CLAUDE_API_ERROR_CODE = /^api_error_[1-5]\d\d$/u;
-/** ChatGPT sharing's own reasons, which Codex relays and `CodexManagedErrors` curates. */
-const CODEX_SHARING_CODE = /^(?:subscription_sharing|chatpass)_[a-z0-9_]{1,48}$/u;
 
 /** The code to report for a failure of `provider`, or undefined when it is not a known category. */
-export function analyticsFailureCode(provider: string, code: string | null): string | undefined {
-  if (code === null) return undefined;
+export function analyticsFailureCode(provider: string, code: unknown): string | undefined {
+  if (typeof code !== "string") return undefined;
   if (HOST_CODES.has(code)) return code;
   switch (provider) {
     case "scient":
@@ -87,7 +102,7 @@ export function analyticsFailureCode(provider: string, code: string | null): str
     case "claudeAgent":
       return CLAUDE_CODES.has(code) || CLAUDE_API_ERROR_CODE.test(code) ? code : undefined;
     case "codex":
-      return CODEX_CODES.has(code) || CODEX_SHARING_CODE.test(code) ? code : undefined;
+      return CODEX_CODES.has(code) ? code : undefined;
     default:
       return undefined;
   }

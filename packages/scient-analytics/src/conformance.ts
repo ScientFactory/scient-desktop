@@ -122,7 +122,7 @@ const representativeProperties = {
   commandCount: 3,
   failedCount: 1,
   stoppedCount: 1,
-  failureCode: "context-overflow",
+  failureCode: "retry_stalled",
   httpStatus: 400,
   retryAttempts: 2,
   failurePhase: "provider",
@@ -302,6 +302,20 @@ export function buildAnalyticsConformanceFixture() {
       failurePhase: "PRIVATE-CONTENT",
       failureCode: "someone@example.invalid",
       httpStatus: 99.5,
+    }),
+    // Identifier-shaped codes that are not the provider's known categories are dropped too.
+    fixtureCase("failure-code-unknown-identifier", "provider.turn.failed", {
+      provider: "scient",
+      model: "gpt-5.6-sol",
+      failureClass: "provider_error",
+      failureCode: "private_prompt_fragment",
+    }),
+    fixtureCase("delegated-failure-unknown-identifier", "mcp.delegated_task.finished", {
+      status: "failed",
+      callerProvider: "claudeAgent",
+      targetProvider: "codex",
+      failurePhase: "provider",
+      failureCode: "chatpass_private_prompt_fragment",
     }),
     fixtureCase("command-hostile", "provider.commands.observed", {
       provider: "codex",

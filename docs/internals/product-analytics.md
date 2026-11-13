@@ -642,9 +642,9 @@ Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`,
   resumed is `retry_stalled` unless the provider gave a code; an out-of-memory kill is `oom_kill`.
   Claude result subtypes and process exits, `api_error_<status>`, and Codex error variants and
   ChatGPT sharing codes come from those adapters.
-  [`ProviderFailureCodes.ts`](../../apps/server/src/telemetry/ProviderFailureCodes.ts) lists
-  each provider's known codes; anything else is dropped, since a code that only looks like an
-  identifier may be free text a provider sent.
+  [`failureCodes.ts`](../../packages/scient-analytics/src/failureCodes.ts) lists each
+  provider's known codes, ChatGPT sharing codes included by name, and the contract itself drops
+  anything else, since a code that only looks like an identifier may be free text a provider sent.
 - `httpStatus`: the provider's HTTP status, 100 to 599, on the failure itself
   (`OrchestrationV2ProviderFailure.httpStatus`).
 - `retryAttempts`, also on `provider.turn.completed`: retry attempts the provider reported for the

@@ -8,7 +8,7 @@ import * as Effect from "effect/Effect";
 
 import { delegatedTaskResultRun } from "../orchestration-v2/RestartBackgroundNote.ts";
 import type { OrchestratorV2Shape } from "../orchestration-v2/Orchestrator.ts";
-import { analyticsFailureCode } from "./ProviderFailureCodes.ts";
+import { analyticsFailureCode } from "@scientfactory/analytics";
 
 export interface DelegatedTaskFailure {
   /**

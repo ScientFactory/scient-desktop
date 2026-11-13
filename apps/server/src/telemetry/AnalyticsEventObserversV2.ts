@@ -19,7 +19,7 @@ import { createProviderAccountAnalyticsMapper } from "./ProviderAccountAnalytics
 import { createProviderLifecycleAnalyticsMapper } from "./ProviderLifecycleAnalytics.ts";
 import { classifyCommand, shellCommandOf } from "./CommandCategories.ts";
 import { BrowserToolCalls, type BrowserToolCallLedger } from "./ScientMcpAnalytics.ts";
-import { analyticsFailureCode } from "./ProviderFailureCodes.ts";
+import { analyticsFailureCode } from "@scientfactory/analytics";
 
 type Observation = {
   readonly name: string;
