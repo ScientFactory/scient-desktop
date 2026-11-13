@@ -117,11 +117,17 @@ export const retainedComputerPresentation = (
       }
     : undefined;
 
-/** The screenshots a tool result shows, as the timeline serves them. */
+/** The images a tool result shows, as the timeline serves them: its image blocks, then the pictures `generate_image` made. */
 export const ompToolImages = (result: unknown): ReadonlyArray<OmpToolImage> => {
-  if (!isRecord(result) || !Array.isArray(result.content)) return [];
+  if (!isRecord(result)) return [];
+  const generated =
+    isRecord(result.details) && Array.isArray(result.details.images)
+      ? result.details.images.map((image) =>
+          isRecord(image) ? { ...image, type: "image" } : image,
+        )
+      : [];
   const images: Array<OmpToolImage> = [];
-  for (const block of result.content) {
+  for (const block of [...(Array.isArray(result.content) ? result.content : []), ...generated]) {
     const image = readToolOutputImage(block);
     if (image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH)
       continue;

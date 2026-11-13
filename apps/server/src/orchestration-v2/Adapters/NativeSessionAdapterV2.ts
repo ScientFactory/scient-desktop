@@ -98,6 +98,17 @@ export type NativeSubagentStep =
     }
   | { readonly kind: "notice"; readonly id: string; readonly message: string };
 
+/** SCIENT-FORK: a tool call shown as the typed row Codex and Claude produce, not a generic one. */
+type NativeToolRowItem = Extract<
+  OrchestrationV2TurnItem,
+  { readonly type: "command_execution" | "file_change" | "web_search" }
+>;
+export type NativeToolRow = NativeToolRowItem extends infer Item
+  ? Item extends NativeToolRowItem
+    ? Omit<Item, Exclude<keyof Item, "type"> & keyof OrchestrationV2TurnItem>
+    : never
+  : never;
+
 /** Native process events, before either orchestration version's presentation mapping. */
 export type NativeSessionUpdate =
   | {
@@ -148,6 +159,7 @@ export type NativeSessionUpdate =
       readonly toolSource?: ToolActivitySource;
       readonly toolIcon?: ToolActivityIcon;
       readonly permissionsNeeded?: ReadonlyArray<ToolHostPermission>;
+      readonly row?: NativeToolRow;
     }
   | {
       readonly type: "subagent";
@@ -1376,6 +1388,18 @@ export function makeNativeSessionAdapterV2(
                   } else if (content.type === "compaction")
                     item = { ...common, ...content, driver };
                   else item = { ...common, ...content };
+                } else if (update.type === "tool" && update.row !== undefined) {
+                  // SCIENT-FORK: typed tool rows.
+                  item = {
+                    ...base,
+                    ...update.row,
+                    title: update.title ?? null,
+                    status:
+                      running.interrupted && update.status === "failed"
+                        ? "interrupted"
+                        : update.status,
+                    completedAt: update.status === "running" ? null : now,
+                  };
                 } else if (update.type === "tool") {
                   const images = update.images ?? [];
                   item = {
@@ -1669,7 +1693,10 @@ export function makeNativeSessionAdapterV2(
                           ? "approval_request"
                           : item.type === "user_input_request"
                             ? "user_input_request"
-                            : item.type === "dynamic_tool"
+                            : item.type === "dynamic_tool" ||
+                                item.type === "command_execution" ||
+                                item.type === "file_change" ||
+                                item.type === "web_search"
                               ? "tool_call"
                               : item.type === "subagent"
                                 ? "subagent"

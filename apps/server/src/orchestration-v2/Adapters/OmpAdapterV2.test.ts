@@ -486,6 +486,22 @@ const ordinaryToolsHarness = Effect.fnUntraced(function* (
   ];
   const tool = (id: string) =>
     latestTools().find((item) => item.nativeItemRef?.nativeId?.endsWith(`:${id}`));
+  const isCall = (item: OrchestrationV2TurnItem, id: string) =>
+    item.nativeItemRef?.nativeId?.endsWith(`:${id}`) === true;
+  /** The call's latest row, typed or generic. */
+  const row = (id: string) =>
+    h.recorded
+      .flatMap((event) =>
+        event.type === "turn_item.updated" && isCall(event.turnItem, id) ? [event.turnItem] : [],
+      )
+      .at(-1);
+  const untilRow = (id: string, status: string) =>
+    h.takeUntil(
+      (event) =>
+        event.type === "turn_item.updated" &&
+        isCall(event.turnItem, id) &&
+        event.turnItem.status === status,
+    );
   const untilTool = (id: string, status?: string) =>
     h.takeUntil(
       (event) =>
@@ -504,7 +520,7 @@ const ordinaryToolsHarness = Effect.fnUntraced(function* (
     });
     return yield* h.takeUntil((event) => event.type === "turn.terminal");
   });
-  return { ...h, tool, latestTools, untilTool, stop: () => stop };
+  return { ...h, tool, row, untilRow, latestTools, untilTool, stop: () => stop };
 });
 const nativeToolStart = (id: string, name: string, args: unknown) => ({
   type: "tool_execution_start",
@@ -1972,7 +1988,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
               data: row.entry?.toolData,
             }));
           yield* h.peer.emit([
-            nativeToolStart("shell", "bash", { command: "printf synthetic" }),
+            nativeToolStart("shell", "find", { pattern: "*.synthetic" }),
             nativeToolStart("file", "read", { path: "note.txt" }),
             { type: "tool_stream_update", toolCallId: "shell", update: { text: "first line" } },
             { type: "tool_stream_update", toolCallId: "file", update: { text: "file text" } },
@@ -2014,9 +2030,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             {
               id: shell.id,
               kind: "work",
-              title: "bash",
+              title: "find",
               status: "inProgress",
-              data: { input: { command: "printf synthetic" }, output: "first line" },
+              data: { input: { pattern: "*.synthetic" }, output: "first line" },
             },
             {
               id: file.id,
@@ -2027,7 +2043,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             },
           ]);
           yield* h.peer.emit([
-            nativeToolEnd("shell", "bash", { content: [{ type: "text", text: "final line" }] }),
+            nativeToolEnd("shell", "find", { content: [{ type: "text", text: "final line" }] }),
             nativeToolEnd("file", "read", {}),
           ]);
           yield* h.untilTool("file", "completed");
@@ -2035,9 +2051,9 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
             {
               id: shell.id,
               kind: "work",
-              title: "bash",
+              title: "find",
               status: "completed",
-              data: { input: { command: "printf synthetic" }, output: "final line" },
+              data: { input: { pattern: "*.synthetic" }, output: "final line" },
             },
             {
               id: file.id,
@@ -2070,7 +2086,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       Effect.gen(function* () {
         const h = yield* ordinaryToolsHarness();
         yield* h.peer.emit([
-          nativeToolStart("shell", "bash", { command: "sleep 10" }),
+          nativeToolStart("shell", "find", { pattern: "*.slow" }),
           { type: "tool_stream_update", toolCallId: "shell", update: { text: "partial text" } },
         ]);
         yield* h.takeUntil(
@@ -2095,7 +2111,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         assert.equal(finalTools.length, 1);
         assert.isBelow(finalTools[0]!.index, terminal);
         assert.equal(h.tool("shell")?.status, trigger === "stop" ? "interrupted" : "failed");
-        assert.deepEqual(h.tool("shell")?.input, { command: "sleep 10" });
+        assert.deepEqual(h.tool("shell")?.input, { pattern: "*.slow" });
         assert.equal(h.tool("shell")?.output, "partial text");
         assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);
       }),
@@ -2107,10 +2123,10 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       Effect.gen(function* () {
         const h = yield* ordinaryToolsHarness();
         yield* h.peer.emit([
-          nativeToolStart("shell", "bash", { command: "false" }),
+          nativeToolStart("shell", "find", { pattern: "*.missing" }),
           nativeToolEnd(
             "shell",
-            "bash",
+            "find",
             { content: [{ type: "text", text: "exit code 1" }] },
             true,
           ),
@@ -2118,8 +2134,8 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* h.untilTool("shell", "failed");
         yield* h.peer.emit([
           { type: "tool_stream_update", toolCallId: "shell", update: { text: "late" } },
-          nativeToolStart("shell", "bash", { command: "echo late" }),
-          nativeToolEnd("shell", "bash", {}),
+          nativeToolStart("shell", "find", { pattern: "*.late" }),
+          nativeToolEnd("shell", "find", {}),
           nativeToolStart("barrier", "read", { path: "barrier.txt" }),
         ]);
         yield* h.untilTool("barrier", "running");
@@ -2133,7 +2149,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           2,
         );
         assert.equal(h.tool("shell")?.status, "failed");
-        assert.deepEqual(h.tool("shell")?.input, { command: "false" });
+        assert.deepEqual(h.tool("shell")?.input, { pattern: "*.missing" });
         assert.equal(h.tool("shell")?.output, "exit code 1");
       }),
     ),
@@ -2155,15 +2171,19 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         const event = yield* h.takeUntil(
           (event) =>
             event.type === "turn_item.updated" &&
-            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.type === "command_execution" &&
             typeof event.turnItem.output === "string",
         );
         assert.isBelow(Buffer.byteLength(encodeDiagnostic(event)), 16 * 1024);
-        assert.deepEqual(h.tool("shell")?.input, { command: "printf large" });
+        const running = h.row("shell");
+        assert.ok(running?.type === "command_execution");
+        assert.equal(running.input, "printf large");
         assert.equal(h.runtime.providerSession.status, "running");
         yield* h.stop();
-        assert.equal(h.tool("shell")?.status, "interrupted");
-        assert.deepEqual(h.tool("shell")?.input, { command: "printf large" });
+        const stopped = h.row("shell");
+        assert.ok(stopped?.type === "command_execution");
+        assert.equal(stopped.status, "interrupted");
+        assert.equal(stopped.input, "printf large");
       }),
     ),
   );
@@ -2190,15 +2210,15 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* h.takeUntil(
           (event) =>
             event.type === "turn_item.updated" &&
-            event.turnItem.type === "dynamic_tool" &&
+            event.turnItem.type === "command_execution" &&
             typeof event.turnItem.output === "string",
         );
-        const encoded = encodeDiagnostic(h.latestTools());
+        const encoded = encodeDiagnostic(h.row("shell"));
         assert.notInclude(encoded, secret.slice(0, -1));
         assert.include(encoded, "[REDACTED]");
         assert.isBelow(Buffer.byteLength(encoded), 16 * 1024);
         yield* h.stop();
-        assert.notInclude(encodeDiagnostic(h.latestTools()), secret.slice(0, -1));
+        assert.notInclude(encodeDiagnostic(h.row("shell")), secret.slice(0, -1));
       }),
     ),
   );
@@ -2254,15 +2274,106 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           nativeToolStart("early", "edit", { path: "src/app.ts" }),
           nativeToolEnd("early", "edit", {}),
         ]);
-        yield* h.untilTool("early", "completed");
-        assert.equal(h.tool("early")?.id, id);
-        assert.equal(h.latestTools().length, 1);
-        assert.deepEqual(h.tool("early")?.input, { path: "src/app.ts" });
-        assert.equal(h.tool("early")?.output, "patch preview");
-        assert.equal(h.tool("early")?.toolName, "edit");
+        yield* h.untilRow("early", "completed");
+        const row = h.row("early");
+        assert.equal(row?.id, id);
+        assert.ok(row?.type === "file_change");
+        assert.equal(row.fileName, "src/app.ts");
         yield* h.stop();
       }),
     ),
+  );
+
+  it.effect(
+    "shows native OMP shell, file and search calls as typed rows and images from any tool",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const h = yield* ordinaryToolsHarness();
+          const missing = "ls: missing: No such file or directory";
+          yield* h.peer.emit([
+            nativeToolStart("shell", "bash", { command: "ls missing" }),
+            { type: "tool_stream_update", toolCallId: "shell", update: { text: missing } },
+          ]);
+          yield* h.takeUntil(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.type === "command_execution" &&
+              event.turnItem.output === missing,
+          );
+          const png = Buffer.from("synthetic image bytes").toString("base64");
+          yield* h.peer.emit([
+            nativeToolEnd(
+              "shell",
+              "bash",
+              {
+                content: [{ type: "text", text: `${missing}\nExit code 1` }],
+                details: { exitCode: 1 },
+              },
+              true,
+            ),
+            nativeToolStart("change", "edit", { path: "notes.md" }),
+            nativeToolEnd("change", "edit", {
+              content: [{ type: "text", text: "Updated notes.md" }],
+              details: {
+                path: "/work/notes.md",
+                diff: "-1|old",
+                oldText: "old\n",
+                newText: "new\n",
+              },
+            }),
+            nativeToolStart("search", "web_search", { query: "dna origami" }),
+            nativeToolEnd("search", "web_search", {
+              content: [{ type: "text", text: "1 source" }],
+              details: {
+                response: {
+                  provider: "synthetic",
+                  sources: [{ title: "Folding DNA", url: "https://example.org/a", snippet: "x" }],
+                },
+              },
+            }),
+            nativeToolStart("picture", "generate_image", { subject: "a cell" }),
+            nativeToolEnd("picture", "generate_image", {
+              content: [{ type: "text", text: "Generated 1 image(s)" }],
+              details: { images: [{ mimeType: "image/png", data: png }] },
+            }),
+          ]);
+          yield* h.untilRow("picture", "completed");
+          const shell = h.row("shell");
+          assert.ok(shell?.type === "command_execution");
+          assert.deepInclude(shell, {
+            status: "failed",
+            title: null,
+            input: "ls missing",
+            exitCode: 1,
+          });
+          assert.equal(shell.output, `${missing}\nExit code 1`);
+          const change = h.row("change");
+          assert.ok(change?.type === "file_change");
+          assert.equal(change.fileName, "/work/notes.md");
+          assert.include(change.diffStr, "-old\n+new");
+          const search = h.row("search");
+          assert.ok(search?.type === "web_search");
+          assert.deepEqual(search.patterns, ["dna origami"]);
+          assert.deepEqual(search.results, [
+            { title: "Folding DNA", url: "https://example.org/a", snippet: "x" },
+          ]);
+          const picture = h.row("picture");
+          assert.ok(picture?.type === "dynamic_tool");
+          assert.deepInclude(picture.output, {
+            content: [
+              { type: "text", text: "Generated 1 image(s)" },
+              { type: "image", mimeType: "image/png", data: png },
+            ],
+          });
+          const node = h.recorded.findLast(
+            (event) => event.type === "node.updated" && event.node.id === shell.nodeId,
+          );
+          assert.ok(node?.type === "node.updated");
+          assert.equal(node.node.kind, "tool_call");
+          yield* h.stop();
+        }),
+      ),
   );
 
   it.effect(
@@ -2543,7 +2654,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
         yield* peer.promptDelivered();
         yield* peer.emit([
           { type: "agent_start" },
-          nativeToolStart("unconfirmed-tool", "bash", { command: "could still have run" }),
+          nativeToolStart("unconfirmed-tool", "find", { pattern: "could still have run" }),
         ]);
         yield* h.takeUntil(
           (event) => event.type === "turn_item.updated" && event.turnItem.type === "dynamic_tool",
