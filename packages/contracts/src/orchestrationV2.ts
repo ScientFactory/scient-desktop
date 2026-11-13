@@ -74,6 +74,13 @@ export {
   OrchestrationV2ForkInitialization,
   ToolHostPermission,
 } from "./scient/orchestrationV2Fork.ts";
+import {
+  makeRoomMessageItems,
+  RoomParticipantId,
+  ThreadRoom,
+  ThreadRoomOwnerAction,
+  ThreadRoomServerAction,
+} from "./scient/threadRoom.ts";
 // SCIENT-FORK:END
 import { ThreadGuestShare } from "./guestShare.ts";
 import { StoredThreadTags, ThreadTag } from "./threadTags.ts";
@@ -554,6 +561,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   lastSnoozeWakeAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   guestShare: Schema.optional(Schema.NullOr(ThreadGuestShare)),
+  // SCIENT-FORK: the thread's room, if the owner invited people (scient/threadRoom.ts).
+  room: Schema.optional(Schema.NullOr(ThreadRoom)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1734,6 +1743,9 @@ const OrchestrationV2TurnItemBaseFields = makeTurnItemBaseFields(
 );
 const { MessageForkItem, MessageForkNoticeItem, MessageForkItemJson, MessageForkNoticeItemJson } =
   makeMessageForkItems(OrchestrationV2TurnItemBaseFields);
+// Room messages: people-only posts, stored and sent as a notice older clients decode.
+const { RoomMessageItem, RoomMessageNoticeItem, RoomMessageItemJson, RoomMessageNoticeItemJson } =
+  makeRoomMessageItems(OrchestrationV2TurnItemBaseFields);
 // SCIENT-FORK:END
 
 export const OrchestrationV2FileSearchResult = Schema.Struct({
@@ -1811,6 +1823,8 @@ const OrchestrationV2LinkRequestFields = {
 
 export const OrchestrationV2TurnItem = Schema.Union([
   MessageForkNoticeItem,
+  // SCIENT-FORK: room messages, ahead of plain notices like the fork notice.
+  RoomMessageNoticeItem,
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("notification"),
@@ -2003,6 +2017,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     providerThreadId: Schema.optional(ProviderThreadId),
   }),
   MessageForkItem,
+  // SCIENT-FORK: room messages.
+  RoomMessageItem,
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("thread_created"),
@@ -2730,6 +2746,8 @@ const OrchestrationV2TurnItemJsonBaseFields = {
 
 export const OrchestrationV2TurnItemJson = Schema.Union([
   MessageForkNoticeItemJson,
+  // SCIENT-FORK: room messages.
+  RoomMessageNoticeItemJson,
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("notification"),
@@ -2915,6 +2933,8 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     providerThreadId: Schema.optional(ProviderThreadId),
   }),
   MessageForkItemJson,
+  // SCIENT-FORK: room messages.
+  RoomMessageItemJson,
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("thread_created"),
@@ -3262,6 +3282,14 @@ export const OrchestrationV2Command = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
   }),
+  // SCIENT-FORK:START — the owner's room actions (scient/threadRoom.ts).
+  Schema.Struct({
+    type: Schema.Literal("thread.room"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    action: ThreadRoomOwnerAction,
+  }),
+  // SCIENT-FORK:END
   Schema.Struct({
     type: Schema.Literal("thread.guest-message.dismiss"),
     commandId: CommandId,
@@ -3478,6 +3506,9 @@ export const OrchestrationV2Command = Schema.Union([
     notification: Schema.optional(OrchestrationV2Notification),
     /** Sends this pending guest message; the server uses the guest's text, not `text`. */
     guestMessageId: Schema.optional(GuestMessageId),
+    // SCIENT-FORK:START — sends this room message; the server uses the message's text and files.
+    roomItemId: Schema.optional(TurnItemId),
+    // SCIENT-FORK:END
     ...OrchestrationV2CreationFields,
     scheduledTaskId: Schema.optional(ScheduledTaskId),
     senderThreadId: Schema.optional(ThreadId),
@@ -3719,6 +3750,30 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  // SCIENT-FORK:START — room actions the room service sends for invites and guests.
+  Schema.Struct({
+    type: Schema.Literal("thread.room.server"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    action: ThreadRoomServerAction,
+  }),
+  /** A guest with agent rights sends to the agent, directly or by sending a room message. */
+  Schema.Struct({
+    type: Schema.Literal("thread.room.guest-dispatch"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    participantId: RoomParticipantId,
+    messageId: MessageId,
+    send: Schema.Union([
+      Schema.Struct({
+        type: Schema.Literal("new"),
+        text: Schema.String,
+        attachments: Schema.Array(ChatAttachment),
+      }),
+      Schema.Struct({ type: Schema.Literal("room-message"), itemId: TurnItemId }),
+    ]),
+  }),
+  // SCIENT-FORK:END
   // SCIENT-FORK: Scient's server-only admission and receipt commands come first.
   ...ScientInternalCommands,
   // Guest share commands the server issues after checking T3 Connect and the guest token.

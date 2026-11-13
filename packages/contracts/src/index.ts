@@ -70,6 +70,9 @@ export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
 export * from "./guestShare.ts";
 export * from "./guestStream.ts";
+// SCIENT-FORK: thread rooms.
+export * from "./scient/threadRoom.ts";
+export * from "./scient/threadRoomStream.ts";
 export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
 export * from "./peerLink.ts";

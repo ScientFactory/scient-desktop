@@ -85,6 +85,8 @@ import {
   ThreadLinkedPullRequest,
   ThreadId,
   TurnItemId,
+  // SCIENT-FORK: thread rooms.
+  type RoomAuthor,
   TrimmedNonEmptyString,
   managedRuntimeModeCeilingMessage,
 } from "@t3tools/contracts";
@@ -201,6 +203,21 @@ import {
   decideGuestShareCommand,
   type GuestShareCommand,
 } from "./GuestShareDecider.ts";
+// SCIENT-FORK:START — thread rooms.
+import {
+  activeParticipant,
+  decideOwnerRoomAction,
+  decideRoomMessageSend,
+  decideServerRoomAction,
+  guestDirectSend,
+  roleCanUseAgent,
+  ROOM_FAILURE,
+  roomAnchorRunOrdinal,
+  roomItemAfterCancelledSend,
+  roomMessageItemId,
+  withoutRoomAttribution,
+} from "../scient/room/threadRoomDecider.ts";
+// SCIENT-FORK:END
 import * as EffectOutbox from "./EffectOutbox.ts";
 import { EventStoreV2 } from "./EventStore.ts";
 import { queuedSourcePlanIsUsable, sourcePlanFingerprint } from "./SourcePlan.ts";
@@ -714,6 +731,10 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.guest-share.close":
     case "thread.guest-message.submit":
     case "thread.guest-message.dismiss":
+    // SCIENT-FORK: thread rooms.
+    case "thread.room":
+    case "thread.room.server":
+    case "thread.room.guest-dispatch":
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
@@ -4359,6 +4380,189 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return decided.success;
   });
 
+  // SCIENT-FORK:START — thread rooms (scient/room/threadRoomDecider.ts).
+  // Commands the room service built for a guest, with who sends them; never from a client.
+  const roomGuestCommands = new WeakMap<object, RoomAuthor>();
+
+  const readRoomItem = (command: OrchestrationV2ServerCommand, itemId: TurnItemId) =>
+    projectionStore
+      .getTurnItem({ threadId: commandThreadId(command), itemId })
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: commandThreadId(command), cause }),
+        ),
+      );
+
+  const roomDispatchError = (command: OrchestrationV2ServerCommand, cause: string) =>
+    new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause,
+    });
+
+  const emitRoomAttachmentCleanup = (
+    command: { readonly commandId: CommandId; readonly threadId: ThreadId },
+    attachmentIds: ReadonlyArray<string>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) =>
+    attachmentIds.length === 0
+      ? Effect.void
+      : Ref.update(effects, (existing) => [
+          ...existing,
+          {
+            id: `effect:${command.commandId}:room-attachment.cleanup`,
+            commandId: command.commandId,
+            threadId: command.threadId,
+            request: { type: "attachment.cleanup", attachmentIds: [...attachmentIds] },
+          } satisfies PendingOrchestrationEffectV2,
+        ]);
+
+  const dispatchThreadRoom = Effect.fn("orchestrationV2.dispatch.threadRoom")(function* (
+    command: Extract<
+      OrchestrationV2ServerCommand,
+      { readonly type: "thread.room" | "thread.room.server" }
+    >,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+  ) {
+    const projection = yield* loadProjectionForCommand(command, ["runs"]);
+    const thread = projection.thread;
+    if (thread.deletedAt !== null) {
+      return yield* roomDispatchError(command, `Thread ${command.threadId} is deleted.`);
+    }
+    const action = command.action;
+    const targetId =
+      "itemId" in action ? action.itemId : "replyTo" in action ? action.replyTo : undefined;
+    const target = targetId === undefined ? null : yield* readRoomItem(command, targetId);
+    const messageExists =
+      "roomMessageId" in action
+        ? (yield* readRoomItem(command, roomMessageItemId(action.roomMessageId))) !== null
+        : false;
+    const now = yield* DateTime.now;
+    const input = {
+      thread,
+      now,
+      anchorRunOrdinal: roomAnchorRunOrdinal(projection.runs),
+      target,
+      messageExists,
+    };
+    const decided =
+      command.type === "thread.room"
+        ? decideOwnerRoomAction({ ...input, action: command.action })
+        : decideServerRoomAction({ ...input, action: command.action });
+    if (Result.isFailure(decided)) return yield* roomDispatchError(command, decided.failure);
+    const event = emit(events, command);
+    if (decided.success.thread !== null) {
+      yield* event({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: decided.success.thread,
+      });
+    }
+    for (const item of decided.success.items) {
+      yield* event({
+        type: "turn-item.updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: item,
+      });
+    }
+    yield* emitRoomAttachmentCleanup(command, decided.success.releasedAttachmentIds, effects);
+  });
+
+  /**
+   * A guest's send runs as the message it becomes, under the same lock, after the room checks the
+   * guest may send to the agent.
+   */
+  const roomGuestDispatchCommand = Effect.fn("orchestrationV2.dispatch.roomGuestCommand")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.room.guest-dispatch" }
+      >,
+    ) {
+      const { thread } = yield* loadProjectionForCommand(command, []);
+      const now = yield* DateTime.now;
+      const room = thread.room ?? null;
+      const participant = activeParticipant(room, command.participantId, now);
+      if (thread.archivedAt !== null || thread.deletedAt !== null || room === null) {
+        return yield* roomDispatchError(command, ROOM_FAILURE.closed);
+      }
+      if (participant === null) return yield* roomDispatchError(command, ROOM_FAILURE.notMember);
+      if (!roleCanUseAgent(participant.role)) {
+        return yield* roomDispatchError(command, ROOM_FAILURE.role);
+      }
+      const base = {
+        type: "message.dispatch" as const,
+        commandId: command.commandId,
+        threadId: command.threadId,
+        messageId: command.messageId,
+        dispatchMode: { type: "queue_after_active" as const },
+        createdBy: "user" as const,
+        creationSource: "web" as const,
+      };
+      const dispatched: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }> =
+        command.send.type === "room-message"
+          ? { ...base, text: "", attachments: [], roomItemId: command.send.itemId }
+          : {
+              ...base,
+              ...guestDirectSend({
+                room,
+                participant,
+                messageId: command.messageId,
+                text: command.send.text,
+                now,
+              }),
+              attachments: [...command.send.attachments],
+            };
+      roomGuestCommands.set(dispatched, {
+        kind: "guest",
+        participantId: participant.id,
+        name: participant.name,
+      });
+      return dispatched;
+    },
+  );
+
+  /** Records the send on the room message; the agent gets the words the server builds. */
+  const emitRoomMessageSent = Effect.fn("orchestrationV2.dispatch.roomMessageSent")(function* (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    roomItemId: TurnItemId,
+    thread: OrchestrationV2AppThread,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const now = yield* DateTime.now;
+    const decided = decideRoomMessageSend({
+      thread,
+      item: yield* readRoomItem(command, roomItemId),
+      sentBy: roomGuestCommands.get(command) ?? { kind: "owner" },
+      messageId: command.messageId,
+      now,
+    });
+    if (Result.isFailure(decided)) return yield* roomDispatchError(command, decided.failure);
+    // Emitted before the message so the send and the record commit together.
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "turn-item.updated",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: decided.success.item,
+    });
+    return {
+      ...command,
+      text: decided.success.text,
+      attachments: [...decided.success.attachments],
+      context: decided.success.context,
+    };
+  });
+  // SCIENT-FORK:END
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
@@ -4941,6 +5145,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             archivedAt: now,
             titleRegeneration: null,
             guestShare: null,
+            // SCIENT-FORK: archiving ends the room; its messages stay in the thread.
+            room: null,
             pullRequests: thread.pullRequests?.map((link) => withPullRequestWatch(link, undefined)),
             updatedAt: now,
           };
@@ -12181,6 +12387,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
     yield* emitQueuedRunCancellation({ command, events, projection, run: queuedRun, now });
     const emitEvent = emit(events, command);
+    // SCIENT-FORK:START — a cancelled room send shows as cancelled on its room message.
+    const roomItemId = queuedMessage?.context?.room?.itemId;
+    if (roomItemId !== undefined && queuedMessage !== undefined) {
+      const roomItem = yield* readRoomItem(command, roomItemId);
+      const cancelled =
+        roomItem === null ? null : roomItemAfterCancelledSend(roomItem, queuedMessage.id, now);
+      if (cancelled !== null) {
+        yield* emitEvent({
+          type: "turn-item.updated",
+          threadId: command.threadId,
+          providerInstanceId: projection.thread.providerInstanceId,
+          occurredAt: now,
+          payload: cancelled,
+        });
+      }
+    }
+    // SCIENT-FORK:END
     const guest = queuedMessage?.context?.guest;
     if (guest !== undefined) {
       const thread = guestShareAfterCancelledSend(projection.thread, guest, now);
@@ -15994,6 +16217,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }
       | undefined;
     let updateDelegatedCompletionOnlyRunId: RunId | undefined;
+    // SCIENT-FORK:START — a guest's send to the agent is decided as the message it becomes.
+    if (command.type === "thread.room.guest-dispatch") {
+      return yield* dispatchOnce(yield* roomGuestDispatchCommand(command), sideChatIds);
+    }
+    // SCIENT-FORK:END
     switch (command.type) {
       case "droid-steer.admission":
         yield* dispatchDroidSteerAdmission(command, events, effects);
@@ -16141,6 +16369,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.guest-message.dismiss":
         yield* dispatchGuestShare(command, events, effects);
         break;
+      // SCIENT-FORK:START — thread rooms.
+      case "thread.room":
+      case "thread.room.server":
+        yield* dispatchThreadRoom(command, events, effects);
+        break;
+      // SCIENT-FORK:END
       case "provider-session.detach":
         yield* dispatchProviderSessionDetach(command, events, effects);
         break;
@@ -16183,9 +16417,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.guestMessageId === undefined
             ? undefined
             : yield* emitGuestMessageSent(command, command.guestMessageId, thread, events);
+        // SCIENT-FORK:START — a room message sent to the agent; a guest's own send keeps its words.
+        const roomSend =
+          command.roomItemId === undefined
+            ? undefined
+            : yield* emitRoomMessageSent(command, command.roomItemId, thread, events);
+        const guestBuilt = roomGuestCommands.has(command) ? command : undefined;
+        // SCIENT-FORK:END
         const dispatched =
           guestSend === undefined
-            ? withoutGuestAttribution(command)
+            ? (roomSend ?? guestBuilt ?? withoutRoomAttribution(withoutGuestAttribution(command)))
             : {
                 ...command,
                 text: guestSend.text,

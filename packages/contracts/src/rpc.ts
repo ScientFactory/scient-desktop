@@ -640,6 +640,14 @@ import {
   WsEditorsFlushResolveRpc,
   WsEditorsFlushRespondRpc,
 } from "./scient/editorFlushRpcs.ts";
+// SCIENT-FORK:START — thread rooms.
+import {
+  SCIENT_THREAD_ROOM_WS_METHODS,
+  WsThreadRoomInviteLinkRpc,
+  WsThreadRoomInviteRpc,
+  WsThreadRoomPresenceRpc,
+} from "./scient/threadRoomRpcs.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Files panel entry changes.
 import {
@@ -703,6 +711,8 @@ export const WS_METHODS = {
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient editor flush methods.
   ...SCIENT_EDITOR_FLUSH_WS_METHODS,
+  // SCIENT-FORK: thread rooms.
+  ...SCIENT_THREAD_ROOM_WS_METHODS,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Agent live voice methods.
   ...SCIENT_LIVE_VOICE_WS_METHODS,
@@ -2694,6 +2704,11 @@ export const WsWorkspaceRpcGroup = RpcGroup.make(
   WsEditorsFlushLeaveRpc,
   WsEditorsFlushResolveRpc,
   WsEditorsFlushRespondRpc,
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — thread rooms.
+  WsThreadRoomInviteRpc,
+  WsThreadRoomInviteLinkRpc,
+  WsThreadRoomPresenceRpc,
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Files panel entry changes and Open With.
   WsProjectsChangeEntriesRpc,

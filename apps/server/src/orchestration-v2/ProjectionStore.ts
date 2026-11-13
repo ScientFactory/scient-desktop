@@ -6709,11 +6709,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       WHERE thread.thread_id = ${threadId}
         AND json_extract(message.value, '$.status') = 'pending'
     `,
+        // SCIENT-FORK: files posted to a thread's room are held by their room messages.
+        sql<{ id: string }>`
+      SELECT DISTINCT json_extract(attachment.value, '$.id') AS id
+      FROM orchestration_v2_projection_turn_items AS item,
+        json_each(item.payload_json, '$.roomMessage.attachments') AS attachment
+      WHERE item.thread_id = ${threadId}
+        AND item.type = 'room_message'
+        ${exceptShownByLiveFork ? sql`AND NOT ${shownByLiveFork(threadId, "item.run_id")}` : sql``}
+    `,
       ]).pipe(
-        Effect.map(([messages, renders, answerFiles, guestFiles]) => [
+        Effect.map(([messages, renders, answerFiles, guestFiles, roomFiles]) => [
           ...new Set([
             ...messages.map((row) => row.id),
             ...guestFiles.map((row) => row.id),
+            ...roomFiles.map((row) => row.id),
             ...answerFiles.map((row) => row.id),
             ...threadHtmlRenderAttachmentIds(
               threadId,

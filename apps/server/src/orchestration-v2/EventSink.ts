@@ -482,7 +482,12 @@ const layerBase: Layer.Layer<
             ? turnItemPositions
                 .normalize(
                   event.payload,
-                  event.payload.runId === null ? undefined : runOrdinals.get(event.payload.runId),
+                  // SCIENT-FORK: a room message joins the range of the run it was posted during.
+                  event.payload.type === "room_message"
+                    ? (event.payload.anchorRunOrdinal ?? undefined)
+                    : event.payload.runId === null
+                      ? undefined
+                      : runOrdinals.get(event.payload.runId),
                 )
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event);

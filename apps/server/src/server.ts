@@ -189,6 +189,8 @@ import * as EnvironmentAuth from "./auth/EnvironmentAuth.ts";
 import * as EnvironmentAuthPolicy from "./auth/EnvironmentAuthPolicy.ts";
 import * as CloudHttp from "./cloud/http.ts";
 import * as GuestHttp from "./guest/http.ts";
+// SCIENT-FORK: thread room guest routes.
+import * as ThreadRoomHttp from "./scient/room/http.ts";
 import * as CloudLink from "./cloud/CloudLink.ts";
 import * as ConnectReachability from "./cloud/ConnectReachability.ts";
 import { pendingServiceUpdateExists } from "./cloud/updateHandoff.ts";
@@ -927,6 +929,8 @@ export const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     GuestHttp.layer,
+    // SCIENT-FORK: thread room guest routes.
+    ThreadRoomHttp.layer,
     DeviceHubProxy.layer,
     // SCIENT-FORK:START — Scient Extensions: connector proxy (session-token authority) and sign-in callback (state authority).
     ConnectorProxyRoute.layer,
