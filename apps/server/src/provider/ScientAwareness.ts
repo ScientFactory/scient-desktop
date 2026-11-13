@@ -78,6 +78,21 @@ const buildScientConnectorsAwareness = (tools: ScientToolProjection): string =>
 When the user needs a service, find one with \`${tools.name("scient_connector_list")}\` and add it with \`${tools.name("scient_connector_add")}\`; if none fits, offer to build one with the \`connector-authoring\` skill. When a connector fails, offer to fix it (\`${tools.name("scient_connector_copy")}\`) or sign it in again (\`${tools.name("scient_connector_control")}\`).`;
 
 /**
+ * Included with Library access, so literature work starts in the Library rather than on the web.
+ * The answer rules are the ones the "Ask the Library" composer sentence was measured with.
+ */
+const buildScientLibraryAwareness = (
+  tools: ScientToolProjection,
+  skills: boolean,
+): string => `## Scient Library
+Start literature or citation work in the project's Library, before web search: \`${tools.name("scient_sources_list")}\` (\`total\` is its size), \`${tools.name("scient_sources_add")}\` by DOI, PMID, arXiv ID or ISBN (\`identifierList\` for several). Answer literature questions from its papers, not memory: search their full text with \`${tools.name("scient_sources_search")}\` and \`${tools.name("scient_sources_read_text")}\`, give the paper and page for each claim, and check quotes with \`${tools.name("scient_sources_quote_check")}\` before giving them. If the Library does not answer, say so; you may then use the web, and say you did. Cite with keys from the \`references.bib\` that \`${tools.name("scient_sources_bibliography")}\` manages.${skills ? " To check or fix a document's references, load the `references` skill first." : ""}${tools.deferred ? " If deferred, load these tools through `ToolSearch` first." : ""}`;
+
+export const SCIENT_LIBRARY_AWARENESS = buildScientLibraryAwareness(
+  CANONICAL_SCIENT_TOOL_PROJECTION,
+  false,
+);
+
+/**
  * Compose only the blocks whose tools this session's list can show. The
  * capabilities are the session's provider-facing manifest, which omits project
  * grants when the thread has no verified workspace.
@@ -102,6 +117,7 @@ export function buildScientAwareness(
       ? [buildScientDocumentAwareness(tools), buildScientOverleafAwareness(tools)]
       : []),
     ...(has("skills:read") ? [buildScientSkillsAwareness(tools)] : []),
+    ...(has("sources:read") ? [buildScientLibraryAwareness(tools, has("skills:read"))] : []),
     ...(has("accounts")
       ? [buildScientPapersAwareness(tools, has("preview")), buildScientConnectorsAwareness(tools)]
       : []),
@@ -121,6 +137,7 @@ export const buildScientPromptAwareness = (capabilities: ReadonlySet<string>): s
 const PROJECT_AWARENESS_GRANTS: ReadonlySet<string> = new Set<McpCapability>([
   "compute",
   "documents:build",
+  "sources:read",
 ]);
 
 /**

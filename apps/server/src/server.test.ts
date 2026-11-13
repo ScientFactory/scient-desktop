@@ -2,6 +2,14 @@ import * as DocumentText from "./provider/DocumentText.ts";
 // SCIENT-FORK:START — Scient Accounts: isolate account storage and key handling in server tests.
 import * as AccountsTestkit from "./scient/accounts/Accounts.testkit.ts";
 // SCIENT-FORK:END
+// SCIENT-FORK:START — Select the Sources backend through its reference.
+import {
+  ScientSourcesBackend,
+  type ScientSourcesBackendKind,
+} from "./scient/sources/SourcesBackend.ts";
+import { initializeScientProject } from "@scientfactory/project-init";
+import { importScientSource } from "@scientfactory/scient-sources/store";
+// SCIENT-FORK:END
 // @effect-diagnostics nodeBuiltinImport:off - HTTP router integration uses native transport boundaries.
 import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodePlatformCrypto from "@effect/platform-node/NodeCrypto";
@@ -599,6 +607,9 @@ const makeBrowserOtlpPayload = (spanName: string) =>
 
 const buildAppUnderTest = (options?: {
   onPairingChangesSubscribed?: Effect.Effect<void>;
+  // SCIENT-FORK:START — Select the Sources backend through its reference.
+  scientSourcesBackend?: ScientSourcesBackendKind;
+  // SCIENT-FORK:END
   config?: Partial<ServerConfig.ServerConfig["Service"]>;
   transformThreadManagementV2?: (
     threads: ThreadManagementV2.ThreadManagementService["Service"],
@@ -1482,7 +1493,15 @@ const buildAppUnderTest = (options?: {
         Layer.provide(layerConfig),
       );
 
-    const services = yield* Layer.build(appLayer);
+    // SCIENT-FORK:START — Select the Sources backend through its reference.
+    const backendLayer =
+      options?.scientSourcesBackend === undefined
+        ? appLayer
+        : appLayer.pipe(
+            Layer.provide(Layer.succeed(ScientSourcesBackend, options.scientSourcesBackend)),
+          );
+    const services = yield* Layer.build(backendLayer);
+    // SCIENT-FORK:END
     return {
       ...config,
       auth: Context.get(services, EnvironmentAuth.EnvironmentAuth),
@@ -5237,6 +5256,191 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodePlatformCrypto.layer))(
         }
       }).pipe(Effect.provide(NodeHttpServerTest)),
     );
+
+    // SCIENT-FORK:START — Library mutations recheck the operate grant at the server.
+    it.effect("rejects adding sources by identifier from a read-only session", () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest();
+        const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: "orchestration:read",
+        });
+        assert.equal(reader.response.status, 200);
+        const response = yield* HttpClient.post("/api/scient/sources/identifiers/add", {
+          headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+          body: yield* HttpBody.json({ root: "/synthetic/project", entries: ["10.1000/abc.123"] }),
+        });
+        assert.deepInclude(yield* response.json, {
+          code: "insufficient_scope",
+          requiredScope: "orchestration:operate",
+        });
+      }).pipe(Effect.provide(NodeHttpServerTest)),
+    );
+
+    it.effect("answers a library-mode Sources route through the server's own layers", () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({ scientSourcesBackend: "library" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-move-status-" });
+        yield* fileSystem.makeDirectory(`${root}/.scient/sources/records`, { recursive: true });
+        yield* fileSystem.writeFileString(`${root}/.scient/sources/records/v1.json`, "{}\n");
+        const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: "orchestration:read",
+        });
+        const response = yield* HttpClient.post("/api/scient/sources/move/status", {
+          headers: { authorization: `Bearer ${reader.body.access_token ?? ""}` },
+          body: yield* HttpBody.json({ root }),
+        });
+        // A project server answers nothing-to-move; the library reads the server's state folder.
+        assert.deepEqual(yield* response.json, { state: "waiting" });
+      }).pipe(Effect.provide(NodeHttpServerTest)),
+    );
+
+    it.effect("marks a library server's overview and answers a repeated move back", () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({ scientSourcesBackend: "library" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-move-back-" });
+        yield* Effect.promise(async () => {
+          await initializeScientProject({ root });
+          await importScientSource({
+            root,
+            operationId: NodeCrypto.randomUUID(),
+            candidate: {
+              sourceKey: "move-back",
+              type: "article",
+              customType: null,
+              title: "A study that comes back",
+              creators: [],
+              issuedRaw: null,
+              issuedYear: 2026,
+              identifiers: [],
+              abstract: null,
+              containerTitle: null,
+              publisher: null,
+              volume: null,
+              issue: null,
+              pages: null,
+              language: null,
+              url: null,
+              tags: [],
+              externalReferences: [],
+              fieldProvenance: [],
+              pdfAvailable: false,
+              pdfFileName: null,
+              pdfAttachmentCount: 0,
+            },
+          });
+        });
+        const owner = { cookie: yield* getAuthenticatedSessionCookieHeader() };
+        const post = (path: string, body: object) =>
+          Effect.gen(function* () {
+            const response = yield* HttpClient.post(path, {
+              headers: owner,
+              body: yield* HttpBody.json(body),
+            });
+            return (yield* response.json) as Record<string, unknown>;
+          });
+
+        // Not moved yet: the project's own store, which has no scopes, on a library server.
+        const before = yield* post("/api/scient/sources/overview", { root });
+        assert.equal(before.libraryBackend, true);
+        assert.notProperty(before, "scopes");
+        // The change moves the project in first, then moves it back.
+        const movedBack = yield* post("/api/scient/sources/organize", {
+          root,
+          change: { action: "move-back" },
+        });
+        assert.equal(movedBack.outcome, "moved-back");
+        assert.deepEqual(
+          yield* post("/api/scient/sources/organize", { root, change: { action: "move-back" } }),
+          { outcome: "not-moved" },
+        );
+        const after = yield* post("/api/scient/sources/overview", { root });
+        assert.equal(after.libraryBackend, true);
+        assert.notProperty(after, "scopes");
+      }).pipe(Effect.provide(NodeHttpServerTest)),
+    );
+
+    it.effect("serves the personal note only to a session that may change the Library", () =>
+      Effect.gen(function* () {
+        yield* buildAppUnderTest({ scientSourcesBackend: "library" });
+        const fileSystem = yield* FileSystem.FileSystem;
+        const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "scient-personal-note-" });
+        const sourceId = yield* Effect.promise(async () => {
+          await initializeScientProject({ root });
+          const imported = await importScientSource({
+            root,
+            operationId: NodeCrypto.randomUUID(),
+            candidate: {
+              sourceKey: "personal-note",
+              type: "article",
+              customType: null,
+              title: "A moved study",
+              creators: [],
+              issuedRaw: null,
+              issuedYear: 2026,
+              identifiers: [],
+              abstract: null,
+              containerTitle: null,
+              publisher: null,
+              volume: null,
+              issue: null,
+              pages: null,
+              language: null,
+              url: null,
+              tags: [],
+              externalReferences: [],
+              fieldProvenance: [],
+              pdfAvailable: false,
+              pdfFileName: null,
+              pdfAttachmentCount: 0,
+            },
+          });
+          return imported.record!.sourceId;
+        });
+        const owner = { cookie: yield* getAuthenticatedSessionCookieHeader() };
+        const reader = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
+          scope: "orchestration:read",
+        });
+        const readOnly = { authorization: `Bearer ${reader.body.access_token ?? ""}` };
+        const post = (path: string, headers: Record<string, string>, body: object) =>
+          Effect.gen(function* () {
+            const response = yield* HttpClient.post(path, {
+              headers,
+              body: yield* HttpBody.json(body),
+            });
+            return (yield* response.json) as Record<string, unknown>;
+          });
+
+        // The first change moves the project; the source arrives unread and unstarred.
+        const set = yield* post("/api/scient/sources/personal-note/update", owner, {
+          root,
+          sourceId,
+          expectedRevision: 1,
+          note: "MY-OWN-NOTE",
+        });
+        assert.equal(set.outcome, "updated");
+        const asOwner = yield* post("/api/scient/sources/detail", owner, { root, sourceId });
+        assert.deepInclude(asOwner, {
+          personalNote: "MY-OWN-NOTE",
+          readingStatus: "unread",
+          starred: false,
+        });
+        const asReader = yield* post("/api/scient/sources/detail", readOnly, { root, sourceId });
+        assert.equal(asReader.title, "A moved study");
+        assert.notInclude(JSON.stringify(asReader), "MY-OWN-NOTE");
+        assert.deepInclude(
+          yield* post("/api/scient/sources/personal-note/update", readOnly, {
+            root,
+            sourceId,
+            expectedRevision: 2,
+            note: null,
+          }),
+          { code: "insufficient_scope", requiredScope: "orchestration:operate" },
+        );
+      }).pipe(Effect.provide(NodeHttpServerTest)),
+    );
+    // SCIENT-FORK:END
 
     it.effect("revokes an individual paired client session", () =>
       Effect.gen(function* () {

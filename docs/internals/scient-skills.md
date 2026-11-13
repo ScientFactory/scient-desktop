@@ -412,7 +412,11 @@ The built-in shipping policy is:
 - `scient-skill-authoring`: active, with automatic selection;
 - `pdf-authoring`: active, with automatic selection;
 - `html-pdf-authoring`: active, with automatic selection;
-- `latex-authoring`: active, with automatic selection; and
+- `latex-authoring`: active, with automatic selection;
+- `overleaf-sync`: active, with automatic selection;
+- `references`: active, with automatic selection. It drives reference reviews
+  through `scient_references_check`, `scient_references_resolve` and the Library
+  tools, and is listed under the `scient.sources` built-in plugin.
 - `connector-authoring`: active, with automatic selection. Its `references/` and
   `templates/` are served by `scient_skill_read_resource`, and `scient_connector_copy` writes
   the same embedded template; see

@@ -13,6 +13,7 @@ const ALL_AWARENESS_CAPABILITIES: ReadonlySet<McpCapability> = new Set([
   "device",
   "documents:build",
   "skills:read",
+  "sources:read",
   "accounts",
 ]);
 

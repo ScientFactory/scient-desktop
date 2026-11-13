@@ -1427,6 +1427,10 @@ export function ScientMarkdownControls({
         <MathInputTools controller={controller.mathInput} anchor={mathMenuAnchor} />
       ) : null}
 
+      {snapshot.editable && snapshot.citationItems.length > 0 ? (
+        <LibraryCitationMenu controller={controller} snapshot={snapshot} />
+      ) : null}
+
       {snapshot.editable && snapshot.slashQuery !== null && slashItems.length > 0 ? (
         <div
           className="scient-markdown-slash-menu flex max-h-72 w-56 flex-col gap-0.5 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg"
@@ -1456,6 +1460,45 @@ export function ScientMarkdownControls({
         </div>
       ) : null}
     </>
+  );
+}
+
+function LibraryCitationMenu(props: {
+  readonly controller: ScientMarkdownEditorView;
+  readonly snapshot: ScientMarkdownEditorSnapshot;
+}) {
+  return (
+    <div
+      className="scient-markdown-slash-menu scient-markdown-citation-menu flex max-h-72 w-72 flex-col gap-0.5 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg"
+      role="listbox"
+      aria-label="Cite from Library"
+    >
+      <div className="px-2 py-1 text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">
+        Library
+      </div>
+      {props.snapshot.citationItems.map((item, index) => (
+        <button
+          key={item.sourceId}
+          type="button"
+          role="option"
+          aria-selected={index === props.snapshot.citationActiveIndex}
+          className={cn(
+            "flex w-full flex-col items-start rounded-md px-2 py-1.5 text-start text-xs text-foreground transition-colors hover:bg-accent hover:text-accent-foreground",
+            index === props.snapshot.citationActiveIndex && "bg-accent text-accent-foreground",
+          )}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={() => props.controller.insertLibraryCitation(item.citationKey)}
+        >
+          <span className="w-full truncate font-medium">
+            {item.label}
+            <span className="ms-1.5 font-normal text-muted-foreground">@{item.citationKey}</span>
+          </span>
+          {item.title ? (
+            <span className="w-full truncate text-muted-foreground">{item.title}</span>
+          ) : null}
+        </button>
+      ))}
+    </div>
   );
 }
 

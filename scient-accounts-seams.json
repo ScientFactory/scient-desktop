@@ -539,6 +539,21 @@
       "purpose": "Resolve a local connector's linked Accounts keys at start and when Accounts changes."
     },
     {
+      "path": "apps/server/src/scient/sources/ZoteroAccountKey.ts",
+      "anchor": "import { AccountsService, type AccountsServiceShape } from \"../accounts/AccountsService.ts\";",
+      "purpose": "Read the Zotero API key from Accounts for Sources' Zotero import, refresh and send, following each account's agent switches; the key stays in server request headers."
+    },
+    {
+      "path": "apps/server/src/scient/sources/researchKeys.ts",
+      "anchor": "import { AccountsService } from \"../accounts/AccountsService.ts\";",
+      "purpose": "Read the user's OpenAlex, Semantic Scholar, NCBI, Google Books and Unpaywall keys from Accounts for Sources' registry requests, in tools, HTTP routes and the background category pass; keys turned off are skipped and values stay redacted."
+    },
+    {
+      "path": "packages/contracts/src/scient/sourcesPermissions.ts",
+      "anchor": "import { PaperQueueRequestInput } from \"./accounts.ts\";",
+      "purpose": "Decode a paper request to decide whether it files or attaches a source, so those requests also need the Library permission; no credential is read."
+    },
+    {
       "path": "apps/server/src/mcp/toolkits/browserNetwork/handlers.ts",
       "anchor": "AccountSessionFiles",
       "purpose": "Save a large response body an agent studies to the thread's private files."

@@ -59,7 +59,7 @@ follow a renamed or moved file. Scient's own records and tool folders, such as
 `.scient` and `.git`, stay as they are.
 
 The same file list can sit beside other side-panel tabs too, such as a browser
-page, Sources, or a Scientific computing session. Use the folder button at the
+page, the Library, or a Scientific computing session. Use the folder button at the
 end of the tab strip, or `mod+alt+e`. One switch covers every tab, project files
 and PDFs included. Clicking a file opens it in its own tab. Diff keeps its own
 file list, and a panel too narrow for both shows the page alone.

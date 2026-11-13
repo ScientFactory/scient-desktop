@@ -4,7 +4,12 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
-import { SCIENT_SOURCE_RECORDS_DIRECTORY } from "@scientfactory/scient-sources/store";
+import { editableMetadataFromRecord } from "@scientfactory/scient-sources";
+import {
+  assignMissingScientSourceCitationKeys,
+  readScientSourceRecord,
+  SCIENT_SOURCE_RECORDS_DIRECTORY,
+} from "@scientfactory/scient-sources/store";
 import {
   EnvironmentId,
   type OrchestrationProjectShell,
@@ -14,6 +19,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { vi } from "vite-plus/test";
 import * as Effect from "effect/Effect";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import { WorkspaceBindingResolutionError } from "../../../scient/projectScope/WorkspaceBinding.ts";
@@ -24,15 +30,32 @@ import {
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
 import {
+  SourceIdentifierLookup,
+  verifiableSourceIdentifier,
+  type ResolveSourceIdentifier,
+} from "../../../scient/sources/SourceIdentifierResolver.ts";
+import * as MetadataHttp from "../../../scient/sources/metadataHttp.ts";
+import { SourceIdentifierBatchLookup } from "../../../scient/sources/SourceIdentifierAdd.ts";
+import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
+import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
   addScientSourceForInvocation,
+  checkScientSourceForInvocation,
+  removeScientSourceForInvocation,
+  restoreScientSourceForInvocation,
+  revertScientSourceForInvocation,
   attachScientSourcePdfForInvocation,
   detachScientSourcePdfForInvocation,
+  exportScientSourcesForInvocation,
+  importScientSourcesFileForInvocation,
   resolveScientSourcesProject,
+  syncScientBibliographyForInvocation,
   updateScientSourceNoteForInvocation,
   updateScientSourceForInvocation,
 } from "./handlers.ts";
+
+vi.mock("../../../scient/sources/metadataHttp.ts", { spy: true });
 
 const fixtures: string[] = [];
 const now = "2026-08-13T12:00:00.000Z";
@@ -53,6 +76,27 @@ async function writeProjectPdf(root: string, relativePath: string, body: string)
   return pdfPath;
 }
 
+/** A one-page PDF whose document information names its title and author. */
+function pdfWithInfo(info: { readonly title: string; readonly author: string }): string {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>",
+    `<< /Title (${info.title}) /Author (${info.author}) >>`,
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = objects.map((object, index) => {
+    const offset = body.length;
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    return offset;
+  });
+  const xref = body.length;
+  const entries = offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`);
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${entries.join("")}`;
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R /Info 4 0 R >>\n`;
+  return `${body}startxref\n${xref}\n%%EOF\n`;
+}
+
 async function writeSource(
   root: string,
   input: {
@@ -60,6 +104,8 @@ async function writeSource(
     readonly title: string;
     readonly abstract?: string | null;
     readonly hasPdf?: boolean;
+    readonly identifiers?: ReadonlyArray<{ readonly scheme: string; readonly value: string }>;
+    readonly type?: "article" | "book" | "book-chapter";
   },
 ) {
   const identity = await readScientProjectIdentity(root);
@@ -68,7 +114,7 @@ async function writeSource(
     sourceId: input.sourceId,
     projectId: identity.projectId,
     revision: 1,
-    type: "article" as const,
+    type: input.type ?? ("article" as const),
     customType: null,
     title: input.title,
     creators: [
@@ -81,7 +127,7 @@ async function writeSource(
     ],
     issuedRaw: "2026",
     issuedYear: 2026,
-    identifiers: [{ scheme: "doi", value: `10.1000/${input.sourceId}` }],
+    identifiers: input.identifiers ?? [{ scheme: "doi", value: `10.1000/${input.sourceId}` }],
     abstract: input.abstract ?? null,
     containerTitle: "Scient Journal",
     publisher: null,
@@ -223,16 +269,24 @@ const makeInvocation = (
     issuedAt: 1,
   });
 
+const offlineLookup: ResolveSourceIdentifier = async (identifiers) => {
+  const identifier = verifiableSourceIdentifier(identifiers);
+  return identifier ? { status: "unavailable", identifier } : null;
+};
+
 const provideContext = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   input: {
     readonly invocation: AgentInvocationContext.AgentInvocationScope;
     readonly query: WorkspaceBindingResolver["Service"];
+    readonly lookup?: ResolveSourceIdentifier;
   },
 ) =>
   effect.pipe(
     Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
     Effect.provideService(WorkspaceBindingResolver, input.query),
+    Effect.provideService(ScientSourcesBackend, "project"),
+    Effect.provideService(SourceIdentifierLookup, input.lookup ?? offlineLookup),
   );
 
 afterEach(async () => {
@@ -329,6 +383,39 @@ describe("Scient Sources MCP handlers", () => {
     }),
   );
 
+  it.effect("sets the project's citation style with the bibliography tool and lists it back", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-citation-style-"));
+      const projectId = ProjectId.make("project-citation-style");
+      const threadId = ThreadId.make("thread-citation-style");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+
+      const set = yield* provideContext(
+        syncScientBibliographyForInvocation({ citationStyle: "nature" }),
+        context,
+      );
+      expect(set.citationStyle).toEqual({
+        id: "nature",
+        title: "Nature",
+        parentId: null,
+        state: "ready",
+      });
+      const listed = yield* provideContext(
+        listScientSourcesForInvocation({ citationStyles: "" }),
+        context,
+      );
+      if (!("citationStyles" in listed)) throw new Error("expected citation styles");
+      expect(listed.citationStyle).toEqual(set.citationStyle);
+      expect(listed.citationStyles.some((style) => style.id === "nature")).toBe(true);
+    }),
+  );
+
   it.effect("does not read a source from another project or reveal host paths", () =>
     Effect.gen(function* () {
       const firstRoot = yield* Effect.promise(() => fixture("scient-sources-first-"));
@@ -406,6 +493,7 @@ describe("Scient Sources MCP handlers", () => {
         context,
       );
       expect(detail.note).toBe("Compare with the **replication** cohort.");
+      expect(detail.updatedBy).toBe("agent");
 
       const stale = yield* provideContext(
         updateScientSourceNoteForInvocation({
@@ -419,7 +507,318 @@ describe("Scient Sources MCP handlers", () => {
     }),
   );
 
-  it.effect("adds an idempotent metadata-only agent source with pending provenance", () =>
+  it.effect("checks a source's identifier and credits the agent", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-check-"));
+      yield* Effect.promise(() => writeSource(root, { sourceId: "source_check", title: "Check" }));
+      const projectId = ProjectId.make("project-check");
+      const threadId = ThreadId.make("thread-check");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      const checked = yield* provideContext(
+        checkScientSourceForInvocation({ sourceId: "source_check" }),
+        context,
+      );
+      expect(checked).toMatchObject({
+        outcome: "updated",
+        revision: 2,
+        registry: "unavailable",
+        verification: { state: "unchecked", identifier: { scheme: "doi" } },
+      });
+      const record = yield* Effect.promise(() => readScientSourceRecord(root, "source_check"));
+      expect(record?.updatedBy).toBe("agent");
+    }),
+  );
+
+  it.effect("refreshes a source from its DOI registry record and reports what changed", () =>
+    Effect.acquireUseRelease(
+      Effect.sync(() =>
+        vi.spyOn(MetadataHttp, "requestMetadataJson").mockImplementation(async (url) => {
+          if (url.href !== "https://doi.org/10.1000/source_refresh") {
+            throw new Error("No recorded response.");
+          }
+          return {
+            type: "article-journal",
+            DOI: "10.1000/source_refresh",
+            title: "Registered Title of the Work",
+            author: [{ given: "Grace", family: "Hopper" }],
+            issued: { "date-parts": [[1952, 5, 1]] },
+            "container-title": "Registry Journal",
+            volume: "7",
+            abstract: "<p>Recorded abstract.</p>",
+          };
+        }),
+      ),
+      () =>
+        Effect.gen(function* () {
+          const root = yield* Effect.promise(() => fixture("scient-sources-agent-refresh-"));
+          yield* Effect.promise(() =>
+            writeSource(root, { sourceId: "source_refresh", title: "Check" }),
+          );
+          const projectId = ProjectId.make("project-refresh");
+          const threadId = ThreadId.make("thread-refresh");
+          const identifier = { scheme: "doi", value: "10.1000/source_refresh" };
+          const context = {
+            invocation: makeInvocation(threadId),
+            query: makeQuery({
+              project: makeProject(projectId, root),
+              thread: makeThread({ threadId, projectId }),
+            }),
+            lookup: (async () => ({
+              status: "found",
+              identifier,
+              retrievedAt: now,
+              metadata: {
+                type: "article",
+                title: "Registered Title of the Work",
+                creators: [],
+                issuedRaw: null,
+                issuedYear: null,
+                identifiers: [identifier],
+                abstract: null,
+                abstractSections: [],
+                containerTitle: null,
+                publisher: null,
+                volume: null,
+                issue: null,
+                pages: null,
+                language: null,
+                url: null,
+              },
+            })) satisfies ResolveSourceIdentifier,
+          };
+          const refreshed = yield* provideContext(
+            checkScientSourceForInvocation({ sourceId: "source_refresh", refresh: true }),
+            context,
+          );
+          const record = yield* Effect.promise(() =>
+            readScientSourceRecord(root, "source_refresh"),
+          );
+          expect(refreshed).toMatchObject({
+            outcome: "refreshed",
+            revision: record?.revision,
+            registry: "found",
+            verification: { state: "verified", identifier },
+            changedFields: expect.arrayContaining([
+              "title",
+              "creators",
+              "containerTitle",
+              "volume",
+            ]),
+          });
+          expect(record).toMatchObject({
+            title: "Registered Title of the Work",
+            creators: [{ givenName: "Grace", familyName: "Hopper" }],
+            containerTitle: "Registry Journal",
+            updatedBy: "agent",
+          });
+        }),
+      (probe) => Effect.sync(() => probe.mockRestore()),
+    ),
+  );
+
+  it.effect("refreshes a source without a DOI or PMID from its PDF", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-refresh-pdf-"));
+      yield* Effect.promise(() =>
+        writeSource(root, { sourceId: "source_refresh_pdf", title: "Draft", identifiers: [] }),
+      );
+      const pdfPath = NodePath.join(root, "papers", "engines.pdf");
+      yield* Effect.promise(async () => {
+        await NodeFSP.mkdir(NodePath.dirname(pdfPath), { recursive: true });
+        await NodeFSP.writeFile(
+          pdfPath,
+          pdfWithInfo({ title: "Analytical Engines Revisited", author: "Charles Babbage" }),
+          "latin1",
+        );
+      });
+      const projectId = ProjectId.make("project-refresh-pdf");
+      const threadId = ThreadId.make("thread-refresh-pdf");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      yield* provideContext(
+        attachScientSourcePdfForInvocation({
+          sourceId: "source_refresh_pdf",
+          expectedRevision: 1,
+          pdfRelativePath: "papers/engines.pdf",
+        }),
+        context,
+      );
+      const refreshed = yield* provideContext(
+        checkScientSourceForInvocation({ sourceId: "source_refresh_pdf", refresh: true }),
+        context,
+      );
+      expect(refreshed).toMatchObject({
+        outcome: "refreshed",
+        registry: "none",
+        changedFields: expect.arrayContaining(["title", "creators"]),
+      });
+      const record = yield* Effect.promise(() =>
+        readScientSourceRecord(root, "source_refresh_pdf"),
+      );
+      expect(record).toMatchObject({
+        title: "Analytical Engines Revisited",
+        creators: [{ literalName: "Charles Babbage" }],
+        updatedBy: "agent",
+      });
+    }),
+  );
+
+  it.effect("tells an agent why a citation key rename was refused", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-key-"));
+      yield* Effect.promise(() => writeSource(root, { sourceId: "source_a", title: "Alpha" }));
+      yield* Effect.promise(() => writeSource(root, { sourceId: "source_b", title: "Beta" }));
+      yield* Effect.promise(() => assignMissingScientSourceCitationKeys(root));
+      const projectId = ProjectId.make("project-keys");
+      const threadId = ThreadId.make("thread-keys");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      const first = yield* Effect.promise(() => readScientSourceRecord(root, "source_a"));
+      const second = yield* Effect.promise(() => readScientSourceRecord(root, "source_b"));
+      if (!first?.citationKey || !second) throw new Error("Expected keyed sources.");
+
+      const refused = yield* provideContext(
+        updateScientSourceForInvocation({
+          sourceId: second.sourceId,
+          expectedRevision: second.revision,
+          metadata: { ...editableMetadataFromRecord(second), citationKey: first.citationKey },
+        }),
+        context,
+      ).pipe(Effect.flip);
+      expect(refused.message).toBe("Another source already uses this citation key.");
+    }),
+  );
+
+  it.effect("moves an agent removal to the trash, restores it, and reverts an edit", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-trash-"));
+      yield* Effect.promise(() => writeSource(root, { sourceId: "source_kept", title: "Kept" }));
+      const projectId = ProjectId.make("project-trash");
+      const threadId = ThreadId.make("thread-trash");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+
+      const removed = yield* provideContext(
+        removeScientSourceForInvocation({ sourceId: "source_kept", expectedRevision: 1 }),
+        context,
+      );
+      expect(removed).toEqual({
+        outcome: "removed",
+        sourceId: "source_kept",
+        revision: 1,
+        restorable: true,
+      });
+      const trash = yield* provideContext(
+        listScientSourcesForInvocation({ inTrash: true }),
+        context,
+      );
+      expect(trash.records).toMatchObject([
+        { sourceId: "source_kept", revision: 1, removedBy: "agent" },
+      ]);
+      expect((yield* provideContext(listScientSourcesForInvocation({}), context)).records).toEqual(
+        [],
+      );
+
+      const restored = yield* provideContext(
+        restoreScientSourceForInvocation({ sourceId: "source_kept" }),
+        context,
+      );
+      expect(restored).toEqual({
+        outcome: "restored",
+        sourceId: "source_kept",
+        revision: 2,
+        matchingSourceIds: [],
+      });
+
+      const stored = yield* Effect.promise(() => readScientSourceRecord(root, "source_kept"));
+      if (!stored) throw new Error("Expected the restored source.");
+      const edited = yield* provideContext(
+        updateScientSourceForInvocation({
+          sourceId: "source_kept",
+          expectedRevision: stored.revision,
+          metadata: { ...editableMetadataFromRecord(stored), title: "Wrong" },
+        }),
+        context,
+      );
+      expect(edited.outcome).toBe("updated");
+      const history = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: "source_kept" }),
+        context,
+      );
+      expect(
+        history.revisions.map(({ revision, savedBy, changes }) => ({ revision, savedBy, changes })),
+      ).toEqual([
+        { revision: 3, savedBy: "agent", changes: ["title"] },
+        { revision: 2, savedBy: "agent", changes: [] },
+        { revision: 1, savedBy: "user", changes: [] },
+      ]);
+      const reverted = yield* provideContext(
+        revertScientSourceForInvocation({
+          sourceId: "source_kept",
+          expectedRevision: 3,
+          toRevision: 2,
+        }),
+        context,
+      );
+      expect(reverted).toMatchObject({ outcome: "reverted", revision: 4 });
+      const back = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: "source_kept" }),
+        context,
+      );
+      expect(back).toMatchObject({ title: "Kept", updatedBy: "agent" });
+
+      yield* provideContext(
+        removeScientSourceForInvocation({ sourceId: "source_kept", expectedRevision: 4 }),
+        context,
+      );
+      expect(
+        yield* provideContext(
+          removeScientSourceForInvocation({
+            sourceId: "source_kept",
+            expectedRevision: 3,
+            permanent: true,
+          }),
+          context,
+        ),
+      ).toMatchObject({ outcome: "stale", revision: 4 });
+      expect(
+        yield* provideContext(
+          removeScientSourceForInvocation({
+            sourceId: "source_kept",
+            expectedRevision: 4,
+            permanent: true,
+          }),
+          context,
+        ),
+      ).toEqual({ outcome: "deleted", sourceId: "source_kept", revision: null });
+      expect(
+        (yield* provideContext(listScientSourcesForInvocation({ inTrash: true }), context)).records,
+      ).toEqual([]);
+    }),
+  );
+
+  it.effect("adds an idempotent metadata-only agent source with agent provenance", () =>
     Effect.gen(function* () {
       const events: { name: string; properties: Readonly<Record<string, unknown>> | undefined }[] =
         [];
@@ -473,8 +872,7 @@ describe("Scient Sources MCP handlers", () => {
       const added = yield* provideContext(addScientSourceForInvocation(input), context).pipe(
         Effect.provideService(AnalyticsService, analytics),
       );
-      expect(added.outcome).toBe("imported");
-      expect(added.review).toBe("pending");
+      expect(added).toMatchObject({ outcome: "imported", verification: "unchecked" });
       expect(added.sourceId).toMatch(/^source_/);
       expect(added.revision).toBe(1);
       expect(added.validationIssues).toEqual([]);
@@ -495,7 +893,6 @@ describe("Scient Sources MCP handlers", () => {
       expect(events[1]?.properties).toMatchObject({
         operationKind: "source-import",
         trigger: "agent",
-        reviewRequired: true,
       });
       expect(
         events.flatMap((event) => Object.values(event.properties ?? {})).join(" "),
@@ -508,7 +905,7 @@ describe("Scient Sources MCP handlers", () => {
       expect(detail.origin).toMatchObject({
         actor: "agent",
         intake: "identifier",
-        review: "pending",
+        review: "none",
       });
       expect(detail.fieldProvenance.some((entry) => entry.origin === "agent")).toBe(true);
       expect(detail.fieldProvenance).toEqual(
@@ -550,6 +947,133 @@ describe("Scient Sources MCP handlers", () => {
         revision: 2,
         validationIssues: [],
       });
+      const edited = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: detail.sourceId }),
+        context,
+      );
+      expect(edited.updatedBy).toBe("agent");
+      expect(edited.fieldProvenance).toEqual(
+        expect.arrayContaining([{ field: "title", origin: "agent", sourceField: null }]),
+      );
+      expect(edited.verification).toEqual(detail.verification);
+    }),
+  );
+
+  it.effect("adds a mixed identifier list as separate agent sources and reports each entry", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-batch-"));
+      const projectId = ProjectId.make("project-agent-batch");
+      const threadId = ThreadId.make("thread-agent-batch");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      const added = yield* provideContext(
+        addScientSourceForInvocation({
+          identifierList: ["10.1000/batch.1", "arXiv:1706.03762", "not an identifier"],
+        }),
+        context,
+      ).pipe(
+        Effect.provideService(SourceIdentifierBatchLookup, async (identifiers) =>
+          identifiers.map((identifier) =>
+            identifier.scheme === "doi"
+              ? {
+                  status: "found" as const,
+                  identifier,
+                  retrievedAt: "2026-11-10T12:00:00.000Z",
+                  metadata: {
+                    type: "article" as const,
+                    title: "Batch article",
+                    creators: [],
+                    issuedRaw: "2024",
+                    issuedYear: 2024,
+                    identifiers: [identifier],
+                    abstract: null,
+                    abstractSections: [],
+                    containerTitle: null,
+                    publisher: null,
+                    volume: null,
+                    issue: null,
+                    pages: null,
+                    language: null,
+                    url: null,
+                  },
+                }
+              : { status: "not-found" as const, identifier },
+          ),
+        ),
+      );
+
+      expect(added).toMatchObject({
+        outcome: "batch",
+        message: "Added 1 of 3. 1 not found. 1 not an identifier.",
+        results: [
+          { input: "10.1000/batch.1", outcome: "imported", verification: "verified" },
+          { input: "arXiv:1706.03762", outcome: "identifier-not-found" },
+          { input: "not an identifier", outcome: "unrecognized" },
+        ],
+      });
+      const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
+      expect(listed.records).toMatchObject([{ title: "Batch article", addedBy: "agent" }]);
+
+      const mixed = yield* provideContext(
+        addScientSourceForInvocation({ identifierList: ["10.1000/batch.2"], title: "Other" }),
+        context,
+      );
+      expect(mixed).toMatchObject({ outcome: "invalid", validationIssues: [{ field: "title" }] });
+    }),
+  );
+
+  it.effect("selects the one copy bare identifier fields name, offline and with no type", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-bare-"));
+      const projectId = ProjectId.make("project-agent-bare");
+      const threadId = ThreadId.make("thread-agent-bare");
+      const isbn = { scheme: "isbn", value: "9780306406157" };
+      yield* Effect.promise(async () => {
+        await writeSource(root, {
+          sourceId: "source_book",
+          title: "Atlas",
+          type: "book",
+          identifiers: [isbn],
+        });
+        await writeSource(root, {
+          sourceId: "source_chapter",
+          title: "Maps",
+          type: "book-chapter",
+          identifiers: [isbn],
+        });
+        await writeSource(root, { sourceId: "source_paper", title: "Paper" });
+      });
+      const asked: Array<unknown> = [];
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+        lookup: async (identifiers: Parameters<ResolveSourceIdentifier>[0]) => {
+          asked.push(identifiers);
+          return offlineLookup(identifiers);
+        },
+      };
+      const add = (identifier: { readonly scheme: string; readonly value: string }) =>
+        provideContext(addScientSourceForInvocation({ identifiers: [identifier] }), context);
+
+      // An ISBN-10 spelling names the whole book, never its chapter.
+      expect(yield* add({ scheme: "isbn", value: "0-306-40615-2" })).toMatchObject({
+        outcome: "duplicate",
+        sourceId: "source_book",
+        validationIssues: [],
+      });
+      expect(yield* add({ scheme: "doi", value: "10.1000/source_paper" })).toMatchObject({
+        outcome: "duplicate",
+        sourceId: "source_paper",
+      });
+      expect(asked).toEqual([]);
     }),
   );
 
@@ -598,7 +1122,7 @@ describe("Scient Sources MCP handlers", () => {
         }),
         context,
       );
-      expect(added).toMatchObject({ outcome: "imported", review: "pending", revision: 1 });
+      expect(added).toMatchObject({ outcome: "imported", verification: "unchecked", revision: 1 });
       const detail = yield* provideContext(
         getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),
         context,
@@ -647,8 +1171,8 @@ describe("Scient Sources MCP handlers", () => {
         outcome: "removed",
         sourceId: detail.sourceId,
         revision: detail.revision + 1,
-        removedAttachmentCount: 1,
       });
+      expect(detached).not.toHaveProperty("removedAttachmentCount");
     }),
   );
 
@@ -671,7 +1195,59 @@ describe("Scient Sources MCP handlers", () => {
         addScientSourceForInvocation({ pdfRelativePath: "papers/untitled.pdf" }),
         context,
       );
-      expect(added).toMatchObject({ outcome: "imported", review: "pending", revision: 1 });
+      expect(added).toMatchObject({ outcome: "imported", verification: "unverified", revision: 1 });
+    }),
+  );
+
+  it.effect("verifies a PDF's DOI without treating its filename title as a claim", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-pdf-doi-"));
+      yield* Effect.promise(() => writeProjectPdf(root, "papers/paper_final.pdf", "file-doi"));
+      const projectId = ProjectId.make("project-agent-pdf-doi");
+      const threadId = ThreadId.make("thread-agent-pdf-doi");
+      const identifier = { scheme: "doi", value: "10.1000/registered-pdf" };
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+        lookup: (async () => ({
+          status: "found",
+          identifier,
+          retrievedAt: now,
+          metadata: {
+            type: "article",
+            title: "Registered Title of the Work",
+            creators: [],
+            issuedRaw: null,
+            issuedYear: null,
+            identifiers: [identifier],
+            abstract: null,
+            abstractSections: [],
+            containerTitle: null,
+            publisher: null,
+            volume: null,
+            issue: null,
+            pages: null,
+            language: null,
+            url: null,
+          },
+        })) satisfies ResolveSourceIdentifier,
+      };
+      const added = yield* provideContext(
+        addScientSourceForInvocation({
+          pdfRelativePath: "papers/paper_final.pdf",
+          identifiers: [identifier],
+        }),
+        context,
+      );
+      expect(added).toMatchObject({ outcome: "imported", verification: "verified" });
+      const detail = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),
+        context,
+      );
+      expect(detail.title).toBe("Registered Title of the Work");
     }),
   );
 
@@ -765,6 +1341,8 @@ describe("Scient Sources MCP handlers", () => {
       const doi = { scheme: "doi" as const, value: "10.1000/shared-pdf-work" };
       const firstDoi = yield* provideContext(
         addScientSourceForInvocation({
+          type: "article",
+          title: "Shared PDF work",
           identifiers: [doi],
           pdfRelativePath: "d/paper.pdf",
         }),
@@ -772,6 +1350,8 @@ describe("Scient Sources MCP handlers", () => {
       );
       const secondDoi = yield* provideContext(
         addScientSourceForInvocation({
+          type: "article",
+          title: "Shared PDF work",
           identifiers: [doi],
           pdfRelativePath: "e/paper.pdf",
         }),
@@ -898,6 +1478,101 @@ describe("Scient Sources MCP handlers", () => {
     }),
   );
 
+  it.effect("checks an agent's DOI and stores the registry's metadata", () =>
+    Effect.gen(function* () {
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-verified-"));
+      const projectId = ProjectId.make("project-agent-verified");
+      const threadId = ThreadId.make("thread-agent-verified");
+      const identifier = { scheme: "doi", value: "10.1000/registered" };
+      const lookup: ResolveSourceIdentifier = async () => ({
+        status: "found",
+        identifier,
+        retrievedAt: now,
+        metadata: {
+          type: "article",
+          title: "Registered Title of the Work",
+          creators: [
+            { creatorType: "author", givenName: "Grace", familyName: "Hopper", literalName: null },
+          ],
+          issuedRaw: "1952-05-01",
+          issuedYear: 1952,
+          identifiers: [identifier],
+          abstract: null,
+          abstractSections: [],
+          containerTitle: "Registry Journal",
+          publisher: null,
+          volume: "7",
+          issue: null,
+          pages: null,
+          language: null,
+          url: "https://doi.org/10.1000/registered",
+        },
+      });
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+        lookup,
+      };
+      const claim = {
+        type: "article" as const,
+        creators: [
+          { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
+        ],
+        issuedYear: 2026,
+        identifiers: [identifier],
+      };
+
+      const mismatch = yield* provideContext(
+        addScientSourceForInvocation({ ...claim, title: "An Unrelated Paper About Rivers" }),
+        context,
+      );
+      expect(mismatch).toMatchObject({
+        outcome: "identifier-mismatch",
+        sourceId: null,
+        revision: null,
+        resolved: {
+          title: "Registered Title of the Work",
+          creators: ["Grace Hopper"],
+          issuedYear: 1952,
+          containerTitle: "Registry Journal",
+        },
+        message: expect.stringContaining("10.1000/registered"),
+      });
+      expect((yield* provideContext(listScientSourcesForInvocation({}), context)).total).toBe(0);
+
+      const added = yield* provideContext(
+        addScientSourceForInvocation({ ...claim, title: "registered title of the work" }),
+        context,
+      );
+      expect(added).toMatchObject({ outcome: "imported", verification: "verified" });
+      const detail = yield* provideContext(
+        getScientSourceForInvocation({ sourceId: added.sourceId ?? "" }),
+        context,
+      );
+      expect(detail).toMatchObject({
+        title: "Registered Title of the Work",
+        creators: [{ familyName: "Hopper" }],
+        issuedYear: 1952,
+        containerTitle: "Registry Journal",
+        verification: { state: "verified", identifier, checkedAt: now },
+      });
+      expect(detail.fieldProvenance).toEqual(
+        expect.arrayContaining([
+          {
+            field: "title",
+            origin: "doi",
+            sourceField: "title",
+            sourceIdentifier: identifier,
+            retrievedAt: now,
+          },
+        ]),
+      );
+    }),
+  );
+
   it.effect("rejects agent source metadata without a usable identity", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-sources-agent-invalid-"));
@@ -931,6 +1606,85 @@ describe("Scient Sources MCP handlers", () => {
       expect(result.outcome).toBe("invalid");
       expect(result.sourceId).toBeNull();
       expect(result.validationIssues.some((issue) => issue.field === "identity")).toBe(true);
+    }),
+  );
+
+  it.effect("imports a project reference file as the agent and exports the Library back", () =>
+    Effect.gen(function* () {
+      const analytics = AnalyticsService.of({
+        recordOwners: () => Effect.void,
+        record: () => Effect.void,
+        status: Effect.succeed({ available: true, consent: "product" }),
+        collectionEpoch: Effect.succeed(0),
+        flush: Effect.void,
+      });
+      const root = yield* Effect.promise(() => fixture("scient-sources-agent-file-"));
+      const projectId = ProjectId.make("project-agent-file");
+      const threadId = ThreadId.make("thread-agent-file");
+      const context = {
+        invocation: makeInvocation(threadId),
+        query: makeQuery({
+          project: makeProject(projectId, root),
+          thread: makeThread({ threadId, projectId }),
+        }),
+      };
+      yield* Effect.promise(() =>
+        NodeFSP.writeFile(
+          NodePath.join(root, "refs.ris"),
+          [
+            "TY  - JOUR",
+            "ID  - rossi2020sleep",
+            "TI  - Sleep and memory",
+            "AU  - Rossi, Giulia",
+            "PY  - 2020",
+            "DO  - 10.1000/sleep.1",
+            "CY  - Boston",
+            "ER  - ",
+            "",
+          ].join("\n"),
+        ),
+      );
+      const imported = yield* provideContext(
+        importScientSourcesFileForInvocation({ relativePath: "refs.ris" }),
+        context,
+      ).pipe(Effect.provideService(AnalyticsService, analytics));
+      expect(imported).toMatchObject({
+        format: "ris",
+        importedCount: 1,
+        imported: [{ citationKey: "rossi2020sleep" }],
+        alreadyInLibrary: 0,
+        remaining: 0,
+        notKept: [{ field: "CY", entryCount: 1, citationKeys: ["rossi2020sleep"] }],
+      });
+      const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
+      expect(listed.records[0]).toMatchObject({ addedBy: "agent", verification: "unchecked" });
+
+      const missing = yield* provideContext(
+        importScientSourcesFileForInvocation({ relativePath: "absent.bib" }),
+        context,
+      ).pipe(Effect.provideService(AnalyticsService, analytics), Effect.flip);
+      expect(missing.message).toBe("The reference file absent.bib was not found.");
+
+      const exported = yield* provideContext(
+        exportScientSourcesForInvocation({ relativePath: "library.bib", format: "bibtex" }),
+        context,
+      );
+      expect(exported).toEqual({
+        outcome: "written",
+        relativePath: "library.bib",
+        sourceCount: 1,
+        missingSourceIds: [],
+        notKept: [],
+      });
+      const written = yield* Effect.promise(() =>
+        NodeFSP.readFile(NodePath.join(root, "library.bib"), "utf8"),
+      );
+      expect(written).toContain("@article{rossi2020sleep,");
+      const again = yield* provideContext(
+        exportScientSourcesForInvocation({ relativePath: "library.bib", format: "bibtex" }),
+        context,
+      );
+      expect(again.outcome).toBe("exists");
     }),
   );
 });

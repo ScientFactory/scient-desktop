@@ -74,20 +74,28 @@ describe("PDF target", () => {
   it("reuses offsets only when the live page text proves them", () => {
     const material = { sha256: hash("b"), byteLength: 10 };
     const stored = target({ material });
-    const read = (text: string, textHash?: string, version = "6.2.108") =>
-      verifyPdfTarget(stored, {
+    const newer = PdfTarget.make({
+      ...stored,
+      extractor: { ...stored.extractor, version: "6.4.299" },
+    });
+    const read = (
+      text: string,
+      options: { textHash?: string; by?: PdfTarget; live?: Partial<PdfCurrentPage> } = {},
+    ) =>
+      verifyPdfTarget(options.by ?? stored, {
         material,
-        extractorVersion: version,
-        page: (page) => (page === 3 ? current(text, textHash) : undefined),
+        page: (page) =>
+          page === 3 ? { ...current(text, options.textHash), ...options.live } : undefined,
       });
     expect(read(page3)).toEqual({ material: "match", selectorValid: true });
-    // Same bytes, but a new extractor: the offsets are no longer proven.
-    expect(read(page3, undefined, "7.0.0")).toEqual({ material: "match", selectorValid: false });
-    expect(read(`X${page3}`, hash("c")).selectorValid).toBe(false);
+    // Another extractor version stored it, and the live page proves its offsets.
+    expect(read(page3, { by: newer })).toEqual({ material: "match", selectorValid: true });
+    // A real change still fails, whatever the version.
+    expect(read(`X${page3}`, { textHash: hash("c"), by: newer }).selectorValid).toBe(false);
+    expect(read(page3, { by: newer, live: { rotation: 90 } }).selectorValid).toBe(false);
     expect(
       verifyPdfTarget(target(), {
         material: null,
-        extractorVersion: "6.2.108",
         page: () => current(page3),
       }),
     ).toEqual({ material: "unknown", selectorValid: true });

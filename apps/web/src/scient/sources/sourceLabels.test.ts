@@ -1,6 +1,12 @@
 import { describe, expect, it, vi } from "vite-plus/test";
 
-import { newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
+import {
+  agentVerificationLabel,
+  fileNameTitleLabel,
+  newlyObservedSourceIds,
+  sourceAddedLabel,
+  sourcePinLabel,
+} from "./sourceLabels";
 
 describe("sourceAddedLabel", () => {
   it("prioritizes the transient just-added state", () => {
@@ -24,6 +30,20 @@ describe("sourceAddedLabel", () => {
 
   it("falls back to a formatted date for older sources", () => {
     expect(sourceAddedLabel("2020-01-02T12:00:00.000Z", false)).toMatch(/^Added /u);
+  });
+});
+
+describe("agentVerificationLabel", () => {
+  it.each([
+    { origin: { actor: "user" }, verification: { state: "verified" as const }, label: "" },
+    { origin: { actor: "agent" }, verification: undefined, label: "" },
+    {
+      origin: { actor: "agent" },
+      verification: { state: "unchecked" as const },
+      label: " · Not yet checked",
+    },
+  ])("labels $origin.actor sources with $verification", ({ label, ...record }) => {
+    expect(agentVerificationLabel(record)).toBe(label);
   });
 });
 
@@ -68,5 +88,46 @@ describe("newlyObservedSourceIds", () => {
         recentCutoff,
       ),
     ).toEqual(["new-user"]);
+  });
+
+  it("never marks a pin served from its snapshot, as one moved to the Trash is", () => {
+    expect(
+      newlyObservedSourceIds(
+        [olderSource, { ...newlyAddedUserSource, fromSnapshot: true as const }],
+        new Set([olderSource.sourceId]),
+        recentCutoff,
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("sourcePinLabel", () => {
+  it("marks pins only in the Library view, and a pin this library lacks in either view", () => {
+    expect(sourcePinLabel({ pinned: true }, "library")).toBe(" · In this project");
+    expect(sourcePinLabel({ pinned: false }, "library")).toBe("");
+    expect(sourcePinLabel({ pinned: true }, "project")).toBe("");
+    expect(sourcePinLabel({}, undefined)).toBe("");
+    expect(sourcePinLabel({ pinned: true, fromSnapshot: true }, "project")).toBe(
+      " · Not in this Library",
+    );
+  });
+});
+
+describe("fileNameTitleLabel", () => {
+  it("speaks only while the title is still the PDF's file name", () => {
+    const fromFile = { field: "title", origin: "local-pdf", sourceField: "file-name" };
+    expect(fileNameTitleLabel({ fieldProvenance: [fromFile] })).not.toBeNull();
+    expect(
+      fileNameTitleLabel({
+        fieldProvenance: [fromFile, { field: "title", origin: "doi", sourceField: "title" }],
+      }),
+    ).toBeNull();
+    expect(
+      fileNameTitleLabel({
+        fieldProvenance: [
+          { field: "title", origin: "local-pdf", sourceField: "document-info/title" },
+        ],
+      }),
+    ).toBeNull();
   });
 });

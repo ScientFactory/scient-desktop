@@ -878,9 +878,9 @@ jobs:
           python3 -m unittest discover -s .github/scripts -p 'test_macos_connect_profile.py'
           node scripts/release-smoke.ts
 
-  # SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory. Exact reuse carries the
-  # source's verified pass instead of rerunning it. Accounts rides this job to reuse its install: a
-  # job of its own would wait for a runner and install again.
+  # SCIENT-FORK:START — Windows Overleaf and Accounts evidence is mandatory, and so are the Sources
+  # file tests. Exact reuse carries the source's verified pass instead of rerunning it. Accounts and
+  # Sources ride this job to reuse its install: a job of their own would wait for a runner and install again.
   overleaf_windows:
     name: Overleaf Windows
     needs: [queue_ci, release_notes]
@@ -948,6 +948,13 @@ jobs:
       - name: Accounts and browser import tests on Windows
         working-directory: apps/desktop
         run: vp test run src/scient/accounts src/preview/BrowserImport
+      # Managed references.bib: hard link, move aside, exchange, exclusive-copy fallback.
+      - name: Sources project file publication tests on Windows
+        working-directory: packages/scient-sources
+        run: vp test run src/projectFilePublication.test.ts
+      - name: Managed bibliography tests on Windows
+        working-directory: apps/server
+        run: vp test run src/scient/sources/ManagedBibliography.test.ts
       # Real Chrome and Edge windows: sign in to a local page, quit, read the profile back.
       - name: Sign in in a Chrome and an Edge window on Windows
         working-directory: apps/desktop

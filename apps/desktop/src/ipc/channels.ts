@@ -143,6 +143,9 @@ export const VOICE_REMOVE_MODEL_CHANNEL = "desktop:voice-remove-model";
 export const VOICE_TRANSCRIBE_CHANNEL = "desktop:voice-transcribe";
 export const VOICE_CANCEL_TRANSCRIPTION_CHANNEL = "desktop:voice-cancel-transcription";
 
+// SCIENT-FORK:START — a browser tab read for "Save to Library" (scient/sources).
+export const PREVIEW_LIBRARY_PAGE_CHANNEL = "scient:preview:library-page";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — the unread-answer app badge (scient/answerAttention).
 export const SET_UNREAD_ANSWER_BADGE_CHANNEL = "scient:answer-attention:set-badge";
 // SCIENT-FORK:END

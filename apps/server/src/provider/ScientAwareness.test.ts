@@ -1,13 +1,16 @@
 import { describe, expect, it } from "vite-plus/test";
 
+import { toMcpCapabilities } from "../mcp/McpInvocationContext.ts";
 import { BUILT_IN_DRIVERS } from "./builtInDrivers.ts";
 import {
   buildScientAwareness,
   buildScientPromptAwareness,
+  scientAwarenessManifest,
   SCIENT_BROWSER_AWARENESS,
   SCIENT_CORE_AWARENESS,
   SCIENT_COMPUTE_AWARENESS,
   SCIENT_DOCUMENT_BUILD_AWARENESS,
+  SCIENT_LIBRARY_AWARENESS,
   SCIENT_OVERLEAF_AWARENESS,
   SCIENT_PAPERS_AWARENESS,
   SCIENT_SKILLS_AWARENESS,
@@ -75,7 +78,7 @@ describe("Scient awareness", () => {
     expect(SCIENT_BROWSER_AWARENESS).toContain("Prefer snapshot locators over coordinates.");
     expect(SCIENT_BROWSER_AWARENESS).toContain("two preview calls fail on one step");
     expect(buildScientAwareness()).toBe(SCIENT_CORE_AWARENESS);
-    expect(buildScientAwareness(new Set(["sources:read"]))).toBe(SCIENT_CORE_AWARENESS);
+    expect(buildScientAwareness(new Set(["threads:read"]))).toBe(SCIENT_CORE_AWARENESS);
     expect(buildScientAwareness(new Set(["preview"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_BROWSER_AWARENESS}`,
     );
@@ -94,11 +97,30 @@ describe("Scient awareness", () => {
     expect(buildScientAwareness(new Set(["preview"]))).not.toContain("scient_paper_get");
   });
 
+  it("points literature work at the Library only with Library access in a verified project", () => {
+    expect(wordCount(SCIENT_LIBRARY_AWARENESS)).toBeLessThanOrEqual(95);
+    expect(buildScientAwareness(new Set(["sources:read"]))).toBe(
+      `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_LIBRARY_AWARENESS}`,
+    );
+    expect(SCIENT_LIBRARY_AWARENESS).toContain("before web search");
+    expect(SCIENT_LIBRARY_AWARENESS).toContain("`identifierList`");
+    const unverified = scientAwarenessManifest(new Set(["sources:read", "sources:write"]), false);
+    expect(buildScientAwareness(toMcpCapabilities(unverified))).toBe(SCIENT_CORE_AWARENESS);
+    const claude = buildScientAwareness(new Set(["sources:read"]), CLAUDE_SCIENT_TOOL_PROJECTION);
+    expect(claude).toContain("`mcp__scient__scient_sources_add`");
+    expect(claude).toContain("through `ToolSearch` first");
+    // Only a session that can load skills is sent to one.
+    expect(SCIENT_LIBRARY_AWARENESS).not.toContain("skill");
+    expect(buildScientAwareness(new Set(["skills:read", "sources:read"]))).toContain(
+      "load the `references` skill first",
+    );
+  });
+
   it("recommends Compute runs only with compute authority", () => {
     expect(wordCount(SCIENT_COMPUTE_AWARENESS)).toBeLessThanOrEqual(50);
     expect(SCIENT_COMPUTE_AWARENESS).toContain("`scient_compute_run`");
     expect(buildScientAwareness()).toBe(SCIENT_CORE_AWARENESS);
-    expect(buildScientAwareness(new Set(["sources:read"]))).toBe(SCIENT_CORE_AWARENESS);
+    expect(buildScientAwareness(new Set(["threads:read"]))).toBe(SCIENT_CORE_AWARENESS);
     expect(buildScientAwareness(new Set(["compute"]))).toBe(
       `${SCIENT_CORE_AWARENESS}\n\n${SCIENT_COMPUTE_AWARENESS}`,
     );

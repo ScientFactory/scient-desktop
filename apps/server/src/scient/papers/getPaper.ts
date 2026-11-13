@@ -11,6 +11,9 @@ import * as Option from "effect/Option";
 import { FetchHttpClient } from "effect/http";
 import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
 import { consumeAgentWorkspace } from "../operations/AgentWorkspaceScope.ts";
+import { readScientSourceRecord } from "@scientfactory/scient-sources/store";
+import { resolveLibrarySourceId } from "../sources/LibraryProjectSources.ts";
+import { resolveScientLibraryStoreAt } from "../sources/SourcesBackend.ts";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { authorizationDecision } from "../accounts/AccountDecisions.ts";
 import { AccountsService, type AccountSessionScope } from "../accounts/AccountsService.ts";
@@ -108,29 +111,83 @@ const agentRoot = consumeAgentWorkspace().pipe(
   Effect.mapError((error) => unavailable(error.message)),
 );
 
-/** One paper, waited for: it goes through the same queue as a list of them. */
-export const getPaper = Effect.fn("Papers.get")(function* (input: {
+interface AgentPaperAsked {
   readonly doi?: string | undefined;
   readonly url?: string | undefined;
-}) {
+  readonly addToLibrary?: boolean | undefined;
+  readonly sourceId?: string | undefined;
+}
+
+const NO_LIBRARY_ACCESS =
+  "This conversation may not change the Library, so the PDF was only saved.";
+
+/** An agent's paper as the queue takes it: Library work needs the Sources write grant. */
+export const askedForLibrary = Effect.fn("Papers.askedForLibrary")(function* (
+  root: string,
+  input: AgentPaperAsked,
+) {
+  const { addToLibrary, sourceId, ...paper } = input;
+  const wanted = addToLibrary === true || sourceId !== undefined;
+  const invocation = yield* AgentInvocationContext;
+  if (!wanted) return { asked: paper };
+  if (!invocation.capabilities.has("sources:write"))
+    return { asked: paper, note: NO_LIBRARY_ACCESS };
+  if (sourceId === undefined) return { asked: { ...paper, library: true } };
+  // Library mode: a library ID, or this project's source ID resolved to its library record.
+  const library = yield* resolveScientLibraryStoreAt(root, "write").pipe(
+    Effect.mapError((error) =>
+      unavailable(
+        error._tag === "ScientLibraryMoveBusyError"
+          ? error.message
+          : "The Library could not be read.",
+      ),
+    ),
+  );
+  const record = yield* Effect.tryPromise({
+    try: async () => {
+      if (!library) return readScientSourceRecord(root, sourceId);
+      const libraryId = await resolveLibrarySourceId(library, sourceId);
+      return libraryId ? readScientSourceRecord(library.store, libraryId) : null;
+    },
+    catch: () => unavailable("The Library could not be read."),
+  });
+  return record
+    ? {
+        asked: {
+          ...paper,
+          source: { sourceId: record.sourceId, expectedRevision: record.revision },
+        },
+      }
+    : { missing: `There is no source ${sourceId} in this project's Library.` };
+});
+
+/** One paper, waited for: it goes through the same queue as a list of them. */
+export const getPaper = Effect.fn("Papers.get")(function* (input: AgentPaperAsked) {
   if (!input.doi && !input.url)
     return {
       status: "not-found" as const,
       message: "Pass the paper's DOI or a link to it; find the DOI with a web search if needed.",
     };
   const root = yield* agentRoot;
-  const [item] = yield* requestPapers(root, [input], yield* agentRequester());
+  const request = yield* askedForLibrary(root, input);
+  if ("missing" in request) return { status: "not-found" as const, message: request.missing };
+  const [item] = yield* requestPapers(root, [request.asked], yield* agentRequester());
   if (!item) return yield* unavailable("The paper could not be queued.");
   const done = yield* waitForPaper(root, item.itemId, ONE_PAPER_WAIT);
-  if (done?.state === "saved" && done.path && done.route)
+  if (done?.state === "saved" && done.path && done.route) {
+    const message = request.note ?? done.message;
     return {
       status: "saved" as const,
       path: done.path,
       route: done.route,
       published: done.published ?? true,
+      ...(done.version ? { version: done.version } : {}),
       ...(done.title ? { title: done.title } : {}),
       ...(done.doi ? { doi: done.doi } : {}),
+      ...(done.sourceId ? { sourceId: done.sourceId } : {}),
+      ...(message ? { message } : {}),
     };
+  }
   return {
     status: done?.state === "saved" || !done ? ("waiting" as const) : done.state,
     message:
@@ -139,11 +196,20 @@ export const getPaper = Effect.fn("Papers.get")(function* (input: {
 }, Effect.provide(FetchHttpClient.layer));
 
 export const queuePapers = Effect.fn("Papers.queue")(function* (input: {
-  readonly papers: ReadonlyArray<PaperAsked>;
+  readonly papers: ReadonlyArray<AgentPaperAsked>;
 }) {
   const root = yield* agentRoot;
-  const items = yield* requestPapers(root, input.papers, yield* agentRequester());
-  return { queued: items.length };
+  const requests = yield* Effect.forEach(input.papers, (paper) => askedForLibrary(root, paper));
+  const asked = requests.flatMap((request) => ("asked" in request ? [request.asked] : []));
+  const notes = [
+    ...new Set(
+      requests.flatMap((request) =>
+        "missing" in request ? [request.missing] : request.note ? [request.note] : [],
+      ),
+    ),
+  ];
+  const items = asked.length > 0 ? yield* requestPapers(root, asked, yield* agentRequester()) : [];
+  return { queued: items.length, ...(notes.length > 0 ? { message: notes.join(" ") } : {}) };
 }, Effect.provide(FetchHttpClient.layer));
 
 export const paperStatus = Effect.fn("Papers.status")(function* (input: {

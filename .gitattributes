@@ -8,6 +8,8 @@ apps/mobile/modules/t3-highlights/Vendor/highlights/highlights.c whitespace=-bla
 apps/mobile/modules/t3-highlights/Vendor/wasm2c/wasm-rt.h whitespace=-blank-at-eol
 # Nitrogen writes this binding code with trailing spaces; keep it as generated.
 apps/mobile/modules/t3-highlights/nitrogen/generated/** whitespace=-blank-at-eol
+# RIS ends each record with "ER  - " including its trailing space, as real exports do.
+packages/scient-sources/src/bibliography/fixtures/*.ris whitespace=-blank-at-eol
 # Batch files need CRLF for cmd.exe to parse them reliably.
 *.cmd text eol=crlf
 *.bat text eol=crlf

@@ -7,8 +7,15 @@ import { vi } from "vite-plus/test";
 import { PreviewAutomationBroker } from "../../mcp/PreviewAutomationBroker.ts";
 import { AccountsService } from "../accounts/AccountsService.ts";
 import { fakeAccounts } from "../accounts/Accounts.testkit.ts";
-import { getPaperForSource } from "./getPaper.ts";
+import { askedForLibrary, getPaperForSource } from "./getPaper.ts";
+import { initializeScientProject } from "@scientfactory/project-init";
+import { importScientSource } from "@scientfactory/scient-sources/store";
+import * as FileSystem from "effect/FileSystem";
+import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts";
+import { userRunInvocation } from "../accounts/checkAccounts.ts";
+import { ThreadId } from "@t3tools/contracts";
 import type * as PaperQueue from "./paperQueue.ts";
+import { ScientSourcesBackend } from "../sources/SourcesBackend.ts";
 
 const asked = vi.hoisted(() => ({ requests: [] as Array<unknown> }));
 
@@ -55,4 +62,83 @@ it.effect("reports a saved paper as attached to its source, as the user's own re
     ),
     Effect.provide(NodeServices.layer),
   ),
+);
+
+const invocationWith = (capabilities: ReadonlyArray<"accounts" | "sources:write">) => ({
+  ...userRunInvocation(ThreadId.make("thread-fixture"), EnvironmentId.make("env-fixture")),
+  capabilities: new Set(capabilities),
+});
+
+it.effect("files an agent's paper in the Library only with the Sources write grant", () =>
+  Effect.gen(function* () {
+    const paper = { doi: "10.1/x", addToLibrary: true };
+    expect(
+      yield* askedForLibrary("/project", paper).pipe(
+        Effect.provideService(AgentInvocationContext, invocationWith(["accounts"])),
+      ),
+    ).toEqual({
+      asked: { doi: "10.1/x" },
+      note: "This conversation may not change the Library, so the PDF was only saved.",
+    });
+    expect(
+      yield* askedForLibrary("/project", paper).pipe(
+        Effect.provideService(
+          AgentInvocationContext,
+          invocationWith(["accounts", "sources:write"]),
+        ),
+      ),
+    ).toEqual({ asked: { doi: "10.1/x", library: true } });
+  }),
+);
+
+it.effect("attaches to a named source at its current revision, or says it is missing", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* fs.makeTempDirectoryScoped({ prefix: "scient-paper-get-" });
+    yield* Effect.promise(() => initializeScientProject({ root }));
+    const { record } = yield* Effect.promise(() =>
+      importScientSource({
+        root,
+        operationId: "op-fixture",
+        candidate: {
+          sourceKey: "named",
+          type: "article",
+          customType: null,
+          title: "A named source",
+          creators: [],
+          issuedRaw: null,
+          issuedYear: null,
+          identifiers: [],
+          abstract: null,
+          containerTitle: null,
+          publisher: null,
+          volume: null,
+          issue: null,
+          pages: null,
+          language: null,
+          url: null,
+          tags: [],
+          externalReferences: [],
+          fieldProvenance: [],
+          pdfAvailable: false,
+          pdfFileName: null,
+          pdfAttachmentCount: 0,
+        },
+      }),
+    );
+    const ask = (sourceId: string) =>
+      askedForLibrary(root, { doi: "10.1/x", sourceId }).pipe(
+        Effect.provideService(
+          AgentInvocationContext,
+          invocationWith(["accounts", "sources:write"]),
+        ),
+        Effect.provideService(ScientSourcesBackend, "project"),
+      );
+    expect(yield* ask(record!.sourceId)).toEqual({
+      asked: { doi: "10.1/x", source: { sourceId: record!.sourceId, expectedRevision: 1 } },
+    });
+    expect(yield* ask("source_missing")).toEqual({
+      missing: "There is no source source_missing in this project's Library.",
+    });
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );

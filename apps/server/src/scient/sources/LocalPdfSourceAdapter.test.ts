@@ -1,6 +1,12 @@
+// @effect-diagnostics nodeBuiltinImport:off -- One case reads a synthetic PDF from a temporary folder.
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { describe, expect, it } from "@effect/vitest";
 import type { ScientSourceCandidate } from "@scientfactory/scient-sources";
 
+import { textPdf } from "../annotations/annotationTestUtils.ts";
 import { localPdfSourceInternals } from "./LocalPdfSourceAdapter.ts";
 
 describe("local PDF source adapter", () => {
@@ -84,6 +90,24 @@ describe("local PDF source adapter", () => {
     expect(localPdfSourceInternals.normalizeEmbeddedPdfDate("D:not-a-date")).toBe("D:not-a-date");
   });
 
+  it("takes the publication date only from PRISM metadata, never file dates", () => {
+    const xmp = (entries: Record<string, string>) => ({ get: (name: string) => entries[name] });
+    expect(
+      localPdfSourceInternals.embeddedPublicationDate(
+        xmp({ "dc:date": "2026-01-05", "xmp:createdate": "2026-01-05T10:00:00Z" }),
+      ),
+    ).toBeNull();
+    expect(
+      localPdfSourceInternals.embeddedPublicationDate(
+        xmp({ "dc:date": "2026-01-05", "prism:coverdate": "2019-06-01T00:00:00Z" }),
+      ),
+    ).toBe("2019-06-01");
+    expect(
+      localPdfSourceInternals.embeddedPublicationDate(xmp({ "prism:publicationdate": "2018" })),
+    ).toBe("2018");
+    expect(localPdfSourceInternals.embeddedPublicationDate(null)).toBeNull();
+  });
+
   it("accepts PDF creator arrays without losing later metadata extraction", () => {
     expect(
       localPdfSourceInternals.embeddedCreators([
@@ -103,6 +127,27 @@ describe("local PDF source adapter", () => {
         "Claire Morley, Maria Unwin, Gregory M. Peterson, Jim Stankovich, Leigh Kinsman",
       ]),
     ).toHaveLength(5);
+  });
+
+  it("marks a title taken from the file name of a PDF that names none", async () => {
+    const folder = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-pdf-title-"));
+    try {
+      const pdfPath = NodePath.join(folder, "field_report-2026.pdf");
+      await NodeFSP.writeFile(pdfPath, textPdf([["Fieldwork notes without identifiers"]]));
+      const candidate = await localPdfSourceInternals.extractPdfMetadata({
+        sourceKey: "local_field",
+        fileName: "field_report-2026.pdf",
+        pdfPath,
+      });
+      expect(candidate.title).toBe("field report 2026");
+      expect(candidate.fieldProvenance).toContainEqual({
+        field: "title",
+        origin: "local-pdf",
+        sourceField: "file-name",
+      });
+    } finally {
+      await NodeFSP.rm(folder, { recursive: true, force: true });
+    }
   });
 
   it("does not assign an abstract to generic embedded PDF metadata", () => {

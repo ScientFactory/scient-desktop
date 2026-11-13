@@ -11,7 +11,7 @@ it.
 
 - Which features and Settings pages you use, and whether they work. This
   includes Scient's own features, whether you use them or an agent does: Compute
-  and the language you run, notebooks, LaTeX, Overleaf sync, Sources, papers,
+  and the language you run, notebooks, LaTeX, Overleaf sync, the Library, papers,
   Accounts, extensions, skills, exports and the thread queue.
 - Which providers and models you use, by name, how long turns take, and how they
   end.
