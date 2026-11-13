@@ -11,6 +11,16 @@ const SERVER_OBSERVED_OPERATIONS: ReadonlySet<string> = new Set([
   "source-import",
 ]);
 
+// Accounts' browser observations (apps/web/src/scient/analytics/accountBrowserAnalytics.ts) often
+// end long after they began, such as a sign-in window or a copied Google sign-in's lifetime.
+const FENCED_FEATURES: ReadonlySet<string> = new Set([
+  "accounts.google_signin.blocked",
+  "accounts.browser_window",
+  "accounts.browser_import",
+  "accounts.google_copy.checked",
+  "accounts.google_copy.ended",
+]);
+
 /** Fence delayed UI outcomes across consent changes and server restarts.
  * The random context never reaches the event contract, queue or gateway.
  */
@@ -44,7 +54,8 @@ export function makeAnalyticsUiAdapter(analytics: AnalyticsService["Service"]) {
       event.name === "settings.viewed" ||
       event.name === "usage.viewed" ||
       event.name === "feature.viewed" ||
-      event.name === "usage.availability"
+      event.name === "usage.availability" ||
+      (event.name === "feature.used" && FENCED_FEATURES.has(String(event.properties.feature)))
     ) {
       const current = yield* status;
       if (

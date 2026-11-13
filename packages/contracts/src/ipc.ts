@@ -680,6 +680,26 @@ export interface DesktopPreviewPointerEvent {
   createdAt: string;
 }
 
+// SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+/** Scient's browser stopped a Google sign-in page, which Google never lets finish here. */
+export interface DesktopPreviewSignInBlockedEvent {
+  tabId: string;
+  page: "credentials" | "transit" | "rejected";
+  /**
+   * The tab itself, a sign-in window ("Continue with Google") a page opened, or a frame in the
+   * tab's page or in such a window.
+   */
+  context: "tab" | "popup" | "frame";
+  /** The https origin of the page the sign-in started from; null for Google's own sign-in. */
+  restartUrl: string | null;
+  /**
+   * The tab's page this is about: for a window or a frame, the page that opened or holds it. Once
+   * the tab shows another page, the explanation no longer applies.
+   */
+  pageUrl: string;
+}
+// SCIENT-FORK:END
+
 export interface DesktopPreviewOpenLinkEvent {
   tabId: string;
   url: string;
@@ -1422,6 +1442,9 @@ export interface DesktopPreviewBridge {
   onPointerEvent: (listener: (event: DesktopPreviewPointerEvent) => void) => () => void;
   onOpenLink: (listener: (event: DesktopPreviewOpenLinkEvent) => void) => () => void;
   onFindResult: (listener: (event: DesktopPreviewFindResultEvent) => void) => () => void;
+  // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
+  onSignInBlocked: (listener: (event: DesktopPreviewSignInBlockedEvent) => void) => () => void;
+  // SCIENT-FORK:END
 }
 
 export type ConfirmDialogVariant = "default" | "destructive";

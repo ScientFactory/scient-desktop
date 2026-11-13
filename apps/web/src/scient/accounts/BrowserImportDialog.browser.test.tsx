@@ -180,14 +180,17 @@ it("imports a Chromium profile's saved passwords through the Accounts importer, 
   });
 });
 
-it("offers a Chrome window on Windows, where Chrome's and Edge's sign-ins can't be read", async () => {
+it("lists Chrome and Edge on Windows as protected, each offering a window of the installed browser", async () => {
   state.sources = [
-    { id: "chrome", name: "Chrome", profiles: [], unavailable: "unsupportedPlatform" },
-    { id: "edge", name: "Edge", profiles: [], unavailable: "unsupportedPlatform" },
+    { id: "chrome", name: "Chrome", profiles: [], unavailable: "appBoundEncryption" },
+    { id: "edge", name: "Microsoft Edge", profiles: [], unavailable: "appBoundEncryption" },
+    { id: "brave", name: "Brave", profiles: [], unavailable: "notInstalled" },
   ];
   state.intoMain.mockReset().mockReturnValue(new Promise(() => {}));
+  state.importCookies.mockReset();
   using _bridge = stubGlobal("desktopBridge", {
     getLocalEnvironmentBootstraps: () => [],
+    getClientPlatform: () => "win32",
     accounts: {
       sourceProfiles: async () => [],
       chromeSignIn: vi.fn(),
@@ -203,9 +206,16 @@ it("offers a Chrome window on Windows, where Chrome's and Edge's sign-ins can't 
       onClose={vi.fn()}
     />,
   );
+  await expect
+    .element(page.getByText("Windows protects this browser's saved sign-ins from other apps."))
+    .toHaveLength(2);
   await expect.element(page.getByText("No browsers found")).not.toBeInTheDocument();
-  await page.getByRole("button", { name: /Sign in in a Chrome window/ }).click();
+  // Nothing to select: a protected browser is never imported from.
+  await expect.element(page.getByRole("checkbox")).toHaveLength(0);
+  const windowActions = page.getByRole("button", { name: "Sign in in an Edge window" });
+  await expect.element(windowActions).toHaveLength(2);
+  await windowActions.first().click();
   await expect.element(page.getByRole("heading", { name: "Sign in in Edge" })).toBeVisible();
-  await expect.element(page.getByRole("button", { name: "Done", exact: true })).toBeVisible();
   expect(state.intoMain).toHaveBeenCalledWith(environmentId, "https://accounts.google.com/");
+  expect(state.importCookies).not.toHaveBeenCalled();
 });

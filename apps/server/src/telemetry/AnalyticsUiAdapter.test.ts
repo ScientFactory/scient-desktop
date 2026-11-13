@@ -93,6 +93,35 @@ describe("UI operation consent context", () => {
       expect(f.events).toEqual([event]);
     }).pipe(Effect.provide(NodeCrypto.layer)),
   );
+  it.effect(
+    "fences Accounts' browser observations across a consent change, not other features",
+    () =>
+      Effect.gen(function* () {
+        const f = fixture();
+        const ui = makeAnalyticsUiAdapter(f.service);
+        const before = yield* ui.status;
+        const window = {
+          name: "feature.used" as const,
+          properties: { feature: "accounts.browser_window", variant: "copied" },
+        };
+        const other = { name: "feature.used" as const, properties: { feature: "sources.add" } };
+        expect(yield* ui.record(window)).toEqual({ accepted: false });
+        expect(yield* ui.record(other)).toEqual({ accepted: true });
+        // The window was opened under `before`; consent went off and on in another client meanwhile.
+        yield* f.setConsent("off");
+        yield* f.setConsent("product");
+        expect(
+          yield* ui.record({ ...window, collectionContext: before.collectionContext }),
+        ).toEqual({ accepted: false });
+        const after = yield* ui.status;
+        expect(yield* ui.record({ ...window, collectionContext: after.collectionContext })).toEqual(
+          {
+            accepted: true,
+          },
+        );
+        expect(f.events).toEqual([other, window]);
+      }).pipe(Effect.provide(NodeCrypto.layer)),
+  );
   it.effect("strips the context before recording and rejects absent or wrong contexts", () =>
     Effect.gen(function* () {
       const f = fixture();

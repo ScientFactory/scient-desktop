@@ -32,12 +32,34 @@ export interface BrowserImportSourceDefinition {
   readonly keychainService?: string;
   readonly keychainAccount?: string;
   readonly linuxSecretApplication?: string;
+  // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+  /** Listed on Windows but never read there; the folder only says whether it is installed. */
+  readonly windowsImportBlock?: {
+    readonly reason: "appBoundEncryption";
+    readonly userDataDirectory: (context: BrowserImportPathContext) => string | undefined;
+  };
+  // SCIENT-FORK:END
 }
 
 const macApplicationSupport = (
   context: BrowserImportPathContext,
   ...segments: ReadonlyArray<string>
 ) => context.path.join(context.home, "Library", "Application Support", ...segments);
+
+// SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+const appBoundBlock = (folder: {
+  readonly root: "localAppData" | "appData";
+  readonly segments: ReadonlyArray<string>;
+}): NonNullable<BrowserImportSourceDefinition["windowsImportBlock"]> => ({
+  reason: "appBoundEncryption",
+  userDataDirectory: (context) => {
+    const root = context[folder.root];
+    return context.platform === "win32" && root
+      ? context.path.join(root, ...folder.segments)
+      : undefined;
+  },
+});
+// SCIENT-FORK:END
 
 const chromiumSource = (input: {
   readonly id: BrowserImportSourceId;
@@ -48,6 +70,9 @@ const chromiumSource = (input: {
   readonly linuxSegments?: ReadonlyArray<string>;
   readonly linuxSecretApplication?: string;
   readonly windowsSegments?: ReadonlyArray<string>;
+  // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+  readonly windowsAppBound?: Parameters<typeof appBoundBlock>[0];
+  // SCIENT-FORK:END
 }): BrowserImportSourceDefinition => ({
   id: input.id,
   name: input.name,
@@ -62,6 +87,11 @@ const chromiumSource = (input: {
   ...(input.linuxSecretApplication === undefined
     ? {}
     : { linuxSecretApplication: input.linuxSecretApplication }),
+  // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+  ...(input.windowsAppBound === undefined
+    ? {}
+    : { windowsImportBlock: appBoundBlock(input.windowsAppBound) }),
+  // SCIENT-FORK:END
   userDataDirectory: (context) => {
     if (context.platform === "darwin") return macApplicationSupport(context, ...input.macSegments);
     if (context.platform === "win32") {
@@ -88,6 +118,9 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     macSegments: ["Google", "Chrome"],
     linuxSegments: ["google-chrome"],
     linuxSecretApplication: "chrome",
+    // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+    windowsAppBound: { root: "localAppData", segments: ["Google", "Chrome", "User Data"] },
+    // SCIENT-FORK:END
   }),
   chromiumSource({
     id: "edge",
@@ -97,6 +130,9 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     macSegments: ["Microsoft Edge"],
     linuxSegments: ["microsoft-edge"],
     linuxSecretApplication: "msedge",
+    // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+    windowsAppBound: { root: "localAppData", segments: ["Microsoft", "Edge", "User Data"] },
+    // SCIENT-FORK:END
   }),
   chromiumSource({
     id: "brave",
@@ -106,6 +142,12 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     macSegments: ["BraveSoftware", "Brave-Browser"],
     linuxSegments: ["BraveSoftware", "Brave-Browser"],
     linuxSecretApplication: "brave",
+    // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+    windowsAppBound: {
+      root: "localAppData",
+      segments: ["BraveSoftware", "Brave-Browser", "User Data"],
+    },
+    // SCIENT-FORK:END
   }),
   chromiumSource({
     id: "vivaldi",
@@ -116,6 +158,9 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     linuxSegments: ["vivaldi"],
     // Vivaldi stores its Linux libsecret key under Chrome's application name.
     linuxSecretApplication: "chrome",
+    // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+    windowsAppBound: { root: "localAppData", segments: ["Vivaldi", "User Data"] },
+    // SCIENT-FORK:END
   }),
   chromiumSource({
     id: "opera",
@@ -125,6 +170,9 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     macSegments: ["com.operasoftware.Opera"],
     linuxSegments: ["opera"],
     linuxSecretApplication: "opera",
+    // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+    windowsAppBound: { root: "appData", segments: ["Opera Software", "Opera Stable"] },
+    // SCIENT-FORK:END
   }),
   chromiumSource({
     id: "arc",
@@ -132,6 +180,20 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     keychainService: "Arc Safe Storage",
     keychainAccount: "Arc",
     macSegments: ["Arc", "User Data"],
+    // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+    // Arc for Windows is a Store package; its family name is fixed by the publisher.
+    windowsAppBound: {
+      root: "localAppData",
+      segments: [
+        "Packages",
+        "TheBrowserCompany.Arc_ttt1ap7aakyb4",
+        "LocalCache",
+        "Local",
+        "Arc",
+        "User Data",
+      ],
+    },
+    // SCIENT-FORK:END
   }),
   chromiumSource({
     id: "helium",
@@ -772,3 +834,30 @@ export const isSourceInstalled = Effect.fn("BrowserImportSources.isSourceInstall
   );
   return found.some(Boolean);
 });
+
+// SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+/**
+ * Why a source this platform can't read is unavailable: its block reason once its user-data folder
+ * exists, otherwise not installed. Undefined when the source has no block here. Reads nothing inside.
+ */
+export const windowsImportBlockReason = Effect.fn("BrowserImportSources.windowsImportBlockReason")(
+  function* (
+    definition: BrowserImportSourceDefinition,
+    context: BrowserImportPathContext,
+  ): Effect.fn.Return<
+    "appBoundEncryption" | "notInstalled" | undefined,
+    never,
+    FileSystem.FileSystem
+  > {
+    const block = definition.windowsImportBlock;
+    const folder = block?.userDataDirectory(context);
+    if (block === undefined || folder === undefined) return undefined;
+    const fileSystem = yield* FileSystem.FileSystem;
+    const installed = yield* fileSystem.stat(folder).pipe(
+      Effect.map((info) => info.type === "Directory"),
+      Effect.orElseSucceed(() => false),
+    );
+    return installed ? block.reason : "notInstalled";
+  },
+);
+// SCIENT-FORK:END
