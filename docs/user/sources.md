@@ -35,8 +35,19 @@ choose **All** under Collection to see every paper in your Library, from every
 project. A paper that is in this project says "In this project" there. Use
 **Add to project** to bring a paper from your Library into this project, and
 **Remove from this project** to take it out; the paper stays in your Library
-and in other projects. Importing while **All** is shown adds the papers to your
-Library only; the import's summary offers **Add to project**.
+and in other projects. Importing or adding by identifier while **All** is shown
+adds the papers to your Library only; the import's summary offers **Add to
+project**.
+
+Sort the list by **Last added**, **Publication year**, **Title** or **Author**
+with the sort button beside the filter button.
+
+A paper this project cites that this computer's Library does not have, for
+example one deleted for good from the Trash or one a collaborator added, says
+"Not in this Library". The project keeps its citation details, so it can still
+be cited, but it has no PDF here and nothing to move to the Trash. Removing it
+from the project asks first, because it cannot be added back from this
+computer.
 
 ### Two notes
 
@@ -64,7 +75,10 @@ line with its progress. A change you make during a large move may ask you to
 try again when it has finished. When the move is done, the line says how many
 duplicates were merged and whether any kept different values. Undo history of
 bulk edits from before the move is not carried over. Dismiss the line when you
-have read it. If the project's `.scient` folder is tracked in git, commit the
+have read it. If a PDF from the project was still open, the line also says how
+many files will be removed from the project later. If the move fails, the line
+says why; Scient tries again with the next change to the Library or its next
+background pass, and **Check again** shows the latest state. If the project's `.scient` folder is tracked in git, commit the
 change so PDFs stop being stored in git.
 
 **Moving back.** To undo the move, choose **Move back into this project** in
@@ -88,8 +102,9 @@ report on the review lists what is left to decide until you dismiss it.
 ### Possible duplicates
 
 When the same paper reaches your Library twice, for example from two projects,
-Scient merges the copies on its own if they share a DOI, PubMed or arXiv ID,
-the same Zotero item, or the same PDF and title. Copies that only look alike,
+Scient merges the copies on its own if they share a DOI, PubMed, PubMed
+Central, arXiv, OpenAlex or Semantic Scholar ID, the same Zotero item, or the
+same PDF and title. Copies that only look alike,
 with the same title, first author and year, or the same ISBN, are listed
 instead. Open them with **Possible duplicates** in the **⋯** menu. Each pair
 shows both copies side by side, with what differs between them stressed.
@@ -113,8 +128,9 @@ summary line offers **Review** when some merges kept different values.
 4. Select individual references, import the selected collection, or import the
    complete library.
 
-Scient copies each reference's metadata, tags, child notes (as the source's
-note) and every PDF attachment into the project. A citation key the item
+Scient copies each reference's metadata, tags, child notes (as **My note**)
+and every PDF attachment into your Library, and adds the references to this
+project unless **All** is shown. A citation key the item
 already has, from Zotero or Better BibTeX, is kept. Each source also joins a
 Library collection named after each Zotero collection it is in. The Library
 keeps one level of nesting, so **Chapter 2** inside **Thesis** stays inside it;
@@ -187,7 +203,8 @@ records are identical, Scient asks whether to import the item separately.
 2. Select one or more PDFs.
 3. Review the imported records and correct any incomplete metadata.
 
-Scient copies each PDF into the project and creates an editable source record.
+Scient copies each PDF into your Library and creates an editable source record;
+when you import a single new PDF, its details open so you can check them.
 It first uses metadata embedded in the file. When the PDF contains one clear
 DOI or explicitly labelled PMID, Scient can use that identifier to retrieve
 better bibliographic metadata or an abstract from PubMed, Crossref, or Europe
@@ -250,7 +267,7 @@ other reference manager by exporting it to a file and importing that file.
 
 Each entry keeps its citation key, authors, editors, identifiers (DOI, PMID,
 PMCID, arXiv, ISBN, ISSN), tags and abstract. Notes in the file (`note` and
-`annote`, RIS `N1`, EndNote notes) become the source's project note. LaTeX
+`annote`, RIS `N1`, EndNote notes) become the source's **My note**. LaTeX
 accents and commands in `.bib` files are turned into plain text, `@string`
 abbreviations and `crossref` entries are resolved, and Google Scholar's
 "arXiv preprint" entries become preprints with their arXiv ID.
@@ -310,14 +327,24 @@ as a separate source. An agent can refresh a source's metadata the same way;
 the change is credited to the agent, and **History** can restore the earlier
 version.
 
-Use **Move to Trash** from the source actions to remove a source. Choose
+A source without a PDF that has a DOI or a link offers **Get PDF** in its
+details, and the **⋯** menu offers **Get the missing PDF** (or **Get _N_
+missing PDFs**) for every such source in the list; see
+[Accounts](accounts.md) for how Scient reaches closed papers.
+
+Use **Move to Trash** from the source actions to remove a source from your
+Library; in **This project** a row's menu offers **Remove from this project**
+instead, and **Move to Trash** is in the source's details and in **All**. Choose
 **Undo** in the message that appears to put it straight back, or choose
 **Trash** in the **⋯** menu at the top of the Library later to restore it. Its PDFs stay in
 your Library while it is in the trash. **Empty trash** deletes the sources in
 it for good, with their saved versions and any PDF no other source uses.
 Removing a source never changes Zotero. Moving a paper to the Trash removes it
-from your Library, not only from this project. Other projects that have it keep
-its citation details, and the message says how many.
+from your Library, not only from this project. Projects that have it, this one
+included, keep its citation details and list it as "Not in this Library" until
+you restore it; the message says how many other projects have it. The Trash
+also holds the copies that merges took away: only the merge's **Undo** brings
+those back, and once the trash is emptied those merges can no longer be undone.
 
 Every change to a source is kept as a version. Choose **History** from the
 source actions to see who changed what and when, and **Restore** an earlier
@@ -357,7 +384,7 @@ with it.
 ## Search the full text
 
 Scient reads the text of every page of every PDF in the Library and keeps it
-with the project, so you can search inside the papers. Type at least three
+in your Library, so you can search inside the papers. Type at least three
 characters in the Library search: under the sources whose title, authors or
 other details match, **In full text** lists passages from the PDFs that match,
 with their page. While a filter is on, only the sources it keeps are searched.
