@@ -19,6 +19,9 @@ import {
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
+// SCIENT-FORK:START — Scient Agent's own accounts stand in for each other.
+import { scientAgentAlternativeModel } from "./scientAgentModelFallback.ts";
+// SCIENT-FORK:END
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -87,6 +90,24 @@ export function resolveNewThreadModelSelection(input: {
 }) {
   const selection = input.explicitSelection ?? input.defaultSelection;
   const unchanged = { selection, fallback: null };
+  // SCIENT-FORK:START — Scient Agent answers with another signed-in account's model first.
+  if (!input.explicitSelection && selection) {
+    const agent = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+    const limited = exhaustedUsageWindow(agent, input.now, selection.model);
+    const alternative =
+      limited &&
+      scientAgentAlternativeModel(
+        agent,
+        selection.model,
+        (slug) => exhaustedUsageWindow(agent, input.now, slug) !== undefined,
+      );
+    if (agent && limited && alternative)
+      return {
+        selection: { instanceId: selection.instanceId, model: alternative.slug },
+        fallback: { provider: agent, resetsAt: limited.resetsAt ?? null },
+      };
+  }
+  // SCIENT-FORK:END
   if (input.explicitSelection || !selection || !input.fallbackSelection) return unchanged;
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
   const window = exhaustedUsageWindow(provider, input.now, selection.model);

@@ -1,5 +1,8 @@
 import {
   type EnvironmentId,
+  // SCIENT-FORK:START — resume with another model.
+  type ModelSelection,
+  // SCIENT-FORK:END
   type ProviderInteractionMode,
   type RunId,
   type RuntimeMode,
@@ -87,7 +90,9 @@ export function useComposerResume(input: ComposerResumeInput) {
   const isResuming = resumingThreadKeys.has(routeThreadKey);
   const { sendInFlight: sendInFlightRef } = draftSendState(routeThreadKey);
 
-  const onResume = async () => {
+  // SCIENT-FORK:START — "Continue with <model>" resumes with a model the composer does not hold.
+  const resumeWith = async (modelSelectionOverride?: ModelSelection) => {
+    // SCIENT-FORK:END
     if (
       !activeThread ||
       !canResume ||
@@ -111,7 +116,11 @@ export function useComposerResume(input: ComposerResumeInput) {
       }
       // Read before the first await: the composer follows the route, so after the user switches
       // threads it holds the other thread's model.
-      const modelSelection = composerRef.current?.getSendContext().selectedModelSelection;
+      const modelSelection =
+        // SCIENT-FORK:START — an explicit model wins over the composer's.
+        modelSelectionOverride ??
+        // SCIENT-FORK:END
+        composerRef.current?.getSendContext().selectedModelSelection;
       const createdAt = new Date().toISOString();
       const settingsResult = await persistThreadSettingsForNextTurn({
         assertCurrent: () => {
@@ -172,5 +181,9 @@ export function useComposerResume(input: ComposerResumeInput) {
     });
   };
 
-  return { onResume, isResuming };
+  // SCIENT-FORK:START — resume with another model.
+  const onResume = () => resumeWith();
+  const onResumeWith = (modelSelection: ModelSelection) => resumeWith(modelSelection);
+  return { onResume, onResumeWith, isResuming };
+  // SCIENT-FORK:END
 }

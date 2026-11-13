@@ -32,6 +32,9 @@ type RecoveryProps = {
   recovery: OrchestrationV2LimitRecovery | null;
   timestampFormat: TimestampFormat;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
+  // SCIENT-FORK:START — continue at once with another signed-in model.
+  continueWith?: { readonly modelName: string; readonly onContinue: () => void } | undefined;
+  // SCIENT-FORK:END
 };
 
 export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBannerStackItem {
@@ -53,9 +56,22 @@ export function usageLimitRecoveryBannerItem(props: RecoveryProps): ComposerBann
     canSchedule && recovery?.runId === runId && recovery.resetAt === resetAt && recovery.autoResume;
   const workspaceLimit = errorCode === CHATGPT_WORKSPACE_USAGE_LIMIT_CODE;
   const chatGptLimit = workspaceLimit || errorCode === CHATGPT_USAGE_LIMIT_CODE;
-  const recoveryActions = canSchedule ? (
-    <RecoveryActions key={`${runId}:${resetAt}`} {...props} />
+  // SCIENT-FORK:START — continue at once with another signed-in model.
+  const continueWith = props.continueWith ? (
+    <span className="flex items-center px-1">
+      <InlineButton touchTarget="padded" onClick={props.continueWith.onContinue}>
+        Continue with {props.continueWith.modelName}
+      </InlineButton>
+    </span>
   ) : null;
+  const recoveryActions =
+    canSchedule || continueWith ? (
+      <>
+        {continueWith}
+        {canSchedule ? <RecoveryActions key={`${runId}:${resetAt}`} {...props} /> : null}
+      </>
+    ) : null;
+  // SCIENT-FORK:END
   const displayAt =
     resumes && resetAt && snoozedUntil && Date.parse(snoozedUntil) > Date.parse(resetAt)
       ? snoozedUntil

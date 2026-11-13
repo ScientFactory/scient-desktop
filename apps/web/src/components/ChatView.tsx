@@ -9,6 +9,10 @@ import { ChildThreadApprovals } from "./chat/ChildThreadApprovals";
 import { workspaceAreaProps } from "../lib/workspaceFocus";
 import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+// SCIENT-FORK:START — Scient Agent's other signed-in accounts on a usage limit.
+import { exhaustedUsageWindow } from "@t3tools/shared/usageLimits";
+import { scientAgentAlternativeModel } from "@t3tools/shared/scientAgentModelFallback";
+// SCIENT-FORK:END
 import { readThreadProjection } from "../state/entities";
 import { deriveTimelineEntriesFromVisibleTurnItemsWithState } from "../session-logic";
 import { Button } from "./ui/button";
@@ -3304,6 +3308,42 @@ function ChatViewContent(props: ChatViewProps) {
     });
     return item ? [item] : [];
   });
+  // SCIENT-FORK:START — the limit banner's "Continue with" resumes, so resume comes first.
+  const { onResume, onResumeWith, isResuming } = useComposerResume({
+    environmentId,
+    routeThreadKey,
+    currentRouteThreadKeyRef,
+    activeThread,
+    resumableRunId,
+    hasHeldQueuedRuns,
+    canResume,
+    isSendBusy,
+    isRevertingCheckpoint,
+    threadDetailLoading,
+    activeEnvironmentUnavailable,
+    runtimeMode,
+    localCheckoutBranchMismatch,
+    composerRef,
+    persistThreadSettingsForNextTurn,
+    clearUsageLimitsFor,
+    scrollToEnd,
+    setThreadError,
+  });
+  const failedModel = activeThread?.modelSelection;
+  const failedProvider = providerStatuses.find(
+    (provider) => provider.instanceId === failedModel?.instanceId,
+  );
+  const continueModel =
+    limitRecoveryRun !== null && canResume && failedModel
+      ? scientAgentAlternativeModel(
+          failedProvider,
+          failedModel.model,
+          (slug) =>
+            exhaustedUsageWindow(failedProvider, Date.parse(`${nowMinute}:00Z`), slug) !==
+            undefined,
+        )
+      : undefined;
+  // SCIENT-FORK:END
   const limitRecoveryBanner =
     limitRecoveryRun !== null && activeThreadShell !== null
       ? usageLimitRecoveryBannerItem({
@@ -3316,6 +3356,20 @@ function ChatViewContent(props: ChatViewProps) {
           recovery: activeThreadShell.limitRecovery ?? null,
           snoozedUntil: activeThreadShell.snoozedUntil,
           timestampFormat,
+          // SCIENT-FORK:START — continue at once with another signed-in model.
+          ...(continueModel && failedModel
+            ? {
+                continueWith: {
+                  modelName: continueModel.name,
+                  onContinue: () =>
+                    void onResumeWith({
+                      instanceId: failedModel.instanceId,
+                      model: continueModel.slug,
+                    }),
+                },
+              }
+            : {}),
+          // SCIENT-FORK:END
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,
@@ -3688,26 +3742,6 @@ function ChatViewContent(props: ChatViewProps) {
     setPendingServerThreadEnvModeEntry,
     setPendingServerThreadStartFromOriginByThreadId,
     scheduleComposerFocus,
-  });
-  const { onResume, isResuming } = useComposerResume({
-    environmentId,
-    routeThreadKey,
-    currentRouteThreadKeyRef,
-    activeThread,
-    resumableRunId,
-    hasHeldQueuedRuns,
-    canResume,
-    isSendBusy,
-    isRevertingCheckpoint,
-    threadDetailLoading,
-    activeEnvironmentUnavailable,
-    runtimeMode,
-    localCheckoutBranchMismatch,
-    composerRef,
-    persistThreadSettingsForNextTurn,
-    clearUsageLimitsFor,
-    scrollToEnd,
-    setThreadError,
   });
   const { onSend } = useComposerSend({
     queueEditsReady,
