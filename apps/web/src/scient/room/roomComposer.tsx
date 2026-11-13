@@ -71,8 +71,8 @@ export function useRoomComposerBanner(
 }
 
 /**
- * Posts the composer's text and files to people when that is where it goes. Resolves true when it
- * took the send, so the normal send to the agent does not run.
+ * Posts the composer's text and files to people when that is where it goes: when `applies`, the
+ * send is `post` and the normal send to the agent does not run.
  */
 export function useRoomComposerPost(input: {
   readonly environmentId: EnvironmentId;
@@ -81,7 +81,7 @@ export function useRoomComposerPost(input: {
   readonly composerDraftTarget: ComposerThreadTarget;
   readonly promptRef: RefObject<string>;
   readonly onError: (threadId: ThreadId, message: string) => void;
-}): () => Promise<boolean> {
+}): { readonly applies: () => boolean; readonly post: () => Promise<void> } {
   const roomAction = useOrchestrationCommand(threadEnvironment.roomAction, {
     label: "post to people",
   });
@@ -91,8 +91,11 @@ export function useRoomComposerPost(input: {
       : { environmentId: input.environmentId, threadId: input.threadId };
   const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
   const state = useAtomValue(roomComposerStateAtom(input.threadKey ?? NO_THREAD));
-  return async () => {
-    if (state.to !== "people" || input.threadId === null || input.threadKey === null) return false;
+  // Decided synchronously, so a send to the agent goes out with no extra wait.
+  const applies = () =>
+    state.to === "people" && input.threadId !== null && input.threadKey !== null;
+  const post = async () => {
+    if (input.threadId === null || input.threadKey === null) return;
     const threadId = input.threadId;
     const threadKey = input.threadKey;
     // A draft meant for people never goes to the agent on its own, even once sharing stopped.
@@ -102,7 +105,7 @@ export function useRoomComposerPost(input: {
         threadId,
         "Sharing stopped, so nobody can read this. It wasn't sent; send again to give it to the agent.",
       );
-      return true;
+      return;
     }
     const target = input.composerDraftTarget;
     const store = useComposerDraftStore.getState();
@@ -119,9 +122,9 @@ export function useRoomComposerPost(input: {
       (draft?.previewAnnotations.length ?? 0) > 0
     ) {
       input.onError(threadId, "Added context only goes to the agent. Remove it to post to people.");
-      return true;
+      return;
     }
-    if (text === "" && images.length === 0 && files.length === 0) return true;
+    if (text === "" && images.length === 0 && files.length === 0) return;
     const replyTo = state.replyTo;
     // The composer is free for the next message at once; what was posted returns only on failure.
     store.clearComposerContent(target);
@@ -149,7 +152,7 @@ export function useRoomComposerPost(input: {
       });
     } catch (error) {
       restore(error instanceof Error ? error.message : "A file failed to upload.");
-      return true;
+      return;
     }
     const result = await roomAction({
       environmentId: input.environmentId,
@@ -168,6 +171,7 @@ export function useRoomComposerPost(input: {
       const error = squashAtomCommandFailure(result);
       restore(error instanceof Error ? error.message : "Could not post the message.");
     }
-    return true;
+    return;
   };
+  return { applies, post };
 }

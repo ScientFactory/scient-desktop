@@ -77,14 +77,11 @@ function RoomBar({
     if (inFlight.current || !canOperateThread) return;
     inFlight.current = true;
     setBusy(true);
-    try {
-      await operation();
-    } catch (error) {
+    await operation().catch((error: unknown) => {
       Dialog.alert("Room action failed", error instanceof Error ? error.message : "Try again.");
-    } finally {
-      inFlight.current = false;
-      setBusy(false);
-    }
+    });
+    inFlight.current = false;
+    setBusy(false);
   };
   const mutate = (roomAction: ThreadRoomOwnerAction) =>
     run(async () => {
