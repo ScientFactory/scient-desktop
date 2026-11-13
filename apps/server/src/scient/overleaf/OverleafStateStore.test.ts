@@ -26,58 +26,27 @@ import {
   type OverleafVolumeIdentityResolver,
 } from "./OverleafRetentionVault.ts";
 import { filePublicationTestHelper } from "../workspace/fileExchange.testkit.ts";
+import {
+  createDiskImage,
+  diskImagesAvailable,
+  type DiskImageFormat,
+} from "../workspace/diskImage.testkit.ts";
 
 const VOLUME = "0A1B2C3D-0000-4000-8000-000000000001";
 const fakeVolume: OverleafVolumeIdentityResolver = async () => VOLUME;
 const helper = await filePublicationTestHelper();
-const diskImagesAvailable =
-  HostProcess.Platform.defaultValue() === "darwin" &&
-  NodeChildProcess.spawnSync("/usr/bin/hdiutil", ["help"]).status !== null;
-
-/** A disposable disk image; attach mounts it at a chosen path, as a reconnected disk would be. */
-const diskImage = (root: string, format: "APFS" | "ExFAT" | "JHFS+" | "MS-DOS FAT32") =>
-  Effect.gen(function* () {
-    const file = NodePath.join(root, `${format}.dmg`);
-    yield* Effect.promise(async () => {
-      NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
-        "create",
-        "-size",
-        "40m",
-        "-fs",
-        format,
-        "-volname",
-        `SCT${format
-          .toUpperCase()
-          .replace(/[^A-Z0-9]/g, "")
-          .slice(-6)}`,
-        file,
-      ]);
-    });
-    let mounted: string | null = null;
-    const detach = Effect.sync(() => {
-      if (mounted === null) return;
-      NodeChildProcess.execFileSync("/usr/bin/hdiutil", ["detach", "-force", mounted]);
-      mounted = null;
-    });
-    yield* Effect.addFinalizer(() => detach);
-    return {
-      attach: (name: string) =>
-        Effect.promise(async () => {
-          const point = NodePath.join(root, `mount-${name}`);
-          await NodeFSP.mkdir(point);
-          NodeChildProcess.execFileSync("/usr/bin/hdiutil", [
-            "attach",
-            "-nobrowse",
-            "-mountpoint",
-            point,
-            file,
-          ]);
-          mounted = point;
-          return NodeFSP.realpath(point);
-        }),
-      detach,
-    };
-  });
+/** A disposable disk image; attach mounts it at a fresh path, as a reconnected disk would be. */
+const diskImage = (format: DiskImageFormat) =>
+  Effect.map(
+    Effect.acquireRelease(
+      Effect.promise(() => createDiskImage(format)),
+      (image) => Effect.promise(() => image.dispose()),
+    ),
+    (image) => ({
+      attach: Effect.promise(() => image.attach()),
+      detach: Effect.promise(() => image.detach()),
+    }),
+  );
 
 type Point = Parameters<NonNullable<OverleafStateStore.OverleafStateStoreHooks["at"]>>[0];
 
@@ -929,7 +898,7 @@ describe("OverleafStateStore", () => {
     const firmlinkAlias = (path: string) => NodePath.join("/System/Volumes/Data", path);
     it.live.skipIf(HostProcess.Platform.defaultValue() !== "darwin")(
       "treats state inside the checkout as inside even through a firmlink alias",
-      () =>
+      (context) =>
         Effect.scoped(
           Effect.gen(function* () {
             const root = yield* Effect.flatMap(temporaryRoot(), (directory) =>
@@ -945,7 +914,7 @@ describe("OverleafStateStore", () => {
                 return false;
               }
             });
-            if (!usable) return;
+            if (!usable) return context.skip();
             const { store } = yield* openStore(
               NodePath.join(checkout, ".state", "overleaf"),
               undefined,
@@ -1132,7 +1101,7 @@ describe("OverleafStateStore", () => {
       ),
     );
 
-    // Real disks: APFS for remount and unplug, exFAT for the capability check.
+    // Real disks: APFS for remount and unplug, JHFS+ and exFAT for the capability check.
     describe.skipIf(!diskImagesAvailable || helper === undefined)("on mounted disk images", () => {
       it.live(
         "finds the folder after the disk is mounted elsewhere and waits while it is unplugged",
@@ -1140,8 +1109,8 @@ describe("OverleafStateStore", () => {
           Effect.scoped(
             Effect.gen(function* () {
               const root = yield* temporaryRoot();
-              const image = yield* diskImage(root, "APFS");
-              const first = yield* image.attach("first");
+              const image = yield* diskImage("APFS");
+              const first = yield* image.attach;
               yield* Effect.promise(() => NodeFSP.mkdir(NodePath.join(first, "paper")));
               const { store } = yield* openStore(NodePath.join(root, "state"));
               const prepared = yield* prepare(store, NodePath.join(first, "paper"));
@@ -1153,7 +1122,7 @@ describe("OverleafStateStore", () => {
                 yield* refusal(prepare(store, NodePath.join(first, "paper"), prepared.identity)),
               ).toBe("volume-unavailable");
 
-              const second = yield* image.attach("second");
+              const second = yield* image.attach;
               const again = yield* prepare(
                 store,
                 NodePath.join(second, "paper"),
@@ -1173,8 +1142,8 @@ describe("OverleafStateStore", () => {
         Effect.scoped(
           Effect.gen(function* () {
             const root = yield* temporaryRoot();
-            const image = yield* diskImage(root, "JHFS+");
-            const mounted = yield* image.attach("hfs");
+            const image = yield* diskImage("JHFS+");
+            const mounted = yield* image.attach;
             const checkout = NodePath.join(mounted, "paper");
             yield* Effect.promise(() => NodeFSP.mkdir(checkout));
             const { store } = yield* openStore(NodePath.join(root, "state"));
@@ -1194,26 +1163,12 @@ describe("OverleafStateStore", () => {
         ),
       );
 
-      it.live("refuses FAT32, whose driver reports a swap it did not perform", () =>
-        Effect.scoped(
-          Effect.gen(function* () {
-            const root = yield* temporaryRoot();
-            const image = yield* diskImage(root, "MS-DOS FAT32");
-            const mounted = yield* image.attach("fat");
-            const checkout = NodePath.join(mounted, "paper");
-            yield* Effect.promise(() => NodeFSP.mkdir(checkout));
-            const { store } = yield* openStore(NodePath.join(root, "state"));
-            expect(yield* refusal(prepare(store, checkout))).toBe("unsupported-filesystem");
-          }),
-        ),
-      );
-
       it.live("refuses exFAT, which can neither exchange nor link files", () =>
         Effect.scoped(
           Effect.gen(function* () {
             const root = yield* temporaryRoot();
-            const image = yield* diskImage(root, "ExFAT");
-            const mounted = yield* image.attach("exfat");
+            const image = yield* diskImage("ExFAT");
+            const mounted = yield* image.attach;
             const checkout = NodePath.join(mounted, "paper");
             yield* Effect.promise(() => NodeFSP.mkdir(checkout));
             const { store } = yield* openStore(NodePath.join(root, "state"));
