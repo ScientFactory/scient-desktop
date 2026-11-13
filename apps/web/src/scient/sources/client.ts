@@ -79,7 +79,12 @@ export function readScientSources(
 
 export function readScientSource(
   environmentId: EnvironmentId,
-  input: { readonly root: string; readonly sourceId: string; readonly reviewId?: string },
+  input: {
+    readonly root: string;
+    readonly sourceId: string;
+    readonly reviewId?: string;
+    readonly citationKey?: string;
+  },
 ) {
   return runtime.runPromise(
     getEnvironmentScientSourceDetail({ prepared: prepared(environmentId), ...input }),

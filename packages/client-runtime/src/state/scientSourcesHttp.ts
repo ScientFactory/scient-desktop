@@ -75,6 +75,7 @@ export const getEnvironmentScientSourceDetail = Effect.fn(
   readonly root: string;
   readonly sourceId: string;
   readonly reviewId?: string;
+  readonly citationKey?: string;
 }) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
@@ -93,6 +94,7 @@ export const getEnvironmentScientSourceDetail = Effect.fn(
           root: input.root,
           sourceId: input.sourceId,
           ...(input.reviewId ? { reviewId: input.reviewId } : {}),
+          ...(input.citationKey ? { citationKey: input.citationKey } : {}),
         },
       }),
   });

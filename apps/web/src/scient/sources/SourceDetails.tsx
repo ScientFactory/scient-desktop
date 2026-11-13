@@ -631,6 +631,14 @@ export interface SourceDetailsLibrary {
     expectedRevision: number,
   ) => Promise<{ readonly outcome: string; readonly record: SourceRecord }>;
   readonly canSavePersonalNote: boolean;
+  /** One of the source's other keys here (`alsoCitedAs`): its own project note and history. */
+  readonly onLoadKeyNote?: (citationKey: string) => Promise<SourceRecord>;
+  readonly onSaveKeyNote?: (
+    citationKey: string,
+    note: string | null,
+    expectedRevision: number,
+    context: SourceNoteSaveContext,
+  ) => Promise<{ readonly outcome: string; readonly record: SourceRecord }>;
   /** Absent when this connection may not change reading state: the markers stay, the controls go. */
   readonly onSetReadingState?: (change: ReadingStateChange) => Promise<void>;
   readonly onAddToProject?: () => Promise<void>;
@@ -638,6 +646,26 @@ export interface SourceDetailsLibrary {
   /** A source kept from this project's details although the Library has similar copies. */
   readonly onLinkToCopy?: (librarySourceId: string) => Promise<void>;
   readonly onKeepSeparate?: (separate: boolean) => Promise<void>;
+}
+
+/** The project note of one of a merged source's other keys, saved and restored on that pin. */
+function KeyProjectNote(props: {
+  readonly citationKey: string;
+  readonly record: SourceRecord;
+  readonly readOnly: boolean;
+  readonly onSave: (
+    note: string | null,
+    expectedRevision: number,
+    context: SourceNoteSaveContext,
+  ) => Promise<{ readonly outcome: string; readonly record: SourceRecord }>;
+}) {
+  return useSourceNoteControls({
+    record: props.record,
+    readOnly: props.readOnly,
+    heading: `${LIBRARY_LABELS.projectNote} (${props.citationKey})`,
+    history: props.record.projectNoteHistory,
+    onSave: props.onSave,
+  }).section;
 }
 
 function LibraryCopySection(props: {
@@ -827,6 +855,70 @@ export function SourceDetails(props: {
   const hasDoi = identifiers.some((identifier) => identifier.scheme.toLowerCase() === "doi");
   // A source this project cites under two keys, after merging two sources it used.
   const otherKeys = record.alsoCitedAs ?? [];
+  const [keyNote, setKeyNote] = useState<{
+    readonly citationKey: string;
+    readonly record: SourceRecord;
+  } | null>(null);
+  const shownKeyNote = keyNote && otherKeys.includes(keyNote.citationKey) ? keyNote : null;
+  const loadKeyNote = library?.onLoadKeyNote;
+  const saveKeyNote = library?.onSaveKeyNote;
+  const primaryKey = record.citationKey;
+  const projectNoteSection =
+    otherKeys.length > 0 && primaryKey && loadKeyNote && saveKeyNote ? (
+      <div className="space-y-2">
+        <div
+          role="group"
+          aria-label={LIBRARY_LABELS.noteForKey}
+          className="flex flex-wrap items-center gap-1 text-xs"
+        >
+          <span className="text-muted-foreground">{LIBRARY_LABELS.noteForKey}</span>
+          {[primaryKey, ...otherKeys].map((citationKey) => {
+            const selected = (shownKeyNote?.citationKey ?? primaryKey) === citationKey;
+            return (
+              <Button
+                key={citationKey}
+                size="xs"
+                variant={selected ? "secondary" : "ghost"}
+                aria-pressed={selected}
+                onClick={() => {
+                  if (citationKey === primaryKey) {
+                    setKeyNote(null);
+                    return;
+                  }
+                  void loadKeyNote(citationKey)
+                    .then((loaded) => setKeyNote({ citationKey, record: loaded }))
+                    .catch(() => undefined);
+                }}
+              >
+                {citationKey}
+              </Button>
+            );
+          })}
+        </div>
+        {shownKeyNote ? (
+          <KeyProjectNote
+            key={shownKeyNote.citationKey}
+            citationKey={shownKeyNote.citationKey}
+            record={shownKeyNote.record}
+            readOnly={readOnly}
+            onSave={async (note, expectedRevision, context) => {
+              const result = await saveKeyNote(
+                shownKeyNote.citationKey,
+                note,
+                expectedRevision,
+                context,
+              );
+              setKeyNote({ citationKey: shownKeyNote.citationKey, record: result.record });
+              return result;
+            }}
+          />
+        ) : (
+          sourceNote.section
+        )}
+      </div>
+    ) : (
+      sourceNote.section
+    );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -1118,12 +1210,12 @@ export function SourceDetails(props: {
           {showsPersonalNote ? (
             <div className="@container/source-notes">
               <div className="grid gap-6 @[32rem]/source-notes:grid-cols-2">
-                {inProject ? sourceNote.section : null}
+                {inProject ? projectNoteSection : null}
                 {personalNote.section}
               </div>
             </div>
           ) : library && !inProject ? null : (
-            sourceNote.section
+            projectNoteSection
           )}
 
           <p className="border-t border-border pt-3 text-xs text-muted-foreground">

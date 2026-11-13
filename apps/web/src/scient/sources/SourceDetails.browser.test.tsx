@@ -183,3 +183,57 @@ it("saves a restored earlier version as its own checkpoint, apart from this edit
   // The same session within ten minutes would replace the typed checkpoint on the server.
   expect(restored?.[2].session).not.toBe(typed?.[2].session);
 });
+
+it("reads and restores the note of a merged source's other key on that key", async () => {
+  const merged = { ...record, citationKey: "first2026", alsoCitedAs: ["second2026"] };
+  const other = {
+    ...merged,
+    note: "Same text",
+    projectNote: "Same text",
+    projectNoteHistory: [
+      { note: "Why the second copy", at: "2026-11-01T00:00:00.000Z", kind: "edit", by: "user" },
+      { note: "Same text", at: "2026-11-12T00:00:00.000Z", kind: "edit", by: "user" },
+    ],
+  } satisfies ScientSourceDetailResult;
+  const loadKeyNote = vi.fn(async (_citationKey: string) => other);
+  const saveKeyNote = vi.fn(
+    async (
+      _citationKey: string,
+      note: string | null,
+      _expectedRevision: number,
+      _context: { readonly base: string | null; readonly session: string },
+    ) => ({
+      outcome: "updated" as const,
+      record: { ...other, note: note ?? "", projectNote: note },
+    }),
+  );
+  const saveProjectNote = vi.fn(async () => ({ outcome: "updated" as const, record: merged }));
+  await using _screen = await render(
+    <SourceDetails
+      record={merged}
+      diagnostics={[]}
+      library={{
+        canSavePersonalNote: false,
+        onSavePersonalNote: async () => ({ outcome: "unchanged", record }),
+        onLoadKeyNote: loadKeyNote,
+        onSaveKeyNote: saveKeyNote,
+      }}
+      onBack={() => undefined}
+      onEdit={() => undefined}
+      onSaveNote={saveProjectNote}
+      onRefreshMetadata={async () => undefined}
+      onRemove={async () => undefined}
+      onOpenPdf={() => undefined}
+    />,
+  );
+
+  await userEvent.click(page.getByRole("button", { name: "second2026" }));
+  await expect.element(page.getByText("Note for this project (second2026)")).toBeVisible();
+  expect(loadKeyNote).toHaveBeenCalledWith("second2026");
+  await userEvent.click(page.getByRole("button", { name: "Earlier versions" }));
+  await userEvent.click(page.getByRole("menuitem", { name: /Why the second copy/ }));
+  await vi.waitFor(() => expect(saveKeyNote).toHaveBeenCalledTimes(1));
+  expect(saveKeyNote.mock.calls[0]?.slice(0, 2)).toEqual(["second2026", "Why the second copy"]);
+  expect(saveKeyNote.mock.calls[0]?.[3].base).toBe("Same text");
+  expect(saveProjectNote).not.toHaveBeenCalled();
+});

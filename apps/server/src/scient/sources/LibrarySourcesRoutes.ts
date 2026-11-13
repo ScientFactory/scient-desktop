@@ -103,6 +103,7 @@ import {
   listProjectPinnedWorks,
   otherProjectsUsing,
   projectPinGroupsByLibraryId,
+  projectPinOfLibrarySource,
   projectPinsByLibraryId,
   refreshProjectAfterLibraryChange,
   resolveLibrarySourceId,
@@ -158,14 +159,38 @@ async function pinOf(store: Store, sourceId: string): Promise<ScientProjectPin |
  * A route record with this project's fields, so a client rebuilding its row or details from an
  * edit's answer keeps every key the project cites the source under.
  */
-async function projectRecordOf(store: Store, record: ScientSourceRecord) {
+/**
+ * A library record as this project sees it, under its first pinned key; with `citationKey`, the
+ * project note is that pin's (one of `alsoCitedAs`), validated against this source's pins.
+ */
+async function projectRecordOf(store: Store, record: ScientSourceRecord, citationKey?: string) {
   const group = (await projectPinGroupsByLibraryId(store)).get(record.sourceId);
+  const notePin =
+    citationKey === undefined || citationKey === group?.pin.citationKey
+      ? group?.pin
+      : (await pinUnderKey(store, record.sourceId, citationKey)).pin;
   return {
-    ...routeRecord(record, group?.pin),
+    ...routeRecord(
+      record,
+      group
+        ? { citationKey: group.pin.citationKey, ...(notePin?.note ? { note: notePin.note } : {}) }
+        : undefined,
+    ),
     pinned: group !== undefined,
-    ...(group ? { projectNote: group.pin.note ?? null } : {}),
+    ...(notePin ? { projectNote: notePin.note ?? null } : {}),
     ...(group && group.alsoCitedAs.length > 0 ? { alsoCitedAs: group.alsoCitedAs } : {}),
   };
+}
+
+/** This project's pin of the library source under `citationKey`, or the reason it has none. */
+async function pinUnderKey(store: Store, sourceId: string, citationKey: string) {
+  const chosen = await projectPinOfLibrarySource(store, {
+    sourceId,
+    requestedId: sourceId,
+    citationKey,
+  });
+  if (!chosen) throw new Error(`${citationKey} does not cite this source in this project.`);
+  return chosen;
 }
 
 async function requireRecord(store: Store, sourceId: string): Promise<ScientSourceRecord> {
@@ -487,6 +512,8 @@ export async function librarySourceDetail(
   input: {
     readonly sourceId: string;
     readonly reviewId?: string;
+    /** The project note and history under this key of the source's, not the first pinned. */
+    readonly citationKey?: string;
     /** True only for a session holding the Library write grant on this environment. */
     readonly personal?: boolean;
   },
@@ -507,12 +534,16 @@ export async function librarySourceDetail(
   const sourceId = await libraryIdOf(store, input.sourceId);
   const record = store.exists ? await readScientSourceRecord(store.library, sourceId) : null;
   if (record) {
-    const detail = await projectRecordOf(store, normalizeSourceRecordForRead(record));
+    const detail = await projectRecordOf(
+      store,
+      normalizeSourceRecordForRead(record),
+      input.citationKey,
+    );
     return {
       ...detail,
       ...(input.personal ? { personalNote: record.note ?? null } : {}),
       ...scientSourceReadingState(record),
-      ...(detail.pinned ? await noteHistoryOf(store, detail.citationKey) : {}),
+      ...(detail.pinned ? await noteHistoryOf(store, input.citationKey ?? detail.citationKey) : {}),
     };
   }
   const snapshot = (
@@ -522,6 +553,9 @@ export async function librarySourceDetail(
     })
   ).find((work) => work.from === "snapshot" && work.projectSourceId === input.sourceId);
   if (!snapshot) throw new Error("The source was not found in the Library.");
+  if (input.citationKey !== undefined && input.citationKey !== snapshot.citationKey) {
+    throw new Error(`${input.citationKey} does not cite this source in this project.`);
+  }
   const match = store.exists
     ? (await libraryPinMatches(store, new Set([input.sourceId]))).get(input.sourceId)
     : undefined;
@@ -752,16 +786,30 @@ export async function updateLibraryProjectNote(
     readonly note: string | null;
     readonly expectedNote?: string | null;
     readonly noteSession?: string;
+    readonly citationKey?: string;
   },
 ) {
   const sourceId = await libraryIdOf(store, input.sourceId);
   const pins = await projectPinsByLibraryId(store);
-  const pin =
-    pins.get(sourceId) ??
+  const snapshotPin = async () =>
     (await listScientProjectPinnedWorks({ projectRoot: store.root, library: store.library }))
-      .filter((work) => work.projectSourceId === input.sourceId)
+      .filter(
+        (work) =>
+          work.projectSourceId === input.sourceId &&
+          (input.citationKey === undefined || work.citationKey === input.citationKey),
+      )
       .map((work) => ({ citationKey: work.citationKey }))[0];
-  if (!pin) throw new Error("Pin this source in the project to give it a project note.");
+  const pin =
+    input.citationKey !== undefined && pins.has(sourceId)
+      ? (await pinUnderKey(store, sourceId, input.citationKey)).pin
+      : (pins.get(sourceId) ?? (await snapshotPin()));
+  if (!pin) {
+    throw new Error(
+      input.citationKey === undefined
+        ? "Pin this source in the project to give it a project note."
+        : `${input.citationKey} does not cite this source in this project.`,
+    );
+  }
   const updated = await setScientProjectPinNote({
     projectRoot: store.root,
     citationKey: pin.citationKey,
@@ -773,7 +821,10 @@ export async function updateLibraryProjectNote(
   if (updated.outcome === "not-pinned") throw new Error("The source is no longer pinned here.");
   return {
     outcome: updated.outcome,
-    record: await librarySourceDetail(store, { sourceId: input.sourceId }),
+    record: await librarySourceDetail(store, {
+      sourceId: input.sourceId,
+      ...(input.citationKey !== undefined ? { citationKey: input.citationKey } : {}),
+    }),
   };
 }
 

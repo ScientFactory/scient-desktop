@@ -89,6 +89,8 @@ export const ScientSourceDetailRequest = Schema.Struct({
   ...ScientSourceRequest.fields,
   /** A review screen's request: the review's own record, from its snapshot when the library lacks it. */
   reviewId: Schema.optionalKey(NonEmptyString),
+  /** A library's project note and its history under this one of the source's keys (`alsoCitedAs`). */
+  citationKey: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceDetailRequest = typeof ScientSourceDetailRequest.Type;
 
@@ -305,6 +307,8 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
   expectedNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The editor's autosave session; its saves within ten minutes are one history checkpoint. */
   noteSession: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(64))),
+  /** A library's project note on this one of the source's keys; absent: the first pinned. */
+  citationKey: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
 export const ScientSourceNoteUpdateResult = Schema.Struct({
