@@ -14,10 +14,12 @@ import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from
 import type { ScientSourceCandidate } from "./model.ts";
 import { resolveScientProjectPins } from "./projectPins.ts";
 import {
+  attachScientSourcePdf,
   deleteScientSourcesPermanently,
   deleteTrashedScientSource,
   importScientSource,
   listScientSourceRecords,
+  listScientSourceTrash,
   readScientSourceRecord,
   removeScientSource,
 } from "./store.ts";
@@ -72,14 +74,64 @@ function candidate(title: string): ScientSourceCandidate {
   };
 }
 
-async function add(root: Parameters<typeof importScientSource>[0]["root"], title: string) {
+async function add(
+  root: Parameters<typeof importScientSource>[0]["root"],
+  title: string,
+  fields: Partial<ScientSourceCandidate> = {},
+) {
   return (await importScientSource({
     root,
     operationId: `op_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
-    candidate: candidate(title),
+    candidate: { ...candidate(title), ...fields },
+    allowPossibleMetadataMatch: true,
     actor: "user",
     intake: "file",
   }))!.record!;
+}
+
+async function attach(projectRoot: string, sourceId: string, bytes: string) {
+  const pdf = NodePath.join(NodePath.dirname(projectRoot), `${NodeCrypto.randomUUID()}.pdf`);
+  await NodeFSP.writeFile(pdf, `%PDF-1.7\n${bytes}\n`, "utf8");
+  const record = (await readScientSourceRecord(projectRoot, sourceId))!;
+  const attached = await attachScientSourcePdf({
+    root: projectRoot,
+    sourceId,
+    expectedRevision: record.revision,
+    pdfPath: pdf,
+  });
+  return attached.record.attachments.at(-1)!.sha256;
+}
+
+async function inLibrary(root: string, sha256: string) {
+  const paths = [
+    NodePath.join(root, "files/sha256", sha256.slice(0, 2), `${sha256}.pdf`),
+    NodePath.join(root, "annotations/v1", `${sha256}.json`),
+  ];
+  const found = await Promise.all(
+    paths.map((path) => NodeFSP.stat(path).then(Boolean, () => false)),
+  );
+  return found.some(Boolean);
+}
+
+async function highlight(projectRoot: string, sha256: string) {
+  const directory = NodePath.join(projectRoot, ".scient/annotations/v1");
+  await NodeFSP.mkdir(directory, { recursive: true });
+  await NodeFSP.writeFile(
+    NodePath.join(directory, `${sha256}.json`),
+    JSON.stringify({
+      formatVersion: 1,
+      material: { sha256, byteLength: 10 },
+      paths: [],
+      annotations: [{ annotationId: "ann_1", revision: 1, highlighted: true }],
+      history: [],
+    }),
+  );
+}
+
+async function deleteForGood(library: ReturnType<typeof scientLibraryLocation>, sourceId: string) {
+  const record = (await readScientSourceRecord(library, sourceId))!;
+  await removeScientSource({ root: library, sourceId, expectedRevision: record.revision });
+  await deleteScientSourcesPermanently({ root: library });
 }
 
 const work = (title: string) => ({
@@ -188,5 +240,81 @@ describe("sources deleted for good", () => {
     });
     expect(pinned?.resolution).toMatchObject({ kind: "unresolved", reason: "removed" });
     expect(await listScientSourceRecords(library)).toEqual([]);
+  });
+
+  it("another project's copy of the work is not moved back, unlike a contradicting work", async () => {
+    const { base, library, projectRoot } = await fixture();
+    const doi = [{ scheme: "doi" as const, value: "10.1000/deleted" }];
+    const first = await add(projectRoot, "Deleted study", { identifiers: doi });
+    const dataset = { sourceKey: "dataset", type: "dataset" } as const;
+    const kept = await add(projectRoot, "Deleted study", dataset);
+    const other = NodePath.join(base, "other");
+    await NodeFSP.mkdir(other);
+    await initializeScientProject({ root: other });
+    const second = await add(other, "Deleted study", { identifiers: doi });
+    const contradicting = await add(other, "Deleted study", dataset);
+    expect(second.sourceId).not.toBe(first.sourceId);
+    await runScientLibraryMove({ library, projectRoot, actor: "user" });
+    await deleteForGood(library, first.sourceId);
+
+    await runScientLibraryMove({ library, projectRoot: other, actor: "user" });
+    const live = [kept.sourceId, contradicting.sourceId].toSorted();
+    const listed = async () =>
+      (await listScientSourceRecords(library)).map((record) => record.sourceId).toSorted();
+    expect(await listed()).toEqual(live);
+    const pins = await resolveScientProjectPins({
+      projectRoot: other,
+      library,
+      mode: "write",
+      actor: "agent",
+    });
+    const pinned = pins.find(({ pin }) => pin.sourceId === second.sourceId);
+    expect(pinned?.pin.work).toMatchObject({ title: "Deleted study", identifiers: doi });
+    // The live datasets disagree with it, so the pin stays on its snapshot as contradicted.
+    expect(pinned?.resolution).toMatchObject({ kind: "unresolved", reason: "contradicted" });
+    expect(await listed()).toEqual(live);
+  });
+
+  it("an old copy's trash does not bring back a deleted source or its PDF", async () => {
+    const { base, root, library, projectRoot } = await fixture();
+    const source = await add(projectRoot, "Trashed study");
+    const sha256 = await attach(projectRoot, source.sourceId, "trashed");
+    const record = (await readScientSourceRecord(projectRoot, source.sourceId))!;
+    await removeScientSource({
+      root: projectRoot,
+      sourceId: source.sourceId,
+      expectedRevision: record.revision,
+    });
+    const copy = NodePath.join(base, "copy");
+    await NodeFSP.cp(projectRoot, copy, { recursive: true });
+    await highlight(copy, sha256);
+    await runScientLibraryMove({ library, projectRoot, actor: "user" });
+    await deleteScientSourcesPermanently({ root: library });
+
+    await runScientLibraryMove({ library, projectRoot: copy, actor: "user" });
+    expect((await listScientSourceTrash(library)).entries).toEqual([]);
+    expect(await inLibrary(root, sha256)).toBe(false);
+  });
+
+  it("a deleted source's PDF stays out of the library unless a kept source shares it", async () => {
+    const { base, root, library, projectRoot } = await fixture();
+    const source = await add(projectRoot, "Deleted study");
+    const own = await attach(projectRoot, source.sourceId, "only the deleted study");
+    const shared = await attach(projectRoot, source.sourceId, "shared");
+    const copy = NodePath.join(base, "copy");
+    await NodeFSP.cp(projectRoot, copy, { recursive: true });
+    await highlight(copy, own);
+    const kept = await add(copy, "Kept study");
+    expect(await attach(copy, kept.sourceId, "shared")).toBe(shared);
+    await runScientLibraryMove({ library, projectRoot, actor: "user" });
+    await deleteForGood(library, source.sourceId);
+    expect(await inLibrary(root, shared)).toBe(false);
+
+    await runScientLibraryMove({ library, projectRoot: copy, actor: "user" });
+    expect((await listScientSourceRecords(library)).map((record) => record.sourceId)).toEqual([
+      kept.sourceId,
+    ]);
+    expect(await inLibrary(root, own)).toBe(false);
+    expect(await inLibrary(root, shared)).toBe(true);
   });
 });

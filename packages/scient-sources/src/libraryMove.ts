@@ -19,6 +19,7 @@ import {
 import {
   recordScientProjectSourceMappings,
   resolveScientProjectSources,
+  scientProjectSourceRemovalCheck,
 } from "./libraryInstanceMap.ts";
 import { withScientFileLock, withScientLibraryLock } from "./libraryLock.ts";
 import { markScientLibrarySourcesDistinct, mergeScientLibraryDuplicates } from "./libraryMerge.ts";
@@ -64,7 +65,6 @@ import {
 import {
   decodePersistedScientSourceRecord,
   inspectScientSources,
-  SCIENT_LIBRARY_DELETED_DIRECTORY,
   SCIENT_SOURCES_DIRECTORY,
   scientSourceIdFor,
   scientSourceStoreInternals,
@@ -827,13 +827,17 @@ async function settleRecord(
   ctx: MoveContext,
   incoming: V1Record,
   aliases: ScientLibraryAliases,
+  isRemoved: (record: ScientSourceRecord) => Promise<boolean>,
 ): Promise<MovedSource> {
   const projectSourceId = incoming.record.sourceId;
   const library = await readLibraryRecord(ctx, projectSourceId);
   if (!library) {
     // Merged away after an earlier run copied it: the survivor holds it now.
     const survivor = resolveScientLibraryAlias(aliases, projectSourceId);
-    if (survivor !== projectSourceId) {
+    if (
+      survivor !== projectSourceId &&
+      ((await readLibraryRecord(ctx, survivor)) || (await readLibraryTrash(ctx, survivor)))
+    ) {
       return { projectSourceId, sourceId: survivor, identity: "same" };
     }
     const trashed = await readLibraryTrash(ctx, projectSourceId);
@@ -844,9 +848,8 @@ async function settleRecord(
       }
       return importDiverged(ctx, incoming, projectSourceId);
     }
-    // Deleted for good: an old copy of the project never brings it back.
-    const deleted = NodePath.join(ctx.libraryRoot, SCIENT_LIBRARY_DELETED_DIRECTORY);
-    if (await readRegularFile(NodePath.join(deleted, `${projectSourceId}.json`))) {
+    // Trashed or deleted for good under any ID: an old copy of a project never brings it back.
+    if (await isRemoved(incoming.record)) {
       return { projectSourceId, sourceId: projectSourceId, identity: "removed" };
     }
     const created = await createJson(
@@ -854,7 +857,7 @@ async function settleRecord(
       NodePath.join(libraryFiles(ctx).records, `${projectSourceId}.json`),
       toLibraryRecord(incoming.record),
     );
-    if (!created) return settleRecord(ctx, incoming, aliases);
+    if (!created) return settleRecord(ctx, incoming, aliases, isRemoved);
     await copyHistory(ctx, projectSourceId, incoming.history);
     return { projectSourceId, sourceId: projectSourceId, identity: "copied" };
   }
@@ -1107,32 +1110,61 @@ async function copyIntoLibrary(
 ): Promise<ScientLibraryMoveJournal> {
   const files = libraryFiles(ctx);
   const sources: MovedSource[] = [];
+  // Read again each hold: another writer may have merged or deleted records in between.
+  const holdState = async () => {
+    const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
+    const removal = scientProjectSourceRemovalCheck(ctx.library, ctx.libraryRoot, aliases);
+    const isRemoved = (record: ScientSourceRecord) =>
+      removal({ projectSourceId: record.sourceId, work: scientPinWorkFromRecord(record) });
+    return { aliases, isRemoved };
+  };
   ctx.progress("sources", 0, v1.records.length);
   for (const [index, batch] of batches(ctx, v1.records).entries()) {
     await locked(ctx, async () => {
-      // Read again each hold: another writer may have merged records in between.
-      const aliases = await readLibraryAliasesAt(ctx.libraryRoot);
-      for (const record of batch) sources.push(await settleRecord(ctx, record, aliases));
+      const { aliases, isRemoved } = await holdState();
+      for (const record of batch) {
+        sources.push(await settleRecord(ctx, record, aliases, isRemoved));
+      }
     });
     ctx.progress("sources", sources.length, v1.records.length);
     if (index === 0) crash(ctx, "after-first-batch");
   }
   const mapped = new Map(sources.map((source) => [source.projectSourceId, source.sourceId]));
+  const removed = new Set(
+    sources.flatMap((source) => (source.identity === "removed" ? [source.projectSourceId] : [])),
+  );
+  // PDFs, their full text and highlights move only for a record or trash entry the library keeps.
+  const needed = new Set<string>();
+  const need = (record: ScientSourceRecord) => {
+    for (const attachment of record.attachments) needed.add(attachment.sha256);
+  };
+  for (const { record, history } of v1.records) {
+    if (!removed.has(record.sourceId)) [record, ...history.values()].forEach(need);
+  }
   for (const batch of batches(ctx, v1.trash)) {
     await locked(ctx, async () => {
+      const { isRemoved } = await holdState();
       for (const entry of batch) {
         if (mapped.has(entry.sourceId) || (await readLibraryRecord(ctx, entry.sourceId))) continue;
-        const { projectId: _project, ...rest } = entry;
-        await createJson(ctx, NodePath.join(files.trash, `${entry.sourceId}.json`), {
-          ...rest,
-          formatVersion: 2,
-          record: toLibraryRecord(entry.record),
-        });
+        // Already in the library's trash (an earlier run, or another copy of this project).
+        if (!(await readLibraryTrash(ctx, entry.sourceId))) {
+          if (await isRemoved(entry.record)) continue;
+          const { projectId: _project, ...rest } = entry;
+          await createJson(ctx, NodePath.join(files.trash, `${entry.sourceId}.json`), {
+            ...rest,
+            formatVersion: 2,
+            record: toLibraryRecord(entry.record),
+          });
+        }
+        need(entry.record);
       }
     });
   }
   const pdfs = new Set<string>();
-  const copies = v1.files.filter((file) => PDF_FILE.test(file) || TEXT_FILE.test(file));
+  const copies = v1.files.filter((file) => {
+    const match = PDF_FILE.exec(file) ?? TEXT_FILE.exec(file);
+    return match !== null && needed.has(match[2]!);
+  });
   ctx.progress("files", 0, copies.length);
   for (const [index, file] of copies.entries()) {
     await ctx.faults.beforeFileCopy?.();
@@ -1156,7 +1188,9 @@ async function copyIntoLibrary(
   // A merge base names its record; a diverged copy under a new ID starts without one.
   const bases = v1.files.flatMap((file) => {
     const zotero = ZOTERO_FILE.exec(file);
-    return zotero && mapped.get(zotero[1]!) === zotero[1] ? [{ file, sourceId: zotero[1]! }] : [];
+    return zotero && mapped.get(zotero[1]!) === zotero[1] && !removed.has(zotero[1]!)
+      ? [{ file, sourceId: zotero[1]! }]
+      : [];
   });
   for (const batch of batches(ctx, bases)) {
     await locked(ctx, async () => {

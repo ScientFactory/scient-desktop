@@ -105,7 +105,7 @@ const MAX_RECORD_BYTES = 2 * 1024 * 1024;
 const MAX_TRASH_ENTRY_BYTES = MAX_RECORD_BYTES + 64 * 1024;
 
 /** The library folder of tombstones, one `<sourceId>.json` per source deleted for good. */
-export const SCIENT_LIBRARY_DELETED_DIRECTORY = "deleted";
+const SCIENT_LIBRARY_DELETED_DIRECTORY = "deleted";
 const MAX_OPERATION_BYTES = 4 * 1024 * 1024;
 const MAX_PDF_BYTES = 512 * 1024 * 1024;
 const COPY_CHUNK_BYTES = 1024 * 1024;
