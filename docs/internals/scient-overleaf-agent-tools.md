@@ -23,12 +23,15 @@ there").
 
 **Failures** are `ScientOverleafToolError` with a fixed `code` and a message
 that says what to do next: `invalid-input`, `project-required`,
-`project-changed`, `workspace-not-authorized`, `relink-needed`, `token-missing`,
+`project-changed`, `workspace-not-authorized`, `token-missing`,
 `token-invalid`, `secret-unavailable`, `project-invalid`, `editor-save-failed`
 (with `paths`), `operation-active`, `connection-not-ready`, `recovery-required`,
 `checkout-busy`, `limit-reached`, `state-locked`, `connection-changed`,
 `retention-unavailable`, `overleaf-unreachable`, `overleaf-access-denied`,
-`overleaf-project-not-found`, `git-unavailable`, `failed`. The service reports
+`overleaf-project-not-found`, `overleaf-rate-limited`, `git-unavailable`,
+`failed`. A link whose record is damaged or from a newer release
+(`connection-not-ready` with reason `corrupt` or `unsupported`) can't be settled
+from a tool; the message sends the user to Settings ▸ Synced folders ▸ Overleaf. The service reports
 Git failures as fixed refusal reasons, which map to the `overleaf-*` and
 `git-unavailable` codes; a raw Git error, should one arrive, is classified the
 same way (`classifyProbeGitFailure`). Anything unexpected is logged by its tag
@@ -116,7 +119,11 @@ earlier receipt instead of running again; a retried tool call is a new request.
   the workspace or the token changed) rather than guessing one.
 - **Refusals** from connect, disconnect and relink are results with a sentence,
   including `authority-changed`, `request-incomplete`, `records-unreadable` and
-  `project-invalid`.
+  `project-invalid`. A sync or preview refusal names every file it concerns
+  (`paths`: both spellings of a case or accent alias, a held file and the file
+  that clashes with it); one raised after the folder was written carries the
+  server's fixed sentence (`message`), which the line uses for a reason the
+  tools don't word themselves.
 
 ## Saving editors first
 
