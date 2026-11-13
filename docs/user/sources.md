@@ -130,7 +130,11 @@ that stops partway finishes the next time it is asked for, or before the next
 move. If it cannot finish because the copy has changed or is gone, the next
 move waits and its line says why: put the copy back and restore again, or ask
 an agent to abandon the unfinished restore, after which the move takes in what
-was already put back. Restoring joins the old sources to what the project has now: current pins
+was already put back. A restore puts each highlight file back only where no
+file is, by a method that cannot replace one; on a drive that does not support
+it (some network and older removable drives), the restore stops there and says
+so, keeping its progress: run it again from a folder on a drive that does, or
+abandon it. Restoring joins the old sources to what the project has now: current pins
 and notes stay as they are, nothing is rolled back. The copy costs disk space (the PDFs are stored
 twice) and, if the folder is tracked in git, adds to the repository unless you
 leave it out. Scient adds no ignore rule and never deletes it; deleting the
@@ -432,8 +436,10 @@ instead, the only choice when the project is on another computer: git then
 commits it with the project, PDFs included, and it takes disk space there.
 Scient says what was left out because this Library did not have it.
 
-An agent saves a package inside the project, or outside it only in a folder
-you have saved one of this project's packages to yourself.
+An agent saves or imports a package inside the project (never in its
+`.scient` folder), or outside it only in a folder where you have saved or
+imported one of this project's packages yourself. A package whose files lead
+outside its folder through a link is refused.
 
 To bring a package in, choose its folder with **Choose a folder…** under
 **Import a package**, or pick one of the package folders in the project. Scient
@@ -444,7 +450,9 @@ marked them as not duplicates; this holds even when the paper there has the
 same ID or was matched by an earlier import, so a paper corrected since to
 another work is not joined. One that only looks alike (the same title, first
 author and year), or that contradicts the paper there, is added as its own
-paper, and nothing from it is attached to the other.
+paper, and nothing from it is attached to the other. A paper that changes here
+while the import is joining it is left as it is and named; import the package
+again to bring that one in.
 
 What an import joins to a paper you already have:
 
@@ -467,16 +475,19 @@ What an import joins to a paper you already have:
 Anything that could not be imported is named, never counted as imported. This
 works with an empty Library and without the computer the package came from.
 
-The import's message has **Undo**. It removes the papers, attached PDFs, pins,
-collections, highlight files and review files the import added, each only if it
-is still as the import left it and no later import of this project used it.
-Anything you changed since (a paper you edited, a pin whose note you changed, a
-collection you added to, a file you edited) or that a later import joined
-stays, and Undo names it. Undo leaves everything the import joined to what you
-had: notices and an abstract it added to your papers, notes and earlier note
-versions, highlights merged into your files, and review versions kept beside
-yours. If a step fails, Undo says so and is not marked done; run it again to
-finish.
+The import's message has **Undo**. It removes only what the import created:
+new papers (to the trash, with the PDFs they came with), new pins, new
+collections, and the note it gave a pin that had none. Each goes only if it is
+still exactly as the import left it and no other import that is not undone
+uses it, in this project or (for papers and collections) any other. Anything
+you changed since, even before the import finished (a paper you edited, a pin
+whose note you changed, a collection you added to), or that another import
+joined, stays, and Undo names it. Undo leaves, and lists, everything the
+import joined to what you had: PDFs, notices and an abstract it added to your
+papers, earlier note versions, highlights, papers it added to your
+collections, and the reviews and review versions it brought. An import made
+before Undo kept this record keeps everything. If a step fails, Undo says so
+and is not marked done; run it again to finish.
 
 ## Review and manage a source
 
