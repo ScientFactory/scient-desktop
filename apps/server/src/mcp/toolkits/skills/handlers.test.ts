@@ -240,6 +240,22 @@ describe("Scient skills MCP handlers", () => {
       });
       expect(incomplete.hint).toContain("discovery was incomplete");
       expect(incomplete.hint).not.toContain("No Scient skills are available");
+
+      const incompleteMiss = yield* provideContext(
+        listScientSkillsForInvocation({ query: "nonexistent" }),
+        {
+          catalog,
+          invocation: makeInvocation(
+            [catalog.releases[0]!],
+            new Set(["skills:read"]),
+            "automatic",
+            "incomplete",
+          ),
+        },
+      );
+      expect(incompleteMiss.skills).toHaveLength(1);
+      expect(incompleteMiss.hint).toContain("discovery was incomplete");
+      expect(incompleteMiss.hint).toContain("No keyword matches");
     }),
   );
 

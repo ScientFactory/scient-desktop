@@ -6,11 +6,14 @@ import { ScientOperation, type OperationDefinition } from "../../ScientOperation
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 
 const NonEmptyString = Schema.String.check(isTrimmedUnadvertised(), Schema.isMinLength(1));
-// Optional fields retain the existing {} call while keeping MCP inputs objects.
+/** Skills per page: `limit` defaults to the first and is capped at the second. */
+export const SKILL_PAGE_SIZE = { default: 20, max: 50 } as const;
+// Optional fields retain the existing {} call while keeping MCP inputs objects. A larger
+// `limit` is capped rather than refused: agents ask for 100 to see every skill at once.
 export const ScientSkillListInput = Schema.Struct({
   query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
   offset: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+  limit: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
 });
 export type ScientSkillListInput = typeof ScientSkillListInput.Type;
 const SkillName = Schema.String.check(
@@ -72,7 +75,7 @@ export const ScientSkillsListTool = Tool.make("scient_skills_list", {
         origin: NonEmptyString,
         invocationPolicy: Schema.Literals(["automatic", "explicit"]),
       }),
-    ).pipe(Schema.check(Schema.isMaxLength(50))),
+    ).pipe(Schema.check(Schema.isMaxLength(SKILL_PAGE_SIZE.max))),
     total: Schema.Int,
     nextOffset: Schema.NullOr(Schema.Int),
     scope: Schema.Struct({

@@ -11,7 +11,12 @@ import * as Option from "effect/Option";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import * as PersonalSkills from "../../../scient/skills/PersonalSkills.ts";
 import { AnalyticsService } from "../../../telemetry/AnalyticsService.ts";
-import { ScientSkillToolError, ScientSkillsToolkit, type ScientSkillListInput } from "./tools.ts";
+import {
+  SKILL_PAGE_SIZE,
+  ScientSkillToolError,
+  ScientSkillsToolkit,
+  type ScientSkillListInput,
+} from "./tools.ts";
 
 const compareStrings = (left: string, right: string): number =>
   left < right ? -1 : left > right ? 1 : 0;
@@ -133,18 +138,24 @@ export const listScientSkillsForInvocation = Effect.fn("ScientSkillsToolkit.list
   const browseFallback = terms.length > 0 && matched.length === 0 && skills.length > 0;
   const matches = browseFallback ? skills : matched;
   const offset = input.offset ?? 0;
-  const page = matches.slice(offset, offset + (input.limit ?? 20));
+  const pageSize = Math.min(input.limit ?? SKILL_PAGE_SIZE.default, SKILL_PAGE_SIZE.max);
+  const page = matches.slice(offset, offset + pageSize);
   const nextOffset = offset + page.length < matches.length ? offset + page.length : null;
   const includesAllSkills =
     scope.status === "complete" && terms.length === 0 && offset === 0 && nextOffset === null;
-  const hint =
+  // A browse page under incomplete discovery needs both explanations, or it reads as matches.
+  const hint = [
     scope.status === "incomplete"
       ? "Scient skill discovery was incomplete for this turn. Results may be partial, and an empty result does not establish that no Scient skills are available. Retry discovery after a new turn scope is prepared."
       : skills.length === 0
         ? "No Scient skills are available in this prepared turn scope."
-        : browseFallback
-          ? "No keyword matches; showing available skills to browse instead. Load any applicable skill by name. Pagination uses this browse order."
-          : undefined;
+        : undefined,
+    browseFallback
+      ? "No keyword matches; showing available skills to browse instead. Load any applicable skill by name. Pagination uses this browse order."
+      : undefined,
+  ]
+    .filter((part) => part !== undefined)
+    .join(" ");
   return {
     skills: page,
     total: matches.length,
