@@ -38,9 +38,22 @@ export const ROOM_MESSAGE_MAX_ATTACHMENT_BYTES = GUEST_MESSAGE_MAX_ATTACHMENT_BY
 export const ROOM_REPLY_EXCERPT_MAX_LENGTH = 200;
 const ROOM_WAITING_LIMIT = 50;
 
-/** Watch reads; Discuss also talks to people; Agent also talks to the agent. */
+/** What a person in the room may do; the room is the same conversation for everyone. */
 export const RoomRole = Schema.Literals(["watch", "discuss", "agent"]);
 export type RoomRole = typeof RoomRole.Type;
+
+export const ROOM_ROLE_LABEL: Record<RoomRole, string> = {
+  watch: "Can watch",
+  discuss: "Can talk with people",
+  agent: "Can also message the agent",
+};
+
+export const ROOM_ROLE_DESCRIPTION: Record<RoomRole, string> = {
+  watch: "Sees the thread live, including the agent's work.",
+  discuss: "Also writes to people here and can suggest messages for the agent.",
+  agent:
+    "Also messages the agent and can stop it. The agent works on this computer with your files and accounts.",
+};
 
 export const RoomAccessDuration = Schema.Literals(["day", "week", "month"]);
 export type RoomAccessDuration = typeof RoomAccessDuration.Type;
