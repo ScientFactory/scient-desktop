@@ -368,9 +368,10 @@ export class ScientPreMoveRestorePendingError extends Error {
   }
 }
 
-/** Test-only: replaces the copy of one archived file to its temporary destination. */
+/** Test-only: replaces the copy of one archived file, or the hard link that publishes a highlight. */
 export interface ScientPreMoveRestoreFaults {
   readonly copyFile?: (from: string, to: string) => Promise<void>;
+  readonly link?: (from: string, to: string) => Promise<void>;
 }
 
 /** The project-relative paths a restore reads, deletes or writes that are not plain folders. */
@@ -400,10 +401,35 @@ async function unsafeRestorePaths(
   return unsafe;
 }
 
+const exclusiveCopy = (from: string, to: string) =>
+  NodeFSP.copyFile(from, to, NodeFS.constants.COPYFILE_EXCL);
+
+/** Copies one archived file into the restore's own staging folder, checked whole. */
+async function stageCopy(
+  from: string,
+  destination: string,
+  sha256: string,
+  faults: ScientPreMoveRestoreFaults | undefined,
+): Promise<void> {
+  await ensureDirectory(NodePath.dirname(destination));
+  try {
+    await (faults?.copyFile ?? exclusiveCopy)(from, destination);
+  } catch (error) {
+    if (isNodeError(error, "EEXIST")) {
+      throw new Error(`${NodePath.basename(destination)} is listed twice.`, { cause: error });
+    }
+    throw error;
+  }
+  if ((await hashFile(destination)) !== sha256) {
+    throw new Error(`${NodePath.basename(destination)} did not copy back whole.`);
+  }
+}
+
 /**
  * Copies through a fresh temporary file in the destination's folder, checks it, then publishes it
- * only where nothing is: a file at `destination` is never a part-written copy. False when one was
- * already there.
+ * by hard link, which never replaces a file: one at `destination` is never a part-written copy nor
+ * overwritten. False when one was already there. A folder that cannot link stops the restore,
+ * keeping its progress record.
  */
 async function publishCopy(
   from: string,
@@ -422,12 +448,13 @@ async function publishCopy(
       throw new Error(`${NodePath.basename(destination)} did not copy back whole.`);
     }
     try {
-      await NodeFSP.link(temporary, destination);
+      await (faults?.link ?? NodeFSP.link)(temporary, destination);
     } catch (error) {
       if (isNodeError(error, "EEXIST")) return false;
-      // Folders without hard links: the gap between this check and the rename is the only race.
-      if ((await NodeFSP.lstat(destination).catch(() => null)) !== null) return false;
-      await NodeFSP.rename(temporary, destination);
+      const code = error instanceof Error && "code" in error ? String(error.code) : "an error";
+      throw new ScientPreMoveRestorePendingError(
+        `${NodePath.basename(destination)} could not be put back without risking a file another writer puts there, because this folder does not take a hard link (${code}).`,
+      );
     }
     return true;
   } finally {
@@ -492,11 +519,7 @@ export async function restoreScientPreMoveArchive(input: {
     await NodeFSP.rm(staging, { recursive: true, force: true });
     for (const file of manifest.files.filter((entry) => entry.path.startsWith("sources/"))) {
       const destination = absolute(staging, file.path.slice("sources/".length));
-      if (
-        !(await publishCopy(absolute(folder, file.path), destination, file.sha256, input.faults))
-      ) {
-        throw new Error(`${file.path} is listed twice.`);
-      }
+      await stageCopy(absolute(folder, file.path), destination, file.sha256, input.faults);
     }
     await atomicWriteJson(
       absolute(input.projectRoot, RESTORE_PROGRESS),

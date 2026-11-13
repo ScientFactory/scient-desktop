@@ -1611,6 +1611,32 @@ describe("the sealed copy from before the move", () => {
     );
   });
 
+  it("stops, keeping its progress, where a highlight cannot be published without replacing one", async () => {
+    const { base, library, project, sha256 } = await seededMove();
+    await move(library, project);
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    const destination = NodePath.join(elsewhere, ".scient/annotations/v1", `${sha256}.json`);
+    // Another writer publishes the project's own highlights just as linking turns out unsupported.
+    const theirs = '{"theirs":true}\n';
+    const noLinks = async () => {
+      await NodeFSP.writeFile(destination, theirs);
+      throw Object.assign(new Error("operation not supported"), { code: "ENOTSUP" });
+    };
+    await expect(
+      restoreScientProjectPreMoveArchive({ projectRoot: elsewhere, faults: { link: noLinks } }),
+    ).rejects.toBeInstanceOf(ScientPreMoveRestorePendingError);
+    expect(await NodeFSP.readFile(destination, "utf8")).toBe(theirs);
+    await expect(
+      NodeFSP.stat(NodePath.join(elsewhere, ".scient/library/restore-progress.json")),
+    ).resolves.toBeTruthy();
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
+      outcome: "restored",
+      keptAnnotations: 1,
+    });
+    expect(await NodeFSP.readFile(destination, "utf8")).toBe(theirs);
+  });
+
   it("deletes nothing until the copy is sealed, and an interrupted copy finishes on the rerun", async () => {
     const { library, project } = await seededMove();
     const before = await NodeFSP.readdir(NodePath.join(project, ".scient/sources"), {
