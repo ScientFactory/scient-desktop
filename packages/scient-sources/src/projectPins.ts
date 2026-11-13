@@ -23,6 +23,13 @@ import {
   type ScientSourceRecord,
 } from "./model.ts";
 import {
+  SCIENT_PIN_CITATION_TEXT_FIELDS,
+  scientPinWorkIsComplete,
+  scientPinWorkKeepingUnknown,
+  scientRecordOnlyFromProjectFile,
+  withKnownPinCitationValues,
+} from "./pinCitation.ts";
+import {
   readScientProjectNoteHistory,
   recordScientProjectNoteChange,
   scientProjectNoteVersionsWithCurrent,
@@ -46,7 +53,11 @@ const MAX_PIN_NOTE_LENGTH = 100_000;
 const NonEmptyString = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
 const NullableText = Schema.NullOr(Schema.String);
 
-/** The pin's metadata snapshot: enough to cite with no library, never an abstract, note or PDF. */
+/**
+ * The pin's metadata snapshot: every citation input, so a collaborator with no Library cites the
+ * same; never an abstract, note or PDF. A snapshot from before the optional fields lacks them:
+ * unknown, never an instruction to empty them.
+ */
 export const ScientPinWork = Schema.Struct({
   // Plain text, so a type a newer Scient adds never hides the whole file.
   type: NonEmptyString,
@@ -55,6 +66,15 @@ export const ScientPinWork = Schema.Struct({
   issuedYear: Schema.NullOr(Schema.Int),
   identifiers: Schema.Array(ScientSourceIdentifier).pipe(Schema.check(Schema.isMaxLength(256))),
   containerTitle: NullableText,
+  customType: Schema.optionalKey(NullableText),
+  issuedRaw: Schema.optionalKey(NullableText),
+  publisher: Schema.optionalKey(NullableText),
+  volume: Schema.optionalKey(NullableText),
+  issue: Schema.optionalKey(NullableText),
+  pages: Schema.optionalKey(NullableText),
+  language: Schema.optionalKey(NullableText),
+  url: Schema.optionalKey(NullableText),
+  tags: Schema.optionalKey(Schema.Array(Schema.String).pipe(Schema.check(Schema.isMaxLength(256)))),
 });
 export type ScientPinWork = typeof ScientPinWork.Type;
 
@@ -132,6 +152,12 @@ function encodeWork(work: ScientPinWork, extra: JsonObject) {
       value: identifier.value,
     })),
     containerTitle: work.containerTitle,
+    ...Object.fromEntries(
+      SCIENT_PIN_CITATION_TEXT_FIELDS.flatMap((field) =>
+        work[field] !== undefined ? [[field, work[field]]] : [],
+      ),
+    ),
+    ...(work.tags !== undefined ? { tags: [...work.tags] } : {}),
     ...sortedExtra(extra),
   };
 }
@@ -250,6 +276,15 @@ export function scientPinWorkFromRecord(record: ScientSourceRecord): ScientPinWo
     issuedYear: record.issuedYear,
     identifiers: record.identifiers,
     containerTitle: record.containerTitle,
+    customType: record.customType ?? null,
+    issuedRaw: record.issuedRaw,
+    publisher: record.publisher,
+    volume: record.volume,
+    issue: record.issue,
+    pages: record.pages,
+    language: record.language,
+    url: record.url,
+    tags: record.tags,
   };
 }
 
@@ -758,8 +793,8 @@ export async function readScientProjectPinNoteHistory(input: {
 }
 
 /**
- * Refreshes each resolvable pin's `work` from its library record. Keys and notes never change.
- * Writes nothing when no snapshot changed.
+ * Refreshes each resolvable pin's `work` from its library record, keeping a known value the record
+ * lacks unless an edit emptied it. Keys and notes never change. Writes nothing when nothing did.
  */
 export async function refreshScientProjectPinSnapshots(input: {
   readonly projectRoot: string;
@@ -775,9 +810,13 @@ export async function refreshScientProjectPinSnapshots(input: {
     const pins = document.pins.map((stored, index) => {
       const resolution = resolutions[index]!;
       const record = resolution.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
-      return record
-        ? { ...stored, pin: { ...stored.pin, work: scientPinWorkFromRecord(record) } }
-        : stored;
+      if (!record) return stored;
+      const work = scientPinWorkKeepingUnknown(
+        stored.pin.work,
+        scientPinWorkFromRecord(withKnownPinCitationValues(record, stored.pin.work)),
+        record,
+      );
+      return { ...stored, pin: { ...stored.pin, work } };
     });
     const changed = await writePinsDocument(root, document, pins);
     return { changed, pins: pins.map(({ pin }) => pin).toSorted(comparePins) };
@@ -827,6 +866,11 @@ export interface ScientProjectPinnedWork {
   readonly record: ScientSourceRecord;
   readonly projectNote: string | null;
   readonly pinnedAt: string;
+  /**
+   * The citation comes only from a snapshot written before it held every citation input (the
+   * snapshot itself, or a record hydrated from it): an earlier managed entry may be fuller.
+   */
+  readonly incompleteSnapshot: boolean;
 }
 
 function recordFromSnapshot(pin: ScientProjectPin): ScientSourceRecord {
@@ -837,20 +881,21 @@ function recordFromSnapshot(pin: ScientProjectPin): ScientSourceRecord {
     revision: 1,
     citationKey: pin.citationKey,
     type: scientSourceTypeFromSnapshot(work.type),
+    ...(work.customType ? { customType: work.customType } : {}),
     title: work.title,
     creators: work.creators,
-    issuedRaw: work.issuedYear === null ? null : String(work.issuedYear),
+    issuedRaw: work.issuedRaw ?? (work.issuedYear === null ? null : String(work.issuedYear)),
     issuedYear: work.issuedYear,
     identifiers: work.identifiers,
     abstract: null,
     containerTitle: work.containerTitle,
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
-    language: null,
-    url: null,
-    tags: [],
+    publisher: work.publisher ?? null,
+    volume: work.volume ?? null,
+    issue: work.issue ?? null,
+    pages: work.pages ?? null,
+    language: work.language ?? null,
+    url: work.url ?? null,
+    tags: work.tags ?? [],
     externalReferences: [],
     attachments: [],
     fieldProvenance: [],
@@ -885,6 +930,7 @@ export async function listScientProjectPinnedWorks(input: {
     const resolution = resolutions[index];
     const found = resolution?.kind === "resolved" ? records.get(resolution.sourceId) : undefined;
     const projectNote = pin.note ?? null;
+    const incomplete = !scientPinWorkIsComplete(pin.work);
     if (!found) {
       return {
         citationKey: pin.citationKey,
@@ -893,9 +939,10 @@ export async function listScientProjectPinnedWorks(input: {
         record: recordFromSnapshot(pin),
         projectNote,
         pinnedAt: pin.pinnedAt,
+        incompleteSnapshot: incomplete,
       };
     }
-    const { note: _personal, ...record } = found;
+    const { note: _personal, ...record } = withKnownPinCitationValues(found, pin.work);
     return {
       citationKey: pin.citationKey,
       projectSourceId: pin.sourceId,
@@ -903,6 +950,7 @@ export async function listScientProjectPinnedWorks(input: {
       record: { ...record, citationKey: pin.citationKey },
       projectNote,
       pinnedAt: pin.pinnedAt,
+      incompleteSnapshot: incomplete && scientRecordOnlyFromProjectFile(found),
     };
   });
 }

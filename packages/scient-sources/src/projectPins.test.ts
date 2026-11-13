@@ -155,6 +155,15 @@ describe("project pins", () => {
       issuedYear: 2020,
       identifiers: [],
       containerTitle: "Journal",
+      customType: null,
+      issuedRaw: "2020",
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      url: null,
+      tags: [],
     });
 
     await renameKey(library, first, "lovelace2020");

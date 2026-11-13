@@ -8,15 +8,24 @@ export interface ManagedBibliographyContents {
   readonly bibtex: string;
   readonly cslJson: string;
   readonly keys: ReadonlyArray<string>;
+  /** Keys whose entry is the earlier one from `keep`, in either file. */
+  readonly keptKeys: ReadonlyArray<string>;
+}
+
+/** Earlier entries by key (`bibtexEntriesByKey`, `cslJsonEntriesByKey`) to write instead of a render. */
+export interface ManagedBibliographyKeptEntries {
+  readonly bibtex: ReadonlyMap<string, string>;
+  readonly cslJson: ReadonlyMap<string, string>;
 }
 
 /**
  * Both managed files, sorted by citation key, with the entries a Library export
  * writes minus notes (private) and abstracts (large, and no document needs them).
- * Sources without a key are left out.
+ * Sources without a key are left out. An entry in `keep` replaces that key's render.
  */
 export function renderManagedBibliography(
   records: ReadonlyArray<ScientSourceRecord>,
+  keep?: ManagedBibliographyKeptEntries,
 ): ManagedBibliographyContents {
   const items = records
     .flatMap((record) => (record.citationKey ? [{ record, citationKey: record.citationKey }] : []))
@@ -26,10 +35,41 @@ export function renderManagedBibliography(
         left.citationKey.localeCompare(right.citationKey),
     );
   const options = { includeNotes: false, includeAbstracts: false };
+  const keys = items.map(({ citationKey }) => citationKey);
+  if (!keep || (keep.bibtex.size === 0 && keep.cslJson.size === 0)) {
+    return {
+      bibtex: `${MANAGED_BIBTEX_HEADER}\n${formatBibliography(items, "bibtex", options)}`,
+      cslJson: formatBibliography(items, "csl-json", options),
+      keys,
+      keptKeys: [],
+    };
+  }
+  const kept = new Set<string>();
+  // Each entry exactly as formatBibliography joins them, so an unkept entry keeps its bytes.
+  const bibtex = items
+    .map((item) => {
+      const earlier = keep.bibtex.get(item.citationKey);
+      if (earlier === undefined) return formatBibliography([item], "bibtex", options);
+      kept.add(item.citationKey);
+      return `${earlier}\n`;
+    })
+    .join("\n");
+  const cslItems: unknown[] = JSON.parse(formatBibliography(items, "csl-json", options));
+  const cslJson = `${JSON.stringify(
+    cslItems.map((item, index) => {
+      const earlier = keep.cslJson.get(keys[index]!);
+      if (earlier === undefined) return item;
+      kept.add(keys[index]!);
+      return JSON.parse(earlier);
+    }),
+    null,
+    2,
+  )}\n`;
   return {
-    bibtex: `${MANAGED_BIBTEX_HEADER}\n${formatBibliography(items, "bibtex", options)}`,
-    cslJson: formatBibliography(items, "csl-json", options),
-    keys: items.map(({ citationKey }) => citationKey),
+    bibtex: `${MANAGED_BIBTEX_HEADER}\n${bibtex}`,
+    cslJson,
+    keys,
+    keptKeys: keys.filter((key) => kept.has(key)),
   };
 }
 
