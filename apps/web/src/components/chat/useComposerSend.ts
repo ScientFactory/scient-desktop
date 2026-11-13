@@ -717,7 +717,9 @@ export function useComposerSend(input: ComposerSendInput) {
               ...loadBalancingSendWarning({
                 pending: loadBalancing.pending,
                 threadContexts: threadContextsAtSend,
-                candidateEnvironments: logicalProjectEnvironments,
+                candidateEnvironmentIds: logicalProjectEnvironments.map(
+                  (candidate) => candidate.environmentId,
+                ),
               }),
             });
             return;
