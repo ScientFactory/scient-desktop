@@ -7,24 +7,26 @@ import * as Stream from "effect/Stream";
 import { makeOmpLiveVoice } from "./OmpLiveVoice.ts";
 
 /** A client that answers live commands and records what was sent. */
-const fakeClient = () => {
+const fakeClient = (options: { readonly connectHangs?: boolean } = {}) => {
   const sent: Array<Record<string, unknown>> = [];
   const client = {
     command: (body: Record<string, unknown> & { readonly type: string }) =>
-      Effect.sync(() => {
-        sent.push(body);
-        return {
-          type: "response" as const,
-          command: body.type,
-          success: true,
-          data:
-            body.type === "live_connect"
-              ? { voice: "sol", sdpAnswer: "v=0 answer" }
-              : body.type === "live_mute"
-                ? { muted: body.muted }
-                : undefined,
-        };
-      }),
+      body.type === "live_connect" && options.connectHangs
+        ? Effect.sync(() => sent.push(body)).pipe(Effect.andThen(Effect.never))
+        : Effect.sync(() => {
+            sent.push(body);
+            return {
+              type: "response" as const,
+              command: body.type,
+              success: true,
+              data:
+                body.type === "live_connect"
+                  ? { voice: "sol", sdpAnswer: "v=0 answer" }
+                  : body.type === "live_mute"
+                    ? { muted: body.muted }
+                    : undefined,
+            };
+          }),
   } as unknown as OmpRpcClient;
   return { client, sent };
 };
@@ -88,5 +90,21 @@ it.effect("refuses a second call and ends a call when the agent stops", () =>
     yield* live.onProcessEnded;
     const events = yield* Fiber.join(call);
     assert.deepStrictEqual(events.at(-1), { type: "ended", error: "Scient Agent stopped." });
+  }),
+);
+
+it.effect("hangs up a call the window leaves while the agent is still connecting", () =>
+  Effect.gen(function* () {
+    const { client, sent } = fakeClient({ connectHangs: true });
+    const live = makeOmpLiveVoice(client);
+    const call = yield* Stream.runDrain(live.runtime.call("offer")).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    yield* Fiber.interrupt(call);
+    assert.deepStrictEqual(sent.at(-1), { type: "live_stop" });
+    // The next call is not refused as a second one.
+    const next = yield* Stream.runDrain(live.runtime.call("offer")).pipe(Effect.forkChild);
+    yield* Effect.yieldNow;
+    yield* Fiber.interrupt(next);
+    assert.strictEqual(sent.filter((body) => body.type === "live_connect").length, 2);
   }),
 );

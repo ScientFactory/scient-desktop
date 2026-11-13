@@ -100,11 +100,9 @@ export const makeOmpLiveVoice = (client: OmpRpcClient): OmpLiveVoice => {
           .command({ type: "live_connect", sdpOffer, hostDelegation: true })
           .pipe(
             Effect.mapError((cause) => failed(cause.message)),
-            Effect.onError(() =>
-              Effect.sync(() => {
-                if (active === queue) active = undefined;
-              }),
-            ),
+            // A window that hangs up while the agent is still connecting must not leave the
+            // call running; `live_stop` without a call is harmless.
+            Effect.onError(() => hangUp),
           );
         const data = isRecord(response.data) ? response.data : {};
         if (typeof data.sdpAnswer !== "string" || !data.sdpAnswer) {
