@@ -219,7 +219,10 @@ describe("deleting a cited source for good", () => {
         fixture,
       );
       expect(deleted).toMatchObject({ outcome: "deleted" });
-      expect(deleted.stillCitedBy?.toSorted()).toEqual(["paper", "thesis"]);
+      expect("stillCitedBy" in deleted ? deleted.stillCitedBy?.toSorted() : null).toEqual([
+        "paper",
+        "thesis",
+      ]);
 
       // A new checkout: no instance map remembers the pins. A write on another source resolves
       // every pin and syncs the bibliography.
