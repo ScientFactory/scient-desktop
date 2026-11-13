@@ -24,6 +24,12 @@ as it is. Custom models already keep their keys in Accounts' encrypted store. Re
 keeps the keys you typed into its settings here, and adding that kind of agent again offers them
 back.
 
+Research keys also serve the [Library](sources.md) and paper downloads. With an **OpenAlex**,
+**Google Books**, **NCBI / PubMed** or **Semantic Scholar** key saved, Scient's own lookups use it, and
+**Unpaywall email** lets Scient ask Unpaywall for a free copy that OpenAlex doesn't list; without
+one, Scient uses the Library's contact email (Settings ▸ Documents ▸ Library) if you set it. A key you
+turn Off for agents is not used. The values stay in Accounts and never appear in what agents see.
+
 ## What agents may use
 
 Everything you add starts **Allowed**. **Ask me** asks you each time, **Off** keeps agents out, and
@@ -94,7 +100,7 @@ submit a new or changed password, Scient offers to save it.
 **When a sign-in doesn't go through**, Scient stops trying that site by itself, however long it
 waits, so it never repeats a wrong password. The row says **Sign in needed**, **Needs you**,
 **Password rejected** or **Code rejected**, with a **Sign in** button, and papers waiting on it show
-"N papers wait for you to sign in to …" in Sources. Signing in, **Check my accounts** or a changed
+"N papers wait for you to sign in to …" in the Library. Signing in, **Check my accounts** or a changed
 saved password lets Scient try again.
 
 **Sign in** opens the site's own sign-in beside your work. Scient types what it may and you finish
@@ -160,8 +166,8 @@ on that computer can read them.
 ## Papers behind a subscription
 
 On a university network, **Get PDF** and agents reach closed papers with no setup. From anywhere
-else, connect your university: **Connect your university** is the first row in Sources. Its own
-sign-in opens beside your work, and its crest then stays beside the Sources title. If your
+else, connect your university: **Connect your university** is the first row in the Library. Its own
+sign-in opens beside your work, and its crest then stays beside the Library title. If your
 university isn't listed, paste a link from your library's website. The first article you open at a
 journal reloads once through your university. Being on campus never counts as signed in, and
 scripts can't take your university sign-in's session.
@@ -171,7 +177,8 @@ agents queue any number. One queue runs every paper, one at a time per publisher
 publisher that refuses several in a row. A sign-in or a publisher's check asks you once, then every
 paper waiting on it continues, even after a restart. Many university licences forbid systematic
 downloading, so how many papers you fetch is your call. Scient saves only a PDF that is the paper,
-in the project's `papers` folder, and never fetches one twice.
+in the project's `papers` folder, and never fetches one twice. Papers an agent gets for your
+library also go on their source in the [Library](sources.md), which is added when missing.
 
 ## What Accounts doesn't protect against
 

@@ -22,6 +22,12 @@ import {
 } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { dispatchScientOperation } from "../../../scient/operations/AgentOperationDispatcher.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
+import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
+import {
+  SourceIdentifierLookup,
+  verifiableSourceIdentifier,
+  type ResolveSourceIdentifier,
+} from "../../../scient/sources/SourceIdentifierResolver.ts";
 import {
   addScientSourceForInvocation,
   attachScientSourcePdfForInvocation,
@@ -29,7 +35,6 @@ import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
   removeScientSourceForInvocation,
-  reviewScientSourceForInvocation,
   updateScientSourceNoteForInvocation,
 } from "./handlers.ts";
 
@@ -167,6 +172,11 @@ const makeInvocation = (
     issuedAt: 1,
   });
 
+const offlineLookup: ResolveSourceIdentifier = async (identifiers) => {
+  const identifier = verifiableSourceIdentifier(identifiers);
+  return identifier ? { status: "unavailable", identifier } : null;
+};
+
 const provideContext = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   input: {
@@ -177,6 +187,8 @@ const provideContext = <A, E, R>(
   effect.pipe(
     Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
     Effect.provideService(WorkspaceBindingResolver, input.query),
+    Effect.provideService(ScientSourcesBackend, "project"),
+    Effect.provideService(SourceIdentifierLookup, offlineLookup),
   );
 
 afterEach(async () => {
@@ -212,11 +224,17 @@ describe("Scient Sources MCP write authorization", () => {
       };
 
       const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
-      expect(listed.records[0]).toMatchObject({
+      expect(listed.records[0]).toEqual({
         sourceId: "source_pending",
-        review: "pending",
-        addedBy: "agent",
+        revision: 1,
+        type: "article",
+        title: "Agent added",
+        creator: "Lovelace",
+        issuedYear: 2026,
+        containerTitle: "Scient Journal",
+        doi: "10.1000/source_pending",
         hasPdf: false,
+        addedBy: "agent",
       });
 
       const note = yield* provideContext(
@@ -243,21 +261,6 @@ describe("Scient Sources MCP write authorization", () => {
       expect(removed._tag).toBe("Failure");
       if (removed._tag === "Failure")
         expect(removed.failure._tag).toBe("AgentOperationUnavailable");
-
-      const reviewed = yield* provideContext(
-        dispatchScientOperation(
-          "sources.review",
-          reviewScientSourceForInvocation({
-            sourceId: "source_pending",
-            expectedRevision: 1,
-            action: "reject",
-          }),
-        ),
-        context,
-      ).pipe(Effect.result);
-      expect(reviewed._tag).toBe("Failure");
-      if (reviewed._tag === "Failure")
-        expect(reviewed.failure._tag).toBe("AgentOperationUnavailable");
 
       const added = yield* provideContext(
         dispatchScientOperation(
@@ -324,129 +327,7 @@ describe("Scient Sources MCP write authorization", () => {
     }),
   );
 
-  it.effect("approves pending review and rejects by removing the source", () =>
-    Effect.gen(function* () {
-      const root = yield* Effect.promise(() => fixture("scient-sources-review-"));
-      yield* Effect.promise(() =>
-        Promise.all([
-          writeSource(root, {
-            sourceId: "source_approve",
-            title: "Approve me",
-            origin: {
-              actor: "agent",
-              intake: "local-pdf",
-              operationId: "operation-approve",
-              review: "pending",
-            },
-          }),
-          writeSource(root, {
-            sourceId: "source_reject",
-            title: "Reject me",
-            origin: {
-              actor: "agent",
-              intake: "identifier",
-              operationId: "operation-reject",
-              review: "pending",
-            },
-          }),
-        ]),
-      );
-      const projectId = ProjectId.make("project-review");
-      const threadId = ThreadId.make("thread-review");
-      const context = {
-        invocation: makeInvocation(threadId, new Set(["sources:read", "sources:write"])),
-        query: makeQuery({
-          project: makeProject(projectId, root),
-          thread: makeThread({ threadId, projectId }),
-        }),
-      };
-
-      const approved = yield* provideContext(
-        reviewScientSourceForInvocation({
-          sourceId: "source_approve",
-          expectedRevision: 1,
-          action: "approve",
-        }),
-        context,
-      );
-      expect(approved).toMatchObject({
-        action: "approve",
-        outcome: "updated",
-        sourceId: "source_approve",
-        revision: 2,
-      });
-
-      const rejected = yield* provideContext(
-        reviewScientSourceForInvocation({
-          sourceId: "source_reject",
-          expectedRevision: 1,
-          action: "reject",
-        }),
-        context,
-      );
-      expect(rejected).toMatchObject({
-        action: "reject",
-        outcome: "removed",
-        sourceId: "source_reject",
-      });
-
-      const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
-      expect(listed.records.map((record) => record.sourceId).sort()).toEqual(["source_approve"]);
-      expect(listed.records[0]).toMatchObject({ review: "none", addedBy: "agent" });
-
-      const detail = yield* provideContext(
-        getScientSourceForInvocation({ sourceId: "source_approve" }),
-        context,
-      );
-      expect(detail.origin).toMatchObject({
-        actor: "agent",
-        intake: "local-pdf",
-        review: "none",
-      });
-    }),
-  );
-
-  it.effect("does not remove a user-owned source through review reject", () =>
-    Effect.gen(function* () {
-      const root = yield* Effect.promise(() => fixture("scient-sources-user-reject-"));
-      yield* Effect.promise(() =>
-        writeSource(root, {
-          sourceId: "source_user",
-          title: "User owned",
-          origin: {
-            actor: "user",
-            intake: "local-pdf",
-            operationId: "operation-user",
-            review: "none",
-          },
-        }),
-      );
-      const projectId = ProjectId.make("project-user-reject");
-      const threadId = ThreadId.make("thread-user-reject");
-      const context = {
-        invocation: makeInvocation(threadId, new Set(["sources:read", "sources:write"])),
-        query: makeQuery({
-          project: makeProject(projectId, root),
-          thread: makeThread({ threadId, projectId }),
-        }),
-      };
-
-      const rejected = yield* provideContext(
-        reviewScientSourceForInvocation({
-          sourceId: "source_user",
-          expectedRevision: 1,
-          action: "reject",
-        }),
-        context,
-      ).pipe(Effect.result);
-      expect(rejected._tag).toBe("Failure");
-
-      const listed = yield* provideContext(listScientSourcesForInvocation({}), context);
-      expect(listed.records.map((record) => record.sourceId)).toEqual(["source_user"]);
-    }),
-  );
-
-  it.effect("adds a metadata-only source as pending review and repeats as a duplicate", () =>
+  it.effect("adds a metadata-only source credited to the agent and repeats as a duplicate", () =>
     Effect.gen(function* () {
       const root = yield* Effect.promise(() => fixture("scient-sources-add-"));
       const projectId = ProjectId.make("project-add");
@@ -509,7 +390,7 @@ describe("Scient Sources MCP write authorization", () => {
       const added = yield* provideContext(addScientSourceForInvocation(payload), context);
       expect(added).toMatchObject({
         outcome: "imported",
-        review: "pending",
+        verification: "unchecked",
         duplicate: { kind: "new" },
       });
       expect(added.sourceId).toBeTruthy();
@@ -521,7 +402,11 @@ describe("Scient Sources MCP write authorization", () => {
       expect(detail.origin).toMatchObject({
         actor: "agent",
         intake: "identifier",
-        review: "pending",
+        review: "none",
+      });
+      expect(detail.verification).toEqual({
+        state: "unchecked",
+        identifier: { scheme: "doi", value: "10.1000/mcp-add" },
       });
       expect(detail.attachments).toEqual([]);
 
@@ -533,7 +418,7 @@ describe("Scient Sources MCP write authorization", () => {
       expect(listed.records).toHaveLength(1);
       expect(listed.records[0]).toMatchObject({
         addedBy: "agent",
-        review: "pending",
+        verification: "unchecked",
         hasPdf: false,
       });
     }),

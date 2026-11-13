@@ -331,6 +331,8 @@ export interface ChatComposerHandle {
     options?: { ensureLeadingBoundary?: boolean; clipboardData?: DataTransfer },
   ) => boolean;
   pasteTextAtEnd: (text: string, options?: { bypassAutoAttachment?: boolean }) => boolean;
+  // SCIENT-FORK: optional for handles that only append; puts text before the draft.
+  insertTextAtStart?: (text: string) => boolean;
   citeAssistantText: (
     citation: AssistantCitation,
     sourceAnchor?: AssistantCitationSourceAnchor,
@@ -2755,7 +2757,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const insertComposerText = (
     text: string,
-    position: "cursor" | "end",
+    // SCIENT-FORK: "start" leads the draft with a surface's fixed instruction.
+    position: "cursor" | "end" | "start",
     options?: {
       ensureLeadingBoundary?: boolean;
       citationCommentAnchor?: AssistantCitationSourceAnchor;
@@ -2775,7 +2778,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       text = importPastedComposerText(options.clipboardData, importContextFragment);
     }
     const prompt = promptRef.current;
-    const cursor = position === "cursor" ? readComposerSnapshot().expandedCursor : prompt.length;
+    const cursor =
+      position === "cursor"
+        ? readComposerSnapshot().expandedCursor
+        : position === "start"
+          ? 0
+          : prompt.length;
     const needsLeadingSpace =
       (options?.ensureLeadingBoundary ?? false) &&
       cursor > 0 &&
@@ -2870,6 +2878,16 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     return inserted;
   };
   const insertComposerTextAtEndStable = useStableCallback(insertComposerTextAtEnd);
+  // SCIENT-FORK:START — the Library's Ask action leads the draft with its instruction.
+  const insertComposerTextAtStart = (text: string) => {
+    const inserted = insertComposerText(text, "start");
+    if (inserted && isComposerCollapsedMobile) {
+      expandMobileComposer();
+    }
+    return inserted;
+  };
+  const insertComposerTextAtStartStable = useStableCallback(insertComposerTextAtStart);
+  // SCIENT-FORK:END
 
   // SCIENT-FORK:START — Ask the agent may send only into its own idle, empty composer.
   const sendMessageIfIdle = (threadRef: ScopedThreadRef, message: string) =>
@@ -3243,6 +3261,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         countPreparingComposerImages(attachmentTargetKey) > 0 ||
         pendingDraftWork.has(attachmentTargetKey),
       insertTextAtEnd: insertComposerTextAtEndStable,
+      // SCIENT-FORK: the Library's Ask action.
+      insertTextAtStart: insertComposerTextAtStartStable,
       // SCIENT-FORK: this handle checks the live target, draft and send availability.
       sendMessageIfIdle: sendMessageIfIdleStable,
       pasteTextAtEnd: (text: string, options) => {
@@ -3447,6 +3467,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       insertComposerDraftTerminalContext,
       insertComposerTextStable,
       insertComposerTextAtEndStable,
+      insertComposerTextAtStartStable,
       sendMessageIfIdleStable,
       promptRef,
       composerImagesRef,

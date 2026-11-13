@@ -35,7 +35,11 @@ import packageJson from "../../package.json" with { type: "json" };
 import { dispatchScientOperation } from "../scient/operations/AgentOperationDispatcher.ts";
 import { AgentInvocationContext } from "../scient/operations/AgentInvocationContext.ts";
 import { ProviderSessionManagerV2 } from "../orchestration-v2/ProviderSessionManager.ts";
-import { scientOperationCatalog, scientTools } from "./ScientOperationCatalog.ts";
+import {
+  scientOperationCatalog,
+  scientTools,
+  scientToolVariants,
+} from "./ScientOperationCatalog.ts";
 import { scientInvocationForMcp } from "./ScientMcpInvocation.ts";
 import { WorkspaceBindingResolver } from "../scient/projectScope/WorkspaceBindingResolver.ts";
 import { makeScientToolListLayer, ScientMcpProtocol } from "./ScientMcpProtocol.ts";
@@ -100,8 +104,27 @@ import {
   PreviewToolkit,
 } from "./toolkits/preview/tools.ts";
 import * as WorktreeHandlers from "./toolkits/worktree/handlers.ts";
-import { ScientSourcesToolkitHandlersLive } from "./toolkits/sources/handlers.ts";
-import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+// SCIENT-FORK:START — PDF annotation agent tools.
+import { layer as ScientAnnotationsLive } from "../scient/annotations/ScientAnnotations.ts";
+import { ScientAnnotationsToolkitHandlersLive } from "./toolkits/annotations/handlers.ts";
+import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
+// SCIENT-FORK:END
+import {
+  ScientSourcesLibraryToolkitHandlersLive,
+  ScientSourcesToolkitHandlersLive,
+} from "./toolkits/sources/handlers.ts";
+import { ScientSourcesLibraryToolkit, ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
+import { ScientSourcesBackend } from "../scient/sources/SourcesBackend.ts";
+import { ScientReferencesToolkitHandlersLive } from "./toolkits/references/handlers.ts";
+import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
+import {
+  ScientSystematicReviewsLibraryToolkitHandlersLive,
+  ScientSystematicReviewsToolkitHandlersLive,
+} from "./toolkits/systematicReviews/handlers.ts";
+import {
+  ScientSystematicReviewsLibraryToolkit,
+  ScientSystematicReviewsToolkit,
+} from "./toolkits/systematicReviews/tools.ts";
 import { ScientSkillsToolkitHandlersLive } from "./toolkits/skills/handlers.ts";
 import { ScientSkillsToolkit } from "./toolkits/skills/tools.ts";
 import { ScientDocumentsToolkitHandlersLive } from "./toolkits/documents/handlers.ts";
@@ -921,7 +944,10 @@ export const registerScientToolkit = <Tools extends Record<string, Tool.Any>>(
     withToolAnalytics(
       Effect.gen(function* () {
         for (const tool of Object.values(toolkit.tools)) {
-          if (tool !== scientTools.find((registered) => registered.name === tool.name)) {
+          if (
+            tool !== scientTools.find((registered) => registered.name === tool.name) &&
+            !scientToolVariants.includes(tool)
+          ) {
             return yield* Effect.die(
               new Error(`Unregistered Scient tool definition: ${tool.name}`),
             );
@@ -1474,9 +1500,41 @@ export const layerPreviewToolkit = Layer.mergeAll(
   layerPreviewSnapshotRegistration,
 );
 
-export const ScientSourcesToolkitRegistrationLive = registerScientToolkit(
-  ScientSourcesToolkit,
-).pipe(Layer.provide(ScientSourcesToolkitHandlersLive));
+// The backend constant picks the Sources tool list; both lists share operations and handlers.
+export const ScientSourcesToolkitRegistrationLive = Layer.unwrap(
+  Effect.gen(function* () {
+    return (yield* ScientSourcesBackend) === "library"
+      ? registerScientToolkit(ScientSourcesLibraryToolkit).pipe(
+          Layer.provide(ScientSourcesLibraryToolkitHandlersLive),
+        )
+      : registerScientToolkit(ScientSourcesToolkit).pipe(
+          Layer.provide(ScientSourcesToolkitHandlersLive),
+        );
+  }),
+);
+
+const ScientReferencesToolkitRegistrationLive = registerScientToolkit(ScientReferencesToolkit).pipe(
+  Layer.provide(ScientReferencesToolkitHandlersLive),
+);
+
+/** Library mode adds the pick between a review's versions to the same two tools. */
+export const ScientSystematicReviewsToolkitRegistrationLive = Layer.unwrap(
+  Effect.gen(function* () {
+    return (yield* ScientSourcesBackend) === "library"
+      ? registerScientToolkit(ScientSystematicReviewsLibraryToolkit).pipe(
+          Layer.provide(ScientSystematicReviewsLibraryToolkitHandlersLive),
+        )
+      : registerScientToolkit(ScientSystematicReviewsToolkit).pipe(
+          Layer.provide(ScientSystematicReviewsToolkitHandlersLive),
+        );
+  }),
+);
+
+// SCIENT-FORK:START — PDF annotation agent tools.
+export const ScientAnnotationsToolkitRegistrationLive = registerScientToolkit(
+  ScientAnnotationsToolkit,
+).pipe(Layer.provide(ScientAnnotationsToolkitHandlersLive), Layer.provide(ScientAnnotationsLive));
+// SCIENT-FORK:END
 
 export const ScientSkillsToolkitRegistrationLive = registerScientToolkit(ScientSkillsToolkit).pipe(
   Layer.provide(ScientSkillsToolkitHandlersLive),
@@ -1646,6 +1704,11 @@ export const layerTools = Layer.mergeAll(
   ),
   // SCIENT-FORK:END
   ScientSourcesToolkitRegistrationLive,
+  ScientReferencesToolkitRegistrationLive,
+  ScientSystematicReviewsToolkitRegistrationLive,
+  // SCIENT-FORK:START — PDF annotation agent tools.
+  ScientAnnotationsToolkitRegistrationLive,
+  // SCIENT-FORK:END
   ScientSkillsToolkitRegistrationLive,
   ScientDocumentsToolkitRegistrationLive,
   // SCIENT-FORK:START — Overleaf agent tools.

@@ -488,6 +488,10 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     exportPdf: (tabId) => ipcRenderer.invoke(IpcChannels.PREVIEW_EXPORT_PDF_CHANNEL, { tabId }),
     renderHtmlPdf: (sourceUrl) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_RENDER_HTML_PDF_CHANNEL, { sourceUrl }),
+    // SCIENT-FORK:START — Scient Library: read a tab for "Save to Library".
+    readLibraryPage: (tabId) =>
+      ipcRenderer.invoke(IpcChannels.PREVIEW_LIBRARY_PAGE_CHANNEL, { tabId }),
+    // SCIENT-FORK:END
     revealArtifact: (path) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_REVEAL_ARTIFACT_CHANNEL, { path }),
     copyArtifactToClipboard: (path) =>

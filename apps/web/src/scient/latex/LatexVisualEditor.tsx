@@ -1,5 +1,7 @@
 import type { PagedTableLayout } from "./latexPagedGeometry";
 import { resolvedLatexFontSize } from "./latexVisualLayout";
+import { useDocumentQuoteTarget } from "../annotations/documentQuoteTargets";
+import { latexQuote } from "../annotations/quoteFormat";
 import { latexSelectionClipboard } from "./latexClipboard";
 import { TextMenu, TextMenuItems } from "../writing/TextMenu";
 import { LatexDirectionMenuItems } from "./LatexDirectionMenuItems";
@@ -8302,6 +8304,34 @@ function LatexVisualEditorReady(
     };
     requestAnimationFrame(focusFirstCell);
   };
+  useDocumentQuoteTarget(
+    props.cwd && props.relativePath && editor
+      ? {
+          root: props.cwd,
+          label: props.relativePath.split("/").at(-1) ?? props.relativePath,
+          element: () => editor.view.dom,
+          insert: (quote) => {
+            if (readOnly || !editor.state.selection.$from.parent.isTextblock) return false;
+            const { text, cite } = latexQuote(quote);
+            return editor
+              .chain()
+              .focus()
+              .insertContent([
+                { type: "text", text },
+                ...(cite
+                  ? [
+                      {
+                        type: "latexInlineCommand",
+                        attrs: { name: "cite", argument: cite.key, raw: cite.raw },
+                      },
+                    ]
+                  : []),
+              ])
+              .run();
+          },
+        }
+      : null,
+  );
   const insertReference = (command: string, key: string) => {
     if (readOnly || !key || /[{}\\%]/u.test(key) || !restoreInsertion()) return;
     if (editor) editor.commands.setTextSelection(editor.state.selection.to);

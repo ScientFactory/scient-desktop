@@ -56,6 +56,7 @@ class ScientReferenceNodeView implements NodeView {
     private readonly view: EditorView,
     private readonly getPos: () => number | undefined,
     registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar,
+    private readonly openCitation?: (source: string) => boolean,
   ) {
     this.node = node;
     const definition = node.type.name === "footnote_definition";
@@ -179,6 +180,15 @@ class ScientReferenceNodeView implements NodeView {
 
   private readonly handleEditorMouseDown = (event: Event) => {
     if (!(event instanceof MouseEvent) || event.button !== 0 || !this.view.editable) return;
+    // As with links, Command or Control-click follows a citation while writing.
+    if (
+      (event.metaKey || event.ctrlKey) &&
+      this.node.type.name === "citation" &&
+      this.openCitation?.(String(this.node.attrs.source))
+    ) {
+      event.preventDefault();
+      return;
+    }
     const position = this.getPos();
     if (position === undefined) return;
     const selection = this.view.state.selection;
@@ -355,6 +365,7 @@ export function createScientReferenceNodeView(
   view: EditorView,
   getPos: () => number | undefined,
   registerFootnote?: ScientMarkdownFootnoteNodeViewRegistrar,
+  openCitation?: (source: string) => boolean,
 ): NodeView {
-  return new ScientReferenceNodeView(node, view, getPos, registerFootnote);
+  return new ScientReferenceNodeView(node, view, getPos, registerFootnote, openCitation);
 }

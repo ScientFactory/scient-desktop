@@ -1,0 +1,13 @@
+{
+  "apiVersion": "scient.skills/v1alpha1",
+  "id": "scient.references",
+  "version": "0.1.0",
+  "category": "Research",
+  "categoryDescription": "Check, find and cite the literature.",
+  "displayOrder": 80,
+  "supportedScopes": ["user"],
+  "defaultInvocationPolicy": "automatic",
+  "origin": {
+    "kind": "scient"
+  }
+}

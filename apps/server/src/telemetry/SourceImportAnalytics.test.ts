@@ -27,15 +27,14 @@ import {
   observeSourceImport,
   type SourceImportObserver,
 } from "../scient/sources/SourceImportObservation.ts";
-import { getZoteroImportMaterial } from "../scient/sources/ZoteroLocalAdapter.ts";
+import {
+  fakeZoteroAccess,
+  fakeZoteroTransport,
+  zoteroItem,
+} from "../scient/sources/Zotero.testkit.ts";
 import { discardLocalPdfImportMaterial } from "../scient/sources/LocalPdfSourceAdapter.ts";
 import { AnalyticsService, type AnalyticsStatus } from "./AnalyticsService.ts";
 import { makeSourceImportAnalytics } from "./SourceImportAnalytics.ts";
-
-vi.mock("../scient/sources/ZoteroLocalAdapter.ts", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("../scient/sources/ZoteroLocalAdapter.ts")>()),
-  getZoteroImportMaterial: vi.fn(),
-}));
 
 vi.mock("../scient/sources/LocalPdfSourceAdapter.ts", async (importOriginal) => {
   const original =
@@ -105,11 +104,16 @@ function analyticsFixture(consent: AnalyticsStatus["consent"] = "product") {
   return { events, service, observer, changeConsent };
 }
 
-async function localOperation(root: string, operationId: string, content = privateMarker) {
+async function localOperation(
+  root: string,
+  operationId: string,
+  content = privateMarker,
+  fileName = `${operationId}.pdf`,
+) {
   const sourcePath = NodePath.join(root, `${operationId}.pdf`);
   const body = `%PDF-1.7\n${content}\n`;
   await NodeFSP.writeFile(sourcePath, body, "utf8");
-  const { item } = await uploadLocalPdfSource({ root, sourcePath, fileName: `${operationId}.pdf` });
+  const { item } = await uploadLocalPdfSource({ root, sourcePath, fileName });
   const itemKey = item.candidate.sourceKey;
   await beginLocalPdfImport({
     root,
@@ -193,7 +197,7 @@ describe("source import outcome analytics", () => {
           ]);
           await getScientSourcesOverview(root);
           await advanceSourceImport({ root, operationId: "first" }, observer);
-          await localOperation(root, "duplicate");
+          await localOperation(root, "duplicate", privateMarker, "first.pdf");
           const duplicate = await advanceSourceImport({ root, operationId: "duplicate" }, observer);
           expect(duplicate.items[0]?.state).toBe("skipped");
           expect(await listScientSourceRecords(root)).toHaveLength(1);
@@ -206,8 +210,8 @@ describe("source import outcome analytics", () => {
           expect(f.events[1]?.properties).toMatchObject({
             operationKind: "source-import",
             trigger: "user",
-            reviewRequired: false,
           });
+          expect(f.events[1]?.properties).not.toHaveProperty("reviewRequired");
           expect(encodeJson(f.events)).not.toMatch(
             /PRIVATE_RESEARCH_CONTENT|scient-import-analytics|\.pdf|sourceKey|sourceId|operationId/u,
           );
@@ -274,19 +278,37 @@ describe("source import outcome analytics", () => {
         const observer = yield* f.observer();
         yield* Effect.promise(async () => {
           const root = await project();
-          vi.mocked(getZoteroImportMaterial)
-            .mockResolvedValueOnce({ candidate, pdfPath: null })
-            .mockRejectedValueOnce(new Error(`secret /private/path ${privateMarker}`));
+          const zotero = fakeZoteroAccess(
+            fakeZoteroTransport({
+              items: new Map([
+                [
+                  "ABCD2345",
+                  {
+                    item: zoteroItem("ABCD2345", {
+                      title: privateMarker,
+                      abstractNote: privateMarker,
+                      DOI: "10.1000/private-research",
+                    }),
+                    children: [],
+                  },
+                ],
+              ]),
+              failures: new Map([["ABCD2346", new Error(`secret /private/path ${privateMarker}`)]]),
+            }),
+          );
           await beginZoteroImport({
             root,
             operationId: "zotero",
             itemKeys: ["ABCD2345", "ABCD2346"],
             possibleMetadataMatchOverrides: [],
           });
-          expect((await advanceSourceImport({ root, operationId: "zotero" }, observer)).state).toBe(
-            "running",
+          expect(
+            (await advanceSourceImport({ root, operationId: "zotero", zotero }, observer)).state,
+          ).toBe("running");
+          const completed = await advanceSourceImport(
+            { root, operationId: "zotero", zotero },
+            observer,
           );
-          const completed = await advanceSourceImport({ root, operationId: "zotero" }, observer);
           expect(completed.items.map((item) => item.state)).toEqual(["imported", "failed"]);
           expect(f.events.map((event) => event.name)).toEqual([
             "scient.operation.started",
@@ -342,7 +364,9 @@ describe("source import outcome analytics", () => {
           { ...f.service, record: () => Effect.die("analytics record failure") },
         ]) {
           const observer = yield* f.observer("agent", service);
-          yield* Effect.promise(() => addAgentSource({ root, candidate }, observer));
+          yield* Effect.promise(() =>
+            addAgentSource({ root, candidate, resolveIdentifier: async () => null }, observer),
+          );
         }
         expect(yield* Effect.promise(() => listScientSourceRecords(root))).toHaveLength(1);
         expect(f.events).toHaveLength(0);
@@ -399,7 +423,8 @@ describe("source import outcome analytics", () => {
         "scient.operation.started",
         "scient.operation.completed",
       ]);
-      expect(f.events[1]?.properties).toMatchObject({ trigger: "agent", reviewRequired: true });
+      expect(f.events[1]?.properties).toMatchObject({ trigger: "agent" });
+      expect(f.events[1]?.properties).not.toHaveProperty("reviewRequired");
     }),
   );
 

@@ -1,45 +1,38 @@
 import type {
-  ContextMenuItem,
   EnvironmentId,
+  ScientSourceDetailResult,
+  ScientSourcesFileImportResult,
   ScientSourcesOverviewResult,
-  ScientSourcesPreflightResult,
   ThreadId,
 } from "@t3tools/contracts";
-import { selectScientSourceMaterial } from "@scientfactory/scient-sources/material-selection";
 import {
   AlertCircle,
   ArrowDownUp,
   BookOpen,
-  CheckCircle2,
   ChevronLeft,
   Download,
   ExternalLink,
-  FileDown,
   FileUp,
   FileText,
   Folder,
+  Hash,
   Library,
   LoaderCircle,
-  Info,
-  MoreVertical,
   RefreshCw,
   Search,
+  Users,
   X,
 } from "lucide-react";
-import {
-  useEffect,
-  useLayoutEffect,
-  useSyncExternalStore,
-  useRef,
-  useState,
-  type MouseEvent as ReactMouseEvent,
-  type ReactNode,
-} from "react";
+import { useEffect, useLayoutEffect, useSyncExternalStore, useRef, useState } from "react";
 
+import { Toggle, ToggleGroup } from "../../components/ui/toggle-group";
 import { Button } from "../../components/ui/button";
+import { ManagedBibliographyNotice } from "./ManagedBibliographyNotice";
+import { useManagedBibliography } from "./useManagedBibliography";
+import { useLibrarySourceRequest } from "./librarySourceRequest";
 import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../components/ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import {
   Select,
@@ -51,15 +44,26 @@ import {
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../components/ui/tooltip";
 import { toastManager } from "../../components/ui/toast";
+import { scientSourcesErrorMessage } from "./errorMessage";
+import { useZoteroSync, ZoteroRefreshDialog } from "./ZoteroSync";
 import { useLiveRefresh } from "../../hooks/useLiveRefresh";
 import { initializeScientProjectForOpening } from "../../lib/scientProjectInitialization";
 import { readLocalApi } from "../../localApi";
 import { readPreparedConnection } from "../../state/session";
-import { ScientTooltip } from "../presentation/ScientTooltip";
+import { SourceAnnotations } from "../annotations/SourceAnnotations";
+import { AddByIdentifier } from "./AddByIdentifier";
+import { ImportReview } from "./ImportReview";
+import { AlreadyPresentSummary, ImportSummary } from "./ImportSummary";
+import { CenteredState, PanelHeader, SourceErrorBanner } from "./PanelChrome";
 import { SourceDetails } from "./SourceDetails";
 import { SourceEditor } from "./SourceEditor";
-import { SourceJournalIcon } from "./SourceJournalIcon";
-import { newlyObservedSourceIds, sourceAddedLabel } from "./sourceLabels";
+import { SourceFullTextResults } from "./SourceFullTextResults";
+import type { SourceRowContext } from "./SourceRow";
+import { showSourceRowMenu } from "./sourceRowMenu";
+import { SourcesList } from "./SourcesList";
+import { requestSourceTextReveal } from "./sourceTextReveal";
+import { useLibraryFileImport } from "./libraryFileHandoff";
+import { newlyObservedSourceIds } from "./sourceLabels";
 import {
   filterScientSourceSearchIndex,
   indexScientSourceSummaries,
@@ -68,16 +72,37 @@ import {
   type ScientSourceSort,
 } from "./filterSources";
 import {
-  completedImportCounts,
   importedSourceIdToReveal,
   importedSourceIds,
   type ScientSourcesImportOutcome,
 } from "./importOutcome";
-import {
-  SourceRemovalConfirmation,
-  type SourceRemovalAnchorPoint,
-} from "./SourceRemovalConfirmation";
+import { SourceHistoryDialog } from "./SourceHistory";
+import { SourceStoreNotice } from "./SourceStoreNotice";
+import { LibraryDuplicatesView, type DuplicatesSection } from "./LibraryDuplicates";
+import { LibraryMoveNotice } from "./LibraryMoveNotice";
+import { useLibraryMoveStatus } from "./useLibraryMoveStatus";
+import { announceSourceMovedToTrash } from "./SourceTrash";
+import { shownSourceRecord } from "./sourcesWorkflow";
 import { useScientSources } from "./useScientSources";
+import { SourceOrganizeSection } from "./SourceOrganizeSection";
+import { SourcesActiveFilters } from "./SourcesActiveFilters";
+import { announceSourcesMovedToTrash, SourcesBulkBar } from "./SourcesBulkBar";
+import { SourcesFilterMenu } from "./SourcesFilterMenu";
+import { SourcesNameDialog, type SourcesNameRequest } from "./SourcesNameDialog";
+import { useSourcesOrganize } from "./useSourcesOrganize";
+import { SystematicReviewsView } from "./SystematicReviews";
+import { ReferenceFileReport } from "./ReferenceFileReport";
+import { isReferenceFileName } from "./referenceFileSummary";
+import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
+import { sourcesCommands, useCanChangeLibrary, useCanRunSourcesCommand } from "./sourcesCommands";
+import { readScientSource, updateScientSourceNote, updateScientSourcePersonalNote } from "./client";
+import {
+  inLibraryNotProjectLabel,
+  LIBRARY_LABELS,
+  matchesReadingFilter,
+  type ReadingStateChange,
+} from "./libraryLabels";
+import { SnapshotRemovalDialog, useLibraryProjectActions } from "./useLibraryProjectActions";
 import { accountsState } from "../accounts/accountsState";
 import { UniversityCrest, UniversityRow } from "../accounts/University";
 import { PaperQueueBand } from "../accounts/PaperRequests";
@@ -85,13 +110,6 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import { useAccountCommand, useAccounts } from "../accounts/useAccounts";
 
 type SourceRecord = ScientSourcesOverviewResult["records"][number];
-type SourceContextAction = "view" | "edit" | "open-pdf" | "remove";
-type PendingSourceRemoval = {
-  readonly record: SourceRecord;
-  readonly anchorPoint: SourceRemovalAnchorPoint;
-};
-type SourceDiagnostic =
-  ScientSourcesOverviewResult["recordDiagnostics"][number]["diagnostics"][number];
 const RECENT_SOURCE_ADD_TTL_MS = 10 * 60 * 1000;
 const recentSourceAdds = new Map<string, Map<string, number>>();
 function createRecentSourcesStore(initial: ReadonlySet<string>) {
@@ -134,87 +152,6 @@ function rememberRecentSourceAdds(
   return readRecentSourceAdds(contextKey);
 }
 
-function MetadataReviewIndicator(props: {
-  readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
-  readonly onOpen: () => void;
-}) {
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <button
-            type="button"
-            className="rounded-full text-amber-600 outline-none hover:text-amber-700 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring dark:text-amber-400 dark:hover:text-amber-300"
-            aria-label="Metadata needs review"
-            onClick={(event) => {
-              event.stopPropagation();
-              props.onOpen();
-            }}
-          >
-            <AlertCircle className="size-4" />
-          </button>
-        }
-      />
-      <TooltipPopup side="top" align="end" className="max-w-72" variant="glass">
-        <div className="space-y-1 px-3 py-2">
-          <div className="font-medium">Metadata needs review</div>
-          <div className="text-muted-foreground">
-            {props.diagnostics.map((diagnostic) => diagnostic.message).join(" ")}
-          </div>
-          <div className="pt-1 text-muted-foreground">Click to view source details.</div>
-        </div>
-      </TooltipPopup>
-    </Tooltip>
-  );
-}
-
-function SourceErrorBanner(props: { readonly message: string; readonly onDismiss: () => void }) {
-  return (
-    <div className="m-3 flex items-start gap-3 rounded-lg border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
-      <span className="min-w-0 flex-1">{props.message}</span>
-      <Button
-        size="icon-xs"
-        variant="ghost-destructive"
-        className="shrink-0"
-        aria-label="Dismiss source notification"
-        onClick={props.onDismiss}
-      >
-        <X />
-      </Button>
-    </div>
-  );
-}
-
-function creatorLabel(record: ScientSourcesOverviewResult["records"][number]): string {
-  const creator = record.creators[0];
-  return creator?.familyName ?? creator?.literalName ?? creator?.givenName ?? "Unknown creator";
-}
-
-function candidateMetadataSummary(
-  candidate: ScientSourcesPreflightResult["items"][number]["candidate"],
-): string | null {
-  const leadCreator = candidate.creators[0];
-  const creatorName =
-    leadCreator?.familyName ?? leadCreator?.literalName ?? leadCreator?.givenName ?? null;
-  const creator = creatorName
-    ? `${creatorName}${candidate.creators.length > 1 ? " et al." : ""}`
-    : null;
-  const hasDoi = candidate.identifiers.some(
-    (identifier) => identifier.scheme.toLowerCase() === "doi",
-  );
-  const values = [
-    creator,
-    candidate.issuedYear === null ? null : String(candidate.issuedYear),
-    candidate.containerTitle,
-    hasDoi ? "DOI" : null,
-  ].filter((value): value is string => Boolean(value));
-  return values.length > 0 ? values.join(" · ") : null;
-}
-
-function importedCount(operation: NonNullable<ReturnType<typeof useScientSources>["operation"]>) {
-  return operation.items.filter((item) => item.state !== "pending").length;
-}
-
 function ZoteroMark() {
   return (
     <svg aria-hidden className="size-4" viewBox="0 0 24 24">
@@ -254,8 +191,41 @@ export function ScientSourcesPanel(props: {
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  readonly onOpenFile?: (path: string, line: number) => void;
 }) {
   const sources = useScientSources({ environmentId: props.environmentId, root: props.root });
+  const canChange = useCanChangeLibrary(props.environmentId);
+  const canSetReading = useCanRunSourcesCommand(
+    sourcesCommands.setReadingState,
+    props.environmentId,
+  );
+  const canChangeProject = useCanRunSourcesCommand(sourcesCommands.organize, props.environmentId);
+  const canSavePersonalNote = useCanRunSourcesCommand(
+    sourcesCommands.updatePersonalNote,
+    props.environmentId,
+  );
+  const zoteroSync = useZoteroSync({
+    environmentId: props.environmentId,
+    root: props.root,
+    onChanged: async () => {
+      await sources.refreshOverview();
+    },
+  });
+  const hasZoteroSources = (sources.overview?.records ?? []).some((record) =>
+    record.externalReferences.some((reference) => reference.system === "zotero"),
+  );
+  const bibliography = useManagedBibliography({
+    environmentId: props.environmentId,
+    root: props.root,
+    records: sources.overview?.records ?? null,
+    onImported: () => void sources.refreshOverview(),
+  });
+  const move = useLibraryMoveStatus({
+    environmentId: props.environmentId,
+    root: props.root,
+    overview: sources.overview,
+    onStoreChanged: () => void sources.refreshOverview().catch(() => undefined),
+  });
   const getPaper = useAccountCommand(accountsState.paperForSource, props.environmentId);
   const requestPapers = useAccountCommand(accountsState.requestPapers, props.environmentId);
   const listPapers = useStableCallback(
@@ -287,13 +257,31 @@ export function ScientSourcesPanel(props: {
   });
   const [query, setQuery] = useState("");
   const [sourceQuery, setSourceQuery] = useState("");
+  const [packageSources, setPackageSources] = useState<ReadonlySet<string> | null>(null);
   const [sourceSort, setSourceSort] = useState<ScientSourceSort>("last-added");
+  const organize = useSourcesOrganize({
+    environmentId: props.environmentId,
+    root: props.root,
+    organization: sources.overview?.organization,
+    query: sourceQuery,
+    setQuery: setSourceQuery,
+    refreshOverview: sources.refreshOverview,
+  });
+  const [nameRequest, setNameRequest] = useState<SourcesNameRequest | null>(null);
+  const [showingReviews, setShowingReviews] = useState(false);
+  const [showingDuplicates, setShowingDuplicates] = useState<DuplicatesSection | null>(null);
   const [selectedKeys, setSelectedKeys] = useState<ReadonlySet<string>>(new Set());
   const [settingUpProject, setSettingUpProject] = useState(false);
   const [setupError, setSetupError] = useState<string | null>(null);
   const [selectedSourceId, setSelectedSourceId] = useState<string | null>(null);
+  useLibrarySourceRequest(props.root, sources.overview !== null, setSelectedSourceId);
   const [editingSource, setEditingSource] = useState(false);
   const [importOutcome, setImportOutcome] = useState<ScientSourcesImportOutcome | null>(null);
+  const [addingByIdentifier, setAddingByIdentifier] = useState(false);
+  const [referenceFileImport, setReferenceFileImport] = useState<{
+    readonly file: File;
+    readonly report: ScientSourcesFileImportResult["report"];
+  } | null>(null);
   const panelContext = `${props.environmentId}\0${props.root}`;
   const [recentSourcesStore] = useState(() =>
     createRecentSourcesStore(readRecentSourceAdds(panelContext)),
@@ -304,11 +292,10 @@ export function ScientSourcesPanel(props: {
     recentSourcesStore.getSnapshot,
   );
   const setRecentlyAddedSourceIds = recentSourcesStore.publish;
-  const [sourcePendingRemoval, setSourcePendingRemoval] = useState<PendingSourceRemoval | null>(
-    null,
-  );
+  const [historySourceId, setHistorySourceId] = useState<string | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const localFileInput = useRef<HTMLInputElement>(null);
+  const referenceFileInput = useRef<HTMLInputElement>(null);
   const panelMounted = useRef(true);
   const importRevealRequest = useRef(0);
   const observedSourceIds = useRef<{
@@ -355,15 +342,37 @@ export function ScientSourcesPanel(props: {
       }
     });
   };
+  useLibraryFileImport(props.root, sources.overview !== null, (files) =>
+    revealImportedSource(sources.uploadLocalFiles(files), files.length === 1),
+  );
+
+  const importReferenceFile = (file: File) => {
+    setSelectedSourceId(null);
+    setReferenceFileImport(null);
+    const requestedContext = panelContext;
+    revealImportedSource(
+      sources.importReferenceFile(file).then((result) => {
+        if (result && panelContextRef.current === requestedContext) {
+          setReferenceFileImport({ file, report: result.report });
+        }
+        return result?.outcome ?? null;
+      }),
+      false,
+    );
+  };
 
   const [previousPanelContext, setPreviousPanelContext] = useState({ context: panelContext });
   if (previousPanelContext.context !== panelContext) {
     setPreviousPanelContext({ context: panelContext });
+    setShowingReviews(false);
+    setShowingDuplicates(null);
     setSelectedSourceId(null);
     setEditingSource(false);
     setImportOutcome(null);
-    setSourcePendingRemoval(null);
+    setReferenceFileImport(null);
+    setHistorySourceId(null);
     setSourceQuery("");
+    setPackageSources(null);
   }
 
   const expirySchedule = { context: panelContext, sourceIds: recentlyAddedSourceIds };
@@ -436,19 +445,47 @@ export function ScientSourcesPanel(props: {
   const diagnosticsBySourceId = new Map(
     sources.overview?.recordDiagnostics.map((entry) => [entry.sourceId, entry.diagnostics]) ?? [],
   );
+  // This project's sources are in the personal Library only when the overview has scopes.
+  const scopes = sources.overview?.scopes;
+  const readingFilter = scopes ? organize.reading : {};
   const sourceSearchIndex = indexScientSourceSummaries(sources.overview?.records ?? []);
   const filteredSourceRecords = sortScientSourceRecords(
-    filterScientSourceSearchIndex(sourceSearchIndex, sourceQuery),
+    filterScientSourceSearchIndex(
+      sourceSearchIndex,
+      sourceQuery,
+      organize.filter,
+      organize.organization,
+    ).filter(
+      (record) =>
+        matchesReadingFilter(record, readingFilter) &&
+        (!packageSources || packageSources.has(record.sourceId)),
+    ),
     sourceSort,
   );
+  const listFilterActive =
+    packageSources !== null ||
+    organize.filterActive ||
+    (scopes ? organize.readingFilterActive : false);
+  const selectScope = (scope: "project" | "library") => {
+    setPackageSources(null);
+    organize.clearFilter();
+    organize.clearSelection();
+    void sources.selectScope(scope);
+  };
+  const showPackageSources = (sourceIds: ReadonlyArray<string>) => {
+    if (!panelMounted.current || panelContextRef.current !== panelContext) return;
+    setSelectedSourceId(null);
+    setShowingReviews(false);
+    setShowingDuplicates(null);
+    organize.clearFilter();
+    organize.clearSelection();
+    setPackageSources(new Set(sourceIds));
+    void sources.selectScope("library");
+  };
   const selectedSummary = selectedSourceId
     ? (sources.overview?.records.find((record) => record.sourceId === selectedSourceId) ?? null)
     : null;
-  const selectedDetail = selectedSourceId
-    ? (sources.sourceDetails[selectedSourceId] ?? null)
-    : null;
-  const selectedRecord =
-    selectedDetail && selectedDetail.revision === selectedSummary?.revision ? selectedDetail : null;
+  const selectedRecord = selectedSourceId ? shownSourceRecord(sources, selectedSourceId) : null;
 
   if (selectedSourceId && !selectedRecord && !selectedSummary) setSelectedSourceId(null);
   const loadSource = sources.loadSource;
@@ -463,61 +500,143 @@ export function ScientSourcesPanel(props: {
   const selectedZoteroCollection = selectedZoteroCollectionKey
     ? sources.zoteroCollections.find((collection) => collection.key === selectedZoteroCollectionKey)
     : null;
+  const zoteroLibraryName =
+    sources.zoteroGroups.find((group) => group.groupId === sources.zoteroGroupId)?.name ??
+    "My Library";
 
-  const showSourceContextMenuAt = async (
-    record: SourceRecord,
-    anchorPoint: { readonly x: number; readonly y: number },
-  ) => {
-    const api = readLocalApi();
-    if (!api) return;
-    const materialSelection = selectScientSourceMaterial({ materials: record.attachments });
-    const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
-    const items: ContextMenuItem<SourceContextAction>[] = [
-      { id: "view", label: "View source details" },
-      { id: "edit", label: "Edit source details", icon: "pencil" },
-      ...(pdf ? ([{ id: "open-pdf", label: "Open PDF" }] as const) : []),
-      {
-        id: "remove",
-        label: "Remove from Sources",
-        destructive: true,
-        disabled: sources.busy,
-        icon: "trash",
+  const libraryActions = useLibraryProjectActions({
+    environmentId: props.environmentId,
+    root: props.root,
+    refreshOverview: sources.refreshOverview,
+    applyReadingState: sources.applyReadingState,
+  });
+  const { addToProject, removeFromProject, setReadingState } = libraryActions;
+  // A source this project keeps from its own details: link it to a Library copy, or keep it apart.
+  const linkToCopy = async (projectSourceId: string, librarySourceId: string) => {
+    const result = await organize.organize(
+      { action: "link-pin", sourceId: projectSourceId, librarySourceId },
+      LIBRARY_LABELS.linkFailed,
+    );
+    if (result?.outcome !== "linked") return;
+    setSelectedSourceId(librarySourceId);
+    toastManager.add({
+      type: "success",
+      title: LIBRARY_LABELS.linked,
+      description: LIBRARY_LABELS.linkedHelp,
+      actionProps: {
+        children: "Undo",
+        onClick: organize.whenFree(() => {
+          void organize
+            .organize(
+              { action: "unlink-pin", sourceId: projectSourceId },
+              LIBRARY_LABELS.linkFailed,
+            )
+            .then((undone) => {
+              if (undone?.outcome === "unlinked") setSelectedSourceId(projectSourceId);
+            });
+        }),
       },
-    ];
-    const action = await api.contextMenu.show(items, {
-      x: anchorPoint.x,
-      y: anchorPoint.y,
     });
-    if (!panelMounted.current || panelContextRef.current !== panelContext) return;
-    switch (action) {
-      case "view":
-        setEditingSource(false);
-        openSourceDetails(record.sourceId);
-        break;
-      case "edit":
-        openSourceDetails(record.sourceId);
-        setEditingSource(true);
-        break;
-      case "open-pdf":
-        if (pdf) {
-          props.onOpenPdf({
-            sourceId: record.sourceId,
-            attachmentId: pdf.attachmentId,
-            fileName: pdf.fileName,
-          });
-        }
-        break;
-      case "remove":
-        setSourcePendingRemoval({ record, anchorPoint });
-        break;
-      case null:
-        break;
+  };
+  const keepSeparate = async (record: ScientSourceDetailResult, separate: boolean) => {
+    const result = await organize.organize(
+      { action: separate ? "keep-pin-separate" : "clear-pin-separate", sourceId: record.sourceId },
+      LIBRARY_LABELS.separateFailed,
+    );
+    if (!result || !record.libraryMatch) return;
+    sources.acceptSourceRecord({
+      ...record,
+      libraryMatch: { ...record.libraryMatch, keptSeparate: separate },
+    });
+  };
+  // A merged-away source has left the Library, so it leaves the selection too.
+  const leaveSelection = useStableCallback((sourceId: string) => {
+    if (organize.selection.has(sourceId)) {
+      organize.setSelection([...organize.selection].filter((selected) => selected !== sourceId));
+    }
+  });
+
+  const moveToTrash = async (record: {
+    readonly sourceId: string;
+    readonly revision: number;
+    readonly title: string | null;
+  }) => {
+    const result = await sources.removeSource(record.sourceId, record.revision);
+    if (result.outcome === "stale") {
+      throw new Error(
+        "This source changed after you opened it. Review the latest version, then try again.",
+      );
+    }
+    if (selectedSourceId === record.sourceId) {
+      setEditingSource(false);
+      setSelectedSourceId(null);
+    }
+    if (result.outcome === "removed") {
+      announceSourceMovedToTrash({
+        environmentId: props.environmentId,
+        root: props.root,
+        sourceId: record.sourceId,
+        title: record.title,
+        ...(result.alsoPinnedIn ? { alsoPinnedIn: result.alsoPinnedIn } : {}),
+        onRestored: sources.refreshOverview,
+      });
     }
   };
-  const showSourceContextMenu = (event: ReactMouseEvent<HTMLElement>, record: SourceRecord) => {
-    event.preventDefault();
-    event.stopPropagation();
-    void showSourceContextMenuAt(record, { x: event.clientX, y: event.clientY });
+
+  const showSourceContextMenuAt = (
+    record: SourceRecord,
+    anchorPoint: { readonly x: number; readonly y: number },
+  ) =>
+    void showSourceRowMenu({
+      record,
+      anchorPoint,
+      listed: scopes?.listed,
+      selected: organize.selection.has(record.sourceId),
+      busy: sources.busy,
+      canChange,
+      canSetReading,
+      canChangeProject,
+      isCurrent: () => panelMounted.current && panelContextRef.current === panelContext,
+      onView: () => {
+        setEditingSource(false);
+        openSourceDetails(record.sourceId);
+      },
+      onEdit: () => {
+        openSourceDetails(record.sourceId);
+        setEditingSource(true);
+      },
+      onOpenPdf: props.onOpenPdf,
+      onToggleSelected: () => organize.toggleSelected(record.sourceId),
+      onSetReadingStatus: (readingStatus) =>
+        void setReadingState([record.sourceId], { readingStatus }, false),
+      onAddToProject: () => void addToProject([record]),
+      onRemoveFromProject: () => void removeFromProject([record]),
+      onMoveToTrash: () =>
+        void moveToTrash(record).catch((cause: unknown) => {
+          toastManager.add({
+            type: "error",
+            title: "Source could not be moved to Trash",
+            description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+          });
+        }),
+    });
+  const sourceRow: SourceRowContext = {
+    environmentId: props.environmentId,
+    root: props.root,
+    listed: scopes?.listed,
+    selection: organize.selection,
+    recentlyAddedSourceIds,
+    diagnosticsBySourceId,
+    onToggleSelected: organize.toggleSelected,
+    onOpenDetails: openSourceDetails,
+    onOpenPdf: props.onOpenPdf,
+    onShowMenu: showSourceContextMenuAt,
+    ...(canSetReading
+      ? {
+          onToggleStar: (record: SourceRecord) =>
+            setReadingState([record.sourceId], { starred: record.starred !== true }, false),
+        }
+      : {}),
   };
 
   if (sources.overview === null) {
@@ -525,7 +644,7 @@ export function ScientSourcesPanel(props: {
       return (
         <CenteredState
           icon={<AlertCircle />}
-          title="Sources could not be loaded"
+          title="The Library could not be loaded"
           description={sources.error}
           action={
             <Button
@@ -555,7 +674,7 @@ export function ScientSourcesPanel(props: {
           conflicting
             ? (sources.overview.issues[0]?.message ?? "Scient will not change conflicting files.")
             : (setupError ??
-              "Sources are kept in this project so they remain portable and reviewable.")
+              "Use Project package to carry this project’s sources, PDFs and highlights.")
         }
         action={
           conflicting ? null : (
@@ -599,6 +718,7 @@ export function ScientSourcesPanel(props: {
         preflight={sources.preflight}
         adapter={sources.preflightAdapter ?? "zotero"}
         busy={sources.busy}
+        readOnly={!canChange}
         error={sources.error}
         onDismissError={sources.clearError}
         onBack={sources.resetImport}
@@ -629,22 +749,53 @@ export function ScientSourcesPanel(props: {
             <MenuTrigger
               render={
                 <Button variant="ghost" size="xs" className="max-w-48">
-                  {sources.zoteroScope.kind === "library" ? <Library /> : <Folder />}
-                  <span className="truncate">{selectedZoteroCollection?.name ?? "My Library"}</span>
+                  {sources.zoteroScope.kind === "collection" ? (
+                    <Folder />
+                  ) : sources.zoteroGroupId ? (
+                    <Users />
+                  ) : (
+                    <Library />
+                  )}
+                  <span className="truncate">
+                    {selectedZoteroCollection?.name ?? zoteroLibraryName}
+                  </span>
                 </Button>
               }
             />
             <MenuPopup align="start" side="bottom" className="max-h-80 min-w-56 overflow-y-auto">
-              <MenuItem
-                onClick={() => {
-                  setQuery("");
-                  setSelectedKeys(new Set());
-                  void sources.selectZoteroScope({ kind: "library" });
-                }}
-              >
-                <Library />
-                My Library
-              </MenuItem>
+              {sources.zoteroMyLibrary ? (
+                <MenuItem
+                  onClick={() => {
+                    setQuery("");
+                    setSelectedKeys(new Set());
+                    void (sources.zoteroGroupId
+                      ? sources.selectZoteroLibrary(null)
+                      : sources.selectZoteroScope({ kind: "library" }));
+                  }}
+                >
+                  <Library />
+                  My Library
+                </MenuItem>
+              ) : null}
+              {sources.zoteroGroups.map((group) => (
+                <MenuItem
+                  key={group.groupId}
+                  title={group.name}
+                  onClick={() => {
+                    setQuery("");
+                    setSelectedKeys(new Set());
+                    void (sources.zoteroGroupId === group.groupId
+                      ? sources.selectZoteroScope({ kind: "library" })
+                      : sources.selectZoteroLibrary(group.groupId));
+                  }}
+                >
+                  <Users />
+                  <span className="min-w-0 truncate">{group.name}</span>
+                </MenuItem>
+              ))}
+              {sources.zoteroGroups.length > 0 && zoteroCollectionChoices.length > 0 ? (
+                <MenuSeparator />
+              ) : null}
               {zoteroCollectionChoices.map((collection) => (
                 <MenuItem
                   key={collection.key}
@@ -708,7 +859,7 @@ export function ScientSourcesPanel(props: {
                 <Button
                   size="xs"
                   variant="ghost"
-                  disabled={sources.busy || sources.library.total === 0}
+                  disabled={!canChange || sources.busy || sources.library.total === 0}
                   onClick={() => revealImportedSource(sources.importZoteroScope())}
                 >
                   <Download />
@@ -719,7 +870,7 @@ export function ScientSourcesPanel(props: {
             <TooltipPopup side="bottom">
               {sources.zoteroScope.kind === "collection"
                 ? `Import ${sources.library.total} references in this collection`
-                : `Import all ${sources.library.total} references in My Library`}
+                : `Import all ${sources.library.total} references in ${zoteroLibraryName}`}
             </TooltipPopup>
           </Tooltip>
         </div>
@@ -744,7 +895,7 @@ export function ScientSourcesPanel(props: {
             <Button
               size="xs"
               variant="ghost"
-              disabled={sources.busy}
+              disabled={!canChange || sources.busy}
               onClick={() => revealImportedSource(sources.previewImport([...selectedKeys]))}
             >
               <Download />
@@ -816,13 +967,15 @@ export function ScientSourcesPanel(props: {
   if (sources.zoteroStatus && sources.zoteroStatus.state !== "ready") {
     const status = sources.zoteroStatus;
     const connectionMessage =
-      status.state === "unreachable"
-        ? "Open Zotero on this computer to continue."
-        : status.state === "access-disabled"
-          ? "Allow local Zotero access to continue."
-          : status.state === "incompatible"
-            ? "This Zotero version is not supported."
-            : "Scient could not verify Zotero.";
+      status.connection === "web"
+        ? status.message
+        : status.state === "unreachable"
+          ? "Open Zotero on this computer to continue."
+          : status.state === "access-disabled"
+            ? "Allow local Zotero access to continue."
+            : status.state === "incompatible"
+              ? "This Zotero version is not supported."
+              : "Scient could not verify Zotero.";
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <PanelHeader
@@ -891,6 +1044,10 @@ export function ScientSourcesPanel(props: {
                       </li>
                       <li>Return here and choose Check again.</li>
                     </ol>
+                    <p className="text-muted-foreground">
+                      Without Zotero on this computer, add a Zotero API key in Accounts to use your
+                      library on zotero.org.
+                    </p>
                   </div>
                 </PopoverPopup>
               </Popover>
@@ -927,97 +1084,216 @@ export function ScientSourcesPanel(props: {
       );
     }
     return (
-      <SourceDetails
-        key={selectedRecord.sourceId}
-        record={selectedRecord}
-        diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
-        onBack={() => {
-          setEditingSource(false);
-          setSelectedSourceId(null);
-        }}
-        onEdit={() => setEditingSource(true)}
-        onSaveNote={(note, expectedRevision) =>
-          sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note)
-        }
-        onRefreshMetadata={async () => {
-          const result = await sources.refreshSourceMetadata(
-            selectedRecord.sourceId,
-            selectedRecord.revision,
-          );
-          if (!panelMounted.current || panelContextRef.current !== panelContext) return;
-          sources.acceptSourceRecord(result.record);
-          if (result.outcome === "refreshed") void sources.reloadOverview();
-          toastManager.add({
-            type:
-              result.outcome === "refreshed" || result.outcome === "unchanged"
-                ? "success"
-                : "warning",
-            title:
-              result.outcome === "refreshed"
-                ? "Metadata refreshed"
-                : result.outcome === "unchanged"
-                  ? "Metadata is already up to date"
-                  : result.outcome === "stale"
-                    ? "Source changed while metadata was refreshed"
-                    : result.outcome === "duplicate"
-                      ? "Metadata refresh stopped"
-                      : "Metadata cannot be refreshed yet",
-            description: result.message ?? undefined,
-          });
-        }}
-        onRemove={async () => {
-          const result = await sources.removeSource(
-            selectedRecord.sourceId,
-            selectedRecord.revision,
-          );
-          if (result.outcome === "stale") {
-            throw new Error(
-              "This source changed after you opened it. Review the latest version, then try again.",
-            );
+      <>
+        <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
+        {/* Each view that can remove a source this Library lacks mounts its question. */}
+        <SnapshotRemovalDialog actions={libraryActions} />
+        <SourceDetails
+          key={selectedRecord.sourceId}
+          record={selectedRecord}
+          readOnly={!canChange}
+          {...(scopes
+            ? {
+                library: {
+                  canSavePersonalNote,
+                  onSavePersonalNote: async (note, expectedRevision, context) => {
+                    const result = await updateScientSourcePersonalNote(props.environmentId, {
+                      root: props.root,
+                      sourceId: selectedRecord.sourceId,
+                      expectedRevision,
+                      note,
+                      expectedNote: context.base,
+                    });
+                    if (panelMounted.current && panelContextRef.current === panelContext) {
+                      sources.acceptSourceRecord(result.record);
+                    }
+                    return result;
+                  },
+                  // Another key's note is shown beside the cached detail, never cached as it.
+                  onLoadKeyNote: (citationKey: string) =>
+                    readScientSource(props.environmentId, {
+                      root: props.root,
+                      sourceId: selectedRecord.sourceId,
+                      citationKey,
+                    }),
+                  onSaveKeyNote: (citationKey, note, expectedRevision, context) =>
+                    updateScientSourceNote(props.environmentId, {
+                      root: props.root,
+                      sourceId: selectedRecord.sourceId,
+                      expectedRevision,
+                      note,
+                      expectedNote: context.base,
+                      noteSession: context.session,
+                      citationKey,
+                    }),
+                  ...(canSetReading
+                    ? {
+                        onSetReadingState: (change: ReadingStateChange) =>
+                          setReadingState([selectedRecord.sourceId], change, false),
+                      }
+                    : {}),
+                  ...(canChangeProject
+                    ? {
+                        onAddToProject: () => addToProject([selectedRecord]),
+                        onRemoveFromProject: () => removeFromProject([selectedRecord]),
+                        onLinkToCopy: (librarySourceId: string) =>
+                          linkToCopy(selectedRecord.sourceId, librarySourceId),
+                        onKeepSeparate: (separate: boolean) =>
+                          keepSeparate(selectedRecord, separate),
+                      }
+                    : {}),
+                },
+              }
+            : {})}
+          citationProject={{ environmentId: props.environmentId, root: props.root }}
+          diagnostics={diagnosticsBySourceId.get(selectedRecord.sourceId) ?? []}
+          organize={
+            <SourceOrganizeSection
+              organize={organize}
+              sourceId={selectedRecord.sourceId}
+              tags={selectedRecord.tags}
+              records={sources.overview.records}
+              onRequestName={setNameRequest}
+              onShowTag={(tag) => {
+                setEditingSource(false);
+                setSelectedSourceId(null);
+                organize.showTag(tag);
+              }}
+              onShowCollection={(collectionId) => {
+                setEditingSource(false);
+                setSelectedSourceId(null);
+                organize.showCollection(collectionId);
+              }}
+              onShowCategory={(category) => {
+                setEditingSource(false);
+                setSelectedSourceId(null);
+                organize.showOnly(category);
+              }}
+            />
           }
-          setEditingSource(false);
-          setSelectedSourceId(null);
-        }}
-        onApproveReview={async () => {
-          const result = await sources.approveSource(
-            selectedRecord.sourceId,
-            selectedRecord.revision,
-          );
-          if (result.outcome === "stale") {
-            throw new Error(
-              "This source changed after you opened it. Review the latest version, then try again.",
-            );
+          onBack={() => {
+            setEditingSource(false);
+            setSelectedSourceId(null);
+          }}
+          onEdit={() => setEditingSource(true)}
+          onSaveNote={(note, expectedRevision, context) =>
+            sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note, context)
           }
-        }}
-        onGetPdf={async () => {
-          const doi = selectedRecord.identifiers.find(
-            (identifier) => identifier.scheme.toLowerCase() === "doi",
-          )?.value;
-          const result = await getPaper({
-            root: props.root,
-            sourceId: selectedRecord.sourceId,
-            expectedRevision: selectedRecord.revision,
-            ...(doi ? { doi } : {}),
-            ...(selectedRecord.url ? { url: selectedRecord.url } : {}),
-          });
-          if (!result.ok) return;
-          if (result.value.status === "attached") {
-            await sources.refreshOverview();
+          onRefreshMetadata={async () => {
+            const result = await sources.refreshSourceMetadata(
+              selectedRecord.sourceId,
+              selectedRecord.revision,
+            );
+            if (!panelMounted.current || panelContextRef.current !== panelContext) return;
+            sources.acceptSourceRecord(result.record);
+            if (result.outcome === "refreshed") void sources.reloadOverview();
             toastManager.add({
-              type: "success",
-              title: result.value.published
-                ? "PDF attached"
-                : "PDF attached: an accepted manuscript or preprint",
+              type:
+                result.outcome === "refreshed" || result.outcome === "unchanged"
+                  ? "success"
+                  : "warning",
+              title:
+                result.outcome === "refreshed"
+                  ? "Metadata refreshed"
+                  : result.outcome === "unchanged"
+                    ? "Metadata is already up to date"
+                    : result.outcome === "stale"
+                      ? "Source changed while metadata was refreshed"
+                      : result.outcome === "duplicate"
+                        ? "Metadata refresh stopped"
+                        : "Metadata cannot be refreshed yet",
+              description: result.message ?? undefined,
             });
-            return;
+          }}
+          onRemove={() => moveToTrash(selectedRecord)}
+          onSendToZotero={(groupId) =>
+            void zoteroSync.sendToZotero(selectedRecord.sourceId, groupId)
           }
-          // Anything waiting for the user is on the band above Sources, with its action.
-          toastManager.add({
-            type: result.value.status === "needs-you" ? "info" : "error",
-            title: result.value.message,
-          });
-        }}
-        onOpenPdf={props.onOpenPdf}
+          zoteroWritableGroups={zoteroSync.writableGroups}
+          onSourceActionsOpen={zoteroSync.loadWritableGroups}
+          onOpenHistory={() => setHistorySourceId(selectedRecord.sourceId)}
+          onGetPdf={async () => {
+            const doi = selectedRecord.identifiers.find(
+              (identifier) => identifier.scheme.toLowerCase() === "doi",
+            )?.value;
+            const result = await getPaper({
+              root: props.root,
+              sourceId: selectedRecord.sourceId,
+              expectedRevision: selectedRecord.revision,
+              ...(doi ? { doi } : {}),
+              ...(selectedRecord.url ? { url: selectedRecord.url } : {}),
+            });
+            if (!result.ok) return;
+            if (result.value.status === "attached") {
+              await sources.refreshOverview();
+              toastManager.add({
+                type: "success",
+                title: result.value.published
+                  ? "PDF attached"
+                  : "PDF attached: an accepted manuscript or preprint",
+              });
+              return;
+            }
+            // Anything waiting for the user is on the band above Sources, with its action.
+            toastManager.add({
+              type: result.value.status === "needs-you" ? "info" : "error",
+              title: result.value.message,
+            });
+          }}
+          onOpenPdf={props.onOpenPdf}
+          annotations={
+            <SourceAnnotations
+              environmentId={props.environmentId}
+              root={props.root}
+              record={selectedRecord}
+              onOpenPdf={props.onOpenPdf}
+            />
+          }
+        />
+        {historySourceId === selectedRecord.sourceId ? (
+          <SourceHistoryDialog
+            key={`${selectedRecord.sourceId}:${selectedRecord.revision}`}
+            environmentId={props.environmentId}
+            root={props.root}
+            sourceId={selectedRecord.sourceId}
+            revision={selectedRecord.revision}
+            onClose={() => setHistorySourceId(null)}
+            onReverted={(record) => {
+              sources.acceptSourceRecord(record);
+              void sources.reloadOverview();
+            }}
+          />
+        ) : null}
+      </>
+    );
+  }
+
+  if (showingDuplicates && scopes) {
+    return (
+      <LibraryDuplicatesView
+        environmentId={props.environmentId}
+        root={props.root}
+        organize={organize}
+        canChange={canChangeProject}
+        initialSection={showingDuplicates}
+        onBack={() => setShowingDuplicates(null)}
+        onMerged={leaveSelection}
+      />
+    );
+  }
+
+  if (showingReviews) {
+    return (
+      <SystematicReviewsView
+        environmentId={props.environmentId}
+        root={props.root}
+        records={sources.overview.records}
+        organization={organize.organization}
+        selectedSourceIds={[...organize.selection]}
+        sourceDetails={sources.sourceDetails}
+        loadSource={sources.loadSource}
+        onOpenSource={openSourceDetails}
+        onBack={() => setShowingReviews(false)}
       />
     );
   }
@@ -1026,7 +1302,7 @@ export function ScientSourcesPanel(props: {
     <div
       className="flex min-h-0 flex-1 flex-col"
       onDragOver={(event) => {
-        if (!event.dataTransfer.types.includes("Files")) return;
+        if (!canChange || !event.dataTransfer.types.includes("Files")) return;
         event.preventDefault();
         event.dataTransfer.dropEffect = "copy";
         setDragActive(true);
@@ -1037,7 +1313,12 @@ export function ScientSourcesPanel(props: {
       onDrop={(event) => {
         event.preventDefault();
         setDragActive(false);
-        if (!event.dataTransfer.files.length) return;
+        if (!canChange || !event.dataTransfer.files.length) return;
+        const [dropped] = event.dataTransfer.files;
+        if (event.dataTransfer.files.length === 1 && dropped && isReferenceFileName(dropped.name)) {
+          importReferenceFile(dropped);
+          return;
+        }
         setSelectedSourceId(null);
         setImportOutcome(null);
         revealImportedSource(sources.uploadLocalFiles([...event.dataTransfer.files]), false);
@@ -1057,41 +1338,36 @@ export function ScientSourcesPanel(props: {
           revealImportedSource(sources.uploadLocalFiles(files), files.length === 1);
         }}
       />
+      <input
+        ref={referenceFileInput}
+        className="sr-only"
+        type="file"
+        accept=".bib,.bibtex,.biblatex,.ris,.json,.xml,.txt"
+        tabIndex={-1}
+        aria-hidden="true"
+        onChange={(event) => {
+          const file = event.currentTarget.files?.[0];
+          event.currentTarget.value = "";
+          if (file) importReferenceFile(file);
+        }}
+      />
       <PaperQueueBand
         environmentId={props.environmentId}
         root={props.root}
         threadId={props.threadId}
       />
       <PanelHeader
-        title="Sources"
+        title="Library"
         action={
-          <div className="flex items-center gap-1">
+          <div className="flex shrink-0 items-center gap-1">
             <UniversityCrest environmentId={props.environmentId} threadId={props.threadId} />
-            {missingPdfs.length > 0 ? (
-              <ScientTooltip
-                content={
-                  missingPdfs.length === 1
-                    ? "Get the missing PDF"
-                    : `Get ${missingPdfs.length} missing PDFs`
-                }
-              >
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Get missing PDFs"
-                  onClick={() => void requestPapers({ root: props.root, papers: missingPdfs })}
-                >
-                  <FileDown />
-                </Button>
-              </ScientTooltip>
-            ) : null}
             <Menu>
               <MenuTrigger
                 render={
                   <Button
                     size="xs"
                     variant="ghost"
-                    disabled={sources.busy || sources.checkingZotero}
+                    disabled={!canChange || sources.busy || sources.checkingZotero}
                     aria-label="Import sources"
                   >
                     {sources.busy || sources.checkingZotero ? (
@@ -1099,7 +1375,7 @@ export function ScientSourcesPanel(props: {
                     ) : (
                       <Download />
                     )}
-                    Import sources
+                    <span className="@max-[20rem]:hidden">Import sources</span>
                   </Button>
                 }
               />
@@ -1119,21 +1395,67 @@ export function ScientSourcesPanel(props: {
                   <ZoteroMark />
                   Import from Zotero
                 </MenuItem>
+                {hasZoteroSources ? (
+                  <MenuItem onClick={() => void zoteroSync.startRefresh()}>
+                    <RefreshCw />
+                    Refresh from Zotero
+                  </MenuItem>
+                ) : null}
+                <MenuItem onClick={() => setAddingByIdentifier(true)}>
+                  <Hash />
+                  Add by identifier
+                </MenuItem>
+                <MenuItem onClick={() => referenceFileInput.current?.click()}>
+                  <FileText />
+                  Import a reference file
+                </MenuItem>
               </MenuPopup>
             </Menu>
+            <SourcesHeaderMenu
+              environmentId={props.environmentId}
+              root={props.root}
+              totalCount={sources.overview?.records.length ?? 0}
+              exportScope={
+                organize.selection.size > 0
+                  ? { kind: "selected", sourceIds: [...organize.selection] }
+                  : sourceQuery.trim() || listFilterActive
+                    ? {
+                        kind: "shown",
+                        sourceIds: filteredSourceRecords.map((record) => record.sourceId),
+                      }
+                    : null
+              }
+              trashedCount={sources.overview.trashedCount ?? 0}
+              onTrashChanged={sources.refreshOverview}
+              missingPdfCount={canChange ? missingPdfs.length : 0}
+              onGetMissingPdfs={() => void requestPapers({ root: props.root, papers: missingPdfs })}
+              onOpenReviews={() => setShowingReviews(true)}
+              {...(scopes ? { onOpenDuplicates: () => setShowingDuplicates("pairs") } : {})}
+              onOpenSource={setSelectedSourceId}
+              {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
+              {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
+              {...(scopes && canChange
+                ? {
+                    onPackageImported: sources.refreshOverview,
+                    onShowPackageSources: showPackageSources,
+                  }
+                : {})}
+            />
           </div>
         }
       />
       {dragActive ? (
         <div className="mx-3 mt-2 rounded-md border border-dashed border-foreground/30 bg-muted/35 px-3 py-2 text-center text-xs text-muted-foreground">
-          Drop PDF files to add them to Sources
+          Drop PDFs or a reference file to add them to the Library
         </div>
       ) : null}
       {sources.importPreparation ? (
         <div className="mx-3 mt-3 flex items-center gap-2 rounded-md bg-muted/40 px-3 py-2 text-xs text-muted-foreground">
           <LoaderCircle className="size-4 shrink-0 animate-spin" />
           <span className="truncate">
-            Reading article metadata…
+            {sources.importPreparation.kind === "file"
+              ? `Reading references… ${sources.importPreparation.name}`
+              : "Reading article metadata…"}
             {sources.importPreparation.kind === "local-files" &&
             sources.importPreparation.names.length === 1
               ? ` ${sources.importPreparation.names[0]}`
@@ -1144,6 +1466,54 @@ export function ScientSourcesPanel(props: {
       {sources.error ? (
         <SourceErrorBanner message={sources.error} onDismiss={sources.clearError} />
       ) : null}
+      <LibraryMoveNotice
+        move={move}
+        {...(scopes ? { onReview: () => setShowingDuplicates("merged") } : {})}
+      />
+      <SourceStoreNotice unreadable={sources.overview.unreadableRecords ?? []} />
+      <ZoteroRefreshDialog
+        state={zoteroSync.refresh}
+        resolving={zoteroSync.resolving}
+        onClose={zoteroSync.closeRefresh}
+        onResolve={(sourceId, field, side) =>
+          void zoteroSync.resolveConflict(sourceId, field, side)
+        }
+      />
+      {bibliography.status ? (
+        <ManagedBibliographyNotice
+          files={bibliography.status.files}
+          replacing={bibliography.replacing || !bibliography.canChange}
+          onResolve={(name, action) => void bibliography.resolve(name, action)}
+        />
+      ) : null}
+      {addingByIdentifier ? (
+        <AddByIdentifier
+          environmentId={props.environmentId}
+          root={props.root}
+          {...(sources.overview?.scopes?.listed === "library" ? { pin: false as const } : {})}
+          onClose={() => setAddingByIdentifier(false)}
+          onAdded={(results) => {
+            const added = results.flatMap((item) =>
+              item.outcome === "imported" && item.sourceId ? [item.sourceId] : [],
+            );
+            if (added.length > 0) {
+              setRecentlyAddedSourceIds(rememberRecentSourceAdds(panelContext, added));
+              toastManager.add({
+                type: "success",
+                title: added.length === 1 ? "Added 1 source" : `Added ${added.length} sources`,
+                ...(sources.overview?.scopes?.listed === "library"
+                  ? { description: inLibraryNotProjectLabel(added.length) }
+                  : {}),
+              });
+            }
+            void sources.refreshOverview();
+          }}
+          onOpenSource={(sourceId) => {
+            setEditingSource(false);
+            setSelectedSourceId(sourceId);
+          }}
+        />
+      ) : null}
       {sources.operation ? (
         <ImportSummary
           operation={sources.operation}
@@ -1152,10 +1522,27 @@ export function ScientSourcesPanel(props: {
               ? importOutcome
               : null
           }
-          onDismiss={sources.clearOperationSummary}
+          onDismiss={() => {
+            setImportOutcome(null);
+            sources.clearOperationSummary();
+          }}
           onCancel={() => void sources.cancelImport()}
           cancelling={sources.cancelling}
-          {...(sources.operation.state !== "cancelled" &&
+          {...(scopes && !sources.operation.pinInstanceId
+            ? {
+                libraryOnly: canChangeProject
+                  ? {
+                      onAddToProject: (sourceIds: ReadonlyArray<string>) =>
+                        void addToProject(sourceIds.map((sourceId) => ({ sourceId }))).then(() => {
+                          setImportOutcome(null);
+                          sources.clearOperationSummary();
+                        }),
+                    }
+                  : {},
+              }
+            : {})}
+          {...(canChange &&
+          sources.operation.state !== "cancelled" &&
           sources.operation.items.some((item) => item.state === "failed")
             ? {
                 onRetryFailed: () => {
@@ -1179,7 +1566,84 @@ export function ScientSourcesPanel(props: {
             : {})}
         />
       ) : null}
-      {sources.overview.records.length > 0 ? (
+      {referenceFileImport ? (
+        <ReferenceFileReport
+          fileName={referenceFileImport.file.name}
+          report={referenceFileImport.report}
+          busy={sources.busy || !canChange}
+          onContinue={() => importReferenceFile(referenceFileImport.file)}
+          onDismiss={() => setReferenceFileImport(null)}
+        />
+      ) : null}
+      {scopes ? (
+        <div className="mx-3 mt-2 flex shrink-0 flex-wrap items-center gap-2">
+          <ToggleGroup
+            aria-label="Source scope"
+            value={[scopes.listed]}
+            onValueChange={(values) => {
+              const scope = values[0];
+              if (scope === "project" || scope === "library") selectScope(scope);
+            }}
+          >
+            <Toggle value="project">{LIBRARY_LABELS.scopes.project}</Toggle>
+            <Toggle value="library">{LIBRARY_LABELS.scopes.library}</Toggle>
+          </ToggleGroup>
+          {packageSources ? (
+            <>
+              <span className="text-xs text-muted-foreground">Papers kept after Undo</span>
+              <Button variant="ghost" size="xs" onClick={() => setPackageSources(null)}>
+                Show all
+              </Button>
+            </>
+          ) : null}
+        </div>
+      ) : null}
+      {sources.overview.records.length > 0 && (organize.selection.size > 0 || organize.progress) ? (
+        <SourcesBulkBar
+          organize={organize}
+          records={sources.overview.records}
+          visibleSourceIds={filteredSourceRecords.map((record) => record.sourceId)}
+          onRequestName={setNameRequest}
+          onRemove={async (records) => {
+            const removed: string[] = [];
+            let alsoElsewhere = 0;
+            // Each removal is its own request; the list is read again once, after the last.
+            for (const record of records) {
+              const result = await sources
+                .removeSource(record.sourceId, record.revision, { refresh: false })
+                .catch(() => null);
+              if (result?.outcome === "removed") removed.push(record.sourceId);
+              if (result?.outcome === "removed" && result.alsoPinnedIn) alsoElsewhere += 1;
+            }
+            await sources.reloadOverview();
+            announceSourcesMovedToTrash({
+              environmentId: props.environmentId,
+              root: props.root,
+              sourceIds: removed,
+              notRemoved: records.length - removed.length,
+              ...(alsoElsewhere > 0 ? { alsoElsewhere } : {}),
+              onRestored: sources.refreshOverview,
+            });
+          }}
+          {...(scopes
+            ? {
+                library: {
+                  listed: scopes.listed,
+                  ...(canSetReading
+                    ? {
+                        onSetReadingState: (
+                          sourceIds: ReadonlyArray<string>,
+                          change: ReadingStateChange,
+                        ) => setReadingState(sourceIds, change, true),
+                      }
+                    : {}),
+                  onAddToProject: addToProject,
+                  onRemoveFromProject: removeFromProject,
+                },
+              }
+            : {})}
+        />
+      ) : sources.overview.records.length > 0 ? (
         <div className="mt-2 mb-1 ml-3 mr-4 flex min-h-8 shrink-0 items-center gap-1 rounded-md text-sm text-muted-foreground">
           <div className="flex min-w-0 flex-1 cursor-text items-center gap-2 rounded-md px-2 transition-colors hover:bg-accent hover:text-accent-foreground focus-within:bg-accent focus-within:text-accent-foreground">
             <Search className="size-4 shrink-0 text-muted-foreground/80" aria-hidden="true" />
@@ -1187,8 +1651,10 @@ export function ScientSourcesPanel(props: {
               nativeInput
               unstyled
               type="search"
-              aria-label="Search project sources"
-              placeholder="Search title, author, DOI, year, or keyword"
+              aria-label={
+                scopes?.listed === "library" ? "Search Library" : "Search project sources"
+              }
+              placeholder="Search sources"
               value={sourceQuery}
               onChange={(event) => setSourceQuery(event.currentTarget.value)}
               size="inline"
@@ -1207,6 +1673,17 @@ export function ScientSourcesPanel(props: {
               </Button>
             ) : null}
           </div>
+          <SourcesFilterMenu
+            organize={organize}
+            records={sources.overview.records}
+            query={sourceQuery}
+            onRequestName={setNameRequest}
+            {...(sources.overview.scopes
+              ? {
+                  scopes: sources.overview.scopes,
+                }
+              : {})}
+          />
           <Select
             value={sourceSort}
             items={SCIENT_SOURCE_SORT_OPTIONS}
@@ -1235,537 +1712,79 @@ export function ScientSourcesPanel(props: {
           </Select>
         </div>
       ) : null}
+      {sources.overview.records.length > 0 &&
+      organize.selection.size === 0 &&
+      !organize.progress ? (
+        <SourcesActiveFilters
+          organize={organize}
+          matchCount={filteredSourceRecords.length}
+          onRequestName={setNameRequest}
+        />
+      ) : null}
+      <SourcesNameDialog request={nameRequest} onClose={() => setNameRequest(null)} />
+      <SnapshotRemovalDialog actions={libraryActions} />
       {sources.overview.records.length === 0 ? (
         <>
           <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
           <CenteredState
             icon={<BookOpen />}
-            title="No sources yet"
-            description="Import PDFs from this computer or references from Zotero. Scient keeps a portable project copy."
+            title={scopes?.listed === "project" ? "No sources in this project" : "No sources yet"}
+            {...(scopes?.listed === "project" && scopes.library > 0
+              ? {
+                  action: (
+                    <Button size="sm" variant="outline" onClick={() => selectScope("library")}>
+                      Choose from Library
+                    </Button>
+                  ),
+                }
+              : {})}
+            description={
+              scopes?.listed === "project"
+                ? "Use a project package to carry PDFs and highlights: Recover → Save a current package."
+                : "Import PDFs, references or Zotero; use a project package to carry PDFs and highlights."
+            }
           />
         </>
       ) : (
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="divide-y divide-border">
-            {sourceQuery ? null : (
+        <SourcesList
+          records={filteredSourceRecords}
+          row={sourceRow}
+          virtualized={scopes !== undefined}
+          header={
+            sourceQuery ? null : (
               <UniversityRow environmentId={props.environmentId} threadId={props.threadId} />
-            )}
-            {filteredSourceRecords.map((record) => {
-              const materialSelection = selectScientSourceMaterial({
-                materials: record.attachments,
-              });
-              const pdf = materialSelection._tag === "Selected" ? materialSelection.material : null;
-              const hasPdf =
-                materialSelection._tag === "Selected" ||
-                materialSelection._tag === "SeveralMaterials";
-              const metadataDiagnostics = diagnosticsBySourceId.get(record.sourceId);
-              return (
-                <div
-                  key={record.sourceId}
-                  className="group flex w-full items-start gap-2 px-2 py-1.5 hover:bg-accent/40"
-                  onContextMenu={(event) => void showSourceContextMenu(event, record)}
-                >
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <button
-                          type="button"
-                          className="flex min-w-0 flex-1 cursor-pointer items-start gap-3 rounded-md px-1 py-1.5 text-left outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
-                          onClick={() => openSourceDetails(record.sourceId)}
-                        >
-                          <SourceJournalIcon
-                            environmentId={props.environmentId}
-                            root={props.root}
-                            record={record}
-                          />
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm font-medium">
-                              {record.title ?? "Untitled source"}
-                            </span>
-                            <span className="mt-0.5 block text-xs text-muted-foreground">
-                              {creatorLabel(record)}
-                              {record.issuedYear ? ` · ${record.issuedYear}` : ""}
-                              {hasPdf ? " · PDF" : " · Metadata only"}
-                              {" · "}
-                              <span
-                                className={
-                                  recentlyAddedSourceIds.has(record.sourceId)
-                                    ? "font-medium text-sky-600 dark:text-sky-400"
-                                    : undefined
-                                }
-                              >
-                                {sourceAddedLabel(
-                                  record.importedAt,
-                                  recentlyAddedSourceIds.has(record.sourceId),
-                                  record.origin?.actor === "agent",
-                                )}
-                              </span>
-                              {record.origin?.review === "pending" ? " · Pending review" : ""}
-                            </span>
-                          </span>
-                        </button>
-                      }
-                    />
-                    <TooltipPopup side="top">View source details</TooltipPopup>
-                  </Tooltip>
-                  <div className="mt-0.5 mr-1 flex shrink-0 items-center gap-1">
-                    <span className="flex size-7 shrink-0 items-center justify-center">
-                      {metadataDiagnostics && metadataDiagnostics.length > 0 ? (
-                        <MetadataReviewIndicator
-                          diagnostics={metadataDiagnostics}
-                          onOpen={() => openSourceDetails(record.sourceId)}
-                        />
-                      ) : null}
-                    </span>
-                    <span className="flex size-7 shrink-0 items-center justify-center">
-                      {pdf ? (
-                        <ScientTooltip content="Open PDF">
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Open PDF: ${pdf.fileName}`}
-                            onClick={() => {
-                              props.onOpenPdf({
-                                sourceId: record.sourceId,
-                                attachmentId: pdf.attachmentId,
-                                fileName: pdf.fileName,
-                              });
-                            }}
-                          >
-                            <FileText />
-                          </Button>
-                        </ScientTooltip>
-                      ) : materialSelection._tag === "SeveralMaterials" ? (
-                        <ScientTooltip content="Choose a PDF in source details">
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`Choose a PDF to open: ${record.title ?? "Untitled source"}`}
-                            onClick={() => openSourceDetails(record.sourceId)}
-                          >
-                            <FileText />
-                          </Button>
-                        </ScientTooltip>
-                      ) : null}
-                    </span>
-                    <ScientTooltip content="More source actions">
-                      <Button
-                        variant="ghost"
-                        size="icon-xs"
-                        aria-label="More source actions"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          const bounds = event.currentTarget.getBoundingClientRect();
-                          void showSourceContextMenuAt(record, {
-                            x: bounds.right,
-                            y: bounds.bottom,
-                          });
-                        }}
-                      >
-                        <MoreVertical />
-                      </Button>
-                    </ScientTooltip>
-                  </div>
-                </div>
-              );
-            })}
-            {filteredSourceRecords.length === 0 ? (
-              <div className="p-8 text-center text-sm text-muted-foreground">
-                No matching sources were found.
-              </div>
-            ) : null}
-          </div>
-        </ScrollArea>
-      )}
-      {sourcePendingRemoval ? (
-        <SourceRemovalConfirmation
-          key={sourcePendingRemoval.record.sourceId}
-          open
-          record={sourcePendingRemoval.record}
-          anchorPoint={sourcePendingRemoval.anchorPoint}
-          onOpenChange={(open) => {
-            if (!open) setSourcePendingRemoval(null);
-          }}
-          onRemove={async () => {
-            const result = await sources.removeSource(
-              sourcePendingRemoval.record.sourceId,
-              sourcePendingRemoval.record.revision,
-            );
-            if (result.outcome === "stale") {
-              throw new Error(
-                "This source changed after you opened it. Review the latest version, then try again.",
-              );
-            }
-            if (selectedSourceId === sourcePendingRemoval.record.sourceId) {
-              setEditingSource(false);
-              setSelectedSourceId(null);
-            }
-          }}
+            )
+          }
+          footer={
+            <SourceFullTextResults
+              environmentId={props.environmentId}
+              root={props.root}
+              query={sourceQuery}
+              metadataMatchCount={filteredSourceRecords.length}
+              sourceIds={
+                listFilterActive
+                  ? filterScientSourceSearchIndex(
+                      sourceSearchIndex,
+                      "",
+                      organize.filter,
+                      organize.organization,
+                    )
+                      .filter(
+                        (record) =>
+                          matchesReadingFilter(record, readingFilter) &&
+                          (!packageSources || packageSources.has(record.sourceId)),
+                      )
+                      .map((record) => record.sourceId)
+                  : undefined
+              }
+              onOpenHit={(hit) => {
+                requestSourceTextReveal(props.root, hit);
+                props.onOpenPdf(hit);
+              }}
+            />
+          }
         />
-      ) : null}
-    </div>
-  );
-}
-
-function ImportReview(props: {
-  readonly preflight: NonNullable<ReturnType<typeof useScientSources>["preflight"]>;
-  readonly adapter: "zotero" | "local-files";
-  readonly busy: boolean;
-  readonly error: string | null;
-  readonly onDismissError: () => void;
-  readonly onBack: () => void;
-  readonly onImport: (
-    itemKeys: ReadonlyArray<string>,
-    possibleMetadataMatchOverrides: ReadonlyArray<string>,
-  ) => void;
-}) {
-  const [possibleMatchOverrides, setPossibleMatchOverrides] = useState<ReadonlySet<string>>(
-    new Set(),
-  );
-  const itemKeys = props.preflight.items.flatMap((item) => {
-    const itemKey = item.candidate.sourceKey;
-    return item.duplicate.kind === "new" || possibleMatchOverrides.has(itemKey) ? [itemKey] : [];
-  });
-  const overrideKeys = props.preflight.items.flatMap((item) => {
-    const itemKey = item.candidate.sourceKey;
-    return item.duplicate.kind === "possible-metadata-match" && possibleMatchOverrides.has(itemKey)
-      ? [itemKey]
-      : [];
-  });
-  const importableKeys = new Set(itemKeys);
-  const selectedCount = props.preflight.items.length;
-  const localFiles = props.adapter === "local-files";
-  const hasMetadataWarnings = props.preflight.items.some(
-    (item) => importableKeys.has(item.candidate.sourceKey) && item.metadataDiagnostics.length > 0,
-  );
-  const localActionLabel = props.busy
-    ? "Adding…"
-    : hasMetadataWarnings
-      ? itemKeys.length > 1
-        ? `Add ${itemKeys.length} anyway`
-        : "Add anyway"
-      : "Add to Sources";
-
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <PanelHeader
-        title={
-          localFiles
-            ? selectedCount === 1
-              ? "Review PDF"
-              : `Review ${selectedCount} PDFs`
-            : "Review import"
-        }
-        onBack={props.onBack}
-        action={
-          !localFiles && itemKeys.length > 0 ? (
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={props.busy}
-              onClick={() => props.onImport(itemKeys, overrideKeys)}
-            >
-              <Download />
-              Import {itemKeys.length}
-            </Button>
-          ) : null
-        }
-      />
-      {props.error ? (
-        <SourceErrorBanner message={props.error} onDismiss={props.onDismissError} />
-      ) : null}
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-        <span>
-          {itemKeys.length > 0
-            ? localFiles
-              ? `${itemKeys.length} PDF${itemKeys.length === 1 ? "" : "s"} ready`
-              : `${itemKeys.length} of ${selectedCount} selected ${selectedCount === 1 ? "reference is" : "references are"} ready to import`
-            : localFiles
-              ? "Nothing new to add"
-              : "Nothing new to import"}
-        </span>
-        {localFiles && itemKeys.length > 0 ? (
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={props.busy}
-            aria-busy={props.busy}
-            onClick={() => props.onImport(itemKeys, overrideKeys)}
-          >
-            {props.busy ? <LoaderCircle className="animate-spin" /> : <Download />}
-            {localActionLabel}
-          </Button>
-        ) : null}
-      </div>
-      <ScrollArea className="min-h-0 flex-1">
-        <div className="divide-y divide-border">
-          {props.preflight.items.map((item) => {
-            const itemKey = item.candidate.sourceKey;
-            const possibleMatch = item.duplicate.kind === "possible-metadata-match";
-            const importingPossibleMatch = possibleMatchOverrides.has(itemKey);
-            const willImport = item.duplicate.kind === "new" || importingPossibleMatch;
-            const metadataSummary = candidateMetadataSummary(item.candidate);
-            const duplicateStatus =
-              item.duplicate.kind === "same-origin"
-                ? "Already in Sources"
-                : item.duplicate.kind === "same-identifier"
-                  ? "A source with this identifier is already in Sources"
-                  : item.duplicate.kind === "same-pdf"
-                    ? "This PDF is already in Sources"
-                    : item.duplicate.reason;
-            return (
-              <div key={itemKey} className={willImport ? "bg-accent/20 px-3 py-3" : "px-3 py-3"}>
-                <div className="flex min-w-0 items-start gap-3">
-                  <div className="min-w-0 flex-1">
-                    <div className="text-sm font-medium">
-                      {item.candidate.title ?? "Untitled source"}
-                    </div>
-                    {localFiles && item.duplicate.kind === "new" ? (
-                      metadataSummary ? (
-                        <div className="mt-1 text-xs text-muted-foreground">{metadataSummary}</div>
-                      ) : null
-                    ) : (
-                      <div className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
-                        {item.duplicate.kind === "new" || importingPossibleMatch ? (
-                          <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" />
-                        ) : possibleMatch ? (
-                          <AlertCircle
-                            className="size-3.5 shrink-0 text-amber-600"
-                            aria-hidden="true"
-                          />
-                        ) : (
-                          <CheckCircle2 className="size-3.5 shrink-0" aria-hidden="true" />
-                        )}
-                        <span>
-                          {item.duplicate.kind === "new"
-                            ? "Ready to import"
-                            : importingPossibleMatch
-                              ? "Will import as a separate source"
-                              : duplicateStatus}
-                        </span>
-                      </div>
-                    )}
-                  </div>
-                  {possibleMatch ? (
-                    <label className="flex shrink-0 cursor-pointer items-center gap-2 text-xs text-muted-foreground">
-                      <Checkbox
-                        checked={importingPossibleMatch}
-                        className="size-4"
-                        onCheckedChange={() => {
-                          setPossibleMatchOverrides((current) => {
-                            const next = new Set(current);
-                            if (next.has(itemKey)) next.delete(itemKey);
-                            else next.add(itemKey);
-                            return next;
-                          });
-                        }}
-                      />
-                      Import separately
-                    </label>
-                  ) : null}
-                </div>
-                {willImport &&
-                props.adapter === "zotero" &&
-                item.candidate.pdfAttachmentCount > 1 ? (
-                  <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
-                    <FileText className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-                    <span>
-                      {item.candidate.pdfAttachmentCount} PDFs in Zotero · importing{" "}
-                      {item.candidate.pdfFileName ?? "one PDF"}
-                    </span>
-                  </div>
-                ) : null}
-                {willImport && item.metadataDiagnostics.length > 0 ? (
-                  <div className="mt-2 flex items-start gap-1.5 text-xs text-amber-700 dark:text-amber-300">
-                    <AlertCircle className="mt-px size-3.5 shrink-0" aria-hidden="true" />
-                    <span>
-                      {item.metadataDiagnostics.map((diagnostic) => diagnostic.message).join(" ")}
-                    </span>
-                  </div>
-                ) : null}
-              </div>
-            );
-          })}
-        </div>
-      </ScrollArea>
-    </div>
-  );
-}
-
-function PanelHeader(props: {
-  readonly title: ReactNode;
-  readonly description?: string;
-  readonly action?: ReactNode;
-  readonly onBack?: () => void;
-}) {
-  return (
-    <div className="flex shrink-0 items-center gap-3 border-b border-border px-3 py-2.5">
-      {props.onBack ? (
-        <Button variant="ghost" size="icon-sm" onClick={props.onBack} aria-label="Go back">
-          <ChevronLeft />
-        </Button>
-      ) : (
-        <Library className="size-4 shrink-0" />
       )}
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">{props.title}</div>
-        {props.description ? (
-          <div className="truncate text-xs text-muted-foreground">{props.description}</div>
-        ) : null}
-      </div>
-      {props.action}
-    </div>
-  );
-}
-
-function ImportSummary(props: {
-  readonly operation: NonNullable<ReturnType<typeof useScientSources>["operation"]>;
-  readonly outcome: ScientSourcesImportOutcome | null;
-  readonly onDismiss: () => void;
-  readonly onCancel: () => void;
-  readonly cancelling: boolean;
-  readonly onRetryFailed?: () => void;
-}) {
-  const counts = props.outcome?.counts ?? completedImportCounts(props.operation);
-  const imported = counts.imported;
-  const alreadyPresent = counts.alreadyPresent;
-  const reviewRequired = counts.reviewRequired;
-  const failed = counts.failed;
-  const unprocessed = props.operation.items.filter((item) => item.state === "pending").length;
-  const running = props.operation.state === "running";
-  const stopped = props.operation.state === "cancelled";
-  if (
-    !running &&
-    !stopped &&
-    failed === 0 &&
-    unprocessed === 0 &&
-    alreadyPresent === 0 &&
-    reviewRequired === 0
-  )
-    return null;
-  const details = running
-    ? [`${importedCount(props.operation)} of ${props.operation.items.length} items processed`]
-    : [
-        `${imported} imported`,
-        alreadyPresent > 0 ? `${alreadyPresent} already present` : null,
-        reviewRequired > 0 ? `${reviewRequired} need review` : null,
-        failed > 0 ? `${failed} failed` : null,
-        unprocessed > 0 ? `${unprocessed} not processed` : null,
-      ].filter((value): value is string => value !== null);
-  return (
-    <div
-      className={
-        failed > 0
-          ? "m-3 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/5 p-3"
-          : "m-3 flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-3"
-      }
-    >
-      {running ? (
-        <LoaderCircle className="mt-0.5 size-4 shrink-0 animate-spin text-muted-foreground" />
-      ) : failed > 0 ? (
-        <AlertCircle className="mt-0.5 size-4 shrink-0 text-amber-600" />
-      ) : (
-        <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-emerald-600" />
-      )}
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">
-          {stopped ? "Import stopped" : running ? "Importing sources" : "Import complete"}
-        </div>
-        <div className="mt-0.5 text-xs text-muted-foreground">{details.join(" · ")}</div>
-        {failed > 0 ? (
-          <div className="mt-1 space-y-0.5 text-xs text-muted-foreground">
-            {props.operation.items
-              .filter((item) => item.state === "failed")
-              .slice(0, 3)
-              .map((item) => (
-                <div key={item.itemKey} className="truncate">
-                  {item.itemKey}: {item.message ?? "Import failed."}
-                </div>
-              ))}
-          </div>
-        ) : null}
-        {failed > 0 && props.onRetryFailed ? (
-          <Button className="mt-2" size="xs" variant="outline" onClick={props.onRetryFailed}>
-            Try failed items again
-          </Button>
-        ) : null}
-        {running ? (
-          <Button
-            className="mt-2"
-            size="xs"
-            variant="ghost"
-            disabled={props.cancelling}
-            onClick={props.onCancel}
-          >
-            {props.cancelling ? <LoaderCircle className="animate-spin" /> : <X />}
-            {props.cancelling ? "Stopping…" : "Cancel after current item"}
-          </Button>
-        ) : null}
-      </div>
-      {running ? null : (
-        <Button
-          variant="ghost"
-          size="icon-xs"
-          aria-label="Dismiss import summary"
-          onClick={props.onDismiss}
-        >
-          <X />
-        </Button>
-      )}
-    </div>
-  );
-}
-
-function AlreadyPresentSummary(props: {
-  readonly outcome: ScientSourcesImportOutcome;
-  readonly onDismiss: () => void;
-  readonly onViewExisting?: () => void;
-}) {
-  const count = props.outcome.counts.alreadyPresent;
-  return (
-    <div className="m-3 flex items-start gap-3 rounded-lg border border-border bg-muted/30 p-3">
-      <Info className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-      <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium">Already in Sources</div>
-        <div className="mt-0.5 text-xs text-muted-foreground">
-          {count === 1
-            ? "This source is already in this project."
-            : `${count} selected sources are already in this project.`}
-        </div>
-        {props.onViewExisting ? (
-          <Button className="mt-2" size="xs" variant="ghost" onClick={props.onViewExisting}>
-            View existing source
-          </Button>
-        ) : null}
-      </div>
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        aria-label="Dismiss import result"
-        onClick={props.onDismiss}
-      >
-        <X />
-      </Button>
-    </div>
-  );
-}
-
-function CenteredState(props: {
-  readonly icon: ReactNode;
-  readonly title: string;
-  readonly description?: string;
-  readonly action?: ReactNode;
-}) {
-  return (
-    <div className="flex min-h-0 flex-1 items-center justify-center p-6">
-      <div className="flex max-w-sm flex-col items-center text-center">
-        <div className="mb-3 text-muted-foreground [&_svg]:size-6">{props.icon}</div>
-        <h2 className="text-base font-medium">{props.title}</h2>
-        {props.description ? (
-          <p className="mt-1 text-sm leading-relaxed text-muted-foreground">{props.description}</p>
-        ) : null}
-        {props.action ? <div className="mt-4">{props.action}</div> : null}
-      </div>
     </div>
   );
 }

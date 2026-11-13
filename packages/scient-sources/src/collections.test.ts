@@ -1,0 +1,702 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Collection tests exercise the real project filesystem boundary.
+import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
+import { initializeScientProject } from "@scientfactory/project-init";
+import { afterEach, describe, expect, it } from "@effect/vitest";
+
+import {
+  bulkUpdateScientSources,
+  changeScientSourceCollectionMembers,
+  createScientSourceCollection,
+  deleteScientSourceCollection,
+  deleteScientSourceSearch,
+  organizeScientSources,
+  readScientSourcesOrganization,
+  renameScientSourceCollection,
+  restoreScientSourceCollection,
+  saveScientSourceSearch,
+  SCIENT_SOURCE_COLLECTIONS_FILE,
+  scientBulkEditChangedType,
+} from "./collections.ts";
+import { editableMetadataFromRecord } from "./editable.ts";
+import type { ScientSourceCandidate, ScientSourceType } from "./model.ts";
+import {
+  importScientSource,
+  readScientSourceRecord,
+  removeScientSource,
+  updateScientSourceMetadata,
+} from "./store.ts";
+
+const fixtures: string[] = [];
+const originalRename = NodeFS.promises.rename;
+const originalReadFile = NodeFS.promises.readFile;
+
+/** Fails the next bulk edit receipt write once `when` holds, as a full disk or a lock would. */
+function failNextReceiptWrite(when: () => Promise<boolean>): void {
+  NodeFS.promises.rename = async (from, to) => {
+    if (String(to).includes("bulk-edits") && (await when())) {
+      NodeFS.promises.rename = originalRename;
+      NodeModule.syncBuiltinESMExports();
+      throw new Error("Injected receipt write failure.");
+    }
+    return originalRename(from, to);
+  };
+  NodeModule.syncBuiltinESMExports();
+}
+
+/** Counts record file reads and bulk edit receipt writes until the returned function is called. */
+function countStoreTraffic(): () => {
+  readonly recordReads: number;
+  readonly receiptWrites: number;
+} {
+  const counts = { recordReads: 0, receiptWrites: 0 };
+  NodeFS.promises.readFile = (async (...args: Parameters<typeof originalReadFile>) => {
+    if (String(args[0]).includes(`${NodePath.sep}records${NodePath.sep}`)) counts.recordReads += 1;
+    return originalReadFile(...args);
+  }) as typeof originalReadFile;
+  NodeFS.promises.rename = async (from, to) => {
+    if (String(to).includes("bulk-edits")) counts.receiptWrites += 1;
+    return originalRename(from, to);
+  };
+  NodeModule.syncBuiltinESMExports();
+  return () => {
+    NodeFS.promises.readFile = originalReadFile;
+    NodeFS.promises.rename = originalRename;
+    NodeModule.syncBuiltinESMExports();
+    return counts;
+  };
+}
+
+afterEach(async () => {
+  NodeFS.promises.readFile = originalReadFile;
+  NodeFS.promises.rename = originalRename;
+  NodeModule.syncBuiltinESMExports();
+  await Promise.all(
+    fixtures.splice(0).map((root) => NodeFSP.rm(root, { recursive: true, force: true })),
+  );
+});
+
+function candidate(sourceKey: string, title: string): ScientSourceCandidate {
+  return {
+    sourceKey,
+    type: "article",
+    customType: null,
+    title,
+    creators: [
+      { creatorType: "author", givenName: "Ada", familyName: "Lovelace", literalName: null },
+    ],
+    issuedRaw: "2026",
+    issuedYear: 2026,
+    identifiers: [{ scheme: "doi", value: `10.1000/${sourceKey.toLowerCase()}` }],
+    abstract: null,
+    containerTitle: "Journal",
+    publisher: null,
+    volume: null,
+    issue: null,
+    pages: null,
+    language: null,
+    url: null,
+    tags: [],
+    externalReferences: [],
+    fieldProvenance: [],
+    pdfAvailable: false,
+    pdfFileName: null,
+    pdfAttachmentCount: 0,
+  };
+}
+
+async function project(titles: ReadonlyArray<string>) {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-collections-"));
+  fixtures.push(root);
+  await initializeScientProject({ root });
+  const sourceIds: string[] = [];
+  for (const [index, title] of titles.entries()) {
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: candidate(`S${index}`, title),
+    });
+    if (!imported.record) throw new Error("Expected an imported source.");
+    sourceIds.push(imported.record.sourceId);
+  }
+  return { root, sourceIds };
+}
+
+describe("Scient source collections", () => {
+  it("adds sources to several collections without rewriting their records", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const before = await readScientSourceRecord(root, first);
+
+    const methods = await createScientSourceCollection({
+      root,
+      name: "Methods",
+      sourceIds: [first, "source_missing"],
+      actor: "user",
+    });
+    const chapter = await createScientSourceCollection({
+      root,
+      name: "Chapter 2",
+      sourceIds: [first, second],
+      actor: "agent",
+    });
+
+    expect(methods).toMatchObject({ outcome: "created", unknownSourceIds: ["source_missing"] });
+    expect(chapter.outcome).toBe("created");
+    const organization = await readScientSourcesOrganization(root);
+    expect(organization.issue).toBeUndefined();
+    expect(organization.collections.map((entry) => [entry.name, entry.sourceIds])).toEqual([
+      ["Methods", [first]],
+      ["Chapter 2", [first, second]],
+    ]);
+    expect(organization.collections[1]?.updatedBy).toBe("agent");
+    expect(await readScientSourceRecord(root, first)).toEqual(before);
+  });
+
+  it("treats a repeated create as the same collection and reports what it added", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const created = await createScientSourceCollection({
+      root,
+      name: "Reading list",
+      sourceIds: [first],
+      actor: "agent",
+    });
+    const repeated = await createScientSourceCollection({
+      root,
+      name: " reading LIST ",
+      sourceIds: [first, second],
+      actor: "agent",
+    });
+
+    expect(repeated.outcome).toBe("existing");
+    if (created.outcome !== "created" || repeated.outcome !== "existing") throw new Error();
+    expect(repeated.collection.collectionId).toBe(created.collection.collectionId);
+    expect(repeated.addedSourceIds).toEqual([second]);
+    expect((await readScientSourcesOrganization(root)).collections).toHaveLength(1);
+  });
+
+  it("keeps membership of a removed source hidden, not lost", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const created = await createScientSourceCollection({
+      root,
+      name: "Methods",
+      sourceIds: [first, second],
+      actor: "user",
+    });
+    const record = await readScientSourceRecord(root, second);
+    await removeScientSource({ root, sourceId: second, expectedRevision: record?.revision ?? 1 });
+
+    const organization = await readScientSourcesOrganization(root);
+    expect(organization.collections[0]?.sourceIds).toEqual([first]);
+    const stored = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(root, SCIENT_SOURCE_COLLECTIONS_FILE), "utf8"),
+    );
+    if (created.outcome !== "created") throw new Error();
+    expect(stored.collections[0].sourceIds).toEqual([first, second]);
+  });
+
+  it("renames, deletes and restores a collection, refusing names already used", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const methods = await createScientSourceCollection({
+      root,
+      name: "Methods",
+      sourceIds,
+      actor: "user",
+    });
+    await createScientSourceCollection({ root, name: "Results", actor: "user" });
+    if (methods.outcome !== "created") throw new Error();
+    const collectionId = methods.collection.collectionId;
+
+    expect(
+      (await renameScientSourceCollection({ root, collectionId, name: "results", actor: "user" }))
+        .outcome,
+    ).toBe("name-taken");
+    expect(
+      (await renameScientSourceCollection({ root, collectionId, name: "Design", actor: "user" }))
+        .outcome,
+    ).toBe("renamed");
+    expect(
+      (await deleteScientSourceCollection({ root, collectionId, actor: "agent" })).outcome,
+    ).toBe("deleted");
+    expect(
+      (await readScientSourcesOrganization(root)).collections.map((entry) => entry.name),
+    ).toEqual(["Results"]);
+
+    const restored = await restoreScientSourceCollection({ root, collectionId, actor: "user" });
+    expect(restored.outcome).toBe("restored");
+    const collections = (await readScientSourcesOrganization(root)).collections;
+    expect(collections.find((entry) => entry.collectionId === collectionId)?.sourceIds).toEqual(
+      sourceIds,
+    );
+  });
+
+  it("nests one level deep, with names unique among siblings", async () => {
+    const { root } = await project([]);
+    const create = (name: string, parentCollectionId?: string) =>
+      createScientSourceCollection({
+        root,
+        name,
+        ...(parentCollectionId ? { parentCollectionId } : {}),
+        actor: "user",
+      });
+    const id = (change: Awaited<ReturnType<typeof create>>) => change.collection!.collectionId;
+    const thesis = id(await create("Thesis"));
+    const review = id(await create("Review"));
+    const methods = id(await create("Methods", thesis));
+
+    expect((await create("Methods", review)).outcome).toBe("created");
+    expect((await create("Figures", methods)).outcome).toBe("too-deep");
+    const move = (collectionId: string, parentCollectionId: string | null) =>
+      organizeScientSources({
+        root,
+        change: { action: "move-collection", collectionId, parentCollectionId },
+        actor: "agent",
+      });
+    // A parent cannot become a child, nor can a child take another's name.
+    expect((await move(thesis, review)).outcome).toBe("too-deep");
+    expect((await move(methods, review)).outcome).toBe("name-taken");
+    expect((await move(methods, null)).outcome).toBe("updated");
+
+    // A child whose parent is deleted shows at the top level until the parent is restored.
+    await move(methods, thesis);
+    await deleteScientSourceCollection({ root, collectionId: thesis, actor: "user" });
+    const orphan = (await readScientSourcesOrganization(root)).collections.find(
+      (entry) => entry.collectionId === methods,
+    );
+    expect(orphan?.parentCollectionId).toBeUndefined();
+    await restoreScientSourceCollection({ root, collectionId: thesis, actor: "user" });
+    const restored = (await readScientSourcesOrganization(root)).collections.find(
+      (entry) => entry.collectionId === methods,
+    );
+    expect(restored?.parentCollectionId).toBe(thesis);
+
+    // A deleted child whose parent moved under another collection comes back at the top level.
+    await deleteScientSourceCollection({ root, collectionId: methods, actor: "user" });
+    expect((await move(thesis, review)).outcome).toBe("updated");
+    await restoreScientSourceCollection({ root, collectionId: methods, actor: "user" });
+    const unnested = (await readScientSourcesOrganization(root)).collections.find(
+      (entry) => entry.collectionId === methods,
+    );
+    expect(unnested?.parentCollectionId).toBeUndefined();
+  });
+
+  it("adds and removes members and reports an unknown collection", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const created = await createScientSourceCollection({
+      root,
+      name: "Methods",
+      sourceIds: [first],
+      actor: "user",
+    });
+    if (created.outcome !== "created") throw new Error();
+
+    const changed = await changeScientSourceCollectionMembers({
+      root,
+      collectionId: created.collection.collectionId,
+      add: [second],
+      remove: [first],
+      actor: "agent",
+    });
+    expect(changed).toMatchObject({
+      outcome: "updated",
+      addedSourceIds: [second],
+      removedSourceIds: [first],
+    });
+    expect(
+      (
+        await changeScientSourceCollectionMembers({
+          root,
+          collectionId: created.collection.collectionId,
+          add: [second],
+          actor: "agent",
+        })
+      ).outcome,
+    ).toBe("unchanged");
+    expect(
+      (
+        await changeScientSourceCollectionMembers({
+          root,
+          collectionId: "collection_missing",
+          add: [second],
+          actor: "agent",
+        })
+      ).outcome,
+    ).toBe("not-found");
+  });
+
+  it("saves a search by name, replaces its filter and deletes it", async () => {
+    const { root } = await project([]);
+    const saved = await saveScientSourceSearch({
+      root,
+      name: "Trials with PDFs",
+      filter: { text: "trial", hasPdf: true },
+      actor: "user",
+    });
+    const replaced = await saveScientSourceSearch({
+      root,
+      name: "trials with pdfs",
+      filter: { text: "trial", tags: ["rct"] },
+      actor: "agent",
+    });
+    expect(saved.outcome).toBe("created");
+    expect(replaced.outcome).toBe("updated");
+    const searches = (await readScientSourcesOrganization(root)).savedSearches;
+    expect(searches).toHaveLength(1);
+    expect(searches[0]).toMatchObject({
+      name: "trials with pdfs",
+      filter: { text: "trial", tags: ["rct"] },
+      updatedBy: "agent",
+    });
+    if (!replaced.savedSearch) throw new Error();
+    await deleteScientSourceSearch({
+      root,
+      searchId: replaced.savedSearch.searchId,
+      actor: "user",
+    });
+    expect((await readScientSourcesOrganization(root)).savedSearches).toEqual([]);
+  });
+
+  it("reports a damaged collections file on read and refuses to overwrite it", async () => {
+    const { root } = await project(["First"]);
+    const filePath = NodePath.join(root, SCIENT_SOURCE_COLLECTIONS_FILE);
+    await NodeFSP.writeFile(filePath, "{ not json", "utf8");
+
+    const read = await readScientSourcesOrganization(root);
+    expect(read.collections).toEqual([]);
+    expect(read.issue).toContain("could not be read");
+    await expect(
+      createScientSourceCollection({ root, name: "Methods", actor: "user" }),
+    ).rejects.toThrow();
+    expect(await NodeFSP.readFile(filePath, "utf8")).toBe("{ not json");
+  });
+
+  it("bulk edits tags, type and collections, crediting a revision to the actor per source", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const collection = await organizeScientSources({
+      root,
+      change: { action: "create-collection", name: "Methods" },
+      actor: "user",
+    });
+    const collectionId = collection.collection?.collectionId ?? "";
+
+    const result = await bulkUpdateScientSources({
+      root,
+      change: {
+        sourceIds: [first, second, "source_missing"],
+        addTags: ["RCT", "sepsis"],
+        type: "preprint",
+        addToCollectionIds: [collectionId],
+      },
+      actor: "agent",
+    });
+
+    expect(result.sources.map((entry) => [entry.sourceId, entry.outcome, entry.revision])).toEqual([
+      [first, "updated", 2],
+      [second, "updated", 2],
+      ["source_missing", "not-found", null],
+    ]);
+    expect(result.collections).toEqual([{ collectionId, outcome: "updated" }]);
+    const updated = await readScientSourceRecord(root, first);
+    expect(updated).toMatchObject({
+      tags: ["RCT", "sepsis"],
+      type: "preprint",
+      updatedBy: "agent",
+    });
+    const organization = await readScientSourcesOrganization(root);
+    expect(organization.collections[0]?.sourceIds).toEqual([first, second]);
+
+    const removal = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds: [first], removeTags: ["rct"], removeFromCollectionIds: [collectionId] },
+      actor: "user",
+    });
+    expect(removal.sources[0]).toMatchObject({ outcome: "updated", revision: 3 });
+    expect((await readScientSourceRecord(root, first))?.tags).toEqual(["sepsis"]);
+    const repeat = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds: [first], removeTags: ["rct"] },
+      actor: "user",
+    });
+    expect(repeat.sources[0]).toMatchObject({ outcome: "unchanged", revision: 3 });
+  });
+
+  it("bulk tags many sources reading the store once and saving Undo a fixed number of times", async () => {
+    const { root, sourceIds } = await project(["A", "B", "C", "D", "E", "F", "G", "H"]);
+    const edited = sourceIds.slice(0, 6);
+    const stop = countStoreTraffic();
+    const result = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds: edited, addTags: ["Screened"] },
+      actor: "user",
+    });
+    const counts = stop();
+    expect(result.undo?.sourceCount).toBe(6);
+    // Each edited record is read before and while it is written; the other records once.
+    expect(counts.recordReads).toBeLessThanOrEqual(sourceIds.length + 2 * edited.length);
+    // The empty receipt, every write planned, every write finished.
+    expect(counts.receiptWrites).toBe(3);
+
+    const undoStop = countStoreTraffic();
+    await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: result.undo?.batchId ?? "" },
+      actor: "user",
+    });
+    const undoCounts = undoStop();
+    expect(undoCounts.recordReads).toBeLessThanOrEqual(sourceIds.length + 3 * edited.length);
+    // Every restore planned, every one done.
+    expect(undoCounts.receiptWrites).toBe(2);
+    expect((await readScientSourceRecord(root, edited[0] ?? ""))?.tags).toEqual([]);
+  });
+
+  it("reports a bulk type change that a source cannot take instead of stopping", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const result = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, type: "other" },
+      actor: "user",
+    });
+    expect(result.sources[0]).toMatchObject({
+      outcome: "failed",
+      message: "Enter the source type.",
+    });
+  });
+  it("undoes a whole bulk edit, keeping a later change and reporting it", async () => {
+    const { root, sourceIds } = await project(["First", "Second", "Third"]);
+    const [first, second, third] = sourceIds as [string, string, string];
+    const edit = async (
+      sourceId: string,
+      fields: { readonly type?: ScientSourceType; readonly tags?: ReadonlyArray<string> },
+    ) => {
+      const record = await readScientSourceRecord(root, sourceId);
+      if (!record) throw new Error("Expected a source.");
+      await updateScientSourceMetadata({
+        root,
+        sourceId,
+        expectedRevision: record.revision,
+        metadata: { ...editableMetadataFromRecord(record), ...fields },
+        actor: "user",
+      });
+    };
+    await edit(first, { tags: ["RCT", "Adults"] });
+    await edit(second, { type: "book" });
+    await edit(third, { tags: ["Pilot", "RCT"] });
+    const collection = async (name: string, members: ReadonlyArray<string>) =>
+      (await createScientSourceCollection({ root, name, sourceIds: members, actor: "user" }))
+        .collection?.collectionId ?? "";
+    const kept = await collection("Kept", [first, third]);
+    const reading = await collection("Reading", [second]);
+    const members = async () =>
+      Object.fromEntries(
+        (await readScientSourcesOrganization(root)).collections.map((entry) => [
+          entry.name,
+          entry.sourceIds.toSorted(),
+        ]),
+      );
+    const fields = async (sourceId: string) => {
+      const record = await readScientSourceRecord(root, sourceId);
+      return [record?.type, record?.tags];
+    };
+
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: {
+        sourceIds,
+        addTags: ["Screened"],
+        removeTags: ["rct"],
+        type: "report",
+        addToCollectionIds: [reading],
+        removeFromCollectionIds: [kept],
+      },
+      actor: "user",
+    });
+    expect(bulk.undo?.sourceCount).toBe(3);
+    await edit(third, { type: "thesis", tags: ["Pilot", "Screened", "Later"] });
+
+    const undone = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: bulk.undo?.batchId ?? "" },
+      actor: "agent",
+    });
+    expect(await fields(first)).toEqual(["article", ["RCT", "Adults"]]);
+    expect(await fields(second)).toEqual(["book", []]);
+    expect(await fields(third)).toEqual(["thesis", ["Pilot", "Later", "RCT"]]);
+    expect((await readScientSourceRecord(root, first))?.updatedBy).toBe("agent");
+    expect(await members()).toEqual({
+      Kept: [first, third].toSorted(),
+      Reading: [second],
+    });
+    expect(undone.conflicts).toEqual([
+      {
+        sourceId: third,
+        message: "Its type was changed after the bulk edit, so the newer type was kept.",
+      },
+    ]);
+    const again = await bulkUpdateScientSources({
+      root,
+      change: { undoBatchId: bulk.undo?.batchId ?? "" },
+      actor: "agent",
+    });
+    expect(again.conflicts).toEqual([{ message: "This bulk edit was already undone." }]);
+
+    // Whether Undo has pin and review snapshots to refresh.
+    expect(await scientBulkEditChangedType(root, bulk.undo?.batchId ?? "")).toBe(true);
+    const tagsOnly = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addTags: ["Second look"] },
+      actor: "user",
+    });
+    expect(await scientBulkEditChangedType(root, tagsOnly.undo?.batchId ?? "")).toBe(false);
+  });
+  it("changes nothing when the bulk edit receipt folder is unsafe", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const collectionId =
+      (await createScientSourceCollection({ root, name: "Methods", actor: "user" })).collection
+        ?.collectionId ?? "";
+    const outside = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-bulk-outside-"));
+    fixtures.push(outside);
+    await NodeFSP.symlink(outside, NodePath.join(root, ".scient/sources/bulk-edits"));
+
+    await expect(
+      bulkUpdateScientSources({
+        root,
+        change: { sourceIds, addTags: ["Bulk"], addToCollectionIds: [collectionId] },
+        actor: "user",
+      }),
+    ).rejects.toThrow("bulk-edits");
+    expect((await readScientSourceRecord(root, sourceIds[0] ?? ""))?.tags).toEqual([]);
+    expect((await readScientSourcesOrganization(root)).collections[0]?.sourceIds).toEqual([]);
+    expect(await NodeFSP.readdir(outside)).toEqual([]);
+  });
+
+  it("retries a bulk undo that failed part way, leaving what it already restored", async () => {
+    const { root, sourceIds } = await project(["First", "Second"]);
+    const [first, second] = sourceIds as [string, string];
+    const bulk = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, type: "book" },
+      actor: "user",
+    });
+    const history = NodePath.join(root, ".scient/sources/history", second);
+    await NodeFSP.rename(history, `${history}-aside`);
+    await NodeFSP.writeFile(history, "");
+    const undo = () =>
+      bulkUpdateScientSources({
+        root,
+        change: { undoBatchId: bulk.undo?.batchId ?? "" },
+        actor: "user",
+      });
+
+    const failed = await undo();
+    expect(failed.sources.map((entry) => [entry.sourceId, entry.outcome])).toEqual([
+      [first, "updated"],
+      [second, "failed"],
+    ]);
+    const record = await readScientSourceRecord(root, first);
+    if (!record) throw new Error("Expected a source.");
+    await updateScientSourceMetadata({
+      root,
+      sourceId: first,
+      expectedRevision: record.revision,
+      metadata: { ...editableMetadataFromRecord(record), type: "thesis" },
+      actor: "user",
+    });
+    await NodeFSP.rm(history);
+    await NodeFSP.rename(`${history}-aside`, history);
+
+    const retried = await undo();
+    expect(retried.sources.map((entry) => [entry.sourceId, entry.outcome])).toEqual([
+      [second, "updated"],
+    ]);
+    expect((await readScientSourceRecord(root, first))?.type).toBe("thesis");
+    expect((await readScientSourceRecord(root, second))?.type).toBe("article");
+    expect((await undo()).conflicts).toEqual([{ message: "This bulk edit was already undone." }]);
+  });
+
+  it("keeps Undo for a change whose receipt could not be finished", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const first = sourceIds[0] ?? "";
+    const collectionId =
+      (await createScientSourceCollection({ root, name: "Methods", actor: "user" })).collection
+        ?.collectionId ?? "";
+    const tags = async () => (await readScientSourceRecord(root, first))?.tags ?? [];
+    const members = async () =>
+      (await readScientSourcesOrganization(root)).collections[0]?.sourceIds ?? [];
+    const undo = (batchId: string | undefined) =>
+      bulkUpdateScientSources({ root, change: { undoBatchId: batchId ?? "" }, actor: "user" });
+
+    failNextReceiptWrite(async () => (await tags()).includes("Bulk"));
+    const tagged = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addTags: ["Bulk"] },
+      actor: "user",
+    });
+    expect(await tags()).toEqual(["Bulk"]);
+    await undo(tagged.undo?.batchId);
+    expect(await tags()).toEqual([]);
+
+    failNextReceiptWrite(async () => (await members()).includes(first));
+    const added = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addToCollectionIds: [collectionId] },
+      actor: "user",
+    });
+    expect(await members()).toEqual([first]);
+    await undo(added.undo?.batchId);
+    expect(await members()).toEqual([]);
+  });
+
+  it("keeps a later edit when an Undo that landed is retried", async () => {
+    const { root, sourceIds } = await project(["First"]);
+    const first = sourceIds[0] ?? "";
+    const collectionId =
+      (await createScientSourceCollection({ root, name: "Methods", actor: "user" })).collection
+        ?.collectionId ?? "";
+    const tags = async () => (await readScientSourceRecord(root, first))?.tags ?? [];
+    const members = async () =>
+      (await readScientSourcesOrganization(root)).collections[0]?.sourceIds ?? [];
+    const undo = (batchId: string | undefined) =>
+      bulkUpdateScientSources({ root, change: { undoBatchId: batchId ?? "" }, actor: "user" });
+
+    const tagged = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addTags: ["Bulk"] },
+      actor: "user",
+    });
+    failNextReceiptWrite(async () => !(await tags()).includes("Bulk"));
+    await undo(tagged.undo?.batchId).catch(() => undefined);
+    const record = await readScientSourceRecord(root, first);
+    if (!record) throw new Error("Expected a source.");
+    await updateScientSourceMetadata({
+      root,
+      sourceId: first,
+      expectedRevision: record.revision,
+      metadata: { ...editableMetadataFromRecord(record), tags: ["Bulk", "Later"] },
+      actor: "user",
+    });
+    const retried = await undo(tagged.undo?.batchId);
+    expect(await tags()).toEqual(["Bulk", "Later"]);
+    expect(retried.conflicts?.map((conflict) => conflict.sourceId)).toEqual([first]);
+
+    const added = await bulkUpdateScientSources({
+      root,
+      change: { sourceIds, addToCollectionIds: [collectionId] },
+      actor: "user",
+    });
+    failNextReceiptWrite(async () => !(await members()).includes(first));
+    await undo(added.undo?.batchId).catch(() => undefined);
+    await changeScientSourceCollectionMembers({ root, collectionId, add: [first], actor: "user" });
+    const again = await undo(added.undo?.batchId);
+    expect(await members()).toEqual([first]);
+    expect(again.conflicts?.map((conflict) => conflict.collectionId)).toEqual([collectionId]);
+  });
+});

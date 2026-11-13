@@ -14,10 +14,16 @@ import {
   Download,
   ExternalLink,
   FileText,
+  FolderMinus,
+  FolderPlus,
+  History,
   LoaderCircle,
   MoreHorizontal,
   Pencil,
   RefreshCw,
+  Star,
+  Trash2,
+  Upload,
 } from "lucide-react";
 import {
   useEffect,
@@ -29,7 +35,16 @@ import {
 
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../components/ui/menu";
+import {
+  Menu,
+  MenuItem,
+  MenuPopup,
+  MenuSeparator,
+  MenuSub,
+  MenuSubPopup,
+  MenuSubTrigger,
+  MenuTrigger,
+} from "../../components/ui/menu";
 import {
   Popover,
   PopoverDescription,
@@ -44,12 +59,20 @@ import { readLocalApi } from "../../localApi";
 import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { scientSourcesErrorMessage } from "./errorMessage";
-import { SourceReference } from "./SourceReference";
-import { useSourceNoteControls } from "./SourceNote";
 import {
-  SourceRemovalConfirmation,
-  type SourceRemovalAnchorPoint,
-} from "./SourceRemovalConfirmation";
+  LIBRARY_LABELS,
+  libraryCopyLabel,
+  libraryCopyProblemLabel,
+  type ReadingStateChange,
+} from "./libraryLabels";
+import { agentVerificationLabel, fileNameTitleLabel } from "./sourceLabels";
+import { pdfVersionLabel } from "./sourcePdfVersion";
+import { SourceEditorialStatus } from "./SourceEditorialStatus";
+import { verificationProblemLabel } from "./sourceLifecycleLabels";
+import { SourceReference } from "./SourceReference";
+import type { CitationStyleProject } from "./useProjectCitationStyle";
+import { useSourceNoteControls, type SourceNoteSaveContext } from "./SourceNote";
+import type { SourceAnchorPoint } from "./sourceAnchor";
 
 type SourceRecord = ScientSourceDetailResult;
 type SourceDiagnostic =
@@ -142,8 +165,8 @@ function importedLabel(record: SourceRecord): string {
       : fromZotero
         ? "Imported from Zotero"
         : "Added to Scient";
-  const reviewLabel = record.origin?.review === "pending" ? " · Pending review" : "";
-  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${reviewLabel}`;
+  const editedLabel = record.updatedBy === "agent" ? " · Edited by agent" : "";
+  return `${sourceLabel}${formattedDate ? ` · ${formattedDate}` : ""}${agentVerificationLabel(record)}${verificationProblemLabel(record.verification)}${editedLabel}${pdfVersionLabel(record.attachments)}`;
 }
 
 function openExternal(url: string): void {
@@ -513,7 +536,7 @@ function SourceTags(props: { readonly tags: ReadonlyArray<string> }) {
 }
 
 function MetadataRefreshConfirmation(props: {
-  readonly anchorPoint: SourceRemovalAnchorPoint;
+  readonly anchorPoint: SourceAnchorPoint;
   readonly onOpenChange: (open: boolean) => void;
   readonly onRefresh: () => Promise<void>;
 }) {
@@ -601,34 +624,229 @@ function MetadataRefreshConfirmation(props: {
   );
 }
 
+/** What a personal Library adds to the details; a project server never passes it. */
+export interface SourceDetailsLibrary {
+  readonly onSavePersonalNote: (
+    note: string | null,
+    expectedRevision: number,
+    context: SourceNoteSaveContext,
+  ) => Promise<{ readonly outcome: string; readonly record: SourceRecord }>;
+  readonly canSavePersonalNote: boolean;
+  /** One of the source's other keys here (`alsoCitedAs`): its own project note and history. */
+  readonly onLoadKeyNote?: (citationKey: string) => Promise<SourceRecord>;
+  readonly onSaveKeyNote?: (
+    citationKey: string,
+    note: string | null,
+    expectedRevision: number,
+    context: SourceNoteSaveContext,
+  ) => Promise<{ readonly outcome: string; readonly record: SourceRecord }>;
+  /** Absent when this connection may not change reading state: the markers stay, the controls go. */
+  readonly onSetReadingState?: (change: ReadingStateChange) => Promise<void>;
+  readonly onAddToProject?: () => Promise<void>;
+  readonly onRemoveFromProject?: () => Promise<unknown>;
+  /** A source kept from this project's details although the Library has similar copies. */
+  readonly onLinkToCopy?: (librarySourceId: string) => Promise<void>;
+  readonly onKeepSeparate?: (separate: boolean) => Promise<void>;
+}
+
+/** The project note of one of a merged source's other keys, saved and restored on that pin. */
+function KeyProjectNote(props: {
+  readonly citationKey: string;
+  readonly record: SourceRecord;
+  readonly readOnly: boolean;
+  readonly onSave: (
+    note: string | null,
+    expectedRevision: number,
+    context: SourceNoteSaveContext,
+  ) => Promise<{ readonly outcome: string; readonly record: SourceRecord }>;
+}) {
+  return useSourceNoteControls({
+    record: props.record,
+    readOnly: props.readOnly,
+    heading: `${LIBRARY_LABELS.projectNote} (${props.citationKey})`,
+    history: props.record.projectNoteHistory,
+    storage: "pin",
+    onSave: props.onSave,
+  }).section;
+}
+
+function LibraryCopySection(props: {
+  readonly match: NonNullable<SourceRecord["libraryMatch"]>;
+  readonly library: SourceDetailsLibrary | undefined;
+}) {
+  const [pending, setPending] = useState(false);
+  const { match, library } = props;
+  const act = (run: (() => Promise<void>) | undefined) =>
+    run
+      ? () => {
+          setPending(true);
+          void run().finally(() => setPending(false));
+        }
+      : undefined;
+  const keep = library?.onKeepSeparate;
+  const toggleSeparate = act(keep ? () => keep(!match.keptSeparate) : undefined);
+  return (
+    <DetailsSection title={LIBRARY_LABELS.libraryCopy}>
+      <p className="text-xs text-muted-foreground">
+        {match.keptSeparate ? LIBRARY_LABELS.keptSeparate : libraryCopyLabel(match)}
+      </p>
+      <ul className="space-y-2">
+        {match.candidates.map((candidate) => {
+          const link = act(
+            library?.onLinkToCopy ? () => library.onLinkToCopy!(candidate.sourceId) : undefined,
+          );
+          return (
+            <li key={candidate.sourceId} className="flex items-start gap-2 text-xs">
+              <div className="min-w-0 flex-1">
+                <p className="break-words text-sm">
+                  {candidate.title ?? "Untitled"}
+                  {candidate.issuedYear ? ` (${candidate.issuedYear})` : ""}
+                </p>
+                {candidate.containerTitle ? (
+                  <p className="break-words text-muted-foreground">{candidate.containerTitle}</p>
+                ) : null}
+                <p className="text-muted-foreground">
+                  {libraryCopyProblemLabel(candidate.problem)}
+                </p>
+              </div>
+              {link ? (
+                <Button size="xs" variant="ghost" disabled={pending} onClick={link}>
+                  {LIBRARY_LABELS.linkToCopy}
+                </Button>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {toggleSeparate ? (
+        <Button size="xs" variant="ghost" disabled={pending} onClick={toggleSeparate}>
+          {match.keptSeparate ? LIBRARY_LABELS.askAgain : LIBRARY_LABELS.keepSeparate}
+        </Button>
+      ) : null}
+    </DetailsSection>
+  );
+}
+
+function ReadingControls(props: {
+  readonly record: SourceRecord;
+  readonly onSetReadingState: SourceDetailsLibrary["onSetReadingState"];
+}) {
+  const [pending, setPending] = useState(false);
+  const { readingStatus, starred } = props.record;
+  if (readingStatus === undefined) return null;
+  const onSet = props.onSetReadingState;
+  if (!onSet) {
+    return readingStatus === "unread" || starred ? (
+      <p className="flex items-center gap-2 text-xs text-muted-foreground">
+        {readingStatus === "unread" ? <span>{LIBRARY_LABELS.unread}</span> : null}
+        {starred ? (
+          <span className="inline-flex items-center gap-1">
+            <Star className="size-3 fill-current" aria-hidden />
+            {LIBRARY_LABELS.starred}
+          </span>
+        ) : null}
+      </p>
+    ) : null;
+  }
+  const set = (change: ReadingStateChange) => {
+    setPending(true);
+    void onSet(change).finally(() => setPending(false));
+  };
+  return (
+    <div className="flex items-center gap-1">
+      <Button
+        size="xs"
+        variant="ghost"
+        disabled={pending}
+        onClick={() => set({ readingStatus: readingStatus === "unread" ? "read" : "unread" })}
+      >
+        {readingStatus === "unread" ? LIBRARY_LABELS.markRead : LIBRARY_LABELS.markUnread}
+      </Button>
+      <ScientTooltip content={starred ? LIBRARY_LABELS.removeStar : LIBRARY_LABELS.star}>
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          disabled={pending}
+          aria-label={starred ? LIBRARY_LABELS.removeStar : LIBRARY_LABELS.star}
+          aria-pressed={starred === true}
+          onClick={() => set({ starred: !starred })}
+        >
+          <Star className={starred ? "fill-current" : undefined} />
+        </Button>
+      </ScientTooltip>
+    </div>
+  );
+}
+
 export function SourceDetails(props: {
   readonly record: SourceRecord;
+  /** Present only on a personal Library: two notes, reading state and this project's sources. */
+  readonly library?: SourceDetailsLibrary;
+  /** The connection can read this Library but not change it. */
+  readonly readOnly?: boolean;
   readonly diagnostics: ReadonlyArray<SourceDiagnostic>;
+  /** Editable tags and collections; without it the tags are shown read-only. */
+  readonly organize?: ReactNode;
+  /** The project whose citation style the reference uses. */
+  readonly citationProject?: CitationStyleProject;
   readonly onBack: () => void;
   readonly onEdit: () => void;
   readonly onSaveNote: (
     note: string | null,
     expectedRevision: number,
+    context: SourceNoteSaveContext,
   ) => Promise<ScientSourceNoteUpdateResult>;
   readonly onRefreshMetadata: () => Promise<void>;
-  readonly onApproveReview?: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
+  readonly onOpenHistory?: () => void;
+  /** Without a group ID, the source goes to My Library. */
+  readonly onSendToZotero?: (groupId: string | null) => void;
+  /** Zotero groups the key in Accounts can write to; with any, Send to Zotero asks where. */
+  readonly zoteroWritableGroups?: ReadonlyArray<{
+    readonly groupId: string;
+    readonly name: string;
+  }>;
+  readonly onSourceActionsOpen?: () => void;
   readonly onGetPdf?: () => Promise<void>;
   readonly onOpenPdf: (input: {
     readonly sourceId: string;
     readonly attachmentId: string;
     readonly fileName: string;
   }) => void;
+  /** The Source's highlights and notes, shown after its reference. */
+  readonly annotations?: ReactNode;
 }) {
-  const [removeAnchorPoint, setRemoveAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(null);
-  const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceRemovalAnchorPoint | null>(
-    null,
-  );
-  const [approvingReview, setApprovingReview] = useState(false);
+  const [refreshAnchorPoint, setRefreshAnchorPoint] = useState<SourceAnchorPoint | null>(null);
   const [gettingPdf, setGettingPdf] = useState(false);
   const record = props.record;
-  const sourceNote = useSourceNoteControls({ record, onSave: props.onSaveNote });
+  const readOnly = props.readOnly ?? false;
+  const library = props.library;
+  // A library server's note is this project's note on the pin, so a source not pinned here has none.
+  const inProject = record.pinned !== false;
+  const sourceNote = useSourceNoteControls({
+    record,
+    readOnly: readOnly || !inProject,
+    onSave: props.onSaveNote,
+    ...(library
+      ? {
+          heading: LIBRARY_LABELS.projectNote,
+          history: record.projectNoteHistory,
+          storage: "pin" as const,
+        }
+      : {}),
+  });
+  const personalNote = useSourceNoteControls({
+    record,
+    field: "personalNote",
+    readOnly: readOnly || !library?.canSavePersonalNote,
+    heading: LIBRARY_LABELS.myNote,
+    help: LIBRARY_LABELS.myNoteHelp,
+    onSave: library?.onSavePersonalNote ?? props.onSaveNote,
+  });
+  // A session without the Library write grant never gets the key, so it never sees "My note".
+  const showsPersonalNote = library !== undefined && "personalNote" in record;
   const publication = publicationLocation(record);
+  const fileNameTitle = fileNameTitleLabel(record);
   const hasPublicationDetails = Boolean(
     record.issuedRaw || record.issuedYear || publication || record.publisher || record.language,
   );
@@ -644,55 +862,92 @@ export function SourceDetails(props: {
   ];
   const tags = [...new Set(record.tags)];
   const hasDoi = identifiers.some((identifier) => identifier.scheme.toLowerCase() === "doi");
+  // A source this project cites under two keys, after merging two sources it used.
+  const otherKeys = record.alsoCitedAs ?? [];
+  const [keyNote, setKeyNote] = useState<{
+    readonly citationKey: string;
+    readonly record: SourceRecord;
+  } | null>(null);
+  const shownKeyNote = keyNote && otherKeys.includes(keyNote.citationKey) ? keyNote : null;
+  const loadKeyNote = library?.onLoadKeyNote;
+  const saveKeyNote = library?.onSaveKeyNote;
+  const primaryKey = record.citationKey;
+  const projectNoteSection =
+    otherKeys.length > 0 && primaryKey && loadKeyNote && saveKeyNote ? (
+      <div className="space-y-2">
+        <div
+          role="group"
+          aria-label={LIBRARY_LABELS.noteForKey}
+          className="flex flex-wrap items-center gap-1 text-xs"
+        >
+          <span className="text-muted-foreground">{LIBRARY_LABELS.noteForKey}</span>
+          {[primaryKey, ...otherKeys].map((citationKey) => {
+            const selected = (shownKeyNote?.citationKey ?? primaryKey) === citationKey;
+            return (
+              <Button
+                key={citationKey}
+                size="xs"
+                variant={selected ? "secondary" : "ghost"}
+                aria-pressed={selected}
+                onClick={() => {
+                  if (citationKey === primaryKey) {
+                    setKeyNote(null);
+                    return;
+                  }
+                  void loadKeyNote(citationKey)
+                    .then((loaded) => setKeyNote({ citationKey, record: loaded }))
+                    .catch(() => undefined);
+                }}
+              >
+                {citationKey}
+              </Button>
+            );
+          })}
+        </div>
+        {shownKeyNote ? (
+          <KeyProjectNote
+            key={shownKeyNote.citationKey}
+            citationKey={shownKeyNote.citationKey}
+            record={shownKeyNote.record}
+            readOnly={readOnly}
+            onSave={async (note, expectedRevision, context) => {
+              const result = await saveKeyNote(
+                shownKeyNote.citationKey,
+                note,
+                expectedRevision,
+                context,
+              );
+              setKeyNote({ citationKey: shownKeyNote.citationKey, record: result.record });
+              return result;
+            }}
+          />
+        ) : (
+          sourceNote.section
+        )}
+      </div>
+    ) : (
+      sourceNote.section
+    );
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-3 border-b border-border p-3">
-        <Button variant="ghost" size="xs" onClick={props.onBack} aria-label="Back to Sources">
+      <div className="flex shrink-0 flex-wrap items-center gap-1 border-b border-border p-3">
+        <Button variant="ghost" size="xs" onClick={props.onBack} aria-label="Back to Library">
           <ChevronLeft />
-          Sources
+          Library
         </Button>
         <div className="min-w-0 flex-1" />
-        {sourceNote.button}
-        {record.origin?.review === "pending" && props.onApproveReview ? (
-          <>
-            <Button
-              size="xs"
-              variant="outline"
-              disabled={approvingReview}
-              onClick={() => {
-                setApprovingReview(true);
-                void props
-                  .onApproveReview?.()
-                  .catch((cause: unknown) => {
-                    toastManager.add({
-                      type: "error",
-                      title: "Review could not be approved",
-                      description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
-                    });
-                  })
-                  .finally(() => setApprovingReview(false));
-              }}
-            >
-              {approvingReview ? <LoaderCircle className="animate-spin" /> : null}
-              {approvingReview ? "Approving…" : "Approve review"}
+        {library && !inProject ? (
+          library.onAddToProject ? (
+            <Button size="xs" variant="ghost" onClick={() => void library.onAddToProject?.()}>
+              <FolderPlus />
+              {LIBRARY_LABELS.addToProject}
             </Button>
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={(event) => {
-                const target = event.currentTarget.getBoundingClientRect();
-                setRemoveAnchorPoint({
-                  x: event.clientX || target.right,
-                  y: event.clientY || target.top + target.height / 2,
-                });
-              }}
-            >
-              Reject
-            </Button>
-          </>
-        ) : null}
-        <Button size="xs" variant="ghost" onClick={props.onEdit}>
+          ) : null
+        ) : (
+          sourceNote.button
+        )}
+        <Button size="xs" variant="ghost" disabled={readOnly} onClick={props.onEdit}>
           <Pencil />
           Edit
         </Button>
@@ -744,7 +999,7 @@ export function SourceDetails(props: {
           <Button
             size="xs"
             variant="ghost"
-            disabled={gettingPdf}
+            disabled={gettingPdf || readOnly}
             onClick={() => {
               setGettingPdf(true);
               void Promise.resolve(props.onGetPdf?.()).finally(() => setGettingPdf(false));
@@ -754,7 +1009,11 @@ export function SourceDetails(props: {
             Get PDF
           </Button>
         ) : null}
-        <Menu>
+        <Menu
+          onOpenChange={(open) => {
+            if (open) props.onSourceActionsOpen?.();
+          }}
+        >
           <ScientTooltip content="More source actions">
             <MenuTrigger
               render={
@@ -766,6 +1025,7 @@ export function SourceDetails(props: {
           </ScientTooltip>
           <MenuPopup align="end" side="bottom" className="min-w-44">
             <MenuItem
+              disabled={readOnly}
               onClick={(event) => {
                 const target = event.currentTarget.getBoundingClientRect();
                 setRefreshAnchorPoint({
@@ -777,19 +1037,63 @@ export function SourceDetails(props: {
               <RefreshCw />
               Refresh metadata
             </MenuItem>
+            {props.onOpenHistory ? (
+              <MenuItem onClick={props.onOpenHistory}>
+                <History />
+                History
+              </MenuItem>
+            ) : null}
+            {props.onSendToZotero && (props.zoteroWritableGroups ?? []).length > 0 ? (
+              <MenuSub>
+                <MenuSubTrigger disabled={readOnly}>
+                  <Upload />
+                  Send to Zotero
+                </MenuSubTrigger>
+                <MenuSubPopup className="max-h-80 overflow-y-auto">
+                  <MenuItem onClick={() => props.onSendToZotero?.(null)}>My Library</MenuItem>
+                  {(props.zoteroWritableGroups ?? []).map((group) => (
+                    <MenuItem
+                      key={group.groupId}
+                      title={group.name}
+                      onClick={() => props.onSendToZotero?.(group.groupId)}
+                    >
+                      <span className="min-w-0 truncate">{group.name}</span>
+                    </MenuItem>
+                  ))}
+                </MenuSubPopup>
+              </MenuSub>
+            ) : props.onSendToZotero ? (
+              <MenuItem disabled={readOnly} onClick={() => props.onSendToZotero?.(null)}>
+                <Upload />
+                Send to Zotero
+              </MenuItem>
+            ) : null}
             <MenuSeparator />
-            <MenuItem
-              variant="destructive"
-              onClick={(event) => {
-                const target = event.currentTarget.getBoundingClientRect();
-                setRemoveAnchorPoint({
-                  x: event.clientX || target.right,
-                  y: event.clientY || target.top + target.height / 2,
-                });
-              }}
-            >
-              {record.origin?.review === "pending" ? "Reject agent source" : "Remove from Sources"}
-            </MenuItem>
+            {library?.onRemoveFromProject && inProject ? (
+              <MenuItem onClick={() => void library.onRemoveFromProject?.()}>
+                <FolderMinus />
+                {LIBRARY_LABELS.removeFromProject}
+              </MenuItem>
+            ) : null}
+            {/* A pin's snapshot is not in this Library, so there is nothing to move to Trash. */}
+            {library && record.fromSnapshot ? null : (
+              <MenuItem
+                variant="destructive"
+                disabled={readOnly}
+                onClick={() => {
+                  void props.onRemove().catch((cause: unknown) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Source could not be moved to Trash",
+                      description: scientSourcesErrorMessage(cause, import.meta.env.DEV),
+                    });
+                  });
+                }}
+              >
+                <Trash2 />
+                Move to Trash
+              </MenuItem>
+            )}
           </MenuPopup>
         </Menu>
       </div>
@@ -802,6 +1106,13 @@ export function SourceDetails(props: {
               {record.title ?? "Untitled source"}
             </h2>
             <p className="text-sm text-muted-foreground">{creatorsLabel(record)}</p>
+            {fileNameTitle ? (
+              <p className="text-xs text-muted-foreground">{fileNameTitle}</p>
+            ) : null}
+            <SourceEditorialStatus status={record.editorialStatus} />
+            {library ? (
+              <ReadingControls record={record} onSetReadingState={library.onSetReadingState} />
+            ) : null}
           </header>
 
           {props.diagnostics.length > 0 ? (
@@ -858,9 +1169,15 @@ export function SourceDetails(props: {
             </section>
           ) : null}
 
-          {identifiers.length > 0 || (externalUrl && !hasDoi) ? (
+          {identifiers.length > 0 || (externalUrl && !hasDoi) || otherKeys.length > 0 ? (
             <DetailsSection title="Identifiers and links">
               <div className="space-y-2">
+                {otherKeys.length > 0 && record.citationKey ? (
+                  <>
+                    <DetailRow label={LIBRARY_LABELS.citedAs}>{record.citationKey}</DetailRow>
+                    <DetailRow label={LIBRARY_LABELS.alsoCitedAs}>{otherKeys.join(", ")}</DetailRow>
+                  </>
+                ) : null}
                 {identifiers.map((identifier) => {
                   return identifier.scheme.toLowerCase() === "doi" ? (
                     <DoiRow
@@ -881,15 +1198,37 @@ export function SourceDetails(props: {
             </DetailsSection>
           ) : null}
 
-          {tags.length > 0 ? (
-            <DetailsSection title="Tags">
-              <SourceTags tags={tags} />
-            </DetailsSection>
+          {props.organize ??
+            (tags.length > 0 ? (
+              <DetailsSection title="Tags">
+                <SourceTags tags={tags} />
+              </DetailsSection>
+            ) : null)}
+
+          {record.libraryMatch ? (
+            <LibraryCopySection
+              match={record.libraryMatch}
+              library={readOnly ? undefined : library}
+            />
           ) : null}
 
-          <SourceReference record={record} />
+          <SourceReference
+            record={record}
+            {...(props.citationProject ? { project: props.citationProject } : {})}
+          />
 
-          {sourceNote.section}
+          {props.annotations}
+
+          {showsPersonalNote ? (
+            <div className="@container/source-notes">
+              <div className="grid gap-6 @[32rem]/source-notes:grid-cols-2">
+                {inProject ? projectNoteSection : null}
+                {personalNote.section}
+              </div>
+            </div>
+          ) : library && !inProject ? null : (
+            projectNoteSection
+          )}
 
           <p className="border-t border-border pt-3 text-xs text-muted-foreground">
             {importedLabel(record)}
@@ -904,19 +1243,6 @@ export function SourceDetails(props: {
             if (!open) setRefreshAnchorPoint(null);
           }}
           onRefresh={props.onRefreshMetadata}
-        />
-      ) : null}
-
-      {removeAnchorPoint ? (
-        <SourceRemovalConfirmation
-          key={record.sourceId}
-          open
-          record={record}
-          anchorPoint={removeAnchorPoint}
-          onOpenChange={(open) => {
-            if (!open) setRemoveAnchorPoint(null);
-          }}
-          onRemove={props.onRemove}
         />
       ) : null}
     </div>

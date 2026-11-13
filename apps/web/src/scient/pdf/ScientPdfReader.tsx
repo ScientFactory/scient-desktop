@@ -46,6 +46,7 @@ import { pdfReaderSessionDocumentKey, pdfReaderSessionStore } from "./pdfReaderS
 import { usePresentedPdfSourceBundle } from "./usePresentedPdfSourceBundle";
 import { useScientPdfReader } from "./useScientPdfReader";
 import type { ScientPdfRuntime } from "./pdfRuntime";
+import { PdfAnnotationLayer } from "../annotations/PdfAnnotationLayer";
 import { PdfQuoteLayer } from "./anchors/PdfQuoteLayer";
 import { usePdfRevealClaim, usePdfRevealRequest } from "./anchors/pdfRevealRequests";
 import { pdfEditSession } from "./pdfEditSession";
@@ -916,15 +917,22 @@ function LoadedScientPdfReader(props: {
           >
             <div ref={setViewerElement} className="scient-pdf-presentation-layers" />
           </div>
-          <PdfQuoteLayer
+          <PdfAnnotationLayer
+            source={edit.savedSource ?? presentedSource?.source ?? null}
             container={container}
             runtimeRef={reader.runtimeRef}
-            presentedSource={edit.savedSource ?? presentedSource?.source ?? null}
-            revealKey={props.revealDocumentKey}
             ready={currentPresentation && !edit.busy}
-            citeThread={props.citeThread}
-            revealOwner={props.revealOwner}
-          />
+          >
+            <PdfQuoteLayer
+              container={container}
+              runtimeRef={reader.runtimeRef}
+              presentedSource={edit.savedSource ?? presentedSource?.source ?? null}
+              revealKey={props.revealDocumentKey}
+              ready={currentPresentation && !edit.busy}
+              citeThread={props.citeThread}
+              revealOwner={props.revealOwner}
+            />
+          </PdfAnnotationLayer>
           {props.sourceNotice || state.updateError ? (
             <div className="scient-pdf-update-notice" role="status">
               <span>{state.updateError ?? props.sourceNotice}</span>

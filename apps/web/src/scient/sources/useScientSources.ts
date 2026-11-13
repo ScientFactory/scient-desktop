@@ -2,7 +2,11 @@ import { useStableCallback } from "~/hooks/useStableCallback";
 import type {
   EnvironmentId,
   ScientSourceDetailResult,
+  ScientSourcesFileImportResult,
   ScientSourcesPreflightResult,
+  ScientSourcesReadingStateResult,
+  ScientSourcesScope,
+  ZoteroConnection,
   ZoteroImportScope,
 } from "@t3tools/contracts";
 import { useEffect, useLayoutEffect, useReducer, useRef } from "react";
@@ -10,7 +14,6 @@ import { useEffect, useLayoutEffect, useReducer, useRef } from "react";
 import { randomUUID } from "../../lib/utils";
 import {
   advanceSourcesImport,
-  approveScientSource,
   beginLocalSourcesImport,
   beginZoteroItemsImport,
   beginZoteroScopeImport,
@@ -27,6 +30,7 @@ import {
   readZoteroCollections,
   readZoteroStatus,
   uploadLocalSourcePdf,
+  importScientSourcesFile,
 } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import type { ScientSourcesImportOutcome, ScientSourcesImportCounts } from "./importOutcome";
@@ -77,6 +81,9 @@ export function useScientSources(input: {
   const requestRef = useRef(0);
   const overviewRequestRef = useRef(0);
   const zoteroRequestRef = useRef(0);
+  const detailFetchRef = useRef(0);
+  // Collections of a library the person already left must not replace the current ones.
+  const zoteroLibraryRef = useRef(0);
   const nextRequestToken = useStableCallback(() => {
     requestRef.current += 1;
     return requestRef.current;
@@ -89,6 +96,14 @@ export function useScientSources(input: {
     zoteroRequestRef.current += 1;
     return zoteroRequestRef.current;
   });
+  // Only a server that offers scopes shows the choice, so under a project server this stays unset.
+  const scopeRef = useRef<{ readonly context: string; readonly scope: ScientSourcesScope } | null>(
+    null,
+  );
+  const inLibraryView = () =>
+    scopeRef.current?.context === contextKeyRef.current && scopeRef.current.scope === "library";
+  // Started from the Library view, an import brings sources in without pinning them here.
+  const pinInput = () => (inLibraryView() ? { pin: false } : {});
   const isCurrentContext = () => mounted.current && contextKeyRef.current === contextKey;
   const isCurrentRequest = (request: number) =>
     isCurrentContext() && requestRef.current === request;
@@ -118,7 +133,11 @@ export function useScientSources(input: {
     // call while a durable import runs, and neither may starve the other.
     const request = nextOverviewRequestToken();
     dispatch({ type: "overviewRequestStarted", request });
-    const next = await readScientSources(input.environmentId, input.root);
+    const next = await readScientSources(
+      input.environmentId,
+      input.root,
+      inLibraryView() ? "library" : undefined,
+    );
     if (isCurrentContext() && overviewRequestRef.current === request) {
       dispatch({ type: "overviewArrived", request, overview: next });
     }
@@ -142,16 +161,47 @@ export function useScientSources(input: {
 
   const acceptSourceRecord = (record: ScientSourceDetailResult) => {
     dispatch({ type: "sourceRecordAccepted", record });
+    // The personal note on screen may be older than this revision; read it again.
+    const shown = state.sourceDetails[record.sourceId];
+    if (
+      shown &&
+      "personalNote" in shown &&
+      !("personalNote" in record) &&
+      shown.revision !== record.revision
+    ) {
+      const atDetailFetch = ++detailFetchRef.current;
+      void readScientSource(input.environmentId, { root: input.root, sourceId: record.sourceId })
+        .then((detail) => {
+          if (isCurrentContext()) {
+            dispatch({
+              type: "sourceDetailArrived",
+              sourceId: record.sourceId,
+              detail,
+              atDetailFetch,
+            });
+          }
+        })
+        .catch(() => undefined);
+    }
   };
 
-  const loadSource = async (sourceId: string): Promise<ScientSourceDetailResult> => {
+  /** With a review ID, the review's own record: from its snapshot when the Library lacks it. */
+  const loadSource = async (
+    sourceId: string,
+    reviewId?: string,
+  ): Promise<ScientSourceDetailResult> => {
     const cached = state.sourceDetails[sourceId];
     const summary = state.overview?.records.find((record) => record.sourceId === sourceId);
     if (cached && summary?.revision === cached.revision) return cached;
+    const atDetailFetch = ++detailFetchRef.current;
     try {
-      const detail = await readScientSource(input.environmentId, { root: input.root, sourceId });
+      const detail = await readScientSource(input.environmentId, {
+        root: input.root,
+        sourceId,
+        ...(reviewId ? { reviewId } : {}),
+      });
       if (isCurrentContext()) {
-        dispatch({ type: "sourceDetailArrived", sourceId, detail });
+        dispatch({ type: "sourceDetailArrived", sourceId, detail, atDetailFetch });
       }
       return detail;
     } catch (cause) {
@@ -172,7 +222,12 @@ export function useScientSources(input: {
     return result;
   };
 
-  const removeSource = async (sourceId: string, expectedRevision: number) => {
+  /** `refresh: false` leaves reading the list again to the caller, once after many removals. */
+  const removeSource = async (
+    sourceId: string,
+    expectedRevision: number,
+    options: { readonly refresh?: boolean } = {},
+  ) => {
     dispatch({ type: "busyChanged", busy: true });
     dispatch({ type: "errorCleared" });
     return await (async () => {
@@ -184,7 +239,7 @@ export function useScientSources(input: {
       if (isCurrentContext() && result.outcome !== "stale") {
         dispatch({ type: "sourceRemoved", sourceId });
       }
-      if (isCurrentContext()) {
+      if (isCurrentContext() && options.refresh !== false) {
         await refreshOverview().catch((cause: unknown) =>
           dispatch({ type: "errorArrived", error: message(cause) }),
         );
@@ -205,39 +260,17 @@ export function useScientSources(input: {
     sourceId: string,
     expectedRevision: number,
     note: string | null,
+    context?: { readonly base: string | null; readonly session: string },
   ) => {
     const result = await updateScientSourceNote(input.environmentId, {
       root: input.root,
       sourceId,
       expectedRevision,
       note,
+      ...(context ? { expectedNote: context.base, noteSession: context.session } : {}),
     });
     if (isCurrentContext()) acceptSourceRecord(result.record);
     return result;
-  };
-
-  const approveSource = async (sourceId: string, expectedRevision: number) => {
-    dispatch({ type: "busyChanged", busy: true });
-    dispatch({ type: "errorCleared" });
-    return await (async () => {
-      const result = await approveScientSource(input.environmentId, {
-        root: input.root,
-        sourceId,
-        expectedRevision,
-      });
-      if (isCurrentContext()) {
-        acceptSourceRecord(result.record);
-        await refreshOverview();
-      }
-      return result;
-    })()
-      .catch(async (cause) => {
-        if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
-        throw cause;
-      })
-      .finally(() => {
-        if (isCurrentContext()) dispatch({ type: "busyChanged", busy: false });
-      });
   };
 
   const resetSourceContext = useStableCallback((expectedContext: string) => {
@@ -269,13 +302,15 @@ export function useScientSources(input: {
           status,
           feedback:
             showRetryFeedback && status.state !== "ready"
-              ? status.state === "unreachable"
-                ? "Zotero is still unavailable. Make sure it is open on the computer running this project."
-                : status.state === "access-disabled"
-                  ? "Local access is still turned off in Zotero."
-                  : status.state === "incompatible"
-                    ? "This Zotero version is still not compatible with Scient."
-                    : "Zotero responded, but its local API still could not be verified."
+              ? status.connection === "web"
+                ? status.message
+                : status.state === "unreachable"
+                  ? "Zotero is still unavailable. Make sure it is open on the computer running this project."
+                  : status.state === "access-disabled"
+                    ? "Local access is still turned off in Zotero."
+                    : status.state === "incompatible"
+                      ? "This Zotero version is still not compatible with Scient."
+                      : "Zotero responded, but its local API still could not be verified."
               : null,
         });
       }
@@ -298,7 +333,17 @@ export function useScientSources(input: {
       });
   };
 
-  const searchZotero = async (query: string, start = 0, scopeInput?: ZoteroImportScope) => {
+  const zoteroConnection = state.zoteroStatus?.connection;
+  const zoteroGroupId = state.zoteroGroupId ?? undefined;
+  const zoteroGroupInput = zoteroGroupId ? { groupId: zoteroGroupId } : {};
+
+  const searchZotero = async (
+    query: string,
+    start = 0,
+    scopeInput?: ZoteroImportScope,
+    connection: ZoteroConnection | undefined = zoteroConnection,
+    groupId: string | undefined = zoteroGroupId,
+  ) => {
     const scope = scopeInput ?? state.zoteroScope;
     // The Zotero browse lane is independent of imports and overview loads.
     const request = nextZoteroRequestToken();
@@ -311,6 +356,8 @@ export function useScientSources(input: {
         query,
         start,
         limit: 50,
+        ...(connection ? { connection } : {}),
+        ...(groupId ? { groupId } : {}),
       });
       if (isCurrentContext() && zoteroRequestRef.current === request) {
         dispatch({ type: "zoteroLibraryArrived", request, page });
@@ -328,25 +375,41 @@ export function useScientSources(input: {
       });
   };
 
+  const showZoteroLibrary = async (
+    connection: ZoteroConnection | undefined,
+    groupId: string | null,
+  ) => {
+    const libraryRequest = ++zoteroLibraryRef.current;
+    dispatch({ type: "zoteroGroupChanged", groupId });
+    dispatch({ type: "zoteroScopeChanged", scope: DEFAULT_ZOTERO_SCOPE });
+    dispatch({ type: "zoteroLibrarySeeded", page: emptyZoteroPage(DEFAULT_ZOTERO_SCOPE) });
+    try {
+      const [collections] = await Promise.all([
+        readZoteroCollections(input.environmentId, connection, groupId ?? undefined),
+        searchZotero("", 0, DEFAULT_ZOTERO_SCOPE, connection, groupId ?? undefined),
+      ]);
+      if (isCurrentContext() && zoteroLibraryRef.current === libraryRequest) {
+        dispatch({ type: "zoteroCollectionsArrived", collections: collections.collections });
+      }
+    } catch (cause) {
+      if (isCurrentContext() && zoteroLibraryRef.current === libraryRequest) {
+        dispatch({ type: "errorArrived", error: message(cause) });
+      }
+    }
+  };
+
   const openZoteroLibrary = async (showRetryFeedback = false) => {
     const status = await checkZotero(showRetryFeedback);
     if (status?.state === "ready" && isCurrentContext()) {
-      dispatch({ type: "zoteroScopeChanged", scope: DEFAULT_ZOTERO_SCOPE });
-      dispatch({ type: "zoteroLibrarySeeded", page: emptyZoteroPage(DEFAULT_ZOTERO_SCOPE) });
-      try {
-        const [collections] = await Promise.all([
-          readZoteroCollections(input.environmentId),
-          searchZotero("", 0, DEFAULT_ZOTERO_SCOPE),
-        ]);
-        if (isCurrentContext()) {
-          dispatch({ type: "zoteroCollectionsArrived", collections: collections.collections });
-        }
-      } catch (cause) {
-        if (isCurrentContext()) dispatch({ type: "errorArrived", error: message(cause) });
-      }
+      const firstGroup = status.myLibrary === false ? status.groups?.[0]?.groupId : undefined;
+      await showZoteroLibrary(status.connection, firstGroup ?? null);
     }
     return status;
   };
+
+  /** My Library (null) or one of the groups the connection can read. */
+  const selectZoteroLibrary = (groupId: string | null) =>
+    showZoteroLibrary(zoteroConnection, groupId);
 
   const selectZoteroScope = async (scope: ZoteroImportScope) => {
     dispatch({ type: "zoteroScopeChanged", scope });
@@ -368,6 +431,9 @@ export function useScientSources(input: {
         root: input.root,
         operationId: randomUUID(),
         scope: state.zoteroScope,
+        ...(zoteroConnection ? { connection: zoteroConnection } : {}),
+        ...zoteroGroupInput,
+        ...pinInput(),
       });
       if (isCurrentRequest(request)) {
         dispatch({
@@ -409,6 +475,89 @@ export function useScientSources(input: {
       });
   };
 
+  /** Imports a .bib, RIS, CSL-JSON or EndNote XML file; entries already in the Library are left out. */
+  const importReferenceFile = async (
+    file: File,
+  ): Promise<{
+    readonly outcome: ScientSourcesImportOutcome | null;
+    readonly report: ScientSourcesFileImportResult["report"];
+  } | null> => {
+    dispatch({ type: "operationCleared" });
+    const request = nextRequestToken();
+    dispatch({ type: "requestStarted", request });
+    dispatch({ type: "importPreparationChanged", preparation: { kind: "file", name: file.name } });
+    dispatch({ type: "busyChanged", busy: true });
+    dispatch({ type: "errorCleared" });
+    return await (async () => {
+      const begun = await importScientSourcesFile(input.environmentId, {
+        root: input.root,
+        operationId: randomUUID(),
+        file,
+        ...pinInput(),
+      });
+      const priorCounts = {
+        imported: 0,
+        alreadyPresent: begun.report.alreadyInLibrary,
+        reviewRequired: 0,
+        failed: 0,
+      };
+      if (!begun.operation) {
+        return {
+          report: begun.report,
+          outcome:
+            priorCounts.alreadyPresent > 0
+              ? {
+                  kind: "already-present" as const,
+                  operation: null,
+                  sourceId: null,
+                  existingSourceId: null,
+                  counts: priorCounts,
+                }
+              : null,
+        };
+      }
+      if (isCurrentRequest(request)) {
+        dispatch({ type: "operationArrived", request, operation: begun.operation });
+      }
+      const next = await continueSourceImport({
+        environmentId: input.environmentId,
+        root: input.root,
+        operation: begun.operation,
+        advance: (operationId) =>
+          advanceSourcesImport(input.environmentId, { root: input.root, operationId }),
+        onProgress: (value) => {
+          if (isCurrentRequest(request)) {
+            dispatch({ type: "operationArrived", request, operation: value });
+          }
+        },
+      });
+      if (isCurrentRequest(request)) {
+        dispatch({ type: "operationArrived", request, operation: next });
+        await refreshOverview().catch((cause: unknown) =>
+          dispatch({ type: "errorArrived", error: message(cause) }),
+        );
+      }
+      return {
+        report: begun.report,
+        outcome: importOutcomeFromOperation({
+          operation: next,
+          revealSingleSource: false,
+          priorCounts,
+        }),
+      };
+    })()
+      .catch(async (cause) => {
+        if (isCurrentRequest(request)) dispatch({ type: "errorArrived", error: message(cause) });
+        return null;
+      })
+      .finally(() => {
+        if (isCurrentRequest(request)) {
+          dispatch({ type: "importPreparationChanged", preparation: null });
+          dispatch({ type: "busyChanged", busy: false });
+        }
+      });
+  };
+
   const executeImport = async (options: {
     readonly adapter: "zotero" | "local-files";
     readonly itemKeys: ReadonlyArray<string>;
@@ -426,6 +575,9 @@ export function useScientSources(input: {
       operationId: randomUUID(),
       itemKeys: options.itemKeys,
       possibleMetadataMatchOverrides: options.possibleMetadataMatchOverrides,
+      ...(options.adapter === "zotero" && zoteroConnection ? { connection: zoteroConnection } : {}),
+      ...(options.adapter === "zotero" ? zoteroGroupInput : {}),
+      ...pinInput(),
     });
     options.onStarted?.();
 
@@ -568,6 +720,8 @@ export function useScientSources(input: {
       const result = await preflightZoteroItems(input.environmentId, {
         root: input.root,
         itemKeys,
+        ...(zoteroConnection ? { connection: zoteroConnection } : {}),
+        ...zoteroGroupInput,
       });
       return await importPreflight({ adapter: "zotero", result, request });
     })()
@@ -848,6 +1002,9 @@ export function useScientSources(input: {
     zoteroStatus: state.zoteroStatus,
     zoteroCollections: state.zoteroCollections,
     zoteroScope: state.zoteroScope,
+    zoteroGroups: state.zoteroStatus?.groups ?? [],
+    zoteroMyLibrary: state.zoteroStatus?.myLibrary !== false,
+    zoteroGroupId: state.zoteroGroupId,
     zoteroCheckFeedback: state.zoteroCheckFeedback,
     library: state.library,
     preflight: state.preflight,
@@ -856,8 +1013,10 @@ export function useScientSources(input: {
     importPreparation: state.importPreparation,
     openZoteroLibrary,
     uploadLocalFiles,
+    importReferenceFile,
     searchZotero,
     selectZoteroScope,
+    selectZoteroLibrary,
     importZoteroScope,
     previewImport,
     runImport,
@@ -866,14 +1025,28 @@ export function useScientSources(input: {
     resumeImport,
     refreshOverview,
     reloadOverview,
+    /** "This project" (its pins) or the whole Library; only a library server offers the choice. */
+    selectScope: async (scope: ScientSourcesScope) => {
+      scopeRef.current = { context: contextKey, scope };
+      return reloadOverview();
+    },
     acceptSourceRecord,
     loadSource,
     refreshSourceMetadata,
     saveSourceNote,
-    approveSource,
+    /** Rows and details take a reading change from the route's answer: it changes no revision. */
+    applyReadingState: (result: ScientSourcesReadingStateResult) => {
+      if (isCurrentContext()) {
+        dispatch({
+          type: "readingStateArrived",
+          result,
+          atDetailFetch: detailFetchRef.current,
+        });
+      }
+    },
     removeSource,
     clearError: () => dispatch({ type: "errorCleared" }),
-    clearOperationSummary: () => dispatch({ type: "importReviewDismissed" }),
+    clearOperationSummary: () => dispatch({ type: "operationCleared" }),
     closeZoteroStatus: () => dispatch({ type: "zoteroStatusDismissed" }),
     closeLibrary: () => dispatch({ type: "zoteroLibraryClosed" }),
     resetImport: () => {

@@ -909,6 +909,9 @@ importers:
       '@scientfactory/provider-runtime':
         specifier: workspace:*
         version: link:../../packages/scient-provider-runtime
+      '@scientfactory/scient-citations':
+        specifier: workspace:*
+        version: link:../../packages/scient-citations
       '@scientfactory/scient-cloud':
         specifier: workspace:*
         version: link:../../packages/scient-cloud

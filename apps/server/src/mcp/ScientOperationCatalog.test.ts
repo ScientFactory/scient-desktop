@@ -13,6 +13,9 @@ import { ScientOperation } from "./ScientOperationTool.ts";
 import { ScientComputeToolkit } from "./toolkits/compute/tools.ts";
 import { ScientPdfBuildTool } from "./toolkits/documents/tools.ts";
 import { PreviewToolkit } from "./toolkits/preview/tools.ts";
+import { ScientAnnotationsToolkit } from "./toolkits/annotations/tools.ts";
+import { ScientSystematicReviewsToolkit } from "./toolkits/systematicReviews/tools.ts";
+import { ScientReferencesToolkit } from "./toolkits/references/tools.ts";
 import { ScientSourcesToolkit } from "./toolkits/sources/tools.ts";
 import { ScientSkillLoadTool } from "./toolkits/skills/tools.ts";
 
@@ -45,11 +48,15 @@ it("preserves automatic Sources writes independently of the Browser grant", () =
   const available = scientOperationCatalog
     .list()
     .filter((operation) => hasOperationCapabilities(operation, baseline));
-  // 3 document builds, 8 Overleaf tools (no grant of their own), 9 Sources tools and the Compute
-  // inventory, which any agent may read.
-  expect(available).toHaveLength(21);
-  const sources = Object.values(ScientSourcesToolkit.tools);
-  expect(sources).toHaveLength(9);
+  // 3 document builds, 8 Overleaf tools (no grant of their own), the Sources, reference check,
+  // systematic review and annotation tools and the Compute inventory, which any agent may read.
+  const sources = [
+    ...Object.values(ScientSourcesToolkit.tools),
+    ...Object.values(ScientReferencesToolkit.tools),
+    ...Object.values(ScientSystematicReviewsToolkit.tools),
+    ...Object.values(ScientAnnotationsToolkit.tools),
+  ];
+  expect(available).toHaveLength(3 + 8 + sources.length + 1);
   for (const tool of sources) {
     const operation = scientOperationCatalog.forTool(tool.name)!;
     expect(available).toContain(operation);

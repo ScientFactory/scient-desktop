@@ -8,18 +8,93 @@
       "types": "./src/index.ts",
       "import": "./src/index.ts"
     },
+    "./bibliography": {
+      "types": "./src/bibliography/index.ts",
+      "import": "./src/bibliography/index.ts"
+    },
+    "./collections": {
+      "types": "./src/collections.ts",
+      "import": "./src/collections.ts"
+    },
+    "./categories-store": {
+      "types": "./src/categoriesStore.ts",
+      "import": "./src/categoriesStore.ts"
+    },
+    "./bibtex": {
+      "types": "./src/bibtex.ts",
+      "import": "./src/bibtex.ts"
+    },
+    "./full-text": {
+      "types": "./src/fullText.ts",
+      "import": "./src/fullText.ts"
+    },
+    "./full-text-store": {
+      "types": "./src/fullTextStore.ts",
+      "import": "./src/fullTextStore.ts"
+    },
+    "./library-lock": {
+      "types": "./src/libraryLock.ts",
+      "import": "./src/libraryLock.ts"
+    },
+    "./library-aliases": {
+      "types": "./src/libraryAliases.ts",
+      "import": "./src/libraryAliases.ts"
+    },
+    "./library-instance-map": {
+      "types": "./src/libraryInstanceMap.ts",
+      "import": "./src/libraryInstanceMap.ts"
+    },
+    "./library-reviews": {
+      "types": "./src/libraryReviews.ts",
+      "import": "./src/libraryReviews.ts"
+    },
+    "./library-move": {
+      "types": "./src/libraryMove.ts",
+      "import": "./src/libraryMove.ts"
+    },
+    "./library-review-conflicts": {
+      "types": "./src/libraryReviewConflicts.ts",
+      "import": "./src/libraryReviewConflicts.ts"
+    },
+    "./library-merge": {
+      "types": "./src/libraryMerge.ts",
+      "import": "./src/libraryMerge.ts"
+    },
+    "./library-root": {
+      "types": "./src/libraryRoot.ts",
+      "import": "./src/libraryRoot.ts"
+    },
     "./material-selection": {
       "types": "./src/materialSelection.ts",
       "import": "./src/materialSelection.ts"
     },
+    "./project-package": {
+      "types": "./src/projectPackage.ts",
+      "import": "./src/projectPackage.ts"
+    },
+    "./project-pins": {
+      "types": "./src/projectPins.ts",
+      "import": "./src/projectPins.ts"
+    },
+    "./project-files": {
+      "types": "./src/projectFiles.ts",
+      "import": "./src/projectFiles.ts"
+    },
     "./store": {
       "types": "./src/store.ts",
       "import": "./src/store.ts"
+    },
+    "./systematic-review": {
+      "types": "./src/systematicReviewStore.ts",
+      "import": "./src/systematicReviewStore.ts"
     }
   },
   "scripts": {
     "typecheck": "effect-tsgo tsrs --noEmit",
-    "test": "vp test run"
+    "test": "vp test run",
+    "measure:library-move": "node scripts/measureLibraryMove.ts",
+    "measure:bulk-edits": "node scripts/measureBulkEdits.ts",
+    "generate:scale-library": "node scripts/scaleLibrary.ts"
   },
   "dependencies": {
     "@scientfactory/project-init": "workspace:*",

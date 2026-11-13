@@ -1,4 +1,7 @@
+import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
+
+import { ScientSourceCategorySummary } from "./categories.ts";
 
 // Agents reading tool schemas gain nothing from the trimmed-string regex; decoding still enforces it.
 const NonEmptyString = Schema.String.check(
@@ -67,11 +70,50 @@ export type ScientSourceExternalReference = typeof ScientSourceExternalReference
 
 export const ScientSourceOrigin = Schema.Struct({
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "paper", "file", "web"]),
   operationId: NonEmptyString,
+  // Older records may still say "pending"; nothing gates on it any more.
   review: Schema.Literals(["none", "pending"]),
 });
 export type ScientSourceOrigin = typeof ScientSourceOrigin.Type;
+
+export const ScientSourceActor = Schema.Literals(["user", "agent"]);
+export type ScientSourceActor = typeof ScientSourceActor.Type;
+
+/** Whether a source's identifier was confirmed against its registry. */
+export const ScientSourceVerification = Schema.Struct({
+  state: Schema.Literals(["verified", "unchecked", "unverified"]),
+  identifier: Schema.optionalKey(ScientSourceIdentifier),
+  checkedAt: Schema.optionalKey(NonEmptyString),
+  /** Why a checked identifier stays unverified: the registry has no such work, or another one. */
+  problem: Schema.optionalKey(Schema.Literals(["not-found", "mismatch"])),
+  /** Brought from another computer's check (a project package) at this time; not checked here. */
+  carriedAt: Schema.optionalKey(NonEmptyString),
+});
+export type ScientSourceVerification = typeof ScientSourceVerification.Type;
+
+export const ScientSourceEditorialNotice = Schema.Struct({
+  kind: Schema.Literals(["retraction", "withdrawal", "expression-of-concern", "correction"]),
+  /** The notice's own DOI, when the registry gives one. */
+  doi: Schema.optionalKey(NonEmptyString),
+  date: Schema.optionalKey(NonEmptyString),
+  /** Who reported it, as the registry names them, for example "retraction-watch" or "publisher". */
+  source: Schema.optionalKey(NonEmptyString),
+});
+export type ScientSourceEditorialNotice = typeof ScientSourceEditorialNotice.Type;
+
+/**
+ * Retractions, withdrawals, expressions of concern and corrections the registry reported when the
+ * identifier was last checked. `none` means it reported none; absence means never checked.
+ */
+export const ScientSourceEditorialStatus = Schema.Struct({
+  state: Schema.Literals(["retracted", "withdrawn", "expression-of-concern", "corrected", "none"]),
+  notices: Schema.Array(ScientSourceEditorialNotice).pipe(Schema.check(Schema.isMaxLength(64))),
+  checkedAt: NonEmptyString,
+  /** Brought from another computer's check (a project package) at this time; not checked here. */
+  carriedAt: Schema.optionalKey(NonEmptyString),
+});
+export type ScientSourceEditorialStatus = typeof ScientSourceEditorialStatus.Type;
 
 export const ScientSourceFieldProvenance = Schema.Struct({
   field: NonEmptyString,
@@ -85,12 +127,27 @@ export const ScientSourceFieldProvenance = Schema.Struct({
     "europe-pmc",
     "derived",
     "user",
+    "arxiv",
+    "open-library",
+    "google-books",
+    "openalex",
+    "semantic-scholar",
+    "file",
+    "web-page",
   ]),
   sourceField: NullableText,
   sourceIdentifier: Schema.optionalKey(ScientSourceIdentifier),
   retrievedAt: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceFieldProvenance = typeof ScientSourceFieldProvenance.Type;
+
+/** How a downloaded PDF was reached, and which version of the work it is. */
+export const ScientSourceAttachmentRetrieval = Schema.Struct({
+  route: Schema.Literals(["open-access", "publisher", "university", "library"]),
+  /** "unknown" is a free copy whose repository did not say which version it holds. */
+  version: Schema.Literals(["published", "accepted", "preprint", "unknown"]),
+});
+export type ScientSourceAttachmentRetrieval = typeof ScientSourceAttachmentRetrieval.Type;
 
 export const ScientSourceAttachment = Schema.Struct({
   attachmentId: NonEmptyString,
@@ -101,6 +158,7 @@ export const ScientSourceAttachment = Schema.Struct({
   byteLength: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   relativePath: NonEmptyString,
   importedAt: NonEmptyString,
+  retrieval: Schema.optionalKey(ScientSourceAttachmentRetrieval),
 });
 export type ScientSourceAttachment = typeof ScientSourceAttachment.Type;
 
@@ -112,11 +170,22 @@ export const ScientSourceAttachmentSummary = Schema.Struct({
 });
 export type ScientSourceAttachmentSummary = typeof ScientSourceAttachmentSummary.Type;
 
+/** Rules in `citationKeys.ts`; decoding stays lenient so one odd key never hides a record. */
+export const ScientSourceCitationKey = NonEmptyString;
+
+/**
+ * A source as the stores hand it out. Project stores keep `formatVersion: 1` records, which name
+ * their project; the personal library keeps `formatVersion: 2` records, which name none. Files are
+ * decoded with the stricter persisted schemas below.
+ */
 export const ScientSourceRecord = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  formatVersion: Schema.Literals([1, 2]),
   sourceId: NonEmptyString,
-  projectId: NonEmptyString,
+  projectId: Schema.optionalKey(NonEmptyString),
+  /** Stable project origin for hydration or package import, including alternate Library IDs. */
+  hydratedFromProjectSourceId: Schema.optionalKey(NonEmptyString),
   revision: Schema.Int.check(Schema.isGreaterThan(0)),
+  citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -139,10 +208,51 @@ export const ScientSourceRecord = Schema.Struct({
   attachments: Schema.Array(ScientSourceAttachment),
   fieldProvenance: Schema.Array(ScientSourceFieldProvenance),
   origin: Schema.optionalKey(ScientSourceOrigin),
+  verification: Schema.optionalKey(ScientSourceVerification),
+  editorialStatus: Schema.optionalKey(ScientSourceEditorialStatus),
   importedAt: NonEmptyString,
   updatedAt: Schema.optionalKey(NonEmptyString),
+  updatedBy: Schema.optionalKey(ScientSourceActor),
 });
 export type ScientSourceRecord = typeof ScientSourceRecord.Type;
+
+/** A record file in a project store. */
+export const ScientSourceRecordV1 = Schema.Struct({
+  ...ScientSourceRecord.fields,
+  formatVersion: Schema.Literal(1),
+  projectId: NonEmptyString,
+});
+
+const { projectId: _projectId, ...libraryRecordFields } = ScientSourceRecord.fields;
+/** A record file in the personal library: the same source with no project. */
+export const ScientLibraryRecordV2 = Schema.Struct({
+  ...libraryRecordFields,
+  formatVersion: Schema.Literal(2),
+  /** Personal reading state, kept only in the library; records written before it are unread. */
+  readingStatus: Schema.Literals(["unread", "read"]).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed("unread" as const)),
+  ),
+  starred: Schema.Boolean.pipe(Schema.withDecodingDefaultKey(Effect.succeed(false))),
+});
+export type ScientLibraryRecord = typeof ScientLibraryRecordV2.Type;
+export type ScientSourceReadingStatus = ScientLibraryRecord["readingStatus"];
+
+export interface ScientSourceReadingState {
+  readonly readingStatus: ScientSourceReadingStatus;
+  readonly starred: boolean;
+}
+
+/** A library record's reading state; null for a project record or a pin's snapshot. */
+export function scientSourceReadingState(
+  record: ScientSourceRecord,
+): ScientSourceReadingState | null {
+  if (record.formatVersion !== 2 || !("readingStatus" in record)) return null;
+  const library = record as ScientSourceRecord & Partial<ScientSourceReadingState>;
+  return {
+    readingStatus: library.readingStatus === "read" ? "read" : "unread",
+    starred: library.starred === true,
+  };
+}
 
 /**
  * Bounded list projection. Large abstracts, provenance, and external sync
@@ -151,6 +261,7 @@ export type ScientSourceRecord = typeof ScientSourceRecord.Type;
 export const ScientSourceSummary = Schema.Struct({
   sourceId: ScientSourceRecord.fields.sourceId,
   revision: ScientSourceRecord.fields.revision,
+  citationKey: ScientSourceRecord.fields.citationKey,
   type: ScientSourceRecord.fields.type,
   title: ScientSourceRecord.fields.title,
   creators: ScientSourceRecord.fields.creators,
@@ -158,11 +269,17 @@ export const ScientSourceSummary = Schema.Struct({
   identifiers: ScientSourceRecord.fields.identifiers,
   containerTitle: ScientSourceRecord.fields.containerTitle,
   url: ScientSourceRecord.fields.url,
+  // Optional so a client can read an older server's list.
+  tags: Schema.optional(ScientSourceRecord.fields.tags),
   externalReferences: ScientSourceRecord.fields.externalReferences,
   attachments: Schema.Array(ScientSourceAttachmentSummary),
   importedAt: ScientSourceRecord.fields.importedAt,
   updatedAt: ScientSourceRecord.fields.updatedAt,
   origin: Schema.optional(ScientSourceOrigin),
+  verification: Schema.optional(ScientSourceVerification),
+  editorialStatus: Schema.optional(ScientSourceEditorialStatus),
+  /** Study design and topics from registries; joined from the categories file, not the record. */
+  categories: Schema.optional(ScientSourceCategorySummary),
 });
 export type ScientSourceSummary = typeof ScientSourceSummary.Type;
 
@@ -170,6 +287,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
   return {
     sourceId: record.sourceId,
     revision: record.revision,
+    ...(record.citationKey ? { citationKey: record.citationKey } : {}),
     type: record.type,
     title: record.title,
     creators: record.creators,
@@ -177,6 +295,7 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
     identifiers: record.identifiers,
     containerTitle: record.containerTitle,
     url: record.url,
+    tags: record.tags,
     externalReferences: record.externalReferences,
     attachments: record.attachments.map((attachment) => ({
       attachmentId: attachment.attachmentId,
@@ -187,11 +306,15 @@ export function scientSourceSummaryFromRecord(record: ScientSourceRecord): Scien
     importedAt: record.importedAt,
     ...(record.updatedAt ? { updatedAt: record.updatedAt } : {}),
     ...(record.origin ? { origin: record.origin } : {}),
+    ...(record.verification ? { verification: record.verification } : {}),
+    ...(record.editorialStatus ? { editorialStatus: record.editorialStatus } : {}),
   };
 }
 
 /** The fields a researcher may correct without changing source identity or files. */
 export const ScientSourceEditableMetadata = Schema.Struct({
+  /** Omitted means keep the current key. A new value renames the key on purpose. */
+  citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -211,6 +334,23 @@ export const ScientSourceEditableMetadata = Schema.Struct({
 });
 export type ScientSourceEditableMetadata = typeof ScientSourceEditableMetadata.Type;
 
+/**
+ * What Zotero held for one source when Scient last read it, kept apart from the record.
+ * Refresh compares against it to tell Zotero's changes from local edits.
+ */
+export const ScientSourceZoteroSync = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  sourceId: NonEmptyString,
+  libraryId: NonEmptyString,
+  itemKey: NonEmptyString,
+  itemVersion: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  syncedAt: NonEmptyString,
+  metadata: ScientSourceEditableMetadata,
+  note: Schema.NullOr(Schema.String),
+  attachmentKeys: Schema.Array(NonEmptyString),
+});
+export type ScientSourceZoteroSync = typeof ScientSourceZoteroSync.Type;
+
 export const ScientSourceMetadataValidationIssue = Schema.Struct({
   field: NonEmptyString,
   message: NonEmptyString,
@@ -219,6 +359,8 @@ export type ScientSourceMetadataValidationIssue = typeof ScientSourceMetadataVal
 
 export const ScientSourceCandidate = Schema.Struct({
   sourceKey: NonEmptyString,
+  /** A key kept from the importing system; the store generates one when absent. */
+  citationKey: Schema.optionalKey(ScientSourceCitationKey),
   type: ScientSourceType,
   customType: Schema.optionalKey(NullableText),
   title: NullableText,
@@ -241,6 +383,7 @@ export const ScientSourceCandidate = Schema.Struct({
   pdfAvailable: Schema.Boolean,
   pdfFileName: NullableText,
   pdfAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  note: Schema.optionalKey(ScientSourceNote),
 });
 export type ScientSourceCandidate = typeof ScientSourceCandidate.Type;
 
@@ -285,6 +428,12 @@ export const ScientSourceMetadataUpdateResult = Schema.Struct({
   record: ScientSourceRecord,
   duplicate: ScientSourceDuplicateAssessment,
   validationIssues: Schema.Array(ScientSourceMetadataValidationIssue),
+  /** Project documents whose citations followed a deliberate key rename. */
+  citationKeyRenamedIn: Schema.optionalKey(Schema.Array(NonEmptyString)),
+  /** Documents a key rename could not reach, with why; their citations still use the old key. */
+  citationKeyRenameSkipped: Schema.optionalKey(
+    Schema.Array(Schema.Struct({ path: NonEmptyString, reason: NonEmptyString })),
+  ),
 });
 export type ScientSourceMetadataUpdateResult = typeof ScientSourceMetadataUpdateResult.Type;
 
@@ -294,20 +443,92 @@ export const ScientSourceNoteUpdateResult = Schema.Struct({
 });
 export type ScientSourceNoteUpdateResult = typeof ScientSourceNoteUpdateResult.Type;
 
-export const ScientSourceReviewUpdateResult = Schema.Struct({
-  outcome: Schema.Literals(["updated", "unchanged", "stale"]),
-  record: ScientSourceRecord,
-});
-export type ScientSourceReviewUpdateResult = typeof ScientSourceReviewUpdateResult.Type;
-
 export const ScientSourceRemovalResult = Schema.Struct({
   outcome: Schema.Literals(["removed", "not-found", "stale"]),
   sourceId: NonEmptyString,
   revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
   removedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   retainedAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  /** A removed source waits in the project trash until it is restored or the trash is emptied. */
+  restorable: Schema.optionalKey(Schema.Boolean),
 });
 export type ScientSourceRemovalResult = typeof ScientSourceRemovalResult.Type;
+
+/** A removed source, kept whole with its attachment references until the trash is emptied. */
+export const ScientSourceTrashEntry = Schema.Struct({
+  /** 1 in a project store (names the project), 2 in the library (names none), as its record. */
+  formatVersion: Schema.Literals([1, 2]),
+  sourceId: NonEmptyString,
+  projectId: Schema.optionalKey(NonEmptyString),
+  removedAt: NonEmptyString,
+  removedBy: ScientSourceActor,
+  record: ScientSourceRecord,
+  /** Set when a library merge put the source here; only that merge's Undo brings it back. */
+  mergedInto: Schema.optionalKey(
+    Schema.Struct({ sourceId: NonEmptyString, mergeId: NonEmptyString }),
+  ),
+});
+export type ScientSourceTrashEntry = typeof ScientSourceTrashEntry.Type;
+
+export const ScientSourceTrashSummary = Schema.Struct({
+  sourceId: NonEmptyString,
+  revision: ScientSourceRecord.fields.revision,
+  type: ScientSourceType,
+  title: NullableText,
+  creators: Schema.Array(ScientSourceCreator),
+  issuedYear: Schema.NullOr(Schema.Int),
+  removedAt: NonEmptyString,
+  removedBy: ScientSourceActor,
+  /** Library only: projects that still cite it and keep citing it from their own copy. */
+  citedBy: Schema.optionalKey(Schema.Array(NonEmptyString)),
+});
+export type ScientSourceTrashSummary = typeof ScientSourceTrashSummary.Type;
+
+export const ScientSourceStoreIssue = Schema.Struct({
+  /** Project-relative path with forward slashes. */
+  path: Schema.String,
+  message: Schema.String,
+});
+export type ScientSourceStoreIssue = typeof ScientSourceStoreIssue.Type;
+
+export const ScientSourceTrashListing = Schema.Struct({
+  entries: Schema.Array(ScientSourceTrashSummary),
+  issues: Schema.Array(ScientSourceStoreIssue),
+});
+export type ScientSourceTrashListing = typeof ScientSourceTrashListing.Type;
+
+export const ScientSourceRestoreResult = Schema.Struct({
+  outcome: Schema.Literals(["restored", "not-found", "exists", "duplicate"]),
+  sourceId: NonEmptyString,
+  record: Schema.NullOr(ScientSourceRecord),
+  matchingSourceIds: Schema.Array(NonEmptyString),
+});
+export type ScientSourceRestoreResult = typeof ScientSourceRestoreResult.Type;
+
+export const ScientSourcePermanentDeletionResult = Schema.Struct({
+  deletedSourceIds: Schema.Array(NonEmptyString),
+  removedFileCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type ScientSourcePermanentDeletionResult = typeof ScientSourcePermanentDeletionResult.Type;
+
+export const ScientSourceRevisionSummary = Schema.Struct({
+  revision: ScientSourceRecord.fields.revision,
+  savedAt: NonEmptyString,
+  savedBy: ScientSourceActor,
+  /** Fields that differ from the previous kept revision; empty for the first one. */
+  changes: Schema.Array(NonEmptyString),
+  current: Schema.Boolean,
+});
+export type ScientSourceRevisionSummary = typeof ScientSourceRevisionSummary.Type;
+
+export const ScientSourceRevertResult = Schema.Struct({
+  outcome: Schema.Literals(["reverted", "unchanged", "stale", "not-found", "duplicate"]),
+  record: ScientSourceRecord,
+  /** PDFs of the earlier revision whose files were already deleted when the trash was emptied. */
+  missingAttachmentCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  matchingSourceIds: Schema.Array(NonEmptyString),
+});
+export type ScientSourceRevertResult = typeof ScientSourceRevertResult.Type;
 
 export const ScientSourcePreflightItem = Schema.Struct({
   candidate: ScientSourceCandidate,
@@ -325,6 +546,8 @@ export const ScientSourceOperationItem = Schema.Struct({
   duplicateKind: Schema.optionalKey(ScientSourceDuplicateKind),
   sourceId: NullableText,
   message: NullableText,
+  /** Something worth telling about an imported item, such as a flattened Zotero collection. */
+  note: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 
@@ -335,23 +558,31 @@ export type ScientSourceOperationItem = typeof ScientSourceOperationItem.Type;
 export const SCIENT_SOURCE_IMPORT_ITEM_LIMIT = 500;
 
 export const ScientSourceImportOperation = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  /** 1 in a project store (names its project), 2 in the library (names the library). */
+  formatVersion: Schema.Literals([1, 2]),
   operationId: NonEmptyString,
-  projectId: NonEmptyString,
-  adapter: Schema.Literals(["zotero", "local-files", "agent"]),
+  projectId: Schema.optionalKey(NonEmptyString),
+  libraryId: Schema.optionalKey(NonEmptyString),
+  adapter: Schema.Literals(["zotero", "local-files", "agent", "zotero-web", "file"]),
   actor: Schema.Literals(["user", "agent"]),
-  intake: Schema.Literals(["zotero", "local-pdf", "identifier"]),
+  intake: Schema.Literals(["zotero", "local-pdf", "identifier", "file"]),
   state: Schema.Literals(["running", "cancelled", "completed"]),
   createdAt: NonEmptyString,
   updatedAt: NonEmptyString,
   items: Schema.Array(ScientSourceOperationItem),
+  /** A Zotero import from a group library; absent for My Library and other adapters. */
+  zoteroGroupId: Schema.optionalKey(Schema.String),
+  /** Library imports started from a project: the checkout instance each imported source is pinned in. */
+  pinInstanceId: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceImportOperation = typeof ScientSourceImportOperation.Type;
 
 export const ScientSourceImportReceipt = Schema.Struct({
-  formatVersion: Schema.Literal(1),
+  /** 1 in a project store (names its project), 2 in the library (names the library). */
+  formatVersion: Schema.Literals([1, 2]),
   operationId: NonEmptyString,
-  projectId: NonEmptyString,
+  projectId: Schema.optionalKey(NonEmptyString),
+  libraryId: Schema.optionalKey(NonEmptyString),
   outcome: Schema.Literals(["completed", "cancelled"]),
   finishedAt: NonEmptyString,
   importedSourceIds: Schema.Array(NonEmptyString),
@@ -371,6 +602,9 @@ export const ScientSourcesOverview = Schema.Struct({
   ),
   records: Schema.Array(ScientSourceRecord),
   activeOperation: Schema.NullOr(ScientSourceImportOperation),
+  /** Record files that could not be read; the rest of the Library still lists. */
+  unreadableRecords: Schema.optionalKey(Schema.Array(ScientSourceStoreIssue)),
+  trashedCount: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
 });
 export type ScientSourcesOverview = typeof ScientSourcesOverview.Type;
 
@@ -383,10 +617,104 @@ export const ZoteroConnectionState = Schema.Literals([
 ]);
 export type ZoteroConnectionState = typeof ZoteroConnectionState.Type;
 
+/** Zotero on this computer (local API) or the user's library on zotero.org (key from Accounts). */
+export const ZoteroConnection = Schema.Literals(["local", "web"]);
+export type ZoteroConnection = typeof ZoteroConnection.Type;
+
+/** A zotero.org group's numeric ID; Zotero on this computer uses the same ID for a synced group. */
+export const ZoteroGroupId = Schema.String.check(Schema.isPattern(/^[1-9][0-9]{0,11}$/u));
+export type ZoteroGroupId = typeof ZoteroGroupId.Type;
+
+/**
+ * Group items are linked as `groups/<groupId>` and My Library items by the bare user ID, so a
+ * group and a user that share a number, or items that share a key, never meet.
+ */
+export const zoteroGroupLibraryId = (groupId: string): string => `groups/${groupId}`;
+
+export function zoteroGroupIdOfLibrary(libraryId: string): string | null {
+  return /^groups\/([1-9][0-9]{0,11})$/u.exec(libraryId)?.[1] ?? null;
+}
+
+/** A group library the connection can read; `canWrite` only on zotero.org with a key that can. */
+export const ZoteroGroup = Schema.Struct({
+  groupId: ZoteroGroupId,
+  name: NonEmptyString,
+  canWrite: Schema.Boolean,
+});
+export type ZoteroGroup = typeof ZoteroGroup.Type;
+
+/** Fields a Zotero refresh compares; the citation key never changes from Zotero. */
+export const ScientSourceZoteroRefreshField = Schema.Literals([
+  "type",
+  "customType",
+  "title",
+  "creators",
+  "issuedRaw",
+  "issuedYear",
+  "identifiers",
+  "abstract",
+  "containerTitle",
+  "publisher",
+  "volume",
+  "issue",
+  "pages",
+  "language",
+  "url",
+  "tags",
+  "note",
+]);
+export type ScientSourceZoteroRefreshField = typeof ScientSourceZoteroRefreshField.Type;
+
+/** A field edited here that Zotero also changed; the value here was kept. */
+export const ScientSourceZoteroConflict = Schema.Struct({
+  field: ScientSourceZoteroRefreshField,
+  local: Schema.String,
+  zotero: Schema.String,
+});
+export type ScientSourceZoteroConflict = typeof ScientSourceZoteroConflict.Type;
+
+export const ScientSourceZoteroRefreshItem = Schema.Struct({
+  sourceId: NonEmptyString,
+  title: NullableText,
+  outcome: Schema.Literals(["updated", "unchanged", "missing", "stale", "failed"]),
+  changedFields: Schema.Array(NonEmptyString),
+  addedPdfCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  conflicts: Schema.Array(ScientSourceZoteroConflict),
+  message: NullableText,
+});
+export type ScientSourceZoteroRefreshItem = typeof ScientSourceZoteroRefreshItem.Type;
+
+export const ScientSourceZoteroRefreshResult = Schema.Struct({
+  connection: ZoteroConnection,
+  items: Schema.Array(ScientSourceZoteroRefreshItem),
+});
+export type ScientSourceZoteroRefreshResult = typeof ScientSourceZoteroRefreshResult.Type;
+
+export const ScientSourceZoteroSendItem = Schema.Struct({
+  sourceId: NonEmptyString,
+  title: NullableText,
+  outcome: Schema.Literals(["created", "updated", "unchanged", "changed-in-zotero", "failed"]),
+  itemKey: NullableText,
+  message: NullableText,
+});
+export type ScientSourceZoteroSendItem = typeof ScientSourceZoteroSendItem.Type;
+
+export const ScientSourceZoteroSendResult = Schema.Struct({
+  items: Schema.Array(ScientSourceZoteroSendItem),
+});
+export type ScientSourceZoteroSendResult = typeof ScientSourceZoteroSendResult.Type;
+
 export const ZoteroConnectionStatus = Schema.Struct({
   state: ZoteroConnectionState,
   apiVersion: Schema.NullOr(Schema.Int),
   message: NonEmptyString,
+  // Absent on statuses from before zotero.org support, which were always local.
+  connection: Schema.optionalKey(ZoteroConnection),
+  canWrite: Schema.optionalKey(Schema.Boolean),
+  /** False when a zotero.org key reads groups but not its owner's My Library. */
+  myLibrary: Schema.optionalKey(Schema.Boolean),
+  /** Group libraries besides My Library; listed only when the connection is ready. */
+  groups: Schema.optionalKey(Schema.Array(ZoteroGroup)),
 });
 export type ZoteroConnectionStatus = typeof ZoteroConnectionStatus.Type;
 

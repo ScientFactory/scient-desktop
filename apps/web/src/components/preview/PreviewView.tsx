@@ -100,6 +100,7 @@ import {
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 // SCIENT-FORK:START — keep PDF export actions in their Scient owner.
 import { ScientPreviewExportActions } from "~/scient/pdf/ScientPreviewExportActions";
+import { SaveToLibraryMenuItem } from "~/scient/sources/SaveToLibraryMenuItem";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — a browser tab can open in a new window from its menu.
 import { PanelTabNewWindowItem } from "~/scient/multiWindow/PanelTabNewWindowItem";
@@ -1114,7 +1115,7 @@ export function PreviewView({
         }
         trailingActions={
           moreMenuActions ? (
-            // SCIENT-FORK:START — place Open in new window and PDF export in the preview menu.
+            // SCIENT-FORK:START — place Open in new window, Save to Library and PDF export in the preview menu.
             <PreviewMoreMenu
               extraItems={
                 <>
@@ -1124,6 +1125,11 @@ export function PreviewView({
                   {previewBridge && tabId ? (
                     <>
                       <PanelTabNewWindowItem label="Open in new Scient window" plain />
+                      <SaveToLibraryMenuItem
+                        threadRef={threadRef}
+                        runtimeTabId={runtimeTabId}
+                        disabled={isUnreachable || loading || isServerTab}
+                      />
                       <ScientPreviewExportActions
                         disabled={
                           pdfExportOwner === null ||
