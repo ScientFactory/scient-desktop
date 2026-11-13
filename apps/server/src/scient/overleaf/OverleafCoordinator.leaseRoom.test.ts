@@ -20,8 +20,9 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("Overleaf writes refused up front
     () =>
       run(
         Effect.gen(function* () {
-          // Within the manuscript limit, but over 4 KiB once inside the folder.
-          const path = `${"a/".repeat(2_040)}main.tex`;
+          // Within the manuscript limit, but over 4 KiB once inside the folder. 511 levels
+          // stay far under Git's tree depth limit.
+          const path = `${"abcdefg/".repeat(510)}main.tex`;
           const w = yield* world({
             synced: { "main.tex": "before" },
             remote: { "main.tex": "after", [path]: "new" },
