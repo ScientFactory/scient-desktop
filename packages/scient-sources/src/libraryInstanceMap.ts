@@ -9,6 +9,7 @@ import * as Schema from "effect/Schema";
 
 import { assessSourceMetadataDuplicate, workLevelIdentifierKey } from "./duplicates.ts";
 import { readLibraryAliasesAt, resolveScientLibraryAlias } from "./libraryAliases.ts";
+import { scientLibraryIdentityProblem } from "./libraryDuplicates.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   listScientLibraryInstances,
@@ -87,7 +88,8 @@ export type ScientProjectSourceResolution =
       readonly kind: "unresolved";
       readonly projectSourceId: string;
       /** `removed`: the mapped library record is gone and nothing else matched; never hydrated. */
-      readonly reason: "no-match" | "ambiguous" | "removed";
+      /** `contradicted`: only matches that disagree with the snapshot; never hydrated. */
+      readonly reason: "no-match" | "ambiguous" | "contradicted" | "removed";
       readonly candidateIds: ReadonlyArray<string>;
     };
 
@@ -162,11 +164,19 @@ function workLevelKeys(identifiers: ReadonlyArray<ScientSourceIdentifier>): Set<
   );
 }
 
-/** Identifier first, then title, lead author and year; one match resolves, more stay ambiguous. */
+/**
+ * Identifier first, then title, lead author and year; one corroborated match resolves, more stay
+ * ambiguous. Matches that do not corroborate the snapshot (`scientLibraryIdentityProblem`: titles,
+ * known types, arXiv versions, conflicting identifiers) never resolve; with none corroborated they
+ * are `contradicted`.
+ */
 function matchWork(
   work: ScientProjectSourceWork,
   records: ReadonlyArray<ScientSourceRecord>,
-): { readonly by: "identifier" | "metadata"; readonly ids: ReadonlyArray<string> } | null {
+): {
+  readonly by: "identifier" | "metadata" | "contradicted";
+  readonly ids: ReadonlyArray<string>;
+} | null {
   const own = workLevelKeys(work.identifiers);
   // Two works that name different DOIs (or PMIDs, …) are never the same work by title alone.
   const compatible = records.filter((record) => {
@@ -177,13 +187,20 @@ function matchWork(
     source: { ...work, identifiers: [...work.identifiers], creators: [...work.creators] },
     existing: compatible,
   });
-  if (assessment.kind === "same-identifier") {
-    return { by: "identifier", ids: assessment.matchingSourceIds };
-  }
-  if (assessment.kind === "possible-metadata-match") {
-    return { by: "metadata", ids: assessment.matchingSourceIds };
-  }
-  return null;
+  const by =
+    assessment.kind === "same-identifier"
+      ? "identifier"
+      : assessment.kind === "possible-metadata-match"
+        ? "metadata"
+        : null;
+  if (!by) return null;
+  const byId = new Map(compatible.map((record) => [record.sourceId, record]));
+  const corroborated = assessment.matchingSourceIds.filter(
+    (sourceId) => scientLibraryIdentityProblem(work, byId.get(sourceId)!) === null,
+  );
+  return corroborated.length > 0
+    ? { by, ids: corroborated }
+    : { by: "contradicted", ids: assessment.matchingSourceIds };
 }
 
 function hydrationSourceKey(projectSourceId: string): string {
@@ -297,7 +314,7 @@ async function resolveAt(
     ]);
     return (
       removed.some((record) => ids.has(record.sourceId)) ||
-      (work !== null && matchWork(work, removed) !== null)
+      (work !== null && (matchWork(work, removed)?.by ?? "contradicted") !== "contradicted")
     );
   };
 
@@ -322,7 +339,7 @@ async function resolveAt(
       continue;
     }
     const match = request.work ? matchWork(request.work, records) : null;
-    if (match && match.ids.length === 1) {
+    if (match && match.by !== "contradicted" && match.ids.length === 1) {
       const sourceId = match.ids[0]!;
       record(projectSourceId, sourceId, match.by);
       results.push({ kind: "resolved", projectSourceId, sourceId, by: match.by });
@@ -332,7 +349,7 @@ async function resolveAt(
       results.push({
         kind: "unresolved",
         projectSourceId,
-        reason: "ambiguous",
+        reason: match.by === "contradicted" ? "contradicted" : "ambiguous",
         candidateIds: match.ids,
       });
       continue;

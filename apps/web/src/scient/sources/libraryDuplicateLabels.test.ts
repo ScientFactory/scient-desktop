@@ -1,3 +1,4 @@
+import { ScientSourcesDuplicateReason } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -10,6 +11,7 @@ import {
   mergedRowLabel,
   mergedTitleLabel,
   otherProjectsLabel,
+  pairReasonLabel,
   shownOfTotalLabel,
   undoProblem,
   unrevertedLabel,
@@ -35,6 +37,9 @@ describe("possible-duplicate labels", () => {
       otherProjectsLabel(["Grant", "Thesis"]) ?? "",
       shownOfTotalLabel(200, 340) ?? "",
       unrevertedLabel(fields) ?? "",
+      ...ScientSourcesDuplicateReason.literals.map(
+        (reason) => pairReasonLabel({ kind: "possible-identifier-match", reason }) ?? "",
+      ),
       ...(["already-undone", "survivor-missing", "loser-missing", "not-found"] as const).map(
         (outcome) => undoProblem({ outcome }) ?? "",
       ),

@@ -1,4 +1,5 @@
 import type {
+  ScientSourcesDuplicateReason,
   ScientSourcesDuplicateSource,
   ScientSourcesDuplicatesResult,
   ScientSourcesOrganizeResult,
@@ -163,6 +164,33 @@ export function shownOfTotalLabel(shown: number, total: number): string | null {
   return total > shown
     ? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()}. Settle these to see the rest.`
     : null;
+}
+
+const MATCH_WORDS: Readonly<Record<string, string>> = {
+  "possible-item-match": "Same Zotero item",
+  "possible-identifier-match": "Same identifier",
+  "possible-pdf-match": "Same PDF",
+};
+
+const REASON_WORDS: Readonly<Record<ScientSourcesDuplicateReason, string>> = {
+  "merge-undone": "but their merge was undone",
+  "title-missing": "but one has no title",
+  "titles-differ": "but the titles differ",
+  "type-unknown": "but one has no known type",
+  "preprint-and-published": "but one is a preprint and the other published",
+  "types-differ": "but the types differ",
+  "arxiv-versions-differ": "but different arXiv versions",
+  "identifiers-conflict": "but other identifiers differ",
+  "conflicting-group": "but it also links copies that disagree",
+};
+
+/** Why Scient did not merge a pair that shares an item, identifier or PDF; null for the others. */
+export function pairReasonLabel(pair: {
+  readonly kind: string;
+  readonly reason?: ScientSourcesDuplicateReason;
+}): string | null {
+  const match = MATCH_WORDS[pair.kind];
+  return match && pair.reason ? `${match}, ${REASON_WORDS[pair.reason]}.` : null;
 }
 
 export function otherProjectsLabel(names: ReadonlyArray<string>): string | null {

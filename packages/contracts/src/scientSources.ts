@@ -895,11 +895,33 @@ export type ScientSourcesDuplicateSource = typeof ScientSourcesDuplicateSource.T
 export const SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT = 200;
 export const SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT = 100;
 
+export const ScientSourcesPossibleDuplicateKind = Schema.Literals([
+  "possible-item-match",
+  "possible-identifier-match",
+  "possible-pdf-match",
+  "possible-metadata-match",
+  "possible-container-match",
+]);
+export const ScientSourcesDuplicateReason = Schema.Literals([
+  "merge-undone",
+  "title-missing",
+  "titles-differ",
+  "type-unknown",
+  "preprint-and-published",
+  "types-differ",
+  "arxiv-versions-differ",
+  "identifiers-conflict",
+  "conflicting-group",
+]);
+export type ScientSourcesDuplicateReason = typeof ScientSourcesDuplicateReason.Type;
+
 /** The possible duplicates of the whole Library, and the merges Undo can still reverse. */
 export const ScientSourcesDuplicatesResult = Schema.Struct({
   pairs: Schema.Array(
     Schema.Struct({
-      kind: Schema.Literals(["possible-metadata-match", "possible-container-match"]),
+      kind: ScientSourcesPossibleDuplicateKind,
+      /** Why a shared Zotero item, identifier or PDF was not merged automatically. */
+      reason: Schema.optionalKey(ScientSourcesDuplicateReason),
       sources: Schema.Tuple([ScientSourcesDuplicateSource, ScientSourcesDuplicateSource]),
       /** The one a merge keeps unless the person picks the other. */
       keptByDefault: NonEmptyString,

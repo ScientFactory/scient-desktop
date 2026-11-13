@@ -37,6 +37,8 @@ import {
   ScientCitationStyleSummary,
   ScientManagedBibliographyFileName,
   ScientManagedBibliographyStatus,
+  ScientSourcesDuplicateReason,
+  ScientSourcesPossibleDuplicateKind,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -151,7 +153,8 @@ export const ScientSourcesListResult = Schema.Struct({
     Schema.Struct({
       pairs: Schema.Array(
         Schema.Struct({
-          kind: Schema.Literals(["possible-metadata-match", "possible-container-match"]),
+          kind: ScientSourcesPossibleDuplicateKind,
+          reason: Schema.optionalKey(ScientSourcesDuplicateReason),
           sources: Schema.Tuple([ScientSourceAgentSummary, ScientSourceAgentSummary]),
           /** The one a merge keeps without survivorId. */
           keptByDefault: NonEmptyString,

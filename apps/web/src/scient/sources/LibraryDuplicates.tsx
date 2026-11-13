@@ -24,6 +24,7 @@ import {
   mergeDifferenceLabel,
   namedDifferencesLabel,
   mergedDateLabel,
+  pairReasonLabel,
   mergedRowLabel,
   sideSummary,
   mergedTitleLabel,
@@ -328,7 +329,9 @@ function DuplicatePair(props: {
   const differing = differingFields(left, right);
   return (
     <section className="@container/pair px-3 py-3" aria-label={fieldValue(left, "title")}>
-      <p className="mb-2 text-xs text-muted-foreground">{differsLabel(differing)}</p>
+      <p className="mb-2 text-xs text-muted-foreground">
+        {[pairReasonLabel(pair), differsLabel(differing)].filter(Boolean).join(" ")}
+      </p>
       {props.canChange ? (
         // Each side is the choice of the one to keep; Merge merges at once and its toast undoes.
         <RadioGroup

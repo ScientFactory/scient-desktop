@@ -494,6 +494,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
         duplicates: {
           pairs: found.pairs.slice(0, AGENT_DUPLICATE_PAIRS).map((pair) => ({
             kind: pair.kind,
+            ...(pair.reason ? { reason: pair.reason } : {}),
             sources: [
               agentSummaryOfRow(pair.sources[0]),
               agentSummaryOfRow(pair.sources[1]),

@@ -344,9 +344,10 @@ export async function libraryDuplicates(
   if (!store.exists) return { pairs: [], pairsTotal: 0, merges: [], mergesTotal: 0 };
   const listing = await readScientLibraryDuplicates({
     library: store.library,
+    pairLimit: SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT,
     mergeLimit: SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT,
   });
-  const pairs = listing.possibleDuplicates.slice(0, SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT);
+  const pairs = listing.possibleDuplicates;
   const byId = new Map(listing.records.map((record) => [record.sourceId, record]));
   const shown = new Set([
     ...pairs.flatMap((pair) => pair.sourceIds),
@@ -370,11 +371,12 @@ export async function libraryDuplicates(
           : [pair.sourceIds[1], pair.sourceIds[0]];
       return {
         kind: pair.kind,
+        ...(pair.reason ? { reason: pair.reason } : {}),
         sources: [row(byId.get(first)!), row(byId.get(second)!)] as const,
         keptByDefault: pair.survivorId,
       };
     }),
-    pairsTotal: listing.possibleDuplicates.length,
+    pairsTotal: listing.pairsTotal,
     merges: listing.merges.map(({ merge, merged }) => {
       const kept = byId.get(merge.survivorId);
       return {
