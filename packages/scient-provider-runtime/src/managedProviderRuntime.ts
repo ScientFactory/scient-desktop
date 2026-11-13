@@ -13,6 +13,7 @@ import {
 import {
   canUnpackManagedRuntimeZstd,
   downloadManagedRuntime,
+  type ManagedRuntimeDownloadResult,
   type ManagedRuntimeDownloadRetry,
   materializeManagedRuntimeArtifact,
   resolveManagedRuntimeArtifactPath,
@@ -282,7 +283,9 @@ export async function smokeManagedRuntimeExecutable(
 
 export interface ManagedProviderRuntimeDependencies {
   readonly filesystem: typeof runtimeFilesystem;
-  readonly download: typeof downloadManagedRuntime;
+  readonly download: (
+    input: Parameters<typeof downloadManagedRuntime>[0],
+  ) => Promise<ManagedRuntimeDownloadResult | void>;
   readonly verify: typeof verifyManagedRuntimeChecksum;
   readonly materialize: typeof materializeManagedRuntimeArtifact;
   /** Absent where this Node cannot unpack zstd; the raw binary is downloaded then. */
@@ -495,6 +498,7 @@ export class ManagedProviderRuntime {
   readonly #mutationLockPath: string;
   readonly #versionsDir: string;
   readonly #stagingDir: string;
+  readonly #downloadsDir: string;
   readonly #leasesDir: string;
   readonly #pruneLockPath: string;
   readonly #dependencies: ManagedProviderRuntimeDependencies;
@@ -511,6 +515,8 @@ export class ManagedProviderRuntime {
     this.#mutationLockPath = NodePath.join(this.#root, "mutation.lock");
     this.#versionsDir = NodePath.join(this.#root, "versions");
     this.#stagingDir = NodePath.join(this.#root, "staging");
+    // Outside staging, which each install empties, so a failed download continues next time.
+    this.#downloadsDir = NodePath.join(this.#root, "downloads");
     // Outside the runtime folder, so inspecting never recreates one that Remove has moved away.
     this.#leasesDir = NodePath.join(
       baseDir,
@@ -684,11 +690,12 @@ export class ManagedProviderRuntime {
           ? {
               url: copy.mirrorUrl,
               fallbackUrl: copy.url,
-              checksum: copy.checksum,
               allowedHosts: [...artifact.allowedHosts, new URL(copy.mirrorUrl).hostname],
             }
           : { url: copy.url, allowedHosts: artifact.allowedHosts }),
+        checksum: copy.checksum,
         destination: copy.destination,
+        partialPath: this.#partialDownloadPath(copy.checksum),
         expectedSize: copy.size,
         signal,
         onProgress: (downloadedBytes, totalBytes) =>
@@ -738,6 +745,7 @@ export class ManagedProviderRuntime {
     await this.#lease(artifact.version);
     await this.#reconcileOwned(signal, artifact);
     await this.#cleanStaging();
+    await this.#pruneDownloads(artifact);
     onProgress?.({ stage: "preparing" });
     const stage = await NodeFSP.mkdtemp(NodePath.join(this.#stagingDir, "install-"));
     const archivePath = NodePath.join(stage, artifact.artifactName);
@@ -1090,6 +1098,27 @@ export class ManagedProviderRuntime {
         force: true,
       }).catch(() => {});
     }
+  }
+
+  #partialDownloadPath(checksum: ManagedRuntimeArtifact["checksum"]): string {
+    return NodePath.join(this.#downloadsDir, `${checksum.digest.trim().toLowerCase()}.part`);
+  }
+
+  /** Keeps only the partial downloads of the release being installed. */
+  async #pruneDownloads(artifact: ManagedRuntimeArtifact): Promise<void> {
+    const kept = [artifact.checksum, artifact.compressed?.checksum].flatMap((checksum) =>
+      checksum ? [NodePath.basename(this.#partialDownloadPath(checksum))] : [],
+    );
+    const entries = await NodeFSP.readdir(this.#downloadsDir).catch(() => []);
+    await Promise.all(
+      entries
+        .filter((entry) => !kept.some((name) => entry === name || entry === `${name}.json`))
+        .map((entry) =>
+          NodeFSP.rm(NodePath.join(this.#downloadsDir, entry), { force: true }).catch(
+            () => undefined,
+          ),
+        ),
+    );
   }
 
   async #cleanStaging(): Promise<void> {

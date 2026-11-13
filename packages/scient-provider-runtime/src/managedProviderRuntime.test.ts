@@ -59,6 +59,7 @@ async function makeRuntime(
     readonly onStateCommitted?: (statePath: string) => Promise<void>;
     readonly filesystem?: ManagedProviderRuntimeDependencies["filesystem"];
     readonly acquireMutationLock?: ManagedProviderRuntimeDependencies["acquireMutationLock"];
+    readonly download?: ManagedProviderRuntimeDependencies["download"];
   } = {},
 ) {
   const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-provider-runtime-"));
@@ -73,11 +74,13 @@ async function makeRuntime(
     ...(input.filesystem ? { filesystem: input.filesystem } : {}),
     ...(input.acquireMutationLock ? { acquireMutationLock: input.acquireMutationLock } : {}),
     now: () => now++,
-    download: async ({ destination }) => {
-      events.push("download");
-      await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
-      await NodeFSP.writeFile(destination, "asset", { flag: "wx" });
-    },
+    download:
+      input.download ??
+      (async ({ destination }) => {
+        events.push("download");
+        await NodeFSP.mkdir(NodePath.dirname(destination), { recursive: true });
+        await NodeFSP.writeFile(destination, "asset", { flag: "wx" });
+      }),
     verify: async () => {
       verifyCalls += 1;
       events.push("verify");
@@ -422,6 +425,36 @@ describe("ManagedProviderRuntime contract", () => {
       activeArtifact: { catalogRevision: "test:1.0.0" },
       previousArtifact: null,
     });
+  });
+
+  it("keeps a failed download's bytes outside staging and drops those of other releases", async () => {
+    const partials: string[] = [];
+    let failNext = true;
+    const download: ManagedProviderRuntimeDependencies["download"] = async ({
+      destination,
+      partialPath,
+    }) => {
+      partials.push(partialPath!);
+      if (failNext) {
+        await NodeFSP.mkdir(NodePath.dirname(partialPath!), { recursive: true });
+        await NodeFSP.writeFile(partialPath!, "ass");
+        throw new Error("connection dropped");
+      }
+      expect(await NodeFSP.readFile(partialPath!, "utf8")).toBe("ass");
+      await NodeFSP.rename(partialPath!, destination);
+    };
+    const { root, runtime } = await makeRuntime({ download });
+    const downloads = NodePath.join(privateRoot(root), "downloads");
+    await NodeFSP.mkdir(downloads, { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(downloads, `${"f".repeat(64)}.part`), "old release");
+    await expect(install(runtime, artifact("1.0.0"))).rejects.toThrow("connection dropped");
+    failNext = false;
+    await install(runtime, artifact("1.0.0"));
+    expect(partials).toEqual([
+      NodePath.join(downloads, `${"0".repeat(64)}.part`),
+      NodePath.join(downloads, `${"0".repeat(64)}.part`),
+    ]);
+    expect(await NodeFSP.readdir(downloads)).toEqual([]);
   });
 
   it("activates an update while recording and preserving the previous version", async () => {
