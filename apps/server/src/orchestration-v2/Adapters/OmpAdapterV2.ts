@@ -51,6 +51,8 @@ import { OmpToolRows } from "../../provider/omp/OmpToolRows.ts";
 import { OmpSessionTree, branchBefore } from "../../provider/omp/OmpSessionTree.ts";
 import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
 import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
+// SCIENT-FORK: idle compaction times itself to the one-hour prompt cache.
+import { withOmpPromptCacheExpiry } from "../../provider/omp/OmpPromptCache.ts";
 import {
   assertReadableOmpSessionFile,
   ompSessionFilesEqual,
@@ -887,7 +889,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 };
                 return onUpdate({
                   type: "usage",
-                  tokenUsage: usage,
+                  // SCIENT-FORK: idle compaction times itself to the one-hour prompt cache.
+                  tokenUsage: withOmpPromptCacheExpiry(usage, event),
                   contextUsage,
                   ...(request === undefined ? {} : { request }),
                 });

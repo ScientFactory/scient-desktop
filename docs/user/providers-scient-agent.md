@@ -138,6 +138,14 @@ includes billed cache refreshes, with cache warming left at the agent's default.
 uses the agent's native compaction and shows its summary when available. The agent's task
 list appears above the composer as a read-only list.
 
+**Compact idle threads** works for Scient Agent as it does for
+[Claude](./providers-claude.md#compact-long-conversations), with the same setting and the same
+per-provider override. **Before the cache expires (beta)** applies only when the model's prompt
+cache lasts an hour, as with a Claude sign-in; Scient compacts such a thread over 200,000 tokens
+shortly before its cache expires. With a shorter cache, or one that never expires, it does nothing.
+**When you return** offers the **Compact** chip after an hour idle. This needs a Scient Agent that
+reports its prompt cache; older ones only show the chip.
+
 Agent notices, retry progress and save failures appear in the conversation. Questions retain
 the agent's offered choices, editor text and timeout information; an expired question closes
 when the agent cancels it. Plain confirmation questions offer Yes and No.

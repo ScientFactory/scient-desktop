@@ -7,6 +7,8 @@ import {
   type RunId,
   type ThreadId,
 } from "@t3tools/contracts";
+// SCIENT-FORK: Scient Agent compacts idle threads too.
+import { compactsIdleThreads } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -37,9 +39,13 @@ export const make = Effect.gen(function* () {
       while (true) {
         const current = yield* settings.getSettings;
         const thread = yield* projections.getThread(threadId);
-        const claudeInstance = Object.hasOwn(current.providerInstances, thread.providerInstanceId)
-          ? current.providerInstances[thread.providerInstanceId]?.driver === "claudeAgent"
-          : thread.providerInstanceId === "claudeAgent";
+        // SCIENT-FORK:START
+        const claudeInstance = compactsIdleThreads(
+          Object.hasOwn(current.providerInstances, thread.providerInstanceId)
+            ? current.providerInstances[thread.providerInstanceId]?.driver
+            : thread.providerInstanceId,
+        );
+        // SCIENT-FORK:END
         if (
           !claudeInstance ||
           resolveIdleCompaction(current, thread.providerInstanceId) !== "beforeCacheExpires" ||

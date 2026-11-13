@@ -1,4 +1,6 @@
 import { isListedThreadLineage, type OrchestrationV2ThreadProjection } from "@t3tools/contracts";
+// SCIENT-FORK: Scient Agent compacts idle threads too.
+import { compactsIdleThreads } from "@t3tools/contracts";
 import { COMPACTION_SUGGESTION_MIN_TOKENS } from "@t3tools/shared/claudeCompaction";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as DateTime from "effect/DateTime";
@@ -86,7 +88,10 @@ export function idleCompactionWindow(
   );
   // The thread's current selection receives the /compact, so it must still be this Claude session.
   if (
-    providerThread?.driver !== "claudeAgent" ||
+    // SCIENT-FORK:START
+    !compactsIdleThreads(providerThread?.driver) ||
+    providerThread === undefined ||
+    // SCIENT-FORK:END
     providerThread.id !== latestRun.providerThreadId ||
     providerThread.providerInstanceId !== thread.providerInstanceId ||
     latestRun.providerInstanceId !== thread.providerInstanceId
