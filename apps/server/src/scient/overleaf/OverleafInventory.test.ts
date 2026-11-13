@@ -572,12 +572,12 @@ describe("captureOverleafInventory", () => {
     const root = await folder({});
     expect(await refusal(NodePath.join(root, "absent"))).toEqual({ reason: "folder-unavailable" });
   });
-  it("refuses a managed file that is on disk only under another spelling", async () => {
+  it("refuses a managed file that is on disk only under another spelling", async (context) => {
     const nfd = "e\u0301.tex";
     const root = await folder({ [nfd]: "x" });
     const names = await NodeFSP.readdir(root);
     // Some file systems normalize names; the test needs the decomposed spelling kept.
-    if (!names.includes(nfd)) return;
+    if (!names.includes(nfd)) return context.skip();
     expect(await refusal(root, { managedPaths: ["\u00e9.tex"] })).toEqual({
       reason: "alias",
       path: "\u00e9.tex",
@@ -585,9 +585,9 @@ describe("captureOverleafInventory", () => {
     });
   });
 
-  it("refuses a case-only variant of a managed file instead of deleting it", async () => {
+  it("refuses a case-only variant of a managed file instead of deleting it", async (context) => {
     const root = await folder({ "Main.tex": "x" });
-    if ((await NodeFSP.readdir(root)).includes("main.tex")) return;
+    if ((await NodeFSP.readdir(root)).includes("main.tex")) return context.skip();
     expect(await refusal(root, { managedPaths: ["main.tex"] })).toEqual({
       reason: "alias",
       path: "main.tex",
