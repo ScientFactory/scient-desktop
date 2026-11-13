@@ -642,6 +642,17 @@ renderers. SQLite durability, immutable migration history, analytics consent and
 allowlists, and cloud/mobile/publication holds remain. Release remains separate.
 
 The current committed alignment through
+`f70e349ecaef6560aecb889f77d6f03b9251edc9` is recorded in
+[the 2026-11-13 f70e349eca receipt](docs/internals/t3-upstream-sync-20261113-f70e349eca.md).
+Literal merge `96fa5a81ff02e5b97172362a3f2722ca9fe10eb9` has owned base
+`5d78d5d7fa5b7bf21db299b2c71897d779d2e62a` and the frozen official target as parents, retaining
+the 589 official commits after `eceeab4d5c`. Scient's copies of its own fixes T3 merged (#34595,
+#34575, #34252) and of the subagent tools-used note (#34821) give way to T3's code. T3's UI
+languages arrive with Scient's names. T3's four migrations are appended as 87 to 90. Antigravity
+keeps Scient's qualified ACP release while T3 moves to Google's native CLI. Release remains
+separate.
+
+The previous committed alignment through
 `eceeab4d5c5bb02b58906978ff9e50bbd595ec19` is recorded in
 [the 2026-11-12 eceeab4d5c receipt](docs/internals/t3-upstream-sync-20261112-eceeab4d5c.md).
 Literal merge `24bf8e8936698b61e604963c41cf9bd5f016140a` has owned base
@@ -651,7 +662,7 @@ the 243 official commits after `44ebb2fe57`. Scient's copies of its own fixes T3
 and is turned on once for everyone. Grok skips an effort it cannot apply, as in T3. T3's two
 migrations are appended as 85 and 86. Release remains separate.
 
-The previous committed alignment through
+An earlier committed alignment through
 `44ebb2fe57465d32f2bd07c5eb3d8e871bdf5ed5` is recorded in
 [the 2026-11-11 44ebb2fe57 receipt](docs/internals/t3-upstream-sync-20261111-44ebb2fe57.md).
 Literal merge `18697158fb3c076f62fbe0aee8c9c37c0314d022` has owned base
@@ -1531,7 +1542,11 @@ projection lives under `scient/skills`; voice correction shares the existing gua
 generation runner. Retain these narrow mounts without forking the native engine.
 Legacy CLI owners are named explicitly and remain active for explicit `agy` paths
 and targets outside the qualified native set; removing a fallback requires native
-replacement qualification, not merely an available Google archive.
+replacement qualification, not merely an available Google archive. T3 now installs Google's
+native CLI and dropped its pinned ACP release; Scient keeps that 1.4.5 release as the offline
+floor of its qualified catalog (`scient/providerLifecycle/antigravityAcpCatalog.ts`), and T3's
+native install runs only where no catalog is supplied. Moving Scient to the native CLI needs that
+qualification first.
 
 Antigravity sign-in carries four marked seams into upstream-owned files. Three fix upstream bugs
 worth proposing to T3:
@@ -2073,16 +2088,6 @@ Two marked focus seams keep the caret where the person is typing:
 - `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
   takes the caret only if focus is still in the composer or nowhere in particular.
 
-## Desktop tab relay ends with a detach
-
-`DesktopBrowserChannel.ts` carries one marked block that T3 lacks: when the desktop detaches a
-tab, its relay socket closes, so Playwright's pending CDP commands fail. Upstream keeps the socket
-open after shutting the tab's queue, so a tab detached while the server was setting it up never
-settles. The desktop attach and preview event consumers await each setup in turn, so every later
-desktop tab is never set up and keeps showing the start page over a page that loaded. Offered to
-T3 as pingdotgg/t3code#34252 (issue #34251). When it merges, take T3's version, then delete the
-marked block and `DesktopBrowserChannel.scient.test.ts`.
-
 ## Git maintenance, untracked scans and owned processes
 
 Scient's checkpoints publish with a `git fetch`, which T3 does not (T3 uses `update-ref`), so
@@ -2105,13 +2110,6 @@ Marked blocks in T3-owned files, to offer upstream and then drop:
   from Scient) is upstream code now. Scient's marked blocks keep only its follow-up: overlapping
   status reads share one running listing, and the error keeps the listing's `GitCommandError` as
   `cause`. Tested in `GitVcsDriverCore.scient.test.ts`; offered as pingdotgg/t3code#34574.
-- `GitVcsDriverCore.ts` (`prepareCommitContext`): drafting a commit message stages into a
-  temporary object directory, reading the repository's own objects and every alternate it lists
-  directly, so a draft without a commit leaves no objects in the repository. Tested in
-  `GitVcsDriverCore.scient.test.ts`. Offered as pingdotgg/t3code#34595 (issue #34594).
-- `CodexAdapterV2.ts`: T3's 2 s force-kill deadline (pingdotgg/t3code#34461, from Scient) is
-  upstream code now. Only its test keeps a marked wait for the stand-in's `ready` line in
-  `CodexAdapterV2.test.ts`, offered as pingdotgg/t3code#34575.
 - `ClaudeAdapterV2.ts` (`spawnClaudeProcessGroup`): descendants that left the CLI's process group
   (its detached Bash tool shells and helpers) stop with it. While the server runs, the CLI's tree
   is sampled and stopped after the CLI exits (`@t3tools/shared/scientOwnedProcessTree`); if the
