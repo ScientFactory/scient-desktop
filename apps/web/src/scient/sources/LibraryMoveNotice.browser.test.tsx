@@ -112,6 +112,11 @@ describe("the Library's move line", () => {
       router: false,
     });
 
+    await expect
+      .element(screen.getByText("Moved into your Library.", { exact: false }))
+      .toBeVisible();
+    await expect.element(screen.getByText(summary, { exact: false })).not.toBeVisible();
+    await userEvent.click(screen.getByText("Show locations"));
     await expect.element(screen.getByText(summary, { exact: false })).toBeVisible();
     await userEvent.click(screen.getByRole("button", { name: "Review" }));
     expect(onReview).toHaveBeenCalledTimes(1);
@@ -194,7 +199,9 @@ describe("the Library's move line", () => {
       { state: "moved-back", restoredSources: 2, restoredPdfs: 1 },
     ]);
     await using screen = await render(<Harness libraryBackend />, { router: false });
-    await expect.element(screen.getByText(summary, { exact: false })).toBeVisible();
+    await expect
+      .element(screen.getByText("Moved into your Library.", { exact: false }))
+      .toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
     await userEvent.click(page.getByRole("menuitem", { name: "Recover", exact: true }));
@@ -238,7 +245,9 @@ describe("the Library's move line", () => {
     ]);
     mocks.organizeScientSources.mockRejectedValueOnce(new Error("timed out"));
     await using screen = await render(<Harness libraryBackend />, { router: false });
-    await expect.element(screen.getByText(summary, { exact: false })).toBeVisible();
+    await expect
+      .element(screen.getByText("Moved into your Library.", { exact: false }))
+      .toBeVisible();
     mocks.readLibraryMoveStatus.mockRejectedValueOnce(new Error("offline"));
 
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
@@ -267,7 +276,9 @@ describe("the Library's move line", () => {
       _tag: "RemoteEnvironmentAuthTimeoutError",
     });
     await using screen = await render(<Harness libraryBackend />, { router: false });
-    await expect.element(screen.getByText(summary, { exact: false })).toBeVisible();
+    await expect
+      .element(screen.getByText("Moved into your Library.", { exact: false }))
+      .toBeVisible();
 
     await userEvent.click(screen.getByRole("button", { name: "More Library actions" }));
     await userEvent.click(page.getByRole("menuitem", { name: "Recover", exact: true }));

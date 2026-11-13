@@ -9,6 +9,7 @@ import {
   exportScientProjectPackage,
   importScientProjectPackage,
   listScientProjectPackages,
+  listScientProjectPackageImports,
   undoScientProjectPackageImport,
 } from "@scientfactory/scient-sources/project-package";
 
@@ -174,5 +175,15 @@ export async function undoLibraryProjectPackageImport(
       kept: undone.kept,
       left: undone.left,
     },
+  };
+}
+
+export async function listLibraryProjectPackageImports(store: ScientSourcesLibraryStore) {
+  const { projectId } = await readScientProjectIdentity(store.root);
+  const listed = await listScientProjectPackageImports({ library: store.library, projectId });
+  return {
+    outcome: "listed" as const,
+    packageImports: listed.imports,
+    packageImportDiagnostics: listed.diagnostics,
   };
 }

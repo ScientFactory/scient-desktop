@@ -629,6 +629,7 @@ export interface SourceDetailsLibrary {
   readonly onSavePersonalNote: (
     note: string | null,
     expectedRevision: number,
+    context: SourceNoteSaveContext,
   ) => Promise<{ readonly outcome: string; readonly record: SourceRecord }>;
   readonly canSavePersonalNote: boolean;
   /** One of the source's other keys here (`alsoCitedAs`): its own project note and history. */
@@ -664,6 +665,7 @@ function KeyProjectNote(props: {
     readOnly: props.readOnly,
     heading: `${LIBRARY_LABELS.projectNote} (${props.citationKey})`,
     history: props.record.projectNoteHistory,
+    storage: "pin",
     onSave: props.onSave,
   }).section;
 }
@@ -825,7 +827,13 @@ export function SourceDetails(props: {
     record,
     readOnly: readOnly || !inProject,
     onSave: props.onSaveNote,
-    ...(library ? { heading: LIBRARY_LABELS.projectNote, history: record.projectNoteHistory } : {}),
+    ...(library
+      ? {
+          heading: LIBRARY_LABELS.projectNote,
+          history: record.projectNoteHistory,
+          storage: "pin" as const,
+        }
+      : {}),
   });
   const personalNote = useSourceNoteControls({
     record,

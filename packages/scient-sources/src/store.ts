@@ -752,6 +752,7 @@ export async function updateScientSourceNote(input: {
   readonly sourceId: string;
   readonly expectedRevision: number;
   readonly note: string | null;
+  readonly expectedNote?: string | null;
   readonly actor?: ScientSourceActor;
 }): Promise<ScientSourceNoteUpdateResult> {
   const paths = await sourceStorePaths(input.root);
@@ -763,7 +764,12 @@ export async function updateScientSourceNote(input: {
     if ((current.note ?? null) === note) {
       return { outcome: "unchanged", record: current };
     }
-    if (current.revision !== input.expectedRevision) {
+    if (
+      input.expectedNote !== undefined
+        ? normalizeScientSourceNote(current.note ?? null) !==
+          normalizeScientSourceNote(input.expectedNote)
+        : current.revision !== input.expectedRevision
+    ) {
       return { outcome: "stale", record: current };
     }
 

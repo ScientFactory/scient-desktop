@@ -28,6 +28,7 @@ import { askLibraryInsertion } from "./askLibrary";
 import { CitationStylePicker } from "./CitationStylePicker";
 import { DUPLICATE_LABELS } from "./libraryDuplicateLabels";
 import { MoveBackDialog } from "./LibraryMoveNotice";
+import { PackageImportsDialog } from "./PackageImportsDialog";
 import { ProjectPackageSubmenu } from "./ProjectPackageMenu";
 import { SourceTrashPopover } from "./SourceTrash";
 import {
@@ -58,6 +59,7 @@ export function SourcesHeaderMenu(props: {
   readonly onShowPackageSources?: (sourceIds: ReadonlyArray<string>) => void;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
+  const [importsOpen, setImportsOpen] = useState(false);
   const [confirmingMoveBack, setConfirmingMoveBack] = useState(false);
   const [checkingReferences, setCheckingReferences] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false);
@@ -163,6 +165,8 @@ export function SourcesHeaderMenu(props: {
           ) : null}
           {props.onPackageImported || props.onMoveBack ? (
             <ProjectPackageSubmenu
+              {...(props.onShowPackageSources ? { onShowSources: props.onShowPackageSources } : {})}
+              onOpenImports={() => setImportsOpen(true)}
               mode="recover"
               environmentId={props.environmentId}
               root={props.root}
@@ -191,6 +195,15 @@ export function SourcesHeaderMenu(props: {
           ) : null}
         </MenuPopup>
       </Menu>
+      {importsOpen ? (
+        <PackageImportsDialog
+          environmentId={props.environmentId}
+          root={props.root}
+          onImported={props.onPackageImported ?? props.onTrashChanged}
+          onClose={() => setImportsOpen(false)}
+          {...(props.onShowPackageSources ? { onShowSources: props.onShowPackageSources } : {})}
+        />
+      ) : null}
       <SourceTrashPopover
         environmentId={props.environmentId}
         root={props.root}

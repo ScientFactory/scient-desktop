@@ -1,7 +1,12 @@
 import { act, render } from "../../../test/render";
 import "../../index.css";
 
-import type { EnvironmentId, ScientSourcesOverviewResult, ThreadId } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ScientSourcesOverviewResult,
+  ScientSourceDetailResult,
+  ThreadId,
+} from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
@@ -9,6 +14,8 @@ import { ScientSourcesPanel } from "./ScientSourcesPanel";
 
 const mocks = vi.hoisted(() => ({
   read: vi.fn(),
+  detail: vi.fn(),
+  personalNote: vi.fn(),
   organize: vi.fn(),
   menu: vi.fn(),
   canChange: true,
@@ -18,6 +25,8 @@ const mocks = vi.hoisted(() => ({
 vi.mock("./client", async (original) => ({
   ...(await original<typeof import("./client")>()),
   readScientSources: mocks.read,
+  readScientSource: mocks.detail,
+  updateScientSourcePersonalNote: mocks.personalNote,
   organizeScientSources: mocks.organize,
 }));
 vi.mock("../../localApi", async (original) => ({
@@ -48,12 +57,15 @@ vi.mock("../../components/ui/toast", () => ({
   toastManager: { add: mocks.toast, close: vi.fn() },
 }));
 vi.mock("./ZoteroSync", () => ({ useZoteroSync: () => ({}), ZoteroRefreshDialog: () => null }));
+vi.mock("./SourceReference", () => ({ SourceReference: () => null }));
 vi.mock("./SourceFullTextResults", () => ({ SourceFullTextResults: () => null }));
 vi.mock("../../hooks/useLiveRefresh", () => ({ useLiveRefresh: () => undefined }));
 
 function setup(canChange = true, extra = false) {
   mocks.canChange = canChange;
   mocks.read.mockReset();
+  mocks.detail.mockReset();
+  mocks.personalNote.mockReset();
   mocks.organize.mockReset();
   mocks.menu.mockReset();
   mocks.toast.mockReset();
@@ -244,3 +256,81 @@ describe("Sources project scope", () => {
     expect(mocks.organize).not.toHaveBeenCalled();
   });
 });
+
+it.each([false, true])(
+  "saves My note across a deferred metadata revision (left editor: %s)",
+  async (leave) => {
+    setup();
+    const initial: ScientSourceDetailResult = {
+      formatVersion: 1,
+      projectId: "project",
+      sourceId: "paper",
+      revision: 1,
+      type: "article",
+      title: "Existing study",
+      creators: [],
+      issuedRaw: null,
+      issuedYear: 2024,
+      identifiers: [],
+      abstract: null,
+      containerTitle: null,
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      url: null,
+      tags: [],
+      externalReferences: [],
+      attachments: [],
+      fieldProvenance: [],
+      importedAt: "2026-11-01T00:00:00.000Z",
+      note: null,
+      projectNote: null,
+      personalNote: null,
+      pinned: false,
+    };
+    let stored = initial;
+    mocks.detail.mockImplementation(async () => stored);
+    const gate = Promise.withResolvers<void>();
+    const finished = Promise.withResolvers<void>();
+    mocks.personalNote.mockImplementation(async (_environment, request) => {
+      await gate.promise;
+      const outcome = request.expectedNote === stored.personalNote ? "updated" : "stale";
+      if (outcome === "updated")
+        stored = { ...stored, revision: stored.revision + 1, personalNote: request.note };
+      finished.resolve();
+      return { outcome, record: stored };
+    });
+    await using screen = await render(
+      <ScientSourcesPanel
+        environmentId={"environment-1" as EnvironmentId}
+        threadId={"thread-1" as ThreadId}
+        projectTitle="Test project"
+        root="/project"
+        onOpenPdf={() => {}}
+      />,
+      { router: false },
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Choose from Library" }));
+    await userEvent.click(screen.getByRole("button", { name: /Existing study/u }));
+    await userEvent.click(page.getByRole("textbox", { name: "My note" }));
+    await userEvent.keyboard("My draft");
+    await userEvent.tab();
+    await vi.waitFor(() => expect(mocks.personalNote).toHaveBeenCalledTimes(1));
+    stored = { ...stored, revision: 2, title: "Corrected title" };
+    if (leave) await userEvent.click(screen.getByRole("button", { name: /Back/u }));
+    gate.resolve();
+    await finished.promise;
+    expect(stored).toMatchObject({
+      revision: 3,
+      title: "Corrected title",
+      personalNote: "My draft",
+    });
+    if (!leave) {
+      await expect.element(page.getByRole("status")).toHaveTextContent("Saved");
+      await expect.element(page.getByText("Saved elsewhere")).not.toBeInTheDocument();
+    }
+    expect(mocks.personalNote).toHaveBeenCalledTimes(1);
+  },
+);

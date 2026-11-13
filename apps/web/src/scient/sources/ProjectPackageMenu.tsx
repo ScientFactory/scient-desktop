@@ -74,6 +74,7 @@ export function ProjectPackageSubmenu(props: {
   readonly onImported: () => Promise<unknown>;
   readonly mode: "recover" | "import";
   readonly onMoveBack?: () => void;
+  readonly onOpenImports?: () => void;
   readonly onShowSources?: (sourceIds: ReadonlyArray<string>) => void;
 }) {
   const [packages, setPackages] = useState<PackageListing | null>(null);
@@ -140,7 +141,7 @@ export function ProjectPackageSubmenu(props: {
           ? `Changed since or used by another import, so kept: ${kept.join(", ")}.`
           : "",
         left.length > 0
-          ? `Left as evidence: ${left.length} things it added to what was already here (PDFs, highlights, notices, reviews).`
+          ? `Left as evidence: ${plural(left.length, "item", "items")}. See Recover → Package imports for the full list.`
           : "",
       ]
         .filter(Boolean)
@@ -229,6 +230,7 @@ export function ProjectPackageSubmenu(props: {
           >
             Recover sources from before the move
           </MenuItem>
+          <MenuItem onClick={props.onOpenImports}>Package imports</MenuItem>
           <MenuItem disabled={!props.onMoveBack} onClick={props.onMoveBack}>
             Keep this project's sources in its folder
           </MenuItem>

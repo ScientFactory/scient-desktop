@@ -98,6 +98,7 @@ import {
   exportLibraryProjectPackage,
   importLibraryProjectPackage,
   listLibraryProjectPackages,
+  listLibraryProjectPackageImports,
   undoLibraryProjectPackageImport,
 } from "./LibraryProjectPackage.ts";
 import {
@@ -898,6 +899,7 @@ export async function updateLibraryPersonalNote(
     readonly sourceId: string;
     readonly expectedRevision: number;
     readonly note: string | null;
+    readonly expectedNote?: string | null;
   },
 ) {
   const sourceId = await libraryIdOf(store, input.sourceId);
@@ -907,6 +909,7 @@ export async function updateLibraryPersonalNote(
     sourceId,
     expectedRevision: input.expectedRevision,
     note: input.note,
+    ...(input.expectedNote !== undefined ? { expectedNote: input.expectedNote } : {}),
     actor: ACTOR,
   });
   return {
@@ -1066,6 +1069,7 @@ export const isLibraryOrganizeAction = (
   change.action === "restore-pre-move" ||
   change.action === "export-package" ||
   change.action === "list-packages" ||
+  change.action === "list-package-imports" ||
   change.action === "import-package" ||
   change.action === "undo-import" ||
   isPinRepairAction(change);
@@ -1197,6 +1201,8 @@ export async function organizeLibrarySources(
       });
     case "export-package":
       return exportLibraryProjectPackage(store, change);
+    case "list-package-imports":
+      return listLibraryProjectPackageImports(store);
     case "list-packages":
       return listLibraryProjectPackages(store);
     case "import-package":

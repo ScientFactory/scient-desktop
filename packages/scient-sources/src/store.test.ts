@@ -741,6 +741,58 @@ describe("Scient source store", () => {
     expect(history).not.toHaveProperty("note");
   });
 
+  it("checks a note base under the source lock despite unrelated metadata revisions", async () => {
+    const root = await fixture();
+    await initializeScientProject({ root });
+    const imported = await importScientSource({
+      root,
+      operationId: NodeCrypto.randomUUID(),
+      candidate,
+    });
+    const record = imported.record!;
+    const request = {
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      expectedNote: null,
+      note: "  My observation.\r\n  ",
+    };
+    await updateScientSourceMetadata({
+      root,
+      sourceId: record.sourceId,
+      expectedRevision: record.revision,
+      metadata: { ...editableMetadataFromRecord(record), title: "Corrected title" },
+    });
+    const saved = await updateScientSourceNote(request);
+    expect(saved).toMatchObject({
+      outcome: "updated",
+      record: { revision: 3, title: "Corrected title", note: "  My observation.\n  " },
+    });
+    const refused = await updateScientSourceNote({
+      ...request,
+      expectedRevision: saved.record.revision,
+      note: "Another editor",
+    });
+    expect(refused).toMatchObject({
+      outcome: "stale",
+      record: { revision: 3, note: "  My observation.\n  " },
+    });
+    expect(
+      await updateScientSourceNote({
+        ...request,
+        expectedNote: "My observation.",
+        note: "Trimmed base must not match",
+      }),
+    ).toMatchObject({ outcome: "stale" });
+    expect(
+      await updateScientSourceNote({
+        ...request,
+        expectedNote: "  My observation.\r\n  ",
+        note: "Checked again",
+      }),
+    ).toMatchObject({ outcome: "updated", record: { revision: 4, note: "Checked again" } });
+  });
+
   it("clears a source note when the draft contains only whitespace", async () => {
     const root = await fixture();
     await initializeScientProject({ root });

@@ -347,6 +347,41 @@ describe("Library routes on the library backend", () => {
       }),
   );
 
+  it.effect("checks personal note bases independently of metadata revisions", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const record = yield* Effect.promise(() => libraryRecord(fixture, "checked-note", {}));
+      const store = yield* storeFor(fixture, "write");
+      yield* Effect.promise(() =>
+        updateLibrarySourceMetadata(store, {
+          sourceId: record.sourceId,
+          expectedRevision: record.revision,
+          metadata: { ...record, title: "Corrected title" },
+        }),
+      );
+      const request = {
+        sourceId: record.sourceId,
+        expectedRevision: record.revision,
+        expectedNote: null,
+        note: "  Personal observation  ",
+      };
+      const saved = yield* Effect.promise(() => updateLibraryPersonalNote(store, request));
+      expect(saved).toMatchObject({
+        outcome: "updated",
+        record: { title: "Corrected title", personalNote: "  Personal observation  " },
+      });
+      expect(
+        yield* Effect.promise(() =>
+          updateLibraryPersonalNote(store, {
+            ...request,
+            expectedRevision: saved.record.revision,
+            note: "Overwritten",
+          }),
+        ),
+      ).toMatchObject({ outcome: "stale", record: { personalNote: "  Personal observation  " } });
+    }),
+  );
+
   it.effect("answers two stale panels with the note saved first and its history", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

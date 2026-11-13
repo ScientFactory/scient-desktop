@@ -120,9 +120,15 @@
 
 .scient-markdown-slash-menu {
   inset-block-start: 3rem;
-  inset-inline-start: max(1rem, calc((100% - 56rem) / 2 + 1.5rem));
+  --scient-markdown-menu-inset: max(1rem, calc((100% - 56rem) / 2 + 1.5rem));
+  inset-inline-start: var(--scient-markdown-menu-inset);
   max-height: min(22rem, 55vh);
   overflow-y: auto;
+}
+
+.scient-markdown-citation-menu {
+  min-width: 0;
+  max-width: max(0px, calc(100% - var(--scient-markdown-menu-inset) - 1rem));
 }
 
 .scient-markdown-document-host {

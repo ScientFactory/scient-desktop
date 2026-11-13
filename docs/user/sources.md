@@ -80,10 +80,14 @@ the project, and **My note**, which follows the paper into every project and is
 not saved in any project folder. Agents read and write My note too. A paper
 that is not in this project has only My note.
 
+Notes save against the note you read. Changing metadata or attaching a PDF does
+not block a note save, including a save still finishing after you leave the editor.
 A note for this project is never overwritten by a change made elsewhere. If
 another window, another Scient on this computer or an agent changed it after
 you started typing, the note shows **Saved elsewhere** with that text next to
-yours: choose **Keep mine** or **Use saved**. **Earlier versions** next to the
+yours: choose **Keep mine** or **Use saved**. Keep mine saves once against the
+note shown under Saved elsewhere. If it changed again, both texts stay visible
+for another choice; Scient does not keep retrying the refused save. **Earlier versions** next to the
 heading lists the first note the project kept (however it was written) and the
 last 20 versions, with who saved each and when (typing in one sitting counts as
 one version); choosing one restores it as a new change, never in place of the
@@ -111,12 +115,13 @@ keeps the list of papers it uses. Scient also moves projects in the background
 a few minutes after it starts. Until then the Library shows "The Library is
 waiting to move out of this project." While the move runs, the Library shows a
 line with its progress. A change you make during a large move may ask you to
-try again when it has finished. When the move is done, the line says how many
-duplicates were merged and whether any kept different values, where your
-Library is, and where the copy from before the move is kept. Undo history of
-bulk edits from before the move is not carried over. Dismiss the line when you
-have read it. If a PDF from the project was still open, the line also says how
-many files will be removed from the project later. If the move fails, the line
+try again when it has finished. When the move is done, a short line confirms
+that the project's earlier sources are kept in the project. **Show locations**
+expands the Library and archive paths, merge results and the limit on older
+bulk-edit Undo history. **Review**, when shown there, opens the merges that
+kept different values. Dismiss the line when you have read it. If a PDF from
+the project was still open, the expanded details also say how many files will
+be removed from the project later. If the move fails, the line
 says why; Scient tries again with the next change to the Library or its next
 background pass, and **Check again** shows the latest state. If the project's `.scient` folder is tracked in git, commit the
 change: the project's live sources then no longer hold PDFs, though the copy
@@ -527,7 +532,15 @@ for good comes back. A fresh checkout finds that imported copy even when its
 citation details are incomplete; deleting it for good also stays deleted in
 fresh checkouts until you deliberately import it again.
 
-The import's message has **Undo**. It removes only unchanged project additions:
+The import's message has **Undo**. To return later, choose **⋯** >
+**Recover** > **Package imports**. It lists this project's imports with their
+dates, counts and Undo when available. Open **What stayed** after Undo for
+the full list of changed additions and evidence kept; **Show them** opens the
+papers still in your Library. The list remains after closing and reopening
+Scient. If a receipt cannot be read, the list names the skipped file and keeps
+showing the healthy imports. If a current paper cannot be read, its import and
+history still appear with a notice; the paper list may be incomplete.
+Undo removes only unchanged project additions:
 new pins, new collections, and a note it gave a pin that had none. Anything
 changed since or used by another import stays. Every paper and PDF stays in
 the Library, including papers used by other projects or by a pin whose note
@@ -920,7 +933,8 @@ which attaches the same linked PDFs and reports the same unreadable entries and
 fields not kept, and write the
 Library to a project file in any of the four formats (`scient_sources_export`),
 never replacing an existing file unless asked to. It saves and imports project
-packages (and undoes an import by its receipt) and restores the copy from
+packages, lists this project’s imports with dates, counts and what stayed,
+and undoes an import by its receipt and restores the copy from
 before a move with `scient_sources_organize`. To change a note for this project
 it must say which note it read; if the note changed since, nothing is written
 and it gets the current note to reconcile. When two pins cite one paper (after

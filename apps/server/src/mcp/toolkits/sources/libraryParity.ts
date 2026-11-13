@@ -145,6 +145,7 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "export-package": ["export-package"],
   "import-package": ["import-package"],
   "undo-import": ["undo-import"],
+  "list-package-imports": ["list-package-imports"],
   // Agents find package folders with their own file tools.
   "list-packages": [],
 };

@@ -1469,7 +1469,7 @@ function LibraryCitationMenu(props: {
 }) {
   return (
     <div
-      className="scient-markdown-slash-menu flex max-h-72 w-72 flex-col gap-0.5 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg"
+      className="scient-markdown-slash-menu scient-markdown-citation-menu flex max-h-72 w-72 flex-col gap-0.5 overflow-y-auto rounded-lg border border-border bg-popover p-1 shadow-lg"
       role="listbox"
       aria-label="Cite from Library"
     >
