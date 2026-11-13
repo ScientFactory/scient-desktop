@@ -504,7 +504,9 @@ sources in `<project>/.scient/library/pins.json`:
   change-pins, note, rename, refresh, package import, and the move and move back
   for their whole run. Order: project pins lock, then the move lock, then the
   library lock; nothing takes the pins lock inside a library-lock hold. It does
-  not coordinate two synced replicas of the folder or an older Scient.
+  not coordinate two synced replicas of the folder or an older Scient. Taking
+  the lock writes `.scient/library/.gitignore` listing only `pins.lock` when
+  that file is missing (never rewritten), so the runtime lock stays out of git.
 - `pinScientLibrarySource` copies the record's preferred `citationKey` (or a
   generated one) as the project key, with the usual suffix when the project
   already has it, compared case-insensitively. The key is frozen: changing the
@@ -517,11 +519,18 @@ sources in `<project>/.scient/library/pins.json`:
   writes nothing and answers `stale` with the current pin. The same check
   applies to a note sent with `pin` on an existing pin and per change in
   `changeScientProjectPins` (`noteBase`). The panel sends `expectedNote` and an
-  editor `noteSession`; the agent sends `noteBase` on organize `pin`.
+  editor `noteSession` (a restore from Earlier versions starts a new session,
+  so it never replaces the checkpoint before it); the agent sends `noteBase` on
+  organize `pin`. With several pins resolving to one source (after a merge) the
+  agent addresses one by `citationKey` on `scient_sources_get` and organize
+  `pin` (`projectPinOfLibrarySource`); without it, both take the pin stored under
+  the ID named, else the first pinned, and `get` lists the others as
+  `alsoCitedAs`.
 - Note history (`projectNoteHistory.ts`): `.scient/library/note-history/<pin
   source ID>.json`, oldest first: the first note kept (`original`, seeded
   from the pin when no history exists), then accepted versions (`edit`, with
-  actor and time), keeping the original plus the latest 20. Saves of one
+  actor and time), keeping the first nonempty version however it was written
+  (seeded, on pinning or added later) plus the latest 20. Saves of one
   editor session within ten minutes replace the session's version. The history
   is written before `pins.json`; when its newest version is not what
   `pins.json` holds (an interrupted write, an outside edit, an older client),
@@ -536,8 +545,8 @@ sources in `<project>/.scient/library/pins.json`:
   snapshot lacks the optional keys: unknown, not empty (`pinCitation.ts`).
   `refreshScientProjectPinSnapshots` and `listScientProjectPinnedWorks` take a
   known snapshot value when the resolving record lacks it
-  (`withKnownPinCitationValues`; a bare year is less than a full date of that
-  year), unless the record's provenance shows a person or agent edit of that
+  (`withKnownPinCitationValues`; a bare year, or a year with no stored date, is
+  less than a full date of that year), unless the record's provenance shows a person or agent edit of that
   field (a deliberate correction). A refresh from a record hydrated from an
   older snapshot keeps the unknown keys absent. A `type` this version does not
   know is read as `other`.
@@ -546,7 +555,10 @@ sources in `<project>/.scient/library/pins.json`:
   pin, otherwise a record built from `work`. It accepts no library at all (a
   collaborator's checkout or CI). Personal notes are left out of the record;
   the project note comes beside it. `incompleteSnapshot` marks a work built only
-  from an older snapshot (the snapshot, or a record hydrated from it);
+  from an older snapshot: the snapshot itself, or a record hydrated from it
+  (`scientPinCitationStillUnknown`) while a citation input the snapshot lacks
+  has no provenance from anything but the project file and no person or agent
+  corrected a citation input (an abstract or note edit counts for nothing);
   `syncPinnedBibliography` then writes the entry it wrote before (from its
   written copy) instead of the poorer render and reports the key in
   `keptEntries`.
@@ -957,8 +969,14 @@ deletes v1 files; a `pins.json` on its own never does.
    archive except `restoreScientProjectPreMoveArchive` (organize
    `restore-pre-move`): it checks the manifest, refuses while `.scient/sources`
    holds files, rebuilds it in `.scient/library/.restoring-archive/` and
-   renames it into place, and copies highlight files that are missing. It needs
-   no journal; the restored store is then an ordinary v1 store the next move
+   renames it into place, and copies highlight files that are missing. Before
+   reading anything it checks every manifest entry: a payload under `sources/`
+   or `annotations/<sha256>.json` whose `original` is exactly the legacy path
+   it came from, no `..`, root, drive or backslash, and no link on the way;
+   otherwise `archive-changed`. `.scient/library/restore-progress.json` is
+   written before the store is published; a retry, or the next move
+   (`finishScientPreMoveRestore` in `recover`), finishes the highlights first.
+   It needs no journal; the restored store is then an ordinary v1 store the next move
    takes in. The archive is not a v1 store, so it never restarts a move. The
    done summary names the Library folder and the archive path.
 8. Cleanup: each v1 file is deleted once its counterpart verifies (library
@@ -1044,34 +1062,60 @@ counts as moved.
 #### Project packages (FP-1)
 
 `projectPackage.ts`, organize `export-package`, `list-packages` (panel only;
-agents list folders themselves) and `import-package`, through
-`LibraryProjectPackage.ts`. A package is a folder inside the project (default
-"Scient project package <date>", never inside `.scient`):
+agents list folders themselves), `import-package` and `undo-import`, through
+`LibraryProjectPackage.ts`. A package is a new folder: `relativePath` (in the
+project, never inside `.scient`, or absolute), or "Scient project package
+<date>" made in `inFolder` (absolute) or the project. The panel offers a chosen
+folder (desktop, local environment; the picker starts beside the project) or
+the project, and says that a package in the project is committed with it.
 
 ```text
 manifest.json      kind scient-project-package, counts, every file's size and SHA-256, unavailable
-README.md
+README.md          what it holds and how to import it (organize import-package)
 project/           pins.json, note-history/, reviews/ (with snapshots), as the project keeps them
 sources/<project source ID>.json   the Library record (no personal note or reading state)
 pdfs/<sha256>.pdf  annotations/<sha256>.json   exact bytes and the Library's highlight files
-organization.json  collections holding these sources, by name and parent name
+organization.json  collections holding these sources and their ancestors, by ID and parent ID
 ```
 
-Export resolves every pin and every ID a live review names (review-only
-sources too) in read mode, writes the package hidden and renames it into
-place; PDFs or records the Library lacks are listed in `unavailable`. Import
-checks every file against the manifest (`package-changed` otherwise), then per
-source: the same library ID, else the resolver, else `importScientSource` with
-the record's details (a shared identifier, PDF or origin matches; a title
-likeness does not); the package's PDFs it lacks are attached, the instance map
-records each project source ID, highlight files join by annotation ID under the
-library lock. A project with no `pins.json` takes the package's pins; otherwise
-`joinScientProjectPins` adds missing pins (a taken key gets a suffix), adds an
-incoming note to a pin without one, and records a differing note as a `found`
-version before the current one. Note history files the project lacks are
-copied. A review the project lacks is added; one that differs goes to
-`.scient/library/conflicts/reviews/<reviewId>/`, the move's conflict layout.
-Collections are created by name. The managed bibliography is synced after.
+Saved searches are personal and stay out. Export resolves every pin and every
+ID a live review names in read mode, writes the package hidden and renames it
+into place; PDFs or records the Library lacks are listed in `unavailable`.
+
+Import is evidence from another computer and overwrites nothing here. It checks
+every path and file against the manifest (`package-changed`), then per source:
+the same library ID, else a resolution by the instance map, the same ID or a
+corroborated identifier (`metadata` resolutions are refused), else
+`importScientSource`, whose shared identity rule (`assessSourceDuplicate`, with
+the Library's exclusions) decides any reuse; a title likeness adds a new
+record. A new record carries the package's structured abstract and its
+`verification` and `editorialStatus` with `carriedAt` (the original
+`checkedAt` stays); a matched record never checked here takes them the same
+way. Then the package's PDFs it lacks are attached and the instance map records
+each project source ID. Highlight files join by content
+(`joinAnnotationFiles`): a branch whose history holds the other's current
+version wins; two that changed apart keep this Library's as current at a new
+revision and the other's as the history version just before it. Pins and note
+histories join in one hold of the pins lock (`joinScientProjectPins`, so a
+`pins.json` written meanwhile is joined): histories merge by version (note,
+time, kind, actor), this copy's newest stays newest; missing pins are added (a
+taken key gets a suffix); a differing note is recorded as a `found` version.
+Reviews reconcile decisions and snapshots separately: a missing review is added
+with its snapshot; a differing review, or an equal one whose snapshot differs,
+is kept under `.scient/library/conflicts/reviews/<reviewId>/`; an equal review
+whose snapshot is missing gets it. Each file is copied hidden, checked and
+renamed, decisions last. Collections are created parents first with their
+ancestry (a same-named sibling here is joined). Anything that fails is listed in
+`failed` and never counted. The managed bibliography is synced after.
+
+Each import writes a receipt, `package-imports/<importId>.json` in the Library
+(`projectPackageReceipt.ts`): the records, PDF attachments, highlight files,
+pins, review files and collections it added, with the bytes of each created
+file, what it joined, and what failed. `undo-import` unpins the added pins,
+removes added review and highlight files still holding those bytes, deletes the
+added collections (restorable), detaches the added PDFs and moves the added
+records to the trash; files changed since stay and are named (`kept`). Joined
+evidence stays: it replaced nothing.
 
 #### Lock holds, progress and one move per project (5e-1)
 
