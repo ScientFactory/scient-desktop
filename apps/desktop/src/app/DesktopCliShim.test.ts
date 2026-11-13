@@ -119,11 +119,11 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
   it.skipIf(!hasSetsid)(
     "runs the AppImage's bundled CLI with every argument and unmounts after",
     () => {
-      const { root, image, shim } = fakeAppImage();
+      const { root, image, appImage, shim } = fakeAppImage();
       const result = run(shim, ["browser", "setup", "a b"]);
       expect(result.status).toBe(3);
       expect(result.stdout.split("\n")).toEqual([
-        `node=1 cli=${shim} home=${root}/home`,
+        `node=1 cli=${shim} home=${root}/home appimage=${appImage}`,
         `${image}/resources/app.asar/apps/server/dist/bin.mjs`,
         "browser",
         "setup",
