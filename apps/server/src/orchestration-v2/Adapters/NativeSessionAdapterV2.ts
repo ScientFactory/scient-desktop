@@ -127,6 +127,8 @@ export type NativeSessionUpdate =
   | { readonly type: "accepted"; readonly nativeTurnId: string }
   | { readonly type: "offered"; readonly nativeTurnId: string }
   | { readonly type: "rejected"; readonly nativeTurnId: string }
+  /** SCIENT-FORK: the native conversation entry the running turn's message became. */
+  | { readonly type: "turn-entry"; readonly entryId: string }
   | {
       readonly type: "text";
       readonly id: string;
@@ -269,6 +271,16 @@ export interface NativeSession {
     input: ProviderAdapter.ProviderAdapterV2SteerInput,
     validateOwner?: () => Effect.Effect<void, NativeSessionOperationError>,
   ) => Effect.Effect<void, NativeSessionOperationError>;
+  /**
+   * SCIENT-FORK: moves the conversation to just before the message `entryId` recorded
+   * (a `turn-entry`), and returns where the conversation now lives.
+   */
+  readonly rewindBefore?: (
+    entryId: string,
+  ) => Effect.Effect<
+    { readonly nativeId: string; readonly resumeCursor?: unknown },
+    NativeSessionOperationError
+  >;
   // SCIENT-FORK: compaction uses the same turn ownership and receipt path as send.
   readonly compact?: NativeSession["send"];
   // SCIENT-FORK: child cancellation never uses the parent interrupt path.
@@ -887,6 +899,7 @@ export function makeNativeSessionAdapterV2(
                 update.type === "accepted" ||
                 update.type === "offered" ||
                 update.type === "rejected" ||
+                update.type === "turn-entry" ||
                 update.type === "question-resolved" ||
                 update.type === "native-thread" ||
                 (update.type === "model" &&
@@ -932,6 +945,21 @@ export function makeNativeSessionAdapterV2(
                     driver,
                     threadId: running.input.threadId,
                     providerTurn: running.turn,
+                  });
+                  return;
+                }
+                if (update.type === "turn-entry") {
+                  if (active === undefined) return;
+                  active.turn = {
+                    ...active.turn,
+                    nativeTurnRef: ref(update.entryId),
+                  };
+                  turns.set(active.turn.id, active.turn);
+                  yield* emit({
+                    type: "provider_turn.updated",
+                    driver,
+                    threadId: active.input.threadId,
+                    providerTurn: active.turn,
                   });
                   return;
                 }
@@ -1802,6 +1830,49 @@ export function makeNativeSessionAdapterV2(
           yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
           return thread;
         });
+        // SCIENT-FORK:START — the first later turn's message is where the kept conversation ends.
+        const rewind = Effect.fn("NativeSessionAdapterV2.rewind")(function* (
+          rewindBefore: NonNullable<NativeSession["rewindBefore"]>,
+          request: ProviderAdapter.ProviderAdapterV2RollbackThreadInput,
+        ) {
+          if (active) return yield* protocolError("A running turn cannot be rewound.");
+          if (thread?.id !== request.providerThread.id) {
+            const nativeId = request.providerThread.nativeThreadRef?.nativeId;
+            if (!nativeId) return yield* protocolError("The native thread reference is missing.");
+            yield* native.resume(nativeId, request.providerThread.nativeMetadata?.resumeCursor);
+            yield* register(
+              request.providerThread.appThreadId ?? input.threadId,
+              request.providerThread,
+            );
+          }
+          const kept =
+            request.target.type === "thread_start" ? 0 : request.target.providerTurn.ordinal;
+          const boundary = request.providerThreadTurns
+            .filter((turn) => turn.ordinal > kept)
+            .sort((a, b) => a.ordinal - b.ordinal)[0];
+          if (boundary !== undefined) {
+            const entry = boundary.nativeTurnRef;
+            if (entry?.strength !== "strong" || !entry.nativeId)
+              return yield* protocolError(
+                "This conversation was recorded before Scient could rewind it here. Fork it instead.",
+              );
+            const moved = yield* rewindBefore(entry.nativeId);
+            thread = {
+              ...thread!,
+              nativeThreadRef: ref(moved.nativeId),
+              nativeMetadata: { ...thread!.nativeMetadata, resumeCursor: moved.resumeCursor },
+              updatedAt: yield* DateTime.now,
+            };
+            yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
+          }
+          return {
+            providerThread: thread!,
+            providerTurns: [...turns.values()],
+            messages: [...messages.values()],
+            runtimeRequests: [...requests.values()].map((entry) => entry.request),
+          };
+        });
+        // SCIENT-FORK:END
         const steer = native.steer;
         const compact = native.compact;
         const startTurn = Effect.fn("NativeSessionAdapterV2.startTurn")(
@@ -2263,14 +2334,28 @@ export function makeNativeSessionAdapterV2(
                     cause: "The native protocol does not expose conversation history.",
                   }),
                 ),
+          // SCIENT-FORK:START — rewind through the native conversation tree.
           rollbackThread: (request) =>
-            Effect.fail(
-              new ProviderAdapter.ProviderAdapterRollbackThreadError({
-                driver,
-                providerThreadId: request.providerThread.id,
-                cause: "The native protocol does not expose conversation rollback.",
-              }),
-            ),
+            native.rewindBefore === undefined
+              ? Effect.fail(
+                  new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                    driver,
+                    providerThreadId: request.providerThread.id,
+                    cause: "The native protocol does not expose conversation rollback.",
+                  }),
+                )
+              : rewind(native.rewindBefore, request).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new ProviderAdapter.ProviderAdapterRollbackThreadError({
+                        driver,
+                        providerThreadId: request.providerThread.id,
+                        checkpointId: request.target.checkpointId,
+                        cause,
+                      }),
+                  ),
+                ),
+          // SCIENT-FORK:END
           forkThread: (request) =>
             Effect.fail(
               new ProviderAdapter.ProviderAdapterForkThreadError({
