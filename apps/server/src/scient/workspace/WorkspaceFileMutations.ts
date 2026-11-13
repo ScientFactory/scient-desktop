@@ -265,6 +265,8 @@ const plainRun = { nonce: NodeCrypto.randomUUID(), generation: 0 };
 /** Temporary files of saves in flight in this process, which no sweep may take. */
 const liveTemporaries = new Set<string>();
 
+/** A save's temporary file is someone's leftover once untouched this long; before, it may be in use. */
+const LEFTOVER_TEMPORARY_AGE_MS = 10 * 60_000;
 const OLDER_RECORDS_SCAN_MS = 5_000;
 const OLDER_WORK_WRITE_WAIT_MS = 30_000;
 const OLDER_WORK_LIMIT_MS = 120_000;
@@ -308,6 +310,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly retentionLimitBytes?: number | null;
   /** Where earlier versions of overwritten files go. */
   readonly fileHistoryDirectory?: string;
+  /** How long a save's temporary file stays untouched before it counts as a leftover. */
+  readonly leftoverTemporaryAgeMs?: number;
   /** Only for tests of the native publication Overleaf still uses, until it is removed. */
   readonly nativeSaves?: boolean;
   readonly retainedHooks?: RetainedMutationHooks;
@@ -1497,8 +1501,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   const swept = new Set<string>();
   /**
    * Removes temporary files a killed save left beside `target`, by this release or an earlier
-   * one. Bytes that differ from the file go to its history first: they may be the only copy of
-   * text that never reached it.
+   * one. Bytes that differ from the file stay unless its history took them: they may be the only
+   * copy of text that never reached it. One changed recently may be another process's save.
    */
   const sweepTemporaries = async (target: string) => {
     if (swept.has(target)) return;
@@ -1507,25 +1511,30 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const directory = NodePath.dirname(target),
       basename = NodePath.basename(target);
     try {
+      const now = await runPromise(Clock.currentTimeMillis);
       for (const name of await NodeFSP.readdir(directory)) {
         const path = NodePath.join(directory, name);
         if (!isPlainTemporaryOf(name, basename) || liveTemporaries.has(path)) continue;
         const stat = await NodeFSP.lstat(path);
         if (!stat.isFile()) continue;
+        if (now - stat.mtimeMs < (deps.leftoverTemporaryAgeMs ?? LEFTOVER_TEMPORARY_AGE_MS)) {
+          swept.delete(target);
+          continue;
+        }
         const revision = stat.size === 0 ? null : await fileRevision(path);
-        if (
-          revision !== null &&
-          deps.fileHistoryDirectory !== undefined &&
-          revision !== (await fileRevision(target))
-        )
-          await keepFileVersion({
-            directory: deps.fileHistoryDirectory,
-            target,
-            source: path,
-            revision,
-            ownSave: false,
-            now: Math.floor(stat.mtimeMs),
-          });
+        if (revision !== null && revision !== (await fileRevision(target))) {
+          const kept =
+            deps.fileHistoryDirectory !== undefined &&
+            (await keepFileVersion({
+              directory: deps.fileHistoryDirectory,
+              target,
+              source: path,
+              revision,
+              ownSave: false,
+              now: Math.floor(stat.mtimeMs),
+            }));
+          if (!kept) continue;
+        }
         await NodeFSP.unlink(path);
       }
     } catch (cause) {

@@ -153,10 +153,19 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
         `.main.tex.${other.toUpperCase()}.scient-tmp`,
       ];
       const unsaved = `.main.tex.${uuid.replace("0f8f", "3f8f")}.scient-tmp`;
+      // Two long names that share their first 206 characters, and a save that may still be running.
+      const sibling = long.slice(0, -1) + "x";
+      const recent = `.main.tex.${uuid.replace("0f8f", "4f8f")}.scient-tmp`;
+      kept.push(plainTemporaryName(sibling), recent);
       const stale = [`.main.tex.${uuid}.scient-tmp`, plainTemporaryName(long), unsaved];
       for (const name of ["main.tex", long, ...kept, ...stale])
         await NodeFSP.writeFile(NodePath.join(h.cwd, name), "A");
       await NodeFSP.writeFile(NodePath.join(h.cwd, unsaved), "text the save never placed");
+      const written = (await NodeFSP.stat(NodePath.join(h.cwd, "main.tex"))).mtimeMs;
+      const hourEarlier = (written - 60 * 60_000) / 1000;
+      for (const name of [...kept, ...stale])
+        if (name !== recent)
+          await NodeFSP.utimes(NodePath.join(h.cwd, name), hourEarlier, hourEarlier);
       const folder = `.main.tex.${uuid.replace("0f8f", "2f8f")}.scient-tmp`;
       await NodeFSP.mkdir(NodePath.join(h.cwd, folder));
       for (const relativePath of ["main.tex", long])
