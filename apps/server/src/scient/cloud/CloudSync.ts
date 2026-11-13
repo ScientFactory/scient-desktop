@@ -29,6 +29,7 @@ import { CloudApi, type CloudApiError } from "./CloudApi.ts";
 import { markAttachments, sha256Hex, withContentDigest } from "./cloudAttachments.ts";
 import { CloudSyncState, type CloudSyncStateDocument } from "./CloudSyncState.ts";
 import type { ConversationExtrasResult } from "./ConversationExtras.ts";
+import { scientCloudLive } from "./availability.ts";
 
 export const SYNC_QUIET_MS = 20_000;
 export const SYNC_MIN_INTERVAL_MS = 120_000;
@@ -501,6 +502,8 @@ export const layer = Layer.effect(
   CloudSync,
   Effect.gen(function* () {
     const { service, markTouched } = yield* make;
+    // A build without Scient Cloud runs no worker, so nothing is ever sent.
+    if (!(yield* scientCloudLive)) return service;
     const source = yield* CloudSyncSource;
     yield* Effect.forkScoped(Stream.runForEach(source.touched, markTouched));
     yield* Effect.forkScoped(

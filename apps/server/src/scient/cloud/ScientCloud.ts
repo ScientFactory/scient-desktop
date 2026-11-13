@@ -18,6 +18,7 @@ import { CloudSync } from "./CloudSync.ts";
 import { CloudSyncState } from "./CloudSyncState.ts";
 import { type BuiltShare, ShareBuilder } from "./ShareBuilder.ts";
 import { TakeOverImport } from "./TakeOverImport.ts";
+import { scientCloudLive } from "./availability.ts";
 
 /** What the `scientCloud` HTTP group calls; each method is one route. */
 export class ScientCloud extends Context.Service<
@@ -64,6 +65,16 @@ const make = Effect.gen(function* () {
   const settings = yield* ServerSettingsService;
   const shares = yield* ShareBuilder;
   const takeOvers = yield* TakeOverImport;
+  const live = yield* scientCloudLive;
+  /** Refuses cloud work in a build without Scient Cloud; status and turning off still answer. */
+  const requireLive = live
+    ? Effect.void
+    : Effect.fail(
+        new ScientCloudError({
+          reason: "cloud-unavailable",
+          message: "Scient Cloud isn't available in this version of Scient.",
+        }),
+      );
 
   const status = Effect.gen(function* () {
     const state = yield* store.get;
@@ -111,6 +122,7 @@ const make = Effect.gen(function* () {
   return ScientCloud.of({
     status,
     enrollmentProof: Effect.fn("ScientCloud.enrollmentProof")(function* ({ nonce, userId }) {
+      yield* requireLive;
       const proof = yield* api.enrollmentProof({ userId, nonce }).pipe(Effect.mapError(fromApi));
       return {
         cloudUrl: api.cloudUrl,
@@ -121,6 +133,7 @@ const make = Effect.gen(function* () {
       };
     }),
     enrollmentComplete: Effect.fn("ScientCloud.enrollmentComplete")(function* (userId: string) {
+      yield* requireLive;
       yield* api.limits(userId).pipe(
         Effect.mapError((error) =>
           error.code === "unauthorized" || error.code === "forbidden"
@@ -147,8 +160,12 @@ const make = Effect.gen(function* () {
       yield* sync.wake;
       return yield* status;
     }),
-    setEnabled,
+    setEnabled: Effect.fn("ScientCloud.setEnabledWhenLive")(function* (enabled: boolean) {
+      if (enabled) yield* requireLive;
+      return yield* setEnabled(enabled);
+    }),
     stop: Effect.fn("ScientCloud.stop")(function* (deleteCopies: boolean) {
+      if (deleteCopies) yield* requireLive;
       if (deleteCopies) yield* sync.deleteCopies.pipe(Effect.mapError(fromApi));
       yield* settings
         .updateSettings({ scientCloudSyncEnabled: false })
@@ -164,8 +181,14 @@ const make = Effect.gen(function* () {
       }));
       return yield* status;
     }),
-    shareBuild: shares.build,
-    takeOver: takeOvers.takeOver,
+    shareBuild: Effect.fn("ScientCloud.shareBuild")(function* (request) {
+      yield* requireLive;
+      return yield* shares.build(request);
+    }),
+    takeOver: Effect.fn("ScientCloud.takeOver")(function* (request, principal) {
+      yield* requireLive;
+      return yield* takeOvers.takeOver(request, principal);
+    }),
   });
 });
 

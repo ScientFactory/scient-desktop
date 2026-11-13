@@ -7,7 +7,8 @@ import { useT3ConnectAuthPrompt } from "~/components/clerk/useT3ConnectAuthPromp
 import { hasCloudPublicConfig, resolveRelayClerkTokenOptions } from "~/cloud/publicConfig";
 
 import { cloudApiOrigin } from "../cloudApi";
-import { SharePage } from "./SharePage";
+import { scientCloudLive } from "../useCloudAccount";
+import { SharePage, ShareUnavailablePage } from "./SharePage";
 import { readShareAddress } from "./shareReader";
 
 /**
@@ -18,6 +19,7 @@ export function SignedInSharePage({ shareId }: { shareId: string }) {
   // The router's hash: desktop builds use hash history, where the window's own hash is the route.
   const hash = useLocation({ select: (location) => location.hash });
   const [address] = useState(() => readShareAddress(`/s/${shareId}`, hash));
+  if (!scientCloudLive()) return <ShareUnavailablePage />;
   if (!hasCloudPublicConfig()) {
     return (
       <SharePage

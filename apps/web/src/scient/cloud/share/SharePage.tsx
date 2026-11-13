@@ -168,6 +168,17 @@ function SharePageContent({
   );
 }
 
+/** In a build without Scient Cloud, a shared link can't be opened here; nothing is fetched. */
+export function ShareUnavailablePage() {
+  return (
+    <SharePageFrame>
+      <p className="py-16 text-center text-sm text-muted-foreground">
+        Shared links can't be opened in this version of Scient.
+      </p>
+    </SharePageFrame>
+  );
+}
+
 function SharePageFrame({
   header,
   footer,

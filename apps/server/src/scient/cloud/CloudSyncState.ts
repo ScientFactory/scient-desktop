@@ -14,6 +14,8 @@ import * as Semaphore from "effect/Semaphore";
 
 import * as ServerConfig from "../../config.ts";
 
+import { scientCloudLive } from "./availability.ts";
+
 export const CopiedThread = Schema.Struct({
   contentDigest: Schema.String,
   title: Schema.String,
@@ -150,10 +152,10 @@ const makeFile = Effect.gen(function* () {
   });
 });
 
-const guardFrom = (store: CloudSyncState["Service"]) =>
+const guardFrom = (store: CloudSyncState["Service"], live = true) =>
   CloudLeaseGuard.of({
     movedTo: Effect.fn("CloudLeaseGuard.movedTo")((threadId) =>
-      store.get.pipe(Effect.map((state) => state.moved[threadId])),
+      live ? store.get.pipe(Effect.map((state) => state.moved[threadId])) : Effect.undefined,
     ),
   });
 
@@ -161,7 +163,11 @@ const guardFrom = (store: CloudSyncState["Service"]) =>
 export const layer = Layer.effectContext(
   Effect.gen(function* () {
     const store = yield* makeFile;
-    return Context.make(CloudSyncState, store).pipe(Context.add(CloudLeaseGuard, guardFrom(store)));
+    // Without Scient Cloud, no conversation counts as continued elsewhere.
+    const live = yield* scientCloudLive;
+    return Context.make(CloudSyncState, store).pipe(
+      Context.add(CloudLeaseGuard, guardFrom(store, live)),
+    );
   }),
 );
 

@@ -20,11 +20,18 @@ const configuredCloudUrl = Boolean(
   (import.meta.env.VITE_SCIENT_CLOUD_URL as string | undefined)?.trim(),
 );
 
+/**
+ * Whether this build uses Scient Cloud at all. Off until the service is live; when off, nothing
+ * shows cloud features or asks a computer or the cloud about them.
+ */
+export function scientCloudLive(): boolean {
+  return devCloudUserId !== null || SCIENT_DESKTOP_IDENTITY.scientCloudLive || configuredCloudUrl;
+}
+
 /** Whether the app can reach a Scient account for Scient Cloud. */
 export function hasCloudAccount(): boolean {
   if (devCloudUserId !== null) return true;
-  const live = SCIENT_DESKTOP_IDENTITY.scientCloudLive || configuredCloudUrl;
-  return live && hasCloudPublicConfig();
+  return scientCloudLive() && hasCloudPublicConfig();
 }
 
 /**

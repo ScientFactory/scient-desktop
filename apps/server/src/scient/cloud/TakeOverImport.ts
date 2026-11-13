@@ -226,22 +226,9 @@ const make = Effect.gen(function* () {
     }
     const downloaded = yield* download(userId, request);
     const result = yield* importPackage(request, destination.projectId, downloaded, principal);
-    // Checked again: a lease taken elsewhere during the import leaves this copy read-only.
-    const after = yield* api
-      .getThread(userId, request.source.environmentId, request.source.threadId)
-      .pipe(Effect.map((copy) => copy.lease));
-    const holder = yield* supersededBy(request, after);
-    const movedAt = DateTime.formatIso(yield* DateTime.now);
+    // Recorded at once, so a retry returns this import instead of making another.
     yield* store.update((state) => ({
       ...state,
-      ...(holder === null || holder === "unknown"
-        ? {}
-        : {
-            moved: {
-              ...state.moved,
-              [result.threadId]: { movedTo: holder as EnvironmentId, movedAt },
-            },
-          }),
       continuedFrom: {
         ...state.continuedFrom,
         [result.threadId]: {
@@ -251,6 +238,26 @@ const make = Effect.gen(function* () {
         },
       },
     }));
+    // Checked again: a lease taken elsewhere during the import leaves this copy read-only. The
+    // lease was confirmed just before the import, so a failed check leaves the copy as it is.
+    const after = yield* api
+      .getThread(userId, request.source.environmentId, request.source.threadId)
+      .pipe(
+        Effect.map((copy) => copy.lease),
+        Effect.catch((cause) =>
+          Effect.logWarning("Take-over could not recheck the lease.", { cause }).pipe(
+            Effect.as(null),
+          ),
+        ),
+      );
+    const holder = after === null ? null : yield* supersededBy(request, after);
+    if (holder !== null && holder !== "unknown") {
+      const movedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* store.update((state) => ({
+        ...state,
+        moved: { ...state.moved, [result.threadId]: { movedTo: holder as EnvironmentId, movedAt } },
+      }));
+    }
     return {
       _tag: "imported",
       threadId: result.threadId,

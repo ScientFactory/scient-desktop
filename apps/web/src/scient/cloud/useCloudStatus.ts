@@ -2,6 +2,7 @@ import type { EnvironmentId, ScientCloudStatus } from "@t3tools/contracts";
 import { useEffect, useState } from "react";
 
 import { readCloudStatus } from "./serverCloud";
+import { scientCloudLive } from "./useCloudAccount";
 
 const REFRESH_MS = 60_000;
 
@@ -17,7 +18,8 @@ export function useCloudStatus(environmentId: EnvironmentId | null) {
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- polls the computer's server for its cloud copy status
   useEffect(() => {
-    if (environmentId === null) return;
+    // Without Scient Cloud there is nothing to show, so the computer isn't asked.
+    if (environmentId === null || !scientCloudLive()) return;
     let cancelled = false;
     const read = () =>
       readCloudStatus(environmentId).then(
