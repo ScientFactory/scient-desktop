@@ -21,6 +21,9 @@ import { isCloudEnvironmentLinkError } from "./linkEnvironment";
 import { refreshManagedTunnelUsage } from "./managedRelayState";
 import {
   linkEnvironment as linkEnvironmentAtom,
+  // SCIENT-FORK:START
+  switchEnvironmentAccount as switchEnvironmentAccountAtom,
+  // SCIENT-FORK:END
   unlinkEnvironment as unlinkEnvironmentAtom,
   updateEnvironmentPreferences as updateEnvironmentPreferencesAtom,
 } from "./linkEnvironmentAtoms";
@@ -48,13 +51,20 @@ function tunnelLimitFromLinkFailure(cause: unknown): number | null {
 }
 
 export function useCloudLinkController(environmentId: EnvironmentId | null) {
-  const { getToken, isSignedIn } = useAuth();
+  // SCIENT-FORK:START — userId: the signed-in account a link must belong to.
+  const { getToken, isSignedIn, userId } = useAuth();
+  // SCIENT-FORK:END
   const refreshRelayEnvironments = useAtomCommand(relayEnvironmentDiscovery.refresh, {
     reportFailure: false,
   });
   const linkEnvironment = useAtomCommand(linkEnvironmentAtom, {
     reportFailure: false,
   });
+  // SCIENT-FORK:START
+  const switchEnvironmentAccount = useAtomCommand(switchEnvironmentAccountAtom, {
+    reportFailure: false,
+  });
+  // SCIENT-FORK:END
   const unlinkEnvironment = useAtomCommand(unlinkEnvironmentAtom, {
     reportFailure: false,
   });
@@ -176,13 +186,30 @@ export function useCloudLinkController(environmentId: EnvironmentId | null) {
         reportUpdateFailure(new Error("Sign in to Scient Connect before enabling this."));
         return false;
       }
+      // SCIENT-FORK:START — account switch
+      // Turning Scient Connect on while this environment is linked to another account (another
+      // sign-in, or the development account older builds used) moves it to the signed-in account;
+      // the server refuses a link over another account's. Edits that turn nothing on keep it.
+      const switchAccount =
+        currentLinkState.linked &&
+        typeof userId === "string" &&
+        currentLinkState.cloudUserId !== null &&
+        currentLinkState.cloudUserId !== userId &&
+        ((desired.managedTunnel && !isManagedTunnelActive(currentLinkState, relayProviderKind)) ||
+          (desired.publish && !currentLinkState.publishAgentActivity));
+      // SCIENT-FORK:END
       const currentManagedTunnel = isManagedTunnelActive(currentLinkState, relayProviderKind);
       if (
+        // SCIENT-FORK:START
+        switchAccount ||
+        // SCIENT-FORK:END
         !currentLinkState.linked ||
         currentLinkState.linkRevoked === true ||
         currentManagedTunnel !== desired.managedTunnel
       ) {
-        const linkResult = await linkEnvironment({
+        // SCIENT-FORK:START
+        const linkResult = await (switchAccount ? switchEnvironmentAccount : linkEnvironment)({
+          // SCIENT-FORK:END
           target,
           clerkToken,
           mode: desired.managedTunnel ? "managed" : "publish_only",
