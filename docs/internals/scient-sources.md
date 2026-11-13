@@ -1323,8 +1323,11 @@ Systematic reviews does, with two sections: the possible pairs and **Merged**.
   `differences` too.
 - **Cost at 20,000 records** (M5 Pro, Node 26, load 2): the assessment alone
   46 ms, the whole read 57 ms warm and 1.2 s cold (the cold part is the
-  record listing the overview pays too). The assessment is not on the overview
-  path; the view asks when it opens and after each change it makes.
+  record listing the overview pays too). With the group check and the merge
+  files read for Undo exclusions (the scale library, 20,029 records, 71
+  merges, 429 pairs; Node 24.19, load 8 to 10): the assessment 99 ms, the read
+  123 ms warm and 1.1 s cold. The assessment is not on the overview path; the
+  view asks when it opens, after each change it makes and for each Show more.
 - **Not duplicates** is `mark-distinct` on organize and its Undo
   `clear-distinct` (engine `markScientLibrarySourcesDistinct` /
   `clearScientLibrarySourcesDistinct`, `distinct-pairs.json`). Both sources
