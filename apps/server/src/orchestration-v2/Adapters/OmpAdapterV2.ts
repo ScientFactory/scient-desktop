@@ -2017,7 +2017,14 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                               failureCode:
                                 cause.code === "timeout" ? "command_timeout" : "command_rejected",
                             }
-                          : { failureClass: "unknown" as const, failureCode: "rpc_failed" }),
+                          : {
+                              failureClass: "unknown" as const,
+                              // A pending prompt whose process exited is a process loss.
+                              failureCode:
+                                cause._tag === "OmpRpcProcessExitedError"
+                                  ? "process_exit"
+                                  : "rpc_failed",
+                            }),
                         broken: cause._tag !== "OmpRpcCommandError",
                       }),
                     ),
