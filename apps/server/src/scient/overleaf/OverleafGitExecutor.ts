@@ -71,6 +71,22 @@ export const isRateLimited = (error: unknown): boolean =>
   isOverleafGitError(error) && /rate.?limit exceeded|returned error: 429\b/iu.test(error.detail);
 
 /**
+ * A push that stopped before any pack went out: Git was missing, or it died on
+ * Overleaf's ref advertisement (exit 128, that step's own message). A failure after
+ * the pack went out exits 1 with no ref status (Git 2.54, LC_ALL=C).
+ */
+export const isRefusedBeforeSending = (error: unknown): boolean =>
+  isOverleafGitError(error) &&
+  (error.reason === "git-not-found" ||
+    error.reason === "git-too-old" ||
+    (error.reason === "non-zero-exit" &&
+      error.exitCode === 128 &&
+      !/RPC failed|hung up/u.test(error.detail) &&
+      /^fatal: (?:unable to access '|Authentication failed for '|repository '[^'\n]*' not found|remote error: )/mu.test(
+        error.detail,
+      )));
+
+/**
  * Waits out that limit for what a person asked for. Overleaf allows about 40 requests a
  * minute and answers again within 30 s (measured 2026-10-31). Background checks skip this.
  */

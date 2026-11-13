@@ -166,7 +166,10 @@ export const OverleafAttemptOutcome = Schema.Literals([
   "accepted",
   /** Overleaf said plainly that its branch had moved. Nothing was applied. */
   "out-of-date",
-  /** Scient refused to start sending (checkout changed); certain, never inferred. */
+  /**
+   * Never applied, and never can be: refused before any pack went out, or Overleaf's
+   * branch moved on from its parent without it, which a push of it could never follow.
+   */
   "not-sent",
   /** A later reviewed operation advanced the base; acceptance still unestablished. */
   "superseded-unresolved",
@@ -482,8 +485,8 @@ export type OverleafTransitionViolation = typeof OverleafTransitionViolation.Typ
 /** Outcome changes a kept attempt may make; anything else rewrites history. */
 const ALLOWED_OUTCOMES: Record<OverleafAttemptOutcome, ReadonlyArray<OverleafAttemptOutcome>> = {
   unknown: ["unknown", "accepted", "out-of-date", "not-sent", "superseded-unresolved"],
-  // Late positive evidence may still arrive; nothing else can be established later.
-  "superseded-unresolved": ["superseded-unresolved", "accepted"],
+  // Late positive evidence may still arrive, or proof that it never can.
+  "superseded-unresolved": ["superseded-unresolved", "accepted", "not-sent"],
   accepted: ["accepted"],
   "out-of-date": ["out-of-date"],
   "not-sent": ["not-sent"],

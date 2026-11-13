@@ -26,8 +26,8 @@ import {
 } from "./OverleafCoordinator.ts";
 import { newOverleafId, type OverleafGitError, waitOutRateLimit } from "./OverleafGitExecutor.ts";
 import { captureOverleafInventory } from "./OverleafInventory.ts";
-import { classifyProbeGitFailure } from "./OverleafProtocolProbe.ts";
-import { OverleafRepository, type OverleafRepositoryError } from "./OverleafRepository.ts";
+import { classifyProbeGitFailure, gitRefusal } from "./OverleafProtocolProbe.ts";
+import { OverleafRepository } from "./OverleafRepository.ts";
 import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
 import { OverleafStateStore, unreadableHolds, unreadableSetAside } from "./OverleafStateStore.ts";
 import { manuscriptPathProblem } from "./manuscriptPaths.ts";
@@ -197,32 +197,6 @@ const summarize = (document: OverleafConnectionDocument): OverleafConnectionSumm
   createdAt: document.createdAt,
   updatedAt: document.updatedAt,
 });
-
-/** A Git failure as a fixed category; Git's own text never leaves (contract section 11). */
-export const gitRefusal = (
-  error: OverleafGitError | OverleafRepositoryError,
-): OverleafConnectionRefusal => {
-  if (error._tag === "OverleafRepositoryError") return "git-failed";
-  if (error.reason === "git-not-found" || error.reason === "git-too-old") return "git-unavailable";
-  switch (classifyProbeGitFailure(error).category) {
-    case "authentication-or-access-denied":
-    case "credential-prompt":
-    case "server-refused":
-      return "access-denied";
-    case "project-not-found":
-      return "project-not-found";
-    case "rate-limited":
-      return "rate-limited";
-    case "timeout":
-    case "dns":
-    case "tls":
-    case "connection":
-    case "redirect":
-      return "unreachable";
-    default:
-      return "git-failed";
-  }
-};
 
 /** Overleaf's own words, without URLs, stay in the log for diagnosis, never in a result. */
 export const logGitFailure = (error: OverleafGitError) =>

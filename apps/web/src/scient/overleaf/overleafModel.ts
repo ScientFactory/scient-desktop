@@ -571,9 +571,11 @@ function publicationLine(
     case "not-sent":
       return {
         line:
-          publication.reason === "rate-limited"
-            ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
-            : "Nothing was sent: the Overleaf token changed during the sync. Sync again.",
+          publication.reason === undefined
+            ? "Nothing was sent: the Overleaf token changed during the sync. Sync again."
+            : publication.reason === "rate-limited"
+              ? "Nothing was sent: Overleaf is limiting Git requests right now. Sync again in a minute."
+              : `Nothing was sent. ${refusalText({ reason: publication.reason })}`,
         tone: "warning",
       };
     case "out-of-date":

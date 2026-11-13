@@ -37,7 +37,13 @@ import {
   type OverleafOperationReceipt,
   type OverleafPublicationAttempt,
 } from "./OverleafConnectionState.ts";
-import { isRateLimited, newOverleafId, type OverleafGitError } from "./OverleafGitExecutor.ts";
+import type { OverleafConnectionRefusal } from "./OverleafConnections.ts";
+import {
+  isRateLimited,
+  isRefusedBeforeSending,
+  newOverleafId,
+  type OverleafGitError,
+} from "./OverleafGitExecutor.ts";
 import { manuscriptTreeProblem } from "./manuscriptPaths.ts";
 import {
   captureOverleafInventory,
@@ -46,7 +52,7 @@ import {
   type OverleafInventoryInput,
   type OverleafInventoryRefusal,
 } from "./OverleafInventory.ts";
-import { probeAcceptance } from "./OverleafProtocolProbe.ts";
+import { gitRefusal, probeAcceptance } from "./OverleafProtocolProbe.ts";
 import * as OverleafRepository from "./OverleafRepository.ts";
 import type { OverleafVolumeIdentityResolver } from "./OverleafRetentionVault.ts";
 import {
@@ -222,8 +228,15 @@ export type OverleafPublication =
     }
   /** Not sent: the folder changed after the apply. The change is for the next review. */
   | { readonly _tag: "not-verified" }
-  /** Recorded, then refused before sending: the credential changed, or Overleaf's rate limit. */
-  | { readonly _tag: "not-sent"; readonly attemptNumber: number; readonly reason?: "rate-limited" }
+  /**
+   * Recorded, then refused before sending: the credential or checkout changed, or
+   * Overleaf or Git refused before any pack went out (`reason`).
+   */
+  | {
+      readonly _tag: "not-sent";
+      readonly attemptNumber: number;
+      readonly reason?: OverleafConnectionRefusal;
+    }
   | { readonly _tag: "accepted"; readonly attemptNumber: number }
   /** Overleaf had moved on, so nothing was applied there. A new review is needed. */
   | { readonly _tag: "out-of-date"; readonly attemptNumber: number }
@@ -1478,9 +1491,10 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
   });
 
   /**
-   * Settles earlier sends against Overleaf's `head` by positive evidence only
-   * (contract section 6): its tree, its bounded history, or the candidate's
-   * reachability. Absent evidence leaves an attempt as it is. Never sends.
+   * Settles earlier sends against Overleaf's `head` (contract section 6): accepted by
+   * its tree, its bounded history, or the candidate's reachability; not sent when the
+   * head moved on from the attempt's parent without the candidate, which Overleaf's
+   * branch, only ever moving forward, can never take again. Never sends.
    */
   const checkAttempts = Effect.fn("OverleafCoordinator.checkAttempts")(function* (
     repo: string,
@@ -1492,6 +1506,11 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       isOverleafAttemptUnresolved(attempt.outcome),
     );
     const evidence = new Map<number, "remote-head-tree" | "remote-history">();
+    const passed = new Set<number>();
+    const ancestor = (ancestor: string) =>
+      repos
+        .isAncestor({ repo, ancestor, descendant: head.commit })
+        .pipe(Effect.orElseSucceed(() => null));
     for (const attempt of open) {
       const found = yield* probeAcceptance({
         repository: repos,
@@ -1509,21 +1528,34 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
           attempt.attemptNumber,
           found === "current-tree" ? "remote-head-tree" : "remote-history",
         );
+      else if (
+        found === "unknown" &&
+        head.commit !== attempt.parentCommit &&
+        (yield* ancestor(attempt.parentCommit)) === true &&
+        (yield* ancestor(attempt.candidateCommit)) === false
+      )
+        passed.add(attempt.attemptNumber);
     }
-    // Late evidence for an overtaken attempt never moves the base, so it is recorded
-    // on its own first; then the current attempt's acceptance moves it.
-    for (const overtaken of [true, false]) {
+    const settled = (
+      attempt: OverleafPublicationAttempt,
+    ): Pick<OverleafPublicationAttempt, "outcome" | "evidence"> | null => {
+      const found = evidence.get(attempt.attemptNumber);
+      if (found !== undefined) return { outcome: "accepted", evidence: found };
+      return passed.has(attempt.attemptNumber)
+        ? { outcome: "not-sent", evidence: "send-refused" }
+        : null;
+    };
+    // Only the current attempt's acceptance moves the base, so everything else is
+    // recorded on its own first.
+    for (const movingBase of [false, true]) {
       const found = new Map(
-        open
-          .filter(
-            (attempt) =>
-              (attempt.outcome === "superseded-unresolved") === overtaken &&
-              evidence.has(attempt.attemptNumber),
-          )
-          .map((attempt) => [
-            attempt.attemptNumber,
-            { outcome: "accepted" as const, evidence: evidence.get(attempt.attemptNumber)! },
-          ]),
+        open.flatMap((attempt) => {
+          const outcome = settled(attempt);
+          return outcome !== null &&
+            (outcome.outcome === "accepted" && attempt.outcome === "unknown") === movingBase
+            ? [[attempt.attemptNumber, outcome] as const]
+            : [];
+        }),
       );
       if (found.size === 0) continue;
       yield* resolveAttempts(repo, connection, found);
@@ -1533,7 +1565,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       accepted: [...evidence.keys()].sort((left, right) => left - right),
       unresolved: open
         .map((attempt) => attempt.attemptNumber)
-        .filter((number) => !evidence.has(number)),
+        .filter((number) => !evidence.has(number) && !passed.has(number)),
     } satisfies OverleafAttemptsChecked;
   });
 
@@ -1740,20 +1772,25 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
         commit: input.candidateCommit,
         credentialEpoch: input.review.binding.credentialEpoch,
       })
-      // A push that failed partway may still have reached Overleaf; a rate limit came first.
+      // A push that failed partway may still have reached Overleaf; a refusal came first.
       .pipe(
         Effect.catch((error) =>
-          Effect.succeed<OverleafRepository.PushOutcome | { readonly _tag: "rate-limited" }>(
+          Effect.succeed<
+            | OverleafRepository.PushOutcome
+            | { readonly _tag: "refused"; readonly reason: OverleafConnectionRefusal }
+          >(
             isRateLimited(error)
-              ? { _tag: "rate-limited" }
-              : { _tag: "unknown", detail: "push failed" },
+              ? { _tag: "refused", reason: "rate-limited" }
+              : isRefusedBeforeSending(error)
+                ? { _tag: "refused", reason: gitRefusal(error) }
+                : { _tag: "unknown", detail: "push failed" },
           ),
         ),
       );
     yield* hook(options, "sent");
     if (pushed._tag === "unknown")
       return { _tag: "unknown", attemptNumber } satisfies OverleafPublication;
-    if (pushed._tag === "rate-limited") {
+    if (pushed._tag === "refused") {
       yield* resolveAttempts(
         repo,
         recorded,
@@ -1764,7 +1801,7 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       const refused: OverleafPublication = {
         _tag: "not-sent",
         attemptNumber,
-        reason: "rate-limited",
+        reason: pushed.reason,
       };
       return refused;
     }

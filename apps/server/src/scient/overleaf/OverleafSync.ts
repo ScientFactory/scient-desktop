@@ -33,7 +33,6 @@ import type {
 import { WorkspaceBindingResolver } from "../projectScope/WorkspaceBindingResolver.ts";
 import * as WorkspaceBindingStore from "../projectScope/WorkspaceBindingStore.ts";
 import {
-  gitRefusal,
   logGitFailure,
   makeOverleafConnections,
   type OverleafConnectionStatus,
@@ -44,6 +43,7 @@ import type { OverleafConnectionDocument } from "./OverleafConnectionState.ts";
 import * as OverleafCoordinator from "./OverleafCoordinator.ts";
 import * as OverleafGitExecutor from "./OverleafGitExecutor.ts";
 import { newOverleafId, waitOutRateLimit } from "./OverleafGitExecutor.ts";
+import { gitRefusal } from "./OverleafProtocolProbe.ts";
 import * as OverleafRepositoryModule from "./OverleafRepository.ts";
 import { OverleafRepository } from "./OverleafRepository.ts";
 import { OverleafEditorSave, type OverleafEditorSaveResult } from "./OverleafEditorSave.ts";
