@@ -1999,9 +1999,10 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         const resolvedLaunch = yield* resolveSpawnCommand(
           settings.binaryPath || "codex",
           [
-            ...codexAppServerArgs(resolveCodexLaunchArgs(settings.launchArgs, environment)),
             // SCIENT-FORK: temporary — make ChatGPT's relative Computer Use entry start (openai/codex#35448).
+            // First, so explicit launch arguments still win.
             ...(yield* codexComputerUsePathArgs(environment, fileSystem, path)),
+            ...codexAppServerArgs(resolveCodexLaunchArgs(settings.launchArgs, environment)),
           ],
           { env: environment, extendEnv: false },
         );
