@@ -21,7 +21,9 @@ vi.mock("~/rightPanelStore", () => ({
   useRightPanelStore: { getState: () => ({ openScient: vi.fn() }) },
 }));
 const { seeOverleafChanges } = await import("./openOverleafReview");
-const { cancelOverleafRun, readOverleafChanges } = await import("./overleafActions");
+const { cancelOverleafRun, readOverleafChanges, unlinkOverleaf } =
+  await import("./overleafActions");
+const { toastManager } = await import("~/components/ui/toast");
 const { readOverleafWorkspace, resetOverleafStoreForTests, setOverleafSyncing } =
   await import("./overleafStore");
 
@@ -87,6 +89,17 @@ describe("overleafActions", () => {
     const error = readOverleafWorkspace(environmentId, ROOT).previewErrors.get("c1");
     expect(error).toMatch(/^It first finished an interrupted sync/u);
     expect(error).not.toMatch(/nothing was (linked or )?changed/iu);
+  });
+
+  it("never says nothing changed when an unlink finished an interrupted sync and was refused", async () => {
+    client.disconnectOverleaf.mockReset().mockResolvedValueOnce({
+      _tag: "refused",
+      reason: "records-unreadable",
+      finishedInterruptedSync: true,
+    });
+    expect(await unlinkOverleaf(environmentId, ROOT, "c1")).toBe(false);
+    const [toast] = vi.mocked(toastManager.add).mock.calls.at(-1)!;
+    expect(toast.description).not.toMatch(/nothing was (linked or )?changed/iu);
   });
 
   it("See changes refreshes an existing unapplied review and waits while a sync runs", async () => {

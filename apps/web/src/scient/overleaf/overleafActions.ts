@@ -98,7 +98,10 @@ export async function unlinkOverleaf(
       connectionId,
       requestId: overleafRequestId(),
     });
-    if (result._tag === "refused") return failed(refusalText({ reason: result.reason }));
+    if (result._tag === "refused")
+      return failed(
+        refusalText({ reason: result.reason }, "sync", result.finishedInterruptedSync === true),
+      );
     // What this window remembered of the link (its review, decisions) goes too.
     forgetOverleafConnection(environmentId, connectionId);
     toastManager.add({

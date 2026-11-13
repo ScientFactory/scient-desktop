@@ -1358,12 +1358,9 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
       callerBindingId,
       stillAuthorized: stillOwner,
     });
-    if (result._tag !== "done") return result;
-    return {
-      ...result,
-      finishedInterruptedSync:
-        recovered !== null && Exit.isSuccess(recovered) && recovered.value._tag === "recovered",
-    };
+    const finishedInterruptedSync =
+      recovered !== null && Exit.isSuccess(recovered) && recovered.value._tag === "recovered";
+    return { ...result, finishedInterruptedSync };
   });
 
   /**
