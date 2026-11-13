@@ -158,7 +158,8 @@ export function windowsPermissionTargets(helper: string) {
  */
 export const WINDOWS_PERMISSIONS_SCRIPT = `
 $ErrorActionPreference = 'Stop'
-foreach ($path in $env:SCIENT_PUBLICATION_ACL_PATHS -split '\\n') { (Get-Acl -LiteralPath $path).Sddl }`;
+Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1"
+foreach ($path in $env:SCIENT_PUBLICATION_ACL_PATHS -split '\\n') { (Microsoft.PowerShell.Security\\Get-Acl -LiteralPath $path).Sddl }`;
 /**
  * Why the descriptors PowerShell printed for `targets` refuse the helper: an owner or a
  * write right outside the user, SYSTEM, Administrators and TrustedInstaller.

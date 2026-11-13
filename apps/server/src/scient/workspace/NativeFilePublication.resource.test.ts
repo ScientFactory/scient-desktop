@@ -159,7 +159,7 @@ const descriptors = (paths: ReadonlyArray<string>, languageMode: string) =>
         // host (AppLocker, WDAC) compiles an encoded command. Such a host trusts Windows' signed
         // modules; a mode set in-session can't load them, so Get-Acl's is loaded first.
         Buffer.from(
-          `Import-Module Microsoft.PowerShell.Security
+          `Import-Module "$PSHOME\\Modules\\Microsoft.PowerShell.Security\\Microsoft.PowerShell.Security.psd1"
 $ExecutionContext.SessionState.LanguageMode = '${languageMode}'
 "mode: $($ExecutionContext.SessionState.LanguageMode)"
 Invoke-Expression $env:SCIENT_PERMISSIONS_SCRIPT`,
