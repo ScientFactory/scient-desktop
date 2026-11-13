@@ -6,11 +6,13 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as SqlClient from "effect/sql/SqlClient";
 
 import * as HostProcess from "@t3tools/shared/HostProcess";
 
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
+// SCIENT-FORK:START — busy means Scient's executing work, not any open run.
+import * as ScientKeepAwakeWork from "../scient/keepAwake/KeepAwakeService.ts";
+// SCIENT-FORK:END
 import { forkParked } from "../serverActivation.ts";
 import * as Settings from "../serverSettings.ts";
 
@@ -30,7 +32,8 @@ function inhibitorCommand(
         command: "systemd-inhibit",
         args: [
           "--what=idle:sleep",
-          "--who=T3 Code",
+          // SCIENT-FORK: the name Linux shows for the inhibitor.
+          "--who=Scient",
           "--why=Agents are working",
           "--mode=block",
           "tail",
@@ -47,7 +50,8 @@ function inhibitorCommand(
           "-NonInteractive",
           "-Command",
           // ES_CONTINUOUS | ES_SYSTEM_REQUIRED, held by this thread until Wait-Process returns.
-          `$t = Add-Type -Name Power -Namespace T3 -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649); Wait-Process -Id ${serverPid}`,
+          // SCIENT-FORK: the Scient namespace for the PowerShell type.
+          `$t = Add-Type -Name Power -Namespace Scient -PassThru -MemberDefinition '[DllImport("kernel32.dll")] public static extern uint SetThreadExecutionState(uint f);'; [void]$t::SetThreadExecutionState([uint32]2147483649); Wait-Process -Id ${serverPid}`,
         ],
       };
     default:
@@ -100,18 +104,18 @@ export const layer = Layer.effectDiscard(
     if (command === undefined) return;
     const settings = yield* Settings.ServerSettingsService;
     const events = yield* OrchestrationEventStore.OrchestrationEventStore;
-    const sql = yield* SqlClient.SqlClient;
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
 
-    const hasActiveRun = sql<{ readonly active: number }>`
-      SELECT EXISTS (
-        SELECT 1 FROM orchestration_v2_projection_runs
-        WHERE status IN ('preparing', 'starting', 'running')
-      ) AS active
-    `.pipe(
-      Effect.map((rows) => rows[0]?.active === 1),
+    // SCIENT-FORK:START — Scient's work: executing threads with a live owner, not monitors, PR
+    // watches, threads waiting on a person or another thread. It reads thread shells, so it is
+    // re-read on any thread event (batched), and each minute for what changes without one: a
+    // provider session ending, and a run's start grace running out.
+    const scientWork = yield* ScientKeepAwakeWork.KeepAwakeService;
+    const hasActiveRun = scientWork.work.pipe(
+      Effect.map((work) => work.working.length > 0),
       retryWithBackoff("keep-awake could not read active runs"),
     );
+    // SCIENT-FORK:END
     // Read the cursor before the snapshot so a run changing in between is replayed, not missed.
     const active = Stream.unwrap(
       events.latestApplicationSequence.pipe(
@@ -119,15 +123,15 @@ export const layer = Layer.effectDiscard(
         Effect.map((afterSequence) =>
           Stream.concat(
             Stream.succeed(undefined),
-            events
-              .streamApplicationEvents({ afterSequence })
-              .pipe(
-                Stream.filter(
-                  (stored) =>
-                    "event" in stored &&
-                    (stored.event.type === "run.created" || stored.event.type === "run.updated"),
-                ),
+            // SCIENT-FORK:START — any thread event can change Scient's work; see scientWork.
+            Stream.merge(
+              events.streamApplicationEvents({ afterSequence }).pipe(
+                Stream.filter((stored) => "event" in stored),
+                Stream.groupedWithin(10_000, "1 second"),
               ),
+              Stream.tick("1 minute").pipe(Stream.drop(1)),
+            ),
+            // SCIENT-FORK:END
           ),
         ),
       ),
