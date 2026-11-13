@@ -129,6 +129,10 @@ while the parent conversation and other subagents continue. This requires a runt
 subagent stopping is unsupported. The child's reported lifecycle determines its final state. If
 the agent's process has already ended, Stop marks the child interrupted.
 
+Shell commands show as command rows with their output and exit code, file edits and writes as
+file changes you can open as a diff, and web searches with their query and sources. Pictures any
+tool returns show in its row.
+
 Scient shows the agent's reported context usage, model capacity and session cost. The cost
 includes billed cache refreshes, with cache warming left at the agent's default. `/compact`
 uses the agent's native compaction and shows its summary when available. The agent's task
@@ -165,6 +169,14 @@ What the operating system asks for:
   the desktop's accessibility support (AT-SPI) is on.
 - **Linux (Wayland):** the first input shows your desktop's remote-control prompt. Released
   agent builds cannot take screenshots on Wayland.
+
+## Making pictures
+
+Scient Agent can make and edit pictures, such as figures and diagrams, when it has a ChatGPT or
+Google Antigravity account signed in. Scient turns the agent's image tool on while such an account
+is connected and off when it is not; no restart is needed. The pictures show in the conversation
+and are saved as files. They use that account's quota. **Image generation** in the provider's
+settings turns it off; it is on by default.
 
 ## Where it keeps things
 

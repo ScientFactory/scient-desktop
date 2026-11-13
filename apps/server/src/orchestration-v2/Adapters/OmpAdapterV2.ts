@@ -47,6 +47,7 @@ import {
   ompDashboardProgress,
 } from "../../provider/omp/OmpDashboardPage.ts";
 import { ompTarget, type OmpTarget } from "../../provider/omp/OmpTarget.ts";
+import { OmpToolRows } from "../../provider/omp/OmpToolRows.ts";
 import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
 import {
   assertReadableOmpSessionFile,
@@ -672,6 +673,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
 
         const ordinaryTools = new Map<string, Extract<NativeSessionUpdate, { type: "tool" }>>();
         const waitRows = new OmpWaitRows();
+        const toolRows = new OmpToolRows((text) => client.redaction.text(text));
         // Native subagents' own steps, read from the conversation OMP saves for each:
         // at most once a second while one runs, then twice after it ends, since its last
         // record can land after its ending frame. Two reads run at a time per session.
@@ -979,16 +981,27 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   update.data,
                   client.redaction.text,
                 ) ?? retainedComputerPresentation(previous);
-              const images = computer ? ompToolImages(update.data) : [];
+              const images = ompToolImages(update.data);
               const permissionsNeeded = computer
                 ? ompComputerPermissionsNeeded(
                     [rawOutput, ...ompComputerStatusErrors(update.data)].join("\n"),
                   )
                 : [];
+              const status = update.status === "inProgress" ? "running" : update.status;
+              const row =
+                computer || images.length > 0 || previous?.images !== undefined
+                  ? undefined
+                  : toolRows.row(update.toolCallId, name, {
+                      input: update.input,
+                      data: update.data,
+                      output: rawOutput,
+                      status,
+                    });
               const item: Extract<NativeSessionUpdate, { type: "tool" }> = {
                 type: "tool",
                 id: update.toolCallId,
                 name,
+                ...(row === undefined ? {} : { row }),
                 ...(waitTitle === undefined ? {} : { title: waitTitle }),
                 ...computer,
                 ...(images.length > 0
@@ -1001,7 +1014,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                   : previous?.permissionsNeeded === undefined
                     ? {}
                     : { permissionsNeeded: previous.permissionsNeeded }),
-                status: update.status === "inProgress" ? "running" : update.status,
+                status,
                 ...(update.input === undefined
                   ? previous?.input === undefined
                     ? {}
@@ -1337,6 +1350,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             case "turn-started":
               manualCompaction = false;
               ordinaryTools.clear();
+              toolRows.clear();
               waitRows.reset();
               return onUpdate({ type: "continuation-started" });
             case "model-changed":

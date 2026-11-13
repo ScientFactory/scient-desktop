@@ -1,3 +1,4 @@
+import type { ProviderConnectionAccount } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -8,7 +9,16 @@ const HOST_CONFIG_FILE = "scient-host.yml";
 
 export interface ScientAgentHostConfigInput {
   readonly computerControl: boolean;
+  readonly imageGeneration: boolean;
 }
+
+/** The agent's sign-ins whose models make pictures: ChatGPT's hosted images and Antigravity's Gemini. */
+const IMAGE_ACCOUNTS: ReadonlySet<string> = new Set(["openai-codex", "google-antigravity"]);
+
+export const hasImageGenerationAccount = (
+  accounts: ReadonlyArray<ProviderConnectionAccount> | undefined,
+): boolean =>
+  accounts?.some((account) => account.connected && IMAGE_ACCOUNTS.has(account.id)) ?? false;
 
 /**
  * Scient runs every Scient Agent conversation with full access, so the desktop's own
@@ -20,6 +30,8 @@ export const scientAgentHostConfigText = (input: ScientAgentHostConfigInput): st
     "computer:",
     `  enabled: ${input.computerControl}`,
     ...(input.computerControl ? ["tools:", "  approval:", "    computer.control: allow"] : []),
+    "generate_image:",
+    `  enabled: ${input.imageGeneration}`,
     "",
   ].join("\n");
 

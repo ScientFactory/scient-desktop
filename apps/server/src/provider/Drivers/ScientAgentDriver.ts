@@ -51,6 +51,7 @@ import {
 import { scientAgentProcessEnvironment, scientAgentTarget } from "../scient/ScientAgentTarget.ts";
 import {
   SCIENT_AGENT_CONFIG_FILES_ENV,
+  hasImageGenerationAccount,
   writeScientAgentHostConfig,
 } from "../scient/ScientAgentHostConfig.ts";
 import type { ScientProviderDriver, ScientProviderInstance } from "../ScientProviderInstance.ts";
@@ -136,11 +137,16 @@ export const ScientAgentDriver: ScientProviderDriver<
         path.join(yield* HostProcess.HomeDirectory, ".claude"),
     );
     processEnv.CLAUDE_CONFIG_DIR = claudeHome;
-    processEnv[SCIENT_AGENT_CONFIG_FILES_ENV] = yield* writeScientAgentHostConfig(root, {
-      computerControl: effectiveConfig.computerControl,
-    }).pipe(
-      Effect.provideService(FileSystem.FileSystem, fs),
-      Effect.provideService(Path.Path, path),
+    // Image generation waits for the provider check to find an account that can make images.
+    const writeHostConfig = (imageAccount: boolean) =>
+      writeScientAgentHostConfig(root, {
+        computerControl: effectiveConfig.computerControl,
+        imageGeneration: effectiveConfig.imageGeneration && imageAccount,
+      }).pipe(
+        Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+      );
+    processEnv[SCIENT_AGENT_CONFIG_FILES_ENV] = yield* writeHostConfig(false).pipe(
       Effect.mapError(failure("Could not write the Scient Agent settings Scient manages.")),
     );
     // A crashed server never removed its extension files, and a bootstrap
@@ -257,6 +263,11 @@ export const ScientAgentDriver: ScientProviderDriver<
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
+        Effect.tap((snapshot) =>
+          snapshot.accounts === undefined
+            ? Effect.void
+            : writeHostConfig(hasImageGenerationAccount(snapshot.accounts)).pipe(Effect.ignore),
+        ),
         Effect.flatMap((snapshot) =>
           effectiveConfig.enabled && snapshot.installed
             ? Effect.all(
