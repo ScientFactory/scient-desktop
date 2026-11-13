@@ -56,15 +56,6 @@ const InstanceMapEntryFields = {
   resolvedBy: ResolutionStep,
   resolvedAt: NonEmptyString,
 };
-const InstanceMapEntry = Schema.Struct({
-  ...InstanceMapEntryFields,
-  /** Who linked it, for `linked`. */
-  linkedBy: Schema.optionalKey(ScientSourceActor),
-  /** What a link replaced, so its Undo puts that back. */
-  replaced: Schema.optionalKey(Schema.Struct(InstanceMapEntryFields)),
-});
-type InstanceMapEntry = typeof InstanceMapEntry.Type;
-
 /** A decision that a pin is not the Library sources it was compared with. */
 const KeptSeparate = Schema.Struct({
   projectSourceId: NonEmptyString,
@@ -73,6 +64,17 @@ const KeptSeparate = Schema.Struct({
   decidedBy: ScientSourceActor,
 });
 type KeptSeparate = typeof KeptSeparate.Type;
+
+const InstanceMapEntry = Schema.Struct({
+  ...InstanceMapEntryFields,
+  /** Who linked it, for `linked`. */
+  linkedBy: Schema.optionalKey(ScientSourceActor),
+  /** What a link replaced, so its Undo puts that back. */
+  replaced: Schema.optionalKey(Schema.Struct(InstanceMapEntryFields)),
+  /** A Keep separate decision the link withdrew; its Undo restores it. */
+  replacedSeparate: Schema.optionalKey(KeptSeparate),
+});
+type InstanceMapEntry = typeof InstanceMapEntry.Type;
 
 const InstanceMapFile = Schema.Struct({
   formatVersion: Schema.Literal(1),
@@ -185,6 +187,7 @@ async function writeInstanceMap(
         resolvedAt: entry.resolvedAt,
         ...(entry.linkedBy ? { linkedBy: entry.linkedBy } : {}),
         ...(entry.replaced ? { replaced: entry.replaced } : {}),
+        ...(entry.replacedSeparate ? { replacedSeparate: entry.replacedSeparate } : {}),
       })),
       ...(separate.size > 0 ? { keptSeparate: byProjectSourceId(separate.values()) } : {}),
     },
@@ -378,7 +381,22 @@ async function resolveAt(
       results.push({ kind: "resolved", projectSourceId, sourceId: sameId, by: "same-id" });
       continue;
     }
-    const match = request.work ? matchWork(request.work, records) : null;
+    const separate = file.keptSeparate.get(projectSourceId);
+    const rejected = new Set(
+      (separate?.sourceIds ?? []).flatMap((sourceId) => [
+        sourceId,
+        resolveScientLibraryAlias(aliases, sourceId),
+      ]),
+    );
+    const found = request.work ? matchWork(request.work, records) : null;
+    // Keep separate holds until withdrawn: a rejected source never resolves this ID again.
+    const match =
+      separate && request.work && found
+        ? (matchWork(
+            request.work,
+            records.filter((candidate) => !rejected.has(candidate.sourceId)),
+          ) ?? { by: "contradicted" as const, ids: found.ids })
+        : found;
     if (match && match.by !== "contradicted" && match.ids.length === 1) {
       const sourceId = match.ids[0]!;
       record(projectSourceId, sourceId, match.by);
@@ -390,8 +408,8 @@ async function resolveAt(
         kind: "unresolved",
         projectSourceId,
         reason: match.by === "contradicted" ? "contradicted" : "ambiguous",
-        candidateIds: match.ids,
-        ...(file.keptSeparate.has(projectSourceId) ? { keptSeparate: true as const } : {}),
+        candidateIds: found?.ids ?? match.ids,
+        ...(separate ? { keptSeparate: true as const } : {}),
       });
       continue;
     }
@@ -513,6 +531,9 @@ export async function linkScientProjectSource(input: {
             resolvedBy: current.resolvedBy,
             resolvedAt: current.resolvedAt,
           };
+    const replacedSeparate =
+      keptSeparate.get(input.projectSourceId) ??
+      (current?.resolvedBy === "linked" ? current.replacedSeparate : undefined);
     entries.set(input.projectSourceId, {
       projectSourceId: input.projectSourceId,
       sourceId: target,
@@ -520,6 +541,7 @@ export async function linkScientProjectSource(input: {
       resolvedAt: new Date().toISOString(),
       linkedBy: input.actor,
       ...(replaced ? { replaced } : {}),
+      ...(replacedSeparate ? { replacedSeparate } : {}),
     });
     keptSeparate.delete(input.projectSourceId);
     await writeInstanceMap(root, instanceId, entries, keptSeparate);
@@ -527,7 +549,10 @@ export async function linkScientProjectSource(input: {
   });
 }
 
-/** Undoes `linkScientProjectSource`: the pin resolves as it did before, or from its snapshot. */
+/**
+ * Undoes `linkScientProjectSource`: the pin resolves as it did before, or from its snapshot, and
+ * a Keep separate decision the link withdrew holds again.
+ */
 export async function unlinkScientProjectSource(input: {
   readonly library: ScientLibraryLocation;
   readonly projectRoot: string;
@@ -543,15 +568,18 @@ export async function unlinkScientProjectSource(input: {
     if (current?.resolvedBy !== "linked") return { outcome: "not-linked" as const };
     if (current.replaced) entries.set(input.projectSourceId, { ...current.replaced });
     else entries.delete(input.projectSourceId);
+    if (current.replacedSeparate) {
+      keptSeparate.set(input.projectSourceId, current.replacedSeparate);
+    }
     await writeInstanceMap(root, instanceId, entries, keptSeparate);
     return { outcome: "unlinked" as const };
   });
 }
 
 /**
- * Records that a pin is none of the Library sources it was compared with (`separate: true`), or
- * withdraws that decision. The pin stays on its snapshot either way; the decision only stops
- * asking.
+ * Records that a pin or review record is none of the Library sources it was compared with
+ * (`separate: true`), or withdraws that decision ("Ask again"). Until withdrawn or a deliberate
+ * Link, those sources (through aliases) never resolve it, even if their metadata later agrees.
  */
 export async function keepScientProjectSourceSeparate(input: {
   readonly library: ScientLibraryLocation;

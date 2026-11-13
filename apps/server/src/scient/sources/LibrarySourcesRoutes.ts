@@ -1,6 +1,7 @@
 import {
   citationKeyValidationMessage,
   scientLibraryIdentityProblem,
+  type ScientLibraryIdentityFields,
   scientSourceReadingState,
   scientSourceSummaryFromRecord,
   sourceMetadataDiagnostics,
@@ -39,6 +40,7 @@ import {
 } from "@scientfactory/scient-sources/library-review-conflicts";
 import {
   changeScientLibraryReview,
+  listScientLibraryReviewIds,
   listScientLibraryReviewRecords,
   listScientLibraryReviews,
   readScientLibraryReview,
@@ -49,6 +51,7 @@ import {
   keepScientProjectSourceSeparate,
   linkScientProjectSource,
   unlinkScientProjectSource,
+  type ScientProjectSourceResolution,
 } from "@scientfactory/scient-sources/library-instance-map";
 import {
   changeScientProjectPins,
@@ -498,9 +501,11 @@ export async function librarySourceDetail(
       sourceId: input.sourceId,
     });
     if (!entry?.record) throw new Error("The source was not found in this review.");
+    const match = (await libraryReviewRecordMatches(store, [entry])).get(input.sourceId);
     return {
       ...normalizeSourceRecordForRead(routeRecord(entry.record, undefined)),
       ...(entry.from === "snapshot" ? { label: SNAPSHOT_LABEL } : {}),
+      ...(match ? { libraryMatch: match } : {}),
     };
   }
   const sourceId = await libraryIdOf(store, input.sourceId);
@@ -537,6 +542,39 @@ export async function librarySourceDetail(
   };
 }
 
+const recordsById = async (store: Store) =>
+  new Map(
+    (await listScientSourceRecords(store.library)).map((record) => [record.sourceId, record]),
+  );
+
+/** Why a project source this Library serves from its snapshot was not taken for its candidates. */
+function libraryMatchOf(
+  work: ScientLibraryIdentityFields,
+  resolution: ScientProjectSourceResolution | undefined,
+  records: ReadonlyMap<string, ScientSourceRecord>,
+): ScientSourceLibraryMatch | undefined {
+  if (resolution?.kind !== "unresolved") return undefined;
+  if (resolution.reason !== "contradicted" && resolution.reason !== "ambiguous") return undefined;
+  return {
+    reason: resolution.reason,
+    keptSeparate: resolution.keptSeparate === true,
+    candidates: resolution.candidateIds.flatMap((sourceId) => {
+      const record = records.get(sourceId);
+      if (!record) return [];
+      const problem = scientLibraryIdentityProblem(work, record);
+      return [
+        {
+          sourceId,
+          title: record.title,
+          issuedYear: record.issuedYear,
+          containerTitle: record.containerTitle,
+          ...(problem ? { problem } : {}),
+        },
+      ];
+    }),
+  };
+}
+
 /**
  * For pins this Library serves from their snapshot although it holds sources sharing their
  * identifier or title: why, and those sources, by project source ID. Writes nothing.
@@ -560,37 +598,63 @@ export async function libraryPinMatches(
       (resolution.reason === "contradicted" || resolution.reason === "ambiguous"),
   );
   if (wanted.length === 0) return matches;
-  const records = new Map(
-    (await listScientSourceRecords(store.library)).map((record) => [record.sourceId, record]),
-  );
+  const records = await recordsById(store);
   for (const { pin, resolution } of wanted) {
-    if (resolution.kind !== "unresolved") continue;
-    if (resolution.reason !== "contradicted" && resolution.reason !== "ambiguous") continue;
-    matches.set(pin.sourceId, {
-      reason: resolution.reason,
-      keptSeparate: resolution.keptSeparate === true,
-      candidates: resolution.candidateIds.flatMap((sourceId) => {
-        const record = records.get(sourceId);
-        if (!record) return [];
-        const problem = scientLibraryIdentityProblem(pin.work, record);
-        return [
-          {
-            sourceId,
-            title: record.title,
-            issuedYear: record.issuedYear,
-            containerTitle: record.containerTitle,
-            ...(problem ? { problem } : {}),
-          },
-        ];
-      }),
-    });
+    const match = libraryMatchOf(pin.work, resolution, records);
+    if (match) matches.set(pin.sourceId, match);
+  }
+  return matches;
+}
+
+/** The repair matches of a review's snapshot records, by project source ID. Writes nothing. */
+export async function libraryReviewRecordMatches(
+  store: Store,
+  entries: ReadonlyArray<ScientLibraryReviewRecord>,
+): Promise<ReadonlyMap<string, ScientSourceLibraryMatch>> {
+  const matches = new Map<string, ScientSourceLibraryMatch>();
+  const repairable = entries.filter(
+    (entry) =>
+      entry.record &&
+      (entry.unresolved?.reason === "contradicted" || entry.unresolved?.reason === "ambiguous"),
+  );
+  if (!store.exists || repairable.length === 0) return matches;
+  const records = await recordsById(store);
+  for (const entry of repairable) {
+    const match = libraryMatchOf(entry.record!, entry.unresolved, records);
+    if (match) matches.set(entry.projectSourceId, match);
   }
   return matches;
 }
 
 /**
- * Deliberate repair of a pin served from its snapshot: link it to one of the Library sources it
- * was compared with (credited, undoable), or record that it is none of them.
+ * `libraryPinMatches`, then the records of this project's reviews no pin names: a full-text
+ * screening record is repaired under the review's project source ID, without becoming a citation.
+ */
+async function libraryProjectSourceMatch(
+  store: Store,
+  projectSourceId: string,
+): Promise<ScientSourceLibraryMatch | undefined> {
+  const pinned = (await libraryPinMatches(store, new Set([projectSourceId]))).get(projectSourceId);
+  if (pinned || !store.exists) return pinned;
+  for (const reviewId of await listScientLibraryReviewIds(store.root)) {
+    const entry = await readScientLibraryReviewRecord({
+      library: store.library,
+      mode: "read",
+      projectRoot: store.root,
+      reviewId,
+      sourceId: projectSourceId,
+    });
+    const match = entry
+      ? (await libraryReviewRecordMatches(store, [entry])).get(projectSourceId)
+      : undefined;
+    if (match) return match;
+  }
+  return undefined;
+}
+
+/**
+ * Deliberate repair of a pin or review record served from its snapshot: link it to one of the
+ * Library sources it was compared with (credited, undoable), or record that it is none of them.
  */
 export async function repairLibraryPin(
   store: Store,
@@ -620,9 +684,7 @@ export async function repairLibraryPin(
     case "keep-pin-separate":
     case "clear-pin-separate": {
       const separate = change.action === "keep-pin-separate";
-      const match = separate
-        ? (await libraryPinMatches(store, new Set([change.sourceId]))).get(change.sourceId)
-        : undefined;
+      const match = separate ? await libraryProjectSourceMatch(store, change.sourceId) : undefined;
       if (separate && !match) return { outcome: "not-found" as const };
       return keepScientProjectSourceSeparate({
         ...repair,

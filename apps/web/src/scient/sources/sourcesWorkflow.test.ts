@@ -531,6 +531,16 @@ describe("sources workflow on a personal Library", () => {
     expect(projectKeys(undone.overview!.records[0]!)).toEqual(["ada2026"]);
   });
 
+  it("shows a review record served from the review's snapshot, which no list row names", () => {
+    const state = reduceAll(library([{ sourceId: "listed", revision: 1 }]), {
+      type: "sourceDetailArrived",
+      sourceId: "screened",
+      atDetailFetch: 1,
+      detail: { ...detail({ sourceId: "screened" }), label: "From this review's snapshot" },
+    });
+    expect(shownSourceRecord(state, "screened")).toMatchObject({ sourceId: "screened" });
+  });
+
   it("keeps a merged-away source's reading change off the kept one and drops it after Undo", () => {
     const marked = sourcesWorkflowReducer(
       library([

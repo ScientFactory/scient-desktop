@@ -318,7 +318,8 @@ function withSummaryReadingState(
 /**
  * The details shown for a source: the cached detail at the overview row's revision. Pins change
  * without a revision, so this project's keys come from the latest overview row alone, never from a
- * detail answer, which may have been read before the newest pin change.
+ * detail answer, which may have been read before the newest pin change. A review record served
+ * from the review's snapshot has no row; its detail is shown as read.
  */
 export function shownSourceRecord(
   state: Pick<SourcesWorkflowState, "overview" | "sourceDetails">,
@@ -326,6 +327,7 @@ export function shownSourceRecord(
 ): ScientSourceDetailResult | null {
   const row = state.overview?.records.find((record) => record.sourceId === sourceId);
   const detail = state.sourceDetails[sourceId];
+  if (!row && detail?.label === "From this review's snapshot") return detail;
   if (!row || !detail || detail.revision !== row.revision) return null;
   if (!isLibraryRow(row)) return detail;
   if (

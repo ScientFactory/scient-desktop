@@ -594,6 +594,17 @@ export function SystematicReviewsView(props: {
   );
   const reviewRecordsId = reviews.records ? reviews.detail?.review.reviewId : undefined;
   const loadSource = (sourceId: string) => props.loadSource(sourceId, reviewRecordsId);
+  // A record served from the review's snapshot is in no list, so its details are read first.
+  const openSource = (sourceId: string) => {
+    if (records.get(sourceId)?.label !== "From this review's snapshot") {
+      props.onOpenSource(sourceId);
+      return;
+    }
+    void loadSource(sourceId).then(
+      () => props.onOpenSource(sourceId),
+      () => undefined,
+    );
+  };
   const detail = reviews.detail;
   const openId = reviews.reviewId;
   const openSummary = reviews.list?.reviews.find((review) => review.reviewId === openId) ?? null;
@@ -755,7 +766,7 @@ export function SystematicReviewsView(props: {
                   records={records}
                   organization={props.organization}
                   selectedSourceIds={props.selectedSourceIds}
-                  onOpenSource={props.onOpenSource}
+                  onOpenSource={openSource}
                 />
               ) : tab === "screening" ? (
                 <>
@@ -778,7 +789,7 @@ export function SystematicReviewsView(props: {
                     sourceDetails={props.sourceDetails}
                     loadSource={loadSource}
                     pending={reviews.disabled}
-                    onOpenSource={props.onOpenSource}
+                    onOpenSource={openSource}
                     onRequestName={setNameRequest}
                     onDecide={(sourceId, decision, reason) =>
                       reviews.change(

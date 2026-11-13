@@ -21,7 +21,13 @@ import {
   resolveScientProjectPins,
   setScientProjectPinNote,
 } from "./projectPins.ts";
-import { attachScientSourcePdf, importScientSource, listScientSourceRecords } from "./store.ts";
+import { editableMetadataFromRecord } from "./editable.ts";
+import {
+  attachScientSourcePdf,
+  importScientSource,
+  listScientSourceRecords,
+  updateScientSourceMetadata,
+} from "./store.ts";
 
 const fixtures: string[] = [];
 
@@ -193,5 +199,74 @@ describe("resolving a copied project's sources", () => {
       actor: "user",
     });
     expect(kept?.resolution).toMatchObject({ reason: "contradicted", keptSeparate: true });
+  });
+
+  it("repairs a review record no pin names; Keep separate holds until withdrawn, and Undo of a link restores it", async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-instance-map-")),
+    );
+    fixtures.push(base);
+    const author = await newLibrary(base, "author");
+    const project = NodePath.join(base, "project");
+    await NodeFSP.mkdir(project);
+    await initializeScientProject({ root: project });
+    const screened = await add(author, work("Early therapy in sepsis"));
+    const { reviewId } = await changeScientLibraryReview({
+      projectRoot: project,
+      library: author,
+      change: { action: "create-review", title: "Sepsis" },
+      actor: "user",
+    });
+    await changeScientLibraryReview({
+      projectRoot: project,
+      library: author,
+      change: { action: "add-sources", reviewId: reviewId!, sourceIds: [screened.sourceId] },
+      actor: "user",
+    });
+    const collaborator = await newLibrary(base, "collaborator");
+    const nearMatch = await add(collaborator, work("Soil carbon under drought"));
+    const reviewRecord = async () =>
+      (await listScientLibraryReviewRecords({
+        projectRoot: project,
+        library: collaborator,
+        reviewId: reviewId!,
+        mode: "read",
+      }))![0]!;
+
+    expect(await reviewRecord()).toMatchObject({
+      from: "snapshot",
+      unresolved: { reason: "contradicted", candidateIds: [nearMatch.sourceId] },
+    });
+    const repair = {
+      library: collaborator,
+      projectRoot: project,
+      projectSourceId: screened.sourceId,
+    };
+    await keepScientProjectSourceSeparate({
+      ...repair,
+      sourceIds: [nearMatch.sourceId],
+      separate: true,
+      actor: "user",
+    });
+    // The rejected copy's metadata later agrees; the decision still holds.
+    await updateScientSourceMetadata({
+      root: collaborator,
+      sourceId: nearMatch.sourceId,
+      expectedRevision: nearMatch.revision,
+      metadata: { ...editableMetadataFromRecord(nearMatch), title: "Early therapy in sepsis" },
+      actor: "user",
+    });
+    expect(await reviewRecord()).toMatchObject({
+      from: "snapshot",
+      unresolved: { keptSeparate: true, candidateIds: [nearMatch.sourceId] },
+    });
+
+    await linkScientProjectSource({ ...repair, sourceId: nearMatch.sourceId, actor: "user" });
+    expect(await reviewRecord()).toMatchObject({ from: "library" });
+    expect(await unlinkScientProjectSource(repair)).toEqual({ outcome: "unlinked" });
+    expect(await reviewRecord()).toMatchObject({
+      from: "snapshot",
+      unresolved: { keptSeparate: true },
+    });
   });
 });
