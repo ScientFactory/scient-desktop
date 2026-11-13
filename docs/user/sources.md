@@ -88,21 +88,46 @@ report on the review lists what is left to decide until you dismiss it.
 ### Possible duplicates
 
 When the same paper reaches your Library twice, for example from two projects,
-Scient merges the copies on its own if they share a DOI, PubMed or arXiv ID,
-the same Zotero item, or the same PDF and title. Copies that only look alike,
-with the same title, first author and year, or the same ISBN, are listed
-instead. Open them with **Possible duplicates** in the **⋯** menu. Each pair
+Scient merges the copies on its own only when it is sure. They must share a
+DOI, PubMed, PMC, arXiv, OpenAlex or Semantic Scholar ID, the same Zotero
+item, or the same PDF, and also have the same title (ignoring case, spacing
+and punctuation) and the same type. Copies whose identifiers disagree are never merged on their own, and
+neither is a copy that matches two others that disagree with each other.
+
+Scient lists a pair for you to decide instead when:
+
+- they share an identifier, a Zotero item or a PDF, but the titles or types
+  differ, one has no title or no known type, one is a preprint and the other
+  the published paper, they are different arXiv versions, other identifiers
+  differ, or you undid their merge. The pair says why, for example "Same
+  identifier, but the titles differ."
+- they have the same title, first author and year.
+- they share an ISBN or ISSN and have the same title, or both are whole books
+  with the same ISBN, and no identifiers disagree. Chapters of one book and
+  articles of one journal are not listed just for sharing it.
+
+Open them with **Possible duplicates** in the **⋯** menu. Each pair
 shows both copies side by side, with what differs between them stressed.
 Choose **Keep this one** on the copy to keep and **Merge**; Scient suggests
 which to keep. Where the two have different values, the kept copy's value
 stays. Projects that use either copy keep citing it. **Not duplicates** takes
-the pair off the list for good. Both have **Undo**.
+the pair off the list for good. Both have **Undo**. A long list shows part at
+a time; **Show more** at its end shows the next part. If the list changed in
+the meantime, it starts again from the top, so nothing is skipped.
 
 The **Merged** tab lists merges you can still undo, including those Scient
 made when a project moved into your Library, with the details that differed.
 **Undo** brings the other copy back; changes you made to the kept copy after the
-merge stay, and Scient says which. After a project moves into your Library, its
-summary line offers **Review** when some merges kept different values.
+merge stay, and Scient says which. Scient never merges those two again on its
+own, not even when another project moves in; the pair is listed again, and you
+can still merge them or mark them as not duplicates. After a project moves
+into your Library, its summary line offers **Review** when some merges kept
+different values.
+
+When a project copied from someone else names a paper and your Library has a
+copy that disagrees with it, for example the same DOI on a paper with another
+title, Scient does not link the two. The project shows the paper as the
+project recorded it, without your copy's PDF.
 
 ## Import from Zotero
 
