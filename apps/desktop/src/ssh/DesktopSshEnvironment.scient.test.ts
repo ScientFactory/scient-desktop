@@ -49,6 +49,7 @@ it.effect("preserves prompt presentation diagnostics through the desktop service
           return yield* Effect.die("Unexpected successful password prompt");
         }),
       disconnectEnvironment: () => Effect.void,
+      closeAllTunnels: Effect.void,
     }),
     Effect.provideService(DesktopSshPasswordPrompts.DesktopSshPasswordPrompts, {
       request: () => Effect.fail(cause),

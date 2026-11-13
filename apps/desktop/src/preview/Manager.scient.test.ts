@@ -48,6 +48,7 @@ const managerLayer = PreviewManager.layer.pipe(
         isPartition: (partition) => partition.startsWith("persist:scient-next-preview-"),
         getSession: () => Effect.succeed({ on: vi.fn() } as unknown as Electron.Session),
         clearCookies: () => Effect.void,
+        cookiesCleared: () => Effect.void,
         clearCache: () => Effect.void,
       }),
     ),
