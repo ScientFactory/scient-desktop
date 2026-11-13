@@ -156,9 +156,11 @@ const descriptors = (paths: ReadonlyArray<string>, languageMode: string) =>
         "-NonInteractive",
         "-EncodedCommand",
         // Invoke-Expression compiles the check in the session's language mode, as a locked-down
-        // host (AppLocker, WDAC) compiles an encoded command.
+        // host (AppLocker, WDAC) compiles an encoded command. Such a host trusts Windows' signed
+        // modules; a mode set in-session can't load them, so Get-Acl's is loaded first.
         Buffer.from(
-          `$ExecutionContext.SessionState.LanguageMode = '${languageMode}'
+          `Import-Module Microsoft.PowerShell.Security
+$ExecutionContext.SessionState.LanguageMode = '${languageMode}'
 "mode: $($ExecutionContext.SessionState.LanguageMode)"
 Invoke-Expression $env:SCIENT_PERMISSIONS_SCRIPT`,
           "utf16le",
@@ -166,7 +168,9 @@ Invoke-Expression $env:SCIENT_PERMISSIONS_SCRIPT`,
       ],
       {
         env: {
-          ...process.env,
+          ...Object.fromEntries(
+            Object.entries(process.env).filter(([name]) => name.toUpperCase() !== "PSMODULEPATH"),
+          ),
           SCIENT_PUBLICATION_ACL_PATHS: paths.join("\n"),
           SCIENT_PERMISSIONS_SCRIPT: WINDOWS_PERMISSIONS_SCRIPT,
         },
