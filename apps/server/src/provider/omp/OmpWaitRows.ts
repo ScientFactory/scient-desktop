@@ -96,7 +96,7 @@ const jobsKey = (jobs: ReadonlyArray<WaitJob>) =>
     .join("\n");
 
 export class OmpWaitRows {
-  /** Subagents this session has published, and whether each has settled. */
+  /** Subagents this session has published, and whether each has settled with its outcome shown. */
   readonly #subagents = new Map<string, boolean>();
   /** Shown wait rows still running: call id → what they wait for. */
   readonly #shown = new Map<string, string>();
@@ -107,8 +107,8 @@ export class OmpWaitRows {
     return name === WAIT_TOOL;
   }
 
-  noteSubagent(id: string, settled: boolean): void {
-    this.#subagents.set(id, settled);
+  noteSubagent(id: string, settledWithOutcome: boolean): void {
+    this.#subagents.set(id, settledWithOutcome);
   }
 
   /** Other work happened, so a next wait starts a new episode. */

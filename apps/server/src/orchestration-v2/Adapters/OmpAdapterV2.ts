@@ -1157,7 +1157,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             case "warning":
               return notice(update.message);
             case "subagent":
-              waitRows.noteSubagent(update.id, update.status !== "inProgress");
+              // Only a settled subagent whose row shows its outcome makes a wait's copy redundant.
+              waitRows.noteSubagent(
+                update.id,
+                update.status !== "inProgress" &&
+                  (update.detail !== undefined ||
+                    (target.driverKind === "scient" && update.result !== undefined)),
+              );
               return Effect.andThen(
                 onUpdate({
                   type: "subagent",
