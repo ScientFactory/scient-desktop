@@ -224,6 +224,24 @@ describe("source full text", () => {
     ).resolves.toMatchObject({ hits: [] });
   });
 
+  it("sends the tightest occurrence of the query as the range the reader reveals", async () => {
+    await using fixture = await project();
+    await addPdfSource(fixture.root, "fjord", "Fjord mixing", [
+      [
+        "We used a two-layer box model with a sill.",
+        "Methods. The stratified layer was sampled weekly.",
+        "Discussion. Mixing limits nutrient supply to the upper layer.",
+      ],
+    ]);
+    await indexSourceFullText(fixture.root);
+    const [hit] = (
+      await searchSourceFullText({ root: fixture.root, query: "stratified layer", limit: 1 })
+    ).hits;
+    expect(hit).toMatchObject({ selector: { quote: "stratified layer" } });
+    expect(hit!.end - hit!.start).toBe("stratified layer".length);
+    expect(hit!.passage).toContain("two-layer box model");
+  });
+
   it("reads pages of one source, extracting them on demand, within a character budget", async () => {
     await using fixture = await project();
     const trial = await addPdfSource(fixture.root, "trial", "Trial", trialPages);

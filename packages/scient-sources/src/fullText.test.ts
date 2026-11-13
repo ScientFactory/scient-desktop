@@ -155,4 +155,26 @@ describe("full-text search", () => {
     expect(page.slice(passage.start, passage.end)).toBe("antibiotics");
     expect(passage.passage).toBe("Results. Early antibiotics reduced mortality in septic shock.");
   });
+
+  it("reveals the tightest occurrence of the query, not the window of repeated terms", () => {
+    const page =
+      "We used a two-layer box model with a sill. Methods. The stratified layer was sampled " +
+      "weekly. Discussion. Mixing limits nutrient supply to the upper layer.";
+    const reveal = (query: string, text: string) => {
+      const [hit] = searchFullText([searchDocument("fjord", [text])], parseFullTextQuery(query), {
+        limit: 1,
+        perDocument: 1,
+      });
+      const passage = fullTextPassage(text, hit!);
+      return { quote: text.slice(passage.start, passage.end), passage: passage.passage };
+    };
+    const contiguous = reveal("stratified layer", page);
+    expect(contiguous.quote).toBe("stratified layer");
+    expect(contiguous.passage).toContain("two-layer box model");
+    expect(contiguous.passage).toContain("the upper layer.");
+    const apart = "Each layer was sampled. Later the column was stratified again.";
+    expect(reveal("stratified layer", apart).quote).toBe(
+      "layer was sampled. Later the column was stratified",
+    );
+  });
 });
