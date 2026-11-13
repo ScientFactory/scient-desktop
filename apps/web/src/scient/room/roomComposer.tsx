@@ -92,19 +92,25 @@ export function useRoomComposerPost(input: {
   const room = useQuietThreadProjection(threadRef)?.projection.thread.room ?? null;
   const state = useAtomValue(roomComposerStateAtom(input.threadKey ?? NO_THREAD));
   return async () => {
-    if (
-      room === null ||
-      state.to !== "people" ||
-      input.threadId === null ||
-      input.threadKey === null
-    ) {
-      return false;
-    }
+    if (state.to !== "people" || input.threadId === null || input.threadKey === null) return false;
     const threadId = input.threadId;
+    const threadKey = input.threadKey;
+    // A draft meant for people never goes to the agent on its own, even once sharing stopped.
+    if (room === null) {
+      setRoomComposerState(threadKey, () => ({ to: "agent", replyTo: null }));
+      input.onError(
+        threadId,
+        "Sharing stopped, so nobody can read this. It wasn't sent; send again to give it to the agent.",
+      );
+      return true;
+    }
+    const target = input.composerDraftTarget;
     const store = useComposerDraftStore.getState();
-    const draft = store.getComposerDraft(input.composerDraftTarget);
-    const text = input.promptRef.current.trim();
-    const files = [...(draft?.images ?? []), ...(draft?.files ?? [])];
+    const draft = store.getComposerDraft(target);
+    const prompt = input.promptRef.current;
+    const text = prompt.trim();
+    const images = [...(draft?.images ?? [])];
+    const files = [...(draft?.files ?? [])];
     if (
       (draft?.terminalContexts.length ?? 0) > 0 ||
       (draft?.reviewComments.length ?? 0) > 0 ||
@@ -115,16 +121,34 @@ export function useRoomComposerPost(input: {
       input.onError(threadId, "Added context only goes to the agent. Remove it to post to people.");
       return true;
     }
-    if (text === "" && files.length === 0) return true;
+    if (text === "" && images.length === 0 && files.length === 0) return true;
+    const replyTo = state.replyTo;
+    // The composer is free for the next message at once; what was posted returns only on failure.
+    store.clearComposerContent(target);
+    setRoomComposerState(threadKey, (current) => ({ ...current, replyTo: null }));
+    const restore = (message: string) => {
+      const current = useComposerDraftStore.getState().getComposerDraft(target);
+      const untouched =
+        (current?.prompt.trim() ?? "") === "" &&
+        (current?.images.length ?? 0) === 0 &&
+        (current?.files.length ?? 0) === 0;
+      if (untouched) {
+        store.setPrompt(target, prompt);
+        store.addImages(target, images);
+        store.addFiles(target, files);
+        setRoomComposerState(threadKey, (current) => ({ ...current, replyTo }));
+      }
+      input.onError(threadId, message);
+    };
     let attachments;
     try {
       attachments = await prepareTurnAttachments({
         environmentId: input.environmentId,
-        attachments: files,
+        attachments: [...images, ...files],
         usesAttachmentUploads: true,
       });
     } catch (error) {
-      input.onError(threadId, error instanceof Error ? error.message : "A file failed to upload.");
+      restore(error instanceof Error ? error.message : "A file failed to upload.");
       return true;
     }
     const result = await roomAction({
@@ -136,19 +160,13 @@ export function useRoomComposerPost(input: {
           roomMessageId: RoomMessageId.make(randomUUID()),
           text,
           attachments,
-          ...(state.replyTo === null ? {} : { replyTo: state.replyTo.itemId }),
+          ...(replyTo === null ? {} : { replyTo: replyTo.itemId }),
         },
       },
     });
-    if (result._tag === "Success") {
-      store.clearComposerContent(input.composerDraftTarget);
-      setRoomComposerState(input.threadKey, (current) => ({ ...current, replyTo: null }));
-    } else {
+    if (result._tag !== "Success") {
       const error = squashAtomCommandFailure(result);
-      input.onError(
-        threadId,
-        error instanceof Error ? error.message : "Could not post the message.",
-      );
+      restore(error instanceof Error ? error.message : "Could not post the message.");
     }
     return true;
   };

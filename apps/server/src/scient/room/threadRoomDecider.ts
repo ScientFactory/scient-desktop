@@ -213,12 +213,6 @@ const deletedItem = (item: RoomMessageItem, now: DateTime.Utc): RoomMessageItem 
   return { ...rest, text: "", deletedAt: DateTime.formatIso(now), updatedAt: now };
 };
 
-/** A deleted message's files go too, unless a sent copy holds them. */
-const filesReleasedByDelete = (item: RoomMessageItem) =>
-  item.deliveries?.some((delivery) => delivery.status === "sent")
-    ? []
-    : (item.attachments ?? []).map((attachment) => attachment.id);
-
 export interface RoomDecisionInput {
   readonly thread: OrchestrationV2AppThread;
   readonly now: DateTime.Utc;
@@ -285,7 +279,6 @@ export function decideOwnerRoomAction(
         ...unchanged,
         thread: withoutWaiting(thread, item.id, now),
         items: [deletedItem(item, now)],
-        releasedAttachmentIds: filesReleasedByDelete(item),
       });
     }
     case "set-role":
@@ -406,7 +399,6 @@ export function decideServerRoomAction(
         ...unchanged,
         thread: withoutWaiting(thread, item.id, now),
         items: [deletedItem(item, now)],
-        releasedAttachmentIds: filesReleasedByDelete(item),
       });
     }
   }

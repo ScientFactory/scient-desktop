@@ -1,4 +1,9 @@
-import type { OrchestrationV2TurnItem, RoomAuthor, RoomReplyTarget } from "@t3tools/contracts";
+import type {
+  OrchestrationV2TurnItem,
+  RoomAuthor,
+  RoomMessageAttribution,
+  RoomReplyTarget,
+} from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { CornerUpLeftIcon, SendIcon, Trash2Icon, UsersIcon } from "lucide-react";
 import { type ComponentType, createContext, use, useState } from "react";
@@ -175,5 +180,19 @@ export function RoomMessageRow({ item }: { readonly item: RoomMessageItem }) {
         </div>
       ) : null}
     </article>
+  );
+}
+
+/** Above a message the agent got from the room: where it came from and who sent it. */
+export function RoomSentLine({ room }: { readonly room: RoomMessageAttribution }) {
+  const viewer = use(RoomTimelineContext)?.viewer;
+  const direct = room.itemId === undefined;
+  return (
+    <p className="me-1 flex items-center gap-1 text-2xs text-muted-foreground">
+      <UsersIcon aria-hidden className="size-3" />
+      {direct
+        ? "From the room, to the agent"
+        : `From the room · sent by ${roomAuthorLabel(room.sentBy, viewer)}`}
+    </p>
   );
 }
