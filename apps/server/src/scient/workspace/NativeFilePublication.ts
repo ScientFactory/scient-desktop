@@ -1,7 +1,7 @@
 // @effect-diagnostics nodeBuiltinImport:off
 /** Host-owned namespace adapter. Policy, records and recovery stay in the mutation service. */
 import {
-  NATIVE_CHECK_DEADLINE_MS,
+  armNativeCheckDeadline,
   NativeCheckDeadlineError,
   validatePublicationArtifact,
 } from "@t3tools/shared/scientPublicationArtifact";
@@ -366,15 +366,7 @@ export async function invokeNativeHelper(
     windowsHide: true,
   });
   // Capability inquiries cannot mutate files, so a wrong protocol may be terminated.
-  let pastDeadline = false;
-  const deadline =
-    args[1] === "capabilities"
-      ? // @effect-diagnostics-next-line globalTimers:off -- The helper process owns this plain-Promise lifecycle.
-        setTimeout(() => {
-          pastDeadline = true;
-          child.kill();
-        }, NATIVE_CHECK_DEADLINE_MS)
-      : undefined;
+  const pastDeadline = args[1] === "capabilities" ? armNativeCheckDeadline(child) : () => false;
   let stdout = "",
     stderr = "",
     overflow = false;
@@ -393,8 +385,9 @@ export async function invokeNativeHelper(
   });
   // No abort/timeout race: even an abandoned waiter leaves this owner awaiting real retirement.
   child.on("close", (code, signal) => {
-    clearTimeout(deadline);
-    if (pastDeadline) reject(new NativeCheckDeadlineError("capabilities"));
+    // A refusal already seen (no launch, too long a reply) stays one after the deadline.
+    if (pastDeadline() && !spawnError && !overflow)
+      reject(new NativeCheckDeadlineError("capabilities"));
     else if (spawnError || code !== 0 || signal !== null || overflow) {
       reject(
         new NativeFilePublicationError({

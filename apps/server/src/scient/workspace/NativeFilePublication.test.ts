@@ -460,6 +460,70 @@ describe.skipIf(!posix)("a capability inquiry's deadline", () => {
       }
     }));
 
+  it("keeps too long a reply a refusal when the deadline then ends the helper", async () => {
+    let error: unknown;
+    await inScratch("scient-capabilities-overflow-", async (folder) => {
+      const path = NodePath.join(folder, "helper");
+      const printed = NodePath.join(folder, "printed");
+      await NodeFSP.writeFile(
+        path,
+        `#!/bin/sh\nyes x | head -c 70000\ntouch '${printed}'\nexec sleep 30\n`,
+        { mode: 0o700 },
+      );
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const asked = nativeFilePublicationCapabilities(path).catch((cause: unknown) => cause);
+        await expect.poll(() => vi.getTimerCount()).toBeGreaterThan(0);
+        // Whatever the helper printed is read before it closes, however the deadline ends it.
+        await expect
+          .poll(() =>
+            NodeFSP.stat(printed).then(
+              () => true,
+              () => false,
+            ),
+          )
+          .toBe(true);
+        vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
+        error = await asked;
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+    expect(error).not.toBeInstanceOf(NativeCheckDeadlineError);
+  });
+
+  it("does not blame the deadline on a helper that had already exited", () =>
+    inScratch("scient-capabilities-exited-", async (folder) => {
+      const path = NodePath.join(folder, "helper");
+      const pidFile = NodePath.join(folder, "pid");
+      // A process it started holds its output open past the deadline.
+      await NodeFSP.writeFile(path, `#!/bin/sh\nsleep 2 &\necho $$ > '${pidFile}'\nexit 0\n`, {
+        mode: 0o700,
+      });
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      try {
+        const asked = nativeFilePublicationCapabilities(path).catch((cause: unknown) => cause);
+        await expect.poll(() => vi.getTimerCount()).toBeGreaterThan(0);
+        await expect.poll(() => NodeFSP.readFile(pidFile, "utf8").catch(() => "")).toMatch(/\d/u);
+        const pid = Number(await NodeFSP.readFile(pidFile, "utf8"));
+        // Reaped: Node has seen it exit.
+        await expect
+          .poll(() => {
+            try {
+              process.kill(pid, 0);
+              return false;
+            } catch {
+              return true;
+            }
+          })
+          .toBe(true);
+        vi.advanceTimersByTime(NATIVE_CHECK_DEADLINE_MS);
+        expect(await asked).not.toBeInstanceOf(NativeCheckDeadlineError);
+      } finally {
+        vi.useRealTimers();
+      }
+    }));
+
   it("does not take a helper that died on its own for a deadline", () =>
     inScratch("scient-capabilities-killed-", async (root) => {
       const killed = NodePath.join(root, "helper-killed");

@@ -3,7 +3,6 @@ import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeUtil from "node:util";
 import * as HostProcess from "./HostProcess.ts";
 
 /** How long one native check (PowerShell's permission check, a capability inquiry) may run. */
@@ -16,6 +15,24 @@ export class NativeCheckDeadlineError extends Error {
     super(`The native ${check} check did not finish within ${NATIVE_CHECK_DEADLINE_MS / 1000} s.`);
     this.check = check;
   }
+}
+
+/**
+ * Stops `child` at the native check deadline unless it has already exited. The returned
+ * function, called once the child has closed, says whether that deadline ended it.
+ */
+export function armNativeCheckDeadline(child: NodeChildProcess.ChildProcess): () => boolean {
+  let pastDeadline = false;
+  // @effect-diagnostics-next-line globalTimers:off -- The child owns this plain-Promise lifecycle.
+  const timer = setTimeout(() => {
+    pastDeadline = true;
+    child.kill();
+  }, NATIVE_CHECK_DEADLINE_MS);
+  child.once("exit", () => clearTimeout(timer));
+  return () => {
+    clearTimeout(timer);
+    return pastDeadline;
+  };
 }
 
 /** Windows permission checks that passed, by what they looked at and when. */
@@ -167,12 +184,10 @@ const windowsPermissionsKey = async (helper: string, receiptPath: string) =>
       }),
     )
   ).join("|");
-const checkWindowsPermissions = async (helper: string, command: string) => {
-  const deadline = new AbortController();
-  // @effect-diagnostics-next-line globalTimers:off -- The PowerShell child owns this plain-Promise lifecycle.
-  const timer = setTimeout(() => deadline.abort(), NATIVE_CHECK_DEADLINE_MS);
-  try {
-    return await NodeUtil.promisify(NodeChildProcess.execFile)(
+/** Settles only once PowerShell has closed, so a retry never overlaps it. */
+const checkWindowsPermissions = (helper: string, command: string) =>
+  new Promise<void>((resolve, reject) => {
+    const child = NodeChildProcess.execFile(
       NodePath.join(
         process.env.SystemRoot ?? "C:/Windows",
         "System32/WindowsPowerShell/v1.0/powershell.exe",
@@ -183,16 +198,15 @@ const checkWindowsPermissions = async (helper: string, command: string) => {
         "-EncodedCommand",
         Buffer.from(command, "utf16le").toString("base64"),
       ],
-      {
-        env: { ...process.env, SCIENT_PUBLICATION_VALIDATE: helper },
-        signal: deadline.signal,
-        windowsHide: true,
+      { env: { ...process.env, SCIENT_PUBLICATION_VALIDATE: helper }, windowsHide: true },
+      (error) => {
+        // Too much output is a refusal, whenever it was noticed.
+        const overflow =
+          (error as { code?: unknown } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        if (pastDeadline() && !overflow) reject(new NativeCheckDeadlineError("permissions"));
+        else if (error) reject(error);
+        else resolve();
       },
     );
-  } catch (error) {
-    if (deadline.signal.aborted) throw new NativeCheckDeadlineError("permissions");
-    throw error;
-  } finally {
-    clearTimeout(timer);
-  }
-};
+    const pastDeadline = armNativeCheckDeadline(child);
+  });
