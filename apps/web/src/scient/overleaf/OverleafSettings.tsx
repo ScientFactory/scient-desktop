@@ -22,7 +22,12 @@ import { useProjects } from "~/state/entities";
 
 import { removeOverleafToken, saveOverleafToken, setAsideUnreadableOverleafRecord } from "./client";
 import { lastSyncLabel } from "./OverleafFileChip";
-import { openOverleafProject, runOverleafSync, unlinkOverleaf } from "./overleafActions";
+import {
+  openOverleafProject,
+  runOverleafSync,
+  settleOverleafOperation,
+  unlinkOverleaf,
+} from "./overleafActions";
 import {
   OVERLEAF_TOKEN_PAGE_URL,
   operationErrorText,
@@ -39,21 +44,6 @@ import {
   useOverleafUnreadableRecords,
   useOverleafWorkspace,
 } from "./overleafStore";
-
-// Outside the components: the React Compiler does not compile try/finally.
-async function settleOverleafOperation(
-  task: () => Promise<void>,
-  failed: (error: unknown) => void,
-  settled: () => void,
-): Promise<void> {
-  try {
-    await task();
-  } catch (error) {
-    failed(error);
-  } finally {
-    settled();
-  }
-}
 
 /** The token: Create a token on Overleaf, Save, Remove and whether one is saved. */
 function OverleafTokenSettings(props: { readonly environmentId: EnvironmentId }) {

@@ -18,6 +18,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 
 import { openFileOnLinkedCopy } from "./askAgentOnLinkedCopy";
 import { listOverleafKeptCopies, overleafRequestId, restoreOverleafKeptCopy } from "./client";
+import { settleOverleafOperation } from "./overleafActions";
 import { connectionForPath, operationErrorText, workspacePathOf } from "./overleafModel";
 import {
   reloadOverleafWorkspaces,
@@ -45,21 +46,6 @@ function restoreText(result: ScientOverleafRestoreResult): string {
       return "That copy is no longer kept. Nothing was restored.";
     case "duplicate":
       return "That restore already ran.";
-  }
-}
-
-// Outside the component: the React Compiler does not compile try/finally.
-async function settleOverleafOperation(
-  task: () => Promise<void>,
-  failed: (error: unknown) => void,
-  settled: () => void,
-): Promise<void> {
-  try {
-    await task();
-  } catch (error) {
-    failed(error);
-  } finally {
-    settled();
   }
 }
 
