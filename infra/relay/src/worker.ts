@@ -78,6 +78,7 @@ import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
 // SCIENT-FORK:START account-deletion
 import * as AccountDeletion from "./account/AccountDeletion.ts";
 import * as AccountRecords from "./account/AccountRecords.ts";
+import * as LinkSupersession from "./environments/LinkSupersession.ts";
 import * as ClerkUsers from "./account/ClerkUsers.ts";
 import * as RelayAccountApi from "./http/AccountApi.ts";
 // SCIENT-FORK:END account-deletion
@@ -319,7 +320,9 @@ export const layer = Api.make(
 
     // SCIENT-FORK:START account-deletion — heads the runtime chain, which is at pipe's arity limit.
     const layerAccountDeletion = AccountDeletion.layer.pipe(
-      Layer.provideMerge(Layer.mergeAll(AccountRecords.layer, ClerkUsers.layer)),
+      Layer.provideMerge(
+        Layer.mergeAll(AccountRecords.layer, ClerkUsers.layer, LinkSupersession.layer),
+      ),
     );
     const layerRuntime = layerAccountDeletion.pipe(
       // SCIENT-FORK:END account-deletion

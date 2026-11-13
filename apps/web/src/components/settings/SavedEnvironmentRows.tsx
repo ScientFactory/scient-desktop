@@ -600,22 +600,27 @@ function ConfiguredCloudLinkRow({
   const updateManagedTunnel = async (enabled: boolean) => {
     if (!readEnvironmentScope(environmentId, AuthRelayWriteScope)) return;
     setIsUpdating(true);
-    const ok = await reconcileCloudState({ managedTunnel: enabled, publish: publishAgentActivity });
+    // SCIENT-FORK:START — publishing has no switch while the phone app is unreleased, so
+    // turning Scient Connect off also stops publishing; otherwise the link could not be removed.
+    const keepPublishing =
+      publishAgentActivity && (enabled || SCIENT_DESKTOP_IDENTITY.mobileAppEnabled);
+    const ok = await reconcileCloudState({ managedTunnel: enabled, publish: keepPublishing });
     if (ok) {
       toastManager.add({
         type: "success",
         title: enabled
           ? "Scient Connect linked"
-          : publishAgentActivity
+          : keepPublishing
             ? "Scient Connect tunnel disabled"
             : "Scient Connect unlinked",
         description: enabled
           ? "This environment is available through Scient Connect."
-          : publishAgentActivity
+          : keepPublishing
             ? "The managed tunnel was removed. Agent activity publishing stays on."
             : "This environment is no longer available through Scient Connect.",
       });
     }
+    // SCIENT-FORK:END
     setIsUpdating(false);
   };
 
