@@ -321,6 +321,39 @@ describe("Sources tools on the library backend", () => {
     }),
   );
 
+  it.effect("replaces a project note only from the note it read, and restores an earlier one", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const added = yield* addSource(fixture, "Noted trial", "10.1000/noted");
+      const sourceId = added.sourceId!;
+      const pin = (note: string, noteBase?: string) =>
+        run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "pin", sourceId, note, ...(noteBase ? { noteBase } : {}) },
+          }),
+          fixture,
+        );
+      expect(yield* pin("First reading")).toMatchObject({ pin: { note: "First reading" } });
+      expect(yield* pin("Blind rewrite")).toMatchObject({
+        outcome: "stale",
+        pin: { note: "First reading" },
+      });
+      expect(yield* pin("Second reading", "First reading")).toMatchObject({
+        outcome: "existing",
+        pin: { note: "Second reading" },
+      });
+      const detail = yield* run(getScientSourceForInvocation({ sourceId }), fixture);
+      expect(detail.projectNoteHistory?.map((version) => [version.note, version.by])).toEqual([
+        ["First reading", "agent"],
+        ["Second reading", "agent"],
+      ]);
+      expect(yield* pin(detail.projectNoteHistory![0]!.note!, "Second reading")).toMatchObject({
+        outcome: "existing",
+        pin: { note: "First reading" },
+      });
+    }),
+  );
+
   it.effect("pins what an agent adds; list, library scope and search mark the pins", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);
@@ -952,6 +985,74 @@ describe("Sources tools on the library backend", () => {
     }),
   );
 
+  it.effect("an agent puts the sealed copy from before the move back into the project", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      yield* Effect.promise(() =>
+        importScientSource({
+          root: fixture.root,
+          operationId: NodeCrypto.randomUUID(),
+          candidate: candidate("v1"),
+        }),
+      );
+      yield* run(listScientSourcesForInvocation({}), fixture);
+      const records = NodePath.join(fixture.root, ".scient/sources/records");
+      expect(yield* Effect.promise(() => exists(records))).toBe(false);
+      expect(
+        yield* run(
+          organizeLibrarySourcesForInvocation({ change: { action: "restore-pre-move" } }),
+          fixture,
+        ),
+      ).toEqual({ outcome: "restored", restoredSources: 1, restoredPdfs: 0 });
+      expect(yield* Effect.promise(() => NodeFSP.readdir(records))).toHaveLength(1);
+    }),
+  );
+
+  it.effect("an agent saves this project's package and imports it into another project", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const added = yield* addSource(fixture, "Packaged trial", "10.1000/packaged");
+      yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "pin", sourceId: added.sourceId!, note: "Why we cite it." },
+        }),
+        fixture,
+      );
+      const exported = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "export-package", relativePath: "handoff" },
+        }),
+        fixture,
+      );
+      expect(exported).toMatchObject({
+        outcome: "exported",
+        packagePath: "handoff",
+        packageReport: { sources: 1, pins: 1, unavailable: 0 },
+      });
+
+      const other = yield* Effect.promise(async () => {
+        const root = NodePath.join(fixture.base, "other");
+        await NodeFSP.mkdir(root);
+        await initializeScientProject({ root });
+        await NodeFSP.cp(NodePath.join(fixture.root, "handoff"), NodePath.join(root, "handoff"), {
+          recursive: true,
+        });
+        return { ...fixture, root, stateDir: NodePath.join(fixture.base, "other-state") };
+      });
+      expect(
+        yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "import-package", relativePath: "handoff" },
+          }),
+          other,
+        ),
+      ).toMatchObject({ outcome: "imported", packageReport: { sources: 1, pins: 1 } });
+      expect(yield* Effect.promise(() => readScientProjectPins(other.root))).toMatchObject([
+        { note: "Why we cite it." },
+      ]);
+    }),
+  );
+
   it.effect("the list carries the move's summary until an agent dismisses it", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);
@@ -972,7 +1073,9 @@ describe("Sources tools on the library backend", () => {
       const moved = yield* run(listScientSourcesForInvocation({}), fixture);
       expect(moveOf(moved)).toEqual({
         state: "done",
-        message: "Undo for bulk edits made before the move was not kept.",
+        message: expect.stringMatching(
+          /^Your Library is in .+\. A copy of this project's sources from before the move is kept in \.scient\/library\/retained-before-library\/move_[0-9a-f]+\. Undo for bulk edits made before the move was not kept\.$/u,
+        ),
       });
       expect(
         yield* run(

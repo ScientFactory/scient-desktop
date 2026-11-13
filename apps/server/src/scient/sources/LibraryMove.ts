@@ -7,6 +7,7 @@ import {
   moveScientProjectBackIntoProject,
   readScientLibraryMoveState,
   readScientLibraryMoveStatus,
+  restoreScientProjectPreMoveArchive,
   runScientLibraryMove,
   type ScientLibraryMoveBackResult,
   type ScientLibraryMoveFaults,
@@ -113,6 +114,8 @@ function progressText(progress: ScientLibraryMoveProgress | null): string {
       return " (merging duplicates)";
     case "switching":
       return " (switching over)";
+    case "archiving":
+      return " (keeping a copy of the old files)";
     case "cleaning-up":
       return ` (removing the old files, ${of})`;
   }
@@ -262,6 +265,26 @@ export async function moveProjectBackIntoProject(input: {
       onProgress,
     }),
   ).result;
+}
+
+/** The sealed copy from before a move back in the project, once no move of it is running. */
+export async function restoreProjectPreMoveArchive(input: {
+  readonly root: string;
+  readonly archiveId?: string;
+}) {
+  const key = await canonicalRoot(input.root);
+  for (let running = runs.get(key); running; running = runs.get(key)) await running.settled;
+  const restored = await restoreScientProjectPreMoveArchive({
+    projectRoot: key,
+    ...(input.archiveId ? { archiveId: input.archiveId } : {}),
+  });
+  return restored.outcome === "restored"
+    ? {
+        outcome: restored.outcome,
+        restoredSources: restored.restoredSources,
+        restoredPdfs: restored.restoredPdfs,
+      }
+    : { outcome: restored.outcome };
 }
 
 /**

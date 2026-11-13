@@ -23,6 +23,8 @@ export const ScientManagedBibliographyStatus = Schema.Struct({
   citedSourceCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   /** Sources added to the Library from hand edits named in `importEdited`. */
   imported: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** Keys whose earlier entry was kept: the project's saved details cannot rebuild it here. */
+  keptEntries: Schema.optionalKey(Keys),
 });
 export type ScientManagedBibliographyStatus = typeof ScientManagedBibliographyStatus.Type;
 

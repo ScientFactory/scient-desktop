@@ -1130,8 +1130,8 @@ export function ScientSourcesPanel(props: {
             setSelectedSourceId(null);
           }}
           onEdit={() => setEditingSource(true)}
-          onSaveNote={(note, expectedRevision) =>
-            sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note)
+          onSaveNote={(note, expectedRevision, context) =>
+            sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note, context)
           }
           onRefreshMetadata={async () => {
             const result = await sources.refreshSourceMetadata(
@@ -1388,6 +1388,7 @@ export function ScientSourcesPanel(props: {
               onOpenSource={setSelectedSourceId}
               {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
               {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
+              {...(scopes && canChange ? { onPackageImported: sources.refreshOverview } : {})}
             />
           </div>
         }

@@ -15,10 +15,15 @@ import {
   resolveScientReviewConflict,
   SCIENT_REVIEW_COMBINED_NOTE,
 } from "./libraryReviewConflicts.ts";
-import { listScientLibraryReviewRecords, readScientLibraryReview } from "./libraryReviews.ts";
+import {
+  changeScientLibraryReview,
+  listScientLibraryReviewRecords,
+  readScientLibraryReview,
+} from "./libraryReviews.ts";
 import {
   moveScientProjectBackIntoProject,
   readScientLibraryMoveState,
+  restoreScientProjectPreMoveArchive,
   runScientLibraryMove,
   scientLibraryMoveInternals,
   scientLibraryMoveStatusLines,
@@ -37,7 +42,17 @@ import {
 } from "./libraryRoot.ts";
 import type { ScientSourceCandidate } from "./model.ts";
 import { SCIENT_SOURCE_NAME_LIMIT } from "./organize.ts";
-import { readScientProjectPins, resolveScientProjectPins } from "./projectPins.ts";
+import {
+  exportScientProjectPackage,
+  importScientProjectPackage,
+  listScientProjectPackages,
+} from "./projectPackage.ts";
+import {
+  readScientProjectPinNoteHistory,
+  readScientProjectPins,
+  resolveScientProjectPins,
+  setScientProjectPinNote,
+} from "./projectPins.ts";
 import {
   attachScientSourcePdf,
   importScientSource,
@@ -384,7 +399,10 @@ describe("the move", () => {
     );
     const other = await seededMove();
     const untracked = await move(other.library, other.project);
-    expect(scientLibraryMoveStatusLines(untracked.journal)).toEqual([]);
+    expect(scientLibraryMoveStatusLines(untracked.journal, other.library.root)).toEqual([
+      `Your Library is in ${other.library.root}.`,
+      `A copy of this project's sources from before the move is kept in .scient/library/retained-before-library/${untracked.journal!.runId}.`,
+    ]);
   });
 
   it("does nothing on a project with no v1 store, and writes no journal", async () => {
@@ -1376,5 +1394,280 @@ describe("the library lock during a move", () => {
         NodePath.join(project, ".scient/sources/files/sha256", sha256.slice(0, 2), `${sha256}.pdf`),
       ),
     ).toBe(true);
+  });
+});
+
+describe("the sealed copy from before the move", () => {
+  const manifestOf = async (project: string, journal: ScientLibraryMoveJournal) =>
+    JSON.parse(
+      await NodeFSP.readFile(
+        NodePath.join(project, journal.archive!.path, "manifest.json"),
+        "utf8",
+      ),
+    );
+
+  it("keeps the evidence, is never read by the Library, and restores with no move journal", async () => {
+    const { base, library, project, a, b, sha256 } = await seededMove();
+    const pdfBytes = await NodeFSP.readFile(
+      NodePath.join(NodePath.dirname(project), `${NodePath.basename(project)}-a.pdf`),
+    );
+    const { journal } = await move(library, project);
+    const archive = NodePath.join(project, journal!.archive!.path);
+    const manifest = await manifestOf(project, journal!);
+    expect(manifest.counts).toMatchObject({
+      records: 2,
+      trash: 1,
+      pdfs: 1,
+      annotations: 1,
+      reviews: 1,
+    });
+    expect(manifest.missing).toEqual([]);
+    const pdf = manifest.files.find((file: { path: string }) => file.path.endsWith(".pdf"));
+    expect(await NodeFSP.readFile(NodePath.join(archive, pdf.path))).toEqual(pdfBytes);
+    expect(await exists(NodePath.join(archive, "annotations", `${sha256}.json`))).toBe(true);
+    expect(await NodeFSP.readFile(NodePath.join(archive, "README.md"), "utf8")).toContain(
+      "Scient never reads this folder on its own.",
+    );
+
+    // Not a v1 store: a later open neither moves it again nor reads it.
+    const records = (await listScientSourceRecords(library)).length;
+    expect(await move(library, project)).toMatchObject({ outcome: "moved", journal: { run: 1 } });
+    expect((await readScientLibraryMoveState({ library, projectRoot: project })).v1Present).toBe(
+      false,
+    );
+    expect(await listScientSourceRecords(library)).toHaveLength(records);
+
+    // A collaborator's copy on a computer with its own, empty Library and no journal.
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    const theirs = await newLibrary(base, "other-computer");
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
+      outcome: "restored",
+      restoredSources: 2,
+      restoredPdfs: 1,
+    });
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toEqual({
+      outcome: "project-store-present",
+    });
+    expect(await move(theirs, elsewhere)).toMatchObject({ outcome: "moved" });
+    expect(
+      (await listScientSourceRecords(theirs)).map((record) => record.title).toSorted(),
+    ).toEqual(["Plain study, revised", "Study a"]);
+    expect(
+      await exists(NodePath.join(theirs.root, "files/sha256", sha256.slice(0, 2), `${sha256}.pdf`)),
+    ).toBe(true);
+    expect(await exists(NodePath.join(theirs.root, "annotations/v1", `${sha256}.json`))).toBe(true);
+    expect(
+      (await readScientProjectPins(elsewhere)).find((pin) => pin.sourceId === a.sourceId)?.note,
+    ).toBe("Why this project cites A.");
+    expect((await readScientProjectPins(elsewhere)).map((pin) => pin.sourceId)).toContain(
+      b.sourceId,
+    );
+  });
+
+  it("deletes nothing until the copy is sealed, and an interrupted copy finishes on the rerun", async () => {
+    const { library, project } = await seededMove();
+    const before = await NodeFSP.readdir(NodePath.join(project, ".scient/sources"), {
+      recursive: true,
+    });
+    const crashed = await crashAt(library, project, { crashAt: "mid-archive" });
+    expect(crashed.state).toBe("committed");
+    expect(crashed.archive).toBeUndefined();
+    expect(
+      await NodeFSP.readdir(NodePath.join(project, ".scient/sources"), { recursive: true }),
+    ).toEqual(before);
+    expect(
+      await NodeFSP.readdir(NodePath.join(project, ".scient/library/retained-before-library")),
+    ).toEqual([`.${crashed.runId}.partial`]);
+
+    const { journal } = await move(library, project);
+    expect(journal).toMatchObject({ state: "done", archive: { path: expect.any(String) } });
+    expect(
+      await NodeFSP.readdir(NodePath.join(project, ".scient/library/retained-before-library")),
+    ).toEqual([crashed.runId]);
+    const manifest = await manifestOf(project, journal!);
+    for (const file of manifest.files) {
+      const bytes = await NodeFSP.readFile(
+        NodePath.join(project, journal!.archive!.path, file.path),
+      );
+      expect(sha(bytes), file.path).toBe(file.sha256);
+    }
+  });
+});
+
+describe("the current-project package", () => {
+  it("restores into an empty Library with the original computer gone, with what came after the move", async () => {
+    const { base, library, project, a, b, reviewId } = await seededMove();
+    await move(library, project);
+    // After the move: a second PDF with a highlight, a personal note and a project-note edit.
+    const later = NodePath.join(base, "later.pdf");
+    await NodeFSP.writeFile(later, "%PDF-1.7\nadded after the move\n", "utf8");
+    const before = (await readScientSourceRecord(library, b.sourceId))!;
+    const attached = await attachScientSourcePdf({
+      root: library,
+      sourceId: b.sourceId,
+      expectedRevision: before.revision,
+      pdfPath: later,
+    });
+    const laterSha = attached.record.attachments[0]!.sha256;
+    const highlight = {
+      formatVersion: 1,
+      material: { sha256: laterSha, byteLength: 30 },
+      paths: [],
+      annotations: [{ annotationId: "ann_later", revision: 1, highlighted: true, note: "After" }],
+      history: [],
+    };
+    await NodeFSP.mkdir(NodePath.join(library.root, "annotations/v1"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(library.root, "annotations/v1", `${laterSha}.json`),
+      JSON.stringify(highlight),
+    );
+    await updateScientSourceNote({
+      root: library,
+      sourceId: a.sourceId,
+      expectedRevision: (await readScientSourceRecord(library, a.sourceId))!.revision,
+      note: "PERSONAL",
+    });
+    const aKey = (await readScientProjectPins(project)).find(
+      (pin) => pin.sourceId === a.sourceId,
+    )!.citationKey;
+    await setScientProjectPinNote({
+      projectRoot: project,
+      citationKey: aKey,
+      note: "Why this project cites A, revised.",
+      base: "Why this project cites A.",
+      actor: "user",
+    });
+
+    // A source only the review names, never added to the project.
+    const reviewOnly = (
+      await importScientSource({
+        root: library,
+        operationId: `op_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
+        candidate: candidate("screened", { title: "Screened out study" }),
+      })
+    ).record!;
+    await changeScientLibraryReview({
+      projectRoot: project,
+      library,
+      change: {
+        action: "log-search",
+        reviewId,
+        database: "Embase",
+        query: "sepsis",
+        searchedOn: "2026-11-12",
+        sourceIds: [reviewOnly.sourceId],
+      },
+      actor: "user",
+    });
+
+    const exported = await exportScientProjectPackage({
+      projectRoot: project,
+      library,
+      relativePath: "handoff",
+      title: "Sepsis",
+    });
+    expect(exported.counts).toMatchObject({
+      pins: 2,
+      sources: 3,
+      reviewOnlySources: 1,
+      pdfs: 2,
+      annotations: 2,
+      reviews: 1,
+    });
+    expect(exported.unavailable).toEqual([]);
+
+    // Another computer: a new project and an empty Library; the original Library is gone.
+    const theirs = await newLibrary(base, "other-computer");
+    const target = await newProject(base, "received");
+    await NodeFSP.cp(NodePath.join(project, "handoff"), NodePath.join(target, "handoff"), {
+      recursive: true,
+    });
+    await NodeFSP.rm(library.root, { recursive: true, force: true });
+    expect(await listScientProjectPackages(target)).toMatchObject([
+      { relativePath: "handoff", title: "Sepsis" },
+    ]);
+    const imported = await importScientProjectPackage({
+      projectRoot: target,
+      library: theirs,
+      folder: NodePath.join(target, "handoff"),
+      actor: "user",
+    });
+    expect(imported).toMatchObject({
+      outcome: "imported",
+      sources: { added: 3, matched: 0 },
+      pdfs: { added: 2 },
+      annotations: 2,
+      pins: { added: 2 },
+      reviews: { added: 1, conflicts: 0 },
+      collections: 1,
+    });
+
+    const pins = await readScientProjectPins(target);
+    expect(pins.map((pin) => [pin.citationKey, pin.note])).toEqual(
+      (await readScientProjectPins(project)).map((pin) => [pin.citationKey, pin.note]),
+    );
+    expect(
+      (await readScientProjectPinNoteHistory({ projectRoot: target, citationKey: aKey }))?.map(
+        (version) => version.note,
+      ),
+    ).toEqual(["Why this project cites A.", "Why this project cites A, revised."]);
+    const resolved = await resolveScientProjectPins({
+      projectRoot: target,
+      library: theirs,
+      mode: "read",
+      actor: "user",
+    });
+    expect(resolved.every(({ resolution }) => resolution.kind === "resolved")).toBe(true);
+    const records = await listScientSourceRecords(theirs);
+    expect(records.map((record) => record.note ?? null)).toEqual([null, null, null]);
+    expect(records.flatMap((record) => record.attachments.map((entry) => entry.sha256))).toContain(
+      laterSha,
+    );
+    expect(
+      JSON.parse(
+        await NodeFSP.readFile(
+          NodePath.join(theirs.root, "annotations/v1", `${laterSha}.json`),
+          "utf8",
+        ),
+      ).annotations,
+    ).toEqual(highlight.annotations);
+    const reviewRecords = await listScientLibraryReviewRecords({
+      projectRoot: target,
+      library: theirs,
+      mode: "read",
+      reviewId,
+    });
+    expect(reviewRecords?.map((record) => record.from)).toEqual(["library", "library", "library"]);
+    expect(pins).toHaveLength(2);
+
+    // A second import matches everything and adds nothing.
+    expect(
+      await importScientProjectPackage({
+        projectRoot: target,
+        library: theirs,
+        folder: NodePath.join(target, "handoff"),
+        actor: "user",
+      }),
+    ).toMatchObject({
+      sources: { added: 0, matched: 3 },
+      pins: { added: 0 },
+      reviews: { added: 0 },
+    });
+  });
+
+  it("refuses a package whose files changed after it was exported", async () => {
+    const { library, project } = await seededMove();
+    await move(library, project);
+    await exportScientProjectPackage({ projectRoot: project, library, relativePath: "handoff" });
+    await NodeFSP.appendFile(NodePath.join(project, "handoff/project/pins.json"), " ");
+    expect(
+      await importScientProjectPackage({
+        projectRoot: project,
+        library,
+        folder: NodePath.join(project, "handoff"),
+        actor: "user",
+      }),
+    ).toEqual({ outcome: "package-changed", files: ["project/pins.json"] });
   });
 });

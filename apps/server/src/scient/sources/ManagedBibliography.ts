@@ -62,6 +62,8 @@ export interface ManagedBibliographyStatus {
   readonly files: ReadonlyArray<ManagedBibliographyFileStatus>;
   readonly citedSourceCount: number;
   readonly imported?: number;
+  /** Keys whose earlier entry was kept: the project's saved details cannot rebuild it here. */
+  readonly keptEntries?: ReadonlyArray<string>;
 }
 
 type FileRead =
@@ -241,6 +243,18 @@ interface BibliographyInput {
   readonly copies: string;
   /** Null when the project has no Library yet. */
   readonly load: () => Promise<ReadonlyArray<ScientSourceRecord> | null>;
+  /** Keys whose render would come only from a snapshot older than its citation fields. */
+  readonly keepWritten?: () => ReadonlySet<string>;
+}
+
+/** The entries Scient last wrote for these keys, to write again instead of a poorer render. */
+async function keptWrittenEntries(root: string, copies: string, keys: ReadonlySet<string>) {
+  const entries = async (name: ManagedBibliographyFileName) => {
+    const copy = keys.size > 0 ? await readWrittenCopy(root, copies, name) : null;
+    const all = copy?.kind === "file" ? entriesOf(name, copy.contents) : new Map<string, string>();
+    return new Map([...all].filter(([key]) => keys.has(key)));
+  };
+  return { bibtex: await entries("references.bib"), cslJson: await entries("references.json") };
 }
 
 async function syncInLane(
@@ -255,7 +269,10 @@ async function syncInLane(
       citedSourceCount: 0,
     };
   }
-  const rendered = renderManagedBibliography(records);
+  const rendered = renderManagedBibliography(
+    records,
+    await keptWrittenEntries(root, input.copies, input.keepWritten?.() ?? new Set()),
+  );
   const files: ManagedBibliographyFileStatus[] = [];
   for (const name of MANAGED_BIBLIOGRAPHY_FILES) {
     files.push(
@@ -276,6 +293,7 @@ async function syncInLane(
       return paths ? { ...file, kept: paths } : file;
     }),
     citedSourceCount: rendered.keys.length,
+    ...(rendered.keptKeys.length > 0 ? { keptEntries: rendered.keptKeys } : {}),
   };
 }
 
@@ -323,9 +341,11 @@ export async function syncPinnedBibliography(input: {
 }): Promise<ManagedBibliographyStatus> {
   const canonical = await canonicalizeScientSourceRoot(input.root);
   const library = input.library;
+  let incomplete = new Set<string>();
   return inLane(canonical, () =>
     syncInLane(canonical, new Set(input.replaceEdited ?? []), {
       copies: PINNED_COPY_DIRECTORY,
+      keepWritten: () => incomplete,
       load: async () => {
         if (library && input.access === "write") {
           await resolveScientProjectPins({
@@ -336,6 +356,9 @@ export async function syncPinnedBibliography(input: {
           });
         }
         const works = await listScientProjectPinnedWorks({ projectRoot: canonical, library });
+        incomplete = new Set(
+          works.filter((work) => work.incompleteSnapshot).map((work) => work.citationKey),
+        );
         return works.map((work) => work.record);
       },
     }),

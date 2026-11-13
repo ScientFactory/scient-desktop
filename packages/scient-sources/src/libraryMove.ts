@@ -23,6 +23,11 @@ import {
 import { withScientFileLock, withScientLibraryLock } from "./libraryLock.ts";
 import { markScientLibrarySourcesDistinct, mergeScientLibraryDuplicates } from "./libraryMerge.ts";
 import {
+  restoreScientPreMoveArchive,
+  sealScientPreMoveArchive,
+  type ScientPreMoveArchiveRestore,
+} from "./libraryMoveArchive.ts";
+import {
   decodeScientReviewSnapshotText,
   scientReviewNamedIds,
   scientReviewSnapshotText,
@@ -54,6 +59,7 @@ import {
   scientPinWorkFromRecord,
   scientProjectPinsText,
   type ScientProjectPin,
+  withScientProjectPinsLock,
 } from "./projectPins.ts";
 import {
   decodePersistedScientSourceRecord,
@@ -169,6 +175,8 @@ export const ScientLibraryMoveJournal = Schema.Struct({
   gitTracked: Schema.Boolean,
   /** The v1 store had bulk-edit Undo history, which the move does not carry over. */
   bulkEditUndo: Schema.optionalKey(Schema.Boolean),
+  /** The sealed copy of the evidence from before this run, made before cleanup deletes any. */
+  archive: Schema.optionalKey(Schema.Struct({ path: NonEmptyString, manifestSha256: Sha256 })),
 });
 export type ScientLibraryMoveJournal = typeof ScientLibraryMoveJournal.Type;
 
@@ -182,6 +190,8 @@ export interface ScientLibraryMoveFaults {
     | "after-stage"
     | "after-prepared"
     | "after-pins-published"
+    /** The archive has its first file, nothing else. */
+    | "mid-archive"
     | "mid-cleanup"
     /** Move back: the backups are restored, nothing else yet. */
     | "after-restore-backups"
@@ -207,6 +217,7 @@ export interface ScientLibraryMoveProgress {
     | "verifying"
     | "merging"
     | "switching"
+    | "archiving"
     | "cleaning-up"
     | "restoring";
   readonly done: number;
@@ -1851,12 +1862,27 @@ async function cleanUp(
     const annotations = current.annotations.map(
       (sha256) => `${PROJECT_ANNOTATIONS_DIRECTORY}/${sha256}.json`,
     );
+    ctx.progress("archiving", 0, 1);
+    // Sealed and checked before anything is deleted; a crash here leaves the journal committed.
+    const archive = await sealScientPreMoveArchive({
+      projectRoot: ctx.root,
+      archiveId: current.runId,
+      projectId: ctx.projectId,
+      projectTitle: ctx.title,
+      run: current.run,
+      instanceId: ctx.instanceId,
+      libraryId: ctx.libraryId,
+      files: [...v1, ...annotations],
+      afterFirstFile: () => crash(ctx, "mid-archive"),
+    });
+    ctx.progress("archiving", 1, 1);
     current = await writeJournal(ctx, {
       ...current,
       state: "cleanup",
       cleanup: [...v1, ...annotations],
       retry: [],
       gitTracked: current.gitTracked || (await ctx.gitTracked().catch(() => false)),
+      archive,
     });
   }
   const left = [...new Set([...current.cleanup, ...current.retry])];
@@ -1996,7 +2022,9 @@ export interface ScientLibraryMoveInput {
 function withProjectLocks<A>(root: string, run: () => Promise<A>): Promise<A> {
   const lock = scientSourceStoreInternals.withOperationLock;
   return lock(`${root}:library-move`, () =>
-    lock(`${root}:reviews-write`, () => lock(`${root}:pins-write`, run)),
+    lock(`${root}:reviews-write`, () =>
+      withScientProjectPinsLock(root, run, { timeoutMs: MOVE_LOCK_TIMEOUT_MS }),
+    ),
   );
 }
 
@@ -2519,9 +2547,18 @@ async function finishRestore(
 }
 
 /** The Library's status lines after a move, for 5e to show. Empty when there is nothing to say. */
-export function scientLibraryMoveStatusLines(journal: ScientLibraryMoveJournal | null): string[] {
+export function scientLibraryMoveStatusLines(
+  journal: ScientLibraryMoveJournal | null,
+  libraryRoot?: string,
+): string[] {
   if (!journal || journal.state === "moved-back" || journal.state === "restoring") return [];
   const lines: string[] = [];
+  if (libraryRoot) lines.push(`Your Library is in ${libraryRoot}.`);
+  if (journal.archive) {
+    lines.push(
+      `A copy of this project's sources from before the move is kept in ${journal.archive.path}.`,
+    );
+  }
   if (journal.merges.merged > 0) {
     const kept = journal.merges.keptDifferent;
     lines.push(
@@ -2577,7 +2614,9 @@ export async function readScientLibraryMoveStatus(input: {
     false,
   ))!;
   const lines = async () =>
-    (await summaryDismissedFor(ctx, journal.run)) ? [] : scientLibraryMoveStatusLines(journal);
+    (await summaryDismissedFor(ctx, journal.run))
+      ? []
+      : scientLibraryMoveStatusLines(journal, ctx.libraryRoot);
   switch (journal.state) {
     case "copying":
     case "prepared":
@@ -2607,6 +2646,26 @@ export async function readScientLibraryMoveStatus(input: {
   }
 }
 
+/**
+ * Puts the project's sealed copy from before a move (the newest, or `archiveId`) back at
+ * `.scient/sources`, with its highlights. Needs no move journal, so it works on any computer: a
+ * later write moves the restored store into this computer's Library like any project's.
+ */
+export async function restoreScientProjectPreMoveArchive(input: {
+  readonly projectRoot: string;
+  readonly archiveId?: string;
+}): Promise<ScientPreMoveArchiveRestore> {
+  const root = await NodeFSP.realpath(input.projectRoot);
+  await readScientProjectIdentity(root);
+  return withProjectLocks(root, () =>
+    restoreScientPreMoveArchive({
+      projectRoot: root,
+      ...(input.archiveId ? { archiveId: input.archiveId } : {}),
+      storePresent: () => v1StorePresent(root),
+    }),
+  );
+}
+
 /** Hides the summary of this checkout's latest move, until a later run has one of its own. */
 export async function dismissScientLibraryMoveSummary(input: {
   readonly library: ScientLibraryLocation;
@@ -2627,6 +2686,8 @@ export async function dismissScientLibraryMoveSummary(input: {
 }
 
 export const scientLibraryMoveInternals = {
+  annotationFile,
+  mergeAnnotationFiles,
   migrationDirectory: (libraryRoot: string, instanceId: string) =>
     migrationDirectory({ libraryRoot, instanceId }),
   readJournalAt,

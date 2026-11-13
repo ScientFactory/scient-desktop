@@ -155,6 +155,15 @@ describe("project pins", () => {
       issuedYear: 2020,
       identifiers: [],
       containerTitle: "Journal",
+      customType: null,
+      issuedRaw: "2020",
+      publisher: null,
+      volume: null,
+      issue: null,
+      pages: null,
+      language: null,
+      url: null,
+      tags: [],
     });
 
     await renameKey(library, first, "lovelace2020");
@@ -184,11 +193,17 @@ describe("project pins", () => {
     expect((await readScientSourceRecord(library, first.sourceId))?.note ?? null).toBeNull();
 
     expect(
-      await setScientProjectPinNote({ projectRoot, citationKey: "SMITH2020DEEP", note: null }),
+      await setScientProjectPinNote({
+        projectRoot,
+        citationKey: "SMITH2020DEEP",
+        note: null,
+        base: "Why I cite this here.",
+        actor: "user",
+      }),
     ).toMatchObject({ outcome: "updated", pin: { citationKey: "smith2020deep" } });
     expect((await readScientProjectPins(projectRoot))[0]).not.toHaveProperty("note");
     expect(
-      await unpinScientLibrarySource({ projectRoot, citationKey: "smith2020deepa" }),
+      await unpinScientLibrarySource({ projectRoot, citationKey: "smith2020deepa", actor: "user" }),
     ).toMatchObject({ outcome: "unpinned" });
     expect((await readScientProjectPins(projectRoot)).map((pin) => pin.citationKey)).toEqual([
       "smith2020deep",
@@ -247,7 +262,11 @@ describe("project pins", () => {
                 sourceId: change.sourceId,
                 actor: "user",
               })
-            : unpinScientLibrarySource({ projectRoot: one, citationKey: change.citationKey })
+            : unpinScientLibrarySource({
+                projectRoot: one,
+                citationKey: change.citationKey,
+                actor: "user",
+              })
         ).catch(() => ({ outcome: "refused" as const })),
       );
     }
@@ -302,12 +321,23 @@ describe("project pins", () => {
     await NodeFSP.writeFile(pinsPath, withNewerFields);
 
     expect((await refreshScientProjectPinSnapshots({ projectRoot, library })).changed).toBe(false);
-    await setScientProjectPinNote({ projectRoot, citationKey: "lovelace2020study", note: "Kept." });
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey: "lovelace2020study",
+      note: "Kept.",
+      actor: "user",
+    });
     expect(JSON.parse(await NodeFSP.readFile(pinsPath, "utf8"))).toMatchObject({
       teamLibraryId: "team_1",
       pins: [{ note: "Kept.", shelf: "methods", work: { edition: "2nd" } }],
     });
-    await setScientProjectPinNote({ projectRoot, citationKey: "lovelace2020study", note: null });
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey: "lovelace2020study",
+      note: null,
+      base: "Kept.",
+      actor: "user",
+    });
     expect(await NodeFSP.readFile(pinsPath, "utf8")).toBe(withNewerFields);
 
     await renameKey(library, record, "lovelace2020renamed");

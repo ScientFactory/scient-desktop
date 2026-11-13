@@ -260,12 +260,14 @@ export function useScientSources(input: {
     sourceId: string,
     expectedRevision: number,
     note: string | null,
+    context?: { readonly base: string | null; readonly session: string },
   ) => {
     const result = await updateScientSourceNote(input.environmentId, {
       root: input.root,
       sourceId,
       expectedRevision,
       note,
+      ...(context ? { expectedNote: context.base, noteSession: context.session } : {}),
     });
     if (isCurrentContext()) acceptSourceRecord(result.record);
     return result;

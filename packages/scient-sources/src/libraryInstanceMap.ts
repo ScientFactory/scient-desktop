@@ -20,10 +20,10 @@ import {
   ScientSourceActor,
   ScientSourceType,
   type ScientSourceCandidate,
-  type ScientSourceCreator,
   type ScientSourceIdentifier,
   type ScientSourceRecord,
 } from "./model.ts";
+import type { ScientPinCitationWork } from "./pinCitation.ts";
 import {
   importScientSource,
   listScientSourceRecords,
@@ -82,14 +82,8 @@ const InstanceMapFile = Schema.Struct({
 });
 
 /** What a project keeps about a work: a pin's `work`, or a review's record snapshot. */
-export interface ScientProjectSourceWork {
-  readonly type: string;
-  readonly title: string | null;
-  readonly creators: ReadonlyArray<ScientSourceCreator>;
-  readonly issuedYear: number | null;
-  readonly identifiers: ReadonlyArray<ScientSourceIdentifier>;
-  readonly containerTitle: string | null;
-}
+/** A pin's or review's snapshot; a pin's also carries the other citation inputs it knows. */
+export type ScientProjectSourceWork = ScientPinCitationWork;
 
 export interface ScientProjectSourceRequest {
   readonly projectSourceId: string;
@@ -255,34 +249,31 @@ function hydrationCandidate(
   citationKey: string | undefined,
 ): ScientSourceCandidate {
   const { work } = request;
-  const filled = (
-    [
-      ["title", work.title !== null],
-      ["creators", work.creators.length > 0],
-      ["issuedYear", work.issuedYear !== null],
-      ["identifiers", work.identifiers.length > 0],
-      ["containerTitle", work.containerTitle !== null],
-    ] as const
-  ).filter(([, present]) => present);
+  const candidate = {
+    customType: work.customType ?? null,
+    title: work.title,
+    creators: work.creators,
+    issuedRaw: work.issuedRaw ?? (work.issuedYear === null ? null : String(work.issuedYear)),
+    issuedYear: work.issuedYear,
+    identifiers: work.identifiers,
+    containerTitle: work.containerTitle,
+    publisher: work.publisher ?? null,
+    volume: work.volume ?? null,
+    issue: work.issue ?? null,
+    pages: work.pages ?? null,
+    language: work.language ?? null,
+    url: work.url ?? null,
+    tags: work.tags ?? [],
+  };
+  const filled = Object.entries(candidate).filter(
+    ([, value]) => value !== null && !(Array.isArray(value) && value.length === 0),
+  );
   return {
     sourceKey: hydrationSourceKey(request.projectSourceId),
     ...(citationKey ? { citationKey } : {}),
     type: scientSourceTypeFromSnapshot(work.type),
-    customType: null,
-    title: work.title,
-    creators: work.creators,
-    issuedRaw: work.issuedYear === null ? null : String(work.issuedYear),
-    issuedYear: work.issuedYear,
-    identifiers: work.identifiers,
+    ...candidate,
     abstract: null,
-    containerTitle: work.containerTitle,
-    publisher: null,
-    volume: null,
-    issue: null,
-    pages: null,
-    language: null,
-    url: null,
-    tags: [],
     externalReferences: [],
     fieldProvenance: filled.map(([field]) => ({
       field,

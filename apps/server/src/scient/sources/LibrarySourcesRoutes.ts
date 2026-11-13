@@ -55,6 +55,7 @@ import {
   listScientProjectPinnedWorks,
   resolveScientProjectPins,
   pinScientLibrarySource,
+  readScientProjectPinNoteHistory,
   renameScientProjectPinKey,
   setScientProjectPinNote,
   unpinScientLibrarySource,
@@ -89,7 +90,12 @@ import {
 import { exportBibliography } from "./BibliographyFileAdapter.ts";
 import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
-import { moveProjectBackIntoProject } from "./LibraryMove.ts";
+import { moveProjectBackIntoProject, restoreProjectPreMoveArchive } from "./LibraryMove.ts";
+import {
+  exportLibraryProjectPackage,
+  importLibraryProjectPackage,
+  listLibraryProjectPackages,
+} from "./LibraryProjectPackage.ts";
 import {
   alsoPinnedIn,
   distinctPinnedWorks,
@@ -500,10 +506,12 @@ export async function librarySourceDetail(
   const sourceId = await libraryIdOf(store, input.sourceId);
   const record = store.exists ? await readScientSourceRecord(store.library, sourceId) : null;
   if (record) {
+    const detail = await projectRecordOf(store, normalizeSourceRecordForRead(record));
     return {
-      ...(await projectRecordOf(store, normalizeSourceRecordForRead(record))),
+      ...detail,
       ...(input.personal ? { personalNote: record.note ?? null } : {}),
       ...scientSourceReadingState(record),
+      ...(detail.pinned ? await noteHistoryOf(store, detail.citationKey) : {}),
     };
   }
   const snapshot = (
@@ -525,6 +533,7 @@ export async function librarySourceDetail(
     fromSnapshot: true as const,
     projectNote: snapshot.projectNote,
     ...(match ? { libraryMatch: match } : {}),
+    ...(await noteHistoryOf(store, snapshot.citationKey)),
   };
 }
 
@@ -625,6 +634,21 @@ export async function repairLibraryPin(
   }
 }
 
+async function noteHistoryOf(store: Store, citationKey: string | null | undefined) {
+  if (!citationKey) return {};
+  const versions = await readScientProjectPinNoteHistory({ projectRoot: store.root, citationKey });
+  return versions && versions.length > 1
+    ? {
+        projectNoteHistory: versions.map(({ note, at, kind, by }) => ({
+          note,
+          at,
+          kind,
+          ...(by ? { by } : {}),
+        })),
+      }
+    : {};
+}
+
 export async function libraryAttachmentMaterial(
   store: Store,
   input: { readonly sourceId: string; readonly attachmentId: string },
@@ -722,7 +746,12 @@ export async function updateLibrarySourceMetadata(
 /** The panel's note here is this project's note on the pin; a source not pinned has none. */
 export async function updateLibraryProjectNote(
   store: Store,
-  input: { readonly sourceId: string; readonly note: string | null },
+  input: {
+    readonly sourceId: string;
+    readonly note: string | null;
+    readonly expectedNote?: string | null;
+    readonly noteSession?: string;
+  },
 ) {
   const sourceId = await libraryIdOf(store, input.sourceId);
   const pins = await projectPinsByLibraryId(store);
@@ -736,6 +765,9 @@ export async function updateLibraryProjectNote(
     projectRoot: store.root,
     citationKey: pin.citationKey,
     note: input.note,
+    base: input.expectedNote ?? null,
+    actor: ACTOR,
+    ...(input.noteSession !== undefined ? { session: input.noteSession } : {}),
   });
   if (updated.outcome === "not-pinned") throw new Error("The source is no longer pinned here.");
   return {
@@ -902,6 +934,10 @@ export const isLibraryOrganizeAction = (
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
   change.action === "dismiss-move-summary" ||
+  change.action === "restore-pre-move" ||
+  change.action === "export-package" ||
+  change.action === "list-packages" ||
+  change.action === "import-package" ||
   isPinRepairAction(change);
 
 export const isPinRepairAction = (change: {
@@ -952,16 +988,22 @@ export async function organizeLibrarySources(
               projectRoot: store.root,
               citationKey: pinned.pin.citationKey,
               note: change.note,
+              base: change.noteBase ?? null,
+              actor: ACTOR,
             })
           : null;
       const pin = noted && noted.outcome !== "not-pinned" ? noted.pin : pinned.pin;
       if (pinned.outcome === "pinned") await syncProjectBibliography(store, ACTOR);
-      return { outcome: pinned.outcome, pin: pinSummary(pin) };
+      return {
+        outcome: noted?.outcome === "stale" ? ("stale" as const) : pinned.outcome,
+        pin: pinSummary(pin),
+      };
     }
     case "unpin": {
       const unpinned = await unpinScientLibrarySource({
         projectRoot: store.root,
         citationKey: change.citationKey,
+        actor: ACTOR,
       });
       if (unpinned.outcome === "not-pinned") return { outcome: "not-pinned" as const };
       await syncProjectBibliography(store, ACTOR);
@@ -1017,6 +1059,17 @@ export async function organizeLibrarySources(
     case "keep-pin-separate":
     case "clear-pin-separate":
       return repairLibraryPin(store, change, ACTOR);
+    case "restore-pre-move":
+      return restoreProjectPreMoveArchive({
+        root: store.root,
+        ...(change.archiveId ? { archiveId: change.archiveId } : {}),
+      });
+    case "export-package":
+      return exportLibraryProjectPackage(store, change);
+    case "list-packages":
+      return listLibraryProjectPackages(store);
+    case "import-package":
+      return importLibraryProjectPackage(store, change, ACTOR);
   }
 }
 
@@ -1048,6 +1101,7 @@ async function changeLibraryPins(
             action: "pin" as const,
             sourceId: libraryIds.get(entry.sourceId) ?? entry.sourceId,
             ...(entry.note !== undefined ? { note: entry.note } : {}),
+            ...(entry.noteBase !== undefined ? { noteBase: entry.noteBase } : {}),
           }
         : entry,
     ),

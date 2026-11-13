@@ -140,6 +140,11 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "unlink-pin": ["unlink-pin"],
   "keep-pin-separate": ["keep-pin-separate"],
   "clear-pin-separate": ["clear-pin-separate"],
+  "restore-pre-move": ["restore-pre-move"],
+  "export-package": ["export-package"],
+  "import-package": ["import-package"],
+  // Agents find package folders with their own file tools.
+  "list-packages": [],
 };
 
 /** Every Library read endpoint and the agent tool that reads the same thing. */

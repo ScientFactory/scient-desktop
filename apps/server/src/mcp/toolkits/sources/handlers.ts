@@ -41,6 +41,7 @@ import {
 } from "@scientfactory/scient-sources/library-root";
 import {
   pinScientLibrarySource,
+  readScientProjectPinNoteHistory,
   renameScientProjectPinKey,
   setScientProjectPinNote,
   unpinScientLibrarySource,
@@ -141,7 +142,12 @@ import {
 } from "../../../scient/sources/LibraryCitation.ts";
 import { syncPinnedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
 import {
+  exportLibraryProjectPackage,
+  importLibraryProjectPackage,
+} from "../../../scient/sources/LibraryProjectPackage.ts";
+import {
   moveProjectBackIntoProject,
+  restoreProjectPreMoveArchive,
   readLibraryMoveStatus,
   scientLibraryMoveNotice,
 } from "../../../scient/sources/LibraryMove.ts";
@@ -777,6 +783,9 @@ const isLibraryOrganizeChange = (
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
   change.action === "dismiss-move-summary" ||
+  change.action === "restore-pre-move" ||
+  change.action === "export-package" ||
+  change.action === "import-package" ||
   isPinRepairAction(change);
 
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
@@ -791,10 +800,22 @@ export const organizeLibrarySourcesForInvocation = Effect.fn(
   if (store.kind !== "library") {
     // Served from its own folder: not moved yet or already moved back, so nothing to move back.
     if (change.action === "move-back") return { outcome: "not-moved" as const };
+    if (change.action === "restore-pre-move") return yield* restorePreMove(store.root, change);
     return yield* toolError("operation-failed", "Pins and merges need the personal Library.");
   }
   return yield* changeLibraryPinsOrMerges(store, change);
 });
+
+const restorePreMove = (
+  root: string,
+  change: Extract<LibraryOrganizeChange, { readonly action: "restore-pre-move" }>,
+) =>
+  attempt(() =>
+    restoreProjectPreMoveArchive({
+      root,
+      ...(change.archiveId ? { archiveId: change.archiveId } : {}),
+    }),
+  );
 
 const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges")(function* (
   store: ScientSourcesLibraryStore,
@@ -820,6 +841,8 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
                 projectRoot: store.root,
                 citationKey: pinned.pin.citationKey,
                 note: change.note ?? null,
+                base: change.noteBase ?? null,
+                actor: "agent",
               }),
             )
           : null;
@@ -828,13 +851,22 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
         yield* attempt(() => syncProjectBibliography(store, "agent"));
       }
       return {
-        outcome: pinned.outcome === "pinned" ? ("pinned" as const) : ("existing" as const),
+        outcome:
+          noted?.outcome === "stale"
+            ? ("stale" as const)
+            : pinned.outcome === "pinned"
+              ? ("pinned" as const)
+              : ("existing" as const),
         pin: pinSummary(pin),
       };
     }
     case "unpin": {
       const unpinned = yield* attempt(() =>
-        unpinScientLibrarySource({ projectRoot: store.root, citationKey: change.citationKey }),
+        unpinScientLibrarySource({
+          projectRoot: store.root,
+          citationKey: change.citationKey,
+          actor: "agent",
+        }),
       );
       if (unpinned.outcome === "not-pinned") return { outcome: "not-pinned" as const };
       yield* attempt(() => syncProjectBibliography(store, "agent"));
@@ -941,6 +973,12 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
     case "keep-pin-separate":
     case "clear-pin-separate":
       return yield* attempt(() => repairLibraryPin(store, change, "agent"));
+    case "restore-pre-move":
+      return yield* restorePreMove(store.root, change);
+    case "export-package":
+      return yield* attempt(() => exportLibraryProjectPackage(store, change));
+    case "import-package":
+      return yield* attempt(() => importLibraryProjectPackage(store, change, "agent"));
   }
 });
 
@@ -1007,6 +1045,15 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       store.kind === "library"
         ? (yield* attempt(() => projectPinsByLibraryId(store))).get(sourceId)
         : undefined;
+    const noteHistory =
+      store.kind === "library" && pin
+        ? yield* attempt(() =>
+            readScientProjectPinNoteHistory({
+              projectRoot: store.root,
+              citationKey: pin.citationKey,
+            }),
+          )
+        : null;
     const categories = currentScientSourceCategories(
       record,
       yield* attempt(() => readScientSourceCategories(root)),
@@ -1057,6 +1104,15 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
         ? {
             pinned: pin !== undefined,
             ...(pin ? { citationKey: pin.citationKey, projectNote: pin.note ?? null } : {}),
+            ...(noteHistory && noteHistory.length > 1
+              ? {
+                  projectNoteHistory: noteHistory.map(({ note, at, by }) => ({
+                    note,
+                    at,
+                    ...(by ? { by } : {}),
+                  })),
+                }
+              : {}),
             ...scientSourceReadingState(record),
           }
         : {}),

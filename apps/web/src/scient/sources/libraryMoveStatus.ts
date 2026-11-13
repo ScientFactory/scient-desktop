@@ -6,6 +6,7 @@ const PHASE_WORDS: Record<ScientSourcesMoveProgress["phase"], string> = {
   verifying: "checking the copies",
   merging: "merging duplicates",
   switching: "switching over",
+  archiving: "keeping a copy of the old files",
   "cleaning-up": "removing old files",
   restoring: "copying back",
 };

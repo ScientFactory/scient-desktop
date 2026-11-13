@@ -43,6 +43,7 @@ import {
   ScientSourcesPinRepairAction,
   ScientSourcesMergeDifferences,
   ScientSourcesPossibleDuplicateKind,
+  ScientProjectPackageReport,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -253,6 +254,16 @@ export const ScientSourceAgentDetail = Schema.Struct({
   ),
   pinned: Schema.optionalKey(Schema.Boolean),
   projectNote: Schema.optionalKey(NullableText),
+  /** Library mode: earlier project notes, oldest first; restore one with organize pin. */
+  projectNoteHistory: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        note: NullableText,
+        at: NonEmptyString,
+        by: Schema.optionalKey(ScientSourceActor),
+      }),
+    ),
+  ),
   readingStatus: Schema.optionalKey(ReadingStatus),
   starred: Schema.optionalKey(Schema.Boolean),
 });
@@ -1118,6 +1129,7 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     action: Schema.Literal("pin"),
     sourceId: NonEmptyString,
     note: Schema.optionalKey(NullableText),
+    noteBase: Schema.optionalKey(NullableText),
   }),
   Schema.Struct({ action: Schema.Literal("unpin"), citationKey: NonEmptyString }),
   Schema.Struct({
@@ -1131,6 +1143,15 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("move-back") }),
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
   ...ScientSourcesPinRepairAction.members,
+  Schema.Struct({
+    action: Schema.Literal("restore-pre-move"),
+    archiveId: Schema.optionalKey(NonEmptyString),
+  }),
+  Schema.Struct({
+    action: Schema.Literal("export-package"),
+    relativePath: Schema.optionalKey(NonEmptyString),
+  }),
+  Schema.Struct({ action: Schema.Literal("import-package"), relativePath: NonEmptyString }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -1158,6 +1179,14 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     "unlinked",
     "not-linked",
     "kept-separate",
+    "stale",
+    "restored",
+    "no-archive",
+    "archive-changed",
+    "exported",
+    "imported",
+    "not-a-package",
+    "package-changed",
   ]),
   pin: Schema.optionalKey(
     Schema.Struct({
@@ -1183,10 +1212,13 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
   unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
   alsoPinnedIn: AlsoPinnedIn,
   restoredSources: Schema.optionalKey(Schema.Int),
+  restoredPdfs: Schema.optionalKey(Schema.Int),
+  packagePath: Schema.optionalKey(NonEmptyString),
+  packageReport: Schema.optionalKey(ScientProjectPackageReport),
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; pinning again returns the pin, with the new note); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes).`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer; export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes), import-package brings one in. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes).`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );

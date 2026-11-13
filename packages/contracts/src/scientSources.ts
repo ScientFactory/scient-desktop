@@ -168,6 +168,17 @@ export const ScientSourceDetailResult = Schema.Struct({
    */
   personalNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
   label: Schema.optionalKey(ScientSystematicReviewRecordLabel),
+  /** A pinned source's project-note versions, oldest first, ending with the note it has now. */
+  projectNoteHistory: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        note: Schema.NullOr(Schema.String),
+        at: Schema.String,
+        kind: Schema.Literals(["original", "edit", "found"]),
+        by: Schema.optionalKey(Schema.Literals(["user", "agent"])),
+      }),
+    ),
+  ),
 });
 export type ScientSourceDetailResult = typeof ScientSourceDetailResult.Type;
 
@@ -290,6 +301,10 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
   sourceId: NonEmptyString,
   expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
   note: ScientSourceNote,
+  /** A library's project note: the note the editor saw (absent: none). Another one answers `stale`. */
+  expectedNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** The editor's autosave session; its saves within ten minutes are one history checkpoint. */
+  noteSession: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
 export const ScientSourceNoteUpdateResult = Schema.Struct({
@@ -380,6 +395,8 @@ const PinAction = Schema.Struct({
   action: Schema.Literal("pin"),
   sourceId: NonEmptyString,
   note: Schema.optionalKey(Schema.NullOr(Schema.String.check(Schema.isMaxLength(20_000)))),
+  /** The note the writer saw on an existing pin; replacing or clearing one needs it. */
+  noteBase: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 const UnpinAction = Schema.Struct({ action: Schema.Literal("unpin"), citationKey: NonEmptyString });
 
@@ -430,6 +447,22 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   /** Hides the move's summary lines in this checkout's status, until a later run. */
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
   ...ScientSourcesPinRepairAction.members,
+  /** Puts the sealed copy from before a move (the newest, or archiveId) back in the project. */
+  Schema.Struct({
+    action: Schema.Literal("restore-pre-move"),
+    archiveId: Schema.optionalKey(NonEmptyString),
+  }),
+  /** Writes this project's package to a new project folder (a dated name when absent). */
+  Schema.Struct({
+    action: Schema.Literal("export-package"),
+    relativePath: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(4_096))),
+  }),
+  /** The packages in the project's top-level folders. */
+  Schema.Struct({ action: Schema.Literal("list-packages") }),
+  Schema.Struct({
+    action: Schema.Literal("import-package"),
+    relativePath: NonEmptyString.check(Schema.isMaxLength(4_096)),
+  }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -441,6 +474,24 @@ export const ScientSourcesOrganizeRequest = Schema.Struct({
   ]),
 });
 export type ScientSourcesOrganizeRequest = typeof ScientSourcesOrganizeRequest.Type;
+
+/** A project package's counts; `unavailable` are PDFs or records the exporting Library lacked. */
+export const ScientProjectPackageReport = Schema.Struct({
+  sources: Count,
+  sourcesMatched: Schema.optionalKey(Count),
+  pdfs: Count,
+  annotations: Count,
+  pins: Count,
+  /** Pins kept their own note; the package's is in the note history. */
+  notesKept: Schema.optionalKey(Count),
+  reviews: Count,
+  reviewConflicts: Schema.optionalKey(Count),
+  collections: Count,
+  unavailable: Count,
+  /** The files that no longer match the manifest. */
+  changedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type ScientProjectPackageReport = typeof ScientProjectPackageReport.Type;
 
 const PinSummary = Schema.Struct({
   citationKey: NonEmptyString,
@@ -472,6 +523,15 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "unlinked",
     "not-linked",
     "kept-separate",
+    "stale",
+    "restored",
+    "no-archive",
+    "archive-changed",
+    "exported",
+    "listed",
+    "imported",
+    "not-a-package",
+    "package-changed",
   ]),
   pin: Schema.optionalKey(PinSummary),
   pinChanges: Schema.optionalKey(
@@ -484,6 +544,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
           "not-pinned",
           "not-found",
           "refused",
+          "stale",
         ]),
         pin: Schema.optionalKey(PinSummary),
       }),
@@ -505,6 +566,20 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
   unrevertedFields: Schema.optionalKey(Schema.Array(Schema.String)),
   alsoPinnedIn: AlsoPinnedIn,
   restoredSources: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  restoredPdfs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** export-package: the folder written. */
+  packagePath: Schema.optionalKey(NonEmptyString),
+  packages: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        relativePath: NonEmptyString,
+        title: Schema.String,
+        exportedAt: Schema.String,
+      }),
+    ),
+  ),
+  /** What an export or import of a project package did. */
+  packageReport: Schema.optionalKey(ScientProjectPackageReport),
 });
 export type ScientSourcesOrganizeResult = typeof ScientSourcesOrganizeResult.Type;
 
@@ -612,6 +687,7 @@ export const ScientSourcesMoveProgress = Schema.Struct({
     "verifying",
     "merging",
     "switching",
+    "archiving",
     "cleaning-up",
     "restoring",
   ]),
