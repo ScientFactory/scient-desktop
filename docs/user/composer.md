@@ -13,6 +13,11 @@ keeps it in the composer and shows how many characters need to be removed.
 Shorten the draft or split it into multiple messages, then send again in the
 same thread.
 
+Sending clears the composer as soon as your message appears in the conversation. If the message
+can't be sent, Scient removes it from the conversation and puts it back in the composer. If you have
+already started a new draft, Scient keeps it and shows **Restore message**, which brings back the failed
+message with its attachments once your new draft is sent or cleared.
+
 On web and desktop, attachments upload as soon as you add them. The send button becomes available
 after every upload finishes. Failed uploads can be retried or removed.
 
