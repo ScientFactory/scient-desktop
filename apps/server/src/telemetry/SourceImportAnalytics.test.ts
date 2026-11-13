@@ -104,11 +104,16 @@ function analyticsFixture(consent: AnalyticsStatus["consent"] = "product") {
   return { events, service, observer, changeConsent };
 }
 
-async function localOperation(root: string, operationId: string, content = privateMarker) {
+async function localOperation(
+  root: string,
+  operationId: string,
+  content = privateMarker,
+  fileName = `${operationId}.pdf`,
+) {
   const sourcePath = NodePath.join(root, `${operationId}.pdf`);
   const body = `%PDF-1.7\n${content}\n`;
   await NodeFSP.writeFile(sourcePath, body, "utf8");
-  const { item } = await uploadLocalPdfSource({ root, sourcePath, fileName: `${operationId}.pdf` });
+  const { item } = await uploadLocalPdfSource({ root, sourcePath, fileName });
   const itemKey = item.candidate.sourceKey;
   await beginLocalPdfImport({
     root,
@@ -192,7 +197,7 @@ describe("source import outcome analytics", () => {
           ]);
           await getScientSourcesOverview(root);
           await advanceSourceImport({ root, operationId: "first" }, observer);
-          await localOperation(root, "duplicate");
+          await localOperation(root, "duplicate", privateMarker, "first.pdf");
           const duplicate = await advanceSourceImport({ root, operationId: "duplicate" }, observer);
           expect(duplicate.items[0]?.state).toBe("skipped");
           expect(await listScientSourceRecords(root)).toHaveLength(1);
