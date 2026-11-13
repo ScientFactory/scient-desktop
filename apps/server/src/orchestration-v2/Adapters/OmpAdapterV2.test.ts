@@ -108,6 +108,7 @@ const harness = Effect.fnUntraced(function* (
     readonly shutdownSignalConfirmed?: boolean;
     readonly makeProcess?: Parameters<typeof makeOmpAdapterV2>[0]["makeProcess"];
     readonly promptSuggestions?: boolean;
+    readonly onAccountSignedOut?: Effect.Effect<void>;
   },
 ) {
   const fs = yield* FileSystem.FileSystem;
@@ -147,6 +148,7 @@ const harness = Effect.fnUntraced(function* (
     interactionMode: "default" as const,
   };
   const adapter = yield* makeOmpAdapterV2({
+    ...(behavior?.onAccountSignedOut ? { onAccountSignedOut: behavior.onAccountSignedOut } : {}),
     target,
     instanceId,
     settings: yield* decodeOmpSettings({
@@ -4516,6 +4518,43 @@ it.layer(TestLayer)("OMP shared desktop presentation", (it) => {
           ),
         );
         assert.isFalse(items.some((item) => item.type === "dynamic_tool"));
+      }),
+    ),
+  );
+
+  it.effect("says how to sign a signed-out account in again, and has its list read again", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const refreshed = yield* Deferred.make<void>();
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          onAccountSignedOut: Deferred.succeed(refreshed, undefined).pipe(Effect.asVoid),
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        yield* peer.emit([
+          { type: "agent_start" },
+          {
+            type: "notice",
+            level: "warning",
+            source: "auth",
+            message:
+              "ChatGPT account a@example.invalid was signed out automatically. Run /login to sign in again.",
+          },
+        ]);
+        const notice = yield* h.takeUntil(
+          (event) => event.type === "turn_item.updated" && event.turnItem.type === "system_notice",
+        );
+        assert.isTrue(
+          notice.type === "turn_item.updated" &&
+            notice.turnItem.type === "system_notice" &&
+            notice.turnItem.message ===
+              "ChatGPT account a@example.invalid was signed out automatically. Sign in again with Reconnect in the composer, or in Settings › Providers.",
+        );
+        yield* Deferred.await(refreshed);
+        yield* peer.finish();
+        yield* h.takeUntil((event) => event.type === "turn.terminal");
       }),
     ),
   );
