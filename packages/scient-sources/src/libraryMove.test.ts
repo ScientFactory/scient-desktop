@@ -1465,6 +1465,56 @@ describe("the sealed copy from before the move", () => {
     );
   });
 
+  it("refuses an entry that names another place, and a move finishes an interrupted restore", async () => {
+    const { base, library, project, sha256 } = await seededMove();
+    const { journal } = await move(library, project);
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    const manifestPath = NodePath.join(elsewhere, journal!.archive!.path, "manifest.json");
+    const sealed = await NodeFSP.readFile(manifestPath, "utf8");
+
+    // A correctly hashed payload whose original path leaves the project.
+    const payload = Buffer.from("{}");
+    const name = `${"0".repeat(64)}.json`;
+    await NodeFSP.writeFile(
+      NodePath.join(elsewhere, journal!.archive!.path, "annotations", name),
+      payload,
+    );
+    const manifest = JSON.parse(sealed);
+    manifest.files.push({
+      path: `annotations/${name}`,
+      original: "../outside.json",
+      sha256: sha(payload),
+      bytes: payload.byteLength,
+    });
+    await NodeFSP.writeFile(manifestPath, JSON.stringify(manifest));
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toEqual({
+      outcome: "archive-changed",
+      files: [`annotations/${name}`],
+    });
+    expect(await exists(NodePath.join(base, "outside.json"))).toBe(false);
+    expect(await exists(NodePath.join(elsewhere, ".scient/sources"))).toBe(false);
+    await NodeFSP.writeFile(manifestPath, sealed);
+
+    // The store is published, then copying the highlights fails.
+    await NodeFSP.rm(NodePath.join(elsewhere, ".scient/annotations"), {
+      recursive: true,
+      force: true,
+    });
+    await NodeFSP.writeFile(NodePath.join(elsewhere, ".scient/annotations"), "in the way");
+    await expect(restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).rejects.toThrow();
+    expect((await readScientLibraryMoveState({ library, projectRoot: elsewhere })).v1Present).toBe(
+      true,
+    );
+    await NodeFSP.rm(NodePath.join(elsewhere, ".scient/annotations"));
+    const theirs = await newLibrary(base, "other-computer");
+    expect(await move(theirs, elsewhere)).toMatchObject({ outcome: "moved" });
+    expect(await exists(NodePath.join(theirs.root, "annotations/v1", `${sha256}.json`))).toBe(true);
+    expect(await exists(NodePath.join(elsewhere, ".scient/library/restore-progress.json"))).toBe(
+      false,
+    );
+  });
+
   it("deletes nothing until the copy is sealed, and an interrupted copy finishes on the rerun", async () => {
     const { library, project } = await seededMove();
     const before = await NodeFSP.readdir(NodePath.join(project, ".scient/sources"), {

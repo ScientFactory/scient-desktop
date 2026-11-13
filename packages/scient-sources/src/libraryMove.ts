@@ -23,6 +23,7 @@ import {
 import { withScientFileLock, withScientLibraryLock } from "./libraryLock.ts";
 import { markScientLibrarySourcesDistinct, mergeScientLibraryDuplicates } from "./libraryMerge.ts";
 import {
+  finishScientPreMoveRestore,
   restoreScientPreMoveArchive,
   sealScientPreMoveArchive,
   type ScientPreMoveArchiveRestore,
@@ -1974,6 +1975,10 @@ async function recover(ctx: MoveContext): Promise<ScientLibraryMoveResult> {
     if (restored.result) return { outcome: "moved-back", journal: restored.journal };
     journal = restored.journal;
   }
+  await finishScientPreMoveRestore({
+    projectRoot: ctx.root,
+    storePresent: () => v1StorePresent(ctx.root),
+  });
   const v1 = await v1StorePresent(ctx.root);
   if (journal?.state === "moved-back") return { outcome: "moved-back", journal };
   if (!journal || journal.state === "done") {

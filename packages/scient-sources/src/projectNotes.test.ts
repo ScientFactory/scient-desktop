@@ -264,7 +264,7 @@ describe("project notes", () => {
       [firstKey, "First on pinning"],
       [otherKey, "First added later"],
     ] as const) {
-      let base = first;
+      let base: string = first;
       for (let index = 0; index < SCIENT_PROJECT_NOTE_CHECKPOINTS + 3; index += 1) {
         const next = `${key} ${index}`;
         await setScientProjectPinNote({
