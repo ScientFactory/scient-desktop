@@ -32,6 +32,11 @@ const SHARDS = { web: 6, server: 12 };
 const assert = (condition, message) => {
   if (!condition) throw new Error(message);
 };
+/** A run that has not passed its gates, as opposed to evidence that is damaged or unreadable. */
+class Unqualified extends Error {}
+const qualified = (condition, message) => {
+  if (!condition) throw new Unqualified(message);
+};
 const positive = (value) => Number.isSafeInteger(value) && value > 0;
 const directory = (env) => path.join(env.RUNNER_TEMP, "ci-queue-reuse");
 
@@ -248,7 +253,7 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
   const run = data.workflow_runs.find((candidate) =>
     matchesRun(candidate, current, who, event, headSha),
   );
-  assert(run && qualifyingState(run), `No qualified exact-content ${event} run`);
+  qualified(run && qualifyingState(run), `No qualified exact-content ${event} run`);
   const artifacts = await github.paginate(api.listWorkflowRunArtifacts, {
     ...repo,
     run_id: run.id,
@@ -272,7 +277,7 @@ async function qualifiedRun({ github, repo, current, who, event, headSha, env, a
     });
   const attemptOf = (name) => {
     const matching = latest.filter((job) => job.name === name);
-    assert(
+    qualified(
       matching.length === 1 &&
         matching[0].conclusion === "success" &&
         matching[0].run_attempt === run.run_attempt &&
@@ -348,7 +353,7 @@ async function pushSegments(probe) {
     assert(segments.length < MAX_QUEUE_SEGMENTS, "Push is not covered by queue qualification");
     const segment = await qualifiedRun({ ...probe, event: "merge_group", headSha: head }).catch(
       (error) => {
-        if (segments.length === 0) throw error;
+        if (segments.length === 0 || !(error instanceof Unqualified)) throw error;
         throw new Error(
           `Earlier queue entry lacks successful qualification; HEADGREEN may have merged it on a later group's green Check: ${error.message}`,
         );
