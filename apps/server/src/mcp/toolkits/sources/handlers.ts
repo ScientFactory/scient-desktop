@@ -817,6 +817,7 @@ const restorePreMove = (
     restoreProjectPreMoveArchive({
       root,
       ...(change.archiveId ? { archiveId: change.archiveId } : {}),
+      ...(change.abandon ? { abandon: true } : {}),
     }),
   );
 

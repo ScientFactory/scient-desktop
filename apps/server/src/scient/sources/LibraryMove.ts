@@ -4,6 +4,7 @@ import * as NodePath from "node:path";
 
 import type { ScientSourceActor } from "@scientfactory/scient-sources";
 import {
+  abandonScientProjectPreMoveRestore,
   moveScientProjectBackIntoProject,
   readScientLibraryMoveState,
   readScientLibraryMoveStatus,
@@ -271,9 +272,15 @@ export async function moveProjectBackIntoProject(input: {
 export async function restoreProjectPreMoveArchive(input: {
   readonly root: string;
   readonly archiveId?: string;
+  readonly abandon?: boolean;
 }) {
   const key = await canonicalRoot(input.root);
   for (let running = runs.get(key); running; running = runs.get(key)) await running.settled;
+  if (input.abandon) {
+    const outcome = await abandonScientProjectPreMoveRestore({ projectRoot: key });
+    if (outcome === "dismissed") failures.delete(key);
+    return { outcome };
+  }
   const restored = await restoreScientProjectPreMoveArchive({
     projectRoot: key,
     ...(input.archiveId ? { archiveId: input.archiveId } : {}),

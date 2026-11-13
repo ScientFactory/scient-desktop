@@ -447,10 +447,14 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   /** Hides the move's summary lines in this checkout's status, until a later run. */
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
   ...ScientSourcesPinRepairAction.members,
-  /** Puts the sealed copy from before a move (the newest, or archiveId) back in the project. */
+  /**
+   * Puts the sealed copy from before a move (the newest, or archiveId) back in the project;
+   * `abandon` instead drops a restore that stopped part way, so the next move takes in its part.
+   */
   Schema.Struct({
     action: Schema.Literal("restore-pre-move"),
     archiveId: Schema.optionalKey(NonEmptyString),
+    abandon: Schema.optionalKey(Schema.Boolean),
   }),
   /**
    * Writes this project's package to a new folder: `relativePath` (in the project, or absolute),

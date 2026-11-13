@@ -104,15 +104,24 @@ function safeEntry(file: typeof ArchiveFile.Type): boolean {
   );
 }
 
-/** No existing folder from `root` down to `relative`'s parent is a link. */
-async function withoutLinks(root: string, relative: string): Promise<boolean> {
-  const segments = relative.split("/").slice(0, -1);
+/**
+ * Every existing part of `relative` under `root`, the last one included, is a real folder (or, for
+ * the last, a regular file when `leaf` is "file"), never a link: nothing then leads outside.
+ */
+async function safePath(
+  root: string,
+  relative: string,
+  leaf: "file" | "directory",
+): Promise<boolean> {
+  if (!safeRelative(relative)) return false;
+  const segments = relative.split("/");
   let current = root;
-  for (const segment of segments) {
+  for (const [index, segment] of segments.entries()) {
     current = NodePath.join(current, segment);
     const stats = await NodeFSP.lstat(current).catch(() => null);
     if (!stats) return true;
-    if (stats.isSymbolicLink()) return false;
+    const last = index === segments.length - 1;
+    if (!(last && leaf === "file" ? stats.isFile() : stats.isDirectory())) return false;
   }
   return true;
 }
@@ -300,6 +309,7 @@ async function listScientPreMoveArchives(
   projectRoot: string,
 ): Promise<ReadonlyArray<ScientPreMoveArchiveSummary>> {
   const folder = absolute(projectRoot, SCIENT_PRE_MOVE_ARCHIVE_DIRECTORY);
+  if (!(await safePath(projectRoot, SCIENT_PRE_MOVE_ARCHIVE_DIRECTORY, "directory"))) return [];
   let entries: NodeFS.Dirent[];
   try {
     entries = await NodeFSP.readdir(folder, { withFileTypes: true });
@@ -310,6 +320,8 @@ async function listScientPreMoveArchives(
   const archives: ScientPreMoveArchiveSummary[] = [];
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    const manifestPath = `${SCIENT_PRE_MOVE_ARCHIVE_DIRECTORY}/${entry.name}/${MANIFEST_FILE}`;
+    if (!(await safePath(projectRoot, manifestPath, "file"))) continue;
     const manifest = await readManifest(NodePath.join(folder, entry.name)).catch(() => null);
     if (manifest?.archiveId === entry.name) {
       archives.push({
@@ -320,6 +332,106 @@ async function listScientPreMoveArchives(
     }
   }
   return archives.toSorted((left, right) => (left.capturedAt < right.capturedAt ? 1 : -1));
+}
+
+const RESTORE_PROGRESS = ".scient/library/restore-progress.json";
+const RESTORE_STAGING = ".scient/library/.restoring-archive";
+const PROJECT_STORE = ".scient/sources";
+
+/** Written before the restored store is published; a retry with it finishes the highlights. */
+const RestoreProgress = Schema.Struct({
+  formatVersion: Schema.Literal(1),
+  archiveId: Schema.String,
+  manifestSha256: Schema.String,
+});
+
+async function readRestoreProgress(projectRoot: string) {
+  if (!(await safePath(projectRoot, RESTORE_PROGRESS, "file"))) {
+    throw new ScientPreMoveRestorePendingError(`${RESTORE_PROGRESS} is not a plain file.`);
+  }
+  try {
+    return await readBoundedJson(absolute(projectRoot, RESTORE_PROGRESS), 4096, RestoreProgress);
+  } catch (error) {
+    if (isNodeError(error, "ENOENT")) return null;
+    throw new ScientPreMoveRestorePendingError(`${RESTORE_PROGRESS} cannot be read.`);
+  }
+}
+
+/** A restore that stopped part way cannot finish; the move waits until it does or is abandoned. */
+export class ScientPreMoveRestorePendingError extends Error {
+  constructor(reason: string) {
+    super(
+      `A restore of this project's copy from before the Library move stopped part way and cannot finish: ${reason} Its sources stay out of the Library until the copy is repaired and the restore is run again, or the unfinished restore is abandoned (scient_sources_organize, restore-pre-move with abandon).`,
+    );
+    this.name = "ScientPreMoveRestorePendingError";
+  }
+}
+
+/** Test-only: replaces the copy of one archived file to its temporary destination. */
+export interface ScientPreMoveRestoreFaults {
+  readonly copyFile?: (from: string, to: string) => Promise<void>;
+}
+
+/** The project-relative paths a restore reads, deletes or writes that are not plain folders. */
+async function unsafeRestorePaths(
+  projectRoot: string,
+  relative: string,
+  manifest: ScientPreMoveArchiveManifest,
+): Promise<ReadonlyArray<string>> {
+  const unsafe: string[] = [];
+  for (const file of manifest.files) {
+    if (
+      !safeEntry(file) ||
+      !(await safePath(projectRoot, `${relative}/${file.path}`, "file")) ||
+      !(await safePath(projectRoot, file.original, "file"))
+    ) {
+      unsafe.push(file.path);
+    }
+  }
+  const places = [
+    [`${RESTORE_STAGING}/${manifest.archiveId}`, "directory"],
+    [RESTORE_PROGRESS, "file"],
+    [PROJECT_STORE, "directory"],
+  ] as const;
+  for (const [place, leaf] of places) {
+    if (!(await safePath(projectRoot, place, leaf))) unsafe.push(place);
+  }
+  return unsafe;
+}
+
+/**
+ * Copies through a fresh temporary file in the destination's folder, checks it, then publishes it
+ * only where nothing is: a file at `destination` is never a part-written copy. False when one was
+ * already there.
+ */
+async function publishCopy(
+  from: string,
+  destination: string,
+  sha256: string,
+  faults: ScientPreMoveRestoreFaults | undefined,
+): Promise<boolean> {
+  await ensureDirectory(NodePath.dirname(destination));
+  const temporary = NodePath.join(
+    NodePath.dirname(destination),
+    `.${NodePath.basename(destination)}.${NodeCrypto.randomUUID()}.tmp`,
+  );
+  try {
+    await (faults?.copyFile ?? NodeFSP.copyFile)(from, temporary);
+    if ((await hashFile(temporary)) !== sha256) {
+      throw new Error(`${NodePath.basename(destination)} did not copy back whole.`);
+    }
+    try {
+      await NodeFSP.link(temporary, destination);
+    } catch (error) {
+      if (isNodeError(error, "EEXIST")) return false;
+      // Folders without hard links: the gap between this check and the rename is the only race.
+      if ((await NodeFSP.lstat(destination).catch(() => null)) !== null) return false;
+      await NodeFSP.rename(temporary, destination);
+    }
+    return true;
+  } finally {
+    await NodeFSP.rm(temporary, { force: true });
+  }
 }
 
 export type ScientPreMoveArchiveRestore =
@@ -334,53 +446,38 @@ export type ScientPreMoveArchiveRestore =
   | { readonly outcome: "no-archive" }
   /** `.scient/sources` holds files; nothing is written over them. */
   | { readonly outcome: "project-store-present" }
-  /** Files changed since the archive was sealed, or entries that name no place it could restore. */
+  /**
+   * Files changed since the archive was sealed, entries that name no place it could restore, or
+   * places on the way that are links rather than folders.
+   */
   | { readonly outcome: "archive-changed"; readonly files: ReadonlyArray<string> };
-
-const RESTORE_PROGRESS = ".scient/library/restore-progress.json";
-
-/** Written before the restored store is published; a retry with it finishes the highlights. */
-const RestoreProgress = Schema.Struct({
-  formatVersion: Schema.Literal(1),
-  archiveId: Schema.String,
-  manifestSha256: Schema.String,
-});
-
-async function readRestoreProgress(projectRoot: string) {
-  try {
-    return await readBoundedJson(absolute(projectRoot, RESTORE_PROGRESS), 4096, RestoreProgress);
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Puts an archive's sources back at `.scient/sources` and its highlights where they were, after
- * checking every manifest path and file; needs no move journal, so any computer can. A stopped
- * restore resumes from its progress record. The caller holds the project's move and pins locks.
+ * checking every path it reads, deletes or writes and every archived file; needs no move journal,
+ * so any computer can. A stopped restore resumes from its progress record. The caller holds the
+ * project's move and pins locks.
  */
 export async function restoreScientPreMoveArchive(input: {
   readonly projectRoot: string;
   readonly archiveId?: string;
   readonly storePresent: () => Promise<boolean>;
+  readonly faults?: ScientPreMoveRestoreFaults;
 }): Promise<ScientPreMoveArchiveRestore> {
   const archiveId =
     input.archiveId ?? (await listScientPreMoveArchives(input.projectRoot))[0]?.archiveId;
   if (!archiveId || !SAFE_ID.test(archiveId)) return { outcome: "no-archive" };
   const relative = archivePath(archiveId);
+  if (!(await safePath(input.projectRoot, `${relative}/${MANIFEST_FILE}`, "file"))) {
+    return { outcome: "archive-changed", files: [MANIFEST_FILE] };
+  }
   const folder = absolute(input.projectRoot, relative);
   const manifest = await readManifest(folder);
   if (!manifest) return { outcome: "no-archive" };
-  const unsafe: string[] = [];
-  for (const file of manifest.files) {
-    if (
-      !safeEntry(file) ||
-      !(await withoutLinks(input.projectRoot, `${relative}/${file.path}`)) ||
-      !(await withoutLinks(input.projectRoot, file.original))
-    ) {
-      unsafe.push(file.path);
-    }
+  if (manifest.archiveId !== archiveId) {
+    return { outcome: "archive-changed", files: [MANIFEST_FILE] };
   }
+  const unsafe = await unsafeRestorePaths(input.projectRoot, relative, manifest);
   if (unsafe.length > 0) return { outcome: "archive-changed", files: unsafe };
   const changed = await changedFiles(folder, manifest);
   if (changed.length > 0) return { outcome: "archive-changed", files: changed };
@@ -390,18 +487,14 @@ export async function restoreScientPreMoveArchive(input: {
   if (!resuming && (await input.storePresent())) return { outcome: "project-store-present" };
 
   if (!resuming || !(await input.storePresent())) {
-    const staging = absolute(input.projectRoot, `.scient/library/.restoring-archive/${archiveId}`);
+    const staging = absolute(input.projectRoot, `${RESTORE_STAGING}/${archiveId}`);
     await NodeFSP.rm(staging, { recursive: true, force: true });
     for (const file of manifest.files.filter((entry) => entry.path.startsWith("sources/"))) {
       const destination = absolute(staging, file.path.slice("sources/".length));
-      await ensureDirectory(NodePath.dirname(destination));
-      await NodeFSP.copyFile(
-        absolute(folder, file.path),
-        destination,
-        NodeFS.constants.COPYFILE_EXCL,
-      );
-      if ((await hashFile(destination)) !== file.sha256) {
-        throw new Error(`${file.path} did not copy back whole.`);
+      if (
+        !(await publishCopy(absolute(folder, file.path), destination, file.sha256, input.faults))
+      ) {
+        throw new Error(`${file.path} is listed twice.`);
       }
     }
     await atomicWriteJson(
@@ -409,12 +502,12 @@ export async function restoreScientPreMoveArchive(input: {
       { formatVersion: 1, archiveId, manifestSha256 },
       4096,
     );
-    const store = absolute(input.projectRoot, ".scient/sources");
+    const store = absolute(input.projectRoot, PROJECT_STORE);
     // An empty folder left by the move's cleanup is replaced; files there were refused above.
     await NodeFSP.rm(store, { recursive: true, force: true });
     await ensureDirectory(NodePath.dirname(store));
     await NodeFSP.rename(staging, store);
-    await NodeFSP.rm(absolute(input.projectRoot, ".scient/library/.restoring-archive"), {
+    await NodeFSP.rm(absolute(input.projectRoot, RESTORE_STAGING), {
       recursive: true,
       force: true,
     });
@@ -422,22 +515,11 @@ export async function restoreScientPreMoveArchive(input: {
   let keptAnnotations = 0;
   for (const file of manifest.files.filter((entry) => entry.path.startsWith("annotations/"))) {
     const destination = absolute(input.projectRoot, file.original);
-    await ensureDirectory(NodePath.dirname(destination));
-    try {
-      await NodeFSP.copyFile(
-        absolute(folder, file.path),
-        destination,
-        NodeFS.constants.COPYFILE_EXCL,
-      );
-    } catch (error) {
-      if (!isNodeError(error, "EEXIST")) throw error;
-      // A copy an interrupted restore already made is restored, not kept.
-      if ((await hashFile(destination)) !== file.sha256) keptAnnotations += 1;
+    if (await publishCopy(absolute(folder, file.path), destination, file.sha256, input.faults)) {
       continue;
     }
-    if ((await hashFile(destination)) !== file.sha256) {
-      throw new Error(`${file.path} did not copy back whole.`);
-    }
+    // Published whole by an earlier attempt, or the project's own: that one is kept.
+    if ((await hashFile(destination)) !== file.sha256) keptAnnotations += 1;
   }
   await NodeFSP.rm(absolute(input.projectRoot, RESTORE_PROGRESS), { force: true });
   return {
@@ -451,7 +533,8 @@ export async function restoreScientPreMoveArchive(input: {
 
 /**
  * Finishes a restore that stopped after publishing its store (its highlights are missing), so a
- * move never takes in half of it. A restore whose archive no longer checks is left as it is.
+ * move never takes in half of it. One that cannot finish, its archive changed or gone, throws and
+ * keeps its progress record: only a repaired archive or an explicit abandon lets the move go on.
  */
 export async function finishScientPreMoveRestore(input: {
   readonly projectRoot: string;
@@ -460,7 +543,34 @@ export async function finishScientPreMoveRestore(input: {
   const progress = await readRestoreProgress(input.projectRoot);
   if (!progress) return;
   const result = await restoreScientPreMoveArchive({ ...input, archiveId: progress.archiveId });
-  if (result.outcome !== "restored") {
-    await NodeFSP.rm(absolute(input.projectRoot, RESTORE_PROGRESS), { force: true });
+  switch (result.outcome) {
+    case "restored":
+      return;
+    case "no-archive":
+      throw new ScientPreMoveRestorePendingError(`the copy ${progress.archiveId} is gone.`);
+    case "project-store-present":
+      throw new ScientPreMoveRestorePendingError(
+        `the copy ${progress.archiveId} changed after its restore began.`,
+      );
+    case "archive-changed":
+      throw new ScientPreMoveRestorePendingError(
+        `in the copy ${progress.archiveId}, ${result.files.slice(0, 3).join(", ")} changed or cannot be used.`,
+      );
   }
+}
+
+/**
+ * Drops an unfinished restore's progress record, so the next move takes in what it published.
+ * The person's explicit choice; the caller holds the project's move and pins locks.
+ */
+export async function abandonScientPreMoveRestore(
+  projectRoot: string,
+): Promise<"dismissed" | "nothing-to-dismiss"> {
+  if (!(await safePath(projectRoot, RESTORE_PROGRESS, "file"))) {
+    throw new ScientPreMoveRestorePendingError(`${RESTORE_PROGRESS} is not a plain file.`);
+  }
+  const path = absolute(projectRoot, RESTORE_PROGRESS);
+  if ((await NodeFSP.lstat(path).catch(() => null)) === null) return "nothing-to-dismiss";
+  await NodeFSP.rm(path, { force: true });
+  return "dismissed";
 }

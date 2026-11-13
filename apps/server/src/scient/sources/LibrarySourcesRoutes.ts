@@ -1065,6 +1065,7 @@ export async function organizeLibrarySources(
       return restoreProjectPreMoveArchive({
         root: store.root,
         ...(change.archiveId ? { archiveId: change.archiveId } : {}),
+        ...(change.abandon ? { abandon: true } : {}),
       });
     case "export-package":
       return exportLibraryProjectPackage(store, change);
