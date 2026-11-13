@@ -600,6 +600,7 @@ export const ScientSourceAddResult = Schema.Struct({
     "invalid",
     "identifier-not-found",
     "identifier-mismatch",
+    "unavailable",
     "batch",
   ]),
   sourceId: Schema.NullOr(NonEmptyString),
@@ -640,7 +641,7 @@ export const ScientSourceAddResult = Schema.Struct({
 
 const ScientSourceAddTool = Tool.make("scient_sources_add", {
   description:
-    "Add sources to this project's Library after the user explicitly asks; list existing sources first. Repeats add nothing. Several works by DOI, PMID, arXiv ID or ISBN: identifierList (outcome batch, see results). A project PDF: pdfRelativePath (citation fields optional). From PubMed, Semantic Scholar or OpenAlex pass only the identifier (scheme pmid, s2 for a paperId or CorpusId:N, openalex for a W ID). Identifiers are checked at their registry: identifier-not-found and identifier-mismatch (see resolved) add nothing; found metadata replaces your fields (verified); unreachable adds as given (unchecked); no identifier is unverified. editorialStatus flags retractions and corrections: tell the user.",
+    "Add sources to this project's Library after the user explicitly asks; list existing sources first. Repeats add nothing. Several works by DOI, PMID, arXiv ID or ISBN: identifierList (outcome batch, see results). A project PDF: pdfRelativePath (citation fields optional). From PubMed, Semantic Scholar or OpenAlex pass only the identifier (scheme pmid, s2 for a paperId or CorpusId:N, openalex for a W ID). Identifiers are checked at their registry: identifier-not-found and identifier-mismatch (see resolved) add nothing; found metadata replaces your fields (verified); unreachable adds supplied citation fields (unchecked), or returns unavailable for identifiers alone; no identifier is unverified. editorialStatus flags retractions and corrections: tell the user.",
   parameters: ScientSourceAddInput,
   success: ScientSourceAddResult,
   failure: ScientSourcesToolError,

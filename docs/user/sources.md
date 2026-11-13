@@ -363,8 +363,9 @@ one copy in your Library carries is that copy: it is reported as already in the
 Library without asking the registry, so this works offline too. An ISBN finds a
 whole book, never a chapter that shares it. When two or more copies carry the
 identifier, Scient does not pick one; it looks the identifier up and judges by
-the registry's title and type. An agent that adds a source by its identifier
-alone gets the same answer. Entries of the last kind stay in the box so
+the registry's title and type. If the registry cannot be reached and no catalogue
+record is available, nothing is added and no copy is selected. An agent that adds
+a source by its identifier alone gets the same answer. Entries of the last kind stay in the box so
 **Add** tries them again. Up to 50 identifiers can be added at a time.
 
 Open Library is edited by its readers, so a listing there without any author

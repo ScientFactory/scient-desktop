@@ -10,6 +10,7 @@ import {
   scientSourceCategoryBasis,
   scientSourceCategoryCounts,
   scientSourceTagCounts,
+  sourceIdentifierRegistryName,
   validateScientSourceEditableMetadata,
   type ScientSourceCandidate,
   type ScientSourceEditableMetadata,
@@ -1597,6 +1598,28 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
       )
     : undefined;
   const resolveIdentifier = yield* keyedIdentifierLookup();
+  const identifierResolution =
+    identifierOnly && !selected
+      ? yield* attempt(() => resolveIdentifier(candidate.identifiers))
+      : null;
+  if (
+    identifierOnly &&
+    !selected &&
+    (!identifierResolution ||
+      (identifierResolution.status === "unavailable" && !identifierResolution.catalogue))
+  ) {
+    const identifier = identifierResolution?.identifier ?? candidate.identifiers[0];
+    const registry = identifier ? sourceIdentifierRegistryName(identifier) : "The registry";
+    const message = `${registry} could not be reached, so nothing was added. Try again later.`;
+    return {
+      outcome: "unavailable" as const,
+      sourceId: null,
+      revision: null,
+      duplicate: { kind: "new" as const, matchingSourceIds: [], reason: message },
+      validationIssues,
+      message,
+    };
+  }
   const observeImport = yield* makeSourceImportAnalytics("agent");
   const result = selected
     ? {
@@ -1616,6 +1639,7 @@ export const addScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.add"
             enrich: input.enrich ?? false,
             allowPossibleMetadataMatch: input.allowPossibleMetadataMatch ?? false,
             resolveIdentifier,
+            ...(identifierResolution ? { identifierResolution } : {}),
             claimedTitle: input.title ?? null,
             ...(resolvedPdf
               ? {

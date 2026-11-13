@@ -45,7 +45,9 @@ import { indexSourceFullText } from "../../../scient/sources/SourceFullText.ts";
 import {
   SourceIdentifierLookup,
   verifiableSourceIdentifier,
+  type ResolveSourceIdentifier,
 } from "../../../scient/sources/SourceIdentifierResolver.ts";
+import { identifierOnlyCandidate } from "../../../scient/sources/SourceIdentifierAdd.ts";
 import {
   changeLibraryReviewConflict,
   libraryReview,
@@ -265,6 +267,80 @@ const addSource = (fixture: Fixture, title: string, doi: string, pdfRelativePath
   );
 
 describe("Sources tools on the library backend", () => {
+  it.effect.each(["found", "unavailable"] as const)(
+    "resolves multiple bare-identifier carriers when the registry is %s",
+    (registry) =>
+      Effect.gen(function* () {
+        const fixture = yield* Effect.promise(setup);
+        const identifier = { scheme: "doi", value: "10.1000/bare-carriers" };
+        const bare = identifierOnlyCandidate([identifier], "agent");
+        const own = yield* Effect.promise(() =>
+          libraryRecord(fixture, bare.sourceKey, {
+            title: "Registered work",
+            identifiers: [identifier],
+          }),
+        );
+        const other = yield* Effect.promise(() => libraryRecord(fixture, "unknown-copy"));
+        yield* Effect.promise(async () => {
+          const path = NodePath.join(fixture.libraryRoot, "records", `${other.sourceId}.json`);
+          await NodeFSP.writeFile(
+            `${path}.tmp`,
+            JSON.stringify({
+              ...other,
+              title: null,
+              type: "other",
+              identifiers: [identifier],
+            }),
+          );
+          await NodeFSP.rename(`${path}.tmp`, path);
+        });
+        const before = yield* Effect.promise(() => listScientSourceRecords(fixture.library));
+        expect(before).toHaveLength(2);
+        const asked: Array<unknown> = [];
+        const lookup: ResolveSourceIdentifier = async (identifiers) => {
+          asked.push(identifiers);
+          return registry === "found"
+            ? {
+                status: "found",
+                identifier,
+                retrievedAt: "2026-11-13T12:00:00.000Z",
+                metadata: {
+                  ...editableMetadataFromRecord(own),
+                  type: "book",
+                  abstractSections: [],
+                },
+              }
+            : { status: "unavailable", identifier };
+        };
+        const added = yield* run(
+          addScientSourceForInvocation({ identifiers: [identifier] }).pipe(
+            Effect.provideService(SourceIdentifierLookup, lookup),
+          ),
+          fixture,
+        );
+        if (registry === "found") {
+          // The title agrees with the own-key copy, but the registry's type rules it out.
+          expect(added).toMatchObject({ outcome: "duplicate", sourceId: other.sourceId });
+        } else {
+          expect(added).toMatchObject({
+            outcome: "unavailable",
+            sourceId: null,
+            revision: null,
+            duplicate: { matchingSourceIds: [] },
+            message: "doi.org could not be reached, so nothing was added. Try again later.",
+          });
+        }
+        expect(asked).toEqual([[identifier]]);
+        const pins = yield* Effect.promise(() => readScientProjectPins(fixture.root));
+        expect(pins.map((pin) => pin.sourceId)).toEqual(
+          registry === "found" ? [other.sourceId] : [],
+        );
+        expect(yield* Effect.promise(() => listScientSourceRecords(fixture.library))).toEqual(
+          before,
+        );
+      }),
+  );
+
   it.effect("on the project backend, a full round of tool calls creates no library folder", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

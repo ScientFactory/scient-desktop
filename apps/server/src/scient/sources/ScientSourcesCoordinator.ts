@@ -10,6 +10,7 @@ import {
   resolveSourceIdentifier,
   titlesAgree,
   type ResolveSourceIdentifier,
+  type SourceIdentifierResolution,
 } from "./SourceIdentifierResolver.ts";
 import {
   discardLocalPdfImportMaterial,
@@ -416,6 +417,8 @@ export async function addAgentSource(
     readonly pdfFileName?: string;
     readonly expectedPdf?: { readonly sha256: string; readonly byteLength: number };
     readonly resolveIdentifier?: ResolveSourceIdentifier;
+    /** A bare-identifier lookup already made before any local-copy preference. */
+    readonly identifierResolution?: SourceIdentifierResolution;
     /** The title the agent asserted; PDF-derived and filename titles are not claims. */
     readonly claimedTitle?: string | null;
     /** A downloaded paper is added for whoever asked for it. */
@@ -428,17 +431,25 @@ export async function addAgentSource(
   return observeSourceImport<AgentSourceAddResult>(
     observer,
     async () => {
-      const preliminary = await assessScientSourceIntake({
-        root: input.root,
-        candidate: input.candidate,
-        ...(input.expectedPdf ? { pdfSha256: input.expectedPdf.sha256 } : {}),
-      });
+      const preliminary = input.identifierResolution
+        ? null
+        : await assessScientSourceIntake({
+            root: input.root,
+            candidate: input.candidate,
+            ...(input.expectedPdf ? { pdfSha256: input.expectedPdf.sha256 } : {}),
+          });
       // A source the identity rule reuses is reported as before, without asking a registry.
       const exactDuplicate =
-        preliminary.kind !== "new" && preliminary.kind !== "possible-metadata-match";
-      const resolution = exactDuplicate
-        ? null
-        : await (input.resolveIdentifier ?? resolveSourceIdentifier)(input.candidate.identifiers);
+        preliminary !== null &&
+        preliminary.kind !== "new" &&
+        preliminary.kind !== "possible-metadata-match";
+      const resolution =
+        input.identifierResolution ??
+        (exactDuplicate
+          ? null
+          : await (input.resolveIdentifier ?? resolveSourceIdentifier)(
+              input.candidate.identifiers,
+            ));
       if (resolution?.status === "not-found") {
         const missing = resolution.named ?? resolution.identifier;
         return {

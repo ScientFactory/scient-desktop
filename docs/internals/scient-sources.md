@@ -342,7 +342,11 @@ name counts as no type) select the same way; when nothing is selected, the
 latter goes through the agent add with type `book` for ISBNs only and `other`
 otherwise, never a type it has to invent to pass validation. Two or
 more carriers are not chosen between: the identifier is resolved and the
-registry's title and type are judged. A paper download (`paperIntake.ts`)
+registry's title and type are judged. The identifier-only agent fallback resolves
+before the coordinator's preliminary assessment and passes that answer into the
+agent add; the locked import judges those facts. Without a reachable registry or
+a catalogue record, it returns `unavailable`, naming no copy and pinning nothing.
+A paper download (`paperIntake.ts`)
 builds the paper's own candidate (type `article`, or `preprint` for an arXiv
 ID alone; the lookup's title), goes through the agent add (assessment, registry
 when not reused, locked import) and attaches its PDF to the record the import
@@ -1889,8 +1893,9 @@ identifier makes the registry's bibliographic fields authoritative, with `doi`
 or `pubmed` field provenance carrying the identifier and retrieval time, and
 stores verification `verified`. A CSL title is read as plain text: Crossref
 passes on the inline markup (`<i>`, `<sub>`, MathML) and line breaks of the
-deposited XML, and Library titles are plain text. An unreachable or unusable registry adds the
-source as given with `unchecked`; a source without a DOI, PMID, arXiv ID or ISBN
+deposited XML, and Library titles are plain text. An unreachable or unusable registry adds
+supplied citation fields as given with `unchecked`; identifiers alone return
+`unavailable` when no catalogue record is available. A source without a DOI, PMID, arXiv ID or ISBN
 is `unverified`. An exact duplicate is reported without a lookup, and optional
 abstract enrichment runs after the check. The same add path serves a person
 adding by identifier (actor `user`), with the same refusals and states.
