@@ -225,6 +225,13 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         streamsToolOutput: true,
       },
       tools: { ...AcpProviderCapabilitiesV2.tools, supportsMcpTools: true },
+      // The agent runs with --approval-mode yolo, so it never asks before a command or file change.
+      approvals: {
+        ...AcpProviderCapabilitiesV2.approvals,
+        supportsCommandApproval: false,
+        supportsFileReadApproval: false,
+        supportsFileChangeApproval: false,
+      },
       planning: {
         ...AcpProviderCapabilitiesV2.planning,
         emitsPlanUpdated: false,
