@@ -42,12 +42,13 @@ project**.
 Sort the list by **Last added**, **Publication year**, **Title** or **Author**
 with the sort button beside the filter button.
 
-A paper this project cites that this computer's Library does not have, for
-example one deleted for good from the Trash or one a collaborator added, says
-"Not in this Library". The project keeps its citation details, so it can still
-be cited, but it has no PDF here and nothing to move to the Trash. Removing it
-from the project asks first, because it cannot be added back from this
-computer.
+A paper this project cites that is in the Trash says "Not in this Library":
+the project keeps its citation details, so it can still be cited, but it has no
+PDF here and nothing to move to the Trash. Removing it from the project asks
+first, because it cannot be added back from this computer. A paper the project
+cites that this computer's Library has never had, for example one a
+collaborator added, is copied into your Library from those citation details,
+without a PDF or abstract, the next time this project changes the Library.
 
 ### Two notes
 
@@ -342,7 +343,11 @@ it for good, with their saved versions and any PDF no other source uses.
 Removing a source never changes Zotero. Moving a paper to the Trash removes it
 from your Library, not only from this project. Projects that have it, this one
 included, keep its citation details and list it as "Not in this Library" until
-you restore it; the message says how many other projects have it. The Trash
+you restore it; the message says how many other projects have it. After
+**Empty trash**, a paper that a project still cites comes back into your
+Library from that project's citation details, without its PDF, abstract or
+My note, the next time that project changes the Library; remove it from those
+projects first if you want it gone. The Trash
 also holds the copies that merges took away: only the merge's **Undo** brings
 those back, and once the trash is emptied those merges can no longer be undone.
 

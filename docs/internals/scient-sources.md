@@ -468,7 +468,10 @@ the ID resolved to then, never the alias survivor.
 pin's key as preferred key), recorded as `hydrated` in the map. Its source ID
 is derived from the library ID and the project source ID, so a repeat after a
 lost map finds the same record. `ambiguous` and `removed` pins are never
-hydrated, so hydration never adds a duplicate or brings back a removed record.
+hydrated, so hydration never adds a duplicate or brings back a record in the
+trash. A record deleted for good (Empty trash, `deletePermanently`) leaves its
+pins `no-match`, so the next write in a project that still pins it hydrates it
+again from the pin's `work` (seen in the review pack of 2026-11-13).
 
 **Two pins, one source.** A project that pinned both sides of a pair keeps
 both pins after they are merged: its documents may cite either key, and the
