@@ -1106,6 +1106,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                     ...(update.failureClass === undefined
                       ? {}
                       : { failureClass: update.failureClass }),
+                    ...(update.resetAt === undefined ? {} : { resetAt: update.resetAt }),
                     ...(update.stopReason === undefined ? {} : { stopReason: update.stopReason }),
                     broken,
                   }),

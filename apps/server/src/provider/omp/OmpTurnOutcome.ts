@@ -2,6 +2,9 @@
  * OMP reports model failures in turn data, not RPC errors. Combine assistant stop/error, exhausted
  * retry, and prompt_result evidence into one terminal outcome.
  */
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+
 import type { OmpTarget } from "./OmpTarget.ts";
 
 /** Longest `errorMessage` reported on a failed turn. */
@@ -25,6 +28,8 @@ export interface OmpTurnEvidence {
   readonly promptErrorCode?: string | undefined;
   /** `prompt_result.error.httpStatus`. */
   readonly promptHttpStatus?: number | undefined;
+  /** `prompt_result.error.resetAt`, epoch ms. */
+  readonly promptResetAt?: number | undefined;
   /** The last assistant `message_end` of this turn. */
   readonly stopReason?: string | undefined;
   readonly errorMessage?: string | undefined;
@@ -39,6 +44,8 @@ export type OmpTurnVerdict =
       readonly stopReason: "abort" | "error";
       readonly errorMessage: string;
       readonly failureClass?: "usage_limit";
+      /** ISO time at which the provider said the usage limit resets. */
+      readonly resetAt?: string;
     }
   | { readonly outcome: "completed"; readonly stopReason?: "length" }
   | { readonly outcome: "unknown" };
@@ -58,6 +65,11 @@ export const clipOmpErrorMessage = (
 
 const promptCategory = (status: string | undefined) =>
   status === "completed" || status === "error" || status === "aborted" ? status : undefined;
+
+const isoTime = (epochMs: number | undefined) =>
+  epochMs === undefined
+    ? Option.none()
+    : DateTime.make(epochMs).pipe(Option.map(DateTime.formatIso));
 
 const firstText = (...values: ReadonlyArray<string | undefined>) =>
   values.find((value) => value !== undefined && value.trim().length > 0);
@@ -91,6 +103,9 @@ export const classifyOmpTurnOutcome = (
     };
   }
   if (category === "error") {
+    // A spending cap or a provider's 429 needs the user, not another attempt.
+    const usageLimit = evidence.promptErrorCode === "cost_cap" || evidence.promptHttpStatus === 429;
+    const resetAt = usageLimit ? isoTime(evidence.promptResetAt) : Option.none();
     return {
       outcome: "failed",
       stopReason: "error",
@@ -98,10 +113,8 @@ export const classifyOmpTurnOutcome = (
         target,
         firstText(evidence.retryFinalError, evidence.errorMessage, evidence.promptError),
       ),
-      // A spending cap or a provider's 429 needs the user, not another attempt.
-      ...(evidence.promptErrorCode === "cost_cap" || evidence.promptHttpStatus === 429
-        ? { failureClass: "usage_limit" as const }
-        : {}),
+      ...(usageLimit ? { failureClass: "usage_limit" as const } : {}),
+      ...(Option.isSome(resetAt) ? { resetAt: resetAt.value } : {}),
     };
   }
   return evidence.stopReason === "length"
