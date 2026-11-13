@@ -47,8 +47,20 @@ choose **All** under Collection to see every paper in your Library, from every
 project. A paper that is in this project says "In this project" there. Use
 **Add to project** to bring a paper from your Library into this project, and
 **Remove from this project** to take it out; the paper stays in your Library
-and in other projects. Importing while **All** is shown adds the papers to your
-Library only; the import's summary offers **Add to project**.
+and in other projects. Importing or adding by identifier while **All** is shown
+adds the papers to your Library only; the import's summary offers **Add to
+project**.
+
+Sort the list by **Last added**, **Publication year**, **Title** or **Author**
+with the sort button beside the filter button.
+
+A paper this project cites that is in the Trash says "Not in this Library":
+the project keeps its citation details, so it can still be cited, but it has no
+PDF here and nothing to move to the Trash. Removing it from the project asks
+first, because it cannot be added back from this computer. A paper the project
+cites that this computer's Library has never had, for example one a
+collaborator added, is copied into your Library from those citation details,
+without a PDF or abstract, the next time this project changes the Library.
 
 ### Two notes
 
@@ -88,7 +100,10 @@ try again when it has finished. When the move is done, the line says how many
 duplicates were merged and whether any kept different values, where your
 Library is, and where the copy from before the move is kept. Undo history of
 bulk edits from before the move is not carried over. Dismiss the line when you
-have read it. If the project's `.scient` folder is tracked in git, commit the
+have read it. If a PDF from the project was still open, the line also says how
+many files will be removed from the project later. If the move fails, the line
+says why; Scient tries again with the next change to the Library or its next
+background pass, and **Check again** shows the latest state. If the project's `.scient` folder is tracked in git, commit the
 change so PDFs stop being stored in git.
 
 **The copy from before the move.** Before the move deletes anything from
@@ -194,6 +209,122 @@ its note for this project and its place in reviews. **Undo** in the
 confirmation goes back. Choose **Keep separate** when it is not; Scient stops
 asking, and **Ask again** withdraws that.
 
+## Import from Zotero
+
+1. Open Zotero on the same computer as the selected Scient environment, or
+   save a Zotero API key in **Accounts** (see below).
+2. In the **Library**, choose **Import sources → Import from Zotero**.
+3. Select **My Library**, one of your Zotero groups, or a specific collection.
+4. Select individual references, import the selected collection, or import the
+   complete library.
+
+Scient copies each reference's metadata, tags, child notes (as **My note**)
+and every PDF attachment into your Library, and adds the references to this
+project unless **All** is shown. A citation key the item
+already has, from Zotero or Better BibTeX, is kept. Each source also joins a
+Library collection named after each Zotero collection it is in. The Library
+keeps one level of nesting, so **Chapter 2** inside **Thesis** stays inside it;
+a collection nested deeper joins its ancestor one level down, and the import
+result says which ones did. The original Zotero records and attachments are
+never changed by an import.
+
+Zotero must be open in the same environment where the project runs. For a
+remote project, that means Zotero must run on the remote computer, not only on
+the computer displaying Scient. If Zotero blocks local access, enable **Allow
+other applications on this computer to communicate with Zotero** in Zotero's
+advanced settings and try again.
+
+### Zotero groups
+
+The library menu in the import picker lists the group libraries you can read
+after **My Library**: the groups Zotero on this computer syncs, or on zotero.org
+the groups your key may read (allow group access when you create the key). A
+key that reads groups but not your personal library works too; the picker then
+opens on a group and leaves **My Library** out.
+Choose a group to browse its collections and import from it; sources still go
+into the current project. A group item and an item of yours stay two separate
+sources, even when Zotero gives them the same key, and **Refresh from Zotero**
+reads each source again from the library it came from.
+
+### Your library on zotero.org
+
+When Zotero is not open on that computer, Scient can use your library on
+zotero.org instead. Create a key at zotero.org (**Settings → Security →
+Create new private key**), allow it to read your library and files, and save
+it in **Accounts** as the Zotero key. Allow write access too if you want to use
+**Send to Zotero**. Scient keeps the key in Accounts and sends it only to
+zotero.org. Turning the key **Off** in Accounts stops the Library from using it.
+Zotero on the computer is used first when both are available.
+
+### Keep sources up to date with Zotero
+
+Choose **Import sources → Refresh from Zotero** to bring changes you made in
+Zotero into sources imported from it. Fields you changed in Zotero are updated,
+new notes and PDFs come in, and tags you added or removed in Zotero are added or
+removed here. When you changed the same field both here and in Zotero, your
+version here is kept and the refresh lists it: choose **Use Zotero's** or **Keep
+mine**. An empty field in Zotero never clears one here, and an item you deleted
+in Zotero stays in your Library.
+
+### Send to Zotero
+
+Choose **Send to Zotero** from a source's actions to add it to your zotero.org
+library, or to update the Zotero item it came from with your changes here.
+Only fields that differ are sent, and an empty field here never clears one in
+Zotero. If the item was changed in Zotero after Scient last read it, nothing is
+overwritten: refresh from Zotero first, then send again. This needs the Zotero
+key in Accounts with write access. Changes are not sent automatically; there is
+no two-way sync.
+
+When your key may write to a group and the group lets you edit its library,
+**Send to Zotero** asks where to send: **My Library** or that group. A source
+sent to a library other than the one it came from gets a new item there and is
+linked to it from then on. Scient refuses to send to a group the key can only
+read.
+
+Long imports can continue in the background. Completed items remain saved, and
+an interrupted import can resume when the Library reopens. Exact duplicates are
+skipped. When a title, creator, and year look similar but do not prove that two
+records are identical, Scient asks whether to import the item separately.
+
+## Import PDF files
+
+1. In the **Library**, choose **Import sources → Import PDF files**.
+2. Select one or more PDFs.
+3. Review the imported records and correct any incomplete metadata.
+
+Scient copies each PDF into your Library and creates an editable source record;
+when you import a single new PDF, its details open so you can check them.
+It first uses metadata embedded in the file. When the PDF contains one clear
+DOI or explicitly labelled PMID, Scient can use that identifier to retrieve
+better bibliographic metadata or an abstract from PubMed, Crossref, or Europe
+PMC. It does not use fuzzy title matching, OCR, or an AI model to invent
+missing facts. The date a PDF file was made is not taken as the publication
+date; only a publication date the publisher embedded counts. A PDF remains
+importable when metadata cannot be resolved; the unknown fields stay visible
+for correction.
+
+To get faster, more reliable answers from Crossref, OpenAlex and Unpaywall, add
+a contact email in **Settings ▸ Documents ▸ Library**. Scient sends it only to
+those services, and sends no email while the field is empty.
+
+Scient also uses your own research keys when you add them in **Accounts** under
+**Research**: **OpenAlex** (get a free key at
+[openalex.org/settings/api](https://openalex.org/settings/api)), **Google Books**
+(an API key from the
+[Google Cloud console](https://console.cloud.google.com/apis/credentials) with
+the Books API turned on; if Google refuses the key, Scient asks without it),
+**NCBI / PubMed**, **Semantic Scholar** and the
+**Unpaywall email**. Without a key these services share a small allowance per
+network address, which can run out while adding many sources. A key you turn
+off in Accounts is not sent.
+
+For remote projects, the selected PDFs are transferred to the selected project
+environment. Metadata services receive only the exact public identifier used
+for lookup, not the PDF itself. PubMed metadata is provided through NCBI
+E-utilities and remains subject to the
+[NCBI disclaimer and copyright notice](https://www.ncbi.nlm.nih.gov/home/about/policies/).
+
 ## Add by identifier
 
 1. In the **Library**, choose **Import sources → Add by identifier**.
@@ -228,7 +359,7 @@ other reference manager by exporting it to a file and importing that file.
 
 Each entry keeps its citation key, authors, editors, identifiers (DOI, PMID,
 PMCID, arXiv, ISBN, ISSN), tags and abstract. Notes in the file (`note` and
-`annote`, RIS `N1`, EndNote notes) become the source's project note. LaTeX
+`annote`, RIS `N1`, EndNote notes) become the source's **My note**. LaTeX
 accents and commands in `.bib` files are turned into plain text, `@string`
 abbreviations and `crossref` entries are resolved, and Google Scholar's
 "arXiv preprint" entries become preprints with their arXiv ID.
@@ -311,14 +442,28 @@ as a separate source. An agent can refresh a source's metadata the same way;
 the change is credited to the agent, and **History** can restore the earlier
 version.
 
-Use **Move to Trash** from the source actions to remove a source. Choose
+A source without a PDF that has a DOI or a link offers **Get PDF** in its
+details, and the **⋯** menu offers **Get the missing PDF** (or **Get _N_
+missing PDFs**) for every such source in the list; see
+[Accounts](accounts.md) for how Scient reaches closed papers.
+
+Use **Move to Trash** from the source actions to remove a source from your
+Library; in **This project** a row's menu offers **Remove from this project**
+instead, and **Move to Trash** is in the source's details and in **All**. Choose
 **Undo** in the message that appears to put it straight back, or choose
 **Trash** in the **⋯** menu at the top of the Library later to restore it. Its PDFs stay in
 your Library while it is in the trash. **Empty trash** deletes the sources in
 it for good, with their saved versions and any PDF no other source uses.
 Removing a source never changes Zotero. Moving a paper to the Trash removes it
-from your Library, not only from this project. Other projects that have it keep
-its citation details, and the message says how many.
+from your Library, not only from this project. Projects that have it, this one
+included, keep its citation details and list it as "Not in this Library" until
+you restore it; the message says how many other projects have it. After
+**Empty trash**, a paper that a project still cites comes back into your
+Library from that project's citation details, without its PDF, abstract or
+My note, the next time that project changes the Library; remove it from those
+projects first if you want it gone. The Trash
+also holds the copies that merges took away: only the merge's **Undo** brings
+those back, and once the trash is emptied those merges can no longer be undone.
 
 Every change to a source is kept as a version. Choose **History** from the
 source actions to see who changed what and when, and **Restore** an earlier
@@ -358,7 +503,7 @@ with it.
 ## Search the full text
 
 Scient reads the text of every page of every PDF in the Library and keeps it
-with the project, so you can search inside the papers. Type at least three
+in your Library, so you can search inside the papers. Type at least three
 characters in the Library search: under the sources whose title, authors or
 other details match, **In full text** lists passages from the PDFs that match,
 with their page. While a filter is on, only the sources it keeps are searched.

@@ -176,6 +176,8 @@ apps never touch the installed app's library.
 ├── merges/<merge-id>.json   one per merge: report and what Undo reverts
 ├── merges/pending/          merges a crash interrupted, finished by the next write
 ├── zotero/<source-id>.json  Zotero merge bases
+├── annotations/v1/<sha256>.json  highlights on the library's PDFs
+├── migrations/<instance-id>/    each checkout's move: journal, move lock, kept v1 copy, review backups
 └── bulk-edits/ operations/ receipts/ staging/
 ```
 
@@ -231,8 +233,9 @@ folder. `library.lock` covers the writers that are not that server.
 
 `@scientfactory/scient-sources/library-merge` merges duplicates library-wide.
 Every function takes a `ScientLibraryLocation` and writes under the library
-lock. Nothing calls it yet; the move (5d) runs the bulk pass and 5f lists the
-possible duplicates.
+lock. The move (5d) runs the bulk pass; the Possible duplicates screen, its
+routes and the agent tools read the pairs, merge one pair on request and undo
+merges (5f).
 
 Three strong matches link two records: the same external item (`system`,
 `libraryId`, `itemKey`, such as one Zotero item imported twice), a shared
@@ -581,7 +584,10 @@ the ID resolved to then, never the alias survivor.
 pin's key as preferred key), recorded as `hydrated` in the map. Its source ID
 is derived from the library ID and the project source ID, so a repeat after a
 lost map finds the same record. `ambiguous` and `removed` pins are never
-hydrated, so hydration never adds a duplicate or brings back a removed record.
+hydrated, so hydration never adds a duplicate or brings back a record in the
+trash. A record deleted for good (Empty trash, `deletePermanently`) leaves its
+pins `no-match`, so the next write in a project that still pins it hydrates it
+again from the pin's `work` (seen in the review pack of 2026-11-13).
 A `contradicted` pin is not hydrated either: the project snapshot serves it,
 with no PDF of the contradicting record, until a person or agent resolves it.
 Review records resolve through the same function, so a review record behaves
@@ -821,8 +827,10 @@ its state.
 - **Source IDs.** Every route that names a source accepts a library ID or a
   project source ID of this project. Detail for a pin this library lacks
   returns the pin's snapshot with `fromSnapshot`.
-- **Notes.** Routes serve any connected client, so a library record's personal
-  note never appears in a route payload. A route record's `note` is this
+- **Notes.** Routes serve any connected client, so list and overview payloads
+  never carry a library record's personal note; only the detail adds it, as
+  `personalNote`, for a session holding operate ("Two notes" below). A route
+  record's `note` is this
   project's note on its pin instead, and `updateNote` sets that note
   (`setScientProjectPinNote`); a source not pinned here has no project note,
   and the panel hides the note editor for it. Exports carry the project note
@@ -2443,8 +2451,10 @@ lock.
 `packages/scient-sources/src/bibliography/` reads and writes BibTeX/BibLaTeX,
 RIS, CSL-JSON and EndNote XML as pure functions with no new dependency (a
 small XML reader handles EndNote). Every parser yields format-neutral entries
-that keep the citation key (normalized by `citationKeys.ts`), the project note
-and, per entry, the source fields that have no Scient field (`notKept`).
+that keep the citation key (normalized by `citationKeys.ts`), the entry's note
+(written to the record's `note`: the project note on a project store, the
+personal note on the library, since imports pin without a pin note) and, per
+entry, the source fields that have no Scient field (`notKept`).
 Entries that cannot be parsed are skipped with their line, so one damaged
 entry does not lose the file. `planBibliographyImport` turns a parse into
 candidates: it drops empty entries, repeats within the file (same content or
