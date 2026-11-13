@@ -24,7 +24,14 @@ import { makeOverleafConnections } from "./scient/overleaf/OverleafConnections.t
 const [profile, phase, installedHelper] = process.argv.slice(2);
 NodeAssert.ok(profile && ["connect", "restart", "refuse"].includes(phase!));
 const root = await NodeFSP.realpath(profile);
-const helper = await resolveNativeFilePublicationHelperPath(installedHelper);
+const failures: string[] = [];
+const helper = await resolveNativeFilePublicationHelperPath(installedHelper, (failure) =>
+  failures.push(
+    `attempt ${failure.attempt}, ${failure.stage}, ${Math.round(failure.elapsedMs)} ms: ${failure.error instanceof Error ? failure.error.message : String(failure.error)}`,
+  ),
+);
+if (helper && failures.length > 0)
+  console.log(`Publication helper passed on a later attempt (${failures.join("; ")}).`);
 if (phase === "refuse") {
   NodeAssert.equal(
     helper,
@@ -33,7 +40,7 @@ if (phase === "refuse") {
   );
   console.log("Overleaf helper-unavailable refusal passed.");
 } else {
-  NodeAssert.ok(helper, "Installed publication helper unavailable");
+  NodeAssert.ok(helper, `Installed publication helper unavailable (${failures.join("; ")})`);
   if (installedHelper !== undefined)
     NodeAssert.equal(
       await resolveNativeFilePublicationHelperPath(),
