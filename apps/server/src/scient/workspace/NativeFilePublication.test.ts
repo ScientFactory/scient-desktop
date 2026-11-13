@@ -12,6 +12,7 @@ import {
 import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import {
   bindNativeFilePublicationParent,
+  HELPER_RECHECK_MS,
   ensureNativePrivateRetentionDirectory,
   checkNativePrivateRetentionDirectory,
   closeNativeHelperServers,
@@ -382,28 +383,6 @@ describe("the packaged server's own resources", () => {
       );
   });
 
-  it("skip Windows' permission check only for the helper beside the server", () => {
-    const { helperCandidate } = nativeFilePublicationInternals;
-    const binary =
-      HostProcess.Platform.defaultValue() === "win32"
-        ? "scient-file-publication.exe"
-        : "scient-file-publication";
-    const resources = NodePath.join(NodePath.sep, "opt", "Scient", "resources");
-    const server = NodePath.join(resources, "server.asar", "apps/server/dist");
-    const installed = NodePath.join(resources, "file-exchange", binary);
-    expect(helperCandidate(undefined, server)).toEqual({
-      candidate: installed,
-      installedWithServer: true,
-    });
-    // The desktop app names that same helper explicitly.
-    expect(helperCandidate(installed, server).installedWithServer).toBe(true);
-    expect(
-      helperCandidate(NodePath.join(NodePath.sep, "elsewhere", binary), server).installedWithServer,
-    ).toBe(false);
-    const source = NodePath.join(NodePath.sep, "work", "apps/server/src/scient/workspace");
-    expect(helperCandidate(undefined, source).installedWithServer).toBe(false);
-  });
-
   it("are not looked for in a source checkout or an unpacked build", () => {
     expect(isPackagedServerDirectory(NodePath.join("/work", "apps/server/dist"))).toBe(false);
     expect(isPackagedServerDirectory(NodePath.join("/work", "resources", "apps/server/dist"))).toBe(
@@ -462,6 +441,129 @@ describe("a helper candidate's checks", () => {
         checks,
       ),
     ).toBe(false);
+  });
+});
+
+describe("which helpers are accepted", () => {
+  const { helperAcceptance } = nativeFilePublicationInternals;
+  const path = "/install/file-exchange/helper";
+  /** Checks that settle only when the test says, in the order they were asked. */
+  const controlled = () => {
+    const asked: Array<PromiseWithResolvers<string | undefined>> = [];
+    const acceptance = helperAcceptance(() => {
+      const check = Promise.withResolvers<string | undefined>();
+      asked.push(check);
+      return check.promise;
+    });
+    const settle = async (index: number, passes: boolean) => {
+      await expect.poll(() => asked.length).toBeGreaterThan(index);
+      asked[index]!.resolve(passes ? path : undefined);
+    };
+    return { acceptance, asked, settle };
+  };
+  /** Lets every callback already queued run: a check's bookkeeping takes a few promise turns. */
+  const flush = async () => {
+    for (let turn = 0; turn < 10; turn++) await Promise.resolve();
+  };
+  /** Whether `promise` has settled once pending callbacks have run. */
+  const settled = async (promise: Promise<unknown>) => {
+    let done = false;
+    void promise.then(() => (done = true));
+    await flush();
+    return done;
+  };
+
+  it("uses a pass at once, checks it again in the background once old, and drops it if that fails", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { acceptance, asked, settle } = controlled();
+      const first = acceptance.helper(path, false);
+      await settle(0, true);
+      expect(await first).toBe(path);
+      now = HELPER_RECHECK_MS - 1;
+      expect(await acceptance.helper(path, false)).toBe(path);
+      expect(acceptance.accepted(path)).toBe(path);
+      expect(asked).toHaveLength(1);
+      now = HELPER_RECHECK_MS;
+      expect(await acceptance.helper(path, false)).toBe(path);
+      expect(asked).toHaveLength(2);
+      // While that check runs, every caller still gets the helper, and no other check starts.
+      expect(await acceptance.helper(path, false)).toBe(path);
+      expect(acceptance.accepted(path)).toBe(path);
+      expect(asked).toHaveLength(2);
+      await settle(1, false);
+      await flush();
+      expect(acceptance.accepted(path)).toBeUndefined();
+      const again = acceptance.helper(path, false);
+      await settle(2, true);
+      expect(await again).toBe(path);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("gives the helper to nobody while a check asked because of a failure runs", async () => {
+    const { acceptance, settle } = controlled();
+    const first = acceptance.helper(path, false);
+    await settle(0, true);
+    await first;
+    const revalidation = acceptance.helper(path, true);
+    const ordinary = acceptance.helper(path, false);
+    expect(acceptance.accepted(path)).toBeUndefined();
+    expect(await settled(ordinary)).toBe(false);
+    await settle(1, true);
+    expect(await ordinary).toBe(path);
+    expect(await revalidation).toBe(path);
+    expect(acceptance.accepted(path)).toBe(path);
+  });
+
+  it("starts that check after one already under way, whose pass may predate the failure", async () => {
+    let now = 0;
+    vi.spyOn(performance, "now").mockImplementation(() => now);
+    try {
+      const { acceptance, asked, settle } = controlled();
+      const first = acceptance.helper(path, false);
+      await settle(0, true);
+      await first;
+      now = HELPER_RECHECK_MS;
+      expect(acceptance.accepted(path)).toBe(path);
+      await expect.poll(() => asked.length).toBe(2);
+      const revalidation = acceptance.helper(path, true);
+      const ordinary = acceptance.helper(path, false);
+      // A second failure before that check starts shares it.
+      const repeated = acceptance.helper(path, true);
+      expect(acceptance.accepted(path)).toBeUndefined();
+      await settle(1, true);
+      expect(await settled(ordinary)).toBe(false);
+      expect(acceptance.accepted(path)).toBeUndefined();
+      await settle(2, false);
+      expect(await revalidation).toBeUndefined();
+      expect(await repeated).toBeUndefined();
+      expect(await ordinary).toBeUndefined();
+      expect(acceptance.accepted(path)).toBeUndefined();
+      expect(asked).toHaveLength(3);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("checks an accepted helper again when it cannot be launched, and nothing else", async () => {
+    const { acceptance, asked, settle } = controlled();
+    acceptance.launchFailed(path);
+    await flush();
+    expect(asked).toHaveLength(0);
+    const first = acceptance.helper(path, false);
+    await settle(0, true);
+    await first;
+    acceptance.launchFailed(path);
+    expect(acceptance.accepted(path)).toBeUndefined();
+    await settle(1, false);
+    await flush();
+    // No longer accepted: the next caller waits for a check of its own.
+    const next = acceptance.helper(path, false);
+    await settle(2, false);
+    expect(await next).toBeUndefined();
   });
 });
 

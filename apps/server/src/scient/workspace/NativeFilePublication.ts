@@ -169,37 +169,25 @@ async function checkHelperCandidate(
     }
   }
 }
-export const nativeFilePublicationInternals = { checkHelperCandidate, helperCandidate };
-
-/**
- * The helper to use, and whether it sits in the running server's own install tree. Installed
- * servers only inspect their own resources; cwd, PATH and project files grant no authority.
- */
-function helperCandidate(
-  configuredPath: string | undefined,
-  moduleDirectory = NodeSea.isSea()
-    ? NodePath.dirname(process.execPath)
-    : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)),
-) {
+/** Installed servers only inspect their own resources; cwd, PATH and project files grant no authority. */
+function helperCandidate(configuredPath: string | undefined) {
   const platform = HostProcess.Platform.defaultValue();
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
+  const moduleDirectory = NodeSea.isSea()
+    ? NodePath.dirname(process.execPath)
+    : NodePath.dirname(NodeURL.fileURLToPath(import.meta.url));
+  // Source development has a separate, explicit build location.
   const source = moduleDirectory.endsWith(NodePath.join("src", "scient", "workspace"));
   const desktop = isPackagedServerDirectory(moduleDirectory);
-  const installed = desktop
-    ? NodePath.resolve(moduleDirectory, "../../../../file-exchange", binary)
-    : source
-      ? undefined
-      : NodePath.join(moduleDirectory, "file-exchange", binary);
-  // Source development has a separate, explicit build location.
-  const candidate =
+  return (
     configuredPath ??
-    (desktop ? undefined : HostProcess.Environment.defaultValue().SCIENT_FILE_PUBLICATION_HELPER) ??
-    installed ??
-    NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary);
-  return {
-    candidate,
-    installedWithServer: installed !== undefined && NodePath.relative(installed, candidate) === "",
-  };
+    (desktop
+      ? NodePath.resolve(moduleDirectory, "../../../../file-exchange", binary)
+      : (HostProcess.Environment.defaultValue().SCIENT_FILE_PUBLICATION_HELPER ??
+        (source
+          ? NodePath.resolve(moduleDirectory, "../../../dist/file-exchange", binary)
+          : NodePath.join(moduleDirectory, "file-exchange", binary))))
+  );
 }
 
 /**
@@ -210,47 +198,98 @@ export async function resolveNativeFilePublicationHelperPath(
   configuredPath?: string,
   onFailure?: NativeHelperFailureReport,
 ): Promise<string | undefined> {
-  const { candidate, installedWithServer } = helperCandidate(configuredPath);
+  const candidate = helperCandidate(configuredPath);
   return (await checkHelperCandidate(candidate, onFailure, {
-    artifact: (helper) => validatePublicationArtifact(helper, { installedWithServer }),
+    artifact: validatePublicationArtifact,
     capabilities: (helper) => nativeFilePublicationCapabilities(helper),
   }))
     ? candidate
     : undefined;
 }
 
-/** Helpers that passed their checks in this process. */
-const acceptedHelpers = new Set<string>();
-const resolvingHelpers = new Map<string, Promise<string | undefined>>();
+/** How long a pass is used before it is checked again, in the background. */
+export const HELPER_RECHECK_MS = 10 * 60_000;
+interface HelperCheck {
+  readonly result: Promise<string | undefined>;
+  /** Holds every caller until it settles. */
+  readonly suspect: boolean;
+  started: boolean;
+}
 /**
- * The helper `resolveNativeFilePublicationHelperPath` finds. A pass holds for the process; a
- * refusal is checked again on the next call. `revalidate` checks an accepted helper again,
- * and a helper that then fails is no longer accepted anywhere.
+ * Which helpers passed `check`, and when. A pass is used at once and checked again in the
+ * background once old; a refusal is checked again on the next ask. A suspect check, asked
+ * because something failed, starts after any check under way and gives the helper to nobody
+ * until it settles. A helper that fails is given to no new use; holders finish with it.
  */
+function helperAcceptance(check: (candidate: string) => Promise<string | undefined>) {
+  /** When each accepted helper's passing check began. */
+  const accepted = new Map<string, number>();
+  /** The check running, or waiting for the one before it, by helper. */
+  const checks = new Map<string, HelperCheck>();
+  const start = (candidate: string, suspect: boolean, after?: Promise<unknown>) => {
+    const entry: HelperCheck = {
+      suspect,
+      started: false,
+      result: (after ?? Promise.resolve())
+        .then(async () => {
+          entry.started = true;
+          const startedAt = performance.now();
+          const helper = await check(candidate);
+          if (helper === undefined) accepted.delete(candidate);
+          else accepted.set(candidate, startedAt);
+          return helper;
+        })
+        .finally(() => {
+          if (checks.get(candidate) === entry) checks.delete(candidate);
+        }),
+    };
+    checks.set(candidate, entry);
+    return entry.result;
+  };
+  const passed = (candidate: string) => {
+    const acceptedAt = accepted.get(candidate);
+    if (acceptedAt === undefined) return undefined;
+    if (!checks.has(candidate) && performance.now() - acceptedAt >= HELPER_RECHECK_MS)
+      void start(candidate, false);
+    return candidate;
+  };
+  const helper = (candidate: string, revalidate: boolean): Promise<string | undefined> => {
+    const running = checks.get(candidate);
+    if (revalidate)
+      return running?.suspect && !running.started
+        ? running.result
+        : start(candidate, true, running?.result);
+    if (running?.suspect) return running.result;
+    const current = passed(candidate);
+    if (current !== undefined) return Promise.resolve(current);
+    return running?.result ?? start(candidate, false);
+  };
+  return {
+    helper,
+    accepted: (candidate: string) =>
+      checks.get(candidate)?.suspect ? undefined : passed(candidate),
+    launchFailed: (candidate: string) => {
+      if (accepted.has(candidate)) void helper(candidate, true);
+    },
+  };
+}
+export const nativeFilePublicationInternals = { checkHelperCandidate, helperAcceptance };
+const acceptance = helperAcceptance((candidate) =>
+  resolveNativeFilePublicationHelperPath(candidate),
+);
+/** The helper `resolveNativeFilePublicationHelperPath` finds, as `helperAcceptance` keeps it. */
 export function nativeFilePublicationHelper(
   configuredPath?: string,
   { revalidate = false } = {},
 ): Promise<string | undefined> {
-  const { candidate } = helperCandidate(configuredPath);
-  if (!revalidate && acceptedHelpers.has(candidate)) return Promise.resolve(candidate);
-  let resolving = resolvingHelpers.get(candidate);
-  if (!resolving) {
-    resolving = resolveNativeFilePublicationHelperPath(configuredPath)
-      .then((helper) => {
-        if (helper === undefined) acceptedHelpers.delete(candidate);
-        else acceptedHelpers.add(helper);
-        return helper;
-      })
-      .finally(() => resolvingHelpers.delete(candidate));
-    resolvingHelpers.set(candidate, resolving);
-  }
-  return resolving;
+  return acceptance.helper(helperCandidate(configuredPath), revalidate);
 }
-/** The helper for `configuredPath` if it has passed its checks in this process. */
+/** The helper for `configuredPath` if it has passed its checks and is not being checked again. */
 export function acceptedNativeFilePublicationHelper(configuredPath?: string) {
-  const { candidate } = helperCandidate(configuredPath);
-  return acceptedHelpers.has(candidate) ? candidate : undefined;
+  return acceptance.accepted(helperCandidate(configuredPath));
 }
+/** An accepted helper that could not be launched may have been removed or replaced. */
+const helperLaunchFailed = (helperPath: string) => acceptance.launchFailed(helperPath);
 /** Helper commands the Windows helper's `--serve=1` process answers; they only read. */
 const servedQuery = (args: ReadonlyArray<string>) =>
   (args[0] === "--windows=1" && ["info", "flags", "private"].includes(args[1] ?? "")) ||
@@ -297,7 +336,9 @@ function helperServer(helperPath: string): HelperServer {
     child.once("close", exited);
     // A helper that never started emits no `close`.
     child.once("error", () => {
-      if (child.pid === undefined) exited();
+      if (child.pid !== undefined) return;
+      helperLaunchFailed(helperPath);
+      exited();
     });
   });
   let answering: PromiseWithResolvers<string> | undefined;
@@ -431,6 +472,7 @@ export async function invokeNativeHelper(
   });
   child.on("error", (error) => {
     spawnError = error;
+    if (child.pid === undefined) helperLaunchFailed(helperPath);
   });
   // No abort/timeout race: even an abandoned waiter leaves this owner awaiting real retirement.
   child.on("close", (code, signal) => {

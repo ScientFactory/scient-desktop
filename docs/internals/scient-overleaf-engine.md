@@ -299,14 +299,17 @@ server defaults to its own installed resources and may explicitly set the
 absolute host-owned `SCIENT_FILE_PUBLICATION_HELPER`. Both paths require the
 production receipt, SHA-256 digest, matching host architecture, native executable
 format, executable permissions and protocol capabilities. Symlinks and resources
-writable by another user are refused. Windows checks owner and write ACLs with
-PowerShell for a helper configured outside the server's own install tree, and
-keeps a pass for the process while the helper, its receipt and its folder are
-unchanged. The helper installed beside the server skips that check: it sits
-under the same ACLs as `Scient.exe` and `server.asar`, so the check could refuse
-only what is already exposed, and Constrained Language Mode (AppLocker, WDAC)
-refuses the check's .NET calls. The helper is looked for when first needed; a
-pass holds for the process and a refusal is checked again at the next use. The
+writable by another user are refused. On Windows, for every helper, PowerShell
+prints the security descriptor (`Get-Acl`, SDDL) of the helper, its receipt, its
+folder and each folder above; the server reads them and refuses an owner, or a
+write or delete right, held by anyone but the user, SYSTEM, Administrators or
+TrustedInstaller. The script uses only a cmdlet and a property read, so it runs
+the same under Constrained Language Mode (AppLocker, WDAC), and `whoami` gives
+the user's SID. A descriptor it cannot read refuses. The helper is looked for
+when first needed. A pass is used at once and checked again in the background
+once ten minutes old; a refusal is checked again at the next use. A helper that
+fails a check, or that can no longer be launched and is being checked again, is
+given to no new use; an operation already holding it finishes with it. The
 helper is never discovered from the workspace or PATH. Development uses the
 helper staged beside its server bundle.
 

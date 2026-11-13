@@ -8,11 +8,16 @@ import {
   publicationDigest,
   validatePublicationArtifact,
   WINDOWS_PERMISSIONS_SCRIPT,
+  windowsPermissionsRefusal,
+  windowsPermissionTargets,
+  windowsUserSid,
 } from "@t3tools/shared/scientPublicationArtifact";
 import { expect, it } from "@effect/vitest";
 import { filePublicationTestHelper } from "./fileExchange.testkit.ts";
 import {
   acceptedNativeFilePublicationHelper,
+  closeNativeHelperServers,
+  invokeNativeHelper,
   nativeFilePublicationHelper,
   resolveNativeFilePublicationHelperPath,
 } from "./NativeFilePublication.ts";
@@ -121,48 +126,106 @@ it("accepts a helper that passes after a refusal, and keeps the pass", async () 
   }
 });
 
-// Locked-down Windows (AppLocker, WDAC) runs PowerShell in Constrained Language Mode, which
-// refuses the check's .NET calls; that is why a helper installed with the server skips it.
+it("checks an accepted helper again once it cannot be launched", async () => {
+  const root = await NodeFSP.realpath(
+    await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-helper-gone-")),
+  );
+  const helper = await stageHelper(NodePath.join(root, "install"));
+  try {
+    expect(await nativeFilePublicationHelper(helper)).toBe(helper);
+    await NodeFSP.rm(helper);
+    await expect(invokeNativeHelper(helper, ["--protocol=1", "capabilities"])).rejects.toThrow();
+    expect(acceptedNativeFilePublicationHelper(helper)).toBeUndefined();
+    expect(await nativeFilePublicationHelper(helper)).toBeUndefined();
+  } finally {
+    await closeNativeHelperServers();
+    await NodeFSP.rm(root, { recursive: true, force: true });
+  }
+});
+
+/** Runs the permission script for `paths` with PowerShell in `languageMode`. */
+const descriptors = (paths: ReadonlyArray<string>, languageMode: string) =>
+  new Promise<string>((resolve, reject) =>
+    NodeChildProcess.execFile(
+      NodePath.join(
+        process.env.SystemRoot ?? "C:/Windows",
+        "System32/WindowsPowerShell/v1.0/powershell.exe",
+      ),
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-EncodedCommand",
+        // Invoke-Expression compiles the check in the session's language mode, as a locked-down
+        // host (AppLocker, WDAC) compiles an encoded command.
+        Buffer.from(
+          `$ExecutionContext.SessionState.LanguageMode = '${languageMode}'
+"mode: $($ExecutionContext.SessionState.LanguageMode)"
+Invoke-Expression $env:SCIENT_PERMISSIONS_SCRIPT`,
+          "utf16le",
+        ).toString("base64"),
+      ],
+      {
+        env: {
+          ...process.env,
+          SCIENT_PUBLICATION_ACL_PATHS: paths.join("\n"),
+          SCIENT_PERMISSIONS_SCRIPT: WINDOWS_PERMISSIONS_SCRIPT,
+        },
+        windowsHide: true,
+      },
+      (error, stdout, stderr) => {
+        if (error) return reject(new Error(`${error.message}\n${stderr}`));
+        const [mode, ...rest] = stdout.split(/\r?\n/u);
+        if (mode?.trim() !== `mode: ${languageMode}`) return reject(new Error(stdout));
+        resolve(rest.join("\n"));
+      },
+    ),
+  );
+
 it.runIf(HostProcess.Platform.defaultValue() === "win32")(
-  "Windows' permission check cannot run in Constrained Language Mode",
+  "Windows' permission check gives the same answer in Constrained Language Mode",
   async () => {
     const root = await NodeFSP.realpath(
       await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-helper-constrained-")),
     );
     try {
-      const helper = await stageHelper(root);
-      // Invoke-Expression compiles the check in the session's language mode, as a locked-down
-      // host compiles an encoded command.
-      const check = (languageMode: string) =>
-        new Promise<string>((resolve, reject) =>
-          NodeChildProcess.execFile(
-            NodePath.join(
-              process.env.SystemRoot ?? "C:/Windows",
-              "System32/WindowsPowerShell/v1.0/powershell.exe",
+      const helper = await stageHelper(NodePath.join(root, "install"));
+      const user = await windowsUserSid();
+      const targets = windowsPermissionTargets(helper);
+      const verdicts = async () =>
+        Promise.all(
+          ["FullLanguage", "ConstrainedLanguage"].map(async (mode) =>
+            windowsPermissionsRefusal(
+              targets,
+              await descriptors(
+                targets.map(({ path }) => path),
+                mode,
+              ),
+              user,
             ),
-            [
-              "-NoProfile",
-              "-NonInteractive",
-              "-EncodedCommand",
-              Buffer.from(
-                `$ExecutionContext.SessionState.LanguageMode = '${languageMode}'
-try { Invoke-Expression $env:SCIENT_PERMISSIONS_SCRIPT; 'passed' } catch { "refused: $($_.Exception.Message)" }`,
-                "utf16le",
-              ).toString("base64"),
-            ],
-            {
-              env: {
-                ...process.env,
-                SCIENT_PUBLICATION_VALIDATE: helper,
-                SCIENT_PERMISSIONS_SCRIPT: WINDOWS_PERMISSIONS_SCRIPT,
-              },
-              windowsHide: true,
-            },
-            (error, stdout) => (error ? reject(error) : resolve(stdout.trim())),
           ),
         );
-      expect(await check("FullLanguage")).toBe("passed");
-      expect(await check("ConstrainedLanguage")).toMatch(/^refused: .*language mode/iu);
+      expect(await verdicts()).toEqual([undefined, undefined]);
+      expect(await validatePublicationArtifact(helper)).toBe(helper);
+      const programFiles = process.env.ProgramFiles ?? "C:\\Program Files";
+      for (const mode of ["FullLanguage", "ConstrainedLanguage"])
+        expect(
+          windowsPermissionsRefusal(
+            [{ path: programFiles, mask: 0xd0040 }],
+            await descriptors([programFiles], mode),
+            user,
+          ),
+        ).toBeUndefined();
+      NodeChildProcess.execFileSync("icacls", [
+        NodePath.dirname(helper),
+        "/grant",
+        "*S-1-1-0:(OI)(CI)M",
+      ]);
+      const [full, constrained] = await verdicts();
+      expect(full).toMatch(/writable by another principal/u);
+      expect(constrained).toBe(full);
+      await expect(validatePublicationArtifact(helper)).rejects.toThrow(
+        /writable by another principal/u,
+      );
     } finally {
       await NodeFSP.rm(root, { recursive: true, force: true });
     }

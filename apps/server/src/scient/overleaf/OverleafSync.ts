@@ -1502,9 +1502,7 @@ export const layer = Layer.unwrap(
           <I, A, E, R>(operation: (input: I) => Effect.Effect<A, E, R>) =>
           (input: I) =>
             Effect.gen(function* () {
-              const helper = yield* Effect.promise(() =>
-                nativeFilePublicationHelper(helperPath, { revalidate: true }),
-              );
+              const helper = yield* Effect.promise(() => nativeFilePublicationHelper(helperPath));
               if (helper === undefined)
                 return yield* new OverleafSyncRefusedError({ reason: "helper-unavailable" });
               return yield* operation(input);

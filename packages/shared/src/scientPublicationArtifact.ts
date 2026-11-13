@@ -4,6 +4,7 @@ import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as HostProcess from "./HostProcess.ts";
+import { securityDescriptorRefusal } from "./windowsSecurityDescriptor.ts";
 
 /** How long one native check (PowerShell's permission check, a capability inquiry) may run. */
 export const NATIVE_CHECK_DEADLINE_MS = 10_000;
@@ -35,32 +36,14 @@ export function armNativeCheckDeadline(child: NodeChildProcess.ChildProcess): ()
   };
 }
 
-/** Windows permission checks that passed, by helper: the key of what they looked at. */
-const checkedWindowsPermissions = new Map<string, string>();
-
 export const publicationDigest = (bytes: Uint8Array) =>
   NodeCrypto.createHash("sha256").update(bytes).digest("hex");
 
-export interface PublicationArtifactOptions {
-  /**
-   * The helper sits in the server's own install tree, under the permissions that guard the
-   * server's code, so Windows' permission check could only refuse what is already exposed.
-   */
-  readonly installedWithServer?: boolean;
-}
-
 /** Validate before executing: a receipt cannot make a project/PATH candidate authoritative. */
-export function validatePublicationArtifact(
-  helper: string,
-  options: PublicationArtifactOptions = {},
-) {
-  return validateArtifact(helper, options, 1);
+export function validatePublicationArtifact(helper: string) {
+  return validateArtifact(helper, 1);
 }
-async function validateArtifact(
-  helper: string,
-  options: PublicationArtifactOptions,
-  attempt: number,
-): Promise<string> {
+async function validateArtifact(helper: string, attempt: number): Promise<string> {
   const platform = HostProcess.Platform.defaultValue();
   const arch = HostProcess.Architecture.defaultValue();
   const binary = platform === "win32" ? "scient-file-publication.exe" : "scient-file-publication";
@@ -131,11 +114,8 @@ async function validateArtifact(
           );
     if (!matches) throw new Error("Native publication is not a host Mach-O executable.");
   }
-  const permissionsChecked = platform === "win32" && !options.installedWithServer;
-  const permissionsKey = permissionsChecked ? await windowsPermissionsKey(helper, receiptPath) : "";
-  // Only principals the check admits can change the folders above, so a pass holds while
-  // the helper, its receipt and its folder stay as they were.
-  if (permissionsChecked && checkedWindowsPermissions.get(helper) !== permissionsKey) {
+  if (platform === "win32") {
+    const permissionsKey = await windowsPermissionsKey(helper, receiptPath);
     // Asynchronous: PowerShell takes a second or more to start, and a synchronous launch
     // would hold the whole server for that long. Checks asked meanwhile share this one.
     const running = `${helper}\0${permissionsKey}`;
@@ -148,9 +128,8 @@ async function validateArtifact(
     // A file replaced while PowerShell looked was not the one checked, nor the one hashed.
     if ((await windowsPermissionsKey(helper, receiptPath)) !== permissionsKey) {
       if (attempt >= 3) throw new Error("Native publication resource kept changing while checked.");
-      return validateArtifact(helper, options, attempt + 1);
+      return validateArtifact(helper, attempt + 1);
     }
-    checkedWindowsPermissions.set(helper, permissionsKey);
   }
   await NodeFSP.access(
     helper,
@@ -159,31 +138,45 @@ async function validateArtifact(
   return helper;
 }
 /**
- * Refuses a helper, its folder, its receipt or any folder above that a principal other than
- * the user, SYSTEM, Administrators or TrustedInstaller owns or can change. It calls .NET
- * methods, which Constrained Language Mode (AppLocker, WDAC) refuses.
+ * What the Windows permission check reads: the helper, its folder and its receipt, which no
+ * other principal may change, then every folder above, from which none may delete them.
+ */
+export function windowsPermissionTargets(helper: string) {
+  const directory = NodePath.dirname(helper);
+  const targets = [helper, directory, NodePath.join(directory, "publication-artifact.json")].map(
+    (path) => ({ path, mask: 0xd0156 }),
+  );
+  for (let path = directory; path !== NodePath.dirname(path);) {
+    path = NodePath.dirname(path);
+    targets.push({ path, mask: 0xd0040 });
+  }
+  return targets;
+}
+/**
+ * Prints each path's security descriptor on its own line. Only a cmdlet and a property
+ * read, so Constrained Language Mode (AppLocker, WDAC) runs it as it is.
  */
 export const WINDOWS_PERMISSIONS_SCRIPT = `
 $ErrorActionPreference = 'Stop'
-$allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
-$directory = Split-Path $env:SCIENT_PUBLICATION_VALIDATE
-$files = @($env:SCIENT_PUBLICATION_VALIDATE, $directory, (Join-Path $directory 'publication-artifact.json'))
-$ancestor = Split-Path $directory
-while ($ancestor) {
-  $files += $ancestor
-  $parent = Split-Path $ancestor
-  if ($parent -eq $ancestor) { break }
-  $ancestor = $parent
-}
-foreach ($file in $files) {
-  $mask = if ($file -in $files[0..2]) { 0xD0156 } else { 0xD0040 }
-  $acl = if ([IO.Directory]::Exists($file)) { [IO.Directory]::GetAccessControl($file) } else { [IO.File]::GetAccessControl($file) }
-  $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
-  if ($owner -notin $allowed) { throw 'Unexpected native resource owner' }
-  foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
-    if ($rule.AccessControlType -eq 'Allow' -and !($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) -and $rule.IdentityReference.Value -notin $allowed -and ($rule.FileSystemRights -band $mask)) { throw 'Native resource is writable by another principal' }
+foreach ($path in $env:SCIENT_PUBLICATION_ACL_PATHS -split '\\n') { (Get-Acl -LiteralPath $path).Sddl }`;
+/**
+ * Why the descriptors PowerShell printed for `targets` refuse the helper: an owner or a
+ * write right outside the user, SYSTEM, Administrators and TrustedInstaller.
+ */
+export function windowsPermissionsRefusal(
+  targets: ReadonlyArray<{ readonly path: string; readonly mask: number }>,
+  output: string,
+  userSid: string,
+) {
+  const descriptors = output.split(/\r?\n/u).filter((line) => line.trim() !== "");
+  if (descriptors.length !== targets.length)
+    return "Native resource permissions were not read for every folder.";
+  for (const [index, { path, mask }] of targets.entries()) {
+    const refusal = securityDescriptorRefusal(descriptors[index]!.trim(), mask, userSid);
+    if (refusal !== undefined) return `${refusal} (${path})`;
   }
-}`;
+  return undefined;
+}
 const runningWindowsChecks = new Map<string, Promise<unknown>>();
 /** What changes when the helper, its receipt or its folder is replaced or re-permissioned. */
 const windowsPermissionsKey = async (helper: string, receiptPath: string) =>
@@ -195,29 +188,56 @@ const windowsPermissionsKey = async (helper: string, receiptPath: string) =>
       }),
     )
   ).join("|");
-/** Settles only once PowerShell has closed, so a retry never overlaps it. */
-const checkWindowsPermissions = (helper: string) =>
-  new Promise<void>((resolve, reject) => {
+/** Settles only once the program has closed, so a retry never overlaps it. */
+const runPermissionsProgram = (
+  file: string,
+  args: ReadonlyArray<string>,
+  env?: NodeJS.ProcessEnv,
+) =>
+  new Promise<string>((resolve, reject) => {
     const child = NodeChildProcess.execFile(
-      NodePath.join(
-        process.env.SystemRoot ?? "C:/Windows",
-        "System32/WindowsPowerShell/v1.0/powershell.exe",
-      ),
+      NodePath.join(process.env.SystemRoot ?? "C:/Windows", "System32", file),
+      args,
+      { env: { ...process.env, ...env }, windowsHide: true },
+      (error, stdout) => {
+        // Too much output is a refusal, whenever it was noticed.
+        const overflow =
+          (error as { code?: unknown } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
+        if (pastDeadline() && !overflow) reject(new NativeCheckDeadlineError("permissions"));
+        else if (error) reject(error);
+        else resolve(stdout);
+      },
+    );
+    const pastDeadline = armNativeCheckDeadline(child);
+  });
+let userSid: Promise<string> | undefined;
+/** The user's SID, which `whoami` gives without .NET. */
+export function windowsUserSid() {
+  userSid ??= runPermissionsProgram("whoami.exe", ["/user", "/fo", "csv", "/nh"]).then((output) => {
+    const sid = /"(S-1-\d+(?:-\d+)+)"\s*$/u.exec(output)?.[1];
+    if (sid === undefined) throw new Error("whoami did not report the user's SID.");
+    return sid;
+  });
+  userSid.catch(() => {
+    userSid = undefined;
+  });
+  return userSid;
+}
+async function checkWindowsPermissions(helper: string) {
+  const targets = windowsPermissionTargets(helper);
+  const [sid, output] = await Promise.all([
+    windowsUserSid(),
+    runPermissionsProgram(
+      "WindowsPowerShell/v1.0/powershell.exe",
       [
         "-NoProfile",
         "-NonInteractive",
         "-EncodedCommand",
         Buffer.from(WINDOWS_PERMISSIONS_SCRIPT, "utf16le").toString("base64"),
       ],
-      { env: { ...process.env, SCIENT_PUBLICATION_VALIDATE: helper }, windowsHide: true },
-      (error) => {
-        // Too much output is a refusal, whenever it was noticed.
-        const overflow =
-          (error as { code?: unknown } | null)?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER";
-        if (pastDeadline() && !overflow) reject(new NativeCheckDeadlineError("permissions"));
-        else if (error) reject(error);
-        else resolve();
-      },
-    );
-    const pastDeadline = armNativeCheckDeadline(child);
-  });
+      { SCIENT_PUBLICATION_ACL_PATHS: targets.map(({ path }) => path).join("\n") },
+    ),
+  ]);
+  const refusal = windowsPermissionsRefusal(targets, output, sid);
+  if (refusal !== undefined) throw new Error(refusal);
+}
