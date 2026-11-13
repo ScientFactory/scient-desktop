@@ -454,3 +454,44 @@ it.effect("stops the thread only for a guest whose role still allows it", () =>
     assert.isFalse(yield* fails(stop("d", "stop-agent")));
   }).pipe(Effect.provide(layerTest)),
 );
+
+// regression: a deleted room message's files are still removed with its thread.
+it.effect("keeps a deleted message's file ids for the thread's cleanup, without showing them", () =>
+  Effect.gen(function* () {
+    const room = yield* setup;
+    yield* room.invite("a", "discuss");
+    yield* room.join("a", "Ann");
+    const fileId = `${threadId.replaceAll(/[^a-z0-9]/gi, "-")}-file-1`;
+    yield* room.orchestrator.dispatch({
+      type: "thread.room.server",
+      commandId: nextCommandId("guest-post-file"),
+      threadId,
+      action: {
+        type: "guest-post",
+        participantId: RoomParticipantId.make("a"),
+        roomMessageId: RoomMessageId.make("f1"),
+        text: "",
+        attachments: [
+          {
+            type: "file",
+            id: fileId as never,
+            name: "notes.txt",
+            mimeType: "text/plain",
+            sizeBytes: 3,
+          },
+        ],
+        suggested: false,
+      },
+    });
+    yield* room.orchestrator.dispatch({
+      type: "thread.room",
+      commandId: nextCommandId("owner-delete"),
+      threadId,
+      action: { type: "delete", itemId: roomMessageItemId(RoomMessageId.make("f1")) },
+    });
+    const deleted = yield* room.roomItem("f1");
+    assert.isUndefined(deleted.attachments);
+    assert.deepEqual(deleted.heldFileIds, [fileId]);
+    assert.include(yield* room.projections.getThreadAttachmentIds(threadId), fileId);
+  }).pipe(Effect.provide(layerTest)),
+);

@@ -209,8 +209,17 @@ const newRoomMessage = (input: {
 });
 
 const deletedItem = (item: RoomMessageItem, now: DateTime.Utc): RoomMessageItem => {
-  const { attachments: _attachments, suggested: _suggested, ...rest } = item;
-  return { ...rest, text: "", deletedAt: DateTime.formatIso(now), updatedAt: now };
+  const { attachments, suggested: _suggested, ...rest } = item;
+  // The files stay on disk while the thread lasts (a fork or sent copy may hold them); their ids
+  // stay too, so deleting the thread removes them.
+  const heldFileIds = (attachments ?? []).map((attachment) => attachment.id);
+  return {
+    ...rest,
+    text: "",
+    deletedAt: DateTime.formatIso(now),
+    ...(heldFileIds.length === 0 ? {} : { heldFileIds }),
+    updatedAt: now,
+  };
 };
 
 export interface RoomDecisionInput {

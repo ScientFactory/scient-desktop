@@ -116,6 +116,8 @@ const RoomMessageFields = {
   deliveries: Schema.optional(Schema.Array(RoomDelivery)),
   /** Deleted messages keep their place and author; text and files are gone. */
   deletedAt: Schema.optional(IsoDateTime),
+  /** A deleted message's file ids, so they are removed with the thread. Never shown. */
+  heldFileIds: Schema.optional(Schema.Array(Schema.String)),
   /** The run whose position range the message joined: the latest started run when posted. */
   anchorRunOrdinal: Schema.NullOr(NonNegativeInt),
 } as const;
@@ -183,6 +185,7 @@ export const makeRoomMessageItems = (baseFields: TurnItemBaseFields) => {
         suggested,
         deliveries,
         deletedAt,
+        heldFileIds,
         anchorRunOrdinal,
         ...fields
       } = item;
@@ -207,6 +210,7 @@ export const makeRoomMessageItems = (baseFields: TurnItemBaseFields) => {
           ...(suggested === undefined ? {} : { suggested }),
           ...(deliveries === undefined ? {} : { deliveries }),
           ...(deletedAt === undefined ? {} : { deletedAt }),
+          ...(heldFileIds === undefined ? {} : { heldFileIds }),
           anchorRunOrdinal,
         },
       };
