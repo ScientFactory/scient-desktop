@@ -55,21 +55,7 @@ export function startsDirectUserRun(
   command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
   pendingEvents: ReadonlyArray<OrchestrationV2DomainEvent>,
 ): boolean {
-  if (!isDirectUserSend(command)) return false;
-  return pendingEvents.some(
-    (event) =>
-      event.type === "run.created" &&
-      event.threadId === command.threadId &&
-      event.payload.userMessageId === command.messageId &&
-      event.payload.status !== "queued",
-  );
-}
-
-/** The user's own Send: not Queue/Steer, automatic work, a continuation or a restart. */
-export function isDirectUserSend(
-  command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
-): boolean {
-  return !(
+  if (
     command.createdBy !== "user" ||
     command.dispatchMode.type !== "start_immediately" ||
     (command.deliveryIntent !== undefined && command.deliveryIntent !== "auto") ||
@@ -80,6 +66,14 @@ export function isDirectUserSend(
     command.usageLimitContinuationOfRunId !== undefined ||
     command.usageLimitRecoveryRequestId !== undefined ||
     command.restartContinuationOfRunId !== undefined
+  )
+    return false;
+  return pendingEvents.some(
+    (event) =>
+      event.type === "run.created" &&
+      event.threadId === command.threadId &&
+      event.payload.userMessageId === command.messageId &&
+      event.payload.status !== "queued",
   );
 }
 

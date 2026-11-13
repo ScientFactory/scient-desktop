@@ -120,7 +120,6 @@ import { pendingStartInterruptEffect } from "./scient-fork/PendingStartInterrupt
 import { dispatchCheckpointRollbackComplete } from "./scient-fork/CheckpointRollbackCompletion.ts";
 import {
   planQueuedRunSend,
-  isDirectUserSend,
   queuedRunsReleasedByDirectSend,
   startsDirectUserRun,
 } from "./scient-fork/QueuedRunSend.ts";
@@ -7720,10 +7719,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const latestRun = latestExecutedRun(projection.runs);
     const worktreeMissingRun =
       activeRun === undefined &&
-      (dispatchMode.type === "queue_after_active" ||
-        (dispatchMode.type === "start_immediately" &&
-          // SCIENT-FORK: the user's own Send goes through the queue hold (QueuedRunSend.ts).
-          !isDirectUserSend(command))) &&
+      (dispatchMode.type === "queue_after_active" || dispatchMode.type === "start_immediately") &&
       (latestRun?.status === "failed" || latestRun?.status === "interrupted") &&
       latestRun.workspacePreparation?.type === "worktree" &&
       projection.thread.worktreePath === null
