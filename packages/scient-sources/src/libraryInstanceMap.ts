@@ -276,7 +276,7 @@ async function readRemovedSources(
   return { libraryId, records };
 }
 
-/** The removed records a project source names: by ID, alias or hydration ID, else by its work. */
+/** The removed records a project source names: by ID, alias or hydration identity, else its work. */
 function removedIdsFor(
   removed: RemovedSources,
   aliases: ScientLibraryAliases,
@@ -287,7 +287,9 @@ function removedIdsFor(
     resolveScientLibraryAlias(aliases, projectSourceId),
     scientSourceIdFor(removed.libraryId, hydrationSourceKey(projectSourceId)),
   ]);
-  const byId = removed.records.filter((record) => ids.has(record.sourceId));
+  const byId = removed.records.filter(
+    (record) => ids.has(record.sourceId) || record.hydratedFromProjectSourceId === projectSourceId,
+  );
   if (byId.length > 0) return [...new Set(byId.map((record) => record.sourceId))];
   const match = work === null ? null : matchWork(work, removed.records);
   return match === null || match.by === "contradicted" ? [] : [...new Set(match.ids)];
@@ -499,6 +501,7 @@ async function resolveAt(
       const hydrated = await importScientSource({
         root: library,
         operationId: `hydrate_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
+        hydratedFromProjectSourceId: projectSourceId,
         candidate: hydrationCandidate(
           { projectSourceId, work: request.work },
           input.hydrate.citationKeys?.get(projectSourceId),

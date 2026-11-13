@@ -494,8 +494,9 @@ projects keep citing it from their own copy of its citation details, listed as
 "Not in this Library". An agent that deletes a paper for good is told the same.
 Only a deliberate import puts it back: adding the paper again, or importing a
 project package that has it. Moving another project into your Library, or an
-old copy of a project, brings back neither the paper nor its PDF. The Trash
-also holds the copies that merges took away: only the merge's **Undo** brings
+old copy of a project, brings back neither the paper nor its PDF. Opening a
+fresh checkout keeps it deleted even when the project's saved citation details
+contain only a title. The Trash also holds the copies that merges took away: only the merge's **Undo** brings
 those back, and once the trash is emptied those merges can no longer be undone.
 
 Every change to a source is kept as a version. Choose **History** from the

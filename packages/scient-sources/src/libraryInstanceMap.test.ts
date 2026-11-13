@@ -24,8 +24,11 @@ import {
 import { editableMetadataFromRecord } from "./editable.ts";
 import {
   attachScientSourcePdf,
+  deleteScientSourcesPermanently,
   importScientSource,
   listScientSourceRecords,
+  readScientSourceRecord,
+  removeScientSource,
   updateScientSourceMetadata,
 } from "./store.ts";
 
@@ -82,6 +85,86 @@ async function add(library: Library, candidate: ScientSourceCandidate) {
 }
 
 describe("resolving a copied project's sources", () => {
+  it("keeps an alternate hydration deleted for good across fresh checkouts of a sparse snapshot", async () => {
+    const base = await NodeFSP.realpath(
+      await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-instance-map-")),
+    );
+    fixtures.push(base);
+    const author = await newLibrary(base, "author");
+    const project = NodePath.join(base, "project");
+    await NodeFSP.mkdir(project);
+    await initializeScientProject({ root: project });
+    const sparse = {
+      ...work("Old imported title"),
+      creators: [],
+      issuedRaw: null,
+      issuedYear: null,
+      identifiers: [],
+      containerTitle: null,
+    };
+    const cited = await add(author, sparse);
+    await pinScientLibrarySource({
+      projectRoot: project,
+      library: author,
+      sourceId: cited.sourceId,
+      actor: "user",
+    });
+    const collaborator = await newLibrary(base, "collaborator");
+    const resolveFresh = async (name: string) => {
+      const copy = NodePath.join(base, name);
+      await NodeFSP.cp(project, copy, { recursive: true });
+      const [pin] = await resolveScientProjectPins({
+        projectRoot: copy,
+        library: collaborator,
+        mode: "write",
+        actor: "user",
+      });
+      return pin!.resolution;
+    };
+    const first = await resolveFresh("first");
+    if (first.kind !== "resolved") throw new Error("Expected the first hydration.");
+    const original = (await readScientSourceRecord(collaborator, first.sourceId))!;
+    const corrected = await updateScientSourceMetadata({
+      root: collaborator,
+      sourceId: original.sourceId,
+      expectedRevision: original.revision,
+      metadata: { ...editableMetadataFromRecord(original), title: "Corrected title" },
+      actor: "user",
+    });
+    expect(corrected.outcome).toBe("updated");
+    const second = await resolveFresh("second");
+    if (second.kind !== "resolved") throw new Error("Expected the alternate hydration.");
+    expect(second.sourceId).not.toBe(first.sourceId);
+    const alternate = (await readScientSourceRecord(collaborator, second.sourceId))!;
+    await removeScientSource({
+      root: collaborator,
+      sourceId: alternate.sourceId,
+      expectedRevision: alternate.revision,
+    });
+    await deleteScientSourcesPermanently({ root: collaborator });
+
+    expect(await resolveFresh("third")).toEqual({
+      kind: "unresolved",
+      projectSourceId: cited.sourceId,
+      reason: "removed",
+      candidateIds: [alternate.sourceId],
+    });
+    expect((await listScientSourceRecords(collaborator)).map(({ sourceId }) => sourceId)).toEqual([
+      original.sourceId,
+    ]);
+
+    const reimported = await importScientSource({
+      root: collaborator,
+      operationId: NodeCrypto.randomUUID(),
+      candidate: { ...sparse, sourceKey: `project-source:${cited.sourceId}` },
+      actor: "user",
+      intake: "file",
+    });
+    expect(reimported.outcome).toBe("imported");
+    expect(reimported.record?.title).toBe(sparse.title);
+    expect(await listScientSourceRecords(collaborator)).toHaveLength(2);
+  });
+
   it("leaves a pin and a review record a misleading near-match contradicts on its snapshot", async () => {
     const base = await NodeFSP.realpath(
       await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-instance-map-")),

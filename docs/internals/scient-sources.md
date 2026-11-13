@@ -638,15 +638,19 @@ the ID resolved to then, never the alias survivor.
 `no-match` pin is hydrated: a library record built from its `work` (intake
 `file`, field provenance `project-file:<field>`, no abstract, no PDF, the
 pin's key as preferred key), recorded as `hydrated` in the map. Its source ID
-is derived from the library ID and the project source ID, so a repeat after a
-lost map finds the same record. `ambiguous` and `removed` pins are never
+is derived from the library ID and the project source ID; intake may choose an
+alternate ID when that ID is already taken by a contradicting record. New
+hydrations also keep `hydratedFromProjectSourceId` on the record and in its
+tombstone, so even a sparse snapshot in a fresh checkout finds the removal of
+an alternate ID. Records without that binding retain the existing fallback
+matching. `ambiguous` and `removed` pins are never
 hydrated, so hydration never adds a duplicate or brings back a record in the
 trash. A record deleted for good (Empty trash, `deletePermanently`, the agent's
 `permanent` removal) first leaves a tombstone, `deleted/<sourceId>.json` in the
 Library: its trash entry with the record cut to what identifies the work (no
 abstract, note, PDFs or history), written before the trash entry is erased and
 under the same lock. The resolver treats tombstones as it treats the trash (by
-ID, alias, hydration ID, or a corroborated match of the pin's `work`, a
+ID, alias, hydration identity, or a corroborated match of the pin's `work`, a
 merged-away copy only while its survivor is gone), so such a pin stays
 `removed` and its snapshot serves it; a `removed` resolution names the removed
 records in `candidateIds`. The move asks the same rule
