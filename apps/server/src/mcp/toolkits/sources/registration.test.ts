@@ -173,7 +173,9 @@ it.effect("refuses read_text parameters it does not know instead of reading page
       );
 
     expect(refused).toBeInstanceOf(McpSchema.InvalidParams);
-    expect(refused.message).toContain('["page"]');
-    expect(refused.message).toContain("Accepted: sourceId, attachmentId, fromPage, maxCharacters");
+    expect(refused.message).toContain('Unknown argument "page".');
+    expect(refused.message).toContain(
+      "Accepted arguments: sourceId, attachmentId, fromPage, maxCharacters",
+    );
   }).pipe(Effect.provide(ReadTextLayer)),
 );
