@@ -15,6 +15,7 @@ import { toastManager } from "../../components/ui/toast";
 import { readLocalApi } from "../../localApi";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { organizeScientSources } from "./client";
+import { settleAfter } from "./settleAfter";
 
 type PackageListing = NonNullable<ScientSourcesOrganizeResult["packages"]>;
 type PackageReport = NonNullable<ScientSourcesOrganizeResult["packageReport"]>;
@@ -86,13 +87,16 @@ export function ProjectPackageSubmenu(props: {
 
   const run = async (task: () => Promise<void>, failure: string) => {
     setWorking(true);
-    try {
-      await task();
-    } catch (cause) {
-      toastManager.add({ type: "error", title: failure, description: message(cause) });
-    } finally {
-      setWorking(false);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          await task();
+        } catch (cause) {
+          toastManager.add({ type: "error", title: failure, description: message(cause) });
+        }
+      },
+      () => setWorking(false),
+    );
   };
 
   const exportPackage = (inFolder?: string) =>

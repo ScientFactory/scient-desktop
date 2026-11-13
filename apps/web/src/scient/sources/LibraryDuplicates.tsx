@@ -37,6 +37,7 @@ import {
   type DuplicateField,
 } from "./libraryDuplicateLabels";
 import { PanelHeader } from "./PanelChrome";
+import { settleAfter } from "./settleAfter";
 import type { SourcesOrganize } from "./useSourcesOrganize";
 
 export type DuplicatesSection = "pairs" | "merged";
@@ -123,34 +124,37 @@ export function LibraryDuplicatesView(props: {
     const shown = current?.result;
     if (!shown || loadingMore) return;
     setLoadingMore(true);
-    try {
-      const next = await readLibraryDuplicates(props.environmentId, props.root, {
-        revision: shown.revision,
-        pairOffset: shown.pairOffset + shown.pairs.length,
-        mergeOffset: shown.mergeOffset + shown.merges.length,
-        merges,
-      });
-      setReading((previous) => {
-        if (previous?.context !== context || previous.result !== shown) return previous;
-        if (next.restarted) return { ...previous, result: next };
-        return {
-          ...previous,
-          result:
-            list === "pairs"
-              ? { ...shown, pairs: [...shown.pairs, ...next.pairs] }
-              : { ...shown, merges: [...shown.merges, ...next.merges] },
-        };
-      });
-      if (next.restarted) toastManager.add({ type: "info", title: DUPLICATE_LABELS.restarted });
-    } catch (cause) {
-      toastManager.add({
-        type: "warning",
-        title: DUPLICATE_LABELS.loadFailed,
-        description: message(cause),
-      });
-    } finally {
-      setLoadingMore(false);
-    }
+    await settleAfter(
+      async () => {
+        try {
+          const next = await readLibraryDuplicates(props.environmentId, props.root, {
+            revision: shown.revision,
+            pairOffset: shown.pairOffset + shown.pairs.length,
+            mergeOffset: shown.mergeOffset + shown.merges.length,
+            merges,
+          });
+          setReading((previous) => {
+            if (previous?.context !== context || previous.result !== shown) return previous;
+            if (next.restarted) return { ...previous, result: next };
+            return {
+              ...previous,
+              result:
+                list === "pairs"
+                  ? { ...shown, pairs: [...shown.pairs, ...next.pairs] }
+                  : { ...shown, merges: [...shown.merges, ...next.merges] },
+            };
+          });
+          if (next.restarted) toastManager.add({ type: "info", title: DUPLICATE_LABELS.restarted });
+        } catch (cause) {
+          toastManager.add({
+            type: "warning",
+            title: DUPLICATE_LABELS.loadFailed,
+            description: message(cause),
+          });
+        }
+      },
+      () => setLoadingMore(false),
+    );
   };
 
   const { organize, whenFree } = props.organize;
