@@ -33,7 +33,7 @@ Scient's `origin` remains `ScientFactory/scient-desktop` on GitHub.
 The official T3 repository is the fetch-only `upstream` remote, with push URL
 `DISABLED`. Do not replace either remote with an upstream mirror.
 
-The official project's [GitCafe mirror](https://git.cafe/pingdotgg/t3code)
+The official project's [forge mirror](https://source.tanstack.com/@pingdotgg/t3code)
 can help with read-only upstream research. It does not mirror Scient's issues,
 reviews, CI, or release authority. Use Scient's GitHub repository for those
 operations and follow [AGENTS.md](../../AGENTS.md#git-upstream-and-delivery).
@@ -60,6 +60,13 @@ and parent process together before stopping it. On macOS, `lsof -nP -iTCP:<port>
 can identify a listener, but a port or worktree match alone does not establish
 ownership. Never pipe a process search into a kill command. Managed Electron
 candidates use the [local dev app stop command](./local-dev-app.md) instead.
+
+`vp` does not pass SIGTERM on, so signalling the `vp run dev` PID alone leaves Vite and the
+server running; stop a background run through the session or harness that owns it, which ends
+the whole tree. Run dev servers, Metro, and builds from your own shell so they end with your
+session, and do not detach them with `systemd-run`, `nohup`, `setsid`, or `tmux` unless a server
+must outlive the session. On Linux the dev runner stops itself above `--memory-limit-gb` (half of
+RAM, at most 16 GiB).
 
 To stop a worktree's dev stack when its thread settles, import the **Dev** action from
 `t3.json` in Settings > Projects > Actions and start it through the action menu or its
@@ -134,7 +141,7 @@ Leave `VITE_HTTP_URL` and `VITE_WS_URL` unset. Vite proxies the backend through 
 origin so the same build works over localhost and remote connections.
 
 Shared runs enable bundled dev to avoid a network round trip for each import level.
-`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. Two reload traps matter
+`T3CODE_BUNDLED_DEV=0` opts out when debugging bundler differences. These traps matter
 when changing this setup:
 
 - The web entry must dynamically import the app so React refresh initializes before application
@@ -144,6 +151,9 @@ when changing this setup:
 - The app and its routes are lazy chunks, built on first request. A plugin pre-bundles the
   startup chain when the server starts. Renaming or moving a startup route or the app entry
   silently drops it from that list.
+- Bundled dev and `--built` hand Rolldown its own watcher, which skips Vite's default
+  `node_modules` ignore. Those files are pnpm-store hardlinks, so another worktree's install or
+  removal rebuilds every long-running server and leaks memory. Keep `node_modules` excluded.
 
 The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts),
 [Tailwind plugin](../../apps/web/vite/tailwind.ts), and

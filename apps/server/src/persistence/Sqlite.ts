@@ -77,27 +77,6 @@ const runMigrationsAsOwner = Effect.fn("SqlitePersistence.runMigrationsAsOwner")
   yield* runMigrations();
 }, Effect.scoped);
 
-// Index builds over large tables take minutes; on the main connection they block the event loop,
-// so requests hang instead of getting the listener's 503. A fresh database stays on the main
-// connection, which must create the first table for its auto_vacuum setting to apply.
-const runMigrationsOffMainThread = Effect.fn("SqlitePersistence.runMigrationsOffMainThread")(
-  function* (dbPath: string) {
-    const sql = yield* SqlClient.SqlClient;
-    const tables = yield* sql<{
-      readonly count: number;
-    }>`SELECT COUNT(*) AS count FROM sqlite_schema WHERE type = 'table'`;
-    if (!tables[0]?.count || !(yield* hasPendingMigrations())) return yield* runMigrations();
-    return yield* Effect.gen(function* () {
-      const worker = yield* SqlClient.SqlClient;
-      yield* worker`PRAGMA foreign_keys = ON;`;
-      // SCIENT-FORK: migrations keep the main connection's power-loss durability.
-      yield* worker`PRAGMA synchronous = FULL;`;
-      yield* worker`PRAGMA temp_store = MEMORY;`;
-      return yield* runMigrations();
-    }).pipe(Effect.provide(NodeSqliteClient.layerWorker(dbPath)));
-  },
-);
-
 const makeLayerSetup = <E, R>(
   migrate: Effect.Effect<unknown, E, R>,
   // SCIENT-FORK: retired thread files are cleaned beside the database they belonged to.
@@ -121,7 +100,7 @@ const makeLayerSetup = <E, R>(
       // macOS fsync misses drive caches; F_FULLFSYNC flushes them at checkpoints and is ignored elsewhere.
       // Per-commit fullfsync stays off.
       yield* sql`PRAGMA checkpoint_fullfsync = ON;`;
-      // Keep statement journals and sort spills off the main thread's disk path.
+      // Keep statement journals and sort spills off the disk.
       // Large statements and open savepoints can increase peak memory use.
       yield* sql`PRAGMA temp_store = MEMORY;`;
       // PASSIVE checkpoints retain peak WAL size until the last connection closes.
@@ -167,8 +146,8 @@ const makeLayerFromPath = <E, R>(
       NodeSqliteClient.layer({
         filename: dbPath,
         readerWorker: true,
-        // Run checkpoint fsyncs off the event loop so slow disk flushes cannot stall clients.
-        checkpointWorker: true,
+        // A slow disk then delays writes instead of freezing every client.
+        writerWorker: true,
         spanAttributes: {
           "db.name": path.basename(dbPath),
           "service.name": "t3code-server",
@@ -188,8 +167,8 @@ const makeLayerFromPath = <E, R>(
     );
   }, Layer.unwrap);
 
-export const layerFromPath = makeLayerFromPath((dbPath, filesystemPaths) =>
-  makeLayerSetup(runMigrationsOffMainThread(dbPath), filesystemPaths),
+export const layerFromPath = makeLayerFromPath((_dbPath, filesystemPaths) =>
+  makeLayerSetup(runMigrations(), filesystemPaths),
 );
 
 export const layerMemory = Layer.provideMerge(

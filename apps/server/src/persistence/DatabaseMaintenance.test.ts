@@ -28,7 +28,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         yield* fs.writeFileString(dbPath, "not a database");
         const failure = yield* Effect.flip(maintenance.inspect(dbPath));
         assert.equal(failure._tag, "DatabaseInspectError");
-      }).pipe(Effect.scoped),
+      }),
     );
 
     // SCIENT-FORK:START — Scient keeps the original database: it is never offered, and its
@@ -56,7 +56,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         assert.equal(refused._tag, "LegacyDatabaseRemoveError");
         assert.isTrue(yield* fs.exists(legacy));
         assert.isTrue(yield* fs.exists(dbPath));
-      }).pipe(Effect.scoped),
+      }),
     );
     // SCIENT-FORK:END
 
@@ -126,7 +126,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
           yield* fs.readFileString(broken.failure),
           new DatabaseMaintenance.DatabaseCompactError({ path: brokenPath, cause: null }).message,
         );
-      }).pipe(Effect.scoped),
+      }),
     );
 
     it.effect("rebuilds message search when a repair stopped after its VACUUM", () =>
@@ -233,7 +233,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
         const shortfall = yield* DatabaseMaintenance.reclaimSpaceShortfall(dbPath, huge);
         assert.isAtLeast(shortfall?.neededBytes ?? 0, huge);
         assert.isBelow(shortfall?.freeBytes ?? Infinity, huge);
-      }).pipe(Effect.scoped),
+      }),
     );
 
     it.effect("compacts an existing database offline only once its server has stopped", () =>
@@ -324,7 +324,7 @@ it.layer(DatabaseMaintenance.layer.pipe(Layer.provideMerge(NodeServices.layer)))
             [{ messageId: "message-1" }],
           );
         }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: dbPath, readonly: true })));
-      }).pipe(Effect.scoped),
+      }),
     );
   },
 );

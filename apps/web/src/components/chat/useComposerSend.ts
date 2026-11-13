@@ -129,6 +129,7 @@ import { environmentServerConfigsAtom } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { runMobileComposerTransition } from "./draftHeroTransition";
 import { useClientSettingsHydrated } from "../../hooks/useSettings";
+import { useStableCallback } from "../../hooks/useStableCallback";
 import { environmentPresentations } from "../../state/presentation";
 import {
   approvalRedirectNotice,
@@ -170,7 +171,6 @@ import type { useLogicalProjectEnvironments } from "../../hooks/useLogicalProjec
 import type { useDraftEnvironmentRouting } from "./useDraftEnvironmentRouting";
 import type { LocalDispatchActions } from "./useLocalDispatchState";
 import type { PendingThreadSendState } from "./usePendingThreadRequests";
-import { useStableCallback } from "../../hooks/useStableCallback";
 import type { useTimelineFollow } from "./useTimelineFollow";
 import type { useUsageLimitsPanel } from "./useUsageLimitsPanel";
 import type { useWorktreeSetup } from "./useWorktreeSetup";
@@ -244,6 +244,7 @@ export interface ComposerSendInput {
   readonly clearUsageLimitsFor: UsageLimitsPanel["clearFor"];
   readonly needsLoadBalancing: boolean;
   readonly loadBalancing: DraftEnvironmentRouting["loadBalancing"];
+  readonly refreshBeforeSend: DraftEnvironmentRouting["refreshBeforeSend"];
   readonly readPendingEnvironmentChange: DraftEnvironmentRouting["readPendingEnvironmentChange"];
   readonly pendingApprovals: PendingThreadSendState["pendingApprovals"];
   readonly respondingRequestIds: PendingThreadSendState["respondingRequestIds"];
@@ -333,6 +334,7 @@ export function useComposerSend(input: ComposerSendInput) {
     clearUsageLimitsFor,
     needsLoadBalancing,
     loadBalancing,
+    refreshBeforeSend,
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
@@ -715,7 +717,9 @@ export function useComposerSend(input: ComposerSendInput) {
               ...loadBalancingSendWarning({
                 pending: loadBalancing.pending,
                 threadContexts: threadContextsAtSend,
-                candidateEnvironments: logicalProjectEnvironments,
+                candidateEnvironmentIds: logicalProjectEnvironments.map(
+                  (candidate) => candidate.environmentId,
+                ),
               }),
             });
             return;
@@ -2003,5 +2007,19 @@ export function useComposerSend(input: ComposerSendInput) {
     },
   );
 
-  return { onSend };
+  const onSendLatest = useStableCallback(onSend);
+  const onSendWithRouting = async (...args: Parameters<typeof onSend>) => {
+    args[0]?.preventDefault();
+    const refresh =
+      args[3] || sendInFlightRef.current || readPendingEnvironmentChange() !== null
+        ? null
+        : refreshBeforeSend();
+    if (refresh === null) return onSend(...args);
+    sendInFlightRef.current = true;
+    const ready = await refresh.finally(() => {
+      sendInFlightRef.current = false;
+    });
+    if (ready) return onSendLatest(...args);
+  };
+  return { onSend: onSendWithRouting };
 }

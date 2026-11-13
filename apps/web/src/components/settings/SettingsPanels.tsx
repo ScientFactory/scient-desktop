@@ -1,7 +1,4 @@
 import { AutomaticThreadPlacementSettings } from "../../scient/sections/AutomaticThreadPlacementSettings";
-// SCIENT-FORK:START — keep the computer awake while threads work.
-import { KeepAwakeSettings } from "../../scient/keepAwake/KeepAwakeSettings";
-// SCIENT-FORK:END
 import { NotificationSettings } from "./NotificationSettings";
 import { CheckIcon } from "lucide-react";
 import { msg, T, useGT, useMessages } from "gt-react";
@@ -1866,10 +1863,35 @@ export function MaintenanceSettingsPanel() {
 
       <SettingsSection id="background" title="Background activity">
         <BackgroundActivitySettingsRow />
-
-        {/* SCIENT-FORK:START — keep the computer awake while threads work. */}
-        <KeepAwakeSettings />
-        {/* SCIENT-FORK:END */}
+        <SettingsRow
+          serverScoped
+          settingKeys={["keepAwakeWhileAgentsWork"]}
+          {...searchableSetting("keep-awake-while-agents-work")}
+          description="Stop the computer from going to sleep while agents are working, and let it sleep once they finish. Closing a laptop lid still puts it to sleep."
+          resetAction={
+            settings.keepAwakeWhileAgentsWork !==
+            DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork ? (
+              <SettingResetButton
+                label="keep awake while agents work"
+                onClick={() =>
+                  updateSettings({
+                    keepAwakeWhileAgentsWork: DEFAULT_UNIFIED_SETTINGS.keepAwakeWhileAgentsWork,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <ScopedSwitch
+              settingKeys={["keepAwakeWhileAgentsWork"]}
+              checked={settings.keepAwakeWhileAgentsWork}
+              onCheckedChange={(checked) =>
+                updateSettings({ keepAwakeWhileAgentsWork: Boolean(checked) })
+              }
+              aria-label="Keep awake while agents work"
+            />
+          }
+        />
       </SettingsSection>
 
       <StorageCleanupSections />

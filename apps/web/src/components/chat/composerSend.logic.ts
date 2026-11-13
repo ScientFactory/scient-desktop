@@ -16,7 +16,7 @@ export function referencedThreadContexts(draft: {
 export function loadBalancingSendWarning(input: {
   readonly pending: boolean;
   readonly threadContexts: ReadonlyArray<ThreadContextRecord>;
-  readonly candidateEnvironments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>;
+  readonly candidateEnvironmentIds: ReadonlyArray<EnvironmentId>;
 }) {
   if (input.pending) {
     return {
@@ -26,8 +26,8 @@ export function loadBalancingSendWarning(input: {
   }
   const noMachineReadsEveryThread =
     input.threadContexts.length > 0 &&
-    !input.candidateEnvironments.some((candidate) =>
-      input.threadContexts.every((record) => record.environmentId === candidate.environmentId),
+    !input.candidateEnvironmentIds.some((environmentId) =>
+      input.threadContexts.every((record) => record.environmentId === environmentId),
     );
   return {
     title: "Choose a machine to continue",

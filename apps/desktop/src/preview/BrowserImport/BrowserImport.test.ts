@@ -89,7 +89,7 @@ describe("BrowserImport.importCookies", () => {
 
       assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
       assert.equal(error.reason, "unknownSourceProfile");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+    }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   // SCIENT-FORK:START — Scient Accounts: Chromium on macOS and Linux is read from a copy while it runs.
@@ -116,7 +116,7 @@ describe("BrowserImport.importCookies", () => {
 
         assert.instanceOf(error, BrowserImport.BrowserImportFailedError);
         assert.equal(error.reason, "unknownSourceProfile");
-      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
   // SCIENT-FORK:END
 });

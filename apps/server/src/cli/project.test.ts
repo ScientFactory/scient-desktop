@@ -189,7 +189,7 @@ it.effect.each(["snapshot", "mutation"] as const)(
       assert.equal(snapshotRequests, 2);
       assert.equal(mutations, 1);
       assert.deepEqual((yield* readStoredProjects(baseDir)).projects, []);
-    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)), Effect.scoped),
+    }).pipe(Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))),
 );
 
 it.effect("does not send a token to whatever took over a dead server's port", () =>
@@ -220,7 +220,7 @@ it.effect("does not send a token to whatever took over a dead server's port", ()
 
     assert.equal(requests, 0);
     assert.equal((yield* readStoredProjects(baseDir)).projects[0]?.workspaceRoot, workspaceRoot);
-  }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 const makeProjectLookupFixture = Effect.fn("ProjectCliTest.makeProjectLookupFixture")(function* () {

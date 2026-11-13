@@ -759,7 +759,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       }
       assert.isFalse(yield* fileSystem.exists(fixture.cachePath));
       assert.equal(iconCacheRuns(run), 0);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("replaces same-length stale icons and refreshes an existing cache once", () =>
@@ -802,7 +802,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
         run.commands.filter(({ command }) => command === "gtk-update-icon-cache"),
         [{ command: "gtk-update-icon-cache", args: ["-f", "-t", fixture.hicolorDir] }],
       );
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("refreshes when this launch changed an icon even if the cache looks newer", () =>
@@ -825,7 +825,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       assert.isTrue(yield* fileSystem.exists(path.join(fixture.appsDir, "Scient.png")));
       // SCIENT-FORK:END scient-conversation-files
       assert.equal(iconCacheRuns(run), 1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("retries a failed icon cache refresh on the next launch", () =>
@@ -853,7 +853,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
       yield* registerWithRealFileSystem(recovering);
       yield* registerWithRealFileSystem(recovering);
       assert.equal(iconCacheRuns(recovering), 1);
-    }).pipe(Effect.scoped),
+    }),
   );
 
   it.effect("still registers the handler when the theme icon install fails", () =>
@@ -888,7 +888,7 @@ it.layer(NodeServices.layer)("DesktopLinuxUrlHandler theme icons", (it) => {
         ],
         // SCIENT-FORK:END scient-conversation-files
       );
-    }).pipe(Effect.scoped),
+    }),
   );
   // SCIENT-FORK:START scient-retained-stall-guards - upstream dropped these fix guards; no other test covers the stalled-helper timeout.
 

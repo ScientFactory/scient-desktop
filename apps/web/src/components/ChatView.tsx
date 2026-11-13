@@ -99,7 +99,7 @@ import {
 
 import { THREAD_FIND_BAR_RESERVED_HEIGHT } from "./chat/ThreadFindBar";
 import { usageLimitRecoveryBannerItem } from "./chat/UsageLimitRecoveryBanner";
-import { resolveDraftHeroState } from "./ChatView.logic";
+import { isThreadEnvironmentLocked, resolveDraftHeroState } from "./ChatView.logic";
 import { queuedRunEditBlockedReason } from "@t3tools/client-runtime/queued-run-edit";
 import { WorkspaceFileDropOverlay } from "./chat/TimelineOverlays";
 import { usePasteToFocusComposer } from "./chat/usePasteToFocusComposer";
@@ -419,8 +419,9 @@ import {
   shouldShowEnvironmentIndicator,
 } from "./BranchToolbar.logic";
 import {
-  getProviderStatusBannerKey,
+  getProviderStatusDismissalKey,
   shouldShowProviderStatusBanner,
+  useProviderStatusBannerDismissed,
 } from "./chat/ProviderStatusBanner";
 import {
   getThreadErrorBannerKey,
@@ -532,6 +533,8 @@ type ChatViewProps =
     };
 
 const DismissedFallbackWindowSchema = Schema.NullOr(Schema.String);
+
+const ignoreComposerFocus = () => {};
 
 function ChatViewContent(props: ChatViewProps) {
   const {
@@ -877,6 +880,8 @@ function ChatViewContent(props: ChatViewProps) {
   }, [isWorkspaceFileDragActive]);
   const prefersPlanSidebarSheet = useMediaQuery(RIGHT_PANEL_INLINE_LAYOUT_MEDIA_QUERY);
   const isMobileViewport = useMediaQuery("max-sm");
+  // Focusing the composer without a tap raises the on-screen keyboard on touch devices.
+  const isCoarsePointer = useMediaQuery({ pointer: "coarse" });
   const [workspaceLayoutElement, setWorkspaceLayoutElement] = useState<HTMLDivElement | null>(null);
   const threadPanelPopoverAnchorRef = useRef<HTMLElement | null>(null);
   const [terminalUiLaunchContext, setTerminalUiLaunchContext] =
@@ -1625,7 +1630,13 @@ function ChatViewContent(props: ChatViewProps) {
     advertisedFileAttachmentBytes === null
       ? null
       : clampFileAttachmentUploadBytes(advertisedFileAttachmentBytes);
-  const envLocked = Boolean(activeThread && (activeMessageCount > 0 || activeRuntime !== null));
+  const envLocked =
+    Boolean(activeThread) &&
+    isThreadEnvironmentLocked({
+      messageCount: activeMessageCount,
+      hasRuntime: activeRuntime !== null,
+      activeProviderThreadId: serverThread?.activeProviderThreadId ?? null,
+    });
   // onEnvironmentChange only retargets an unsent draft. envLocked alone does not
   // rule out a started thread: one whose machine is offline never loads its
   // messages, so it would otherwise be offered a machine picker that does nothing.
@@ -2198,16 +2209,14 @@ function ChatViewContent(props: ChatViewProps) {
     null,
     DismissedFallbackWindowSchema,
   );
-  const providerStatusBannerKey = getProviderStatusBannerKey(activeProviderStatus);
-  const [dismissedProviderStatusBannerKey, setDismissedProviderStatusBannerKey] = useState<
-    string | null
-  >(null);
-  if (providerStatusBannerKey === null && dismissedProviderStatusBannerKey !== null) {
-    setDismissedProviderStatusBannerKey(null);
-  }
+  const providerStatusDismissalKey = getProviderStatusDismissalKey(
+    providerEnvironmentId,
+    activeProviderStatus,
+  );
+  const providerStatusDismissed = useProviderStatusBannerDismissed(providerStatusDismissalKey);
   const visibleProviderStatus = shouldShowProviderStatusBanner(
     activeProviderStatus,
-    dismissedProviderStatusBannerKey,
+    providerStatusDismissed,
   )
     ? activeProviderStatus
     : null;
@@ -2329,6 +2338,7 @@ function ChatViewContent(props: ChatViewProps) {
   const {
     needsLoadBalancing,
     loadBalancing,
+    refreshBeforeSend,
     onAutoEnvironmentStable,
     autoEnvironmentLabel,
     isEnvironmentChanging,
@@ -2856,12 +2866,20 @@ function ChatViewContent(props: ChatViewProps) {
     workspaceLayoutElement,
     !embedded,
     terminalUiState.terminalOpen,
-    focusComposerOnThreadOpen,
+    isCoarsePointer ? ignoreComposerFocus : focusComposerOnThreadOpen,
   );
 
-  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- window focus listener that refocuses the composer after the window regains focus on a fine pointer
   useEffect(() => {
-    if (embedded || !activeThread?.id || terminalUiState.terminalOpen || isMobileViewport) return;
+    if (
+      embedded ||
+      !activeThread?.id ||
+      terminalUiState.terminalOpen ||
+      isMobileViewport ||
+      isCoarsePointer
+    ) {
+      return;
+    }
     let frame: number | null = null;
     const onWindowFocus = () => {
       if (frame !== null) window.cancelAnimationFrame(frame);
@@ -2888,6 +2906,7 @@ function ChatViewContent(props: ChatViewProps) {
     activeThread?.id,
     embedded,
     focusComposerStable,
+    isCoarsePointer,
     isMobileViewport,
     terminalUiState.terminalOpen,
   ]);
@@ -3739,6 +3758,7 @@ function ChatViewContent(props: ChatViewProps) {
     clearUsageLimitsFor,
     needsLoadBalancing,
     loadBalancing,
+    refreshBeforeSend,
     readPendingEnvironmentChange,
     pendingApprovals,
     respondingRequestIds,
@@ -4248,8 +4268,7 @@ function ChatViewContent(props: ChatViewProps) {
             <ChatBannerLane
               environmentId={activeThread.environmentId}
               providerStatus={visibleProviderStatus}
-              providerStatusBannerKey={providerStatusBannerKey}
-              setDismissedProviderStatusBannerKey={setDismissedProviderStatusBannerKey}
+              providerStatusDismissalKey={providerStatusDismissalKey}
               onOpenProviderSetup={openProviderSetupStable}
               threadId={activeThread.id}
               threadError={timelineThreadError}

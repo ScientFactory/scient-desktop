@@ -4671,13 +4671,24 @@ export const make = Effect.fn("OpenCode2Adapter.make")(function* (
           const newest = yield* client.message.list({ sessionID, order: "desc", limit: 1 });
           yield* markBefore(sessionId, newest.data[0]?.id ?? null);
           if (!(yield* sending())) return;
-          yield* client.session
-            .command({ sessionID, ...command })
-            .pipe(Effect.tap(() => markTurnAccepted(state, turn)));
           if (goalCommand?.type === "pause" || goalCommand?.type === "clear") {
-            yield* finishControl;
+            // OpenCode rejects pausing or clearing a missing goal; Codex treats that as a no-op.
+            yield* client.session.command({ sessionID, ...command }).pipe(
+              Effect.catchIf(
+                (error) =>
+                  error._tag === "CommandExecutionError" && error.message === "No goal is set.",
+                () => Effect.void,
+              ),
+              // SCIENT-FORK: native acceptance.
+              Effect.tap(() => markTurnAccepted(state, turn)),
+            );
+            return yield* finishControl;
           }
-          return;
+          return yield* client.session.command({ sessionID, ...command }).pipe(
+            // SCIENT-FORK: native acceptance.
+            Effect.tap(() => markTurnAccepted(state, turn)),
+            Effect.asVoid,
+          );
         }
       }
       const mentions = skillMentions(text);

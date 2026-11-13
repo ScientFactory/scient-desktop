@@ -228,11 +228,11 @@ export const CodexDriver: ScientProviderDriver<
       yield* HostProcess.Environment,
     );
     const environmentHome = processEnv.CODEX_HOME;
-    const homeLayout = yield* resolveCodexHomeLayout(
-      !config.homePath.trim() && !config.shadowHomePath.trim() && environmentHome?.trim()
+    const homeConfig =
+      !config.homePath.trim() && environmentHome?.trim()
         ? { ...config, homePath: environmentHome }
-        : config,
-    );
+        : config;
+    const homeLayout = yield* resolveCodexHomeLayout(homeConfig);
     const continuationIdentity = codexContinuationIdentity(homeLayout);
     yield* materializeCodexShadowHome(homeLayout).pipe(
       Effect.mapError(
@@ -355,7 +355,7 @@ export const CodexDriver: ScientProviderDriver<
         environment,
         enabled,
         // The native factory resolves the shared/auth-overlay home itself.
-        config: { ...config, binaryPath: effectiveConfig.binaryPath },
+        config: { ...homeConfig, binaryPath: effectiveConfig.binaryPath },
       },
       {
         onUsageLimits: (update) => snapshot.applyUsageLimits(update),

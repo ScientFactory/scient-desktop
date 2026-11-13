@@ -120,6 +120,17 @@ export const PROVIDER_INTERRUPT_TIMEOUT_MS = 15 * 1000;
 const busyTurnPrefix = (providerThreadId: ProviderThreadId) => `${providerThreadId}#`;
 const busyTurnKey = (providerThreadId: ProviderThreadId, runOrdinal: number) =>
   `${busyTurnPrefix(providerThreadId)}${runOrdinal}`;
+interface OwnBusyTurns {
+  readonly providerThreadIds: ReadonlyArray<ProviderThreadId>;
+  readonly throughRunOrdinal: number;
+}
+const isOwnBusyTurn = (turnKey: string, own: OwnBusyTurns) =>
+  own.providerThreadIds.some((id) => {
+    const prefix = busyTurnPrefix(id);
+    return (
+      turnKey.startsWith(prefix) && Number(turnKey.slice(prefix.length)) <= own.throughRunOrdinal
+    );
+  });
 const UNLOAD_THREAD_TIMEOUT_MS = 10 * 1000;
 // Providers can announce a retry and never resume. Longer than any adapter's own stall handling.
 const PROVIDER_RETRY_STALL_TIMEOUT = Duration.minutes(15);
@@ -253,14 +264,13 @@ export const ProviderSessionManagerV2Error = Schema.Union([
 ]);
 export type ProviderSessionManagerV2Error = typeof ProviderSessionManagerV2Error.Type;
 
-// SCIENT-FORK:START — running-fork text members live in ProviderTextSnapshotManagerShape.
 // SCIENT-FORK:START — credential reuse compares only non-secret startup policy.
 const samePluginKeyPolicies = (left: unknown, right: ReadonlyArray<unknown>) =>
   JSON.stringify(left ?? []) === JSON.stringify(right);
 // SCIENT-FORK:END
 
+// SCIENT-FORK: running-fork text members live in ProviderTextSnapshotManagerShape.
 export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManagerShape {
-  // SCIENT-FORK:END
   readonly shutdown: Effect.Effect<void>;
   readonly withProviderWorkAdmission: <A, E, R>(
     identity: ProviderAdapter.ProviderAdapterV2InitiatedWorkIdentity,
@@ -327,13 +337,16 @@ export interface ProviderSessionManagerV2Shape extends ProviderTextSnapshotManag
     readonly revokeMcpCredential?: boolean;
   }) => Effect.Effect<void, ProviderSessionManagerV2Error>;
   /**
-   * Releases the session unless, at the moment of removal, a turn of a provider thread outside
-   * `ownProviderThreadIds` is busy on it. Checked atomically with turn starts. Succeeds with
-   * whether it was released.
+   * Releases the session unless, at the moment of removal, a turn is busy on it other than one
+   * of `ownProviderThreadIds` from a run up to `throughRunOrdinal`. Checked atomically with turn
+   * starts. Succeeds with whether it was released.
    */
   readonly releaseUnlessBusy: (input: {
     readonly providerSessionId: ProviderSessionId;
     readonly ownProviderThreadIds: ReadonlyArray<ProviderThreadId>;
+    readonly throughRunOrdinal: number;
+    /** Keeps the session when it succeeds with true, checked atomically with the removal. */
+    readonly keepIf?: Effect.Effect<boolean>;
     readonly reason: ProviderSessionReleaseReason;
     readonly detail?: string;
   }) => Effect.Effect<boolean, ProviderSessionManagerV2Error>;
@@ -411,7 +424,7 @@ interface ReleaseEntryInput {
   readonly detachedThreadId?: ThreadId;
   readonly cancelIdleFiber?: boolean;
   readonly onlyIfIdleGeneration?: number;
-  readonly keepIfBusyOtherThan?: ReadonlyArray<ProviderThreadId>;
+  readonly keepIfBusyOtherThan?: OwnBusyTurns;
   readonly keepIf?: Effect.Effect<boolean>;
   // SCIENT-FORK:START — the start that holds the startup reservation releases the session itself.
   readonly releasedByReservingStart?: boolean;
@@ -878,13 +891,13 @@ export const layerWithOptions = (
               capabilities.add("skills:read");
             if (browserToolsAvailable) capabilities.add("preview");
             if (deviceToolsAvailable) capabilities.add("device");
-            // SCIENT-FORK:START Scient Extensions connector delivery
-            // Other Scient grants are appended here, before connector delivery is planned.
             // SCIENT-FORK:START — Scient Accounts: all provider sessions can use user-granted accounts.
             capabilities.add("accounts");
             // SCIENT-FORK:END
+            // SCIENT-FORK:START Scient Extensions connector delivery
+            // Other Scient grants are appended above, before connector delivery is planned.
             let connectorPlan = yield* planConnectors(true);
-            // SCIENT-FORK:START — key-bearing native servers stay suppressed until Scient supplies them.
+            // Key-bearing native servers stay suppressed until Scient supplies them.
             const pluginKeyPolicies = Option.isSome(pluginKeyBindings)
               ? yield* preparePluginKeyStartup(
                   providerRegistry,
@@ -892,7 +905,6 @@ export const layerWithOptions = (
                   cwd ?? undefined,
                 )
               : [];
-            // SCIENT-FORK:END
             const pluginStdio =
               Option.isSome(pluginKeyBindings) && pluginStdioFiles
                 ? yield* preparePluginKeyStdio(providerRegistry, pluginKeyBindings.value, {
@@ -1755,6 +1767,22 @@ export const layerWithOptions = (
               operation,
               firstRecordsAttempt,
             };
+            // The caller settled its own turns; one whose end never arrives must not keep
+            // the session from going idle once the turn it was kept for ends.
+            const keptWithoutOwnBusyTurns = (
+              current: ReadonlyMap<string, LiveSessionEntry>,
+              existing: LiveSessionEntry,
+              own: OwnBusyTurns,
+            ) => {
+              const kept = new Map(current);
+              kept.set(key, {
+                ...existing,
+                busyTurns: new Set(
+                  [...existing.busyTurns].filter((turnKey) => !isOwnBusyTurn(turnKey, own)),
+                ),
+              });
+              return kept;
+            };
             const reserveMutation = Ref.modify(sessions, (current) => {
               const existing = current.get(key);
               if (
@@ -1772,11 +1800,9 @@ export const layerWithOptions = (
               const own = input.keepIfBusyOtherThan;
               if (
                 own !== undefined &&
-                [...existing.busyTurns].some(
-                  (turnKey) => !own.some((id) => turnKey.startsWith(busyTurnPrefix(id))),
-                )
+                [...existing.busyTurns].some((turnKey) => !isOwnBusyTurn(turnKey, own))
               )
-                return [false, current] as const;
+                return [false, keptWithoutOwnBusyTurns(current, existing, own)] as const;
               // SCIENT-FORK:START — a pending canonical start declines idle retirement.
               if (
                 input.onlyIfIdleGeneration !== undefined &&
@@ -1827,7 +1853,21 @@ export const layerWithOptions = (
                 ? reservation
                 : candidate.requestEventPermit.withPermits(1)(
                     Effect.gen(function* () {
-                      if (yield* keepIf) return false;
+                      if (yield* keepIf) {
+                        const own = input.keepIfBusyOtherThan;
+                        if (own !== undefined)
+                          yield* Ref.update(sessions, (current) => {
+                            const existing = current.get(key);
+                            return existing?.runtime === candidate.runtime &&
+                              existing.scope === candidate.scope &&
+                              (input.onlyIfIdleGeneration === undefined ||
+                                (existing.busyTurns.size === 0 &&
+                                  existing.idleGeneration === input.onlyIfIdleGeneration))
+                              ? keptWithoutOwnBusyTurns(current, existing, own)
+                              : current;
+                          });
+                        return false;
+                      }
                       const reserved = yield* reservation;
                       if (reserved && closingSessions.get(key) === owner) yield* removeReserved;
                       return reserved;
@@ -4101,10 +4141,19 @@ export const layerWithOptions = (
             providerSessionId: input.providerSessionId,
             reason: input.reason,
             ...(input.detail === undefined ? {} : { detail: input.detail }),
-            keepIfBusyOtherThan: input.ownProviderThreadIds,
+            keepIfBusyOtherThan: {
+              providerThreadIds: input.ownProviderThreadIds,
+              throughRunOrdinal: input.throughRunOrdinal,
+            },
+            ...(input.keepIf === undefined ? {} : { keepIf: input.keepIf }),
           });
-          // Identity, not presence: open can install a replacement under the same id meanwhile.
-          return before !== undefined && (yield* Ref.get(sessions)).get(key) !== before;
+          // Scope, not presence: open can install a replacement under the same id meanwhile, and
+          // a kept entry is rewritten with the same scope.
+          const released =
+            before !== undefined && (yield* Ref.get(sessions)).get(key)?.scope !== before.scope;
+          // The stopped turn's markBusy cancelled the idle timer and its markIdle may never come.
+          if (!released) yield* scheduleIdleReleaseInternal(input.providerSessionId);
+          return released;
         }),
         otherWorkingThreads: Effect.fn("ProviderSessionManager.otherWorkingThreads")(
           function* (input) {

@@ -423,6 +423,17 @@ thread explicitly attached by the user as context. External clients use their
 approved environment authority. Reading a complete terminal result from a
 direct app-owned child also acknowledges that child's completion delivery.
 
+An agent in a Scient thread that reads without a cursor gets the newest items,
+and `beforePosition=earlierPosition` reads older ones. Client callers (the CLI,
+linked environments, outside MCP clients) start at the oldest item instead,
+because the CLI and linked environments on older versions read that way and
+follow only `hasMore`. `afterPosition=-1` starts any read at the oldest item,
+and `afterPosition=nextPosition` reads newer items. The server stops adding
+items once the result reaches about 30,000 characters and reports the rest
+through `earlierPosition` or `hasMore`. Claude Code saves MCP results over its
+token limit to a file instead of showing them, so a read has to fit whatever
+`limit` an agent asks for.
+
 Agents mention another thread by the `link` its result carries,
 `<t3-thread://v2/<environmentId>/<threadId>>`, so they never format an id or
 write a title, which goes stale when the user renames the thread. The

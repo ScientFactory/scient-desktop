@@ -20,14 +20,9 @@ export const KeepAwakeChoice = Schema.Struct({
 });
 export type KeepAwakeChoice = typeof KeepAwakeChoice.Type;
 
+/** The desktop's "until done" choices. The app-wide hold is the server's `keepAwakeWhileAgentsWork`. */
 export const KeepAwakeState = Schema.Struct({
-  /** The app setting: awake whenever any thread on this computer is working. */
-  appSetting: Schema.Boolean,
-  /** Whether the computer is being kept awake right now. */
-  active: Schema.Boolean,
   /** The threads on "until done". */
   threads: Schema.Array(ThreadId),
-  /** What the operating system may still do, when that needs saying. */
-  notice: Schema.NullOr(Schema.String),
 });
 export type KeepAwakeState = typeof KeepAwakeState.Type;

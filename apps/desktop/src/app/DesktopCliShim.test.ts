@@ -48,7 +48,7 @@ const run = (shim: string, args: ReadonlyArray<string>, env: NodeJS.ProcessEnv =
 
 const REPORTER =
   // SCIENT-FORK:START scient-cli-command
-  '#!/bin/sh\necho "node=$ELECTRON_RUN_AS_NODE cli=$T3CODE_CLI_PATH home=$SCIENT_NEXT_HOME"\nprintf "%s\\n" "$@"\nexit 3\n';
+  '#!/bin/sh\necho "node=$ELECTRON_RUN_AS_NODE cli=$T3CODE_CLI_PATH home=$SCIENT_NEXT_HOME appimage=$APPIMAGE"\nprintf "%s\\n" "$@"\nexit 3\n';
 // SCIENT-FORK:END scient-cli-command
 
 const fakeAppImage = (canMount = true, app = REPORTER) => {
@@ -119,11 +119,11 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
   it.skipIf(!hasSetsid)(
     "runs the AppImage's bundled CLI with every argument and unmounts after",
     () => {
-      const { root, image, shim } = fakeAppImage();
+      const { root, image, appImage, shim } = fakeAppImage();
       const result = run(shim, ["browser", "setup", "a b"]);
       expect(result.status).toBe(3);
       expect(result.stdout.split("\n")).toEqual([
-        `node=1 cli=${shim} home=${root}/home`,
+        `node=1 cli=${shim} home=${root}/home appimage=${appImage}`,
         `${image}/resources/app.asar/apps/server/dist/bin.mjs`,
         "browser",
         "setup",
@@ -186,6 +186,14 @@ describe.skipIf(nativePlatform === "win32")("renderCliShim Unix execution", () =
     expect(result.stdout).toMatch(
       /squashfs-root\/resources\/app\.asar\/apps\/server\/dist\/bin\.mjs/,
     );
+  });
+
+  // The server skips its compile cache only under APPIMAGE; each mount path is new.
+  it("tells the CLI it runs from the mounted AppImage", () => {
+    const { appImage, shim } = fakeAppImage();
+    const result = run(shim, ["--version"]);
+    expect(result.status).toBe(3);
+    expect(result.stdout).toContain(`appimage=${appImage}`);
   });
 
   // SCIENT-FORK:START scient-cli-command

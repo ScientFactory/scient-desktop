@@ -107,17 +107,3 @@ export function inlineImageFormatLabel(fileName: string): string {
   if (extension === "jpg" || extension === "jpeg") return "JPEG";
   return extension.toUpperCase();
 }
-
-export function inlineWorkspaceImageMarkdownSource(
-  alt: string,
-  src: string,
-  title?: string | undefined,
-): string {
-  const escapedAlt = alt.replaceAll("\\", "\\\\").replaceAll("[", "\\[").replaceAll("]", "\\]");
-  const destination = /\s/u.test(src) ? `<${src.replaceAll(">", "%3E")}>` : src;
-  const normalizedTitle = title?.replace(/\s+/gu, " ").trim();
-  const serializedTitle = normalizedTitle
-    ? ` "${normalizedTitle.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`
-    : "";
-  return `![${escapedAlt}](${destination}${serializedTitle})`;
-}
