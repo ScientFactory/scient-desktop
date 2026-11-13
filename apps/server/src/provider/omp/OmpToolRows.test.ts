@@ -85,6 +85,26 @@ it("shows a written file's new content", () => {
   );
 });
 
+it("leaves a finished search without sources and an edit without snapshots generic", () => {
+  const rows = new OmpToolRows(redact);
+  assert.isUndefined(
+    rows.row("s1", "web_search", {
+      input: { query: "dna" },
+      data: { details: { response: { sources: [] }, error: "No web search model configured" } },
+      output: "No web search model configured",
+      status: "failed",
+    }),
+  );
+  assert.isUndefined(
+    rows.row("e1", "edit", {
+      input: { path: "a.ts" },
+      data: { details: { path: "/w/a.ts", diff: "-1|old", snapshotsPruned: true } },
+      output: "Updated a.ts",
+      status: "completed",
+    }),
+  );
+});
+
 it("leaves other tools, and writes to agent devices, as generic rows", () => {
   const rows = new OmpToolRows(redact);
   assert.isUndefined(

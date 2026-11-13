@@ -2274,11 +2274,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           nativeToolStart("early", "edit", { path: "src/app.ts" }),
           nativeToolEnd("early", "edit", {}),
         ]);
-        yield* h.untilRow("early", "completed");
-        const row = h.row("early");
-        assert.equal(row?.id, id);
-        assert.ok(row?.type === "file_change");
-        assert.equal(row.fileName, "src/app.ts");
+        yield* h.untilTool("early", "completed");
+        assert.equal(h.tool("early")?.id, id);
+        assert.equal(h.latestTools().length, 1);
+        assert.deepEqual(h.tool("early")?.input, { path: "src/app.ts" });
+        assert.equal(h.tool("early")?.output, "patch preview");
+        assert.equal(h.tool("early")?.toolName, "edit");
         yield* h.stop();
       }),
     ),

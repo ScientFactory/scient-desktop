@@ -123,6 +123,8 @@ const editRow = (call: ToolCall, redact: (text: string) => string): NativeToolRo
   if (fileName === undefined) return undefined;
   const patches = files.flatMap((file) => snapshotPatch(file) ?? []);
   const failure = status === "failed" ? nonEmpty(output) : undefined;
+  // Pruned snapshots leave only the agent's own diff text, which a generic row shows.
+  if (status === "completed" && patches.length === 0) return undefined;
   const diffStr = patches.length > 0 ? patches.join("") : failure;
   return {
     type: "file_change",
@@ -158,8 +160,8 @@ const writeRow = (call: ToolCall, redact: (text: string) => string): NativeToolR
   };
 };
 
-const searchRow = (call: ToolCall, redact: (text: string) => string): NativeToolRow => {
-  const { input, data } = call;
+const searchRow = (call: ToolCall, redact: (text: string) => string): NativeToolRow | undefined => {
+  const { input, data, status } = call;
   const query = nonEmpty(isRecord(input) ? input.query : undefined);
   const response = details(data)?.response;
   const sources = isRecord(response) && Array.isArray(response.sources) ? response.sources : [];
@@ -175,10 +177,12 @@ const searchRow = (call: ToolCall, redact: (text: string) => string): NativeTool
         ...(url === undefined ? {} : { url: redact(url) }),
         ...(snippet === undefined
           ? {}
-          : { snippet: redact(Array.from(snippet).slice(0, MAX_SNIPPET_LENGTH).join("")) }),
+          : { snippet: Array.from(redact(snippet)).slice(0, MAX_SNIPPET_LENGTH).join("") }),
       },
     ];
   });
+  // A search with no sources (an error, or an answer alone) shows its text in a generic row.
+  if (status !== "running" && results.length === 0) return undefined;
   return {
     type: "web_search",
     ...(query === undefined ? {} : { patterns: [redact(query)] }),
