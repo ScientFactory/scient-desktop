@@ -1511,6 +1511,11 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       yield* publish({ type: "session-settled" });
       return;
     }
+    // SCIENT-FORK: the thread's goal row follows the agent's goal.
+    if (event.type === "goal_updated") {
+      yield* publish({ type: "observation", event });
+      return;
+    }
     if (ignoredLifecycleEvents.has(event.type)) return;
     if (seenUnknownEvents.has(event.type)) return;
     seenUnknownEvents.add(event.type);

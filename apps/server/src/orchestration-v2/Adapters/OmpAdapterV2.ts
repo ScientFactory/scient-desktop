@@ -8,6 +8,8 @@ import {
   type ModelSelection,
   type OmpSettings,
 } from "@t3tools/contracts";
+// SCIENT-FORK: /goal drives Scient Agent's goal command.
+import { parseGoalCommand } from "@t3tools/contracts";
 import {
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
@@ -53,6 +55,8 @@ import { OmpWaitRows } from "../../provider/omp/OmpWaitRows.ts";
 import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
 // SCIENT-FORK: idle compaction times itself to the one-hour prompt cache.
 import { withOmpPromptCacheExpiry } from "../../provider/omp/OmpPromptCache.ts";
+// SCIENT-FORK: /goal drives Scient Agent's goal command.
+import { ompGoalUpdate, runOmpGoalTurn } from "../../provider/omp/OmpGoal.ts";
 import {
   assertReadableOmpSessionFile,
   ompSessionFilesEqual,
@@ -227,6 +231,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         ...AcpProviderCapabilitiesV2.turns,
         supportsActiveSteering: true,
         supportsQueuedMessages: true,
+        // SCIENT-FORK: /goal drives Scient Agent's goal command.
+        supportsNativeGoals: target.driverKind === "scient",
       },
       streaming: {
         ...AcpProviderCapabilitiesV2.streaming,
@@ -897,6 +903,11 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               }
               if (event.type === "cache_warming_end")
                 return event.usage === undefined ? Effect.void : refreshUsage(false);
+              // SCIENT-FORK: the thread's goal row follows the agent's goal.
+              if (event.type === "goal_updated") {
+                const update = ompGoalUpdate(event);
+                return update === undefined ? Effect.void : onUpdate({ type: "goal", ...update });
+              }
               if (event.type === "todo_auto_clear") return publishTodos([]);
               if (event.type === "auto_retry_start" || event.type === "auto_retry_end") {
                 const starting = event.type === "auto_retry_start";
@@ -1833,7 +1844,12 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
             function* (turnInput, nativeTurnId) {
               manualCompaction = false;
               dashboardRequested = ompDashboardCommand(turnInput.message.text);
-              const refusal = commandRefusal(turnInput.message.text);
+              // SCIENT-FORK:START - /goal drives Scient Agent's goal command.
+              const goalCommand =
+                target.driverKind === "scient" ? parseGoalCommand(turnInput.message) : null;
+              const refusal =
+                goalCommand === null ? commandRefusal(turnInput.message.text) : undefined;
+              // SCIENT-FORK:END
               if (refusal !== undefined) {
                 yield* onUpdate({ type: "offered", nativeTurnId });
                 yield* onUpdate({ type: "accepted", nativeTurnId });
@@ -2039,6 +2055,26 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 });
               }
               fresh = false;
+              // SCIENT-FORK:START - /goal drives Scient Agent's goal command.
+              if (goalCommand !== null)
+                return yield* runOmpGoalTurn({
+                  client,
+                  command: goalCommand,
+                  nativeTurnId,
+                  runtime,
+                  onUpdate,
+                  notice: (message) => notice(message),
+                  redact: (text) => client.redaction.text(text),
+                }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new NativeSessionOperationError({
+                        detail: client.redaction.text(cause.message),
+                        cause,
+                      }),
+                  ),
+                );
+              // SCIENT-FORK:END
               yield* onUpdate({ type: "offered", nativeTurnId });
               yield* client.prompt({ ...prompt, streamingBehavior: "steer" }).pipe(
                 // send() only writes/schedules the command. The correlated native

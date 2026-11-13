@@ -8,6 +8,7 @@ import {
   type ModelSelection,
   type OrchestrationV2PlanStep,
   type OrchestrationV2ProviderTurnTokenUsage,
+  OrchestrationV2ProviderGoal,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2ProviderRetry,
   type ThreadTokenUsageSnapshot,
@@ -108,6 +109,8 @@ export type NativeToolRow = NativeToolRowItem extends infer Item
     ? Omit<Item, Exclude<keyof Item, "type"> & keyof OrchestrationV2TurnItem>
     : never
   : never;
+
+const providerGoalsEqual = Schema.toEquivalence(Schema.NullOr(OrchestrationV2ProviderGoal));
 
 /** Native process events, before either orchestration version's presentation mapping. */
 export type NativeSessionUpdate =
@@ -217,6 +220,8 @@ export type NativeSessionUpdate =
   | { readonly type: "native-thread"; readonly id: string; readonly resumeCursor?: unknown }
   | { readonly type: "model"; readonly model: string }
   | { readonly type: "background"; readonly pending: boolean }
+  /** SCIENT-FORK: the native goal changed; null when none is set. */
+  | { readonly type: "goal"; readonly goal: OrchestrationV2ProviderGoal | null }
   | { readonly type: "continuation-started" }
   | {
       readonly type: "terminal";
@@ -904,6 +909,7 @@ export function makeNativeSessionAdapterV2(
                 update.type === "turn-entry" ||
                 update.type === "question-resolved" ||
                 update.type === "native-thread" ||
+                update.type === "goal" ||
                 (update.type === "model" &&
                   active !== undefined &&
                   active.turn.acceptedAt === undefined) ||
@@ -991,6 +997,13 @@ export function makeNativeSessionAdapterV2(
                       providerThread: thread,
                     });
                   }
+                  return;
+                }
+                // SCIENT-FORK: the thread's goal row follows the native goal.
+                if (update.type === "goal") {
+                  if (!thread || providerGoalsEqual(thread.goal ?? null, update.goal)) return;
+                  thread = { ...thread, goal: update.goal, updatedAt: yield* DateTime.now };
+                  yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
                   return;
                 }
                 if (update.type === "background") {

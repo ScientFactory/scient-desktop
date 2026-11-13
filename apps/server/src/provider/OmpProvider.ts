@@ -23,6 +23,7 @@ import type * as Scope from "effect/Scope";
 
 import { compileOmpCommandCatalog } from "./omp/OmpCommandPolicy.ts";
 import { OmpExecutableBusyError } from "./omp/OmpExecutableGate.ts";
+import { OMP_GOAL_SLASH_COMMAND } from "./omp/OmpGoal.ts";
 import { ompModelToServerModel } from "./omp/OmpModel.ts";
 import {
   OMP_ISOLATED_ARGS,
@@ -263,7 +264,10 @@ export const checkOmpProviderStatus = Effect.fn("checkOmpProviderStatus")(functi
     ...(discovery.value.modelConnections && discovery.value.modelConnections.length > 0
       ? { modelConnections: discovery.value.modelConnections }
       : {}),
-    slashCommands: compileOmpCommandCatalog(discovery.value.commands).advertised,
+    slashCommands: [
+      ...compileOmpCommandCatalog(discovery.value.commands).advertised,
+      ...(target.driverKind === "scient" ? [OMP_GOAL_SLASH_COMMAND] : []),
+    ],
     probe: {
       installed: true,
       version: discovery.value.version,
