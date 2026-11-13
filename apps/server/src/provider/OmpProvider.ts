@@ -48,7 +48,8 @@ const presentation = (target: OmpTarget) =>
     reportsContextWindow: true,
     showInteractionModeToggle: false,
     supportedRuntimeModes: ["full-access"],
-    supportsConversationRollback: false,
+    // SCIENT-FORK: rewind runs through the agent's session tree.
+    supportsConversationRollback: true,
     requiresNewThreadForModelChange: false,
   }) as const;
 
