@@ -142,6 +142,7 @@ describe("captureOverleafInventory", () => {
       "._main.tex": "x",
       "main.tex.swp": "x",
       ".scient-overleaf-apply-123/main.tex": "x",
+      ".main.tex.0f8fad5b-d9cb-469f-a165-70867728950e.scient-tmp": "x",
       "staged/copy.tex": "x",
       "trailing.": "x",
     });
@@ -155,6 +156,7 @@ describe("captureOverleafInventory", () => {
       { path: ".DS_Store", reason: "dropping" },
       { path: "._main.tex", reason: "dropping" },
       { path: ".git", reason: "reserved" },
+      { path: ".main.tex.0f8fad5b-d9cb-469f-a165-70867728950e.scient-tmp", reason: "staging" },
       { path: ".scient-overleaf-apply-123", reason: "staging" },
       { path: "link.tex", reason: "link" },
       { path: "main.tex.swp", reason: "dropping" },

@@ -58,7 +58,9 @@ import {
   fileIdentity,
   fileRevision,
   inspectGuardedFile,
+  isPlainTemporaryOf,
   mutateRetainedFile,
+  plainTemporaryName,
   prepareRetainedDirectory,
   publicationLeaseBindings,
   decodeRetainedRecord,
@@ -260,7 +262,11 @@ const within = (root: string, target: string) => {
  * instance so their epochs agree. The nonce names the run.
  */
 const plainRun = { nonce: NodeCrypto.randomUUID(), generation: 0 };
+/** Temporary files of saves in flight in this process, which no sweep may take. */
+const liveTemporaries = new Set<string>();
 
+/** A save's temporary file is someone's leftover once untouched this long; before, it may be in use. */
+const LEFTOVER_TEMPORARY_AGE_MS = 10 * 60_000;
 const OLDER_RECORDS_SCAN_MS = 5_000;
 const OLDER_WORK_WRITE_WAIT_MS = 30_000;
 const OLDER_WORK_LIMIT_MS = 120_000;
@@ -304,6 +310,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
   readonly retentionLimitBytes?: number | null;
   /** Where earlier versions of overwritten files go. */
   readonly fileHistoryDirectory?: string;
+  /** How long a save's temporary file stays untouched before it counts as a leftover. */
+  readonly leftoverTemporaryAgeMs?: number;
   /** Only for tests of the native publication Overleaf still uses, until it is removed. */
   readonly nativeSaves?: boolean;
   readonly retainedHooks?: RetainedMutationHooks;
@@ -1384,10 +1392,12 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     const exclusive = intent.kind === "create" || intent.condition === "absent";
     const standing = snapshot ? await beforeChange(() => NodeFSP.stat(resolved.target)) : null;
     const mode = standing ? Number(standing.mode) & 0o7777 : intent.executable ? 0o777 : 0o666;
+    await sweepTemporaries(resolved.target);
     const temporary = NodePath.join(
       directory,
-      `.${NodePath.basename(resolved.target)}.${NodeCrypto.randomUUID()}.scient-tmp`,
+      plainTemporaryName(NodePath.basename(resolved.target)),
     );
+    liveTemporaries.add(temporary);
     try {
       // A replacement that can't be made yet is no failure: the file may still take the bytes.
       let refused: unknown =
@@ -1470,7 +1480,8 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
         }
       }
     } finally {
-      await NodeFSP.rm(temporary, { force: true }).catch(() => undefined);
+      await NodeFSP.rm(temporary, { force: true }).catch(() => swept.delete(resolved.target));
+      liveTemporaries.delete(temporary);
     }
     lastSaved.delete(resolved.target);
     lastSaved.set(resolved.target, desired);
@@ -1486,6 +1497,51 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
     ["EPERM", "EACCES", "EBUSY", "EMLINK"].some((code) => isNodeError(cause, code));
   /** What Scient last wrote to each file, which tells its own autosaves from outside changes. */
   const lastSaved = new Map<string, string>();
+  /** Targets whose folder was swept; leftovers only come from an earlier run or a failed removal. */
+  const swept = new Set<string>();
+  /**
+   * Removes temporary files a killed save left beside `target`, by this release or an earlier
+   * one. Bytes that differ from the file stay unless its history took them: they may be the only
+   * copy of text that never reached it. One changed recently may be another process's save.
+   */
+  const sweepTemporaries = async (target: string) => {
+    if (swept.has(target)) return;
+    swept.add(target);
+    if (swept.size > LAST_SAVED_FILES) swept.delete(swept.values().next().value!);
+    const directory = NodePath.dirname(target),
+      basename = NodePath.basename(target);
+    try {
+      const now = await runPromise(Clock.currentTimeMillis);
+      for (const name of await NodeFSP.readdir(directory)) {
+        const path = NodePath.join(directory, name);
+        if (!isPlainTemporaryOf(name, basename) || liveTemporaries.has(path)) continue;
+        const stat = await NodeFSP.lstat(path);
+        if (!stat.isFile()) continue;
+        if (now - stat.mtimeMs < (deps.leftoverTemporaryAgeMs ?? LEFTOVER_TEMPORARY_AGE_MS)) {
+          swept.delete(target);
+          continue;
+        }
+        const revision = stat.size === 0 ? null : await fileRevision(path);
+        if (revision !== null && revision !== (await fileRevision(target))) {
+          const kept =
+            deps.fileHistoryDirectory !== undefined &&
+            (await keepFileVersion({
+              directory: deps.fileHistoryDirectory,
+              target,
+              source: path,
+              revision,
+              ownSave: false,
+              now: Math.floor(stat.mtimeMs),
+            }));
+          if (!kept) continue;
+        }
+        await NodeFSP.unlink(path);
+      }
+    } catch (cause) {
+      swept.delete(target);
+      await runPromise(Effect.logWarning("Could not tidy a save's leftover temporary file", cause));
+    }
+  };
   /**
    * Scient's own autosave can go without a copy, since the person's text is in the editor.
    * Text from anywhere else is only replaced once it is safely in the history.
@@ -4038,6 +4094,7 @@ export const makeWorkspaceFileMutations = Effect.fnUntraced(function* (deps: {
       kind: NonNullable<RetainedMutationInput["kind"]>,
       condition: NonNullable<RetainedMutationInput["condition"]>,
     ): Promise<RetainedMutationResult> => {
+      await sweepTemporaries(resolved.target);
       const directory = await prepareRetainedDirectory(
         input.retentionDirectory,
         input.id,
