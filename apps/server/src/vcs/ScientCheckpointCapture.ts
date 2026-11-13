@@ -64,9 +64,15 @@ const GIT_DEFAULT_UNPACK_LIMIT = 100;
 const CHECKPOINT_CAPTURE_TIMEOUT_MS = 90_000;
 const CHECKPOINT_CAPTURE_MAX_FILE_BYTES = 512n * 1024n * 1024n;
 const CHECKPOINT_CAPTURE_MAX_CHANGED_BYTES = 1024n * 1024n * 1024n;
-// Every turn's first message waits for this scan, so a workspace it cannot finish in time is
-// treated as too large, and a too-large workspace is not rescanned for a while.
-const CHECKPOINT_SIZE_SCAN_TIMEOUT_MS = 2_000;
+/**
+ * How long the changed-file size scan may run. Every turn's first message waits for it, so a
+ * workspace it cannot finish in time is treated as too large, and a too-large workspace is not
+ * rescanned for a while. Tests of capture itself raise it; a loaded runner is not a slow user.
+ */
+export class CheckpointSizeScanTimeout extends Context.Reference<number>(
+  "ScientCheckpointCapture/SizeScanTimeout",
+  { defaultValue: () => 2_000 },
+) {}
 const CHECKPOINT_SIZE_LIMIT_MEMORY_MS = 10 * 60_000;
 
 const checkpointFileError = (cwd: string, operation: string, error: { readonly message: string }) =>
@@ -97,6 +103,7 @@ export const makeCheckpointSizeCheck = (deps: {
     env: NodeJS.ProcessEnv,
   ) {
     const operation = VcsProcess.CHECKPOINT_CAPTURE_OPERATION;
+    const scanTimeoutMs = yield* CheckpointSizeScanTimeout;
     const now = yield* Clock.currentTimeMillis;
     if (now < (tooLargeUntil.get(cwd) ?? 0))
       return yield* tooLarge(cwd, "Changed files were too large for file history a moment ago.");
@@ -156,7 +163,7 @@ export const makeCheckpointSizeCheck = (deps: {
         // Only stderr needs buffering. Every stdout byte goes through the awaited consumer.
         maxOutputBytes: 4096,
         outputMode: "truncate",
-        timeoutMs: CHECKPOINT_SIZE_SCAN_TIMEOUT_MS,
+        timeoutMs: scanTimeoutMs,
         onStdoutChunkEffect: (chunk) =>
           consumer.consume(chunk).pipe(
             Effect.mapError(
