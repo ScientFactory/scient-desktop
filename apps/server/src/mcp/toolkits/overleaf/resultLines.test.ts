@@ -47,6 +47,17 @@ describe("Undo tool results", () => {
 });
 
 describe("Refusal lines", () => {
+  it("say what the server said for a refusal raised after the folder was written", () => {
+    expect(
+      syncLines({
+        _tag: "refused",
+        refusal: { reason: "archived", message: "This Overleaf connection was disconnected." },
+        retried: false,
+        settled: null,
+      }),
+    ).toEqual(["This sync stopped: This Overleaf connection was disconnected."]);
+  });
+
   it("name both spellings of a name that differs only by letter case", () => {
     expect(
       syncLines({

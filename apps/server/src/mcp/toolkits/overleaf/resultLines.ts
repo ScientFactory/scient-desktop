@@ -313,8 +313,15 @@ const refusalReason = (refusal: ScientOverleafRefusal): string => {
       return `a synced file is on disk under a name that differs only by letter case or Unicode spelling${at}. Rename it back.`;
     case "release-held":
       return `${refusal.path ?? "a file"} can't be sent as it is: another file held for its conflict marks keeps that place on Overleaf. Settle that file's marks first, or leave it out of files.release.`;
+    case "held-file-clash":
+      return `a file held for its conflict marks keeps its place on Overleaf, where this sync puts another file or folder${at}. Settle that file's marks, or move the other one.`;
+    case "not-selectable":
+    case "not-local-only":
+      return `a file named in files.send or files.keepOnlyHere changed or is gone${at}. Preview again and decide from that review.`;
+    case "sync-managed-folder":
+      return "Scient can't keep copies of replaced files in a folder a cloud service syncs. Ask the user to move the project out of the cloud folder, then relink it.";
     default:
-      return `the review was refused (${refusal.reason})${at}.`;
+      return refusal.message ?? `the review was refused (${refusal.reason})${at}.`;
   }
 };
 

@@ -8,7 +8,7 @@ import { platformFileIdentity } from "../workspace/PlatformFileIdentity.ts";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
-import { ThreadId } from "@t3tools/contracts";
+import { overleafFilesystemRefusalText, ThreadId } from "@t3tools/contracts";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -308,6 +308,9 @@ const refusedAfterProgress =
             _tag: "refused" as const,
             refusal: {
               reason: overleafRefusalReason(error),
+              message:
+                overleafFilesystemRefusalText(overleafRefusalReason(error)) ??
+                (error as unknown as { readonly message: string }).message,
               ...(error._tag === "OverleafEditorUnsavedError"
                 ? editorUnsavedPaths(error as unknown as OverleafEditorUnsavedError)
                 : {}),
@@ -343,6 +346,7 @@ export type OverleafSyncOutcome =
         readonly reason: string;
         readonly path?: string;
         readonly paths?: ReadonlyArray<string>;
+        readonly message?: string;
       };
     } & OverleafSyncProgress)
   /** A repeated request: its receipt, never a second sync. */

@@ -433,19 +433,94 @@ describe("refusalText", () => {
       "Two names differ only by letter case or accents (Figure.png, figure.png). Rename one and sync again.",
     );
     expect(refusalText({ reason: "something-new" })).toBe("Sync stopped (something-new).");
-    // Step 5's newer reasons each have their own words.
+    expect(refusalText({ reason: "something-new", message: "The server's words." })).toBe(
+      "The server's words.",
+    );
+    // Every reason the server sends has its own words.
     for (const reason of [
-      "request-incomplete",
-      "records-unreadable",
-      "overleaf-moved",
+      // Refused operations, by error.
+      "workspace-not-authorized",
+      "token-missing",
+      "token-invalid",
       "project-invalid",
-      "authority-changed",
       "access-denied",
       "project-not-found",
       "unreachable",
+      "rate-limited",
       "git-unavailable",
       "git-failed",
-      "token-missing",
+      "editor-unsaved",
+      "operation-active",
+      "missing",
+      "corrupt",
+      "unsupported",
+      "archived",
+      "folder-changed",
+      "recovery-required",
+      "authority-changed",
+      "retained-limit",
+      "checkout-suspended",
+      "checkout-recovery-required",
+      "unreadable-record",
+      "newer-unfinished-record",
+      "state-locked",
+      "connection-stale",
+      "connection-unavailable",
+      "request-reused",
+      "volume-unavailable",
+      "no-volume-identity",
+      "unsupported-filesystem",
+      "network-filesystem",
+      "volatile-filesystem",
+      "sync-managed-folder",
+      "read-only-parent",
+      "shared-parent",
+      "disk-root-checkout",
+      "unsafe-directory",
+      "vault-missing",
+      "vault-replaced",
+      // Refused reviews.
+      "would-empty-overleaf",
+      "remote-file-limit",
+      "remote-too-large",
+      "remote-file-too-large",
+      "remote-forbidden",
+      "path-alias",
+      "unreviewed-path",
+      "alias-rename",
+      "candidate-file-limit",
+      "candidate-too-large",
+      "candidate-file-too-large",
+      "local-only-limit",
+      "held-file-clash",
+      "release-held",
+      "remote-collides-with-excluded",
+      "walk-limit",
+      "managed-limit",
+      "total-too-large",
+      "file-too-large",
+      "unstable",
+      "unreadable",
+      "not-a-file",
+      "lfs-pointer",
+      "managed-excluded",
+      "alias",
+      "not-selectable",
+      "not-local-only",
+      // Links, and syncs that couldn't settle.
+      "folder-invalid",
+      "folder-missing",
+      "folder-not-empty",
+      "folder-outside-checkout",
+      "folder-overlaps",
+      "project-already-linked",
+      "no-branch",
+      "local-work-pending",
+      "request-incomplete",
+      "records-unreadable",
+      "overleaf-moved",
+      "folder-kept-changing",
+      "recovery-repeated",
     ])
       expect(refusalText({ reason })).not.toContain("Sync stopped (");
     expect(
@@ -462,6 +537,21 @@ describe("refusalText", () => {
     expect(operationErrorText({ reason: "token-missing", message: "x" })).toContain(
       "No Overleaf token is saved",
     );
+    // A reason this release doesn't know, or a limit, says what the server said.
+    expect(
+      operationErrorText({
+        _tag: "ScientOverleafOperationError",
+        reason: "brand-new",
+        message: "Something new happened.",
+      }),
+    ).toBe("Something new happened.");
+    expect(
+      operationErrorText({
+        _tag: "ScientOverleafOperationError",
+        reason: "retained-limit",
+        message: "Release kept copies first.",
+      }),
+    ).toBe("Release kept copies first.");
     // Overleaf's rate limit is not a refused project.
     expect(operationErrorText({ reason: "rate-limited" })).toBe(
       "Overleaf is limiting Git requests right now. Nothing was lost. Sync again in a minute.",

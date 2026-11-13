@@ -157,7 +157,12 @@ const toToolError = (error: Failure): Effect.Effect<ScientOverleafToolError> => 
             ? toolError("connection-changed", error.message)
             : field("reason") === "folder-changed"
               ? toolError("connection-not-ready", error.message)
-              : toolError("connection-not-ready", `${error.message} ${LIST_LINKS}`),
+              : field("reason") === "corrupt" || field("reason") === "unsupported"
+                ? toolError(
+                    "connection-not-ready",
+                    `${error.message} Ask the user to check Settings ▸ Synced folders ▸ Overleaf; it can't be settled from a tool.`,
+                  )
+                : toolError("connection-not-ready", `${error.message} ${LIST_LINKS}`),
       );
     case "CheckoutRecoveryRequiredError":
       return Effect.succeed(

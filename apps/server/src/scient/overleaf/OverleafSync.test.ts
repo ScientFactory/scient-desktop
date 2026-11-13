@@ -1341,7 +1341,10 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
           yield* w.service.sync({ caller: w.at(w.main), connectionId: id, requestId: "s3" }),
         ).toMatchObject({
           _tag: "refused",
-          refusal: { reason: "authority-changed" },
+          refusal: {
+            reason: "authority-changed",
+            message: "This project's workspace changed during the Overleaf operation. Try again.",
+          },
           settled: { outcome: "complete" },
         });
         expect(yield* read(NodePath.join(w.main, "paper"), "main.tex")).toBe("after\n");

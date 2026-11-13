@@ -224,11 +224,23 @@ export function overleafChipView(
   };
 }
 
-/** Plain words for a refusal or failure reason, from the engine's fixed categories. */
+/**
+ * Plain words for a refusal or failure reason, from the engine's fixed categories; for a
+ * reason this release doesn't know, the server's own sentence when the refusal carries one.
+ */
 export function refusalText(
   refusal: ScientOverleafRefusal,
   action: "sync" | "connect" = "sync",
 ): string {
+  return (
+    knownRefusalText(refusal, action) ?? refusal.message ?? `Sync stopped (${refusal.reason}).`
+  );
+}
+
+function knownRefusalText(
+  refusal: ScientOverleafRefusal,
+  action: "sync" | "connect",
+): string | null {
   const filesystem = overleafFilesystemRefusalText(refusal.reason);
   if (filesystem !== null) return filesystem;
   const names = refusal.paths ?? (refusal.path ? [refusal.path] : []);
@@ -238,8 +250,8 @@ export function refusalText(
       return "The disk holding this project is not connected.";
     case "no-volume-identity":
       return "This disk does not report a stable identity, so Scient cannot keep replaced files safely on it.";
-    case "unsupported-filesystem":
-      return "This disk cannot replace files safely (for example exFAT or FAT). Use a disk formatted as APFS.";
+    case "sync-managed-folder":
+      return "Scient can't keep copies of replaced files in a folder a cloud service syncs. Move the project out of the cloud folder, then link it again.";
     case "read-only-parent":
       return "Scient cannot create its folder for kept files beside this project, because that location is read-only.";
     case "shared-parent":
@@ -254,6 +266,8 @@ export function refusalText(
       return "The folder for kept files is not the one this connection recorded.";
     case "token-missing":
       return "No Overleaf token is saved. Add one in Settings ▸ Synced folders ▸ Overleaf.";
+    case "token-invalid":
+      return "That isn't an Overleaf Git token. Copy it again from Overleaf.";
     case "access-denied":
       return "Overleaf refused this project. Check the link, that the project is shared with your account, and your Overleaf token in Settings ▸ Synced folders.";
     case "project-not-found":
@@ -283,6 +297,13 @@ export function refusalText(
     case "folder-changed":
     case "folder-unavailable":
       return "The linked folder was moved, renamed, replaced or deleted. Link it again at its new place, or unlink it.";
+    case "archived":
+      return "This folder was unlinked from Overleaf. Link it again to sync.";
+    case "missing":
+      return "This folder's Overleaf link is gone. Link the folder again.";
+    case "corrupt":
+    case "unsupported":
+      return "Scient can't read this folder's Overleaf link record. See Settings › Synced folders › Overleaf.";
     case "folder-not-empty":
       return "A folder with that name already has files. Pick another name, or link it instead.";
     case "folder-outside-checkout":
@@ -303,6 +324,10 @@ export function refusalText(
     case "checkout-recovery-required":
     case "recovery-required":
       return "An earlier sync didn't finish. Sync again to finish it.";
+    case "unreadable-record":
+      return "Scient can't read one of its Overleaf link records. See Settings › Synced folders › Overleaf.";
+    case "newer-unfinished-record":
+      return "A newer version of Scient left an Overleaf sync unfinished. Finish it in that version, then try again.";
     case "state-locked":
       return "Another Scient process holds the Overleaf state. Close it and sync again.";
     case "walk-limit":
@@ -337,6 +362,11 @@ export function refusalText(
     case "path-alias":
     case "alias-rename":
       return `Two names differ only by letter case or accents${at}. Rename one and sync again.`;
+    case "held-file-clash":
+      return `A file waiting for its conflict marks keeps its place on Overleaf, where this sync puts another file or folder${at}. Settle its marks, or move the other one.`;
+    case "not-selectable":
+    case "not-local-only":
+      return `A file chosen for this sync changed or is gone${at}. Check the changes again, then sync.`;
     case "remote-forbidden":
       return `Overleaf sent something Scient won't write: a link, a repository or a Git LFS pointer${at}.`;
     case "unreviewed-path":
@@ -345,17 +375,17 @@ export function refusalText(
     case "git-folder":
       return "The folder is inside Git's own folders.";
     case "retained-limit":
+      return "This would record more than Scient can track for one link. Settle conflict marks, kept copies or earlier sends first.";
     case "retention-unavailable":
       return "Scient can't keep copies of replaced files on this disk right now.";
     case "connection-unavailable":
-    case "connection-not-ready":
       return "This folder's link isn't ready. Sync again.";
     case "request-reused":
       return "This request was already used. Try again.";
     case "request-incomplete":
       return "An earlier attempt stopped before it finished, so it isn't run again. Try again.";
     case "records-unreadable":
-      return "Scient can't read one of its Overleaf link records, so nothing was linked or changed. Set it aside in Settings › Synced folders › Overleaf.";
+      return "Scient can't read one of its Overleaf link records, so nothing was linked or changed. See Settings › Synced folders › Overleaf.";
     case "editor-unsaved":
       return refusal.path
         ? `${refusal.path} has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again. Nothing was changed.`
@@ -367,38 +397,47 @@ export function refusalText(
     case "recovery-repeated":
       return "An interrupted sync couldn't be finished. Sync again.";
     default:
-      return `Sync stopped (${refusal.reason}).`;
+      return null;
   }
 }
 
-/** What an operation's thrown error says: the server's fixed reason when it gave one. */
 /** What any other failure says: no address, status or serialized error reaches the screen. */
 export const OVERLEAF_REQUEST_FAILED = "The Overleaf request didn't go through. Try again.";
 
 const REASON = /^[a-z][a-z-]{0,63}$/u;
 
+/** Reasons whose server sentence says more than the app's line: which files, which limit. */
+const SERVER_EXPLAINS: ReadonlySet<string> = new Set(["editor-unsaved", "retained-limit"]);
+
 /**
- * What an operation's thrown error says. The server's typed refusal
- * (`ScientOverleafOperationError`) and the app's own reasoned errors carry a
- * fixed reason, mapped to its words. Typed editor-save failures preserve the server's
- * explanation; anything else gets one fixed line.
+ * What an operation's thrown error says: its fixed reason in the app's words, or the
+ * server's fixed sentence for a reason this release doesn't know. Anything else gets one
+ * fixed line, so no address, status or serialized error reaches the screen.
  */
 export function operationErrorText(error: unknown, action: "sync" | "connect" = "sync"): string {
   if (typeof error === "object" && error !== null && "reason" in error) {
     const { reason, paths } = error as { readonly reason: unknown; readonly paths?: unknown };
-    if (
-      reason === "editor-unsaved" &&
+    const message =
       "_tag" in error &&
       error._tag === "ScientOverleafOperationError" &&
       "message" in error &&
       typeof error.message === "string" &&
       error.message.trim().length > 0
-    )
-      return error.message;
-    // An editor that couldn't save is named by the first of the files the server lists.
-    const path = Array.isArray(paths) && typeof paths[0] === "string" ? paths[0] : undefined;
-    if (typeof reason === "string" && REASON.test(reason))
-      return refusalText({ reason, ...(path === undefined ? {} : { path }) }, action);
+        ? error.message
+        : undefined;
+    if (typeof reason === "string" && REASON.test(reason)) {
+      if (message !== undefined && SERVER_EXPLAINS.has(reason)) return message;
+      // An editor that couldn't save is named by the first of the files the server lists.
+      const path = Array.isArray(paths) && typeof paths[0] === "string" ? paths[0] : undefined;
+      return refusalText(
+        {
+          reason,
+          ...(path === undefined ? {} : { path }),
+          ...(message === undefined ? {} : { message }),
+        },
+        action,
+      );
+    }
   }
   return OVERLEAF_REQUEST_FAILED;
 }

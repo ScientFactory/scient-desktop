@@ -96,6 +96,7 @@ export const refusalView = (
     reason: refusal.reason,
     ...(typeof fields.path === "string" ? { path: fields.path } : {}),
     ...(names.length > 1 ? { paths: names } : {}),
+    ...(typeof fields.message === "string" ? { message: fields.message } : {}),
   };
 };
 

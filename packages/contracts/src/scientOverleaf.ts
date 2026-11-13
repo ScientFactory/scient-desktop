@@ -385,6 +385,8 @@ export const ScientOverleafRefusal = Schema.Struct({
   path: Schema.optional(ManuscriptPath),
   /** Every name the refusal concerns, when it is more than one (two spellings of a name). */
   paths: Schema.optional(Schema.Array(ManuscriptPath)),
+  /** The server's fixed sentence for a refusal raised after the folder was written. */
+  message: Schema.optional(Schema.String),
 });
 export type ScientOverleafRefusal = typeof ScientOverleafRefusal.Type;
 
