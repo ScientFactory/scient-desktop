@@ -1,12 +1,9 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off -- the relaunch watcher outlives this process; the marker is written synchronously while quitting; the grant poll runs only while it watches.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off -- Plain async Electron work; the fresh check is a short-lived osascript child.
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
-import * as NodePath from "node:path";
 
 import * as Electron from "electron";
 
 import { MAC_PERMISSION_SETTINGS_URLS } from "../../permissions/MacPermission.ts";
-import { runningWorkCount, whenRunningWorkIdle } from "../quitGuard/ipc.ts";
 
 /** The macOS privacy panes an agent's computer control needs; macOS charges them to Scient. */
 export type ComputerControlPermission = "screen-recording" | "accessibility";
@@ -14,10 +11,64 @@ export type ComputerControlPermission = "screen-recording" | "accessibility";
 export const isComputerControlPermission = (pane: string): pane is ComputerControlPermission =>
   pane === "screen-recording" || pane === "accessibility";
 
-export const computerControlPermissionGranted = (permission: ComputerControlPermission): boolean =>
+const inProcessGranted = (permission: ComputerControlPermission): boolean =>
   permission === "screen-recording"
     ? Electron.systemPreferences.getMediaAccessStatus("screen") === "granted"
     : Electron.systemPreferences.isTrustedAccessibilityClient(false);
+
+/**
+ * macOS keeps a process's first Screen Recording answer until it exits, so a grant made with
+ * "Later" never reaches this process. A new process asks afresh and is charged to Scient; these
+ * preflight calls never prompt.
+ */
+const FRESH_CHECK = [
+  'ObjC.import("CoreGraphics");',
+  'ObjC.import("ApplicationServices");',
+  'ObjC.bindFunction("CGPreflightScreenCaptureAccess", ["bool", []]);',
+  'ObjC.bindFunction("AXIsProcessTrusted", ["bool", []]);',
+  '[$.CGPreflightScreenCaptureAccess(), $.AXIsProcessTrusted()].map(Number).join(" ")',
+].join("");
+const FRESH_CHECK_TIMEOUT_MS = 3_000;
+/** The status row polls; a refusal is reused this long so it starts at most one child per interval. */
+const RECHECK_AFTER_MS = 2_000;
+
+type Grants = Record<ComputerControlPermission, boolean>;
+
+const seenGranted = new Set<ComputerControlPermission>();
+/** A check still running is shared; a finished one is reused until `RECHECK_AFTER_MS` passes. */
+let freshCheck: { readonly grants: Promise<Grants>; settledAt?: number } | undefined;
+
+const runFreshCheck = (): Promise<Grants> =>
+  new Promise((resolve) => {
+    NodeChildProcess.execFile(
+      "/usr/bin/osascript",
+      ["-l", "JavaScript", "-e", FRESH_CHECK],
+      { timeout: FRESH_CHECK_TIMEOUT_MS },
+      (error, stdout) => {
+        const [screen, accessibility] = error ? [] : stdout.trim().split(" ");
+        resolve({ "screen-recording": screen === "1", accessibility: accessibility === "1" });
+      },
+    );
+  });
+
+/** Whether macOS lets Scient use `permission` now, including a grant made since Scient started. */
+export async function computerControlPermissionGranted(
+  permission: ComputerControlPermission,
+): Promise<boolean> {
+  if (seenGranted.has(permission) || inProcessGranted(permission)) return true;
+  const settledAt = freshCheck?.settledAt;
+  if (!freshCheck || (settledAt !== undefined && Date.now() - settledAt >= RECHECK_AFTER_MS)) {
+    const check: { grants: Promise<Grants>; settledAt?: number } = { grants: runFreshCheck() };
+    void check.grants.then((grants) => {
+      check.settledAt = Date.now();
+      if (grants["screen-recording"]) seenGranted.add("screen-recording");
+      if (grants.accessibility) seenGranted.add("accessibility");
+    });
+    freshCheck = check;
+  }
+  await freshCheck.grants;
+  return seenGranted.has(permission);
+}
 
 /**
  * Asking is what lists Scient in the pane, in the right list (macOS 15+ splits the pane into
@@ -28,7 +79,7 @@ export const computerControlPermissionGranted = (permission: ComputerControlPerm
 async function requestComputerControlPermission(
   permission: ComputerControlPermission,
 ): Promise<void> {
-  if (computerControlPermissionGranted(permission)) return;
+  if (await computerControlPermissionGranted(permission)) return;
   if (permission === "accessibility") {
     Electron.systemPreferences.isTrustedAccessibilityClient(true);
     return;
@@ -38,104 +89,13 @@ async function requestComputerControlPermission(
     .catch(() => undefined);
 }
 
-/**
- * Turning on Screen Recording can end a running Scient (seen on macOS 26.7: ended without a
- * clean quit at the moment of the grant), which would stop runs that are going. With runs
- * going, Scient waits for them to finish before it opens the pane.
- */
-function confirmOpenWhenRunsFinish(running: number): boolean {
-  const choice = Electron.dialog.showMessageBoxSync({
-    type: "info",
-    message: "Allow Screen Recording when your runs finish?",
-    detail: `macOS may close Scient when you turn on Screen Recording, which would stop ${running === 1 ? "the run that is" : `the ${running} runs that are`} going. Scient opens System Settings as soon as ${running === 1 ? "it finishes" : "they finish"}.`,
-    buttons: ["Open when they finish", "Cancel"],
-    defaultId: 0,
-    cancelId: 1,
-  });
-  return choice === 0;
-}
-
-/** macOS ends the app at the moment of the grant, so the watcher outlives a seen grant briefly. */
-const GRANTED_GRACE_MS = 30_000;
-const GRANT_POLL_MS = 2_000;
-/** Without a grant, the watch ends after this, so a later crash or Force Quit doesn't reopen Scient. */
-const WATCH_LIMIT_MS = 10 * 60_000;
-let relaunchWatching = false;
-let cleanExitMarker: string | undefined;
-
-/**
- * Until Screen Recording is on, a detached watcher reopens Scient if it is ended without a clean
- * quit. A clean quit (macOS's own Quit & Reopen, or the user's) ends the watch, and so does a grant
- * seen in this process or ten minutes without one.
- */
-function watchForForcedExit(): void {
-  if (!Electron.app.isPackaged || relaunchWatching) return;
-  const bundle = /^(.+\.app)\/Contents\/MacOS\/[^/]+$/u.exec(process.execPath)?.[1];
-  if (!bundle) return;
-  relaunchWatching = true;
-  if (cleanExitMarker === undefined) {
-    const marker = NodePath.join(Electron.app.getPath("temp"), `scient-clean-exit-${process.pid}`);
-    cleanExitMarker = marker;
-    Electron.app.once("will-quit", () => {
-      try {
-        NodeFS.writeFileSync(marker, "");
-      } catch {}
-    });
-  }
-  const script = [
-    'while kill -0 "$1" 2>/dev/null; do sleep 1; done',
-    'if [ -e "$2" ]; then rm -f "$2"; exit 0; fi',
-    'sleep 1; exec /usr/bin/open "$3"',
-  ].join("\n");
-  const watcher = NodeChildProcess.spawn(
-    "/bin/sh",
-    ["-c", script, "scient-relaunch-watch", String(process.pid), cleanExitMarker, bundle],
-    { detached: true, stdio: "ignore" },
-  );
-  const poll = setInterval(() => {
-    if (!computerControlPermissionGranted("screen-recording")) return;
-    clearInterval(poll);
-    setTimeout(() => watcher.kill(), GRANTED_GRACE_MS).unref();
-  }, GRANT_POLL_MS);
-  poll.unref();
-  const limit = setTimeout(() => watcher.kill(), WATCH_LIMIT_MS);
-  limit.unref();
-  const stopped = () => {
-    clearInterval(poll);
-    clearTimeout(limit);
-    relaunchWatching = false;
-  };
-  watcher.once("exit", stopped);
-  watcher.once("error", stopped);
-  watcher.unref();
-}
-
-async function openPane(permission: ComputerControlPermission): Promise<boolean> {
-  if (permission === "screen-recording" && !computerControlPermissionGranted(permission))
-    watchForForcedExit();
+/** Asks macOS, which lists Scient in the pane, then opens the pane. */
+export async function openComputerControlPermissionPane(
+  permission: ComputerControlPermission,
+): Promise<boolean> {
   await requestComputerControlPermission(permission);
   return Electron.shell.openExternal(MAC_PERMISSION_SETTINGS_URLS[permission]).then(
     () => true,
     () => false,
   );
-}
-
-/**
- * Asks macOS (which lists Scient in the pane) and opens the pane, or, for Screen Recording
- * while runs are going, opens it once they finish.
- */
-export async function openComputerControlPermissionPane(
-  permission: ComputerControlPermission,
-): Promise<"opened" | "deferred" | "cancelled" | "failed"> {
-  const running = runningWorkCount();
-  if (
-    permission === "screen-recording" &&
-    running > 0 &&
-    !computerControlPermissionGranted(permission)
-  ) {
-    if (!confirmOpenWhenRunsFinish(running)) return "cancelled";
-    whenRunningWorkIdle(() => void openPane(permission));
-    return "deferred";
-  }
-  return (await openPane(permission)) ? "opened" : "failed";
 }

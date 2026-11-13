@@ -19,18 +19,20 @@ export const COMPUTER_CONTROL_PERMISSION_COPY: Record<
   },
 };
 
-/** macOS 15+ splits the pane; a switch in the audio-only list leaves screen access off. */
-const SCREEN_LIST_HINT = "Turn on Scient in the top list, not in System Audio Recording Only.";
+/**
+ * macOS 15+ splits the pane; a switch in the audio-only list leaves screen access off. macOS then
+ * offers Quit & Reopen, but Scient sees the grant without a restart.
+ */
+const SCREEN_LIST_HINT =
+  "Turn on Scient in the top list, not in System Audio Recording Only. If macOS asks, choose Later.";
 const SCREEN_STILL_OFF =
-  "Still off. That pane has two lists: System Audio Recording Only does not let the agent see windows. Turn on Scient in the top list, Screen & System Audio Recording.";
+  "Still off. That pane has two lists: System Audio Recording Only does not let the agent see windows. Turn on Scient in the top list, Screen & System Audio Recording. If macOS asks, choose Later.";
 
 export const computerControlPermissionDescription = (
   permission: ToolHostPermission,
-  state: { readonly granted: boolean; readonly requested: boolean; readonly waitingFor: number },
+  state: { readonly granted: boolean; readonly requested: boolean },
 ): string => {
   const base = COMPUTER_CONTROL_PERMISSION_COPY[permission].description;
   if (state.granted || permission !== "screen-recording") return base;
-  if (state.waitingFor > 0)
-    return `Opens System Settings once ${state.waitingFor === 1 ? "the running thread finishes" : `the ${state.waitingFor} running threads finish`}: macOS may close Scient when you turn this on, which would stop ${state.waitingFor === 1 ? "it" : "them"}.`;
   return state.requested ? SCREEN_STILL_OFF : `${base} ${SCREEN_LIST_HINT}`;
 };

@@ -156,9 +156,8 @@ What the operating system asks for:
   agent. The provider's settings, and any step macOS refused, show both with an **Allow** button:
   it asks macOS, which lists Scient in the pane, then opens the pane so you only turn Scient on.
   In Screen & System Audio Recording, use the top list; **System Audio Recording Only** does not
-  let the agent see windows. macOS can close Scient when you turn on screen recording, so while
-  runs are going Scient offers to open the pane once they finish; if macOS ends Scient, it opens
-  again by itself with your conversations as they were.
+  let the agent see windows. When you turn on screen recording, macOS offers to quit and reopen
+  Scient: choose **Later**. Scient and the agent see the permission at once, with no restart.
 - **Windows:** nothing to allow. The agent cannot act in windows of apps running as administrator
   unless Scient does too.
 - **Linux (X11):** nothing to allow. Background input needs write access to `/dev/uinput`;
