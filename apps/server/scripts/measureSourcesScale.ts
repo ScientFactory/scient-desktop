@@ -28,6 +28,7 @@ import {
   runScientLibraryMove,
 } from "@scientfactory/scient-sources/library-move";
 import { withScientLibraryLock } from "@scientfactory/scient-sources/library-lock";
+import { warmScientLibraryRecordIndex } from "@scientfactory/scient-sources/store";
 import {
   ensureScientLibrary,
   scientLibraryLocation,
@@ -52,6 +53,7 @@ import {
   libraryReviews,
   organizeLibrarySources,
 } from "../src/scient/sources/LibrarySourcesRoutes.ts";
+import { LIBRARY_WARM_MINIMUM_RECORDS } from "../src/scient/sources/LibraryIndexWarm.ts";
 import type { ScientSourcesLibraryStore } from "../src/scient/sources/SourcesBackend.ts";
 
 const SCRIPT = NodeURL.fileURLToPath(import.meta.url);
@@ -59,6 +61,8 @@ const PART = 100;
 const PIN_CHANGES_PER_REQUEST = 2_000;
 const WARM = 5;
 const DELAY_RESOLUTION_MS = 10;
+/** `start-during-warming` opens the list this long after the start-up warming begins. */
+const OPEN_DURING_WARMING_MS = 250;
 
 const LIBRARY_MEASURES = [
   "overview-library",
@@ -70,6 +74,9 @@ const LIBRARY_MEASURES = [
   "bulk-tag",
   "bulk-type",
   "change-pins",
+  "start-cold",
+  "start-warmed",
+  "start-during-warming",
 ] as const;
 const MOVE_MEASURES = ["move", "move-interrupt"] as const;
 type Measure = (typeof LIBRARY_MEASURES)[number] | (typeof MOVE_MEASURES)[number];
@@ -148,6 +155,15 @@ function wireSize(value: unknown, schema?: Schema.Codec<unknown, unknown>) {
     parseMs,
     ...(schema ? { decodeMs: round2(performance.now() - decodeStarted) } : {}),
   };
+}
+
+const wireMs = (wire: ReturnType<typeof wireSize>) =>
+  (wire.encodeMs ?? 0) + wire.stringifyMs + wire.parseMs + (wire.decodeMs ?? 0);
+
+/** Heap still in use once garbage is collected; the child runs with `--expose-gc`. */
+function heapAfterCollection(): number {
+  (globalThis as { gc?: () => void }).gc?.();
+  return NodeProcess.memoryUsage().heapUsed;
 }
 
 async function libraryStore(
@@ -417,6 +433,43 @@ async function runLibraryMeasure(measure: Measure, meta: Meta): Promise<Record<s
         unpinInRequests: unpinParts.summary,
       };
     }
+    case "start-cold":
+    case "start-warmed":
+    case "start-during-warming": {
+      const store = await read(meta.projects.thesis);
+      const heapBefore = heapAfterCollection();
+      const warm = () =>
+        time(() =>
+          warmScientLibraryRecordIndex(store.library, {
+            minimumRecords: measure === "start-cold" ? Number.POSITIVE_INFINITY : 0,
+          }),
+        );
+      const warming = measure === "start-cold" ? null : warm();
+      if (measure === "start-warmed") await warming;
+      if (measure === "start-during-warming") {
+        await new Promise((resolve) => setTimeout(resolve, OPEN_DURING_WARMING_MS));
+      }
+      const heapWarmed = measure === "start-warmed" ? heapAfterCollection() : null;
+      const first = await time(() =>
+        libraryOverview(store, { scope: "library", background: false }),
+      );
+      const warmed = await warming;
+      return {
+        threshold: LIBRARY_WARM_MINIMUM_RECORDS,
+        recordFiles: warmed?.value.recordFiles ?? null,
+        rows: first.value.records.length,
+        warmingMs: warmed?.ms ?? null,
+        ...(measure === "start-during-warming" ? { listOpenedAtMs: OPEN_DURING_WARMING_MS } : {}),
+        firstListMs: first.ms,
+        firstListWithWireMs: round2(
+          first.ms + wireMs(wireSize(first.value, ScientSourcesOverviewResult)),
+        ),
+        heldHeapMiB: {
+          ...(heapWarmed === null ? {} : { afterWarming: mib(heapWarmed - heapBefore) }),
+          afterFirstList: mib(heapAfterCollection() - heapBefore),
+        },
+      };
+    }
     default:
       throw new Error(`Unknown measure ${measure}.`);
   }
@@ -563,6 +616,7 @@ async function spawnMeasure(input: {
   const args = [
     // A bound to test, not to tune: a measure that needs more heap fails instead of growing.
     ...(input.heapMiB ? [`--max-old-space-size=${input.heapMiB}`] : []),
+    "--expose-gc",
     SCRIPT,
     "--child",
     input.measure,

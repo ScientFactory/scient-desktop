@@ -1445,13 +1445,50 @@ const isSettled = (stats: NodeFS.BigIntStats, scanStartedNs: bigint) =>
   scanStartedNs - stats.mtimeNs > RACY_TIMESTAMP_NS &&
   scanStartedNs - stats.ctimeNs > RACY_TIMESTAMP_NS;
 
+/** A first build of a library's index in progress; it settles, never rejects. */
+const libraryRecordIndexBuilds = new Map<string, Promise<void>>();
+
 /**
- * The library's record list from its in-memory index. Every library write replaces, links or
- * unlinks a file in `records/`, which changes the folder's timestamps; while those are unchanged
- * and recently checked, the index answers without touching any record. Otherwise each file is
- * checked by its own timestamps and only new or changed files are read again.
+ * The library's record list from its in-memory index. A list asked for while the first build
+ * runs (the start-up warming, or another list) waits for that build and then checks it as below,
+ * instead of reading every record a second time.
  */
-async function scanLibraryRecords(paths: SourceStorePaths): Promise<RecordScan> {
+async function scanLibraryRecords(
+  paths: SourceStorePaths,
+  signal?: AbortSignal,
+): Promise<RecordScan> {
+  if (!libraryRecordIndexes.has(paths.root)) {
+    const building = libraryRecordIndexBuilds.get(paths.root);
+    if (building) {
+      await building;
+    } else {
+      const build = indexLibraryRecords(paths, signal);
+      const settled = build.then(
+        () => undefined,
+        () => undefined,
+      );
+      libraryRecordIndexBuilds.set(paths.root, settled);
+      void settled.then(() => {
+        if (libraryRecordIndexBuilds.get(paths.root) === settled) {
+          libraryRecordIndexBuilds.delete(paths.root);
+        }
+      });
+      return build;
+    }
+  }
+  return indexLibraryRecords(paths, signal);
+}
+
+/**
+ * Every library write replaces, links or unlinks a file in `records/`, which changes the
+ * folder's timestamps; while those are unchanged and recently checked, the index answers without
+ * touching any record. Otherwise each file is checked by its own timestamps and only new or
+ * changed files are read again.
+ */
+async function indexLibraryRecords(
+  paths: SourceStorePaths,
+  signal: AbortSignal | undefined,
+): Promise<RecordScan> {
   const scanStartedMs = Date.now();
   const scanStartedNs = BigInt(scanStartedMs) * 1_000_000n;
   const folder = await NodeFSP.lstat(paths.records, { bigint: true }).catch((error: unknown) => {
@@ -1509,6 +1546,7 @@ async function scanLibraryRecords(paths: SourceStorePaths): Promise<RecordScan> 
   const files = new Map<string, IndexedRecordFile>();
   // One file at a time waits on each stat and read in turn: 20,000 serial stats take 0.6 s.
   for (let start = 0; start < names.length; start += RECORD_SCAN_CONCURRENCY) {
+    signal?.throwIfAborted();
     const part = names.slice(start, start + RECORD_SCAN_CONCURRENCY);
     const indexed = await Promise.all(part.map(indexFile));
     for (const [offset, file] of indexed.entries()) if (file) files.set(part[offset]!, file);
@@ -1534,6 +1572,27 @@ export async function listScientSourceRecords(
   root: ScientSourceStoreLocation,
 ): Promise<ReadonlyArray<ScientSourceRecord>> {
   return listScientSourceRecordsFromPaths(await sourceStorePaths(root));
+}
+
+/**
+ * Builds a library's record index before its first list, only when it holds at least
+ * `minimumRecords` record files. Counting lists one folder and reads no record; `signal` stops
+ * the build between reads and leaves no index behind.
+ */
+export async function warmScientLibraryRecordIndex(
+  location: ScientLibraryLocation,
+  options: { readonly minimumRecords: number; readonly signal?: AbortSignal },
+): Promise<{ readonly recordFiles: number; readonly warmed: boolean }> {
+  const names = await NodeFSP.readdir(NodePath.join(location.root, "records")).catch(
+    (error: unknown) => {
+      if (isNodeError(error, "ENOENT")) return [];
+      throw error;
+    },
+  );
+  const recordFiles = names.filter((name) => name.endsWith(".json")).length;
+  if (recordFiles < options.minimumRecords) return { recordFiles, warmed: false };
+  await scanLibraryRecords(await sourceStorePaths(location), options.signal);
+  return { recordFiles, warmed: true };
 }
 
 async function operationRecordSnapshot(

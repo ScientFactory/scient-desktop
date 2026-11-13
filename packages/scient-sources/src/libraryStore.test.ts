@@ -15,6 +15,7 @@ import {
   registerScientLibraryInstance,
   scientLibraryLocation,
   scientLibraryRootFor,
+  type ScientLibraryLocation,
 } from "./libraryRoot.ts";
 import type { ScientSourceCandidate } from "./model.ts";
 import {
@@ -29,6 +30,7 @@ import {
   setScientLibraryReadingState,
   sourceAttachmentAbsolutePath,
   updateScientSourceNote,
+  warmScientLibraryRecordIndex,
 } from "./store.ts";
 
 const fixtures: string[] = [];
@@ -323,6 +325,55 @@ describe("personal library store", () => {
     await NodeFSP.writeFile(filePath, JSON.stringify({ ...file, title: "After" }));
     vi.setSystemTime(Date.now() + 60 * 1000);
     expect((await listScientSourceRecords(library))[0]?.title).toBe("After");
+  });
+
+  it("warms the record index only at its threshold, and a stopped warming keeps none", async () => {
+    // Edited in place, a file leaves its folder's timestamps alone: only an index built before
+    // the edit still answers with the old title.
+    const editedTitle = async (warm: (library: ScientLibraryLocation) => Promise<unknown>) => {
+      const { root, library } = await newLibrary();
+      const imported = await importScientSource({
+        root: library,
+        operationId: NodeCrypto.randomUUID(),
+        candidate: candidate("ONE", "Source ONE"),
+      });
+      await importScientSource({
+        root: library,
+        operationId: NodeCrypto.randomUUID(),
+        candidate: candidate("TWO", "Source TWO"),
+      });
+      vi.useFakeTimers({ toFake: ["Date"] });
+      vi.setSystemTime(Date.now() + 60 * 60 * 1000);
+      await warm(library);
+      const filePath = NodePath.join(root, "records", `${imported.record!.sourceId}.json`);
+      const file = JSON.parse(await NodeFSP.readFile(filePath, "utf8")) as Record<string, unknown>;
+      await NodeFSP.writeFile(filePath, JSON.stringify({ ...file, title: "After" }));
+      const records = await listScientSourceRecords(library);
+      vi.useRealTimers();
+      return records.find((record) => record.sourceId === imported.record!.sourceId)?.title;
+    };
+
+    expect(
+      await editedTitle(async (library) => {
+        expect(await warmScientLibraryRecordIndex(library, { minimumRecords: 3 })).toEqual({
+          recordFiles: 2,
+          warmed: false,
+        });
+        const stopped = new AbortController();
+        stopped.abort();
+        await expect(
+          warmScientLibraryRecordIndex(library, { minimumRecords: 2, signal: stopped.signal }),
+        ).rejects.toThrow();
+      }),
+    ).toBe("After");
+    expect(
+      await editedTitle(async (library) => {
+        expect(await warmScientLibraryRecordIndex(library, { minimumRecords: 2 })).toEqual({
+          recordFiles: 2,
+          warmed: true,
+        });
+      }),
+    ).toBe("Source ONE");
   });
 
   it("gives each checkout of a project its own instance", async () => {
