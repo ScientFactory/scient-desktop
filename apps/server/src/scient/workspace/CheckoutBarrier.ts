@@ -138,6 +138,30 @@ const missing = (error: unknown) =>
  * nothing at or above `path` exists and `skipMissing` is set.
  */
 async function locate(path: string, skipMissing: boolean): Promise<Located | null> {
+  if (!skipMissing) return examine(path, false);
+  // A skipped change runs outside the barrier, so only the requested path's own absence may
+  // skip it. Removed while being examined, it can fail a step (Windows' identity read has no
+  // error code) or leave its enclosing checkout as the nearest; an enclosing checkout or `.git`
+  // that vanished while the path still exists must refuse, never skip.
+  const gone = () =>
+    NodeFSP.stat(NodePath.resolve(path)).then(
+      () => false,
+      (error: unknown) => {
+        if (missing(error)) return true;
+        throw error;
+      },
+    );
+  let found: Located | null;
+  try {
+    found = await examine(path, true);
+  } catch (error) {
+    if (await gone()) return null;
+    throw error;
+  }
+  return found !== null && (await gone()) ? null : found;
+}
+
+async function examine(path: string, skipMissing: boolean): Promise<Located | null> {
   let current = NodePath.resolve(path);
   for (;;) {
     try {
@@ -168,13 +192,7 @@ async function locate(path: string, skipMissing: boolean): Promise<Located | nul
   if (roots.length === 0) roots.push(current);
   const keys: string[] = [];
   for (const root of roots) {
-    try {
-      keys.push(await platformFileIdentity.key(root));
-    } catch (error) {
-      // Removed while being examined: as if it had been gone before.
-      if (skipMissing && missing(error)) return null;
-      throw error;
-    }
+    keys.push(await platformFileIdentity.key(root));
   }
   return { root: roots[0]!, keys };
 }

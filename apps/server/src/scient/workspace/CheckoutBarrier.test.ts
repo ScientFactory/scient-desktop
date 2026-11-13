@@ -1,6 +1,8 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
@@ -100,22 +102,36 @@ const waitForBulkAdmission = Effect.fn("test.CheckoutBarrier.waitForBulkAdmissio
 });
 
 /**
- * Forks a bulk change of `path` and returns once it has located its checkout and announced
- * itself (the checkout's epoch rose), so it holds or waits for the checkout it found. Locating
- * reads the disk, so a fixed number of scheduler turns is not enough on a slow runner.
+ * Waits until `path`'s checkout epoch exceeds `before` (a bulk change located the checkout and
+ * announced itself, so it holds or waits for the checkout it found) or until `fiber` ended
+ * without doing so. Locating reads the disk, so a fixed number of scheduler turns is not enough
+ * on a slow runner.
  */
+const waitForBulkAnnounced = (
+  barrier: CheckoutBarrierShape,
+  path: string,
+  before: number,
+  fiber: Fiber.Fiber<unknown, unknown>,
+) =>
+  Effect.raceFirst(
+    barrier
+      .current(path)
+      .pipe(Effect.repeat({ until: (section) => section.epoch > before }), Effect.asVoid),
+    Fiber.await(fiber).pipe(Effect.asVoid),
+  );
+
+/** Forks a bulk change of `path` and returns once it has announced itself (or ended). */
 const forkBulk = <A, E>(
   barrier: CheckoutBarrierShape,
   path: string,
   effect: Effect.Effect<A, E>,
-  options?: { readonly missing?: "nearest" | "skip" },
+  options?: { readonly missing?: "nearest" | "skip"; readonly detach?: boolean },
 ) =>
   Effect.gen(function* () {
     const before = (yield* barrier.current(path)).epoch;
-    const fiber = yield* barrier.bulk(path, effect, options).pipe(Effect.forkChild);
-    yield* barrier
-      .current(path)
-      .pipe(Effect.repeat({ until: (section) => section.epoch > before }));
+    const change = barrier.bulk(path, effect, options);
+    const fiber = yield* options?.detach ? Effect.forkDetach(change) : Effect.forkChild(change);
+    yield* waitForBulkAnnounced(barrier, path, before, fiber);
     return fiber;
   });
 
@@ -209,13 +225,11 @@ describe("CheckoutBarrier", () => {
           const release = yield* Deferred.make<void>();
           const outer = yield* holdBulk(barrier, repo, release);
           // A nested change of the same checkout, from inside, joins the held section.
-          const second = yield* barrier
-            .bulk(
-              paper,
-              Effect.sync(() => seen.push("second")),
-            )
-            .pipe(Effect.forkChild);
-          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          const second = yield* forkBulk(
+            barrier,
+            paper,
+            Effect.sync(() => seen.push("second")),
+          );
           // The second waits its turn: not even its settler runs while the first holds.
           assert.deepEqual(seen, ["settled"]);
           yield* Deferred.succeed(release, undefined);
@@ -316,8 +330,9 @@ describe("CheckoutBarrier", () => {
       );
       const release = yield* Deferred.make<void>();
       const application = yield* holdApplication(barrier, repo, release);
+      const before = (yield* barrier.current(repo)).epoch;
       yield* Deferred.succeed(afterOuter, undefined);
-      for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+      yield* waitForBulkAnnounced(barrier, repo, before, detached!);
       assert.isFalse(mutated);
       yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(application);
@@ -385,15 +400,14 @@ describe("CheckoutBarrier", () => {
         repo,
         Effect.gen(function* () {
           // Forked inside the section, it inherits it but does not own it.
-          child = yield* barrier
-            .bulk(
-              repo,
-              Effect.sync(() => {
-                order.push("child");
-              }),
-            )
-            .pipe(Effect.forkDetach);
-          for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow;
+          child = yield* forkBulk(
+            barrier,
+            repo,
+            Effect.sync(() => {
+              order.push("child");
+            }),
+            { detach: true },
+          );
           order.push("owner");
         }),
       );
@@ -491,30 +505,96 @@ describe("CheckoutBarrier", () => {
     }).pipe(Effect.scoped),
   );
 
-  it.effect("skips a path removed while it is being examined, when told to skip", () =>
+  // A skipped change runs outside the barrier: no settler, no epoch.
+  const skipsOutside = (barrier: CheckoutBarrierShape, path: string, observe: string) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* barrier.settleBeforeBulk((section) =>
+          Effect.fail(new CheckoutRecoveryRequiredError({ checkout: section.root })),
+        );
+        let ran = false;
+        yield* barrier.bulk(
+          path,
+          Effect.sync(() => {
+            ran = true;
+          }),
+          { missing: "skip" },
+        );
+        assert.isTrue(ran);
+        assert.equal((yield* barrier.current(observe)).epoch, 0);
+      }),
+    );
+
+  it.effect.each([
+    { name: "fails its identity read", read: "missing" },
+    // Windows reports a missing identity as an error without a code.
+    { name: "fails its identity read without an error code", read: "uncoded" },
+    { name: "was read, leaving a stale nearest checkout", read: "after-identity" },
+    { name: "leaves its enclosing checkout as the nearest", read: "before-marker" },
+  ] as const)("skips a path removed while it is examined when that $name", ({ read }) =>
     Effect.gen(function* () {
       const { repo } = yield* folders;
       const worktree = NodePath.join(repo, "worktree");
       yield* Effect.promise(() =>
         NodeFSP.mkdir(NodePath.join(worktree, ".git"), { recursive: true }),
       );
-      // Gone after its `.git` was seen and before its identity is read.
+      const remove = () => NodeFSP.rm(worktree, { recursive: true, force: true });
       const key = platformFileIdentity.key.bind(platformFileIdentity);
-      const spy = vi.spyOn(platformFileIdentity, "key").mockImplementationOnce(async (path) => {
-        await NodeFSP.rm(worktree, { recursive: true, force: true });
+      const identity = vi.spyOn(platformFileIdentity, "key").mockImplementation(async (path) => {
+        // Gone after its `.git` was seen: before its own identity read, or after it.
+        if (read !== "before-marker" && path === (read === "after-identity" ? repo : worktree))
+          await remove();
+        if (read === "uncoded" && path === worktree)
+          throw new Error("File identity is unavailable.");
+        return key(path);
+      });
+      // Gone after its real path was resolved and before its `.git` is looked for.
+      const promises = NodeFS.promises;
+      const lstat = promises.lstat.bind(promises);
+      const marker = vi.spyOn(promises, "lstat").mockImplementation(async (file, ...rest) => {
+        if (read === "before-marker" && file === NodePath.join(worktree, ".git")) await remove();
+        return lstat(file, ...rest);
+      });
+      NodeModule.syncBuiltinESMExports();
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          identity.mockRestore();
+          marker.mockRestore();
+          NodeModule.syncBuiltinESMExports();
+        }),
+      );
+      yield* skipsOutside(makeCheckoutBarrier(), worktree, repo);
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("refuses, not skips, when an enclosing checkout vanishes but the path remains", () =>
+    Effect.gen(function* () {
+      const { repo } = yield* folders;
+      const worktree = NodePath.join(repo, "worktree");
+      yield* Effect.promise(() =>
+        NodeFSP.mkdir(NodePath.join(worktree, ".git"), { recursive: true }),
+      );
+      const key = platformFileIdentity.key.bind(platformFileIdentity);
+      const spy = vi.spyOn(platformFileIdentity, "key").mockImplementation(async (path) => {
+        if (path === repo)
+          throw Object.assign(new Error("ENOENT: the enclosing checkout moved"), {
+            code: "ENOENT",
+          });
         return key(path);
       });
       yield* Effect.addFinalizer(() => Effect.sync(() => spy.mockRestore()));
       let ran = false;
-      yield* makeCheckoutBarrier().bulk(
-        worktree,
-        Effect.sync(() => {
-          ran = true;
-        }),
-        { missing: "skip" },
+      const refused = yield* Effect.exit(
+        makeCheckoutBarrier().bulk(
+          worktree,
+          Effect.sync(() => {
+            ran = true;
+          }),
+          { missing: "skip" },
+        ),
       );
-      assert.isTrue(ran);
-      assert.equal(spy.mock.calls[0]?.[0], worktree);
+      assert.include(String(refused), "CheckoutLookupError");
+      assert.isFalse(ran);
     }).pipe(Effect.scoped),
   );
 
