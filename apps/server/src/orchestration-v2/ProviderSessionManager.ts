@@ -891,10 +891,11 @@ export const layerWithOptions = (
               capabilities.add("skills:read");
             if (browserToolsAvailable) capabilities.add("preview");
             if (deviceToolsAvailable) capabilities.add("device");
-            // SCIENT-FORK:START Scient Extensions connector delivery
-            // Other Scient grants are appended here, before connector delivery is planned.
-            // Scient Accounts: all provider sessions can use user-granted accounts.
+            // SCIENT-FORK:START — Scient Accounts: all provider sessions can use user-granted accounts.
             capabilities.add("accounts");
+            // SCIENT-FORK:END
+            // SCIENT-FORK:START Scient Extensions connector delivery
+            // Other Scient grants are appended above, before connector delivery is planned.
             let connectorPlan = yield* planConnectors(true);
             // Key-bearing native servers stay suppressed until Scient supplies them.
             const pluginKeyPolicies = Option.isSome(pluginKeyBindings)
