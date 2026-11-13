@@ -35,11 +35,14 @@ const {
   pendingOverleafDecisions,
   setOverleafFileDecision,
   setOverleafConflictChoices,
+  setOverleafTokenSaved,
   beginOverleafPreview,
   finishOverleafPreview,
   recordOverleafSync,
   loadOverleafWorkspace,
+  loadOverleafTokenStatus,
   noteOverleafAgentRuns,
+  readOverleafTokenState,
   readOverleafWorkspace,
   refreshOverleafStatus,
   reloadOverleafWorkspaces,
@@ -388,6 +391,37 @@ describe("overleafStore", () => {
     await vi.waitFor(() =>
       expect(readOverleafWorkspace(environmentId, ROOT).remoteStates.get("c1")).toBe("changed"),
     );
+  });
+
+  it("a list that fails says nothing about the links; only a folder that isn't a project has none", async () => {
+    resetOverleafStoreForTests();
+    client.listOverleafConnections.mockReset().mockRejectedValue(new Error("offline"));
+    await loadOverleafWorkspace(environmentId, ROOT);
+    expect(readOverleafWorkspace(environmentId, ROOT)).toMatchObject({
+      loaded: false,
+      error: "The Overleaf request didn't go through. Try again.",
+    });
+    client.listOverleafConnections.mockRejectedValue({
+      _tag: "ScientOverleafOperationError",
+      reason: "workspace-not-authorized",
+      message: "This Overleaf link does not belong to this project.",
+    });
+    await loadOverleafWorkspace(environmentId, ROOT, { force: true });
+    expect(readOverleafWorkspace(environmentId, ROOT)).toMatchObject({
+      loaded: true,
+      error: null,
+      connections: [],
+    });
+  });
+
+  it('a token status that can\'t be read stays as last known, never "no token saved"', async () => {
+    resetOverleafStoreForTests();
+    client.readOverleafToken.mockReset().mockRejectedValue(new Error("offline"));
+    await loadOverleafTokenStatus(environmentId);
+    expect(readOverleafTokenState(environmentId)).toEqual({ loaded: false, saved: false });
+    setOverleafTokenSaved(environmentId, true);
+    await loadOverleafTokenStatus(environmentId);
+    expect(readOverleafTokenState(environmentId)).toEqual({ loaded: true, saved: true });
   });
 
   it("reads the links again once each time the settled agent runs change", async () => {

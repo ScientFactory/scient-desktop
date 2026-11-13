@@ -47,13 +47,14 @@ export interface OverleafShownReview {
 }
 
 export interface OverleafWorkspaceSnapshot {
-  /** The first list has answered (or failed). */
+  /** A list has answered, or the folder isn't a project and has no links. */
   readonly loaded: boolean;
   readonly connections: ReadonlyArray<OverleafConnection>;
   /** The environment's link records this release can't read; they block linking. */
   readonly unreadableRecords: ReadonlyArray<ScientOverleafUnreadableRecord>;
   /** Which list read this came from; a later read is newer. */
   readonly listRead: number;
+  /** Why the last list read failed; the links listed before, if any, stay. */
   readonly error: string | null;
   readonly statuses: ReadonlyMap<string, ScientOverleafStatus>;
   /** What Overleaf itself last said about each link. The status only reads the folder. */
@@ -465,8 +466,17 @@ export function loadOverleafWorkspace(
         void refreshOverleafRemoteState(environmentId, workspaceRoot, connection.connectionId);
     } catch (error) {
       if (listReads.get(key) !== read) return;
-      // An environment without Overleaf sync, or a folder that isn't a project, has no links.
-      update(key, (current) => ({ ...current, loaded: true, error: operationErrorText(error) }));
+      // A folder that isn't a project has no links. Any other failure says nothing about them.
+      const notAProject =
+        typeof error === "object" &&
+        error !== null &&
+        "reason" in error &&
+        error.reason === "workspace-not-authorized";
+      update(key, (current) =>
+        notAProject
+          ? { ...current, loaded: true, error: null, connections: [] }
+          : { ...current, error: operationErrorText(error) },
+      );
     } finally {
       if (listReads.get(key) === read) {
         loadedAt.set(key, Date.now());
@@ -882,9 +892,33 @@ export function useNoOverleafLinks(
   return useSyncExternalStore(subscribe, () =>
     workspaceRoots.every((root) => {
       const view = viewOf(keyOf(environmentId, root));
-      return view.loaded && view.connections.length === 0;
+      return view.loaded && view.error === null && view.connections.length === 0;
     }),
   );
+}
+
+/** Why the links of the given projects couldn't be read: the first failure, or null. */
+export function useOverleafListError(
+  environmentId: EnvironmentId,
+  workspaceRoots: ReadonlyArray<string>,
+): string | null {
+  const rootsKey = workspaceRoots.join("\u0000");
+  const subscribe = (listener: () => void) => {
+    const roots = rootsKey === "" ? [] : rootsKey.split("\u0000");
+    const unsubscribes = roots.map((root) =>
+      subscribeOverleafWorkspace(environmentId, root, listener),
+    );
+    return () => {
+      for (const unsubscribe of unsubscribes) unsubscribe();
+    };
+  };
+  return useSyncExternalStore(subscribe, () => {
+    for (const root of workspaceRoots) {
+      const { error } = viewOf(keyOf(environmentId, root));
+      if (error !== null) return error;
+    }
+    return null;
+  });
 }
 
 type TokenState = { readonly loaded: boolean; readonly saved: boolean };
@@ -906,7 +940,7 @@ export function useOverleafTokenSaved(environmentId: EnvironmentId | null): Toke
   // Being shown reads the token's status again; the answer is shared by every view.
   const subscribe = (listener: () => void) => {
     tokenListeners.add(listener);
-    if (environmentId !== null) readTokenStatus(environmentId);
+    if (environmentId !== null) void loadOverleafTokenStatus(environmentId);
     return () => tokenListeners.delete(listener);
   };
   return useSyncExternalStore(subscribe, () =>
@@ -914,17 +948,23 @@ export function useOverleafTokenSaved(environmentId: EnvironmentId | null): Toke
   );
 }
 
-function readTokenStatus(environmentId: EnvironmentId): void {
+/** The token's status now, without reading it. */
+export function readOverleafTokenState(environmentId: EnvironmentId): TokenState {
+  return tokens.get(environmentId) ?? UNKNOWN_TOKEN;
+}
+
+/** Reads whether a token is saved; the answer is shared by every view. */
+export function loadOverleafTokenStatus(environmentId: EnvironmentId): Promise<void> {
   const read = ++readCounter;
   tokenReads.set(environmentId, read);
-  readOverleafToken(environmentId).then(
+  return readOverleafToken(environmentId).then(
     (status) => {
       if (tokenReads.get(environmentId) === read)
         setOverleafTokenSaved(environmentId, status.saved);
     },
-    () => {
-      if (tokenReads.get(environmentId) === read) setOverleafTokenSaved(environmentId, false);
-    },
+    // An unanswered read says nothing about the token: it stays as last known, and the next
+    // view that shows it asks again.
+    () => undefined,
   );
 }
 

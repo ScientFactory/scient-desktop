@@ -28,6 +28,8 @@ import {
   overleafUndoSucceeded,
   parseOverleafProjectInput,
   refusalText,
+  setAsideAction,
+  unreadableRecordLines,
   workspacePathOf,
 } from "./overleafModel";
 
@@ -921,5 +923,59 @@ describe("results the folder status can't show", () => {
       { kind: "added", path: "send.txt" },
       { kind: "renamed", from: "a.tex", to: "b.tex" },
     ]);
+  });
+});
+
+describe("unreadable link records", () => {
+  const record = (
+    kind: "damaged" | "newer",
+    unfinished: boolean | null,
+    setAside: "allowed" | "confirm" | "held",
+    holds: "linking" | "checkout" | "every-checkout",
+  ) => ({ recordId: "r1", folder: "/work/paper", kind, unfinished, setAside, holds });
+  const LINKING = "Scient won't link folders.";
+  const BULK = (which: string) =>
+    `Scient won't link folders or change ${which} project's files in bulk, for example when switching branches.`;
+
+  it.each([
+    [
+      record("newer", true, "held", "checkout"),
+      "A newer version of Scient made this link, and its last sync didn't finish. Open that version to finish it; Scient keeps the record until then.",
+      `Until then, ${BULK("this")}`,
+      null,
+    ],
+    [
+      record("newer", null, "held", "every-checkout"),
+      "A newer version of Scient made this link, and this version can't tell whether its last sync finished. Open that version to check; Scient keeps the record until then.",
+      `Until then, ${BULK("any")}`,
+      null,
+    ],
+    [
+      record("newer", false, "allowed", "linking"),
+      "A newer version of Scient made this link. As far as this version can tell, its last sync finished.",
+      `Until it's set aside, ${LINKING}`,
+      { label: "Set aside", acceptUnfinished: false },
+    ],
+    [
+      record("damaged", true, "confirm", "checkout"),
+      "This record is damaged, and its last sync stopped part-way. Setting it aside stops Scient guarding the files that sync left in the folder.",
+      `Until it's set aside, ${BULK("this")}`,
+      { label: "Set aside anyway", acceptUnfinished: true },
+    ],
+    [
+      record("damaged", false, "allowed", "linking"),
+      "This record is damaged. No sync is waiting on it.",
+      `Until it's set aside, ${LINKING}`,
+      { label: "Set aside", acceptUnfinished: false },
+    ],
+    [
+      record("damaged", null, "allowed", "every-checkout"),
+      "This record is damaged, and it doesn't say whether a sync stopped part-way.",
+      `Until it's set aside, ${BULK("any")}`,
+      { label: "Set aside", acceptUnfinished: false },
+    ],
+  ])("says what %o holds back and how it can be set aside", (shown, state, holds, action) => {
+    expect(unreadableRecordLines(shown)).toEqual({ state, holds });
+    expect(setAsideAction(shown)).toEqual(action);
   });
 });

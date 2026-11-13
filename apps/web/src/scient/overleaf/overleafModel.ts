@@ -12,6 +12,7 @@ import type {
   ScientOverleafSyncResult,
   ScientOverleafDiffFile,
   ScientOverleafUndoResult,
+  ScientOverleafUnreadableRecord,
 } from "@t3tools/contracts";
 
 /** Overleaf's own page for a project. */
@@ -804,6 +805,45 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
         hasChanges: false,
         needsDecision: false,
       };
+  }
+}
+
+/** What one unreadable record holds back, and what the user can do about it. */
+export function unreadableRecordLines(record: ScientOverleafUnreadableRecord): {
+  readonly state: string;
+  readonly holds: string;
+} {
+  const state =
+    record.kind === "newer"
+      ? record.unfinished === true
+        ? "A newer version of Scient made this link, and its last sync didn't finish. Open that version to finish it; Scient keeps the record until then."
+        : record.unfinished === null
+          ? "A newer version of Scient made this link, and this version can't tell whether its last sync finished. Open that version to check; Scient keeps the record until then."
+          : "A newer version of Scient made this link. As far as this version can tell, its last sync finished."
+      : record.setAside === "confirm"
+        ? "This record is damaged, and its last sync stopped part-way. Setting it aside stops Scient guarding the files that sync left in the folder."
+        : record.unfinished === false
+          ? "This record is damaged. No sync is waiting on it."
+          : "This record is damaged, and it doesn't say whether a sync stopped part-way.";
+  const until = record.setAside === "held" ? "Until then" : "Until it's set aside";
+  const holds =
+    record.holds === "linking"
+      ? `${until}, Scient won't link folders.`
+      : `${until}, Scient won't link folders or change ${record.holds === "every-checkout" ? "any" : "this"} project's files in bulk, for example when switching branches.`;
+  return { state, holds };
+}
+
+/** The button that sets an unreadable record aside, if it can be: knowingly, when its unfinished sync loses its protection. */
+export function setAsideAction(
+  record: Pick<ScientOverleafUnreadableRecord, "setAside">,
+): { readonly label: string; readonly acceptUnfinished: boolean } | null {
+  switch (record.setAside) {
+    case "held":
+      return null;
+    case "confirm":
+      return { label: "Set aside anyway", acceptUnfinished: true };
+    case "allowed":
+      return { label: "Set aside", acceptUnfinished: false };
   }
 }
 
