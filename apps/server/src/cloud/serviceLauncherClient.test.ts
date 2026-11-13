@@ -14,6 +14,7 @@ import {
   type ServiceLauncherChildMessage,
   type ServiceLauncherParentMessage,
 } from "./serviceProtocol.ts";
+import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import * as ServiceLauncherClient from "./serviceLauncherClient.ts";
 
 class FakeLauncherProcess {
@@ -64,7 +65,8 @@ it.effect.each([3, SERVICE_LAUNCHER_PROTOCOL])(
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-trial-" });
       const baseDir = path.join(root, ".t3");
-      const exe = (version: string) => path.join(baseDir, "runtime/versions", version, "t3");
+      // SCIENT-FORK: launchers point at Scient's pinned npm bin, not a native t3 binary.
+      const exe = (version: string) => pinnedRuntimePaths(path, baseDir, version).entryPath;
       const installed = path.join(root, ".local/bin/t3");
       for (const file of [exe("1.0.0"), exe("1.1.0")]) {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });
@@ -216,7 +218,8 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
         const path = yield* Path.Path;
         const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
         const baseDir = path.join(root, ".t3");
-        const exe = (version: string) => path.join(baseDir, "runtime/versions", version, "t3");
+        // SCIENT-FORK: launchers point at Scient's pinned npm bin, not a native t3 binary.
+        const exe = (version: string) => pinnedRuntimePaths(path, baseDir, version).entryPath;
         const installed = path.join(root, "custom/bin/t3");
         const onPath = path.join(root, "bin/t3");
         for (const file of [exe("1.0.0"), exe("1.5.0"), exe("2.0.0")]) {
@@ -247,7 +250,8 @@ it.layer(NodeServices.layer)("self-update launchers", (it) => {
       const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
       const baseDir = path.join(root, ".t3");
-      const exe = (version: string) => path.join(baseDir, "runtime/versions", version, "t3");
+      // SCIENT-FORK: launchers point at Scient's pinned npm bin, not a native t3 binary.
+      const exe = (version: string) => pinnedRuntimePaths(path, baseDir, version).entryPath;
       const installed = path.join(root, ".local/bin/t3");
       const onPath = path.join(root, "bin/t3");
       for (const file of [exe("1.0.0"), exe("2.0.0")]) {

@@ -409,7 +409,6 @@ describe("PiAdapterV2 Extensions", () => {
       });
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       const command = "git status --short";
       const output = " M src/app.ts";
@@ -649,6 +648,7 @@ describe("PiAdapterV2 Extensions", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      fake.deferNextLifecycle("prompt");
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
       yield* fake.emit({
@@ -689,6 +689,7 @@ describe("PiAdapterV2 Extensions", () => {
             event.type === "provider_turn.updated" && event.providerTurn.acceptedAt !== undefined,
         ),
       );
+      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       yield* fake.emit({ type: "agent_settled" });
       assert.equal(
@@ -1206,6 +1207,7 @@ describe("PiAdapterV2 Offers", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      fake.deferNextLifecycle("prompt");
       yield* startTurn(runtime, providerThread, "default", [], "/extension-command");
       yield* fake.takeRequest("prompt");
       const pending = yield* takeEvent((e) => e.type === "provider_turn.updated");
@@ -1265,7 +1267,6 @@ describe("PiAdapterV2 Offers", () => {
       });
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       const accepted = yield* takeEvent(
         (e) => e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
@@ -1321,7 +1322,6 @@ describe("PiAdapterV2 Offers", () => {
       });
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       const accepted = yield* takeEvent(
         (e) => e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
@@ -1383,12 +1383,12 @@ describe("PiAdapterV2 Offers", () => {
       });
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
-      yield* fake.emit({ type: "response", command: "prompt", success: true });
       yield* fake.emit({ type: "agent_start" });
       const accepted = yield* takeEvent(
         (e) => e.type === "provider_turn.updated" && e.providerTurn.nativeAcceptance === "accepted",
       );
       if (accepted.type !== "provider_turn.updated") return;
+      fake.deferNextLifecycle("prompt");
       yield* runtime.steerTurn({
         threadId: THREAD_ID,
         runId: RunId.make(`run:${THREAD_ID}:1`),
@@ -1926,6 +1926,7 @@ describe("PiAdapterV2 Recovery", () => {
         modelSelection: modelSelection("default"),
         runtimePolicy,
       });
+      fake.deferNextLifecycle("prompt");
       yield* startTurn(runtime, providerThread);
       yield* fake.takeRequest("prompt");
       yield* fake.emit({

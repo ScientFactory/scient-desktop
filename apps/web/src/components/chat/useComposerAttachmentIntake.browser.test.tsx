@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 
 import { act, render } from "../../../test/render";
@@ -70,6 +70,10 @@ it("prepares a repeated paste without a tile, and still keeps a different image"
     return ids;
   };
   const input = {
+    // SCIENT-FORK:START — Scient's staging reads the target draft and other question drafts.
+    environmentId: EnvironmentId.make("environment-local"),
+    attachmentDraftTarget: target,
+    // SCIENT-FORK:END
     activeThreadId: ThreadId.make("thread"),
     activePendingProgress: null,
     activePendingIsResponding: false,

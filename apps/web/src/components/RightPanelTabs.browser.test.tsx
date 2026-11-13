@@ -187,6 +187,11 @@ function panel(activeSurface: RightPanelSurface) {
     onAddFiles: noop,
     onAddPullRequest: noop,
     onAddPullRequests: noop,
+    // SCIENT-FORK:START — Scient's agents, sources and Compute tabs.
+    onAddAgents: noop,
+    onAddSources: noop,
+    onAddCompute: noop,
+    // SCIENT-FORK:END
     onAddDevice: noop,
     browserAvailable: true,
     terminalAvailable: true,
@@ -194,6 +199,11 @@ function panel(activeSurface: RightPanelSurface) {
     filesAvailable: true,
     pullRequestAvailable: true,
     pullRequestsAvailable: true,
+    // SCIENT-FORK:START — Scient's agents, sources and Compute tabs.
+    agentsAvailable: true,
+    sourcesAvailable: true,
+    computeAvailable: true,
+    // SCIENT-FORK:END
     deviceAvailable: true,
     children: (
       <div data-testid="surface-content">

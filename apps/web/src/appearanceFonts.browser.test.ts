@@ -65,6 +65,7 @@ describe("applyAppearanceFontVariables", () => {
         sizeInterface: 16,
         sizePrompt: 14,
         sizeCode: 13,
+        weightInterface: 400,
         smoothing: true,
         separate: false,
       });

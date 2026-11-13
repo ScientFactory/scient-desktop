@@ -489,19 +489,22 @@ describe("Files panel search", () => {
   });
 
   it("keeps expanded folders when the panel remounts", async () => {
-    const panel = () => (
-      <FileBrowserPanel
-        environmentId={EnvironmentId.make("env-files")}
-        cwd="/repo"
-        projectName="repo"
-        selectedPath={null}
-        selectedPathRevealId={0}
-        onOpenFile={() => {}}
-        workspaceMutationId={null}
-      />
-    );
+    // SCIENT-FORK:START — Scient's lazy tree lists each folder through the mocked command.
+    setup();
+    const findTreeRow = (path: string) =>
+      document
+        .querySelector("file-tree-container")
+        ?.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${path}"]`) ?? null;
+    const panel = () => {
+      // The tree virtualizes its rows, so it needs a real viewport to render any.
+      const container = document.createElement("div");
+      container.style.cssText =
+        "display: flex; flex-direction: column; width: 320px; height: 480px;";
+      return render(<FileBrowserPanel {...props} cwd="/remount" />, { container });
+    };
+    // SCIENT-FORK:END
     {
-      await using _first = await render(panel());
+      await using _first = await panel();
       await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
       findTreeRow("src/")!.click();
       await vi.waitFor(() =>
@@ -509,7 +512,7 @@ describe("Files panel search", () => {
       );
     }
 
-    await using _second = await render(panel());
+    await using _second = await panel();
     await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
     await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
   });

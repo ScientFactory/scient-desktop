@@ -210,9 +210,11 @@ describe("scan cache round trip", () => {
       const expected = new Map(original);
       if (version < encoded.version) {
         for (const [file, entry] of expected) {
+          // v5/v6 writers had neither turn provenance nor the v13 1-hour cache-write column.
           const withoutProvenance = (record: UsageRecord) => {
             const compatible = { ...record };
             delete compatible.unresolvedServiceTierTurnId;
+            delete compatible.cacheCreation1hTokens;
             return compatible;
           };
           // Every older Claude entry re-parses so advisor usage is counted.

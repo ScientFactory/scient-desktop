@@ -162,7 +162,8 @@ describe("useActiveRowReveal", () => {
       { router: false },
     );
     const row = screen.getByText("thread-40", { exact: true }).element();
-    expect(observe).toHaveBeenCalledWith(row);
+    // SCIENT-FORK: Scient's shared observer groups targets by box, so it names the box too.
+    expect(observe).toHaveBeenCalledWith(row, { box: "content-box" });
 
     // A widening viewport unmounts the closed sheet before it ever opens.
     await screen.rerender(<div hidden />);

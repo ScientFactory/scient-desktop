@@ -28,7 +28,8 @@ function setup(locks?: Pick<LockManager, "request">) {
   __resetClientSettingsPersistenceForTests();
   let listener: ((settings: ClientSettings) => void) | null = null;
   const globals = stubGlobals({
-    window: {
+    // An event target like a real window, which also hears other tabs' storage writes.
+    window: Object.assign(new EventTarget(), {
       desktopBridge: {
         onClientSettingsChanged: (next: (settings: ClientSettings) => void) => {
           listener = next;
@@ -37,7 +38,7 @@ function setup(locks?: Pick<LockManager, "request">) {
           };
         },
       },
-    },
+    }),
     navigator: locks === undefined ? {} : { locks },
   });
   return {

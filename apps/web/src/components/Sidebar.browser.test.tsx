@@ -313,6 +313,8 @@ describe("sidebar settled pagination", () => {
           {
             scratchWorkspaceRoot: null,
             shellThreadFamilies: false,
+            // SCIENT-FORK: Scient's status placement reads every thread's settle capabilities.
+            environment: { capabilities: {} },
           } as unknown as EnvironmentServerConfig,
         ],
       ]),

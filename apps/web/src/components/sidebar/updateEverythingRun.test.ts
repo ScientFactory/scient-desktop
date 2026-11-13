@@ -11,6 +11,9 @@ import {
   setUpdateEverythingRun,
   startDesktopUpdateLaunchNotice,
 } from "./updateEverythingRun";
+// SCIENT-FORK:START — a retry sends only servers the sidebar still qualifies.
+import { publishQualifiedUpdateRunServers } from "./updateEverythingRun";
+// SCIENT-FORK:END
 
 function relaunchWhileRestarting(environmentId: EnvironmentId) {
   const now = 1_800_000_000_000;
@@ -116,8 +119,14 @@ describe("retryFailedUpdateRunServers", () => {
     const update = vi.fn(
       (_target: ServerUpdateTarget) => new Promise<ServerUpdateOutcome>(() => {}),
     );
+    // SCIENT-FORK:START — the sidebar still qualifies both servers for this update.
+    publishQualifiedUpdateRunServers(
+      [...serverVersions.keys()].map((environmentId) => failedMachine(environmentId).server),
+    );
+    // SCIENT-FORK:END
 
     retryFailedUpdateRunServers(update);
+    publishQualifiedUpdateRunServers([]); // SCIENT-FORK: the sidebar owner leaves
 
     let run: UpdateEverythingRun | null = null;
     setUpdateEverythingRun((current) => {

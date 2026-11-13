@@ -31,7 +31,8 @@ describe("ReadOnlySourcePreview", () => {
     // File paints nothing until the shared highlighter has loaded; once it has, mount renders synchronously.
     await getSyntaxHighlighterPromise("text");
     await using screen = await render(
-      <div className="flex h-[400px] flex-col">
+      // SCIENT-FORK: Tailwind does not scan Scient's test files, so the box sizes itself inline.
+      <div style={{ display: "flex", flexDirection: "column", height: 400 }}>
         <ReadOnlySourcePreview name="notes.txt" text={text} wordWrap={false} />
       </div>,
     );

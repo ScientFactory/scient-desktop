@@ -22,6 +22,9 @@ import {
   prepareModelPreferencesPatch,
 } from "./useSettings";
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
+// SCIENT-FORK:START — Scient saves client settings under its own storage key.
+import { SCIENT_DESKTOP_IDENTITY } from "@t3tools/shared/scientDesktopIdentity";
+// SCIENT-FORK:END
 
 beforeEach(() => {
   persistenceMocks.getClientSettings.mockReset().mockResolvedValue(null);
@@ -230,7 +233,9 @@ describe("persistClientSettingsPatch", () => {
       const otherTabSettings = { ...DEFAULT_CLIENT_SETTINGS, timestampFormat: "12-hour" as const };
       persistenceMocks.getClientSettings.mockResolvedValue(otherTabSettings);
       window.dispatchEvent(
-        Object.assign(new Event("storage"), { key: "t3code:client-settings:v1" }),
+        Object.assign(new Event("storage"), {
+          key: SCIENT_DESKTOP_IDENTITY.clientSettingsStorageKey /* SCIENT-FORK: Scient's key */,
+        }),
       );
 
       await persistClientSettingsPatch({ wordWrap: false });

@@ -115,7 +115,8 @@ it("Esc in the keybindings search clears the query without closing Settings", as
       </DialogPopup>
     </Dialog>,
   );
-  const search = page.getByRole("searchbox", { name: "Search keybindings" });
+  // SCIENT-FORK: Scient names the field "Search shortcuts".
+  const search = page.getByRole("searchbox", { name: "Search shortcuts" });
   await search.fill("sidebar");
 
   await userEvent.keyboard("{Escape}");

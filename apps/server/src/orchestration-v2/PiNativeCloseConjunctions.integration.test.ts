@@ -73,6 +73,17 @@ function processIsLive(pid: number): boolean {
   }
 }
 
+/** The adapter's request id on the prompt the synthetic peer is holding. */
+function heldPromptId(
+  wire: ReadonlyArray<{ readonly pid: number; readonly kind: string; readonly record?: unknown }>,
+  pid: number,
+): string {
+  const held = wire.find((row) => row.pid === pid && row.kind === "pending_prompt")?.record;
+  const id = typeof held === "object" && held !== null ? (held as { id?: unknown }).id : undefined;
+  assert.isString(id, "The held native prompt must carry a request id");
+  return id as string;
+}
+
 const waitForProjection = Effect.fn("PiClose.waitForProjection")(function* (
   orchestrator: OrchestratorV2["Service"],
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
@@ -151,11 +162,12 @@ const header = JSON.parse(fs.readFileSync(file, "utf8").split("\n")[0]);
 record("spawn", { argv: sessionArguments, sessionId: header.id });
 // Teardown ends stdin before SIGTERM (Effect 4.1 destroys an interrupted
 // writer's stream), so answer the held prompt late on whichever comes first.
+// Like Pi, prompt ACKs echo the request id and arrive only once the prompt is taken.
 const shutDown = reason => {
  record("shutdown", reason);
  const held = pendingPrompt;
  pendingPrompt = null;
- if (held) emit({ type: "response", command: "prompt", success: process.env.PI_CLOSE_LATE_ACK === "positive", ...(process.env.PI_CLOSE_LATE_ACK === "positive" ? {} : { error: "late rejected prompt" }) });
+ if (held) emit({ type: "response", id: held.id, command: "prompt", success: process.env.PI_CLOSE_LATE_ACK === "positive", ...(process.env.PI_CLOSE_LATE_ACK === "positive" ? {} : { error: "late rejected prompt" }) });
  process.exit(0);
 };
 process.on("SIGTERM", () => shutDown("SIGTERM"));
@@ -168,11 +180,11 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
  if (r.type === "get_entries") data = { entries: [], leafId: null };
  if (r.type === "get_available_models") data = { models: [] };
  if (r.type === "get_commands") data = { commands: [] };
- if (r.id) emit({ type: "response", id: r.id, command: r.type, success: true, data });
+ if (r.id && r.type !== "prompt") emit({ type: "response", id: r.id, command: r.type, success: true, data });
  if (r.type === "prompt") {
    if (r.message.includes("PENDING_NATIVE_HELD_610")) { pendingPrompt = r; record("pending_prompt", r); return; }
    streaming = true;
-   emit({ type: "response", command: "prompt", success: true });
+   emit({ type: "response", id: r.id, command: "prompt", success: true });
    emit({ type: "agent_start" });
    if (r.message.includes("SAME_FILE_REPLACEMENT_609")) {
      emit({ type: "message_start", message: { role: "assistant", content: [] } });
@@ -447,7 +459,12 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
             const late = after.wire
               .filter((row) => row.pid === oldProcess.pid && row.kind === "out")
               .map((row) => row.record);
-            assert.deepInclude(late, { type: "response", command: "prompt", success: true });
+            assert.deepInclude(late, {
+              type: "response",
+              id: heldPromptId(after.wire, oldProcess.pid),
+              command: "prompt",
+              success: true,
+            });
             assert.lengthOf(processes, 2);
             if (caseArtifacts !== undefined)
               yield* fs.writeFileString(
@@ -514,9 +531,15 @@ rl.createInterface({ input: process.stdin }).on("close", () => shutDown("stdin_e
             assert.deepInclude(
               late,
               scenario.lateAck
-                ? { type: "response", command: "prompt", success: true }
+                ? {
+                    type: "response",
+                    id: heldPromptId(after.wire, oldProcess.pid),
+                    command: "prompt",
+                    success: true,
+                  }
                 : {
                     type: "response",
+                    id: heldPromptId(after.wire, oldProcess.pid),
                     command: "prompt",
                     success: false,
                     error: "late rejected prompt",
