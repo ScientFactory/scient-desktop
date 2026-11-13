@@ -354,6 +354,67 @@ describe("Sources tools on the library backend", () => {
     }),
   );
 
+  it.effect("reads and writes each merged pin's project note by its own key", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const first = (yield* addSource(fixture, "First copy", "10.1000/first")).sourceId!;
+      const later = (yield* addSource(fixture, "Later copy", "10.1000/later")).sourceId!;
+      const note = (sourceId: string, text: string, noteBase?: string, citationKey?: string) =>
+        run(
+          organizeLibrarySourcesForInvocation({
+            change: {
+              action: "pin",
+              sourceId,
+              note: text,
+              ...(noteBase ? { noteBase } : {}),
+              ...(citationKey ? { citationKey } : {}),
+            },
+          }),
+          fixture,
+        );
+      yield* note(first, "Why the first copy");
+      yield* note(first, "Same text", "Why the first copy");
+      yield* note(later, "Why the later copy");
+      yield* note(later, "Same text", "Why the later copy");
+      const keyOf = (pins: ReadonlyArray<{ sourceId: string; citationKey: string }>, id: string) =>
+        pins.find((pin) => pin.sourceId === id)!.citationKey;
+      const before = yield* Effect.promise(() => readScientProjectPins(fixture.root));
+      const firstKey = keyOf(before, first);
+      const laterKey = keyOf(before, later);
+      yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "merge", sourceIds: [first, later], survivorId: later },
+        }),
+        fixture,
+      );
+
+      const notesOf = (detail: {
+        readonly projectNoteHistory?: ReadonlyArray<{ note: string | null }>;
+      }) => detail.projectNoteHistory?.map((version) => version.note);
+      const survivor = yield* run(getScientSourceForInvocation({ sourceId: later }), fixture);
+      expect(survivor).toMatchObject({ citationKey: laterKey, alsoCitedAs: [firstKey] });
+      expect(notesOf(survivor)).toEqual(["Why the later copy", "Same text"]);
+      const earliest = yield* run(
+        getScientSourceForInvocation({ sourceId: later, citationKey: firstKey }),
+        fixture,
+      );
+      expect(notesOf(earliest)).toEqual(["Why the first copy", "Same text"]);
+
+      // Restoring the history it read lands on that pin, not on the one the ID resolves to.
+      expect(yield* note(later, "Why the first copy", "Same text", firstKey)).toMatchObject({
+        outcome: "existing",
+        pin: { citationKey: firstKey, note: "Why the first copy" },
+      });
+      const pins = yield* Effect.promise(() => readScientProjectPins(fixture.root));
+      expect(pins.map((pin) => [pin.citationKey, pin.note])).toEqual(
+        expect.arrayContaining([
+          [firstKey, "Why the first copy"],
+          [laterKey, "Same text"],
+        ]),
+      );
+    }),
+  );
+
   it.effect("pins what an agent adds; list, library scope and search mark the pins", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

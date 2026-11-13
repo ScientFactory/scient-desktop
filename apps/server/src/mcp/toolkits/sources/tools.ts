@@ -254,6 +254,7 @@ export const ScientSourceAgentDetail = Schema.Struct({
   ),
   pinned: Schema.optionalKey(Schema.Boolean),
   projectNote: Schema.optionalKey(NullableText),
+  alsoCitedAs: Schema.optionalKey(Schema.Array(CitationKey)),
   /** Library mode: earlier project notes, oldest first; restore one with organize pin. */
   projectNoteHistory: Schema.optionalKey(
     Schema.Array(
@@ -321,20 +322,25 @@ const sourcesListTool = (mode: SourcesBackendMode) =>
 
 const ScientSourcesListTool = sourcesListTool("project");
 
-const ScientSourceGetTool = Tool.make("scient_sources_get", {
-  description:
-    "Read one Source: metadata, revision, provenance, attachments and kept revisions (newest first, with who saved each and what changed). Abstracts over 50,000 characters are cut (abstractTruncated).",
-  parameters: Schema.Struct({ sourceId: NonEmptyString }),
-  success: ScientSourceAgentDetail,
-  failure: ScientSourcesToolError,
-  dependencies,
-})
-  .annotate(Tool.Title, "Read a project source")
-  .annotate(Tool.Readonly, true)
-  .annotate(Tool.Destructive, false)
-  .annotate(Tool.Idempotent, true)
-  .annotate(Tool.OpenWorld, false)
-  .annotate(ScientOperation, sourceOperation("sources.get", false));
+const sourceGetTool = (mode: SourcesBackendMode) =>
+  Tool.make("scient_sources_get", {
+    description: `Read one Source: metadata, revision, provenance, attachments and kept revisions (newest first, with who saved each and what changed). Abstracts over 50,000 characters are cut (abstractTruncated).${mode === "project" ? "" : " Several pins of it (alsoCitedAs): citationKey picks whose project note and history."}`,
+    parameters:
+      mode === "project"
+        ? Schema.Struct({ sourceId: NonEmptyString })
+        : Schema.Struct({ sourceId: NonEmptyString, citationKey: Schema.optionalKey(CitationKey) }),
+    success: ScientSourceAgentDetail,
+    failure: ScientSourcesToolError,
+    dependencies,
+  })
+    .annotate(Tool.Title, "Read a project source")
+    .annotate(Tool.Readonly, true)
+    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Idempotent, true)
+    .annotate(Tool.OpenWorld, false)
+    .annotate(ScientOperation, sourceOperation("sources.get", false));
+
+const ScientSourceGetTool = sourceGetTool("project");
 
 export const ScientSourceNoteUpdateResult = Schema.Struct({
   outcome: Schema.Literals(["updated", "unchanged", "stale"]),
@@ -1130,6 +1136,7 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     sourceId: NonEmptyString,
     note: Schema.optionalKey(NullableText),
     noteBase: Schema.optionalKey(NullableText),
+    citationKey: Schema.optionalKey(CitationKey),
   }),
   Schema.Struct({ action: Schema.Literal("unpin"), citationKey: NonEmptyString }),
   Schema.Struct({
@@ -1218,7 +1225,7 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer; export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes), import-package brings one in. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes).`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note, on the pin citationKey names when several cite it; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer; export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes), import-package brings one in. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes).`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );
@@ -1437,7 +1444,7 @@ export const ScientSourcesToolkit = Toolkit.make(
 /** The same tools in the same order, with the library backend's scope, pins and merges. */
 export const ScientSourcesLibraryToolkit = Toolkit.make(
   sourcesListTool("library"),
-  ScientSourceGetTool,
+  sourceGetTool("library"),
   sourceNoteUpdateTool("library"),
   ScientSourceLibraryMetadataUpdateTool,
   ScientSourceRemoveTool,

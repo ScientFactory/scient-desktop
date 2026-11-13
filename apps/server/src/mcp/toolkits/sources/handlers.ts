@@ -76,6 +76,7 @@ import {
   alsoPinnedIn,
   distinctPinnedWorks,
   listProjectPinnedWorks,
+  projectPinOfLibrarySource,
   projectPinsByLibraryId,
   refreshProjectAfterLibraryChange,
   resolveLibrarySourceId,
@@ -824,6 +825,39 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
   switch (change.action) {
     case "pin": {
       const sourceId = yield* sourceIdIn(store, change.sourceId);
+      // A note goes to the pin `get` showed: the same key, or the same choice without one.
+      const existing =
+        change.note !== undefined || change.citationKey !== undefined
+          ? yield* attempt(() =>
+              projectPinOfLibrarySource(store, {
+                sourceId,
+                requestedId: change.sourceId,
+                ...(change.citationKey !== undefined ? { citationKey: change.citationKey } : {}),
+              }),
+            )
+          : null;
+      if (change.citationKey !== undefined && !existing) {
+        return { outcome: "not-pinned" as const };
+      }
+      if (existing) {
+        if (change.note === undefined) {
+          return { outcome: "existing" as const, pin: pinSummary(existing.pin) };
+        }
+        const noted = yield* attempt(() =>
+          setScientProjectPinNote({
+            projectRoot: store.root,
+            citationKey: existing.pin.citationKey,
+            note: change.note ?? null,
+            base: change.noteBase ?? null,
+            actor: "agent",
+          }),
+        );
+        if (noted.outcome === "not-pinned") return { outcome: "not-pinned" as const };
+        return {
+          outcome: noted.outcome === "stale" ? ("stale" as const) : ("existing" as const),
+          pin: pinSummary(noted.pin),
+        };
+      }
       const pinned = yield* attempt(() =>
         pinScientLibrarySource({
           projectRoot: store.root,
@@ -1031,7 +1065,7 @@ export const bulkUpdateScientSourcesForInvocation = Effect.fn("ScientSourcesTool
 );
 
 export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get")(
-  function* (input: { readonly sourceId: string }) {
+  function* (input: { readonly sourceId: string; readonly citationKey?: string }) {
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
     const sourceId = yield* sourceIdIn(store, input.sourceId);
@@ -1041,10 +1075,17 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
         : yield* attempt(() => readScientSourceRecord(root, sourceId));
     if (!record) return yield* toolError("not-found", "The source was not found in this project.");
     const revisions = yield* attempt(() => listScientSourceRevisions(root, sourceId));
-    const pin =
+    const pinned =
       store.kind === "library"
-        ? (yield* attempt(() => projectPinsByLibraryId(store))).get(sourceId)
-        : undefined;
+        ? yield* attempt(() =>
+            projectPinOfLibrarySource(store, {
+              sourceId,
+              requestedId: input.sourceId,
+              ...(input.citationKey !== undefined ? { citationKey: input.citationKey } : {}),
+            }),
+          )
+        : null;
+    const pin = pinned?.pin;
     const noteHistory =
       store.kind === "library" && pin
         ? yield* attempt(() =>
@@ -1104,6 +1145,7 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
         ? {
             pinned: pin !== undefined,
             ...(pin ? { citationKey: pin.citationKey, projectNote: pin.note ?? null } : {}),
+            ...(pinned && pinned.alsoCitedAs.length > 0 ? { alsoCitedAs: pinned.alsoCitedAs } : {}),
             ...(noteHistory && noteHistory.length > 1
               ? {
                   projectNoteHistory: noteHistory.map(({ note, at, by }) => ({
@@ -1389,7 +1431,7 @@ export const removeScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.r
 );
 
 export const restoreScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.restore")(
-  function* (input: { readonly sourceId: string }) {
+  function* (input: { readonly sourceId: string; readonly citationKey?: string }) {
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
     const result = yield* attempt(() =>
