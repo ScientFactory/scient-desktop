@@ -599,7 +599,11 @@ entry from a v1 store whose ID the library lacks, so neither an old copy nor
 another project that imported the same work under its own ID brings a removed
 record back; a contradicting work is still copied. PDFs, full text and
 highlights are copied only for the records and trash entries the library keeps
-(bytes a kept source shares stay); the rest is in the sealed pre-move archive
+(bytes a kept source shares stay). The allowlist includes the Library's retained
+live records and actual Trash entries, even when a resumed move settles a v1
+live record as `removed`. Keeping an existing same-ID Trash entry uses that
+entry's attachments, not the incoming copy's. Tombstones and unreferenced orphan
+payloads add no hashes. The rest is in the sealed pre-move archive
 and the move's backup, never in the live Library. Nothing clears a tombstone: a
 live record of the same work, imported again on purpose (by intake or a project
 package), resolves first. The Trash listing names, per entry, the checkouts that would

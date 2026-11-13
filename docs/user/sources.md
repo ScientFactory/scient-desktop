@@ -106,6 +106,10 @@ says why; Scient tries again with the next change to the Library or its next
 background pass, and **Check again** shows the latest state. If the project's `.scient` folder is tracked in git, commit the
 change so PDFs stop being stored in git.
 
+If you put a paper in the Trash during an interrupted move, resuming keeps it
+there and finishes copying its PDFs, full text and highlights. **Restore** brings
+them back with the paper. A paper deleted for good stays deleted.
+
 **The copy from before the move.** Before the move deletes anything from
 `.scient/sources`, it saves a sealed copy of the project's sources, with their
 earlier revisions, the trash, collections, reviews, the exact PDFs and their

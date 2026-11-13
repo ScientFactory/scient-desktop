@@ -65,6 +65,8 @@ import {
 import {
   decodePersistedScientSourceRecord,
   inspectScientSources,
+  listScientSourceRecords,
+  readScientSourceTrashEntries,
   SCIENT_SOURCES_DIRECTORY,
   scientSourceIdFor,
   scientSourceStoreInternals,
@@ -1156,10 +1158,13 @@ async function copyIntoLibrary(
             record: toLibraryRecord(entry.record),
           });
         }
-        need(entry.record);
       }
     });
   }
+  await locked(ctx, async () => {
+    for (const record of await listScientSourceRecords(ctx.library)) need(record);
+    for (const entry of await readScientSourceTrashEntries(ctx.library)) need(entry.record);
+  });
   const pdfs = new Set<string>();
   const copies = v1.files.filter((file) => {
     const match = PDF_FILE.exec(file) ?? TEXT_FILE.exec(file);
