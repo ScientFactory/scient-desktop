@@ -141,7 +141,9 @@ report on the review lists what is left to decide until you dismiss it.
 ### Possible duplicates
 
 When the same paper reaches your Library twice, for example from two projects,
-Scient merges the copies on its own only when it is sure. They must share a
+Scient merges the copies on its own only when it is sure. If one merge in a
+group fails, copies that were joined to the group only through that one wait
+for the next pass. They must share a
 DOI, PubMed, PMC, arXiv, OpenAlex or Semantic Scholar ID, the same Zotero
 item, or the same PDF, and also have the same title (ignoring case, spacing
 and punctuation) and the same known type. Every copy in a merge must be joined
@@ -157,8 +159,10 @@ copy that shares its identifier, Zotero item or PDF (for a book, its ISBN)
 unless something it does say disagrees: another title, another known type (a
 chapter is not its book, an article is not a dataset), another arXiv version,
 or another identifier. A paper added again the same way gets the same check,
-so a registry that has since corrected its title gives a new copy. If it
-disagrees, matches more than one copy, or the copy is one whose merge with it
+so a registry that has since corrected its title gives a new copy. When it
+says too little to tell two copies that disagree with each other apart (a bare
+DOI that two copies with different titles carry), Scient does not pick one. If
+it disagrees, matches more than one copy, or the copy is one whose merge with it
 you undid or whose merge details cannot be read, it is added as its own copy
 and the pair is listed below with the reason, so a wrong DOI on one paper never
 makes another paper stand in for it. The preview before a Zotero or PDF import
@@ -217,7 +221,10 @@ and its PDF, and keeps the paper's citation key, its note for this project and
 its place in reviews. **Undo** in the confirmation goes back. Choose **Keep
 separate** when it is not: Scient never links the paper to those copies on its
 own, even if their details change later to agree, until you choose **Ask
-again** or link it yourself. Undoing a link brings back a **Keep separate** you
+again** or link it yourself. If those copies change so that they no longer
+match at all, the paper still shows as kept separate, with **Ask again**, and
+Scient does not add a copy of its own for it to your Library until you ask
+again. Undoing a link brings back a **Keep separate** you
 had chosen before it.
 
 ## Import from Zotero
@@ -356,7 +363,8 @@ one copy in your Library carries is that copy: it is reported as already in the
 Library without asking the registry, so this works offline too. An ISBN finds a
 whole book, never a chapter that shares it. When two or more copies carry the
 identifier, Scient does not pick one; it looks the identifier up and judges by
-the registry's title and type. Entries of the last kind stay in the box so
+the registry's title and type. An agent that adds a source by its identifier
+alone gets the same answer. Entries of the last kind stay in the box so
 **Add** tries them again. Up to 50 identifiers can be added at a time.
 
 Open Library is edited by its readers, so a listing there without any author

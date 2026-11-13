@@ -270,7 +270,12 @@ merged, and its receipt names the strongest such link. The survivor holds by
 then every identifier, item and PDF of the records merged into it, so the
 receipt's kind is evidence the two sides of that merge share; there is no
 default kind. Example: A with DOI X, B with DOI X and PMID Y, C with PMID Y,
-all agreeing, survivor A: B merges first, then C on the PMID A now holds.
+all agreeing, survivor A: B merges first, then C on the PMID A now holds. Each
+loser carries its corroborated links to the records ahead of it, and the pass
+uses the strongest link to one whose merge succeeded in this pass; a loser with
+none (its bridge failed) is not merged and is reported as a failure, so a
+receipt never names evidence the survivor did not gain. The next pass plans
+again.
 
 Every linked pair not merged is listed as `possible-item-match`,
 `possible-identifier-match` or `possible-pdf-match` with a `reason`:
@@ -305,10 +310,15 @@ the copy carrying it; two titles that differ, two known types that differ,
 different explicit arXiv versions or conflicting identifiers are. The record
 the candidate's own key derives gets the same check: a derived ID (an
 identifier hash, an agent key without the type, a Zotero item key) is no proof
-of one work, so an idempotent retry is recognized by its facts agreeing. When
-that record and others pass, it is preferred; otherwise exactly one passing
-record is reused. Several, or only disagreeing ones, leave the candidate
-`new`: it is stored as its own record, `matchingSourceIds` names the others
+of one work. Of several passing records, the locked import first takes the one
+this same operation already wrote (the ID derived from source key and
+operation, or the derived ID with `origin.operationId` equal): that durable
+record is how a genuine retry is recognised, and exclusions are judged against
+it. Otherwise the own-key record is preferred only when no two passing records
+disagree with each other (intake rule, distinct pair or kept-apart pair):
+missing facts that make disagreeing copies look alike choose none of them.
+Otherwise exactly one passing record is reused. Several, or only disagreeing
+ones, leave the candidate `new`: it is stored as its own record, `matchingSourceIds` names the others
 and `reason` says why ("Kept as a separate source: it shares an identifier
 with an existing source, but the titles differ."), and the Library's
 duplicates read lists the pair. A new record never takes an ID that names an
@@ -323,9 +333,14 @@ preflight under its staged key, both through the assessor, so an undone or
 held-back pair is offered as `new` rather than hidden as an exact duplicate.
 The locked import checks again.
 
-A bare identifier (`SourceIdentifierAdd.ts` `localCopy`) that exactly one
-stored record carries (for an ISBN, one whole book) and that the assessment
-reuses is reported as that record without a registry call, offline too. Two or
+A bare identifier (`SourceIdentifierAdd.ts` `selectIdentifierCopy`) that
+exactly one stored record carries (for an ISBN, one whole book) and that the
+assessment reuses is reported as that record without a registry call, offline
+too. The identifier list and an agent add whose citation fields are identifiers
+alone (`identifierOnlyInput` in the sources handlers; type `other` without a
+name counts as no type) select the same way; when nothing is selected, the
+latter goes through the agent add with type `book` for ISBNs only and `other`
+otherwise, never a type it has to invent to pass validation. Two or
 more carriers are not chosen between: the identifier is resolved and the
 registry's title and type are judged. A paper download (`paperIntake.ts`)
 builds the paper's own candidate (type `article`, or `preprint` for an arXiv
@@ -650,7 +665,11 @@ entry back (or none). `keep-pin-separate` records the decision in the map's
 `keptSeparate: true`, and `clear-pin-separate` withdraws it. The decision
 holds: resolution leaves the rejected IDs (and what their aliases resolve to)
 out of matching for that project source ID, so a rejected copy whose metadata
-later agrees still does not resolve it, and nothing is hydrated meanwhile. A
+later agrees still does not resolve it, and nothing is hydrated meanwhile.
+When nothing matches any more (the rejected copy's identifier was corrected),
+the source stays unresolved as `contradicted` with `keptSeparate` and the
+rejected IDs as candidates, so its detail, the review read and Ask again still
+show it; only after Ask again can a write-mode resolution hydrate it. A
 later link withdraws it and keeps it on the `linked` entry
 (`replacedSeparate`); `unlink-pin` puts it back. Older map files without these
 fields read as before.
