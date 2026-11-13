@@ -80,6 +80,21 @@ it("keeps raster screenshots from a tool result, in order", () => {
   assert.deepEqual(ompToolImages({ content: "text" }), []);
 });
 
+it("shows pictures generate_image made, called directly or through its device", () => {
+  const made = { images: [{ mimeType: "image/webp", data: "CCCC", size: "1024x1024" }] };
+  assert.deepEqual(ompToolImages({ content: [], details: made }), [
+    { mimeType: "image/webp", data: "CCCC" },
+  ]);
+  assert.deepEqual(ompToolImages({ details: { xdev: { tool: "generate_image", inner: made } } }), [
+    { mimeType: "image/webp", data: "CCCC" },
+  ]);
+  // A resumed session stores a reference in place of the bytes.
+  assert.deepEqual(
+    ompToolImages({ details: { images: [{ mimeType: "image/webp", data: "blob:sha256:ab" }] } }),
+    [],
+  );
+});
+
 it("reads the macOS panes the agent says were refused", () => {
   assert.deepEqual(
     ompComputerPermissionsNeeded(

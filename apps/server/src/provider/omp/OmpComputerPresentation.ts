@@ -117,19 +117,28 @@ export const retainedComputerPresentation = (
       }
     : undefined;
 
-/** The images a tool result shows, as the timeline serves them: its image blocks, then the pictures `generate_image` made. */
+/** Pictures `generate_image` made, called directly or through its `xd://` device. */
+const generatedImages = (details: unknown): ReadonlyArray<unknown> => {
+  if (!isRecord(details)) return [];
+  const inner = isRecord(details.xdev) ? details.xdev.inner : details;
+  return isRecord(inner) && Array.isArray(inner.images)
+    ? inner.images.map((image) => (isRecord(image) ? { ...image, type: "image" } : image))
+    : [];
+};
+
+/** The images a tool result shows, as the timeline serves them: its image blocks, then generated pictures. */
 export const ompToolImages = (result: unknown): ReadonlyArray<OmpToolImage> => {
   if (!isRecord(result)) return [];
-  const generated =
-    isRecord(result.details) && Array.isArray(result.details.images)
-      ? result.details.images.map((image) =>
-          isRecord(image) ? { ...image, type: "image" } : image,
-        )
-      : [];
+  const generated = generatedImages(result.details);
   const images: Array<OmpToolImage> = [];
   for (const block of [...(Array.isArray(result.content) ? result.content : []), ...generated]) {
     const image = readToolOutputImage(block);
-    if (image?.data === undefined || image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH)
+    // A saved session replaces image bytes with a `blob:` reference.
+    if (
+      image?.data === undefined ||
+      image.data.startsWith("blob:") ||
+      image.data.length > MAX_TOOL_OUTPUT_IMAGE_BASE64_LENGTH
+    )
       continue;
     images.push({ mimeType: image.mimeType, data: image.data });
     if (images.length === MAX_TOOL_OUTPUT_IMAGES) break;

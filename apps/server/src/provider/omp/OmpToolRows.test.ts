@@ -85,10 +85,19 @@ it("shows a written file's new content", () => {
   );
 });
 
-it("leaves other tools as generic rows", () => {
+it("leaves other tools, and writes to agent devices, as generic rows", () => {
+  const rows = new OmpToolRows(redact);
   assert.isUndefined(
-    new OmpToolRows(redact).row("r1", "read", {
+    rows.row("r1", "read", {
       input: { path: "a.ts" },
+      data: undefined,
+      output: undefined,
+      status: "running",
+    }),
+  );
+  assert.isUndefined(
+    rows.row("w1", "write", {
+      input: { path: "xd://generate_image", content: "{}" },
       data: undefined,
       output: undefined,
       status: "running",

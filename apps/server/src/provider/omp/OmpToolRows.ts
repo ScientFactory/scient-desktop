@@ -25,6 +25,12 @@ const nonEmpty = (value: unknown): string | undefined => {
   return text ? text : undefined;
 };
 
+/** `xd://generate_image` and other agent URIs are devices and documents, not files. */
+const filePath = (value: unknown): string | undefined => {
+  const path = nonEmpty(value);
+  return path === undefined || /^[a-z][a-z\d+.-]*:\/\//iu.test(path) ? undefined : path;
+};
+
 const head = (value: string, max = MAX_TEXT_BYTES) =>
   Buffer.byteLength(value) <= max
     ? value
@@ -113,7 +119,7 @@ const editRow = (call: ToolCall, redact: (text: string) => string): NativeToolRo
   const files = (
     Array.isArray(result?.perFileResults) ? result.perFileResults : result ? [result] : []
   ).flatMap((file) => fileSnapshot(file) ?? []);
-  const fileName = files[0]?.path ?? nonEmpty(isRecord(input) ? input.path : undefined);
+  const fileName = files[0]?.path ?? filePath(isRecord(input) ? input.path : undefined);
   if (fileName === undefined) return undefined;
   const patches = files.flatMap((file) => snapshotPatch(file) ?? []);
   const failure = status === "failed" ? nonEmpty(output) : undefined;
@@ -136,8 +142,9 @@ const editRow = (call: ToolCall, redact: (text: string) => string): NativeToolRo
 
 const writeRow = (call: ToolCall, redact: (text: string) => string): NativeToolRow | undefined => {
   const { input, data, output, status } = call;
-  const fileName =
-    nonEmpty(details(data)?.resolvedPath) ?? nonEmpty(isRecord(input) ? input.path : undefined);
+  const requested = isRecord(input) ? input.path : undefined;
+  if (requested !== undefined && filePath(requested) === undefined) return undefined;
+  const fileName = nonEmpty(details(data)?.resolvedPath) ?? filePath(requested);
   if (fileName === undefined) return undefined;
   const content = string(isRecord(input) ? input.content : undefined);
   const max = status === "running" ? MAX_RUNNING_TEXT_BYTES : MAX_TEXT_BYTES;
