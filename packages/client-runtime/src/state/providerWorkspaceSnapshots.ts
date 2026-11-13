@@ -11,8 +11,8 @@ type ServerProviderEntry = ServerConfig["providers"][number];
  * The provider-wide fields a workspace snapshot builds on. A live session, a sign-out, or a
  * /usage-limits change shows up here, so a snapshot fetched before it no longer applies.
  */
-// SCIENT-FORK:START — a reply's own machine fields decide its provenance. Replies leave out
-// the models and the catalog digest, so those come from the config's provider, as upstream.
+// SCIENT-FORK:START — a full inventory reply's own machine fields decide its provenance. Replies
+// leave out the models and the catalog digest, so those come from the config's provider, as upstream.
 const snapshotBasis = (
   provider: ServerProviderEntry | undefined,
   configProvider: ServerProviderEntry | undefined = provider,
@@ -77,7 +77,8 @@ export function recordFetchedWorkspaceSnapshot(
   if (provider?.nativeInventoryGeneration !== configProvider?.nativeInventoryGeneration) {
     return current;
   }
-  const basis = snapshotBasis(provider, configProvider);
+  // A cwd reply leaves out the machine lists, so its basis is the config's, as upstream.
+  const basis = snapshotBasis(configProvider);
   const snapshot = provider?.workspaceSnapshots?.find((candidate) => candidate.cwd === input.cwd);
   const stored = current.find(
     (entry) => entry.instanceId === input.instanceId && entry.snapshot.cwd === input.cwd,
