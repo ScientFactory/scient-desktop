@@ -298,6 +298,9 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("OverleafSync", () => {
           reason: "token-missing",
         });
         expect(yield* w.service.tokenStatus).toEqual({ saved: false });
+        expect(yield* Effect.flip(w.service.saveToken("olp_first half"))).toMatchObject({
+          reason: "token-invalid",
+        });
         yield* w.service.saveToken(` ${TOKEN} `);
         expect(yield* w.service.tokenStatus).toEqual({ saved: true });
         expect(

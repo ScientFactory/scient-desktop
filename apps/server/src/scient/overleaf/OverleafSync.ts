@@ -85,6 +85,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
       "workspace-not-authorized",
       /** No Overleaf token is saved. */
       "token-missing",
+      /** A token to save is empty, too long, or has spaces inside it. */
+      "token-invalid",
       "project-invalid",
       /** Overleaf refused the token or this account's access to the project. */
       "access-denied",
@@ -108,6 +110,8 @@ export class OverleafSyncRefusedError extends Schema.TaggedError<OverleafSyncRef
         return "This Overleaf link does not belong to this project.";
       case "token-missing":
         return "No Overleaf Git token is saved. Save one first.";
+      case "token-invalid":
+        return "That isn't an Overleaf Git token. Copy it again from Overleaf.";
       case "project-invalid":
         return "That is not an Overleaf project link or ID.";
       case "access-denied":
@@ -743,7 +747,7 @@ const make = Effect.fn("OverleafSync.make")(function* (options: OverleafSyncOpti
   const saveToken = Effect.fn("OverleafSync.saveToken")(function* (token: string) {
     const trimmed = token.trim();
     if (trimmed.length === 0 || /\s/u.test(trimmed) || trimmed.length > 512)
-      return yield* new OverleafSyncRefusedError({ reason: "token-missing" });
+      return yield* new OverleafSyncRefusedError({ reason: "token-invalid" });
     yield* credentialLock.withPermits(CREDENTIAL_PERMITS)(
       Effect.gen(function* () {
         yield* secrets.set(TOKEN_SECRET, new TextEncoder().encode(trimmed));
