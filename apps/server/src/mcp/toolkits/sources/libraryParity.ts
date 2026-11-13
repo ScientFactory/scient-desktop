@@ -137,6 +137,10 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "move-back": ["move-back"],
   "dismiss-move-summary": ["dismiss-move-summary"],
   "restore-pre-move": ["restore-pre-move"],
+  "export-package": ["export-package"],
+  "import-package": ["import-package"],
+  // Agents find package folders with their own file tools.
+  "list-packages": [],
 };
 
 /** Every Library read endpoint and the agent tool that reads the same thing. */

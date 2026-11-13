@@ -138,3 +138,36 @@ export async function recordScientProjectNoteChange(
     MAX_HISTORY_BYTES,
   );
 }
+
+/**
+ * Keeps another copy's note for a pin (from an imported package) as a `found` version just before
+ * the note the pin has now, so either can be restored. The caller holds the project's pins lock.
+ */
+export async function recordScientProjectNoteFromElsewhere(
+  root: string,
+  input: {
+    readonly sourceId: string;
+    readonly pinnedAt: string;
+    readonly current: string;
+    readonly other: string;
+  },
+): Promise<void> {
+  const now = new Date().toISOString();
+  const kept = scientProjectNoteVersionsWithCurrent(
+    await readScientProjectNoteHistory(root, input.sourceId),
+    input.current,
+    input.pinnedAt,
+    now,
+  );
+  if (kept.some((version) => version.note === input.other)) return;
+  const versions = [
+    ...kept.slice(0, -1),
+    { note: input.other, at: now, kind: "found" as const },
+    kept.at(-1)!,
+  ];
+  await atomicWriteJson(
+    historyPath(root, input.sourceId),
+    { formatVersion: 1, sourceId: input.sourceId, versions: pruned(versions) },
+    MAX_HISTORY_BYTES,
+  );
+}

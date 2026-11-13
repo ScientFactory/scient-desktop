@@ -2686,6 +2686,8 @@ export async function dismissScientLibraryMoveSummary(input: {
 }
 
 export const scientLibraryMoveInternals = {
+  annotationFile,
+  mergeAnnotationFiles,
   migrationDirectory: (libraryRoot: string, instanceId: string) =>
     migrationDirectory({ libraryRoot, instanceId }),
   readJournalAt,

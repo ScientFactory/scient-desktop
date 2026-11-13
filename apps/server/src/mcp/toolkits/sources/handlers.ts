@@ -142,6 +142,10 @@ import {
 } from "../../../scient/sources/LibraryCitation.ts";
 import { syncPinnedBibliography } from "../../../scient/sources/ManagedBibliography.ts";
 import {
+  exportLibraryProjectPackage,
+  importLibraryProjectPackage,
+} from "../../../scient/sources/LibraryProjectPackage.ts";
+import {
   moveProjectBackIntoProject,
   restoreProjectPreMoveArchive,
   readLibraryMoveStatus,
@@ -730,7 +734,9 @@ const isLibraryOrganizeChange = (
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
   change.action === "dismiss-move-summary" ||
-  change.action === "restore-pre-move";
+  change.action === "restore-pre-move" ||
+  change.action === "export-package" ||
+  change.action === "import-package";
 
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
 export const organizeLibrarySourcesForInvocation = Effect.fn(
@@ -914,6 +920,10 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
       };
     case "restore-pre-move":
       return yield* restorePreMove(store.root, change);
+    case "export-package":
+      return yield* attempt(() => exportLibraryProjectPackage(store, change));
+    case "import-package":
+      return yield* attempt(() => importLibraryProjectPackage(store, change, "agent"));
   }
 });
 

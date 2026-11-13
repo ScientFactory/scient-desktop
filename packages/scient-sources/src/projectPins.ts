@@ -32,6 +32,7 @@ import {
 import {
   readScientProjectNoteHistory,
   recordScientProjectNoteChange,
+  recordScientProjectNoteFromElsewhere,
   scientProjectNoteVersionsWithCurrent,
   type ScientProjectNoteChange,
   type ScientProjectNoteVersion,
@@ -952,5 +953,75 @@ export async function listScientProjectPinnedWorks(input: {
       pinnedAt: pin.pinnedAt,
       incompleteSnapshot: incomplete && scientRecordOnlyFromProjectFile(found),
     };
+  });
+}
+
+export interface ScientProjectPinsJoin {
+  readonly added: number;
+  /** Pins this project had without a note, which took the incoming one. */
+  readonly notesAdded: number;
+  /** Pins whose own note stays; the incoming note is kept in its note history. */
+  readonly notesKept: number;
+  /** Incoming keys another source here already used, and the keys they got. */
+  readonly renamedKeys: ReadonlyArray<{ readonly from: string; readonly to: string }>;
+}
+
+/**
+ * Joins pins from another copy of a project (a package) into this one: a source pinned here
+ * keeps its pin and note, an incoming note it lacks is added, a differing one goes into its note
+ * history; a new source keeps its key unless another source here has it. Writes `pins.json` once.
+ */
+export async function joinScientProjectPins(input: {
+  readonly projectRoot: string;
+  readonly pins: ReadonlyArray<ScientProjectPin>;
+}): Promise<ScientProjectPinsJoin> {
+  const root = await projectRootFor(input.projectRoot);
+  return withPinsLock(root, async () => {
+    const document = await readPinsDocument(root);
+    const pins = [...document.pins];
+    const taken = new Set(pins.map(({ pin }) => citationKeyComparisonValue(pin.citationKey)));
+    let added = 0;
+    let notesAdded = 0;
+    let notesKept = 0;
+    const renamedKeys: Array<{ from: string; to: string }> = [];
+    for (const incoming of input.pins) {
+      const index = pins.findIndex(({ pin }) => pin.sourceId === incoming.sourceId);
+      const existing = index >= 0 ? pins[index]! : undefined;
+      if (existing) {
+        if (incoming.note === undefined || incoming.note === existing.pin.note) continue;
+        if (existing.pin.note === undefined) {
+          await recordScientProjectNoteChange(root, {
+            ...noteChange(existing.pin, incoming.note, incoming.pinnedBy, undefined),
+          });
+          pins[index] = { ...existing, pin: { ...existing.pin, note: incoming.note } };
+          notesAdded += 1;
+        } else {
+          await recordScientProjectNoteFromElsewhere(root, {
+            sourceId: existing.pin.sourceId,
+            pinnedAt: existing.pin.pinnedAt,
+            current: existing.pin.note,
+            other: incoming.note,
+          });
+          notesKept += 1;
+        }
+        continue;
+      }
+      const clash = taken.has(citationKeyComparisonValue(incoming.citationKey));
+      const citationKey = clash
+        ? assignCitationKey({
+            preferred: incoming.citationKey,
+            creators: incoming.work.creators,
+            issuedYear: incoming.work.issuedYear,
+            title: incoming.work.title,
+            taken,
+          })
+        : incoming.citationKey;
+      if (clash) renamedKeys.push({ from: incoming.citationKey, to: citationKey });
+      taken.add(citationKeyComparisonValue(citationKey));
+      pins.push({ pin: { ...incoming, citationKey }, extra: {}, workExtra: {} });
+      added += 1;
+    }
+    await writePinsDocument(root, document, pins);
+    return { added, notesAdded, notesKept, renamedKeys };
   });
 }

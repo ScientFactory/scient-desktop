@@ -82,6 +82,11 @@ import { resolveJournalIcon } from "./JournalIconResolver.ts";
 import { renameCitationKeyInProject, scanCitationKeyRenameDocuments } from "./LibraryCitation.ts";
 import { moveProjectBackIntoProject, restoreProjectPreMoveArchive } from "./LibraryMove.ts";
 import {
+  exportLibraryProjectPackage,
+  importLibraryProjectPackage,
+  listLibraryProjectPackages,
+} from "./LibraryProjectPackage.ts";
+import {
   alsoPinnedIn,
   distinctPinnedWorks,
   listProjectPinnedWorks,
@@ -748,7 +753,10 @@ export const isLibraryOrganizeAction = (
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
   change.action === "dismiss-move-summary" ||
-  change.action === "restore-pre-move";
+  change.action === "restore-pre-move" ||
+  change.action === "export-package" ||
+  change.action === "list-packages" ||
+  change.action === "import-package";
 
 const pinSummary = (pin: ScientProjectPin) => ({
   citationKey: pin.citationKey,
@@ -861,6 +869,12 @@ export async function organizeLibrarySources(
         root: store.root,
         ...(change.archiveId ? { archiveId: change.archiveId } : {}),
       });
+    case "export-package":
+      return exportLibraryProjectPackage(store, change);
+    case "list-packages":
+      return listLibraryProjectPackages(store);
+    case "import-package":
+      return importLibraryProjectPackage(store, change, ACTOR);
   }
 }
 

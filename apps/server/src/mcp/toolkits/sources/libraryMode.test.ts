@@ -858,6 +858,51 @@ describe("Sources tools on the library backend", () => {
     }),
   );
 
+  it.effect("an agent saves this project's package and imports it into another project", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const added = yield* addSource(fixture, "Packaged trial", "10.1000/packaged");
+      yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "pin", sourceId: added.sourceId!, note: "Why we cite it." },
+        }),
+        fixture,
+      );
+      const exported = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "export-package", relativePath: "handoff" },
+        }),
+        fixture,
+      );
+      expect(exported).toMatchObject({
+        outcome: "exported",
+        packagePath: "handoff",
+        packageReport: { sources: 1, pins: 1, unavailable: 0 },
+      });
+
+      const other = yield* Effect.promise(async () => {
+        const root = NodePath.join(fixture.base, "other");
+        await NodeFSP.mkdir(root);
+        await initializeScientProject({ root });
+        await NodeFSP.cp(NodePath.join(fixture.root, "handoff"), NodePath.join(root, "handoff"), {
+          recursive: true,
+        });
+        return { ...fixture, root, stateDir: NodePath.join(fixture.base, "other-state") };
+      });
+      expect(
+        yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "import-package", relativePath: "handoff" },
+          }),
+          other,
+        ),
+      ).toMatchObject({ outcome: "imported", packageReport: { sources: 1, pins: 1 } });
+      expect(yield* Effect.promise(() => readScientProjectPins(other.root))).toMatchObject([
+        { note: "Why we cite it." },
+      ]);
+    }),
+  );
+
   it.effect("the list carries the move's summary until an agent dismisses it", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

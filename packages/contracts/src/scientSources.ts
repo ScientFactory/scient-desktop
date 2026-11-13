@@ -396,6 +396,17 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     action: Schema.Literal("restore-pre-move"),
     archiveId: Schema.optionalKey(NonEmptyString),
   }),
+  /** Writes this project's package to a new project folder (a dated name when absent). */
+  Schema.Struct({
+    action: Schema.Literal("export-package"),
+    relativePath: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(4_096))),
+  }),
+  /** The packages in the project's top-level folders. */
+  Schema.Struct({ action: Schema.Literal("list-packages") }),
+  Schema.Struct({
+    action: Schema.Literal("import-package"),
+    relativePath: NonEmptyString.check(Schema.isMaxLength(4_096)),
+  }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -407,6 +418,24 @@ export const ScientSourcesOrganizeRequest = Schema.Struct({
   ]),
 });
 export type ScientSourcesOrganizeRequest = typeof ScientSourcesOrganizeRequest.Type;
+
+/** A project package's counts; `unavailable` are PDFs or records the exporting Library lacked. */
+export const ScientProjectPackageReport = Schema.Struct({
+  sources: Count,
+  sourcesMatched: Schema.optionalKey(Count),
+  pdfs: Count,
+  annotations: Count,
+  pins: Count,
+  /** Pins kept their own note; the package's is in the note history. */
+  notesKept: Schema.optionalKey(Count),
+  reviews: Count,
+  reviewConflicts: Schema.optionalKey(Count),
+  collections: Count,
+  unavailable: Count,
+  /** The files that no longer match the manifest. */
+  changedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+});
+export type ScientProjectPackageReport = typeof ScientProjectPackageReport.Type;
 
 const PinSummary = Schema.Struct({
   citationKey: NonEmptyString,
@@ -438,6 +467,11 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "restored",
     "no-archive",
     "archive-changed",
+    "exported",
+    "listed",
+    "imported",
+    "not-a-package",
+    "package-changed",
   ]),
   pin: Schema.optionalKey(PinSummary),
   pinChanges: Schema.optionalKey(
@@ -473,6 +507,19 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
   alsoPinnedIn: AlsoPinnedIn,
   restoredSources: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   restoredPdfs: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** export-package: the folder written. */
+  packagePath: Schema.optionalKey(NonEmptyString),
+  packages: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        relativePath: NonEmptyString,
+        title: Schema.String,
+        exportedAt: Schema.String,
+      }),
+    ),
+  ),
+  /** What an export or import of a project package did. */
+  packageReport: Schema.optionalKey(ScientProjectPackageReport),
 });
 export type ScientSourcesOrganizeResult = typeof ScientSourcesOrganizeResult.Type;
 

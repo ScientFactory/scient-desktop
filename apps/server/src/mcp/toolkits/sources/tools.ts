@@ -37,6 +37,7 @@ import {
   ScientCitationStyleSummary,
   ScientManagedBibliographyFileName,
   ScientManagedBibliographyStatus,
+  ScientProjectPackageReport,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -1106,6 +1107,11 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     action: Schema.Literal("restore-pre-move"),
     archiveId: Schema.optionalKey(NonEmptyString),
   }),
+  Schema.Struct({
+    action: Schema.Literal("export-package"),
+    relativePath: Schema.optionalKey(NonEmptyString),
+  }),
+  Schema.Struct({ action: Schema.Literal("import-package"), relativePath: NonEmptyString }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -1133,6 +1139,10 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     "restored",
     "no-archive",
     "archive-changed",
+    "exported",
+    "imported",
+    "not-a-package",
+    "package-changed",
   ]),
   pin: Schema.optionalKey(
     Schema.Struct({
@@ -1159,10 +1169,12 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
   alsoPinnedIn: AlsoPinnedIn,
   restoredSources: Schema.optionalKey(Schema.Int),
   restoredPdfs: Schema.optionalKey(Schema.Int),
+  packagePath: Schema.optionalKey(NonEmptyString),
+  packageReport: Schema.optionalKey(ScientProjectPackageReport),
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer.`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer; export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes), import-package brings one in.`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );

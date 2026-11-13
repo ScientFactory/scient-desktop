@@ -29,6 +29,7 @@ import { askLibraryInsertion } from "./askLibrary";
 import { CitationStylePicker } from "./CitationStylePicker";
 import { DUPLICATE_LABELS } from "./libraryDuplicateLabels";
 import { MoveBackDialog } from "./LibraryMoveNotice";
+import { ProjectPackageSubmenu } from "./ProjectPackageMenu";
 import { SourceTrashPopover } from "./SourceTrash";
 import {
   SourcesExportSubmenu,
@@ -53,6 +54,8 @@ export function SourcesHeaderMenu(props: {
   readonly onOpenFile?: (path: string, line: number) => void;
   /** Present only on a moved project and for a session that may change the Library. */
   readonly onMoveBack?: () => void;
+  /** Present only on a personal Library for a session that may change it. */
+  readonly onPackageImported?: () => Promise<unknown>;
 }) {
   const trigger = useRef<HTMLButtonElement>(null);
   const [confirmingMoveBack, setConfirmingMoveBack] = useState(false);
@@ -156,6 +159,13 @@ export function SourcesHeaderMenu(props: {
               exporter={exporter}
               totalCount={props.totalCount}
               scope={props.exportScope}
+            />
+          ) : null}
+          {props.onPackageImported ? (
+            <ProjectPackageSubmenu
+              environmentId={props.environmentId}
+              root={props.root}
+              onImported={props.onPackageImported}
             />
           ) : null}
           {props.onMoveBack ? (

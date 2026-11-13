@@ -1344,6 +1344,7 @@ export function ScientSourcesPanel(props: {
               onOpenSource={setSelectedSourceId}
               {...(props.onOpenFile ? { onOpenFile: props.onOpenFile } : {})}
               {...(move.canMoveBack ? { onMoveBack: () => void move.moveBack() } : {})}
+              {...(scopes && canChange ? { onPackageImported: sources.refreshOverview } : {})}
             />
           </div>
         }

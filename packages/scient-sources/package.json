@@ -68,6 +68,10 @@
       "types": "./src/materialSelection.ts",
       "import": "./src/materialSelection.ts"
     },
+    "./project-package": {
+      "types": "./src/projectPackage.ts",
+      "import": "./src/projectPackage.ts"
+    },
     "./project-pins": {
       "types": "./src/projectPins.ts",
       "import": "./src/projectPins.ts"
