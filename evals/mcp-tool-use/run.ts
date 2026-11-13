@@ -430,10 +430,15 @@ const CODEX_NAMES: Readonly<Record<string, string>> = {
   write_stdin: "write_stdin",
   web__run: "WebFetch",
 };
+// SCIENT-FORK:START — Scient registers upstream's `t3_*` tools as `scient_*`; cases keep T3's names.
+const t3CaseName = (name: string) =>
+  name === "scient_thread_inspect" ? "t3_thread_read" : name.replace(/^scient_/, "t3_");
+// SCIENT-FORK:END
 export const normalizeToolName = (name: string) => {
   const bare = name.slice(name.lastIndexOf(".") + 1);
   return isT3Name(bare)
-    ? bare.slice(T3_PREFIX.length)
+    ? // SCIENT-FORK: grade and answer Scient's names as the T3 names the cases use.
+      t3CaseName(bare.slice(T3_PREFIX.length))
     : (CODEX_NAMES[bare] ?? bare.slice(bare.lastIndexOf("_") + 1));
 };
 export const normalizeToolInput = (name: string, input: unknown) => {
@@ -464,7 +469,8 @@ const t3SourceTools: ReadonlyArray<Tool.Any> = [
 // McpHttpServer decodes arguments with each tool's JSON codec, which drops undeclared keys.
 const t3InputDecoders = new Map(
   t3SourceTools.map((tool) => [
-    tool.name,
+    // SCIENT-FORK: keyed by the T3 name normalizeToolName returns.
+    t3CaseName(tool.name),
     Schema.decodeUnknownOption(
       Schema.toCodecJson(tool.parametersSchema as Schema.Codec<unknown, unknown>),
     ),
@@ -478,7 +484,8 @@ const t3Tools: ReadonlyArray<ApiTool> = t3SourceTools.map((tool) => ({
 // T3 gates these on the `preview` capability, which agent browser access decides.
 const PREVIEW_TOOLS = new Set(
   [PreviewToolkit, PreviewControlsToolkit].flatMap((toolkit) =>
-    Object.values(toolkit.tools).map((tool: Tool.Any) => tool.name),
+    // SCIENT-FORK: the T3 names normalizeToolName returns.
+    Object.values(toolkit.tools).map((tool: Tool.Any) => t3CaseName(tool.name)),
   ),
 );
 const decodePreviewError = Schema.decodeUnknownOption(PreviewAutomationError);
@@ -1448,7 +1455,10 @@ const searchTools = (base: Base, query: string, max: number) => {
   if (query.startsWith("select:")) {
     const wanted = query.slice("select:".length).split(",");
     return base.deferred.filter((tool) =>
-      wanted.some((name) => [tool.name, normalizeToolName(tool.name)].includes(name.trim())),
+      // SCIENT-FORK: a bare `scient_*` name selects the tool its T3 name grades as.
+      wanted.some((name) =>
+        [tool.name, normalizeToolName(tool.name)].includes(t3CaseName(name.trim())),
+      ),
     );
   }
   const words = query
@@ -1687,6 +1697,8 @@ export const answerToolCall = Effect.fn("evaluateMcpToolUse.answerToolCall")(fun
         new PreviewAutomationUnavailableError({
           capability: "preview",
           environmentId: EVAL_ENVIRONMENT_ID,
+          // SCIENT-FORK: Scient's unavailable error always names the thread.
+          threadId: ThreadId.make(testCase.id),
         }).message,
       );
     const previewError = previewFailure(mock);

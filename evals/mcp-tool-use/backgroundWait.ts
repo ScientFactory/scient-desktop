@@ -25,7 +25,10 @@ import { McpSchema, McpServer } from "effect/ai";
 
 import * as McpHttpServer from "../../apps/server/src/mcp/McpHttpServer.ts";
 import * as McpInvocationContext from "../../apps/server/src/mcp/McpInvocationContext.ts";
-import { liveThreadShell } from "../../apps/server/src/mcp/McpToolAccess.testkit.ts";
+import {
+  liveThreadShell,
+  scientToolServicesLayer,
+} from "../../apps/server/src/mcp/McpToolAccess.testkit.ts";
 import * as OrchestratorMcpService from "../../apps/server/src/mcp/OrchestratorMcpService.ts";
 import * as ThreadMetadataMcpService from "../../apps/server/src/mcp/ThreadMetadataMcpService.ts";
 import * as OrchestratorHandlers from "../../apps/server/src/mcp/toolkits/orchestrator/handlers.ts";
@@ -101,6 +104,8 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
       Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
       Layer.provide(Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({})),
       Layer.provide(Layer.mock(ThreadMetadataMcpService.ThreadMetadataMcpService)({})),
+      // SCIENT-FORK: Scient's caller tools also check the live owner's invocation policy.
+      Layer.provide(scientToolServicesLayer.pipe(Layer.provide(threads))),
       Layer.provide(threads),
       Layer.provide(Layer.mock(PeerForwarding.PeerForwarding)({})),
       Layer.provide(Layer.mock(PeerLinkRequests.PeerLinkRequests)({})),
@@ -111,8 +116,9 @@ export const makeBackgroundWait = Effect.fn("evaluateMcpToolUse.makeBackgroundWa
   type Entry = Parameters<McpServer.McpServer["Service"]["addTool"]>[0];
   // The registry keeps each tool's handler; its public type lists only definitions.
   const tools = Context.get(context, McpServer.McpServer).tools as ReadonlyArray<Entry>;
-  const entry = tools.find((tool) => tool.tool.name === "t3_background_wait");
-  if (entry === undefined) return yield* Effect.die(new Error("T3 has no t3_background_wait."));
+  // SCIENT-FORK: Scient registers upstream's background wait as `scient_background_wait`.
+  const entry = tools.find((tool) => tool.tool.name === "scient_background_wait");
+  if (entry === undefined) return yield* Effect.die(new Error("No scient_background_wait tool."));
   const scope: McpInvocationContext.McpThreadInvocationScope = {
     environmentId: EnvironmentId.make("00000000-0000-4000-8000-0000000000e0"),
     requestNamespace: "mcp-tool-use-eval",

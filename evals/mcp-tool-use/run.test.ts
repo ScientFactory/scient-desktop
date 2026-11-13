@@ -1074,6 +1074,8 @@ it.effect("fails preview calls with T3's errors when browser access is off or a 
     const off = new PreviewAutomationUnavailableError({
       capability: "preview",
       environmentId: EnvironmentId.make("eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"),
+      // SCIENT-FORK: Scient's unavailable error always names the thread.
+      threadId: ThreadId.make("thread-browser-off"),
     }).message;
     for (const tool of ["preview_status", "preview_open", "t3_preview_list"])
       assert.deepInclude(yield* answer("br-guard-browser-access-off", tool), {
@@ -1176,7 +1178,9 @@ it.effect("seeds T3's error for a prior background wait whose IDs match nothing"
       assert.equal(sample.priorErrors.has(wait), isError, id);
       const blocks = buildMessages(sample).flatMap((message) => message.content);
       const waitUse = blocks.find(
-        (block) => block.type === "tool_use" && String(block.name).endsWith("t3_background_wait"),
+        // SCIENT-FORK: the replayed call carries Scient's registered name.
+        (block) =>
+          block.type === "tool_use" && String(block.name).endsWith("scient_background_wait"),
       );
       const replayed = blocks.find(
         (block) => block.type === "tool_result" && block.tool_use_id === waitUse?.id,

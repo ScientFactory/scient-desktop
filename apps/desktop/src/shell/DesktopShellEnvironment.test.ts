@@ -646,6 +646,9 @@ describe("DesktopShellEnvironment", () => {
       const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin:/bin:/usr/sbin:/sbin" };
       const output = envOutput({ PATH: "/opt/homebrew/bin:/usr/bin" });
       let shellProbes = 0;
+      // SCIENT-FORK: Scient's install waits for the first discovery, so the clock may only
+      // advance once the slow probe is running.
+      const slowProbeStarted = yield* Deferred.make<void>();
       yield* runShellEnvironment({
         env,
         platform: "darwin",
@@ -659,26 +662,30 @@ describe("DesktopShellEnvironment", () => {
           // A cold start: the first login shell answers, but only after 7s.
           const slow = Effect.sleep("7 seconds");
           const stdout = Stream.fromEffect(slow.pipe(Effect.as(textEncoder.encode(output))));
-          return Effect.succeed(
-            ChildProcessSpawner.makeHandle({
-              pid: ChildProcessSpawner.ProcessId(125),
-              stdout,
-              stderr: Stream.empty,
-              all: stdout,
-              exitCode: slow.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
-              isRunning: Effect.succeed(true),
-              kill: () => Effect.void,
-              stdin: Sink.drain,
-              getInputFd: () => Sink.drain,
-              getOutputFd: () => Stream.empty,
-              unref: Effect.succeed(Effect.void),
-            }),
+          return Deferred.succeed(slowProbeStarted, undefined).pipe(
+            Effect.as(
+              ChildProcessSpawner.makeHandle({
+                pid: ChildProcessSpawner.ProcessId(125),
+                stdout,
+                stderr: Stream.empty,
+                all: stdout,
+                exitCode: slow.pipe(Effect.as(ChildProcessSpawner.ExitCode(0))),
+                isRunning: Effect.succeed(true),
+                kill: () => Effect.void,
+                stdin: Sink.drain,
+                getInputFd: () => Sink.drain,
+                getOutputFd: () => Stream.empty,
+                unref: Effect.succeed(Effect.void),
+              }),
+            ),
           );
         }),
         use: (service) =>
           Effect.gen(function* () {
-            yield* service.installIntoProcess;
+            const install = yield* Effect.forkChild(service.installIntoProcess);
+            yield* Deferred.await(slowProbeStarted);
             yield* TestClock.adjust("10 minutes");
+            yield* Fiber.join(install);
             return true;
           }),
       }).pipe(Effect.provide(Logger.layer([])));

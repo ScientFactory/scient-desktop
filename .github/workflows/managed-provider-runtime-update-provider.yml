@@ -330,6 +330,11 @@ jobs:
             apps/server/src/provider/AntigravityInstallation.ts \
             apps/server/src/provider/runtimeFilesystem.ts \
             apps/server/src/provider/antigravityRelease.ts \
+            apps/server/src/provider/antigravityCliRelease.ts \
+            apps/server/src/provider/ModelManifest.ts \
+            apps/server/src/provider/ClaudeModelManifest.ts \
+            apps/server/src/provider/model-manifest.json \
+            apps/server/src/provider/providerCompatibility.ts \
             apps/server/src/provider/antigravityAuthSupport.ts \
             apps/server/src/provider/acp \
             apps/server/src/scient/skills/antigravityPluginSkillProjection.ts \
