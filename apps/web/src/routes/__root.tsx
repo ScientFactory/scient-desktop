@@ -31,7 +31,8 @@ import { OverleafNewProjectDialogHost } from "../scient/overleaf/OverleafNewProj
 // SCIENT-FORK:START — browser availability notices reuse the shared update owners.
 import { BrowserProviderUpdateNotification } from "../scient/providerConnection/BrowserProviderUpdateNotification";
 // SCIENT-FORK:END
-import { GuestShareDialogHost } from "../components/chat/GuestShareControls";
+// SCIENT-FORK: thread rooms replace T3's single-guest dialog.
+import { RoomDialogHost } from "../scient/room/RoomDialog";
 // SCIENT-FORK:START — the Share link dialog.
 import { ShareLinkDialogHost } from "../scient/cloud/ShareLinkDialog";
 // SCIENT-FORK:END
@@ -228,7 +229,8 @@ function RootRouteBranch() {
       {/* SCIENT-FORK:START — app-level sign-in page opener. */}
       <ProviderSignInPageCoordinator />
       {/* SCIENT-FORK:END */}
-      <GuestShareDialogHost />
+      {/* SCIENT-FORK: the share commands open the room dialog in place of T3's guest link one. */}
+      <RoomDialogHost />
       {/* SCIENT-FORK:START — the Share link dialog. */}
       <ShareLinkDialogHost />
       {/* SCIENT-FORK:END */}

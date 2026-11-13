@@ -485,7 +485,13 @@ export const layerProduction = Layer.mergeAll(
   ),
   // SCIENT-FORK: thread rooms, beside T3's single-guest links.
   ThreadRoomService.layer.pipe(
-    Layer.provide(Layer.merge(layerOrchestratorProvided, layerCommandOutputHubProvided)),
+    Layer.provide(
+      Layer.mergeAll(
+        layerOrchestratorProvided,
+        layerCommandOutputHubProvided,
+        layerThreadManagementProvided,
+      ),
+    ),
   ),
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(

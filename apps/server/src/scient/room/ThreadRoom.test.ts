@@ -403,3 +403,32 @@ it.effect("places a room message after what the thread showed when it was posted
     assert.isTrue(owner < after && after < 2_000_000, `${owner} < ${after} < 2000000`);
   }).pipe(Effect.provide(layerTest)),
 );
+
+it.effect("counts guests' messages as waiting on the owner until the owner looks or answers", () =>
+  Effect.gen(function* () {
+    const room = yield* setup;
+    yield* room.invite("a", "discuss");
+    yield* room.join("a", "Ann");
+    const waiting = Effect.map(
+      room.projections.getThreadShell(threadId),
+      (shell) => shell?.pendingGuestMessageCount,
+    );
+    yield* room.guestPost("a", "w1", "First");
+    yield* room.guestPost("a", "w2", "Second");
+    assert.equal(yield* waiting, 2);
+    // Sending one to the agent answers it.
+    yield* room.ownerSend("send-w1", "w1");
+    assert.equal(yield* waiting, 1);
+    // Opening the thread is seeing the rest.
+    yield* room.orchestrator.dispatch({
+      type: "thread.visit",
+      commandId: nextCommandId("visit"),
+      threadId,
+      visitedAt: DateTime.formatIso(yield* DateTime.now),
+    });
+    assert.equal(yield* waiting, 0);
+    yield* room.guestPost("a", "w3", "Third");
+    yield* room.ownerPost("w4", "Got it");
+    assert.equal(yield* waiting, 0);
+  }).pipe(Effect.provide(layerTest)),
+);

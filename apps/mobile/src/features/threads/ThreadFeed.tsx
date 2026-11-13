@@ -20,6 +20,7 @@ import {
   ThreadHandoffRow,
   ThreadModelSwitchDivider,
 } from "./thread-handoff-row";
+import { ThreadRoomMessage } from "./ThreadRoomMessage";
 import { GuestBubbleTint, GuestMessageName } from "./guestMessageStyle";
 import { ThreadGuestPendingMessage, useThreadGuestShare } from "./ThreadGuestShareBar";
 import { LinkRequestCard } from "./LinkRequestCard";
@@ -1703,6 +1704,24 @@ function renderFeedEntry(
 ) {
   const entry = info.item;
   const { markdownStyles, iconSubtleColor, userBubbleColor } = props;
+
+  if (entry.type === "room-message") {
+    return (
+      <ThreadRoomMessage
+        threadRef={scopeThreadRef(props.environmentId, props.threadId)}
+        item={entry.item}
+        bubbleMaxWidth={props.duoColumns ? "85%" : props.userBubbleMaxWidth}
+        renderAttachments={(attachments) => (
+          <MessageAttachmentList
+            attachments={attachments}
+            environmentId={props.environmentId}
+            onPressPreview={props.onPressPreview}
+            onPlaybackStart={props.onPlaybackStart}
+          />
+        )}
+      />
+    );
+  }
 
   if (entry.type === "guest-pending") {
     return (

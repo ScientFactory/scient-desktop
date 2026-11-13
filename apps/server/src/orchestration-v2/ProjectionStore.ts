@@ -3,6 +3,8 @@ import {
   applyOrchestrationV2ThreadVisit,
   checkpointSupportsRewind,
   pendingGuestMessageCount,
+  // SCIENT-FORK: thread rooms.
+  roomWaitingCount,
 } from "@t3tools/contracts";
 // SCIENT-FORK:START — retained-source adapters and fixture selection.
 import { ContextHandoffId, type OrchestrationV2ContextHandoff } from "@t3tools/contracts";
@@ -2026,7 +2028,10 @@ function shellFromState(input: {
     lastErrorCode: input.state.lastErrorCode,
     usageLimitResetAt: input.state.usageLimitResetAt,
     pendingRuntimeRequest: input.state.pendingRuntimeRequest,
-    pendingGuestMessageCount: pendingGuestMessageCount(input.state.thread.guestShare),
+    pendingGuestMessageCount:
+      pendingGuestMessageCount(input.state.thread.guestShare) +
+      // SCIENT-FORK: guests' room messages the owner has not seen yet.
+      roomWaitingCount(input.state.thread.room),
     latestVisibleMessage: null,
     latestUserMessageAt: input.state.latestUserMessageAt,
     latestUserAuthoredMessageAt: input.state.latestUserAuthoredMessageAt,
@@ -8851,7 +8856,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   activityRunStatus: null,
                   activityRunStartedAt: null,
                   pendingRuntimeRequest: null,
-                  pendingGuestMessageCount: pendingGuestMessageCount(thread.guestShare),
+                  pendingGuestMessageCount:
+                    pendingGuestMessageCount(thread.guestShare) +
+                    // SCIENT-FORK: guests' room messages the owner has not seen yet.
+                    roomWaitingCount(thread.room),
                   pendingBackgroundTasks: derivePendingBackgroundWork({
                     latestRun:
                       latestRunId === null || status === "idle"

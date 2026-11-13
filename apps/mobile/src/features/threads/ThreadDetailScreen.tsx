@@ -207,6 +207,8 @@ import { WorkspaceMutationIdProvider } from "./WorkspaceMutationIdProvider";
 import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
 import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
+import { ThreadRoomBar } from "./ThreadRoomBar";
+import { useThreadRoom } from "./thread-room-state";
 import { ThreadGuestShareBar } from "./ThreadGuestShareBar";
 import { ThreadSideChatsRow } from "./ThreadSideChatsRow";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
@@ -425,6 +427,7 @@ function ThreadDetailBody(
   const openLinkedThread = useOpenLinkedThread();
   const openInspector = useOpenThreadInspector();
   const { session: voiceInputSession } = useGlobalVoiceInput();
+  const room = useThreadRoom(props.selectedThreadDetailRef);
   const reportedModelSelection = useThreadReportedModelSelection(props.selectedThreadDetailRef);
   const deviceState = useEnvironmentQuery(
     deviceEnvironment.state({ environmentId: props.environmentId, input: {} }),
@@ -1677,10 +1680,16 @@ function ThreadDetailBody(
                       threadRef={props.selectedThreadDetailRef}
                       maxHeight={pendingUserInputMaxHeight}
                     />
-                    <ThreadGuestShareBar
+                    <ThreadRoomBar
                       threadRef={props.selectedThreadDetailRef}
                       canOperateThread={props.canOperateThread}
                     />
+                    {room === null ? (
+                      <ThreadGuestShareBar
+                        threadRef={props.selectedThreadDetailRef}
+                        canOperateThread={props.canOperateThread}
+                      />
+                    ) : null}
                     {props.draftMode ? null : (
                       <ThreadSideChatsRow
                         environmentId={props.environmentId}

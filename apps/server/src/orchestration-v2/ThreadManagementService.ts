@@ -722,7 +722,8 @@ const make = Effect.gen(function* () {
         threadId: projection.thread.id,
         title: projection.thread.title,
         updatedAt: projection.updatedAt,
-        items: projection.visibleTurnItems,
+        // SCIENT-FORK: what people said to each other in a room never reaches an agent.
+        items: projection.visibleTurnItems.filter((row) => row.item.type !== "room_message"),
       };
       let sizeBytes = Buffer.byteLength(
         threadTranscriptHeader(yield* environment.getEnvironmentId, transcript),
@@ -770,6 +771,17 @@ const make = Effect.gen(function* () {
               projectId: projection.thread.projectId,
               commandId: command.commandId,
               instanceId: (command.modelSelection ?? projection.thread.modelSelection).instanceId,
+            }),
+          ),
+        );
+      // SCIENT-FORK: a guest's send to the agent starts a turn on the thread's provider.
+      case "thread.room.guest-dispatch":
+        return orchestrator.getThreadRecords(command.threadId, []).pipe(
+          Effect.flatMap((projection) =>
+            assertProviderInstanceEnabled({
+              projectId: projection.thread.projectId,
+              commandId: command.commandId,
+              instanceId: projection.thread.modelSelection.instanceId,
             }),
           ),
         );

@@ -609,6 +609,8 @@ export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
 export const OrchestrationV2ThreadVisit = Schema.Struct({
   lastVisitedAt: OrchestrationV2AppThread.fields.lastVisitedAt,
   opens: OrchestrationV2AppThread.fields.opens,
+  // SCIENT-FORK: opening the thread is seeing what people wrote in its room.
+  room: OrchestrationV2AppThread.fields.room,
 });
 export type OrchestrationV2ThreadVisit = typeof OrchestrationV2ThreadVisit.Type;
 
@@ -620,6 +622,8 @@ export function applyOrchestrationV2ThreadVisit<Thread extends OrchestrationV2Ap
     ...thread,
     lastVisitedAt: visit.lastVisitedAt,
     ...(visit.opens === undefined ? {} : { opens: visit.opens }),
+    // SCIENT-FORK: thread rooms.
+    ...(visit.room === undefined ? {} : { room: visit.room }),
   };
 }
 
