@@ -29,6 +29,9 @@ import {
   type ThreadEnvMode,
   type UploadChatAttachment,
   type GuestMessageId,
+  // SCIENT-FORK: thread rooms.
+  type ThreadRoomOwnerAction,
+  type TurnItemId,
 } from "@t3tools/contracts";
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
@@ -581,6 +584,45 @@ export const resolveGuestMessage = Effect.fn("EnvironmentCommands.resolveGuestMe
     creationSource: input.creationSource ?? "web",
   });
 });
+
+// SCIENT-FORK:START — thread rooms (contracts scient/threadRoom.ts).
+export interface ThreadRoomActionInput extends ThreadCommandInput {
+  readonly action: ThreadRoomOwnerAction;
+}
+export const runThreadRoomAction = Effect.fn("EnvironmentCommands.runThreadRoomAction")(function* (
+  input: ThreadRoomActionInput,
+) {
+  return yield* dispatch({
+    type: "thread.room",
+    commandId: yield* allocateCommandId(input),
+    threadId: input.threadId,
+    action: input.action,
+  });
+});
+
+export interface SendRoomMessageInput extends ThreadCommandInput {
+  readonly itemId: TurnItemId;
+  readonly creationSource?: "web" | "mobile";
+}
+/** Runs a room message as a normal turn; the server supplies its words and files. */
+export const sendRoomMessageToAgent = Effect.fn("EnvironmentCommands.sendRoomMessageToAgent")(
+  function* (input: SendRoomMessageInput) {
+    const commandId = yield* allocateCommandId(input);
+    return yield* dispatch({
+      type: "message.dispatch",
+      commandId,
+      threadId: input.threadId,
+      messageId: MessageId.make(commandId),
+      roomItemId: input.itemId,
+      text: "",
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+      createdBy: "user",
+      creationSource: input.creationSource ?? "web",
+    });
+  },
+);
+// SCIENT-FORK:END
 
 export const archiveThread = Effect.fn("EnvironmentCommands.archiveThread")(function* (
   input: ArchiveThreadInput,

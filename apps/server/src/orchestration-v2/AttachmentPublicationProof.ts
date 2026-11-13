@@ -23,13 +23,17 @@ export const commandPublicationProven = Effect.fn("AttachmentPublication.command
           target.type === "question"
             ? sql`event_type = 'turn-item.updated' AND json_extract(payload_json, '$.type') = 'user_input_request'
             AND json_extract(payload_json, '$.requestId') = ${target.requestId} AND json_extract(payload_json, '$.status') = 'completed'`
-            : sql`event_type = 'message.updated' AND ${
-                target.type === "message"
-                  ? sql`json_extract(payload_json, '$.id') = ${target.messageId}`
-                  : target.type === "run"
-                    ? sql`json_extract(payload_json, '$.runId') = ${target.runId}`
-                    : sql`json_extract(payload_json, '$.role') = 'user'`
-              }`
+            : target.type === "room-message"
+              ? // Room messages are stored as the notice older clients read.
+                sql`event_type = 'turn-item.updated'
+            AND json_extract(payload_json, '$.roomMessage.roomMessageId') = ${target.roomMessageId}`
+              : sql`event_type = 'message.updated' AND ${
+                  target.type === "message"
+                    ? sql`json_extract(payload_json, '$.id') = ${target.messageId}`
+                    : target.type === "run"
+                      ? sql`json_extract(payload_json, '$.runId') = ${target.runId}`
+                      : sql`json_extract(payload_json, '$.role') = 'user'`
+                }`
         }
     ) AS proven
   `;

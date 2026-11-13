@@ -32,6 +32,9 @@ import {
   archiveThread,
   closeGuestShare,
   resolveGuestMessage,
+  // SCIENT-FORK: thread rooms.
+  runThreadRoomAction,
+  sendRoomMessageToAgent,
   cancelQueuedRun,
   createThread,
   deleteThread,
@@ -192,6 +195,20 @@ export function createThreadEnvironmentAtoms<R, E>(
       scheduler,
       concurrency,
     }),
+    // SCIENT-FORK:START — thread rooms.
+    roomAction: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:room-action",
+      execute: runThreadRoomAction,
+      scheduler,
+      concurrency,
+    }),
+    sendRoomMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:send-room-message",
+      execute: sendRoomMessageToAgent,
+      scheduler,
+      concurrency,
+    }),
+    // SCIENT-FORK:END
     archive: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:archive",
       execute: archiveThread,

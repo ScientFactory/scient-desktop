@@ -6,6 +6,7 @@ import {
   ChatAttachment,
   CommandId,
   MessageId,
+  RoomMessageId,
   RunId,
   RuntimeRequestId,
   ThreadId,
@@ -53,9 +54,12 @@ export const AttachmentReservationOwner = Schema.Union([
       "queued-run.edit",
       "runtime-request.respond",
       "legacy-queue.import",
+      // Files a room message posts to people.
+      "thread.room",
     ]),
     target: Schema.Union([
       Schema.Struct({ type: Schema.Literal("message"), messageId: MessageId }),
+      Schema.Struct({ type: Schema.Literal("room-message"), roomMessageId: RoomMessageId }),
       Schema.Struct({ type: Schema.Literal("run"), runId: RunId }),
       Schema.Struct({ type: Schema.Literal("question"), requestId: RuntimeRequestId }),
       Schema.Struct({ type: Schema.Literal("initial-message") }),

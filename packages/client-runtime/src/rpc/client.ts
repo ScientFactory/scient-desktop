@@ -82,6 +82,8 @@ export type EnvironmentSubscriptionRpcTag =
   // SCIENT-FORK:START — the server's editor flush requests to each window.
   | typeof WS_METHODS.editorsFlushConnect
   // SCIENT-FORK:END
+  // SCIENT-FORK: who has a thread's room open.
+  | typeof WS_METHODS.threadRoomPresence
   | typeof WS_METHODS.filesystemSubscribeFileChanges
   | typeof WS_METHODS.projectsSubscribeFileChanges
   | typeof WS_METHODS.pullRequestsSubscribeRefreshes

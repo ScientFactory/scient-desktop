@@ -1802,6 +1802,21 @@ export function createServerEnvironmentAtoms<R, E>(
       label: "environment-data:server:guest-share:create",
       tag: WS_METHODS.guestShareCreate,
     }),
+    // SCIENT-FORK:START — thread rooms.
+    inviteToThreadRoom: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:thread-room:invite",
+      tag: WS_METHODS.threadRoomInvite,
+    }),
+    threadRoomInviteLink: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:thread-room:invite-link",
+      tag: WS_METHODS.threadRoomInviteLink,
+    }),
+    threadRoomPresence: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:thread-room:presence",
+      tag: WS_METHODS.threadRoomPresence,
+      idleTtlMs: 0,
+    }),
+    // SCIENT-FORK:END
     // Off the config lane: answering a card must not queue behind settings
     // edits. One answer per card at a time.
     answerSecretRequest: createEnvironmentRpcCommand(runtime, {
