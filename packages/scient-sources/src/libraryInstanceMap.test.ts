@@ -155,6 +155,7 @@ describe("resolving a copied project's sources", () => {
       projectRoot: copy,
       citationKey: served!.citationKey,
       note: "Why we cite it",
+      actor: "user",
     });
     const repair = { library: collaborator, projectRoot: copy, projectSourceId: cited.sourceId };
     expect(
