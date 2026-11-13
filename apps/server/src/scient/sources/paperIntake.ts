@@ -1,5 +1,6 @@
 import {
   normalizePersistentIdentifier,
+  scientLibraryIdentityProblem,
   type ScientSourceActor,
   type ScientSourceAttachmentRetrieval,
   type ScientSourceCandidate,
@@ -101,9 +102,19 @@ export async function addPaperToLibrary(
       message: "The paper has no DOI or arXiv ID, so add it with scient_sources_add.",
     };
   const records = await listScientSourceRecords(store);
-  const existing = records.find((record) =>
+  const naming = records.filter((record) =>
     record.identifiers.some((identifier) => keys.has(identifierKey(identifier))),
   );
+  // Without the paper's own title one record naming the identifier is not proof it is this paper.
+  const existing =
+    naming.length === 1 &&
+    input.fallback?.title &&
+    scientLibraryIdentityProblem(
+      { type: naming[0]!.type, title: input.fallback.title, identifiers: named },
+      naming[0]!,
+    ) === null
+      ? naming[0]
+      : undefined;
   const attach = (record: ScientSourceRecord) =>
     attachToSource({
       root: store,

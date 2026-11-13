@@ -61,12 +61,18 @@ const withPair: ScientSourcesDuplicatesResult = {
     },
   ],
   pairsTotal: 1,
+  revision: "r1",
+  pairOffset: 0,
+  mergeOffset: 0,
   merges: [],
   mergesTotal: 0,
 };
 const empty: ScientSourcesDuplicatesResult = {
   pairs: [],
   pairsTotal: 0,
+  revision: "r0",
+  pairOffset: 0,
+  mergeOffset: 0,
   merges: [],
   mergesTotal: 0,
 };
@@ -238,6 +244,88 @@ describe("Possible duplicates", () => {
     expect(mocks.organizeScientSources.mock.calls[1]![1].change).toMatchObject({
       survivorId: "a",
     });
+  });
+
+  it("shows the next page of pairs, and starts again from the top when the list changed", async () => {
+    const pair = (index: number): Pair => ({
+      kind: "possible-identifier-match",
+      reason: "titles-differ",
+      sources: [
+        { ...side(`p${index}a`, "North Journal"), title: `Study ${index}` },
+        { ...side(`p${index}b`, "South Journal"), title: `Other ${index}` },
+      ],
+      keptByDefault: `p${index}a`,
+    });
+    const page = (offset: number, first: number, revision: string) => ({
+      ...withPair,
+      pairs: [pair(first), pair(first + 1)],
+      pairsTotal: 6,
+      pairOffset: offset,
+      revision,
+    });
+    const { onMerged } = setup(page(0, 0, "r1"), page(2, 2, "r1"), {
+      ...page(0, 10, "r2"),
+      restarted: true,
+    });
+    await using screen = await render(<Harness onMerged={onMerged} />, { router: false });
+    using add = vi.spyOn(toastManager, "add");
+
+    await expect
+      .element(screen.getByText(/^Same identifier, but the titles differ\./u).first())
+      .toBeVisible();
+    await expect.element(screen.getByText("Showing 2 of 6.")).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await expect.element(screen.getByText("Showing 4 of 6.")).toBeVisible();
+    expect(mocks.readLibraryDuplicates.mock.calls[1]!.slice(2)).toEqual([
+      { revision: "r1", pairOffset: 2, mergeOffset: 0, merges: "undoable" },
+    ]);
+
+    // A merge elsewhere changed the list: the next page comes back from the top instead.
+    await userEvent.click(screen.getByRole("button", { name: "Show more" }));
+    await expect.element(screen.getByText("Study 10")).toBeVisible();
+    await expect.element(screen.getByText("Showing 2 of 6.")).toBeVisible();
+    expect(screen.getByText("Study 2", { exact: true }).query()).toBeNull();
+    expect(add.mock.calls.at(-1)![0]).toMatchObject({
+      type: "info",
+      title: "The list changed, so it starts again from the top.",
+    });
+  });
+
+  it("lists every merge under All, read-only where Undo can no longer run", async () => {
+    const merge = (mergeId: string, undo: "available" | "undone") => ({
+      mergeId,
+      mergedAt: "2026-11-12T00:00:00.000Z",
+      requested: true,
+      keptSourceId: "kept",
+      kept: null,
+      mergedSourceId: `${mergeId}_away`,
+      mergedTitle: `Paper ${mergeId}`,
+      merged: null,
+      keptDifferent: [],
+      differences: [],
+      undo,
+    });
+    const { onMerged } = setup(
+      { ...empty, merges: [merge("m1", "available")], mergesTotal: 1 },
+      {
+        ...empty,
+        merges: [merge("m1", "available"), merge("m2", "undone")],
+        mergesTotal: 2,
+        damagedReceipts: [{ mergeId: "m3", sourceIds: ["x"] }],
+      },
+    );
+    await using screen = await render(<Harness onMerged={onMerged} />, { router: false });
+
+    await userEvent.click(screen.getByRole("button", { name: /^Merged/u }));
+    await expect.element(screen.getByRole("button", { name: "Undo" })).toBeVisible();
+    await userEvent.click(screen.getByRole("button", { name: "All" }));
+
+    await expect.element(screen.getByText("Undone", { exact: true })).toBeVisible();
+    expect(mocks.readLibraryDuplicates.mock.calls[1]!.slice(2)).toEqual([{ merges: "all" }]);
+    expect(screen.getByRole("button", { name: "Undo" }).all()).toHaveLength(1);
+    await expect
+      .element(screen.getByText(/^The details of one merge could not be read\./u))
+      .toBeVisible();
   });
 
   it("takes a pair off the list as not duplicates, with Undo", async () => {

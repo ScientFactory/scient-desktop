@@ -1,5 +1,6 @@
 import {
   citationKeyValidationMessage,
+  scientLibraryIdentityProblem,
   scientSourceReadingState,
   scientSourceSummaryFromRecord,
   sourceMetadataDiagnostics,
@@ -25,6 +26,7 @@ import {
   markScientLibrarySourcesDistinct,
   mergeScientLibrarySources,
   readScientLibraryDuplicates,
+  readScientLibraryMergeReceipt,
   type ScientLibraryMerge,
   undoScientLibraryMerge,
 } from "@scientfactory/scient-sources/library-merge";
@@ -44,8 +46,14 @@ import {
   type ScientLibraryReviewRecord,
 } from "@scientfactory/scient-sources/library-reviews";
 import {
+  keepScientProjectSourceSeparate,
+  linkScientProjectSource,
+  unlinkScientProjectSource,
+} from "@scientfactory/scient-sources/library-instance-map";
+import {
   changeScientProjectPins,
   listScientProjectPinnedWorks,
+  resolveScientProjectPins,
   pinScientLibrarySource,
   renameScientProjectPinKey,
   setScientProjectPinNote,
@@ -69,7 +77,9 @@ import {
   SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT,
   SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT,
   type ScientSourcesDuplicatesResult,
+  type ScientSourceLibraryMatch,
   type ScientSourcesLibraryOrganizeAction,
+  type ScientSourcesPinRepairAction,
   type ScientSourcesScope,
   type ScientSystematicReviewConflictChange,
   type ScientSystematicReviewRecord,
@@ -332,35 +342,53 @@ function mergeDifferences(merge: ScientLibraryMerge) {
   });
 }
 
+/** A page of each list; the limits default to what the screen is sent. */
+export interface LibraryDuplicatesPage {
+  readonly pairOffset?: number;
+  readonly mergeOffset?: number;
+  readonly revision?: string;
+  readonly pairLimit?: number;
+  readonly mergeLimit?: number;
+  readonly merges?: "undoable" | "all";
+}
+
 /**
- * The possible duplicates of the whole library and the merges Undo can still reverse. Reading
- * never merges: the automatic merges run with the move, not here.
+ * A page of the whole library's possible duplicates and of its merges: those Undo can still
+ * reverse, or every receipt. Reading never merges: the automatic merges run with the move.
  */
 export async function libraryDuplicates(
   store: Store,
   /** The projects the server knows, to name other projects by title rather than folder. */
   projects?: ReadonlyArray<KnownProject>,
+  page: LibraryDuplicatesPage = {},
 ): Promise<ScientSourcesDuplicatesResult> {
-  if (!store.exists) return { pairs: [], pairsTotal: 0, merges: [], mergesTotal: 0 };
+  if (!store.exists) {
+    return {
+      pairs: [],
+      pairsTotal: 0,
+      revision: "empty",
+      pairOffset: 0,
+      mergeOffset: 0,
+      merges: [],
+      mergesTotal: 0,
+    };
+  }
   const listing = await readScientLibraryDuplicates({
     library: store.library,
-    mergeLimit: SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT,
+    pairLimit: Math.min(page.pairLimit ?? Infinity, SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT),
+    mergeLimit: Math.min(page.mergeLimit ?? Infinity, SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT),
+    ...(page.pairOffset === undefined ? {} : { pairOffset: page.pairOffset }),
+    ...(page.mergeOffset === undefined ? {} : { mergeOffset: page.mergeOffset }),
+    ...(page.revision === undefined ? {} : { revision: page.revision }),
+    ...(page.merges === undefined ? {} : { merges: page.merges }),
   });
-  const pairs = listing.possibleDuplicates.slice(0, SCIENT_SOURCES_DUPLICATE_PAIR_LIMIT);
+  const pairs = listing.possibleDuplicates;
   const byId = new Map(listing.records.map((record) => [record.sourceId, record]));
   const shown = new Set([
     ...pairs.flatMap((pair) => pair.sourceIds),
     ...listing.merges.map(({ merge }) => merge.survivorId),
   ]);
-  const [pins, categories, others] = await Promise.all([
-    projectPinGroupsByLibraryId(store),
-    readScientSourceCategories(store.library).catch((): Categories => ({})),
-    otherProjectsUsing(store, shown, projects),
-  ]);
-  const row = (record: ScientSourceRecord) => ({
-    ...overviewRow(pinnedEntry(record, pins.get(record.sourceId)), categories),
-    otherProjects: others.get(record.sourceId) ?? [],
-  });
+  const row = await duplicateRows(store, shown, projects);
   return {
     pairs: pairs.map((pair) => {
       // The default kept source first, so the two read left to right as "keep, merge away".
@@ -370,27 +398,79 @@ export async function libraryDuplicates(
           : [pair.sourceIds[1], pair.sourceIds[0]];
       return {
         kind: pair.kind,
+        ...(pair.reason ? { reason: pair.reason } : {}),
         sources: [row(byId.get(first)!), row(byId.get(second)!)] as const,
         keptByDefault: pair.survivorId,
       };
     }),
-    pairsTotal: listing.possibleDuplicates.length,
-    merges: listing.merges.map(({ merge, merged }) => {
+    pairsTotal: listing.pairsTotal,
+    revision: listing.revision,
+    ...(listing.restarted ? { restarted: true as const } : {}),
+    pairOffset: listing.pairOffset,
+    mergeOffset: listing.mergeOffset,
+    merges: listing.merges.map(({ merge, merged, undo }) => {
       const kept = byId.get(merge.survivorId);
       return {
-        mergeId: merge.mergeId,
-        mergedAt: merge.mergedAt,
-        requested: merge.kind === "requested",
-        keptSourceId: merge.survivorId,
-        kept: kept ? row(kept) : null,
-        mergedSourceId: merge.loserId,
-        mergedTitle: merged.title,
-        merged: scientSourceSummaryFromRecord(merged),
-        keptDifferent: merge.conflicts.map((conflict) => conflict.field),
-        differences: mergeDifferences(merge),
+        ...mergeEntry(merge, merged, kept ? row(kept) : null),
+        merged: merged ? scientSourceSummaryFromRecord(merged) : null,
+        undo,
       };
     }),
     mergesTotal: listing.mergesTotal,
+    ...(listing.damagedReceipts.length > 0
+      ? { damagedReceipts: listing.damagedReceipts.map((receipt) => ({ ...receipt })) }
+      : {}),
+  };
+}
+
+async function duplicateRows(
+  store: Store,
+  shown: ReadonlySet<string>,
+  projects: ReadonlyArray<KnownProject> | undefined,
+) {
+  const [pins, categories, others] = await Promise.all([
+    projectPinGroupsByLibraryId(store),
+    readScientSourceCategories(store.library).catch((): Categories => ({})),
+    otherProjectsUsing(store, shown, projects),
+  ]);
+  return (record: ScientSourceRecord) => ({
+    ...overviewRow(pinnedEntry(record, pins.get(record.sourceId)), categories),
+    otherProjects: others.get(record.sourceId) ?? [],
+  });
+}
+
+function mergeEntry(
+  merge: ScientLibraryMerge,
+  merged: ScientSourceRecord | null,
+  kept: ReturnType<Awaited<ReturnType<typeof duplicateRows>>> | null,
+) {
+  return {
+    mergeId: merge.mergeId,
+    mergedAt: merge.mergedAt,
+    requested: merge.kind === "requested",
+    keptSourceId: merge.survivorId,
+    kept,
+    mergedSourceId: merge.loserId,
+    mergedTitle: merged?.title ?? null,
+    keptDifferent: merge.conflicts.map((conflict) => conflict.field),
+    differences: mergeDifferences(merge),
+  };
+}
+
+/**
+ * One merge's receipt by ID, as the Merged list shows it, also once undone or no longer
+ * undoable, with whether Undo can run now. Undo checks again when it runs.
+ */
+export async function libraryMergeReceipt(store: Store, mergeId: string) {
+  if (!store.exists) return null;
+  const receipt = await readScientLibraryMergeReceipt({ library: store.library, mergeId });
+  if (!receipt) return null;
+  const row = receipt.kept
+    ? await duplicateRows(store, new Set([receipt.kept.sourceId]), undefined)
+    : null;
+  return {
+    ...mergeEntry(receipt.merge, receipt.merged, receipt.kept && row ? row(receipt.kept) : null),
+    undo: receipt.undo,
   };
 }
 
@@ -433,6 +513,9 @@ export async function librarySourceDetail(
     })
   ).find((work) => work.from === "snapshot" && work.projectSourceId === input.sourceId);
   if (!snapshot) throw new Error("The source was not found in the Library.");
+  const match = store.exists
+    ? (await libraryPinMatches(store, new Set([input.sourceId]))).get(input.sourceId)
+    : undefined;
   return {
     ...routeRecord(snapshot.record, {
       citationKey: snapshot.citationKey,
@@ -441,7 +524,105 @@ export async function librarySourceDetail(
     pinned: true,
     fromSnapshot: true as const,
     projectNote: snapshot.projectNote,
+    ...(match ? { libraryMatch: match } : {}),
   };
+}
+
+/**
+ * For pins this Library serves from their snapshot although it holds sources sharing their
+ * identifier or title: why, and those sources, by project source ID. Writes nothing.
+ */
+export async function libraryPinMatches(
+  store: Store,
+  projectSourceIds: ReadonlySet<string>,
+): Promise<ReadonlyMap<string, ScientSourceLibraryMatch>> {
+  const matches = new Map<string, ScientSourceLibraryMatch>();
+  if (!store.exists || projectSourceIds.size === 0) return matches;
+  const pins = await resolveScientProjectPins({
+    projectRoot: store.root,
+    library: store.library,
+    mode: "read",
+    actor: ACTOR,
+  });
+  const wanted = pins.filter(
+    ({ pin, resolution }) =>
+      projectSourceIds.has(pin.sourceId) &&
+      resolution.kind === "unresolved" &&
+      (resolution.reason === "contradicted" || resolution.reason === "ambiguous"),
+  );
+  if (wanted.length === 0) return matches;
+  const records = new Map(
+    (await listScientSourceRecords(store.library)).map((record) => [record.sourceId, record]),
+  );
+  for (const { pin, resolution } of wanted) {
+    if (resolution.kind !== "unresolved") continue;
+    if (resolution.reason !== "contradicted" && resolution.reason !== "ambiguous") continue;
+    matches.set(pin.sourceId, {
+      reason: resolution.reason,
+      keptSeparate: resolution.keptSeparate === true,
+      candidates: resolution.candidateIds.flatMap((sourceId) => {
+        const record = records.get(sourceId);
+        if (!record) return [];
+        const problem = scientLibraryIdentityProblem(pin.work, record);
+        return [
+          {
+            sourceId,
+            title: record.title,
+            issuedYear: record.issuedYear,
+            containerTitle: record.containerTitle,
+            ...(problem ? { problem } : {}),
+          },
+        ];
+      }),
+    });
+  }
+  return matches;
+}
+
+/**
+ * Deliberate repair of a pin served from its snapshot: link it to one of the Library sources it
+ * was compared with (credited, undoable), or record that it is none of them.
+ */
+export async function repairLibraryPin(
+  store: Store,
+  change: ScientSourcesPinRepairAction,
+  actor: ScientSourceActor,
+) {
+  const repair = {
+    library: store.library,
+    projectRoot: store.root,
+    projectSourceId: change.sourceId,
+  };
+  switch (change.action) {
+    case "link-pin": {
+      const linked = await linkScientProjectSource({
+        ...repair,
+        sourceId: change.librarySourceId,
+        actor,
+      });
+      if (linked.outcome === "linked") await syncProjectBibliography(store, actor);
+      return { outcome: linked.outcome };
+    }
+    case "unlink-pin": {
+      const unlinked = await unlinkScientProjectSource(repair);
+      if (unlinked.outcome === "unlinked") await syncProjectBibliography(store, actor);
+      return { outcome: unlinked.outcome };
+    }
+    case "keep-pin-separate":
+    case "clear-pin-separate": {
+      const separate = change.action === "keep-pin-separate";
+      const match = separate
+        ? (await libraryPinMatches(store, new Set([change.sourceId]))).get(change.sourceId)
+        : undefined;
+      if (separate && !match) return { outcome: "not-found" as const };
+      return keepScientProjectSourceSeparate({
+        ...repair,
+        sourceIds: match?.candidates.map((candidate) => candidate.sourceId) ?? [],
+        separate,
+        actor,
+      });
+    }
+  }
 }
 
 export async function libraryAttachmentMaterial(
@@ -720,7 +901,16 @@ export const isLibraryOrganizeAction = (
   change.action === "mark-distinct" ||
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
-  change.action === "dismiss-move-summary";
+  change.action === "dismiss-move-summary" ||
+  isPinRepairAction(change);
+
+export const isPinRepairAction = (change: {
+  readonly action: string;
+}): change is ScientSourcesPinRepairAction =>
+  change.action === "link-pin" ||
+  change.action === "unlink-pin" ||
+  change.action === "keep-pin-separate" ||
+  change.action === "clear-pin-separate";
 
 const pinSummary = (pin: ScientProjectPin) => ({
   citationKey: pin.citationKey,
@@ -822,6 +1012,11 @@ export async function organizeLibrarySources(
           projectRoot: store.root,
         }),
       };
+    case "link-pin":
+    case "unlink-pin":
+    case "keep-pin-separate":
+    case "clear-pin-separate":
+      return repairLibraryPin(store, change, ACTOR);
   }
 }
 

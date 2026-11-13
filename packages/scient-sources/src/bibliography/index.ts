@@ -5,9 +5,10 @@ import {
   citationKeyComparisonValue,
   takenCitationKeys,
 } from "../citationKeys.ts";
-import { assessSourceDuplicate } from "../duplicates.ts";
+import { assessSourceDuplicate, type ScientSourceIntakeExclusions } from "../duplicates.ts";
 import type { ScientSourceCandidate, ScientSourceRecord } from "../model.ts";
 import { normalizePersistentIdentifier } from "../normalize.ts";
+import { scientLibraryIdentityProblem } from "../sourceIdentity.ts";
 import { formatBibtex, parseBibtex } from "./bibtex.ts";
 import { formatCslJson, parseCslJson } from "./cslJson.ts";
 import { formatEndnoteXml, parseEndnoteXml } from "./endnoteXml.ts";
@@ -194,13 +195,18 @@ export function planBibliographyImport(input: {
   readonly sourceKeyFor: (identity: string) => string;
   /** The store's source ID for a source key, so entries imported before count as present whatever their metadata. */
   readonly sourceIdFor: (sourceKey: string) => string;
+  /** The Library's merge decisions, so an entry is never taken for a record they keep apart. */
+  readonly exclusions?: ScientSourceIntakeExclusions;
   readonly limit: number;
 }): BibliographyImportPlan {
   const { parse } = input;
   const unreadable: BibliographyUnreadableEntry[] = [...parse.unreadable];
   const notKept = new Map<string, { entryCount: number; citationKeys: string[] }>();
   const seenKeys = new Map<string, number | null>();
-  const seenWorks = new Map<string, number | null>();
+  const seenWorks = new Map<
+    string,
+    ReadonlyArray<{ readonly line: number | null; readonly candidate: ScientSourceCandidate }>
+  >();
   const fresh: ScientSourceCandidate[] = [];
   const labels = new Map<string, string>();
   const linked = new Map<string, ReadonlyArray<BibliographyLinkedFile>>();
@@ -244,7 +250,10 @@ export function planBibliographyImport(input: {
         ? [normalizePersistentIdentifier(identifier.scheme, identifier.value)]
         : [],
     );
-    const repeated = workKeys.map((key) => seenWorks.get(key)).find((line) => line !== undefined);
+    // A shared identifier repeats an entry only when the two corroborate one work.
+    const repeated = workKeys
+      .flatMap((key) => seenWorks.get(key) ?? [])
+      .find((earlier) => scientLibraryIdentityProblem(candidate, earlier.candidate) === null)?.line;
     if (repeated !== undefined) {
       unreadable.push({
         line: entry.line,
@@ -255,9 +264,16 @@ export function planBibliographyImport(input: {
       });
       continue;
     }
-    for (const key of workKeys) seenWorks.set(key, entry.line);
+    for (const key of workKeys) {
+      seenWorks.set(key, [...(seenWorks.get(key) ?? []), { line: entry.line, candidate }]);
+    }
     const sourceId = input.sourceIdFor(sourceKey);
-    const duplicate = assessSourceDuplicate({ candidate, existing: input.existing, sourceId });
+    const duplicate = assessSourceDuplicate({
+      candidate,
+      existing: input.existing,
+      sourceId,
+      ...(input.exclusions ? { exclusions: input.exclusions } : {}),
+    });
     if (duplicate.kind !== "new") {
       alreadyInLibrary += 1;
       const [match] = duplicate.matchingSourceIds;

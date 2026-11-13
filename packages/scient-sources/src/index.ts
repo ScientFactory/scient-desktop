@@ -11,5 +11,6 @@ export * from "./organize.ts";
 export * from "./identifierInput.ts";
 export * from "./referenceCheck.ts";
 export * from "./referenceDocuments.ts";
+export * from "./sourceIdentity.ts";
 export * from "./systematicReview.ts";
 export * from "./webPage.ts";

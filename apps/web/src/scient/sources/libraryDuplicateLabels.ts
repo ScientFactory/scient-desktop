@@ -1,4 +1,6 @@
 import type {
+  ScientSourcesDuplicateReason,
+  ScientSourcesMergeUndoState,
   ScientSourcesDuplicateSource,
   ScientSourcesDuplicatesResult,
   ScientSourcesOrganizeResult,
@@ -15,6 +17,10 @@ export const DUPLICATE_LABELS = {
   mergedSection: "Merged",
   noPairs: "No possible duplicates in your Library.",
   noMerges: "No merges that can be undone.",
+  noMergesAtAll: "No merges yet.",
+  canUndo: "Can undo",
+  allMerges: "All",
+  undoneState: "Undone",
   loadFailed: "Possible duplicates could not be loaded",
   tryAgain: "Try again",
   merge: "Merge",
@@ -41,6 +47,8 @@ export const DUPLICATE_LABELS = {
   keptSide: "Kept",
   mergedSide: "Merged away",
   none: "none",
+  showMore: "Show more",
+  restarted: "The list changed, so it starts again from the top.",
 } as const;
 
 /** How a merge's different-value fields read in a sentence. */
@@ -160,9 +168,35 @@ export function sectionCountLabel(label: string, count: number): string {
 }
 
 export function shownOfTotalLabel(shown: number, total: number): string | null {
-  return total > shown
-    ? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()}. Settle these to see the rest.`
-    : null;
+  return total > shown ? `Showing ${shown.toLocaleString()} of ${total.toLocaleString()}.` : null;
+}
+
+const MATCH_WORDS: Readonly<Record<string, string>> = {
+  "possible-item-match": "Same Zotero item",
+  "possible-identifier-match": "Same identifier",
+  "possible-pdf-match": "Same PDF",
+};
+
+const REASON_WORDS: Readonly<Record<ScientSourcesDuplicateReason, string>> = {
+  "merge-undone": "but their merge was undone",
+  "merge-record-unreadable": "but the details of an earlier merge of one could not be read",
+  "title-missing": "but one has no title",
+  "titles-differ": "but the titles differ",
+  "type-unknown": "but one has no known type",
+  "preprint-and-published": "but one is a preprint and the other published",
+  "types-differ": "but the types differ",
+  "arxiv-versions-differ": "but different arXiv versions",
+  "identifiers-conflict": "but other identifiers differ",
+  "conflicting-group": "but it also links copies that disagree",
+};
+
+/** Why Scient did not merge a pair that shares an item, identifier or PDF; null for the others. */
+export function pairReasonLabel(pair: {
+  readonly kind: string;
+  readonly reason?: ScientSourcesDuplicateReason;
+}): string | null {
+  const match = MATCH_WORDS[pair.kind];
+  return match && pair.reason ? `${match}, ${REASON_WORDS[pair.reason]}.` : null;
 }
 
 export function otherProjectsLabel(names: ReadonlyArray<string>): string | null {
@@ -256,4 +290,26 @@ export function unrevertedLabel(fields: ReadonlyArray<string> | undefined): stri
   return fields && fields.length > 0
     ? `Changes made after the merge were kept: ${fieldWords(fields)}.`
     : null;
+}
+
+/** Why a merge in the full list has no Undo; null when Undo can run. */
+export function mergeStateLabel(undo: ScientSourcesMergeUndoState): string | null {
+  switch (undo) {
+    case "available":
+      return null;
+    case "undone":
+      return DUPLICATE_LABELS.undoneState;
+    case "kept-source-gone":
+      return "Can no longer be undone: the kept source was merged again or moved to the Trash.";
+    case "merged-source-gone":
+      return "Can no longer be undone: the merged-away source left the Trash.";
+  }
+}
+
+/** Merge files hold the Undo decisions, so one Scient cannot read is said plainly. */
+export function damagedReceiptsLabel(count: number): string | null {
+  if (count === 0) return null;
+  return count === 1
+    ? "The details of one merge could not be read. The sources it names are not merged automatically until its file is repaired."
+    : `The details of ${count} merges could not be read. The sources they name are not merged automatically until their files are repaired.`;
 }

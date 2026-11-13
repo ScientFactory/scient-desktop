@@ -7,7 +7,7 @@ import * as NodePath from "node:path";
 import { readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
-import { assessSourceMetadataDuplicate, workLevelIdentifierKey } from "./duplicates.ts";
+import { assessSourceMetadataDuplicate } from "./duplicates.ts";
 import { readLibraryAliasesAt, resolveScientLibraryAlias } from "./libraryAliases.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
@@ -17,8 +17,8 @@ import {
   type ScientLibraryLocation,
 } from "./libraryRoot.ts";
 import {
+  ScientSourceActor,
   ScientSourceType,
-  type ScientSourceActor,
   type ScientSourceCandidate,
   type ScientSourceCreator,
   type ScientSourceIdentifier,
@@ -30,6 +30,7 @@ import {
   readScientSourceTrashEntries,
   scientSourceIdFor,
 } from "./store.ts";
+import { scientLibraryIdentityProblem, workLevelIdentifierKey } from "./sourceIdentity.ts";
 import { assertSafeIdentifier, atomicWriteJson, readBoundedJson, snapshot } from "./storeFiles.ts";
 
 const SCIENT_LIBRARY_PROJECTS_DIRECTORY = "projects";
@@ -43,22 +44,41 @@ const ResolutionStep = Schema.Literals([
   "metadata",
   "hydrated",
   "moved",
+  /** A person's or agent's deliberate link of a pin the automatic steps would not resolve. */
+  "linked",
 ]);
 type ResolutionStep = typeof ResolutionStep.Type;
 
-const InstanceMapEntry = Schema.Struct({
+const InstanceMapEntryFields = {
   projectSourceId: NonEmptyString,
   /** The library ID it resolved to then; aliases are followed on every read, so Undo still works. */
   sourceId: NonEmptyString,
   resolvedBy: ResolutionStep,
   resolvedAt: NonEmptyString,
+};
+const InstanceMapEntry = Schema.Struct({
+  ...InstanceMapEntryFields,
+  /** Who linked it, for `linked`. */
+  linkedBy: Schema.optionalKey(ScientSourceActor),
+  /** What a link replaced, so its Undo puts that back. */
+  replaced: Schema.optionalKey(Schema.Struct(InstanceMapEntryFields)),
 });
 type InstanceMapEntry = typeof InstanceMapEntry.Type;
+
+/** A decision that a pin is not the Library sources it was compared with. */
+const KeptSeparate = Schema.Struct({
+  projectSourceId: NonEmptyString,
+  sourceIds: Schema.Array(NonEmptyString),
+  decidedAt: NonEmptyString,
+  decidedBy: ScientSourceActor,
+});
+type KeptSeparate = typeof KeptSeparate.Type;
 
 const InstanceMapFile = Schema.Struct({
   formatVersion: Schema.Literal(1),
   instanceId: NonEmptyString,
   sources: Schema.Array(InstanceMapEntry),
+  keptSeparate: Schema.optionalKey(Schema.Array(KeptSeparate)),
 });
 
 /** What a project keeps about a work: a pin's `work`, or a review's record snapshot. */
@@ -87,8 +107,11 @@ export type ScientProjectSourceResolution =
       readonly kind: "unresolved";
       readonly projectSourceId: string;
       /** `removed`: the mapped library record is gone and nothing else matched; never hydrated. */
-      readonly reason: "no-match" | "ambiguous" | "removed";
+      /** `contradicted`: only matches that disagree with the snapshot; never hydrated. */
+      readonly reason: "no-match" | "ambiguous" | "contradicted" | "removed";
       readonly candidateIds: ReadonlyArray<string>;
+      /** Someone decided this pin is none of these candidates. */
+      readonly keptSeparate?: true;
     };
 
 export interface ScientProjectSourceResolveInput {
@@ -117,37 +140,59 @@ function instanceMapPath(root: string, instanceId: string): string {
   return NodePath.join(root, SCIENT_LIBRARY_PROJECTS_DIRECTORY, `${instanceId}.json`);
 }
 
+interface InstanceMap {
+  readonly entries: Map<string, InstanceMapEntry>;
+  readonly keptSeparate: Map<string, KeptSeparate>;
+}
+
+async function readInstanceMapFile(root: string, instanceId: string): Promise<InstanceMap> {
+  const filePath = instanceMapPath(root, instanceId);
+  const state = await snapshot(filePath);
+  if (state === "missing") return { entries: new Map(), keptSeparate: new Map() };
+  if (state !== "file") throw new Error("The project instance map is not a safe regular file.");
+  const file = await readBoundedJson(filePath, MAX_INSTANCE_MAP_BYTES, InstanceMapFile);
+  if (file.instanceId !== instanceId) throw new Error("The project instance map is inconsistent.");
+  return {
+    entries: new Map(file.sources.map((entry) => [entry.projectSourceId, entry])),
+    keptSeparate: new Map(
+      (file.keptSeparate ?? []).map((decision) => [decision.projectSourceId, decision]),
+    ),
+  };
+}
+
 async function readInstanceMap(
   root: string,
   instanceId: string,
 ): Promise<Map<string, InstanceMapEntry>> {
-  const filePath = instanceMapPath(root, instanceId);
-  const state = await snapshot(filePath);
-  if (state === "missing") return new Map();
-  if (state !== "file") throw new Error("The project instance map is not a safe regular file.");
-  const file = await readBoundedJson(filePath, MAX_INSTANCE_MAP_BYTES, InstanceMapFile);
-  if (file.instanceId !== instanceId) throw new Error("The project instance map is inconsistent.");
-  return new Map(file.sources.map((entry) => [entry.projectSourceId, entry]));
+  return (await readInstanceMapFile(root, instanceId)).entries;
 }
+
+const byProjectSourceId = <A extends { readonly projectSourceId: string }>(
+  values: Iterable<A>,
+): Array<A> =>
+  [...values].toSorted((left, right) => (left.projectSourceId < right.projectSourceId ? -1 : 1));
 
 async function writeInstanceMap(
   root: string,
   instanceId: string,
   entries: ReadonlyMap<string, InstanceMapEntry>,
+  keptSeparate?: ReadonlyMap<string, KeptSeparate>,
 ): Promise<void> {
+  const separate = keptSeparate ?? (await readInstanceMapFile(root, instanceId)).keptSeparate;
   await atomicWriteJson(
     instanceMapPath(root, instanceId),
     {
       formatVersion: 1,
       instanceId,
-      sources: [...entries.values()]
-        .toSorted((left, right) => (left.projectSourceId < right.projectSourceId ? -1 : 1))
-        .map((entry) => ({
-          projectSourceId: entry.projectSourceId,
-          sourceId: entry.sourceId,
-          resolvedBy: entry.resolvedBy,
-          resolvedAt: entry.resolvedAt,
-        })),
+      sources: byProjectSourceId(entries.values()).map((entry) => ({
+        projectSourceId: entry.projectSourceId,
+        sourceId: entry.sourceId,
+        resolvedBy: entry.resolvedBy,
+        resolvedAt: entry.resolvedAt,
+        ...(entry.linkedBy ? { linkedBy: entry.linkedBy } : {}),
+        ...(entry.replaced ? { replaced: entry.replaced } : {}),
+      })),
+      ...(separate.size > 0 ? { keptSeparate: byProjectSourceId(separate.values()) } : {}),
     },
     MAX_INSTANCE_MAP_BYTES,
   );
@@ -162,11 +207,19 @@ function workLevelKeys(identifiers: ReadonlyArray<ScientSourceIdentifier>): Set<
   );
 }
 
-/** Identifier first, then title, lead author and year; one match resolves, more stay ambiguous. */
+/**
+ * Identifier first, then title, lead author and year; one corroborated match resolves, more stay
+ * ambiguous. Matches that do not corroborate the snapshot (`scientLibraryIdentityProblem`: titles,
+ * known types, arXiv versions, conflicting identifiers) never resolve; with none corroborated they
+ * are `contradicted`.
+ */
 function matchWork(
   work: ScientProjectSourceWork,
   records: ReadonlyArray<ScientSourceRecord>,
-): { readonly by: "identifier" | "metadata"; readonly ids: ReadonlyArray<string> } | null {
+): {
+  readonly by: "identifier" | "metadata" | "contradicted";
+  readonly ids: ReadonlyArray<string>;
+} | null {
   const own = workLevelKeys(work.identifiers);
   // Two works that name different DOIs (or PMIDs, …) are never the same work by title alone.
   const compatible = records.filter((record) => {
@@ -177,13 +230,20 @@ function matchWork(
     source: { ...work, identifiers: [...work.identifiers], creators: [...work.creators] },
     existing: compatible,
   });
-  if (assessment.kind === "same-identifier") {
-    return { by: "identifier", ids: assessment.matchingSourceIds };
-  }
-  if (assessment.kind === "possible-metadata-match") {
-    return { by: "metadata", ids: assessment.matchingSourceIds };
-  }
-  return null;
+  const by =
+    assessment.kind === "same-identifier"
+      ? "identifier"
+      : assessment.kind === "possible-metadata-match"
+        ? "metadata"
+        : null;
+  if (!by) return null;
+  const byId = new Map(compatible.map((record) => [record.sourceId, record]));
+  const corroborated = assessment.matchingSourceIds.filter(
+    (sourceId) => scientLibraryIdentityProblem(work, byId.get(sourceId)!) === null,
+  );
+  return corroborated.length > 0
+    ? { by, ids: corroborated }
+    : { by: "contradicted", ids: assessment.matchingSourceIds };
 }
 
 function hydrationSourceKey(projectSourceId: string): string {
@@ -258,7 +318,13 @@ async function resolveAt(
 ): Promise<ReadonlyArray<ScientProjectSourceResolution>> {
   const library = input.library;
   const instanceId = await projectInstanceId(library, input.projectRoot, input.mode);
-  const map = instanceId ? await readInstanceMap(root, instanceId) : new Map();
+  const file = instanceId
+    ? await readInstanceMapFile(root, instanceId)
+    : {
+        entries: new Map<string, InstanceMapEntry>(),
+        keptSeparate: new Map<string, KeptSeparate>(),
+      };
+  const map = file.entries;
   const aliases = await readLibraryAliasesAt(root);
   const records = [...(await listScientSourceRecords(library))];
   const live = new Set(records.map((record) => record.sourceId));
@@ -297,7 +363,7 @@ async function resolveAt(
     ]);
     return (
       removed.some((record) => ids.has(record.sourceId)) ||
-      (work !== null && matchWork(work, removed) !== null)
+      (work !== null && (matchWork(work, removed)?.by ?? "contradicted") !== "contradicted")
     );
   };
 
@@ -322,7 +388,7 @@ async function resolveAt(
       continue;
     }
     const match = request.work ? matchWork(request.work, records) : null;
-    if (match && match.ids.length === 1) {
+    if (match && match.by !== "contradicted" && match.ids.length === 1) {
       const sourceId = match.ids[0]!;
       record(projectSourceId, sourceId, match.by);
       results.push({ kind: "resolved", projectSourceId, sourceId, by: match.by });
@@ -332,8 +398,9 @@ async function resolveAt(
       results.push({
         kind: "unresolved",
         projectSourceId,
-        reason: "ambiguous",
+        reason: match.by === "contradicted" ? "contradicted" : "ambiguous",
         candidateIds: match.ids,
+        ...(file.keptSeparate.has(projectSourceId) ? { keptSeparate: true as const } : {}),
       });
       continue;
     }
@@ -373,7 +440,7 @@ async function resolveAt(
   }
 
   if (input.mode === "write" && instanceId && mapChanged) {
-    await writeInstanceMap(root, instanceId, recorded);
+    await writeInstanceMap(root, instanceId, recorded, file.keptSeparate);
   }
   return results;
 }
@@ -410,4 +477,119 @@ export async function resolveScientProjectSources(
   const root = await NodeFSP.realpath(input.library.root);
   if (input.mode === "read") return resolveAt(root, input);
   return withScientLibraryLock(root, () => resolveAt(root, input));
+}
+
+export type ScientProjectSourceLinkResult =
+  | { readonly outcome: "linked" | "unchanged"; readonly sourceId: string }
+  | { readonly outcome: "not-found" };
+
+/**
+ * Links a project source ID to a Library source on purpose, for a pin or review record the
+ * automatic steps leave on its snapshot (`contradicted` or `ambiguous`). The pin keeps its key,
+ * project note and review membership: they hang on the project source ID. Undo:
+ * `unlinkScientProjectSource`.
+ */
+export async function linkScientProjectSource(input: {
+  readonly library: ScientLibraryLocation;
+  readonly projectRoot: string;
+  readonly projectSourceId: string;
+  readonly sourceId: string;
+  readonly actor: ScientSourceActor;
+}): Promise<ScientProjectSourceLinkResult> {
+  assertSafeIdentifier(input.projectSourceId, "Source ID");
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  const root = await NodeFSP.realpath(input.library.root);
+  return withScientLibraryLock(root, async () => {
+    const instanceId = await projectInstanceId(input.library, input.projectRoot, "write");
+    if (!instanceId) return { outcome: "not-found" as const };
+    const aliases = await readLibraryAliasesAt(root);
+    const target = resolveScientLibraryAlias(aliases, input.sourceId);
+    const records = await listScientSourceRecords(input.library);
+    if (!records.some((record) => record.sourceId === target)) {
+      return { outcome: "not-found" as const };
+    }
+    const { entries, keptSeparate } = await readInstanceMapFile(root, instanceId);
+    const current = entries.get(input.projectSourceId);
+    if (current && resolveScientLibraryAlias(aliases, current.sourceId) === target) {
+      return { outcome: "unchanged" as const, sourceId: target };
+    }
+    const replaced =
+      current?.resolvedBy === "linked"
+        ? current.replaced
+        : current && {
+            projectSourceId: current.projectSourceId,
+            sourceId: current.sourceId,
+            resolvedBy: current.resolvedBy,
+            resolvedAt: current.resolvedAt,
+          };
+    entries.set(input.projectSourceId, {
+      projectSourceId: input.projectSourceId,
+      sourceId: target,
+      resolvedBy: "linked",
+      resolvedAt: new Date().toISOString(),
+      linkedBy: input.actor,
+      ...(replaced ? { replaced } : {}),
+    });
+    keptSeparate.delete(input.projectSourceId);
+    await writeInstanceMap(root, instanceId, entries, keptSeparate);
+    return { outcome: "linked" as const, sourceId: target };
+  });
+}
+
+/** Undoes `linkScientProjectSource`: the pin resolves as it did before, or from its snapshot. */
+export async function unlinkScientProjectSource(input: {
+  readonly library: ScientLibraryLocation;
+  readonly projectRoot: string;
+  readonly projectSourceId: string;
+}): Promise<{ readonly outcome: "unlinked" | "not-linked" }> {
+  assertSafeIdentifier(input.projectSourceId, "Source ID");
+  const root = await NodeFSP.realpath(input.library.root);
+  return withScientLibraryLock(root, async () => {
+    const instanceId = await projectInstanceId(input.library, input.projectRoot, "read");
+    if (!instanceId) return { outcome: "not-linked" as const };
+    const { entries, keptSeparate } = await readInstanceMapFile(root, instanceId);
+    const current = entries.get(input.projectSourceId);
+    if (current?.resolvedBy !== "linked") return { outcome: "not-linked" as const };
+    if (current.replaced) entries.set(input.projectSourceId, { ...current.replaced });
+    else entries.delete(input.projectSourceId);
+    await writeInstanceMap(root, instanceId, entries, keptSeparate);
+    return { outcome: "unlinked" as const };
+  });
+}
+
+/**
+ * Records that a pin is none of the Library sources it was compared with (`separate: true`), or
+ * withdraws that decision. The pin stays on its snapshot either way; the decision only stops
+ * asking.
+ */
+export async function keepScientProjectSourceSeparate(input: {
+  readonly library: ScientLibraryLocation;
+  readonly projectRoot: string;
+  readonly projectSourceId: string;
+  readonly sourceIds: ReadonlyArray<string>;
+  readonly separate: boolean;
+  readonly actor: ScientSourceActor;
+}): Promise<{ readonly outcome: "kept-separate" | "cleared" | "unchanged" }> {
+  assertSafeIdentifier(input.projectSourceId, "Source ID");
+  const root = await NodeFSP.realpath(input.library.root);
+  return withScientLibraryLock(root, async () => {
+    const instanceId = await projectInstanceId(input.library, input.projectRoot, "write");
+    if (!instanceId) return { outcome: "unchanged" as const };
+    const { entries, keptSeparate } = await readInstanceMapFile(root, instanceId);
+    if (input.separate === keptSeparate.has(input.projectSourceId)) {
+      return { outcome: "unchanged" as const };
+    }
+    if (input.separate) {
+      keptSeparate.set(input.projectSourceId, {
+        projectSourceId: input.projectSourceId,
+        sourceIds: [...input.sourceIds],
+        decidedAt: new Date().toISOString(),
+        decidedBy: input.actor,
+      });
+    } else {
+      keptSeparate.delete(input.projectSourceId);
+    }
+    await writeInstanceMap(root, instanceId, entries, keptSeparate);
+    return { outcome: input.separate ? ("kept-separate" as const) : ("cleared" as const) };
+  });
 }

@@ -31,6 +31,7 @@ import type {
   ScientSourceRemovalRequest,
   ScientSourceSavePageRequest,
   ScientSourcesBulkUpdateRequest,
+  ScientSourcesDuplicatesRequest,
   ScientSourcesOrganizeRequest,
   ScientSourcesReadingStateRequest,
   ScientSourcesScope,
@@ -176,9 +177,13 @@ export function changeSystematicReviewConflict(
 }
 
 /** Where this project's move into the personal Library is; a project server has nothing to move. */
-export function readLibraryDuplicates(environmentId: EnvironmentId, root: string) {
+export function readLibraryDuplicates(
+  environmentId: EnvironmentId,
+  root: string,
+  page: Omit<ScientSourcesDuplicatesRequest, "root"> = {},
+) {
   return runtime.runPromise(
-    getEnvironmentScientSourcesDuplicates({ prepared: prepared(environmentId), root }),
+    getEnvironmentScientSourcesDuplicates({ prepared: prepared(environmentId), root, ...page }),
   );
 }
 

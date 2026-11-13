@@ -58,7 +58,7 @@ import {
   restoreScientSource,
   revertScientSource,
 } from "@scientfactory/scient-sources/store";
-import type { ScientProjectCitationStyle } from "@t3tools/contracts";
+import type { ScientProjectCitationStyle, ScientSourceLibraryMatch } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -148,6 +148,10 @@ import {
 import {
   bothInLibrary,
   libraryDuplicates,
+  libraryMergeReceipt,
+  libraryPinMatches,
+  isPinRepairAction,
+  repairLibraryPin,
   moveBackResult,
 } from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import { ReferenceIdentifierLookup } from "../../../scient/references/ReferenceCheck.ts";
@@ -410,7 +414,7 @@ const citationStyleDependencies = Effect.map(
   }),
 );
 
-/** At most this many pairs and merges in a list call with duplicates; totals count them all. */
+/** At most this many pairs and merges per page of a list call with duplicates. */
 const AGENT_DUPLICATE_PAIRS = 25;
 const AGENT_UNDOABLE_MERGES = 10;
 
@@ -475,25 +479,59 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly readingStatus?: ScientSourceReadingStatus;
     readonly starred?: boolean;
     readonly duplicates?: boolean;
+    readonly mergeOffset?: number;
+    readonly allMerges?: boolean;
+    readonly revision?: string;
+    readonly mergeId?: string;
   }) {
     const store = yield* resolveScientSourcesStore();
     const root = store.store;
     const library = store.kind === "library" ? store : null;
-    if (input.duplicates) {
+    if (input.duplicates || input.mergeId !== undefined) {
       if (!library) {
         return yield* toolError(
           "operation-failed",
           "Possible duplicates need the personal Library.",
         );
       }
-      const found = yield* attempt(() => libraryDuplicates(library));
+      if (input.mergeId !== undefined) {
+        const mergeId = input.mergeId;
+        const receipt = yield* attempt(() => libraryMergeReceipt(library, mergeId));
+        if (!receipt) return yield* toolError("not-found", "No merge has this ID.");
+        const { kept, keptSourceId, ...rest } = receipt;
+        return {
+          records: [],
+          total: 0,
+          nextOffset: null,
+          mergeReceipt: {
+            ...rest,
+            survivorId: keptSourceId,
+            kept: kept ? agentSummaryOfRow(kept) : null,
+          },
+        };
+      }
+      const found = yield* attempt(() =>
+        libraryDuplicates(library, undefined, {
+          pairLimit: AGENT_DUPLICATE_PAIRS,
+          mergeLimit: AGENT_UNDOABLE_MERGES,
+          ...(input.offset === undefined ? {} : { pairOffset: input.offset }),
+          ...(input.mergeOffset === undefined ? {} : { mergeOffset: input.mergeOffset }),
+          ...(input.revision === undefined ? {} : { revision: input.revision }),
+          ...(input.allMerges ? { merges: "all" as const } : {}),
+        }),
+      );
+      const next = (offset: number, shown: number, total: number) =>
+        offset + shown < total ? offset + shown : null;
       return {
         records: [],
         total: found.pairsTotal,
-        nextOffset: null,
+        nextOffset: next(found.pairOffset, found.pairs.length, found.pairsTotal),
         duplicates: {
-          pairs: found.pairs.slice(0, AGENT_DUPLICATE_PAIRS).map((pair) => ({
+          revision: found.revision,
+          ...(found.restarted ? { restarted: true as const } : {}),
+          pairs: found.pairs.map((pair) => ({
             kind: pair.kind,
+            ...(pair.reason ? { reason: pair.reason } : {}),
             sources: [
               agentSummaryOfRow(pair.sources[0]),
               agentSummaryOfRow(pair.sources[1]),
@@ -501,15 +539,18 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
             keptByDefault: pair.keptByDefault,
           })),
           pairsTotal: found.pairsTotal,
-          merges: found.merges.slice(0, AGENT_UNDOABLE_MERGES).map((merge) => ({
+          merges: found.merges.map((merge) => ({
             mergeId: merge.mergeId,
             mergedAt: merge.mergedAt,
             survivorId: merge.keptSourceId,
             mergedSourceId: merge.mergedSourceId,
             mergedTitle: merge.mergedTitle,
             keptDifferent: merge.keptDifferent,
+            undo: merge.undo,
           })),
           mergesTotal: found.mergesTotal,
+          nextMergeOffset: next(found.mergeOffset, found.merges.length, found.mergesTotal),
+          ...(found.damagedReceipts ? { damagedReceipts: found.damagedReceipts } : {}),
         },
       };
     }
@@ -611,6 +652,13 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     const limit = Math.min(50, Math.max(1, input.limit ?? 25));
     const page = matching.slice(offset, offset + limit);
     const move = yield* libraryMoveNotice(store.root);
+    const snapshotIds = new Set(
+      page.flatMap((record) => (fromSnapshot.has(record.sourceId) ? [record.sourceId] : [])),
+    );
+    const matches =
+      library && snapshotIds.size > 0
+        ? yield* attempt(() => libraryPinMatches(library, snapshotIds))
+        : new Map<string, ScientSourceLibraryMatch>();
     const pinOf = (sourceId: string) => (pins ? pins.get(sourceId) : undefined);
     const citationKeyOf = (record: (typeof page)[number]) =>
       pinOf(record.sourceId)?.citationKey ?? record.citationKey;
@@ -648,6 +696,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
           ? { pinned: pinnedWorks !== null || pinOf(record.sourceId) !== undefined }
           : {}),
         ...(fromSnapshot.has(record.sourceId) ? { fromSnapshot: true } : {}),
+        ...(matches.has(record.sourceId) ? { libraryMatch: matches.get(record.sourceId)! } : {}),
         ...(library ? scientSourceReadingState(record) : null),
       })),
       total: matching.length,
@@ -727,7 +776,8 @@ const isLibraryOrganizeChange = (
   change.action === "mark-distinct" ||
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
-  change.action === "dismiss-move-summary";
+  change.action === "dismiss-move-summary" ||
+  isPinRepairAction(change);
 
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
 export const organizeLibrarySourcesForInvocation = Effect.fn(
@@ -886,6 +936,11 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
           dismissScientLibraryMoveSummary({ library: store.library, projectRoot: store.root }),
         ),
       };
+    case "link-pin":
+    case "unlink-pin":
+    case "keep-pin-separate":
+    case "clear-pin-separate":
+      return yield* attempt(() => repairLibraryPin(store, change, "agent"));
   }
 });
 
@@ -1356,7 +1411,9 @@ const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolki
     yield* pinAdded(
       store,
       results.map((item) =>
-        item.outcome === "imported" || item.outcome === "duplicate" ? item.sourceId : null,
+        item.outcome === "imported" || (item.outcome === "duplicate" && !item.possibleMatch)
+          ? item.sourceId
+          : null,
       ),
     );
     return {

@@ -234,15 +234,71 @@ Every function takes a `ScientLibraryLocation` and writes under the library
 lock. Nothing calls it yet; the move (5d) runs the bulk pass and 5f lists the
 possible duplicates.
 
-The assessment follows the design's order. These merge automatically:
+Three strong matches link two records: the same external item (`system`,
+`libraryId`, `itemKey`, such as one Zotero item imported twice), a shared
+work-level identifier (`workLevelIdentifierKey` in `sourceIdentity.ts`: DOI,
+PMID, PMCID, arXiv, OpenAlex, Semantic Scholar), or the same PDF hash, unless
+it is a book's PDF on its parts (`scientSourcePdfIsEvidence`: two chapters, or
+a chapter and a book, with different titles). Identifiers conflict when both
+records name a scheme (ISBN included) and share none of its values.
 
-1. The same external item (`system`, `libraryId`, `itemKey`), such as one
-   Zotero item imported twice.
-2. A shared work-level identifier from `WORK_LEVEL_IDENTIFIER_SCHEMES` in
-   `duplicates.ts` (DOI, PMID, PMCID, arXiv, OpenAlex, Semantic Scholar).
-3. The same PDF hash, titles equal once case, punctuation and spacing are
-   ignored, and no conflicting identifiers. Identifiers conflict when both
-   records name a scheme (ISBN included) and share none of its values.
+A link is evidence, not proof. Two records corroborate one work
+(`scientLibraryIdentityProblem`, `sourceIdentity.ts`) only when both have a
+title and the titles are equal once Unicode form (NFKC), case, spacing and
+punctuation are evened out (every word and number stays; no subtitle
+stripping), both have the same known type (`other` is unknown), they name no
+different explicit arXiv versions (`v1` against `v2`; normalization strips
+versions, this check reads the raw values) and no identifiers conflict.
+
+A merge set is a connected component of links that corroborate and are
+neither distinct, undone nor held by an unreadable receipt; the set merges
+only when every two of its members also corroborate (and none of those pairs
+is excluded). Connectivity is positive: two records that agree on paper but
+share no link of their own never merge, even when a third record links both.
+Example: A "Editorial" with DOI X, B "Different work" with DOI X and PMID Y,
+C "Editorial" with PMID Y. Both links disagree on the title, so nothing
+merges; A–B and B–C are listed `titles-differ`, A–C only as a metadata match.
+A record that agrees with two copies that disagree (A has DOI X and arXiv Y,
+B only arXiv Y, C arXiv Y and DOI Z) puts all three in one set that fails, so
+a bridge never joins A and C and B is not guessed into either. Each merged
+record's receipt names the strongest corroborated link that joined it; there
+is no default kind.
+
+Every linked pair not merged is listed as `possible-item-match`,
+`possible-identifier-match` or `possible-pdf-match` with a `reason`:
+`merge-undone`, `merge-record-unreadable`, `title-missing`, `titles-differ`,
+`type-unknown`, `preprint-and-published` (a preprint against any other type),
+`types-differ` (book and chapter, article and dataset),
+`arxiv-versions-differ`, `identifiers-conflict`, or `conflicting-group` (the
+pair agrees but its set does not). Two copies sharing only a PDF under
+different titles are therefore reviewable (`possible-pdf-match`,
+`titles-differ`); equal titles still gate the automatic merge. Pairs are listed
+by kind (item, identifier, PDF, metadata, container), then by source IDs. Pair
+problems are computed per shared key and for the members of each merge set,
+never for every two records of a large linked cluster.
+
+**Intake uses the same rule.** `assessSourceDuplicate` (`duplicates.ts`),
+behind the store's locked import, the coordinator's check before asking a
+registry, the reference-file plan, Zotero and PDF intake and the agent add
+paths, collects the records that share the candidate's external item,
+work-level identifier or PDF (not a book's PDF on its parts) and reuses one
+only when it corroborates the candidate and no Library decision keeps the two
+apart (`ScientSourceIntakeExclusions`: a distinct pair, an undone merge, or a
+record an unreadable receipt names, judged against the ID the candidate's own
+source key derives). Exactly one such record is reused; the record that ID
+names is the import itself and is always reused. Several corroborated records,
+or only disagreeing ones, leave the candidate `new`: it is stored as its own
+record, `matchingSourceIds` names the others and `reason` says why ("Kept as a
+separate source: it shares an identifier with an existing source, but the
+titles differ."), and the Library's duplicates read lists the pair. A new
+record never takes an ID that names a merged-away record or that a live alias
+forwards; it takes one derived from its source key and operation instead. Two
+entries of one reference file repeat each other only when they corroborate.
+Adding a bare identifier always asks its registry first, because the
+identifier alone has no title to corroborate; a paper download attaches its
+PDF to the record naming its identifier only when the paper lookup's title
+corroborates it. An identifier add that only resembles a stored record
+(`possibleMatch`) is not added to the project.
 
 Two kinds of match are only listed as `possibleDuplicates`, never merged:
 title, lead author and year (`possible-metadata-match`), and a shared ISBN or
@@ -291,6 +347,29 @@ changed (`unrevertedFields`), which keep the later value. It puts collection
 membership back and marks the alias `undoneAt`; the tombstone stays so sync
 never brings the alias back. Undo refuses while the survivor itself was merged
 on or removed, and when the trash was emptied.
+
+**Undo is a durable correction.** Every automatic pass, intake, and the
+duplicates read treat the pair of a merge file in state `undone` (or `done`
+with its merged-away source live again, an Undo that stopped after restoring
+it) as excluded (`libraryExclusions.ts`). They are read from `merges/*.json`
+each time, so they survive restarts and need no second file, and resolved
+through aliases, except an alias whose merged-away source is live again: an
+interrupted Undo still has an active alias, and following it would turn the
+pair into one ID and drop the exclusion. A later merge of either side
+therefore cannot reunite them through a third record. Unlike a distinct pair
+the pair stays listed (`merge-undone`), so Merge or Not duplicates remain a
+person's or an agent's choice; Undo does not claim the two are different works.
+
+**Receipts are kept for good.** Nothing prunes `merges/*.json`; emptying the
+Trash deletes trash entries and history, not receipts. A receipt this Scient
+cannot read (bad JSON, another format version, not a regular file) is
+reported, never skipped: the bulk pass returns `damagedReceipts`, the
+duplicates read and route send them, the screen says how many, and the agent
+list tool returns them with the source IDs still legible in the file
+(`survivorId`/`loserId` read from the raw text). Those records, and what their
+IDs resolve to, are not merged automatically or reused at intake
+(`merge-record-unreadable`); when no ID is legible, no automatic merge or
+intake reuse happens at all until the file is repaired or removed by hand.
 
 Measured once at 20,000 records with 1,000 seeded DOI duplicates (generated
 records in a temporary folder; Apple M5 Pro, Node 24.19, load average about 8):
@@ -449,10 +528,15 @@ ID with its snapshot (a pin's `work`, later a review's record snapshot):
 2. The same ID in this library, through `resolveScientLibraryAlias`.
 3. The snapshot: a shared work-level identifier, then title, lead author and
    year (`assessSourceMetadataDuplicate`). Records whose work-level identifiers
-   conflict with the snapshot's are skipped. More than one match is
-   `ambiguous` and stays unresolved.
+   conflict with the snapshot's are skipped. A match counts only when it
+   corroborates the snapshot by the merge engine's own check
+   (`scientLibraryIdentityProblem`: title, known type, arXiv version, no
+   conflicting identifier). More than one corroborated match is `ambiguous`;
+   matches of which none corroborates are `contradicted` (for example a
+   Library record carrying the work's DOI by mistake). Both stay unresolved.
 4. Otherwise unresolved: `no-match`, or `removed` when the map named a record
-   that is gone and nothing else matched.
+   that is gone and nothing else matched. Only a corroborated match in the
+   trash counts as removed.
 
 `read` mode writes nothing at all: no instance registration, no map, no lock
 file. `write` mode holds the library lock, registers the instance and records
@@ -466,6 +550,25 @@ pin's key as preferred key), recorded as `hydrated` in the map. Its source ID
 is derived from the library ID and the project source ID, so a repeat after a
 lost map finds the same record. `ambiguous` and `removed` pins are never
 hydrated, so hydration never adds a duplicate or brings back a removed record.
+A `contradicted` pin is not hydrated either: the project snapshot serves it,
+with no PDF of the contradicting record, until a person or agent resolves it.
+Review records resolve through the same function, so a review record behaves
+the same way.
+
+**Deliberate repair.** Automatic matching stays strict; a person or agent
+settles a `contradicted` or `ambiguous` pin on purpose. The snapshot's detail
+(and its row in the agent list) carries `libraryMatch`: the reason, the
+candidate records with title, year, journal and what disagrees
+(`scientLibraryIdentityProblem` against the pin's `work`), and whether it was
+kept separate (`libraryPinMatches` in `LibrarySourcesRoutes.ts`).
+`link-pin` (`linkScientProjectSource`) writes a `linked` map entry with
+`linkedBy` and the entry it replaced, under the library lock; the pin's key,
+project note and review membership hang on the project source ID, so they all
+stay, and the managed bibliography is rebuilt. `unlink-pin` puts the replaced
+entry back (or none). `keep-pin-separate` records the decision in the map's
+`keptSeparate` list with actor and time; the resolution then carries
+`keptSeparate: true`, and `clear-pin-separate` withdraws it. A later link
+clears it. Older map files without these fields read as before.
 
 **Two pins, one source.** A project that pinned both sides of a pair keeps
 both pins after they are merged: its documents may cite either key, and the
@@ -1254,8 +1357,27 @@ Systematic reviews does, with two sections: the possible pairs and **Merged**.
   path only. Each pair carries both sides as overview rows plus
   `otherProjects` (other checkouts on this computer that use it, by their
   title in the server's project list or else their folder name; one pin
-  resolution per checkout) and `keptByDefault`, the design's survivor rule. The default side comes first. At most 200 pairs are sent;
-  `pairsTotal` counts them all. A project server refuses the read.
+  resolution per checkout) and `keptByDefault`, the design's survivor rule. The default side comes first; a strong match that was
+  not merged carries its `reason`. A project server refuses the read.
+- **Pages.** The engine pages both lists before any route or tool cuts them:
+  pairs in the assessment's order, merges newest first with the merge ID
+  breaking ties. A page is at most 200 pairs and 100 merges for the screen
+  (`pairOffset`, `mergeOffset`), with `pairsTotal` and `mergesTotal` counting
+  all. Every answer carries `revision`, a hash of both whole lists; a request
+  that names another revision gets both lists from offset 0 and
+  `restarted: true`, so a list that changed between pages (a merge, an Undo,
+  Not duplicates) is never skipped through. The screen's **Show more** asks
+  for the next page under the revision it holds and appends it, or replaces
+  the shown page on a restart ("The list changed, so it starts again from the
+  top."). A change the view makes reads the first page again.
+- **Every receipt, read-only.** With `merges: "all"` (the Merged tab's
+  **All**; the agent's `allMerges: true`) the merge list holds every receipt,
+  undone and no longer undoable ones too, each with `undo` (`available`,
+  `undone`, `kept-source-gone`, `merged-source-gone`) and `merged` null once
+  the trash was emptied; it pages, counts and restarts like the undoable list.
+  Rows that cannot be undone say why and have no Undo. `damagedReceipts`
+  (merge ID, legible source IDs) is sent whenever a receipt cannot be read,
+  and the view says so above both lists.
 - **Merges Undo can still reverse** come from `merges/*.json` with state
   `done` by Undo's own rule: the merged-away source is in the trash under that
   merge, or live again after an Undo that stopped halfway (Undo finishes it).
@@ -1272,11 +1394,15 @@ Systematic reviews does, with two sections: the possible pairs and **Merged**.
   journal and identifiers, for one title "Their authors and volume differed.",
   and one line per field with both values, "Volume: none (kept), 12 (merged
   away)". The
-  agent's duplicates list keeps `keptDifferent` only.
+  agent's duplicates list keeps `keptDifferent` only; its receipt by ID has the
+  `differences` too.
 - **Cost at 20,000 records** (M5 Pro, Node 26, load 2): the assessment alone
   46 ms, the whole read 57 ms warm and 1.2 s cold (the cold part is the
-  record listing the overview pays too). The assessment is not on the overview
-  path; the view asks when it opens and after each change it makes.
+  record listing the overview pays too). With the group check and the merge
+  files read for Undo exclusions (the scale library, 20,029 records, 71
+  merges, 429 pairs; Node 24.19, load 8 to 10): the assessment 99 ms, the read
+  123 ms warm and 1.1 s cold. The assessment is not on the overview path; the
+  view asks when it opens, after each change it makes and for each Show more.
 - **Not duplicates** is `mark-distinct` on organize and its Undo
   `clear-distinct` (engine `markScientLibrarySourcesDistinct` /
   `clearScientLibrarySourcesDistinct`, `distinct-pairs.json`). Both sources
@@ -1303,10 +1429,18 @@ Systematic reviews does, with two sections: the possible pairs and **Merged**.
   button that opens the view at Merged; the phrase is
   `SCIENT_LIBRARY_MERGES_TO_REVIEW`, shared by the line and the button.
 - **Agents**: `scient_sources_list` with `duplicates: true` (library mode)
-  returns the first 25 pairs and 10 undoable merges with both totals (each
-  merge's `survivorId` is `keptSourceId`); project mode refuses it. `scient_sources_organize` takes `mark-distinct` and
+  returns a page of 25 pairs (`offset`, answered `nextOffset`) and 10 undoable
+  merges (`mergeOffset`, answered `duplicates.nextMergeOffset`), both totals
+  and `duplicates.revision` to pass back (each merge's `survivorId` is
+  `keptSourceId`). With `mergeId` it returns `mergeReceipt`: that merge as the
+  Merged list shows it (`differences` with both values), also once undone or
+  no longer undoable, and `undo` (`available`, `undone`, `kept-source-gone`,
+  `merged-source-gone`; engine `readScientLibraryMergeReceipt`). It reads
+  only; `undo-merge` checks again under the lock. `allMerges: true` lists
+  every receipt, each merge carries `undo`, and `damagedReceipts` comes when
+  one cannot be read. Project mode refuses both. `scient_sources_organize` takes `mark-distinct` and
   `clear-distinct` with two source IDs. The library tool list grew from
-  112,563 to 112,832 bytes. `LIBRARY_ORGANIZE_ACTION_PARITY` maps every
+  112,563 to 112,832 bytes, then to 113,035 with paging and the receipt. `LIBRARY_ORGANIZE_ACTION_PARITY` maps every
   Library-only organize action to the tool's action(s), and its test checks
   the tool's schema names them.
 - Not built: merging two sources the assessment did not pair.

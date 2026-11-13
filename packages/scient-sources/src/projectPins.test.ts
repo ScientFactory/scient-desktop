@@ -359,7 +359,7 @@ describe("project pins", () => {
       { projectSourceId: loser.sourceId, work: null },
       {
         projectSourceId: "source_elsewhere_doi",
-        work: work("Another title", [{ scheme: "doi", value: "https://doi.org/10.1000/DOI" }]),
+        work: work("Study DOI", [{ scheme: "doi", value: "https://doi.org/10.1000/DOI" }]),
       },
       { projectSourceId: "source_elsewhere_meta", work: work("Metadata only") },
       { projectSourceId: "source_elsewhere_twin", work: work("Twin study") },
