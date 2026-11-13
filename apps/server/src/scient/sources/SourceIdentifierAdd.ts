@@ -2,9 +2,7 @@
 import * as NodeCrypto from "node:crypto";
 
 import {
-  assessSourceDuplicate,
   detectSourceIdentifier,
-  isbn13,
   normalizePersistentIdentifier,
   type ScientSourceActor,
   type ScientSourceCandidate,
@@ -69,23 +67,6 @@ function identifierOnlyCandidate(
   };
 }
 
-/** ISBNs are not work-level identity in general (chapters share them), but two books with one ISBN are one book. */
-function sameBook(
-  identifier: ScientSourceIdentifier,
-  existing: ReadonlyArray<ScientSourceRecord>,
-): ScientSourceRecord | undefined {
-  if (identifier.scheme !== "isbn") return undefined;
-  return existing.find(
-    (record) =>
-      record.type === "book" &&
-      record.identifiers.some(
-        (candidate) =>
-          candidate.scheme.trim().toLowerCase() === "isbn" &&
-          isbn13(candidate.value) === identifier.value,
-      ),
-  );
-}
-
 type Step =
   | { readonly kind: "done"; readonly item: ScientSourceIdentifierAddItem }
   | {
@@ -107,6 +88,7 @@ function existingItem(
     sourceId: record?.sourceId ?? null,
     title: record?.title ?? null,
     ...(record?.verification ? { verification: record.verification.state } : {}),
+    ...(possible ? { possibleMatch: true as const } : {}),
     message: possible
       ? "A source with the same title, first author and year is already in the Library."
       : "Already in the Library.",
@@ -129,7 +111,6 @@ export async function addScientSourcesByIdentifier(
   },
   observer?: SourceImportObserver,
 ): Promise<ReadonlyArray<ScientSourceIdentifierAddItem>> {
-  const existing = await listScientSourceRecords(input.root);
   const firstByKey = new Map<string, number>();
   const steps = input.entries.map(
     (
@@ -155,16 +136,7 @@ export async function addScientSourcesByIdentifier(
       const first = firstByKey.get(key);
       if (first !== undefined) return { kind: "repeat", of: first, input: text };
       firstByKey.set(key, index);
-      const book = sameBook(identifier, existing);
-      if (book) return { kind: "done", item: existingItem(text, identifier, book, false) };
-      const duplicate = assessSourceDuplicate({
-        candidate: identifierOnlyCandidate(identifier, input.actor),
-        existing,
-      });
-      if (duplicate.kind !== "new") {
-        const record = existing.find((entry) => entry.sourceId === duplicate.matchingSourceIds[0]);
-        return { kind: "done", item: existingItem(text, identifier, record, false) };
-      }
+      // A bare identifier has no title to corroborate a stored record, so its registry answers first.
       return { kind: "resolve", input: text, identifier };
     },
   );

@@ -8,7 +8,6 @@ import { initializeScientProject } from "@scientfactory/project-init";
 import type { ScientSourceIdentifier } from "@scientfactory/scient-sources";
 import { importScientSource, listScientSourceRecords } from "@scientfactory/scient-sources/store";
 import { afterEach, describe, expect, it } from "@effect/vitest";
-import { vi } from "vite-plus/test";
 
 import {
   addScientSourcesByIdentifier,
@@ -120,37 +119,35 @@ describe("addScientSourcesByIdentifier", () => {
     expect(results[4]?.sourceId).toBe(records[0]?.sourceId);
   });
 
-  it("reports an identifier already in the Library without asking its registry", async () => {
+  it("reports an identifier already in the Library once its registry names the same work", async () => {
     const root = await project();
-    const first = await addScientSourcesByIdentifier({
+    const resolveIdentifiers = registry({
+      "doi:10.1000/abc.123": metadata("Measured outcomes", [
+        { scheme: "doi", value: "10.1000/abc.123" },
+      ]),
+      "pmid:4242": metadata("Another study", [
+        { scheme: "doi", value: "10.1000/abc.123" },
+        { scheme: "pmid", value: "4242" },
+      ]),
+    });
+    const [first] = await addScientSourcesByIdentifier({
       root,
       actor: "user",
-      entries: ["10.1000/abc.123", "ISBN 978-0-262-03384-8"],
-      resolveIdentifiers: registry({
-        "doi:10.1000/abc.123": metadata("Measured outcomes", [
-          { scheme: "doi", value: "10.1000/abc.123" },
-        ]),
-        "isbn:9780262033848": {
-          ...metadata("Introduction to Algorithms", [{ scheme: "isbn", value: "9780262033848" }]),
-          type: "book",
-        },
-      }),
+      entries: ["10.1000/abc.123"],
+      resolveIdentifiers,
     });
-    expect(first.map((item) => item.outcome)).toEqual(["imported", "imported"]);
 
-    const resolveIdentifiers = vi.fn<ResolveSourceIdentifierBatch>(async () => []);
     const again = await addScientSourcesByIdentifier({
       root,
       actor: "agent",
-      entries: ["DOI: 10.1000/ABC.123", "0-262-03384-4"],
+      entries: ["DOI: 10.1000/ABC.123", "PMID 4242"],
       resolveIdentifiers,
     });
 
     expect(again).toMatchObject([
-      { outcome: "duplicate", sourceId: first[0]?.sourceId, title: "Measured outcomes" },
-      { outcome: "duplicate", sourceId: first[1]?.sourceId, title: "Introduction to Algorithms" },
+      { outcome: "duplicate", sourceId: first?.sourceId, title: "Measured outcomes" },
+      { outcome: "imported", title: "Another study" },
     ]);
-    expect(resolveIdentifiers).toHaveBeenCalledWith([]);
     await expect(listScientSourceRecords(root)).resolves.toHaveLength(2);
   });
 

@@ -7,11 +7,9 @@ import * as NodePath from "node:path";
 import * as Schema from "effect/Schema";
 
 import { scientSourceCollectionsInternals } from "./collections.ts";
-import { workLevelIdentifierKey } from "./duplicates.ts";
 import {
   readLibraryAliasesAt,
   resolveScientLibraryAlias,
-  type ScientLibraryAliases,
   writeLibraryAliasesAt,
 } from "./libraryAliases.ts";
 import {
@@ -20,6 +18,17 @@ import {
   pairKey,
   type ScientLibraryPossibleDuplicate,
 } from "./libraryDuplicates.ts";
+import {
+  readScientLibraryDistinctPairs,
+  readScientLibraryMergeReceipts,
+  SCIENT_LIBRARY_MAX_DISTINCT_PAIRS_BYTES,
+  SCIENT_LIBRARY_MAX_MERGE_BYTES,
+  SCIENT_LIBRARY_MERGES_DIRECTORY,
+  scientLibraryDistinctPairsPath,
+  scientLibraryExclusionsFrom,
+  type ScientLibraryDamagedReceipt,
+  type ScientLibraryDistinctPair,
+} from "./libraryExclusions.ts";
 import type { ScientLibraryLocation } from "./libraryRoot.ts";
 import {
   ScientSourceActor,
@@ -32,6 +41,7 @@ import {
 } from "./model.ts";
 import { normalizePersistentIdentifier } from "./normalize.ts";
 import { scientSourceTagKey } from "./organize.ts";
+import { workLevelIdentifierKey } from "./sourceIdentity.ts";
 import { scientSourceStoreInternals } from "./store.ts";
 
 const {
@@ -54,11 +64,9 @@ const {
 const { rewriteLibraryCollections } = scientSourceCollectionsInternals;
 type StorePaths = Awaited<ReturnType<typeof sourceStorePaths>>;
 
-const MERGES_DIRECTORY = "merges";
+const MERGES_DIRECTORY = SCIENT_LIBRARY_MERGES_DIRECTORY;
 const PENDING_MERGES_DIRECTORY = "pending";
-const DISTINCT_PAIRS_FILE = "distinct-pairs.json";
-const MAX_MERGE_BYTES = 8 * 1024 * 1024;
-const MAX_DISTINCT_PAIRS_BYTES = 16 * 1024 * 1024;
+const MAX_MERGE_BYTES = SCIENT_LIBRARY_MAX_MERGE_BYTES;
 const NonEmptyString = Schema.String.check(Schema.isTrimmed(), Schema.isNonEmpty());
 
 const MergeFieldChange = Schema.Struct({
@@ -103,18 +111,7 @@ export const ScientLibraryMerge = Schema.Struct({
 export type ScientLibraryMerge = typeof ScientLibraryMerge.Type;
 type MergeKind = ScientLibraryMerge["kind"];
 
-const ScientLibraryDistinctPair = Schema.Struct({
-  sourceIds: Schema.Tuple([NonEmptyString, NonEmptyString]),
-  /** A person's or agent's decision, or copies of one project that diverged (written by the move). */
-  reason: Schema.Literals(["marked-distinct", "divergent-copies"]),
-  markedAt: NonEmptyString,
-  markedBy: ScientSourceActor,
-});
-export type ScientLibraryDistinctPair = typeof ScientLibraryDistinctPair.Type;
-const DistinctPairsFile = Schema.Struct({
-  formatVersion: Schema.Literal(1),
-  pairs: Schema.Array(ScientLibraryDistinctPair),
-});
+export type { ScientLibraryDistinctPair };
 
 /** Bibliographic fields: an empty one takes the loser's value, a different one is reported. */
 const REPORTED_FIELDS = [
@@ -501,69 +498,17 @@ async function settlePendingMerges(paths: StorePaths): Promise<void> {
   await finishMerges(paths, finishing);
 }
 
-async function readDistinctPairs(
-  paths: StorePaths,
-): Promise<ReadonlyArray<ScientLibraryDistinctPair>> {
-  const filePath = NodePath.join(paths.root, DISTINCT_PAIRS_FILE);
-  const state = await snapshot(filePath);
-  if (state === "missing") return [];
-  if (state !== "file") throw new Error(`${DISTINCT_PAIRS_FILE} is not a safe regular file.`);
-  return (await readBoundedJson(filePath, MAX_DISTINCT_PAIRS_BYTES, DistinctPairsFile)).pairs;
-}
-
-function pairIndex(
-  pairs: ReadonlyArray<readonly [string, string]>,
-  aliases: ScientLibraryAliases,
-): (left: string, right: string) => boolean {
-  const keys = new Set<string>();
-  for (const pair of pairs) {
-    const [left, right] = pair.map((sourceId) => resolveScientLibraryAlias(aliases, sourceId));
-    if (left !== right) keys.add(pairKey(left!, right!));
-  }
-  return (left, right) => keys.has(pairKey(left, right));
-}
-
-async function readMergeFiles(paths: StorePaths): Promise<ReadonlyArray<ScientLibraryMerge>> {
-  const directory = NodePath.join(paths.root, MERGES_DIRECTORY);
-  if ((await snapshot(directory)) !== "directory") return [];
-  const merges: ScientLibraryMerge[] = [];
-  for (const entry of await NodeFSP.readdir(directory, { withFileTypes: true })) {
-    if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-    const merge = await readBoundedJson(
-      NodePath.join(directory, entry.name),
-      MAX_MERGE_BYTES,
-      ScientLibraryMerge,
-    ).catch(() => null);
-    if (merge) merges.push(merge);
-  }
-  return merges;
-}
-
-/**
- * Pairs no automatic pass merges: those marked distinct, and those whose merge was undone (or an
- * Undo that stopped after bringing the merged-away source back). Both follow aliases, so a later
- * merge of either side cannot reunite them through a third source.
- */
-async function automaticExclusions(
-  paths: StorePaths,
-  aliases: ScientLibraryAliases,
-  live: ReadonlySet<string>,
-  merges: ReadonlyArray<ScientLibraryMerge>,
-) {
+/** Every receipt and the exclusions they and the distinct pairs hold. Caller lists `live`. */
+async function readExclusions(paths: StorePaths, live: ReadonlySet<string>) {
+  const [distinctPairs, { receipts, damaged }, aliases] = await Promise.all([
+    readScientLibraryDistinctPairs(paths.root),
+    readScientLibraryMergeReceipts(paths.root, ScientLibraryMerge),
+    readLibraryAliasesAt(paths.root),
+  ]);
   return {
-    isDistinct: pairIndex(
-      (await readDistinctPairs(paths)).map((pair) => pair.sourceIds),
-      aliases,
-    ),
-    wasUnmerged: pairIndex(
-      merges
-        .filter(
-          (merge) =>
-            merge.state === "undone" || (merge.state === "done" && live.has(merge.loserId)),
-        )
-        .map((merge) => [merge.survivorId, merge.loserId] as const),
-      aliases,
-    ),
+    receipts,
+    aliases,
+    exclusions: scientLibraryExclusionsFrom({ distinctPairs, receipts, damaged, aliases, live }),
   };
 }
 
@@ -592,16 +537,16 @@ async function changeDistinctPairs<A>(
         resolveScientLibraryAlias(aliases, pair.sourceIds[1]),
       );
     const { pairs, result } = change(
-      await readDistinctPairs(paths),
+      await readScientLibraryDistinctPairs(paths.root),
       pairKey(...resolved),
       resolved,
       keyOf,
     );
     if (pairs) {
       await atomicWriteJson(
-        NodePath.join(paths.root, DISTINCT_PAIRS_FILE),
+        scientLibraryDistinctPairsPath(paths.root),
         { formatVersion: 1, pairs },
-        MAX_DISTINCT_PAIRS_BYTES,
+        SCIENT_LIBRARY_MAX_DISTINCT_PAIRS_BYTES,
       );
     }
     return result;
@@ -729,6 +674,8 @@ export interface ScientLibraryDuplicateMergeResult {
   }>;
   /** What is left for a person or agent to decide, after this pass's merges. */
   readonly possibleDuplicates: ReadonlyArray<ScientLibraryPossibleDuplicate>;
+  /** Receipts that could not be read; the records they name were not merged automatically. */
+  readonly damagedReceipts: ReadonlyArray<ScientLibraryDamagedReceipt>;
 }
 
 /** The library-wide pass: merges every automatic duplicate group into its survivor. */
@@ -742,16 +689,11 @@ export async function mergeScientLibraryDuplicates(input: {
   return withStoreLock(paths, "source-write", async () => {
     await settlePendingMerges(paths);
     const records = await listScientSourceRecordsFromPaths(paths);
-    const aliases = await readLibraryAliasesAt(paths.root);
-    const assessment = assessScientLibraryDuplicates({
-      records,
-      ...(await automaticExclusions(
-        paths,
-        aliases,
-        new Set(records.map((record) => record.sourceId)),
-        await readMergeFiles(paths),
-      )),
-    });
+    const { exclusions } = await readExclusions(
+      paths,
+      new Set(records.map((record) => record.sourceId)),
+    );
+    const assessment = assessScientLibraryDuplicates({ records, ...exclusions });
     const byId = new Map(records.map((record) => [record.sourceId, record]));
     const pending: ScientLibraryMerge[] = [];
     const failures: Array<ScientLibraryDuplicateMergeResult["failures"][number]> = [];
@@ -787,6 +729,7 @@ export async function mergeScientLibraryDuplicates(input: {
       merges,
       failures,
       possibleDuplicates: assessment.possibleDuplicates,
+      damagedReceipts: exclusions.damaged,
     };
   });
 }
@@ -931,10 +874,11 @@ export type ScientLibraryMergeUndoState =
   /** The trash was emptied: Undo answers `loser-missing`. */
   | "merged-source-gone";
 
-interface ScientLibraryUndoableMerge {
+interface ScientLibraryListedMerge {
   readonly merge: ScientLibraryMerge;
-  /** The merged-away record as it went to the trash, or live after an Undo that stopped halfway. */
-  readonly merged: ScientSourceRecord;
+  /** The merged-away record: in the trash, live after an Undo, or null once the trash was emptied. */
+  readonly merged: ScientSourceRecord | null;
+  readonly undo: ScientLibraryMergeUndoState;
 }
 
 /** Undo's own checks, without its lock: the answer can change before an Undo applies. */
@@ -984,15 +928,17 @@ interface ScientLibraryDuplicatesListing {
   >;
   readonly pairsTotal: number;
   readonly mergeOffset: number;
-  /** This page of the merges Undo can still reverse, newest first. */
-  readonly merges: ReadonlyArray<ScientLibraryUndoableMerge>;
+  /** This page of the merges asked for, newest first. */
+  readonly merges: ReadonlyArray<ScientLibraryListedMerge>;
   readonly mergesTotal: number;
+  /** Receipts that could not be read; no automatic pass merges the records they name. */
+  readonly damagedReceipts: ReadonlyArray<ScientLibraryDamagedReceipt>;
 }
 
 /**
- * A page of each list the duplicates screen shows. Reads only: no merge, no settling, no lock.
- * Pairs go by kind then IDs, merges newest first then by ID. A `revision` other than the current
- * one restarts both pages at the top, so a list that changed between pages skips nothing.
+ * A page of each list the duplicates screen shows; reads only. Pairs by kind then IDs, merges
+ * newest first (undoable ones, or with `merges: "all"` every receipt). Another `revision` than
+ * the current one restarts both pages at the top, so a list that changed skips nothing.
  */
 export async function readScientLibraryDuplicates(input: {
   readonly library: ScientLibraryLocation;
@@ -1000,17 +946,14 @@ export async function readScientLibraryDuplicates(input: {
   readonly pairLimit: number;
   readonly mergeOffset?: number;
   readonly mergeLimit: number;
+  readonly merges?: "undoable" | "all";
   readonly revision?: string;
 }): Promise<ScientLibraryDuplicatesListing> {
   const paths = await libraryPaths(input.library);
   const records = await listScientSourceRecordsFromPaths(paths);
-  const aliases = await readLibraryAliasesAt(paths.root);
   const byId = new Map(records.map((record) => [record.sourceId, record]));
-  const mergeFiles = await readMergeFiles(paths);
-  const assessment = assessScientLibraryDuplicates({
-    records,
-    ...(await automaticExclusions(paths, aliases, new Set(byId.keys()), mergeFiles)),
-  });
+  const { receipts, exclusions } = await readExclusions(paths, new Set(byId.keys()));
+  const assessment = assessScientLibraryDuplicates({ records, ...exclusions });
   const possibleDuplicates = assessment.possibleDuplicates.map((pair) => {
     const [left, right] = pair.sourceIds.map((sourceId) => byId.get(sourceId)!);
     return {
@@ -1019,13 +962,15 @@ export async function readScientLibraryDuplicates(input: {
     };
   });
   const trashed = await trashFileNames(paths);
-  const undoable: ScientLibraryUndoableMerge[] = [];
-  for (const merge of mergeFiles) {
-    if (merge.state !== "done") continue;
+  const listed: ScientLibraryListedMerge[] = [];
+  for (const merge of receipts) {
+    if (merge.state === "pending") continue;
     const { undo, merged } = await mergeUndoState(paths, merge, byId, trashed);
-    if (undo === "available" && merged) undoable.push({ merge, merged });
+    if (input.merges === "all" || (undo === "available" && merged)) {
+      listed.push({ merge, merged, undo });
+    }
   }
-  undoable.sort(
+  listed.sort(
     (left, right) =>
       right.merge.mergedAt.localeCompare(left.merge.mergedAt) ||
       (left.merge.mergeId < right.merge.mergeId ? -1 : 1),
@@ -1034,7 +979,8 @@ export async function readScientLibraryDuplicates(input: {
     .update(
       JSON.stringify([
         possibleDuplicates.map((pair) => [pair.sourceIds, pair.kind, pair.reason ?? null]),
-        undoable.map(({ merge }) => merge.mergeId),
+        listed.map(({ merge, undo }) => [merge.mergeId, undo]),
+        exclusions.damaged.map((receipt) => receipt.mergeId),
       ]),
     )
     .digest("hex")
@@ -1045,7 +991,7 @@ export async function readScientLibraryDuplicates(input: {
     return { start, items: items.slice(start, start + Math.max(0, limit)) };
   };
   const pairs = page(possibleDuplicates, input.pairOffset, input.pairLimit);
-  const merges = page(undoable, input.mergeOffset, input.mergeLimit);
+  const merges = page(listed, input.mergeOffset, input.mergeLimit);
   return {
     records,
     revision,
@@ -1055,7 +1001,8 @@ export async function readScientLibraryDuplicates(input: {
     pairsTotal: possibleDuplicates.length,
     mergeOffset: merges.start,
     merges: merges.items,
-    mergesTotal: undoable.length,
+    mergesTotal: listed.length,
+    damagedReceipts: exclusions.damaged,
   };
 }
 

@@ -14,6 +14,7 @@ import {
   assessSourceMetadataDuplicate,
   sourceMetadataMatchIndex,
 } from "./duplicates.ts";
+import { readScientLibraryExclusions, type ScientLibraryExclusions } from "./libraryExclusions.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   isScientLibraryLocation,
@@ -2652,6 +2653,66 @@ interface ImportScientSourceInput {
   readonly pdfRetrieval?: ScientSourceAttachmentRetrieval;
 }
 
+async function intakeExclusions(
+  paths: SourceStorePaths,
+  existing: ReadonlyArray<ScientSourceRecord>,
+): Promise<ScientLibraryExclusions | undefined> {
+  if (paths.owner.kind !== "library") return undefined;
+  return readScientLibraryExclusions(
+    paths.root,
+    new Set(existing.map((record) => record.sourceId)),
+  );
+}
+
+/**
+ * The ID a new record of this import takes: the one its source key derives, unless that ID is a
+ * merged-away source or one a merge alias forwards (a live record there is always reused).
+ */
+async function newRecordId(
+  paths: SourceStorePaths,
+  input: ImportScientSourceInput,
+  existing: ReadonlyArray<ScientSourceRecord>,
+  exclusions: ScientLibraryExclusions | undefined,
+): Promise<string> {
+  const derived = scientSourceIdFor(storeOwnerId(paths), input.candidate.sourceKey);
+  const taken =
+    existing.some((record) => record.sourceId === derived) ||
+    exclusions?.forwarded(derived) ||
+    (await readTrashEntry(paths, derived).catch(() => null))?.mergedInto !== undefined;
+  return taken
+    ? scientSourceIdFor(storeOwnerId(paths), `${input.candidate.sourceKey}\0${input.operationId}`)
+    : derived;
+}
+
+/** The Library's merge decisions intake respects; none for a project store. */
+export async function readScientSourceIntakeExclusions(
+  root: ScientSourceStoreLocation,
+  existing: ReadonlyArray<ScientSourceRecord>,
+): Promise<ScientLibraryExclusions | undefined> {
+  return intakeExclusions(await sourceStorePaths(root), existing);
+}
+
+/**
+ * How the shared identity rule judges a candidate against a store as it is now, outside the
+ * import's lock: for checks before an import, such as whether a registry needs asking.
+ */
+export async function assessScientSourceIntake(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly candidate: ScientSourceCandidate;
+  readonly pdfSha256?: string;
+}): Promise<ScientSourceDuplicateAssessment> {
+  const paths = await sourceStorePaths(input.root);
+  const existing = await listScientSourceRecordsFromPaths(paths);
+  const exclusions = await intakeExclusions(paths, existing);
+  return assessSourceDuplicate({
+    candidate: input.candidate,
+    existing,
+    sourceId: scientSourceIdFor(storeOwnerId(paths), input.candidate.sourceKey),
+    ...(input.pdfSha256 ? { pdfSha256: input.pdfSha256 } : {}),
+    ...(exclusions ? { exclusions } : {}),
+  });
+}
+
 async function importScientSourceWithRecordLookup(
   input: ImportScientSourceInput,
   lookup: "complete" | "operation-snapshot",
@@ -2664,8 +2725,18 @@ async function importScientSourceWithRecordLookup(
       lookup === "operation-snapshot"
         ? await operationRecordSnapshot(paths, input.operationId)
         : await listScientSourceRecordsFromPaths(paths);
+    const exclusions = await intakeExclusions(paths, existing);
+    const derivedId = scientSourceIdFor(storeOwnerId(paths), input.candidate.sourceKey);
+    const assess = (records: ReadonlyArray<ScientSourceRecord>, pdfSha256?: string) =>
+      assessSourceDuplicate({
+        candidate: input.candidate,
+        existing: records,
+        sourceId: derivedId,
+        ...(pdfSha256 ? { pdfSha256 } : {}),
+        ...(exclusions ? { exclusions } : {}),
+      });
     const importedAt = new Date().toISOString();
-    const preliminaryDuplicate = assessSourceDuplicate({ candidate: input.candidate, existing });
+    const preliminaryDuplicate = assess(existing, input.expectedPdf?.sha256);
     if (duplicateBlocksImport(preliminaryDuplicate, input.allowPossibleMetadataMatch ?? false)) {
       return { outcome: "duplicate", record: null, duplicate: preliminaryDuplicate };
     }
@@ -2680,16 +2751,11 @@ async function importScientSourceWithRecordLookup(
           importedAt,
         })
       : null;
-    const sourceId = scientSourceIdFor(storeOwnerId(paths), input.candidate.sourceKey);
-    const duplicate = assessSourceDuplicate({
-      candidate: input.candidate,
-      existing,
-      sourceId,
-      ...(attachment ? { pdfSha256: attachment.sha256 } : {}),
-    });
+    const duplicate = assess(existing, attachment?.sha256);
     if (duplicateBlocksImport(duplicate, input.allowPossibleMetadataMatch ?? false)) {
       return { outcome: "duplicate", record: null, duplicate };
     }
+    const sourceId = await newRecordId(paths, input, existing, exclusions);
     const citationKey = assignCitationKey({
       preferred: input.candidate.citationKey,
       creators: input.candidate.creators,
@@ -2754,12 +2820,7 @@ async function importScientSourceWithRecordLookup(
       if (lookup === "operation-snapshot") {
         await replaceOperationRecordSnapshot(paths, input.operationId, concurrentRecords);
       }
-      const concurrentDuplicate = assessSourceDuplicate({
-        candidate: input.candidate,
-        existing: concurrentRecords,
-        sourceId,
-        ...(attachment ? { pdfSha256: attachment.sha256 } : {}),
-      });
+      const concurrentDuplicate = assess(concurrentRecords, attachment?.sha256);
       if (concurrentDuplicate.kind === "new") {
         throw new Error("A conflicting source record was created concurrently.");
       }

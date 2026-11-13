@@ -16,6 +16,7 @@ import { readLibraryDuplicates } from "./client";
 import { scientSourcesErrorMessage } from "./errorMessage";
 import {
   DUPLICATE_LABELS,
+  damagedReceiptsLabel,
   differingFields,
   differsLabel,
   fieldValue,
@@ -26,6 +27,7 @@ import {
   mergedDateLabel,
   pairReasonLabel,
   mergedRowLabel,
+  mergeStateLabel,
   sideSummary,
   mergedTitleLabel,
   sectionCountLabel,
@@ -67,8 +69,10 @@ export function LibraryDuplicatesView(props: {
   /** A merge landed: the merged-away source has left the Library. */
   readonly onMerged: (mergedSourceId: string) => void;
 }) {
-  const context = `${props.environmentId}\0${props.root}`;
   const [section, setSection] = useState<DuplicatesSection>(props.initialSection);
+  // Merges Undo can reverse, or every merge with how it stands now.
+  const [merges, setMerges] = useState<"undoable" | "all">("undoable");
+  const context = `${props.environmentId}\0${props.root}\0${merges}`;
   const [asks, setAsks] = useState(0);
   const [reading, setReading] = useState<{
     readonly context: string;
@@ -91,7 +95,7 @@ export function LibraryDuplicatesView(props: {
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reads the possible duplicates from the environment server when the screen opens and after each change that lands through the organize hook
   useEffect(() => {
     let live = true;
-    void readLibraryDuplicates(props.environmentId, props.root).then(
+    void readLibraryDuplicates(props.environmentId, props.root, { merges }).then(
       (result) => {
         if (!live) return;
         setReading({ context, result, error: null, ask });
@@ -110,7 +114,7 @@ export function LibraryDuplicatesView(props: {
     return () => {
       live = false;
     };
-  }, [props.environmentId, props.root, context, ask]);
+  }, [props.environmentId, props.root, merges, context, ask]);
 
   const [loadingMore, setLoadingMore] = useState(false);
   // The next page of one list under the revision the shown one came with. A list that changed
@@ -124,6 +128,7 @@ export function LibraryDuplicatesView(props: {
         revision: shown.revision,
         pairOffset: shown.pairOffset + shown.pairs.length,
         mergeOffset: shown.mergeOffset + shown.merges.length,
+        merges,
       });
       setReading((previous) => {
         if (previous?.context !== context || previous.result !== shown) return previous;
@@ -265,6 +270,11 @@ export function LibraryDuplicatesView(props: {
           </Toggle>
         </ToggleGroup>
       </div>
+      {result?.damagedReceipts ? (
+        <p className="mx-3 mt-3 text-xs text-muted-foreground">
+          {damagedReceiptsLabel(result.damagedReceipts.length)}
+        </p>
+      ) : null}
       {current?.error ? (
         <div className="mx-3 mt-3 flex items-center gap-2 text-xs text-destructive">
           <span className="min-w-0 flex-1">
@@ -324,30 +334,48 @@ export function LibraryDuplicatesView(props: {
             className="mt-2 min-h-0 flex-1 overscroll-contain"
           />
         )
-      ) : result.merges.length === 0 ? (
-        <p className="px-3 py-6 text-center text-sm text-muted-foreground">
-          {DUPLICATE_LABELS.noMerges}
-        </p>
       ) : (
-        <ScrollArea className="mt-2 min-h-0 flex-1">
-          <ul className="divide-y divide-border">
-            {result.merges.map((entry) => (
-              <MergedRow
-                key={entry.mergeId}
-                merge={entry}
-                canChange={props.canChange}
-                busy={busy}
-                onUndo={() => void undoMerge(entry.mergeId)}
+        <>
+          <div className="shrink-0 px-3 pt-2">
+            <ToggleGroup
+              aria-label={DUPLICATE_LABELS.mergedSection}
+              className="w-full *:flex-1"
+              value={[merges]}
+              onValueChange={(next) => {
+                const value = next[0];
+                if (value === "undoable" || value === "all") setMerges(value);
+              }}
+            >
+              <Toggle value="undoable">{DUPLICATE_LABELS.canUndo}</Toggle>
+              <Toggle value="all">{DUPLICATE_LABELS.allMerges}</Toggle>
+            </ToggleGroup>
+          </div>
+          {result.merges.length === 0 ? (
+            <p className="px-3 py-6 text-center text-sm text-muted-foreground">
+              {merges === "all" ? DUPLICATE_LABELS.noMergesAtAll : DUPLICATE_LABELS.noMerges}
+            </p>
+          ) : (
+            <ScrollArea className="mt-2 min-h-0 flex-1">
+              <ul className="divide-y divide-border">
+                {result.merges.map((entry) => (
+                  <MergedRow
+                    key={entry.mergeId}
+                    merge={entry}
+                    canChange={props.canChange}
+                    busy={busy}
+                    onUndo={() => void undoMerge(entry.mergeId)}
+                  />
+                ))}
+              </ul>
+              <ShowMore
+                shown={result.mergeOffset + result.merges.length}
+                total={result.mergesTotal}
+                loading={loadingMore}
+                onShowMore={() => void showMore("merged")}
               />
-            ))}
-          </ul>
-          <ShowMore
-            shown={result.mergeOffset + result.merges.length}
-            total={result.mergesTotal}
-            loading={loadingMore}
-            onShowMore={() => void showMore("merged")}
-          />
-        </ScrollArea>
+            </ScrollArea>
+          )}
+        </>
       )}
     </div>
   );
@@ -491,6 +519,7 @@ function MergedRow(props: {
 }) {
   const { merge } = props;
   const kept = keptDifferentLabel(merge.keptDifferent);
+  const state = mergeStateLabel(merge.undo);
   // The first line names what differed only for two copies of one title still in the Library.
   const named =
     merge.kept && merge.kept.title === merge.mergedTitle
@@ -505,10 +534,12 @@ function MergedRow(props: {
             {DUPLICATE_LABELS.keptSide}: {sideSummary(merge.kept, { projects: true })}
           </p>
         ) : null}
-        <p className="mt-0.5 break-words text-muted-foreground">
-          {DUPLICATE_LABELS.mergedSide}:{" "}
-          {sideSummary({ ...merge.merged, otherProjects: [] }, { projects: false })}
-        </p>
+        {merge.merged ? (
+          <p className="mt-0.5 break-words text-muted-foreground">
+            {DUPLICATE_LABELS.mergedSide}:{" "}
+            {sideSummary({ ...merge.merged, otherProjects: [] }, { projects: false })}
+          </p>
+        ) : null}
         {merge.differences
           // The first line already names both titles while the kept source is here.
           .filter(hasMergeValues)
@@ -528,8 +559,9 @@ function MergedRow(props: {
             .join(" · ")}
         </p>
         {kept ? <p className="mt-0.5 text-muted-foreground">{kept}</p> : null}
+        {state ? <p className="mt-0.5 text-muted-foreground">{state}</p> : null}
       </div>
-      {props.canChange ? (
+      {props.canChange && merge.undo === "available" ? (
         <Button size="xs" variant="ghost" disabled={props.busy} onClick={props.onUndo}>
           {DUPLICATE_LABELS.undo}
         </Button>

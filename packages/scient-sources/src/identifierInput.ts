@@ -264,6 +264,8 @@ export const ScientSourceIdentifierAddItem = Schema.Struct({
   sourceId: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   verification: Schema.optionalKey(ScientSourceVerification.fields.state),
+  /** The existing source only resembles it (title, first author, year): not pinned for it. */
+  possibleMatch: Schema.optionalKey(Schema.Literal(true)),
   message: Schema.NullOr(Schema.String),
 });
 export type ScientSourceIdentifierAddItem = typeof ScientSourceIdentifierAddItem.Type;

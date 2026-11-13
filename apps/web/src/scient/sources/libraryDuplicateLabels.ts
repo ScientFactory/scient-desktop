@@ -1,5 +1,6 @@
 import type {
   ScientSourcesDuplicateReason,
+  ScientSourcesMergeUndoState,
   ScientSourcesDuplicateSource,
   ScientSourcesDuplicatesResult,
   ScientSourcesOrganizeResult,
@@ -16,6 +17,10 @@ export const DUPLICATE_LABELS = {
   mergedSection: "Merged",
   noPairs: "No possible duplicates in your Library.",
   noMerges: "No merges that can be undone.",
+  noMergesAtAll: "No merges yet.",
+  canUndo: "Can undo",
+  allMerges: "All",
+  undoneState: "Undone",
   loadFailed: "Possible duplicates could not be loaded",
   tryAgain: "Try again",
   merge: "Merge",
@@ -174,6 +179,7 @@ const MATCH_WORDS: Readonly<Record<string, string>> = {
 
 const REASON_WORDS: Readonly<Record<ScientSourcesDuplicateReason, string>> = {
   "merge-undone": "but their merge was undone",
+  "merge-record-unreadable": "but the details of an earlier merge of one could not be read",
   "title-missing": "but one has no title",
   "titles-differ": "but the titles differ",
   "type-unknown": "but one has no known type",
@@ -284,4 +290,26 @@ export function unrevertedLabel(fields: ReadonlyArray<string> | undefined): stri
   return fields && fields.length > 0
     ? `Changes made after the merge were kept: ${fieldWords(fields)}.`
     : null;
+}
+
+/** Why a merge in the full list has no Undo; null when Undo can run. */
+export function mergeStateLabel(undo: ScientSourcesMergeUndoState): string | null {
+  switch (undo) {
+    case "available":
+      return null;
+    case "undone":
+      return DUPLICATE_LABELS.undoneState;
+    case "kept-source-gone":
+      return "Can no longer be undone: the kept source was merged again or moved to the Trash.";
+    case "merged-source-gone":
+      return "Can no longer be undone: the merged-away source left the Trash.";
+  }
+}
+
+/** Merge files hold the Undo decisions, so one Scient cannot read is said plainly. */
+export function damagedReceiptsLabel(count: number): string | null {
+  if (count === 0) return null;
+  return count === 1
+    ? "The details of one merge could not be read. The sources it names are not merged automatically until its file is repaired."
+    : `The details of ${count} merges could not be read. The sources they name are not merged automatically until their files are repaired.`;
 }

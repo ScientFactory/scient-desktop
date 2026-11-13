@@ -416,7 +416,7 @@ describe("ScientSourcesCoordinator", () => {
     ).rejects.toThrow("The source attachment was not found in this project.");
   });
 
-  it("reports byte-identical PDFs during preflight instead of changing the answer at import", async () => {
+  it("names a byte-identical PDF under another title during preflight, as the import does", async () => {
     const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "scient-source-preflight-"));
     fixtures.push(root);
     await initializeScientProject({ root });
@@ -442,7 +442,7 @@ describe("ScientSourcesCoordinator", () => {
         existing: [imported.record],
         pdfPath,
       }),
-    ).resolves.toMatchObject({ kind: "same-pdf" });
+    ).resolves.toMatchObject({ kind: "new", matchingSourceIds: [imported.record.sourceId] });
   });
 
   it("updates canonical source metadata through the environment coordinator", async () => {

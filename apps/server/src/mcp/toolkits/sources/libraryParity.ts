@@ -136,6 +136,10 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "clear-distinct": ["clear-distinct"],
   "move-back": ["move-back"],
   "dismiss-move-summary": ["dismiss-move-summary"],
+  "link-pin": ["link-pin"],
+  "unlink-pin": ["unlink-pin"],
+  "keep-pin-separate": ["keep-pin-separate"],
+  "clear-pin-separate": ["clear-pin-separate"],
 };
 
 /** Every Library read endpoint and the agent tool that reads the same thing. */

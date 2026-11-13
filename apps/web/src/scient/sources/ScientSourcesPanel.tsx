@@ -1,5 +1,6 @@
 import type {
   EnvironmentId,
+  ScientSourceDetailResult,
   ScientSourcesFileImportResult,
   ScientSourcesOverviewResult,
   ThreadId,
@@ -96,6 +97,7 @@ import { sourcesCommands, useCanChangeLibrary, useCanRunSourcesCommand } from ".
 import { updateScientSourcePersonalNote } from "./client";
 import {
   inLibraryNotProjectLabel,
+  LIBRARY_LABELS,
   matchesReadingFilter,
   type ReadingStateChange,
 } from "./libraryLabels";
@@ -483,6 +485,44 @@ export function ScientSourcesPanel(props: {
     applyReadingState: sources.applyReadingState,
   });
   const { addToProject, removeFromProject, setReadingState } = libraryActions;
+  // A source this project keeps from its own details: link it to a Library copy, or keep it apart.
+  const linkToCopy = async (projectSourceId: string, librarySourceId: string) => {
+    const result = await organize.organize(
+      { action: "link-pin", sourceId: projectSourceId, librarySourceId },
+      LIBRARY_LABELS.linkFailed,
+    );
+    if (result?.outcome !== "linked") return;
+    setSelectedSourceId(librarySourceId);
+    toastManager.add({
+      type: "success",
+      title: LIBRARY_LABELS.linked,
+      description: LIBRARY_LABELS.linkedHelp,
+      actionProps: {
+        children: "Undo",
+        onClick: organize.whenFree(() => {
+          void organize
+            .organize(
+              { action: "unlink-pin", sourceId: projectSourceId },
+              LIBRARY_LABELS.linkFailed,
+            )
+            .then((undone) => {
+              if (undone?.outcome === "unlinked") setSelectedSourceId(projectSourceId);
+            });
+        }),
+      },
+    });
+  };
+  const keepSeparate = async (record: ScientSourceDetailResult, separate: boolean) => {
+    const result = await organize.organize(
+      { action: separate ? "keep-pin-separate" : "clear-pin-separate", sourceId: record.sourceId },
+      LIBRARY_LABELS.separateFailed,
+    );
+    if (!result || !record.libraryMatch) return;
+    sources.acceptSourceRecord({
+      ...record,
+      libraryMatch: { ...record.libraryMatch, keptSeparate: separate },
+    });
+  };
   // A merged-away source has left the Library, so it leaves the selection too.
   const leaveSelection = useStableCallback((sourceId: string) => {
     if (organize.selection.has(sourceId)) {
@@ -1050,6 +1090,10 @@ export function ScientSourcesPanel(props: {
                     ? {
                         onAddToProject: () => addToProject([selectedRecord]),
                         onRemoveFromProject: () => removeFromProject([selectedRecord]),
+                        onLinkToCopy: (librarySourceId: string) =>
+                          linkToCopy(selectedRecord.sourceId, librarySourceId),
+                        onKeepSeparate: (separate: boolean) =>
+                          keepSeparate(selectedRecord, separate),
                       }
                     : {}),
                 },

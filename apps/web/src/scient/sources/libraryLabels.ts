@@ -1,4 +1,5 @@
 import type {
+  ScientSourceIdentityProblem,
   ScientSourceReadingStatus,
   ScientSourcesReadingStateResult,
   ScientSourcesScope,
@@ -34,7 +35,47 @@ export const LIBRARY_LABELS = {
   removeSnapshot: "Remove a source this Library does not have?",
   removeSnapshotHelp:
     "This computer's Library does not have it: it is only kept for this project. Removing it cannot be undone here, and it cannot be added back from this computer.",
+  libraryCopy: "Library copy",
+  linkToCopy: "Link to this Library copy",
+  keepSeparate: "Keep separate",
+  askAgain: "Ask again",
+  keptSeparate: "You kept this separate from the Library copies below.",
+  linked: "Linked to the Library copy",
+  linkedHelp: "Its citation key, project note and reviews stay as they were.",
+  unlinked: "Link undone",
+  linkFailed: "Not linked",
+  separateFailed: "Not changed",
+  keptSeparateToast: "Kept separate",
 } as const;
+
+const COPY_PROBLEM_WORDS: Readonly<Record<ScientSourceIdentityProblem, string>> = {
+  "merge-undone": "A merge of the two was undone.",
+  "merge-record-unreadable": "The details of an earlier merge could not be read.",
+  "title-missing": "One of them has no title.",
+  "titles-differ": "The titles differ.",
+  "type-unknown": "The type of one is unknown.",
+  "preprint-and-published": "One is a preprint and the other is not.",
+  "types-differ": "The types differ.",
+  "arxiv-versions-differ": "They name different arXiv versions.",
+  "identifiers-conflict": "Other identifiers differ.",
+};
+
+/** Why this project's source uses its own details although the Library has similar ones. */
+export function libraryCopyLabel(match: {
+  readonly reason: "contradicted" | "ambiguous";
+  readonly candidates: ReadonlyArray<unknown>;
+}): string {
+  if (match.reason === "ambiguous") {
+    return "Your Library has several copies that match, so this project's own details are used until you choose one.";
+  }
+  return match.candidates.length === 1
+    ? "Your Library has a similar copy, but it differs from what this project recorded, so this project's own details are used."
+    : "Your Library has similar copies, but they differ from what this project recorded, so this project's own details are used.";
+}
+
+export function libraryCopyProblemLabel(problem: ScientSourceIdentityProblem | undefined): string {
+  return problem ? COPY_PROBLEM_WORDS[problem] : "It matches this project's details.";
+}
 
 const sources = (count: number) => (count === 1 ? "1 source" : `${count} sources`);
 

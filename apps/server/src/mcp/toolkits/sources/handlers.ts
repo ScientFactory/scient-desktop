@@ -58,7 +58,7 @@ import {
   restoreScientSource,
   revertScientSource,
 } from "@scientfactory/scient-sources/store";
-import type { ScientProjectCitationStyle } from "@t3tools/contracts";
+import type { ScientProjectCitationStyle, ScientSourceLibraryMatch } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -149,6 +149,9 @@ import {
   bothInLibrary,
   libraryDuplicates,
   libraryMergeReceipt,
+  libraryPinMatches,
+  isPinRepairAction,
+  repairLibraryPin,
   moveBackResult,
 } from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import { ReferenceIdentifierLookup } from "../../../scient/references/ReferenceCheck.ts";
@@ -477,6 +480,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     readonly starred?: boolean;
     readonly duplicates?: boolean;
     readonly mergeOffset?: number;
+    readonly allMerges?: boolean;
     readonly revision?: string;
     readonly mergeId?: string;
   }) {
@@ -513,6 +517,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
           ...(input.offset === undefined ? {} : { pairOffset: input.offset }),
           ...(input.mergeOffset === undefined ? {} : { mergeOffset: input.mergeOffset }),
           ...(input.revision === undefined ? {} : { revision: input.revision }),
+          ...(input.allMerges ? { merges: "all" as const } : {}),
         }),
       );
       const next = (offset: number, shown: number, total: number) =>
@@ -541,9 +546,11 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
             mergedSourceId: merge.mergedSourceId,
             mergedTitle: merge.mergedTitle,
             keptDifferent: merge.keptDifferent,
+            undo: merge.undo,
           })),
           mergesTotal: found.mergesTotal,
           nextMergeOffset: next(found.mergeOffset, found.merges.length, found.mergesTotal),
+          ...(found.damagedReceipts ? { damagedReceipts: found.damagedReceipts } : {}),
         },
       };
     }
@@ -645,6 +652,13 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
     const limit = Math.min(50, Math.max(1, input.limit ?? 25));
     const page = matching.slice(offset, offset + limit);
     const move = yield* libraryMoveNotice(store.root);
+    const snapshotIds = new Set(
+      page.flatMap((record) => (fromSnapshot.has(record.sourceId) ? [record.sourceId] : [])),
+    );
+    const matches =
+      library && snapshotIds.size > 0
+        ? yield* attempt(() => libraryPinMatches(library, snapshotIds))
+        : new Map<string, ScientSourceLibraryMatch>();
     const pinOf = (sourceId: string) => (pins ? pins.get(sourceId) : undefined);
     const citationKeyOf = (record: (typeof page)[number]) =>
       pinOf(record.sourceId)?.citationKey ?? record.citationKey;
@@ -682,6 +696,7 @@ export const listScientSourcesForInvocation = Effect.fn("ScientSourcesToolkit.li
           ? { pinned: pinnedWorks !== null || pinOf(record.sourceId) !== undefined }
           : {}),
         ...(fromSnapshot.has(record.sourceId) ? { fromSnapshot: true } : {}),
+        ...(matches.has(record.sourceId) ? { libraryMatch: matches.get(record.sourceId)! } : {}),
         ...(library ? scientSourceReadingState(record) : null),
       })),
       total: matching.length,
@@ -761,7 +776,8 @@ const isLibraryOrganizeChange = (
   change.action === "mark-distinct" ||
   change.action === "clear-distinct" ||
   change.action === "move-back" ||
-  change.action === "dismiss-move-summary";
+  change.action === "dismiss-move-summary" ||
+  isPinRepairAction(change);
 
 /** Library mode's organize: collections and saved searches, plus pins and merges. */
 export const organizeLibrarySourcesForInvocation = Effect.fn(
@@ -920,6 +936,11 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
           dismissScientLibraryMoveSummary({ library: store.library, projectRoot: store.root }),
         ),
       };
+    case "link-pin":
+    case "unlink-pin":
+    case "keep-pin-separate":
+    case "clear-pin-separate":
+      return yield* attempt(() => repairLibraryPin(store, change, "agent"));
   }
 });
 
@@ -1390,7 +1411,9 @@ const addScientSourcesByIdentifierForInvocation = Effect.fn("ScientSourcesToolki
     yield* pinAdded(
       store,
       results.map((item) =>
-        item.outcome === "imported" || item.outcome === "duplicate" ? item.sourceId : null,
+        item.outcome === "imported" || (item.outcome === "duplicate" && !item.possibleMatch)
+          ? item.sourceId
+          : null,
       ),
     );
     return {

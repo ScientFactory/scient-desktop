@@ -7,6 +7,11 @@ import * as NodePath from "node:path";
 import { initializeScientProject } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 
+import {
+  keepScientProjectSourceSeparate,
+  linkScientProjectSource,
+  unlinkScientProjectSource,
+} from "./libraryInstanceMap.ts";
 import { changeScientLibraryReview, listScientLibraryReviewRecords } from "./libraryReviews.ts";
 import { ensureScientLibrary, scientLibraryLocation, scientLibraryRootFor } from "./libraryRoot.ts";
 import type { ScientSourceCandidate } from "./model.ts";
@@ -14,6 +19,7 @@ import {
   listScientProjectPinnedWorks,
   pinScientLibrarySource,
   resolveScientProjectPins,
+  setScientProjectPinNote,
 } from "./projectPins.ts";
 import { attachScientSourcePdf, importScientSource, listScientSourceRecords } from "./store.ts";
 
@@ -143,5 +149,48 @@ describe("resolving a copied project's sources", () => {
     expect(records?.map(({ from, record }) => [from, record?.title])).toEqual([
       ["snapshot", "Early therapy in sepsis"],
     ]);
+
+    // A person decides: this pin is the collaborator's copy after all, or it is not.
+    await setScientProjectPinNote({
+      projectRoot: copy,
+      citationKey: served!.citationKey,
+      note: "Why we cite it",
+    });
+    const repair = { library: collaborator, projectRoot: copy, projectSourceId: cited.sourceId };
+    expect(
+      await linkScientProjectSource({ ...repair, sourceId: nearMatch.sourceId, actor: "user" }),
+    ).toEqual({ outcome: "linked", sourceId: nearMatch.sourceId });
+    const [linked] = await listScientProjectPinnedWorks({
+      projectRoot: copy,
+      library: collaborator,
+    });
+    expect(linked).toMatchObject({
+      from: "library",
+      citationKey: served!.citationKey,
+      projectNote: "Why we cite it",
+      record: { title: "Soil carbon under drought", attachments: [{ kind: "pdf" }] },
+    });
+    const linkedReview = await listScientLibraryReviewRecords({
+      projectRoot: copy,
+      library: collaborator,
+      reviewId: reviewId!,
+      mode: "read",
+    });
+    expect(linkedReview?.map(({ from }) => from)).toEqual(["library"]);
+
+    expect(await unlinkScientProjectSource(repair)).toEqual({ outcome: "unlinked" });
+    await keepScientProjectSourceSeparate({
+      ...repair,
+      sourceIds: [nearMatch.sourceId],
+      separate: true,
+      actor: "agent",
+    });
+    const [kept] = await resolveScientProjectPins({
+      projectRoot: copy,
+      library: collaborator,
+      mode: "read",
+      actor: "user",
+    });
+    expect(kept?.resolution).toMatchObject({ reason: "contradicted", keptSeparate: true });
   });
 });

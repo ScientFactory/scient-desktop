@@ -335,7 +335,7 @@ function existingRecord(doi: string) {
     projectId: "project",
     revision: 1,
     type: "article",
-    title: "Existing",
+    title: "One",
     creators: [],
     issuedRaw: null,
     issuedYear: null,
@@ -360,7 +360,7 @@ describe("import plan", () => {
   const bib = String.raw`
 @article{a, title={One}, author={A, B}, year=2001, doi={10.1000/one}, address={Here}}
 @article{b, title={Two}, author={C, D}, year=2002, doi={10.1000/TWO}}
-@article{c, title={Two again}, author={C, D}, year=2002, doi={https://doi.org/10.1000/two}}
+@article{c, title={Two}, author={C, D}, year=2002, pages={1--2}, doi={https://doi.org/10.1000/two}}
 @article{a, title={One}, author={A, B}, year=2001, doi={10.1000/one}, address={Here}}
 @article{d, title={Three}, year=2003}
 @article{e, title={Four}, year=2004}

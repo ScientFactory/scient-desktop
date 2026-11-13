@@ -85,6 +85,7 @@ import {
   detachScientSourcePdf,
   inspectScientSourcePdf,
   inspectScientSources,
+  assessScientSourceIntake,
   listScientSourceRecords,
   readScientSourceRecord,
   readSourceImportOperation,
@@ -423,12 +424,12 @@ export async function addAgentSource(
   return observeSourceImport<AgentSourceAddResult>(
     observer,
     async () => {
-      const preliminary = assessSourceDuplicate({
+      const preliminary = await assessScientSourceIntake({
+        root: input.root,
         candidate: input.candidate,
-        existing: await listScientSourceRecords(input.root),
         ...(input.expectedPdf ? { pdfSha256: input.expectedPdf.sha256 } : {}),
       });
-      // An exact duplicate is reported as before, without asking a registry.
+      // A source the identity rule reuses is reported as before, without asking a registry.
       const exactDuplicate =
         preliminary.kind !== "new" && preliminary.kind !== "possible-metadata-match";
       const resolution = exactDuplicate

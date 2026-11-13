@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Merge tests exercise the real library files.
+// @effect-diagnostics globalDate:off -- Seeded receipts carry fixed ISO timestamps.
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
@@ -26,6 +27,7 @@ import type { ScientSourceRecord } from "./model.ts";
 import {
   importScientSource,
   listScientSourceRecords,
+  removeScientSource,
   readScientSourceRecord,
   readScientSourceTrashEntries,
   restoreScientSource,
@@ -356,6 +358,196 @@ describe("library merge engine", () => {
     expect(
       await mergeScientLibrarySources({ library, sourceIds: ["source_keep", "source_back"] }),
     ).toMatchObject({ outcome: "merged" });
+  });
+
+  it("merges nothing when copies are linked only through one that disagrees with both", async () => {
+    const { root, library } = await newLibrary();
+    const doi = { scheme: "doi", value: "10.1000/editorial" };
+    const pmid = { scheme: "pmid", value: "31" };
+    await seed(root, [
+      record("source_a", { title: "Editorial", identifiers: [doi] }),
+      record("source_b", { title: "Different work", identifiers: [doi, pmid] }),
+      record("source_c", { title: "Editorial", identifiers: [pmid] }),
+      record("source_d", { title: "Shared PDF", attachments: [pdf("c".repeat(64))] }),
+      record("source_e", { title: "Another title", attachments: [pdf("c".repeat(64))] }),
+    ]);
+
+    const result = await mergeScientLibraryDuplicates({ library });
+
+    expect(result.mergedCount).toBe(0);
+    expect(result.possibleDuplicates).toEqual([
+      {
+        sourceIds: ["source_a", "source_b"],
+        kind: "possible-identifier-match",
+        reason: "titles-differ",
+      },
+      {
+        sourceIds: ["source_b", "source_c"],
+        kind: "possible-identifier-match",
+        reason: "titles-differ",
+      },
+      { sourceIds: ["source_d", "source_e"], kind: "possible-pdf-match", reason: "titles-differ" },
+      { sourceIds: ["source_a", "source_c"], kind: "possible-metadata-match" },
+    ]);
+  });
+
+  it("keeps an Undo that stopped after bringing the copy back apart from later passes", async () => {
+    const { root, library } = await newLibrary();
+    const doi = { scheme: "doi", value: "10.1000/halfway" };
+    await seed(root, [
+      record("source_keep", { title: "Halfway", identifiers: [doi] }),
+      record("source_back", {
+        title: "Halfway",
+        identifiers: [doi],
+        importedAt: "2026-02-01T00:00:00.000Z",
+      }),
+    ]);
+    const [merge] = (await mergeScientLibraryDuplicates({ library })).merges;
+    failNext("rename", /aliases\.json$/u);
+    await expect(undoScientLibraryMerge({ library, mergeId: merge!.mergeId })).rejects.toThrow(
+      "Injected",
+    );
+    expect(await liveIds(library)).toEqual(["source_back", "source_keep"]);
+
+    expect((await mergeScientLibraryDuplicates({ library })).mergedCount).toBe(0);
+    await seed(root, [record("source_third", { title: "Halfway", identifiers: [doi] })]);
+    const third = await mergeScientLibraryDuplicates({ library });
+
+    expect(third.mergedCount).toBe(0);
+    expect(third.possibleDuplicates.map((pair) => [...pair.sourceIds, pair.reason])).toEqual([
+      ["source_back", "source_keep", "merge-undone"],
+      ["source_back", "source_third", "conflicting-group"],
+      ["source_keep", "source_third", "conflicting-group"],
+    ]);
+  });
+
+  it("keeps the records a damaged receipt names out of automatic merging, and reports it", async () => {
+    const { root, library } = await newLibrary();
+    const pair = (prefix: string) => {
+      const doi = { scheme: "doi", value: `10.1000/${prefix}` };
+      return [
+        record(`source_${prefix}1`, { title: prefix, identifiers: [doi] }),
+        record(`source_${prefix}2`, {
+          title: prefix,
+          identifiers: [doi],
+          importedAt: "2026-02-01T00:00:00.000Z",
+        }),
+      ];
+    };
+    await seed(root, [...pair("named"), ...pair("other")]);
+    await NodeFSP.mkdir(NodePath.join(root, "merges"), { recursive: true });
+    await NodeFSP.writeFile(
+      NodePath.join(root, "merges", "merge_damaged.json"),
+      '{"formatVersion":1,"survivorId":"source_named1","loserId":"source_named2","sta',
+    );
+
+    const first = await mergeScientLibraryDuplicates({ library });
+
+    expect(first.merges.map((merge) => merge.survivorId)).toEqual(["source_other1"]);
+    expect(first.damagedReceipts).toEqual([
+      { mergeId: "merge_damaged", sourceIds: ["source_named1", "source_named2"] },
+    ]);
+    expect(first.possibleDuplicates).toEqual([
+      {
+        sourceIds: ["source_named1", "source_named2"],
+        kind: "possible-identifier-match",
+        reason: "merge-record-unreadable",
+      },
+    ]);
+    const listed = await readScientLibraryDuplicates({ library, pairLimit: 10, mergeLimit: 10 });
+    expect(listed.damagedReceipts).toEqual(first.damagedReceipts);
+
+    // One that names nothing legible holds back every automatic merge.
+    await NodeFSP.writeFile(NodePath.join(root, "merges", "merge_unreadable.json"), "\u0000");
+    await seed(root, pair("later"));
+    expect((await mergeScientLibraryDuplicates({ library })).mergedCount).toBe(0);
+  });
+
+  it("reuses a stored record at intake only when it corroborates and no Undo keeps them apart", async () => {
+    const { root, library } = await newLibrary();
+    const doi = { scheme: "doi", value: "10.1000/intake" };
+    const zotero = {
+      system: "zotero",
+      libraryId: "users/1",
+      itemKey: "INTAKE01",
+      itemVersion: 1,
+      rawItemType: "journalArticle",
+    } as const;
+    const pdfPath = NodePath.join(NodePath.dirname(root), "paper.pdf");
+    await NodeFSP.writeFile(pdfPath, "%PDF-1.7\nintake\n");
+    const add = (sourceKey: string, fields: Partial<ScientSourceRecord>, withPdf = false) =>
+      importScientSource({
+        root: library,
+        operationId: `op_${sourceKey}`,
+        candidate: {
+          ...record("x", { creators: [], ...fields }),
+          sourceKey,
+          customType: null,
+          pdfAvailable: withPdf,
+          pdfFileName: null,
+          pdfAttachmentCount: withPdf ? 1 : 0,
+        },
+        ...(withPdf ? { pdfPath } : {}),
+        actor: "user",
+        intake: "file",
+      });
+    const stored = await add(
+      "stored",
+      { title: "Editorial", identifiers: [doi], externalReferences: [zotero] },
+      true,
+    );
+    const storedId = stored.record!.sourceId;
+
+    expect(await add("same", { title: "Editorial", identifiers: [doi] })).toMatchObject({
+      outcome: "duplicate",
+      duplicate: { kind: "same-identifier", matchingSourceIds: [storedId] },
+    });
+    for (const [sourceKey, fields, withPdf] of [
+      ["wrong-doi", { title: "Different work", identifiers: [doi] }, false],
+      ["chapter", { title: "Editorial", type: "book-chapter", identifiers: [doi] }, false],
+      ["retitled-item", { title: "Retitled", externalReferences: [zotero] }, false],
+      ["same-pdf", { title: "Another paper" }, true],
+    ] as const) {
+      const separate = await add(sourceKey, fields, withPdf);
+      expect(separate).toMatchObject({
+        outcome: "imported",
+        duplicate: { kind: "new", matchingSourceIds: expect.arrayContaining([storedId]) },
+      });
+    }
+
+    const back = await add("undone", {
+      title: "Undone",
+      identifiers: [{ scheme: "pmid", value: "8" }],
+    });
+    await seed(root, [
+      record("source_undone_keep", {
+        title: "Undone",
+        identifiers: [{ scheme: "pmid", value: "8" }],
+        importedAt: "2025-01-01T00:00:00.000Z",
+      }),
+    ]);
+    const merged = await mergeScientLibrarySources({
+      library,
+      sourceIds: ["source_undone_keep", back.record!.sourceId],
+    });
+    await undoScientLibraryMerge({
+      library,
+      mergeId: merged.outcome === "merged" ? merged.merge.mergeId : "",
+    });
+    const restored = await readScientSourceRecord(library, back.record!.sourceId);
+    await removeScientSource({
+      root: library,
+      sourceId: restored!.sourceId,
+      expectedRevision: restored!.revision,
+    });
+
+    expect(
+      await add("undone", { title: "Undone", identifiers: [{ scheme: "pmid", value: "8" }] }),
+    ).toMatchObject({ outcome: "imported", record: { sourceId: back.record!.sourceId } });
+    const listed = await readScientLibraryDuplicates({ library, pairLimit: 20, mergeLimit: 10 });
+    expect(
+      listed.possibleDuplicates.find((entry) => entry.sourceIds.includes("source_undone_keep")),
+    ).toMatchObject({ reason: "merge-undone" });
   });
 
   it("only lists possible duplicates and never merges a pair marked distinct", async () => {
@@ -812,7 +1004,7 @@ describe("library merge engine", () => {
     const after = await read();
     expect(after.possibleDuplicates).toEqual([]);
     expect(after.mergesTotal).toBe(1);
-    expect(after.merges.map(({ merge, merged: away }) => [merge.mergeId, away.sourceId])).toEqual([
+    expect(after.merges.map(({ merge, merged: away }) => [merge.mergeId, away?.sourceId])).toEqual([
       [mergeId, "source_pair1"],
     ]);
     expect(after.merges[0]?.merge.conflicts).toEqual([
@@ -832,6 +1024,15 @@ describe("library merge engine", () => {
     const undone = await read();
     expect(undone.merges).toEqual([]);
     expect(undone.possibleDuplicates).toEqual(before.possibleDuplicates);
+    const every = await readScientLibraryDuplicates({
+      library,
+      pairLimit: 10,
+      mergeLimit: 10,
+      merges: "all",
+    });
+    expect(every.merges.map(({ merge, undo }) => [merge.mergeId, undo])).toEqual([
+      [mergeId, "undone"],
+    ]);
     expect(await liveIds(library)).toHaveLength(6);
   });
 });

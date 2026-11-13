@@ -549,7 +549,8 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
                 await pinLibraryIntake(
                   library,
                   results.map((item) =>
-                    item.outcome === "imported" || item.outcome === "duplicate"
+                    item.outcome === "imported" ||
+                    (item.outcome === "duplicate" && !item.possibleMatch)
                       ? item.sourceId
                       : null,
                   ),

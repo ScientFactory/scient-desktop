@@ -122,8 +122,46 @@ export const ScientSourceProjectRecord = Schema.Struct({
 });
 export type ScientSourceProjectRecord = typeof ScientSourceProjectRecord.Type;
 
+/** Why two records were not taken for one work; the Library's own words for its identity rule. */
+export const ScientSourceIdentityProblem = Schema.Literals([
+  "merge-undone",
+  "merge-record-unreadable",
+  "title-missing",
+  "titles-differ",
+  "type-unknown",
+  "preprint-and-published",
+  "types-differ",
+  "arxiv-versions-differ",
+  "identifiers-conflict",
+]);
+export type ScientSourceIdentityProblem = typeof ScientSourceIdentityProblem.Type;
+
+/**
+ * A pin this Library serves from its snapshot although it holds sources that share its
+ * identifier or title: `contradicted` when none agrees with the snapshot, `ambiguous` when
+ * several do. `link-pin` links the pin to one on purpose; `keep-pin-separate` records that it
+ * is none of them.
+ */
+export const ScientSourceLibraryMatch = Schema.Struct({
+  reason: Schema.Literals(["contradicted", "ambiguous"]),
+  keptSeparate: Schema.Boolean,
+  candidates: Schema.Array(
+    Schema.Struct({
+      sourceId: NonEmptyString,
+      title: Schema.NullOr(Schema.String),
+      issuedYear: Schema.NullOr(Schema.Int),
+      containerTitle: Schema.NullOr(Schema.String),
+      /** What disagrees with the snapshot; absent for an ambiguous candidate that agrees. */
+      problem: Schema.optionalKey(ScientSourceIdentityProblem),
+    }),
+  ),
+});
+export type ScientSourceLibraryMatch = typeof ScientSourceLibraryMatch.Type;
+
 export const ScientSourceDetailResult = Schema.Struct({
   ...ScientSourceProjectRecord.fields,
+  /** A pin's snapshot only: the Library sources it was compared with and why it was not linked. */
+  libraryMatch: Schema.optionalKey(ScientSourceLibraryMatch),
   /**
    * The person's own note on the library record, which follows the paper. Only in the detail,
    * and only for a session holding the Library write grant; `note` stays this project's note.
@@ -347,6 +385,23 @@ const UnpinAction = Schema.Struct({ action: Schema.Literal("unpin"), citationKey
 
 const DistinctPair = Schema.Tuple([NonEmptyString, NonEmptyString]);
 
+/** For a pin served from its snapshot (`libraryMatch`); `sourceId` is the pin's project source ID. */
+export const ScientSourcesPinRepairAction = Schema.Union([
+  /** Links the pin to that Library source; its key, project note and reviews stay. */
+  Schema.Struct({
+    action: Schema.Literal("link-pin"),
+    sourceId: NonEmptyString,
+    librarySourceId: NonEmptyString,
+  }),
+  /** Undo of link-pin. */
+  Schema.Struct({ action: Schema.Literal("unlink-pin"), sourceId: NonEmptyString }),
+  /** Records that the pin is none of the Library sources it was compared with. */
+  Schema.Struct({ action: Schema.Literal("keep-pin-separate"), sourceId: NonEmptyString }),
+  /** Undo of keep-pin-separate. */
+  Schema.Struct({ action: Schema.Literal("clear-pin-separate"), sourceId: NonEmptyString }),
+]);
+export type ScientSourcesPinRepairAction = typeof ScientSourcesPinRepairAction.Type;
+
 /** Pins and merges act on the personal library; a project server refuses them. */
 export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   PinAction,
@@ -374,6 +429,7 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   Schema.Struct({ action: Schema.Literal("move-back") }),
   /** Hides the move's summary lines in this checkout's status, until a later run. */
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
+  ...ScientSourcesPinRepairAction.members,
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -412,6 +468,10 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "nothing-to-dismiss",
     "marked",
     "cleared",
+    "linked",
+    "unlinked",
+    "not-linked",
+    "kept-separate",
   ]),
   pin: Schema.optionalKey(PinSummary),
   pinChanges: Schema.optionalKey(
@@ -887,6 +947,8 @@ export const ScientSourcesDuplicatesRequest = Schema.Struct({
   pairOffset: Schema.optionalKey(Count),
   mergeOffset: Schema.optionalKey(Count),
   revision: Schema.optionalKey(NonEmptyString),
+  /** `all`: every merge receipt, also undone and no longer undoable ones. Default: undoable. */
+  merges: Schema.optionalKey(Schema.Literals(["undoable", "all"])),
 });
 export type ScientSourcesDuplicatesRequest = typeof ScientSourcesDuplicatesRequest.Type;
 
@@ -909,14 +971,7 @@ export const ScientSourcesPossibleDuplicateKind = Schema.Literals([
   "possible-container-match",
 ]);
 export const ScientSourcesDuplicateReason = Schema.Literals([
-  "merge-undone",
-  "title-missing",
-  "titles-differ",
-  "type-unknown",
-  "preprint-and-published",
-  "types-differ",
-  "arxiv-versions-differ",
-  "identifiers-conflict",
+  ...ScientSourceIdentityProblem.literals,
   "conflicting-group",
 ]);
 export type ScientSourcesDuplicateReason = typeof ScientSourcesDuplicateReason.Type;
@@ -932,7 +987,18 @@ export const ScientSourcesMergeDifferences = Schema.Array(
   ]),
 );
 
-/** The possible duplicates of the whole Library, and the merges Undo can still reverse. */
+/** Undo's answer for a merge now; it checks again when it runs. */
+export const ScientSourcesMergeUndoState = Schema.Literals([
+  "available",
+  "undone",
+  /** The kept source was merged on or removed since. */
+  "kept-source-gone",
+  /** The trash was emptied, so the merged-away source is gone. */
+  "merged-source-gone",
+]);
+export type ScientSourcesMergeUndoState = typeof ScientSourcesMergeUndoState.Type;
+
+/** The possible duplicates of the whole Library, and the merges asked for (undoable or all). */
 export const ScientSourcesDuplicatesResult = Schema.Struct({
   pairs: Schema.Array(
     Schema.Struct({
@@ -963,8 +1029,9 @@ export const ScientSourcesDuplicatesResult = Schema.Struct({
       kept: Schema.NullOr(ScientSourcesDuplicateSource),
       mergedSourceId: NonEmptyString,
       mergedTitle: Schema.NullOr(Schema.String),
-      /** The merged-away source as it was, so two copies with one title can be told apart. */
-      merged: ScientSourceSummary,
+      /** The merged-away source as it was; null once the trash was emptied. */
+      merged: Schema.NullOr(ScientSourceSummary),
+      undo: ScientSourcesMergeUndoState,
       /** Fields where the two had different values and the kept source's value stayed. */
       keptDifferent: Schema.Array(Schema.String),
       /**
@@ -976,5 +1043,14 @@ export const ScientSourcesDuplicatesResult = Schema.Struct({
     }),
   ).pipe(Schema.check(Schema.isMaxLength(SCIENT_SOURCES_UNDOABLE_MERGE_LIMIT))),
   mergesTotal: Count,
+  /**
+   * Merge receipts that could not be read, with the source IDs still legible in them. Receipts
+   * hold Undo decisions, so the sources they name are never merged automatically meanwhile.
+   */
+  damagedReceipts: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ mergeId: NonEmptyString, sourceIds: Schema.Array(NonEmptyString) }),
+    ),
+  ),
 });
 export type ScientSourcesDuplicatesResult = typeof ScientSourcesDuplicatesResult.Type;

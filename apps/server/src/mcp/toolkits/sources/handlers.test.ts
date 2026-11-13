@@ -1290,6 +1290,8 @@ describe("Scient Sources MCP handlers", () => {
       const doi = { scheme: "doi" as const, value: "10.1000/shared-pdf-work" };
       const firstDoi = yield* provideContext(
         addScientSourceForInvocation({
+          type: "article",
+          title: "Shared PDF work",
           identifiers: [doi],
           pdfRelativePath: "d/paper.pdf",
         }),
@@ -1297,6 +1299,8 @@ describe("Scient Sources MCP handlers", () => {
       );
       const secondDoi = yield* provideContext(
         addScientSourceForInvocation({
+          type: "article",
+          title: "Shared PDF work",
           identifiers: [doi],
           pdfRelativePath: "e/paper.pdf",
         }),

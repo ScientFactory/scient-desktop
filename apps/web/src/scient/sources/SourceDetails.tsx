@@ -59,7 +59,12 @@ import { readLocalApi } from "../../localApi";
 import { observeResize } from "../../lib/observeResize";
 import { ScientTooltip } from "../presentation/ScientTooltip";
 import { scientSourcesErrorMessage } from "./errorMessage";
-import { LIBRARY_LABELS, type ReadingStateChange } from "./libraryLabels";
+import {
+  LIBRARY_LABELS,
+  libraryCopyLabel,
+  libraryCopyProblemLabel,
+  type ReadingStateChange,
+} from "./libraryLabels";
 import { agentVerificationLabel } from "./sourceLabels";
 import { pdfVersionLabel } from "./sourcePdfVersion";
 import { SourceEditorialStatus } from "./SourceEditorialStatus";
@@ -630,6 +635,66 @@ export interface SourceDetailsLibrary {
   readonly onSetReadingState?: (change: ReadingStateChange) => Promise<void>;
   readonly onAddToProject?: () => Promise<void>;
   readonly onRemoveFromProject?: () => Promise<unknown>;
+  /** A source kept from this project's details although the Library has similar copies. */
+  readonly onLinkToCopy?: (librarySourceId: string) => Promise<void>;
+  readonly onKeepSeparate?: (separate: boolean) => Promise<void>;
+}
+
+function LibraryCopySection(props: {
+  readonly match: NonNullable<SourceRecord["libraryMatch"]>;
+  readonly library: SourceDetailsLibrary | undefined;
+}) {
+  const [pending, setPending] = useState(false);
+  const { match, library } = props;
+  const act = (run: (() => Promise<void>) | undefined) =>
+    run
+      ? () => {
+          setPending(true);
+          void run().finally(() => setPending(false));
+        }
+      : undefined;
+  const keep = library?.onKeepSeparate;
+  const toggleSeparate = act(keep ? () => keep(!match.keptSeparate) : undefined);
+  return (
+    <DetailsSection title={LIBRARY_LABELS.libraryCopy}>
+      <p className="text-xs text-muted-foreground">
+        {match.keptSeparate ? LIBRARY_LABELS.keptSeparate : libraryCopyLabel(match)}
+      </p>
+      <ul className="space-y-2">
+        {match.candidates.map((candidate) => {
+          const link = act(
+            library?.onLinkToCopy ? () => library.onLinkToCopy!(candidate.sourceId) : undefined,
+          );
+          return (
+            <li key={candidate.sourceId} className="flex items-start gap-2 text-xs">
+              <div className="min-w-0 flex-1">
+                <p className="break-words text-sm">
+                  {candidate.title ?? "Untitled"}
+                  {candidate.issuedYear ? ` (${candidate.issuedYear})` : ""}
+                </p>
+                {candidate.containerTitle ? (
+                  <p className="break-words text-muted-foreground">{candidate.containerTitle}</p>
+                ) : null}
+                <p className="text-muted-foreground">
+                  {libraryCopyProblemLabel(candidate.problem)}
+                </p>
+              </div>
+              {link ? (
+                <Button size="xs" variant="ghost" disabled={pending} onClick={link}>
+                  {LIBRARY_LABELS.linkToCopy}
+                </Button>
+              ) : null}
+            </li>
+          );
+        })}
+      </ul>
+      {toggleSeparate ? (
+        <Button size="xs" variant="ghost" disabled={pending} onClick={toggleSeparate}>
+          {match.keptSeparate ? LIBRARY_LABELS.askAgain : LIBRARY_LABELS.keepSeparate}
+        </Button>
+      ) : null}
+    </DetailsSection>
+  );
 }
 
 function ReadingControls(props: {
@@ -1034,6 +1099,13 @@ export function SourceDetails(props: {
                 <SourceTags tags={tags} />
               </DetailsSection>
             ) : null)}
+
+          {record.libraryMatch ? (
+            <LibraryCopySection
+              match={record.libraryMatch}
+              library={readOnly ? undefined : library}
+            />
+          ) : null}
 
           <SourceReference
             record={record}

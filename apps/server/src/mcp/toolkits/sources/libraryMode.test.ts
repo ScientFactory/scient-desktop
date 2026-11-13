@@ -552,6 +552,69 @@ describe("Sources tools on the library backend", () => {
       }),
   );
 
+  it.effect("names the Library copy a snapshot pin disagrees with, and links it on request", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const doi = [{ scheme: "doi", value: "10.1000/shared" }];
+      const theirs = scientLibraryLocation(
+        scientLibraryRootFor(NodePath.join(fixture.base, "theirs")),
+      );
+      yield* Effect.promise(() => ensureScientLibrary(theirs.root));
+      const cited = yield* Effect.promise(() =>
+        importScientSource({
+          root: theirs,
+          operationId: NodeCrypto.randomUUID(),
+          candidate: candidate("cited", { title: "Early therapy", identifiers: doi }),
+        }),
+      );
+      const pin = yield* Effect.promise(() =>
+        pinScientLibrarySource({
+          projectRoot: fixture.root,
+          library: theirs,
+          sourceId: cited.record!.sourceId,
+          actor: "user",
+        }),
+      );
+      const local = yield* Effect.promise(() =>
+        libraryRecord(fixture, "local", { title: "Soil carbon", identifiers: doi }),
+      );
+
+      const listed = yield* run(listScientSourcesForInvocation({}), fixture);
+      expect(listed.records).toMatchObject([
+        {
+          sourceId: cited.record!.sourceId,
+          fromSnapshot: true,
+          libraryMatch: {
+            reason: "contradicted",
+            keptSeparate: false,
+            candidates: [{ sourceId: local.sourceId, problem: "titles-differ" }],
+          },
+        },
+      ]);
+
+      const linked = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: {
+            action: "link-pin",
+            sourceId: cited.record!.sourceId,
+            librarySourceId: local.sourceId,
+          },
+        }),
+        fixture,
+      );
+      expect(linked.outcome).toBe("linked");
+      const after = yield* run(listScientSourcesForInvocation({}), fixture);
+      expect(after.records).toMatchObject([
+        {
+          sourceId: local.sourceId,
+          citationKey: pin.outcome === "not-found" ? null : pin.pin.citationKey,
+          pinned: true,
+        },
+      ]);
+      expect(after.records[0]).not.toHaveProperty("fromSnapshot");
+    }),
+  );
+
   it.effect("lists possible duplicates and marks a pair not duplicates; project mode refuses", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

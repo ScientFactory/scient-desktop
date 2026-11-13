@@ -29,6 +29,7 @@ import {
   canonicalizeScientSourceRoot,
   createSourceImportOperation,
   listScientSourceRecords,
+  readScientSourceIntakeExclusions,
   readScientSourceStagedFileImport,
   readSourceImportOperation,
   removeScientSourceStagedFileImport,
@@ -302,11 +303,13 @@ async function plan(
     throw new Error(`Scient could not tell what kind of reference file this is. ${FORMAT_HELP}`);
   }
   const existing = await listScientSourceRecords(root);
+  const exclusions = await readScientSourceIntakeExclusions(root, existing);
   const planned = planBibliographyImport({
     parse: parseBibliography(input.text, format),
     existing,
     sourceKeyFor: fileImportSourceKey,
     sourceIdFor: await storeSourceIdFor(root, existing),
+    ...(exclusions ? { exclusions } : {}),
     limit: SCIENT_SOURCE_IMPORT_ITEM_LIMIT,
   });
   const linked = await resolveLinkedPdfs(projectRoot, input.sourceFolder, planned.linkedFiles);
