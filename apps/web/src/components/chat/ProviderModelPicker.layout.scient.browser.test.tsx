@@ -7,7 +7,7 @@ import {
 import { compileResolvedKeybindingsConfig } from "@t3tools/shared/keybindings";
 import { createModelCapabilities } from "@t3tools/shared/model";
 import { runtimeModeConfig } from "./runtimeModeConfig";
-import { expect, it, vi } from "vite-plus/test";
+import { expect, it, onTestFinished, vi } from "vite-plus/test";
 import { page } from "vite-plus/test/browser";
 import "~/index.css";
 import { render } from "../../../test/render";
@@ -273,11 +273,17 @@ function AgentPicker() {
 const singleLine = (element: HTMLElement) =>
   element.getBoundingClientRect().height < parseFloat(getComputedStyle(element).lineHeight) * 1.5;
 
-it("keeps model names and the reasoning header on one line", async () => {
+// Windows and Linux label the jump keys "Ctrl+2", which is wider than "⌘2".
+it.each([
+  ["MacIntel", "⌘2"],
+  ["Win32", "Ctrl+2"],
+])("keeps model names and the reasoning header on one line on %s", async (platform, jumpLabel) => {
+  const platformSpy = vi.spyOn(navigator, "platform", "get").mockReturnValue(platform);
+  onTestFinished(() => platformSpy.mockRestore());
   await page.viewport(1280, 800);
   await using _screen = await render(<AgentPicker />);
   await page.getByRole("button", { name: "Choose model" }).click();
-  await expect.element(page.getByText("⌘2")).toBeVisible();
+  await expect.element(page.getByText(jumpLabel, { exact: true })).toBeVisible();
   const header = page.getByText("Reasoning", { exact: true });
   await expect.element(header).toBeVisible();
   await expect.element(page.getByText("Thinking Level", { exact: true })).not.toBeInTheDocument();
