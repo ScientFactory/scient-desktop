@@ -340,6 +340,9 @@ describe.skipIf(!hasPrivateFoldersAndIdentity)("WorkspaceApplier after real proc
       expect(await h.apply("crash")).toMatchObject({ outcome: "complete", matchesTarget: true });
       expect(await read(h.cwd, "a.tex")).toBe("remote");
       expect(await read(h.cwd, "guard.tex")).toBe("guard");
+      expect((await NodeFSP.readdir(h.cwd)).filter((name) => name.endsWith(".scient-tmp"))).toEqual(
+        [],
+      );
     }),
   );
 

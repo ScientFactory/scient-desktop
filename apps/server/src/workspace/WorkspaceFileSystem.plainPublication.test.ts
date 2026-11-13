@@ -10,7 +10,7 @@ import {
   fileMutationFixture,
   filePublicationHelperWithout,
 } from "../scient/workspace/fileExchange.testkit.ts";
-import { bytesRevision } from "../scient/workspace/RetainedFileMutation.ts";
+import { bytesRevision, plainTemporaryName } from "../scient/workspace/RetainedFileMutation.ts";
 
 /** Faults for a save: `refuse` answers the rename, `partial` fails a write through the file. */
 const faults = vi.hoisted(() => ({
@@ -119,6 +119,56 @@ describe.each(modes)("plain publication with %s", (_name, wrap) => {
       if (posix) expect((await NodeFSP.stat(target)).mode & 0o777).toBe(0o664);
       expect(await leftovers(h.cwd)).toEqual([]);
       expect(await h.settledRead("main.tex")).toMatchObject({ contents: "C" });
+    }),
+  );
+
+  // macOS and Windows count a name's characters, Linux its UTF-8 bytes; each limit is 255.
+  it.live.each(["a".repeat(251) + ".tex", "論".repeat(85)])(
+    "saves a file whose name is as long as the system allows",
+    (name) =>
+      plain(async (h) => {
+        await NodeFSP.writeFile(NodePath.join(h.cwd, name), "A");
+        await h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath: name,
+            contents: "C",
+            expectedRevision: revision("A"),
+          }),
+        );
+        expect(await NodeFSP.readFile(NodePath.join(h.cwd, name), "utf8")).toBe("C");
+        expect(await leftovers(h.cwd)).toEqual([]);
+      }),
+  );
+
+  it.live("removes temporary files a killed save left, and nothing else", () =>
+    plain(async (h) => {
+      const long = "論".repeat(85);
+      const uuid = "0f8fad5b-d9cb-469f-a165-70867728950e";
+      const other = "1f8fad5b-d9cb-469f-a165-70867728950e";
+      const kept = [
+        `.other.tex.${uuid}.scient-tmp`,
+        `.main.tex.${uuid}.scient-tmp.bak`,
+        `.main.tex.not-a-uuid.scient-tmp`,
+        `.main.tex.${other.toUpperCase()}.scient-tmp`,
+      ];
+      const stale = [`.main.tex.${uuid}.scient-tmp`, plainTemporaryName(long)];
+      for (const name of ["main.tex", long, ...kept, ...stale])
+        await NodeFSP.writeFile(NodePath.join(h.cwd, name), "A");
+      const folder = `.main.tex.${uuid.replace("0f8f", "2f8f")}.scient-tmp`;
+      await NodeFSP.mkdir(NodePath.join(h.cwd, folder));
+      for (const relativePath of ["main.tex", long])
+        await h.run(
+          h.methods.writeFile({
+            cwd: h.cwd,
+            relativePath,
+            contents: "C",
+            expectedRevision: revision("A"),
+          }),
+        );
+      expect((await NodeFSP.readdir(h.cwd)).toSorted()).toEqual(
+        ["main.tex", long, ...kept, folder].toSorted(),
+      );
     }),
   );
 
