@@ -189,13 +189,15 @@ describe("makeOwnedProcessTree when ps fails", () => {
         ),
         parentPid: 1,
         readRetrySpacing: "1 milli",
+        sampleRetrySpacing: "1 milli",
         signal: (pid, name) => {
           signals.push([pid, name]);
           table = [];
         },
       });
       yield* tree.sample;
-      failures = 1;
+      // Both of the sample's reads fail.
+      failures = 2;
       yield* tree.sample;
       table = [entry(11, 1, 11)];
       failures = 2;
@@ -205,6 +207,33 @@ describe("makeOwnedProcessTree when ps fails", () => {
         unverified: 0,
       });
       assert.deepStrictEqual(signals, [[11, "SIGTERM"]]);
+    }),
+  );
+
+  it.live("a sample reads again once when the first read fails", () =>
+    Effect.gen(function* () {
+      let failures = 1;
+      const table = [entry(10, 1), entry(11, 10, 11)];
+      const signals: Array<[number, string]> = [];
+      const tree = makeOwnedProcessTree(10, {
+        readTable: Effect.suspend(() =>
+          failures > 0 ? (failures--, unavailable) : Effect.succeed(table),
+        ),
+        parentPid: 1,
+        sampleRetrySpacing: "1 milli",
+        signal: (pid, name) => signals.push([pid, name]),
+      });
+      yield* tree.sample;
+      assert.strictEqual(failures, 0);
+      assert.deepStrictEqual(yield* tree.reap("1 milli"), {
+        terminated: 1,
+        killed: 1,
+        unverified: 0,
+      });
+      assert.deepStrictEqual(signals, [
+        [11, "SIGTERM"],
+        [11, "SIGKILL"],
+      ]);
     }),
   );
 
@@ -334,15 +363,41 @@ describe.skipIf(Context.get(Context.empty(), HostProcess.Platform) === "win32")(
             } catch {}
           }),
         );
-        const tree = makeOwnedProcessTree(root.pid!);
+        // Every table the tree reads, so a failure says what sampling and stopping actually saw.
+        const reads: Array<ReadonlyArray<OwnedProcess> | "ps failed"> = [];
+        const tree = makeOwnedProcessTree(root.pid!, {
+          readTable: readProcessTable.pipe(
+            Effect.tap((table) => Effect.sync(() => reads.push(table))),
+            Effect.tapError(() => Effect.sync(() => reads.push("ps failed"))),
+          ),
+        });
+        const rowsOf = (read: (typeof reads)[number] | undefined) =>
+          read === undefined || read === "ps failed"
+            ? String(read)
+            : JSON.stringify(read.filter((row) => row.pid === root.pid || row.pid === grandchild));
         yield* tree.sample;
+        const sampled = reads.findLast((read) => read !== "ps failed");
+        const seen = `sample reads: ${reads.map(rowsOf).join(" | ")}`;
+        assert.isDefined(sampled, seen);
+        const sampledRoot = sampled.find((row) => row.pid === root.pid);
+        const sampledGrandchild = sampled.find((row) => row.pid === grandchild);
+        assert.isDefined(sampledRoot, seen);
+        assert.isDefined(sampledGrandchild, seen);
+        assert.strictEqual(sampledRoot.ppid, process.pid, seen);
+        assert.strictEqual(sampledGrandchild.ppid, root.pid, seen);
+        assert.notStrictEqual(sampledGrandchild.pgid, sampledRoot.pgid, seen);
+        const sampleReads = reads.length;
         process.kill(-root.pid!, "SIGKILL");
         yield* Effect.callback<void>((resume) => {
           root.once("exit", () => resume(Effect.void));
         });
         assert.isTrue(yield* alive(grandchild), "the grandchild survived its parent's group kill");
         const result = yield* tree.reap("2 seconds");
-        assert.deepStrictEqual(result, { terminated: 1, killed: 0, unverified: 0 });
+        assert.deepStrictEqual(
+          result,
+          { terminated: 1, killed: 0, unverified: 0 },
+          `${seen}; stop reads: ${reads.slice(sampleReads).map(rowsOf).join(" | ")}`,
+        );
         yield* Effect.promise(() =>
           expect
             .poll(
