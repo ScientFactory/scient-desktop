@@ -561,7 +561,7 @@ describe("project pins", () => {
         kind: "unresolved",
         projectSourceId: "source_elsewhere",
         reason: "removed",
-        candidateIds: [],
+        candidateIds: [hydrated.sourceId],
       },
     ]);
     expect(await listScientSourceRecords(library)).toHaveLength(0);

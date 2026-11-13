@@ -64,6 +64,7 @@ import {
 import {
   decodePersistedScientSourceRecord,
   inspectScientSources,
+  SCIENT_LIBRARY_DELETED_DIRECTORY,
   SCIENT_SOURCES_DIRECTORY,
   scientSourceIdFor,
   scientSourceStoreInternals,
@@ -842,6 +843,11 @@ async function settleRecord(
         return { projectSourceId, sourceId: projectSourceId, identity: "removed" };
       }
       return importDiverged(ctx, incoming, projectSourceId);
+    }
+    // Deleted for good: an old copy of the project never brings it back.
+    const deleted = NodePath.join(ctx.libraryRoot, SCIENT_LIBRARY_DELETED_DIRECTORY);
+    if (await readRegularFile(NodePath.join(deleted, `${projectSourceId}.json`))) {
+      return { projectSourceId, sourceId: projectSourceId, identity: "removed" };
     }
     const created = await createJson(
       ctx,

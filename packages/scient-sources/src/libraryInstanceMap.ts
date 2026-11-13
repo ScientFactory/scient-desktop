@@ -27,6 +27,7 @@ import type { ScientPinCitationWork } from "./pinCitation.ts";
 import {
   importScientSource,
   listScientSourceRecords,
+  readScientSourceTombstones,
   readScientSourceTrashEntries,
   scientSourceIdFor,
 } from "./store.ts";
@@ -100,7 +101,10 @@ export type ScientProjectSourceResolution =
   | {
       readonly kind: "unresolved";
       readonly projectSourceId: string;
-      /** `removed`: the mapped library record is gone and nothing else matched; never hydrated. */
+      /**
+       * `removed`: the mapped library record is in the trash or deleted for good and nothing else
+       * matched; never hydrated. Its `candidateIds` name the removed records.
+       */
       /** `contradicted`: only matches that disagree with the snapshot; never hydrated. */
       readonly reason: "no-match" | "ambiguous" | "contradicted" | "removed";
       readonly candidateIds: ReadonlyArray<string>;
@@ -331,18 +335,23 @@ async function resolveAt(
     mapChanged = true;
   };
 
-  // The map can be lost, or a crash can precede its write; the trash still says what was removed.
+  // The map can be lost, or a crash can precede its write; the trash and the tombstones of
+  // sources deleted for good still say what was removed.
   let trash:
     | Promise<{ readonly libraryId: string; readonly removed: ScientSourceRecord[] }>
     | undefined;
-  const wasRemoved = async ({ projectSourceId, work }: ScientProjectSourceRequest) => {
+  const removedIds = async ({
+    projectSourceId,
+    work,
+  }: ScientProjectSourceRequest): Promise<ReadonlyArray<string>> => {
     trash ??= Promise.all([
       readScientLibraryManifest(root),
       readScientSourceTrashEntries(library),
-    ]).then(([{ libraryId }, entries]) => ({
+      readScientSourceTombstones(library),
+    ]).then(([{ libraryId }, entries, deleted]) => ({
       libraryId,
       // A merge moves the losing record to the trash; that is not a removal while the winner lives.
-      removed: entries
+      removed: [...entries, ...deleted]
         .filter((entry) => !entry.mergedInto || liveTarget(entry.sourceId) === null)
         .map((entry) => entry.record),
     }));
@@ -352,10 +361,15 @@ async function resolveAt(
       resolveScientLibraryAlias(aliases, projectSourceId),
       scientSourceIdFor(libraryId, hydrationSourceKey(projectSourceId)),
     ]);
-    return (
-      removed.some((record) => ids.has(record.sourceId)) ||
-      (work !== null && (matchWork(work, removed)?.by ?? "contradicted") !== "contradicted")
-    );
+    const byId = removed.filter((record) => ids.has(record.sourceId));
+    const match = byId.length === 0 && work !== null ? matchWork(work, removed) : null;
+    const found =
+      byId.length > 0
+        ? byId.map((record) => record.sourceId)
+        : match?.by === "contradicted"
+          ? []
+          : (match?.ids ?? []);
+    return [...new Set(found)];
   };
 
   const results: ScientProjectSourceResolution[] = [];
@@ -395,8 +409,16 @@ async function resolveAt(
       });
       continue;
     }
-    if (mapped || (await wasRemoved(request))) {
-      results.push({ kind: "unresolved", projectSourceId, reason: "removed", candidateIds: [] });
+    const removed = mapped
+      ? [resolveScientLibraryAlias(aliases, mapped.sourceId)]
+      : await removedIds(request);
+    if (removed.length > 0) {
+      results.push({
+        kind: "unresolved",
+        projectSourceId,
+        reason: "removed",
+        candidateIds: removed,
+      });
       continue;
     }
     if (input.mode === "write" && input.hydrate && request.work) {
