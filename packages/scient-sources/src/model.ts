@@ -473,6 +473,8 @@ export const ScientSourceTrashSummary = Schema.Struct({
   issuedYear: Schema.NullOr(Schema.Int),
   removedAt: NonEmptyString,
   removedBy: ScientSourceActor,
+  /** Library only: projects that still cite it and keep citing it from their own copy. */
+  citedBy: Schema.optionalKey(Schema.Array(NonEmptyString)),
 });
 export type ScientSourceTrashSummary = typeof ScientSourceTrashSummary.Type;
 

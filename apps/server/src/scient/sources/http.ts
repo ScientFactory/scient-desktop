@@ -536,9 +536,17 @@ export const scientSourcesHttpApiLayer = HttpApiBuilder.group(
           ),
         )
         .handle("trash", (args) =>
-          route(args.endpoint.name, AuthOrchestrationReadScope, args.payload.root, (library) =>
-            library ? libraryTrash(library) : listSourceTrash(args.payload),
-          ),
+          Effect.gen(function* () {
+            // Only for naming the projects that cite a trashed source.
+            const projects = yield* projectStore.list().pipe(Effect.orElseSucceed(() => []));
+            return yield* route(
+              args.endpoint.name,
+              AuthOrchestrationReadScope,
+              args.payload.root,
+              (library) =>
+                library ? libraryTrash(library, projects) : listSourceTrash(args.payload),
+            );
+          }),
         )
         .handle("restore", (args) =>
           route(args.endpoint.name, AuthOrchestrationOperateScope, args.payload.root, (library) =>

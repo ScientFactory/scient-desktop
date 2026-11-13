@@ -444,7 +444,7 @@ const ScientSourceLibraryMetadataUpdateTool = Tool.make("scient_sources_update",
 
 const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
   description:
-    "Move one Source and its PDFs to the trash after the user explicitly asks (scient_sources_restore undoes it). Pass its current revision; if stale, re-read and redo. permanent deletes a trashed source with its revisions and unused PDFs, irreversibly: only when the user asks for that (revision from scient_sources_list inTrash).",
+    "Move one Source and its PDFs to the trash after the user explicitly asks (scient_sources_restore undoes it). Pass its current revision; if stale, re-read and redo. permanent deletes a trashed source with its revisions and unused PDFs, irreversibly: only when the user asks for that (revision from scient_sources_list inTrash); stillCitedBy names projects that keep citing it from their own copy.",
   parameters: Schema.Struct({
     sourceId: NonEmptyString,
     expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
@@ -456,6 +456,7 @@ const ScientSourceRemoveTool = Tool.make("scient_sources_remove", {
     revision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThan(0))),
     restorable: Schema.optionalKey(Schema.Boolean),
     alsoPinnedIn: AlsoPinnedIn,
+    stillCitedBy: Schema.optionalKey(Schema.Array(NonEmptyString)),
   }),
   failure: ScientSourcesToolError,
   dependencies,
