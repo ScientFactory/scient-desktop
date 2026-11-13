@@ -27,18 +27,24 @@ import {
 import {
   decodeScientProjectPinsText,
   joinScientProjectPins,
+  readScientProjectPins,
   type ScientProjectPinsJoin,
 } from "./projectPins.ts";
 import {
   attachScientSourcePdf,
   decodePersistedScientSourceRecord,
   importScientSource,
+  listScientSourceRecords,
+  readScientSourceIntakeExclusions,
   readScientSourceRecord,
   recordScientSourceCheck,
   scientSourceStoreInternals,
+  updateScientSourceMetadata,
   sourceAttachmentAbsolutePath,
 } from "./store.ts";
 import { atomicWriteJson, ensureDirectory, isNodeError, readBoundedJson } from "./storeFiles.ts";
+import { editableMetadataFromRecord } from "./editable.ts";
+import { scientLibraryIdentityProblem } from "./sourceIdentity.ts";
 import { ScientSystematicReview } from "./systematicReview.ts";
 
 const PROJECT_LIBRARY = ".scient/library";
@@ -509,6 +515,112 @@ function candidateFrom(record: ScientSourceRecord, projectSourceId: string): Sci
   };
 }
 
+/**
+ * A proposed target as it is now, when the shared rule takes it for the packaged record: their
+ * facts corroborate and no Library decision (Not duplicates, an undone merge) keeps the two apart.
+ * Read under the Library lock; later writes are conditioned on the revision it returns. A stable
+ * ID or an earlier mapping is never proof alone.
+ */
+async function packageTargetHolds(
+  library: ScientLibraryLocation,
+  incoming: ScientSourceRecord,
+  targetId: string,
+): Promise<ScientSourceRecord | null> {
+  return withScientLibraryLock(library.root, async () => {
+    const existing = await listScientSourceRecords(library);
+    const target = existing.find((record) => record.sourceId === targetId);
+    if (!target) return null;
+    if (incoming.sourceId !== target.sourceId) {
+      const exclusions = await readScientSourceIntakeExclusions(library, existing);
+      if (
+        exclusions?.isDistinct(incoming.sourceId, target.sourceId) ||
+        exclusions?.keptApart(incoming.sourceId, target.sourceId)
+      ) {
+        return null;
+      }
+    }
+    return scientLibraryIdentityProblem(incoming, target) === null ? target : null;
+  });
+}
+
+const EDITORIAL_RANK = ["none", "corrected", "expression-of-concern", "withdrawn", "retracted"];
+
+/**
+ * A matched record's check joined with the package's, each part on its own: every notice either
+ * side knows stays (a local check never drops an incoming retraction), the gravest state wins, and
+ * a verification made here wins over a carried one unless this computer never checked. What came
+ * only from the package is marked carried. Null when the package adds nothing.
+ */
+function scientPackageCheckJoin(
+  local: Pick<ScientSourceRecord, "verification" | "editorialStatus">,
+  incoming: Pick<ScientSourceRecord, "verification" | "editorialStatus">,
+  at: string,
+): {
+  readonly verification: NonNullable<ScientSourceRecord["verification"]>;
+  readonly editorialStatus: NonNullable<ScientSourceRecord["editorialStatus"]> | null;
+} | null {
+  const takeVerification =
+    incoming.verification !== undefined &&
+    incoming.verification.state !== "unchecked" &&
+    (local.verification === undefined || local.verification.state === "unchecked");
+  const verification = takeVerification
+    ? { ...incoming.verification!, carriedAt: at }
+    : local.verification;
+  const noticeKey = (notice: { kind: string; doi?: string; date?: string }) =>
+    `${notice.kind}\0${notice.doi ?? ""}\0${notice.date ?? ""}`;
+  const localNotices = local.editorialStatus?.notices ?? [];
+  const known = new Set(localNotices.map(noticeKey));
+  const added = (incoming.editorialStatus?.notices ?? []).filter(
+    (notice) => !known.has(noticeKey(notice)),
+  );
+  const graver =
+    incoming.editorialStatus !== undefined &&
+    EDITORIAL_RANK.indexOf(incoming.editorialStatus.state) >
+      EDITORIAL_RANK.indexOf(local.editorialStatus?.state ?? "none");
+  const takeEditorial =
+    incoming.editorialStatus !== undefined &&
+    (local.editorialStatus === undefined || added.length > 0 || graver);
+  if (!takeVerification && !takeEditorial) return null;
+  const editorialStatus = takeEditorial
+    ? {
+        ...(local.editorialStatus ?? incoming.editorialStatus!),
+        state: graver ? incoming.editorialStatus!.state : local.editorialStatus!.state,
+        notices: [...localNotices, ...added].slice(0, 64),
+        carriedAt: at,
+      }
+    : (local.editorialStatus ?? null);
+  return {
+    verification: verification ?? { state: "unchecked" },
+    editorialStatus,
+  };
+}
+
+/** What the import left, so its Undo removes only what nobody changed since. */
+async function importedVersions(
+  library: ScientLibraryLocation,
+  root: string,
+  state: ImportState,
+  addedKeys: ReadonlyArray<string>,
+) {
+  const touched = new Set([
+    ...state.receipt.sources,
+    ...state.receipt.pdfs.map((pdf) => pdf.sourceId),
+  ]);
+  const sources = [];
+  for (const sourceId of touched) {
+    const record = await readScientSourceRecord(library, sourceId);
+    if (record) sources.push({ sourceId, revision: record.revision });
+  }
+  const pinned = new Map(
+    (await readScientProjectPins(root)).map((pin) => [pin.citationKey, pin] as const),
+  );
+  const pins = addedKeys.flatMap((citationKey) => {
+    const pin = pinned.get(citationKey);
+    return pin ? [{ citationKey, sourceId: pin.sourceId, note: pin.note ?? null }] : [];
+  });
+  return { sources, pins, collections: state.collectionVersions };
+}
+
 /** Another computer's check, marked as brought here, never as a check made here. */
 function carried(record: ScientSourceRecord, at: string) {
   return {
@@ -545,6 +657,10 @@ interface ImportState {
     reviewFiles: Array<{ path: string; sha256: string }>;
     collections: string[];
   };
+  /** Each created collection's version as this import left it. */
+  readonly collectionVersions: Array<{ collectionId: string; updatedAt: string }>;
+  /** Existing records the import joined, which an earlier import's Undo then keeps. */
+  readonly joinedSourceIds: Set<string>;
   readonly failed: ScientProjectPackageFailure[];
 }
 
@@ -587,6 +703,8 @@ export async function importScientProjectPackage(input: {
   const state: ImportState = {
     folder,
     receipt: { sources: [], pdfs: [], annotationFiles: [], reviewFiles: [], collections: [] },
+    collectionVersions: [],
+    joinedSourceIds: new Set(),
     failed: [],
   };
 
@@ -613,35 +731,57 @@ export async function importScientProjectPackage(input: {
   for (const [index, { projectSourceId, record }] of packaged.entries()) {
     try {
       const resolution = resolutions[index]!;
-      const sameId = await readScientSourceRecord(
-        library,
-        resolveScientLibraryAlias(aliases, record.sourceId),
-      );
-      // Title likeness is no identity here; an identifier match already passed the shared rule.
+      const sameId = resolveScientLibraryAlias(aliases, record.sourceId);
+      // Title likeness is no identity here; every other proposed target is checked again.
       const resolvedId =
         resolution.kind === "resolved" && resolution.by !== "metadata" ? resolution.sourceId : null;
-      let target =
-        sameId ?? (resolvedId ? await readScientSourceRecord(library, resolvedId) : null);
+      const proposed = (await readScientSourceRecord(library, sameId)) ? sameId : resolvedId;
+      let target = proposed ? await packageTargetHolds(library, record, proposed) : null;
+      // A contradicted target: the paper becomes its own record, never that one by its key.
+      const contradicted = proposed !== null && target === null;
       if (target) {
         matched += 1;
-        if (!target.verification && !target.editorialStatus && record.verification) {
-          const checked = carried(record, importedAt);
-          target = (
-            await recordScientSourceCheck({
-              root: library,
-              sourceId: target.sourceId,
-              expectedRevision: target.revision,
-              verification: checked.verification!,
-              editorialStatus: checked.editorialStatus ?? null,
-              actor: input.actor,
-            })
-          ).record;
+        state.joinedSourceIds.add(target.sourceId);
+        const checked = scientPackageCheckJoin(target, record, importedAt);
+        if (checked) {
+          const result = await recordScientSourceCheck({
+            root: library,
+            sourceId: target.sourceId,
+            expectedRevision: target.revision,
+            verification: checked.verification,
+            editorialStatus: checked.editorialStatus,
+            actor: input.actor,
+          });
+          if (result.outcome === "stale") {
+            state.failed.push({
+              part: "source",
+              item: projectSourceId,
+              message: "It changed while its notices were brought in; import the package again.",
+            });
+          }
+          target = result.record;
+        }
+        // An abstract only the package knows comes along, with where it came from.
+        if (target.abstract === null && record.abstract !== null) {
+          const provenance = record.fieldProvenance.filter((entry) => entry.field === "abstract");
+          const edited = await updateScientSourceMetadata({
+            root: library,
+            sourceId: target.sourceId,
+            expectedRevision: target.revision,
+            metadata: { ...editableMetadataFromRecord(target), abstract: record.abstract },
+            ...(provenance.length > 0 ? { fieldProvenance: provenance } : {}),
+            actor: input.actor,
+          }).catch(() => null);
+          if (edited?.outcome === "updated") target = edited.record;
         }
       } else {
         const imported = await importScientSource({
           root: library,
           operationId: `package_${NodeCrypto.randomUUID().replaceAll("-", "")}`,
-          candidate: candidateFrom(record, projectSourceId),
+          candidate: candidateFrom(
+            record,
+            contradicted ? `${projectSourceId}:${importId}` : projectSourceId,
+          ),
           actor: input.actor,
           intake: "file",
           // Title likeness alone adds a new source; the shared rule decides any other match.
@@ -662,7 +802,10 @@ export async function importScientProjectPackage(input: {
           continue;
         }
         if (imported.record) state.receipt.sources.push(imported.record.sourceId);
-        else matched += 1;
+        else {
+          matched += 1;
+          state.joinedSourceIds.add(target.sourceId);
+        }
       }
       mapped.set(projectSourceId, target.sourceId);
       for (const attachment of record.attachments) {
@@ -730,8 +873,14 @@ export async function importScientProjectPackage(input: {
     importedBy: input.actor,
     projectId,
     packageTitle: manifest.project.title,
-    added: { ...state.receipt, pins: pins.addedKeys },
+    added: {
+      ...state.receipt,
+      pins: pins.addedKeys,
+      versions: await importedVersions(library, root, state, pins.addedKeys),
+    },
     joined: {
+      sourceIds: [...state.joinedSourceIds],
+      pinKeys: [...pins.joinedKeys],
       sources: matched,
       pdfs: pdfsPresent,
       annotationConflicts: annotations.conflicts,
@@ -934,6 +1083,7 @@ async function importProjectFiles(
     return {
       added: 0,
       addedKeys: [],
+      joinedKeys: [],
       notesAdded: 0,
       notesKept: 0,
       historyAdded: 0,
@@ -1078,8 +1228,13 @@ async function importCollections(
       if (!change.collection) throw new Error(`The collection was not made (${change.outcome}).`);
       created.set(entry.key, change.collection.collectionId);
       if (entry.parentKey === undefined) byName.set(entry.name, change.collection.collectionId);
-      if (change.outcome === "created")
+      if (change.outcome === "created") {
         state.receipt.collections.push(change.collection.collectionId);
+        state.collectionVersions.push({
+          collectionId: change.collection.collectionId,
+          updatedAt: change.collection.updatedAt,
+        });
+      }
       count += 1;
     } catch (error) {
       state.failed.push({ part: "collection", item: entry.name, message: message(error) });

@@ -546,16 +546,23 @@ function moveScientSourceCollection(input: {
   });
 }
 
-/** Deleting a collection never touches its sources, and it can be restored. */
+/**
+ * Deleting a collection never touches its sources, and it can be restored. With
+ * `expectedUpdatedAt`, one changed since is left as it is ("unchanged").
+ */
 export function deleteScientSourceCollection(input: {
   readonly root: ScientSourceStoreLocation;
   readonly collectionId: string;
   readonly actor: ScientSourceActor;
+  readonly expectedUpdatedAt?: string;
 }): Promise<ScientSourceCollectionChange> {
   return mutate<ScientSourceCollectionChange>(input.root, (document, { now }) => {
     const current = findCollection(document, input.collectionId);
     if (!current) return { document: null, result: { outcome: "not-found", collection: null } };
-    if (current.deletedAt !== undefined) {
+    if (
+      current.deletedAt !== undefined ||
+      (input.expectedUpdatedAt !== undefined && current.updatedAt !== input.expectedUpdatedAt)
+    ) {
       return {
         document: null,
         result: { outcome: "unchanged", collection: current, ...unchangedMembers },

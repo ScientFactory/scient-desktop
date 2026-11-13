@@ -34,7 +34,9 @@ import {
   listScientSourceRecords,
   listScientSourceTrash,
   recordScientSourceCheck,
+  updateScientSourceMetadata,
 } from "./store.ts";
+import { editableMetadataFromRecord } from "./editable.ts";
 
 const fixtures: string[] = [];
 
@@ -141,6 +143,55 @@ const importInto = (root: string, library: ScientLibraryLocation, folder: string
   importScientProjectPackage({ projectRoot: root, library, folder, actor: "user" });
 
 describe("importing a project package", () => {
+  it("checks a target found by its ID or an earlier mapping before joining it", async () => {
+    const { base, mine, source } = await setup();
+    const doi = { scheme: "doi", value: "10.1000/paper" };
+    const paper = await add(mine, "paper", { title: "Shared paper", identifiers: [doi] });
+    await withPdf(mine, base, paper.sourceId);
+    await pinned(mine, source, paper.sourceId);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+    const correct = async (library: ScientLibraryLocation, sourceId: string, title: string) => {
+      const record = (await listScientSourceRecords(library)).find(
+        (entry) => entry.sourceId === sourceId,
+      )!;
+      await updateScientSourceMetadata({
+        root: library,
+        sourceId,
+        expectedRevision: record.revision,
+        metadata: {
+          ...editableMetadataFromRecord(record),
+          title,
+          identifiers: [{ scheme: "doi", value: `10.1000/${sourceId}` }],
+        },
+      });
+    };
+
+    // A copy of this Library where the same ID now names another work.
+    const copied = scientLibraryLocation(NodePath.join(base, "copied"));
+    await NodeFSP.cp(mine.root, copied.root, { recursive: true });
+    await correct(copied, paper.sourceId, "A different work");
+    expect(await importInto(await project(base, "one"), copied, handoff)).toMatchObject({
+      sources: { added: 1, matched: 0 },
+      pdfs: { added: 1 },
+    });
+    expect(
+      (await listScientSourceRecords(copied)).find((entry) => entry.sourceId === paper.sourceId)
+        ?.attachments,
+    ).toHaveLength(1);
+
+    // A target this project mapped on an earlier import, corrected since to another work.
+    const theirs = await computer(base, "theirs");
+    const received = await project(base, "received");
+    await importInto(received, theirs, handoff);
+    const [mapped] = await listScientSourceRecords(theirs);
+    await correct(theirs, mapped!.sourceId, "Another work entirely");
+    expect(await importInto(received, theirs, handoff)).toMatchObject({
+      sources: { added: 1, matched: 0 },
+    });
+    expect(await listScientSourceRecords(theirs)).toHaveLength(2);
+  });
+
   it("never takes title likeness for identity, so a PDF lands on its own work", async () => {
     const { base, mine, source } = await setup();
     const paper = await add(mine, "paper", { title: "Shared title" });
@@ -313,6 +364,51 @@ describe("importing a project package", () => {
     ]);
   });
 
+  it("brings a retraction and an abstract to a paper this computer checked as clear", async () => {
+    const { base, mine, source } = await setup();
+    const doi = { scheme: "doi", value: "10.1000/retracted" };
+    const paper = await add(mine, "paper", { identifiers: [doi], abstract: "Why it matters." });
+    await recordScientSourceCheck({
+      root: mine,
+      sourceId: paper.sourceId,
+      expectedRevision: paper.revision,
+      verification: { state: "verified", checkedAt: "2026-11-05T00:00:00.000Z" },
+      editorialStatus: {
+        state: "retracted",
+        notices: [{ kind: "retraction", doi: "10.1000/notice" }],
+        checkedAt: "2026-11-05T00:00:00.000Z",
+      },
+    });
+    await pinned(mine, source, paper.sourceId);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+
+    const theirs = await computer(base, "theirs");
+    const local = await add(theirs, "local", { title: paper.title, identifiers: [doi] });
+    await recordScientSourceCheck({
+      root: theirs,
+      sourceId: local.sourceId,
+      expectedRevision: local.revision,
+      verification: { state: "verified", checkedAt: "2026-11-01T00:00:00.000Z" },
+      editorialStatus: { state: "none", notices: [], checkedAt: "2026-11-01T00:00:00.000Z" },
+    });
+    expect(await importInto(await project(base, "received"), theirs, handoff)).toMatchObject({
+      sources: { added: 0, matched: 1 },
+    });
+    const [record] = await listScientSourceRecords(theirs);
+    expect(record?.editorialStatus).toMatchObject({
+      state: "retracted",
+      notices: [{ kind: "retraction", doi: "10.1000/notice" }],
+      carriedAt: expect.any(String),
+    });
+    // This computer's own check stays its own.
+    expect(record?.verification).toEqual({
+      state: "verified",
+      checkedAt: "2026-11-01T00:00:00.000Z",
+    });
+    expect(record?.abstract).toBe("Why it matters.");
+  });
+
   it("keeps collection ancestry, so two Methods folders stay apart", async () => {
     const { base, mine, source } = await setup();
     const trial = await add(mine, "trial");
@@ -455,5 +551,71 @@ describe("importing a project package", () => {
     expect((await listScientSourceTrash(theirs)).entries).toHaveLength(1);
     expect((await readScientSourcesOrganization(theirs)).collections).toEqual([]);
     expect(await undo()).toEqual({ outcome: "already-undone" });
+  });
+
+  it("Undo keeps what was changed since, and what a later import also uses", async () => {
+    const { base, mine, source } = await setup();
+    const edited = await add(mine, "edited");
+    const noted = await add(mine, "noted");
+    for (const record of [edited, noted]) await pinned(mine, source, record.sourceId);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+    const imports = async (received: string, library: ScientLibraryLocation) => {
+      const imported = await importInto(received, library, handoff);
+      if (imported.outcome !== "imported") throw new Error("Expected an import.");
+      const { projectId } = JSON.parse(
+        await NodeFSP.readFile(NodePath.join(received, ".scient/project.json"), "utf8"),
+      );
+      return () =>
+        undoScientProjectPackageImport({
+          projectRoot: received,
+          projectId,
+          library,
+          importId: imported.importId,
+          actor: "user",
+        });
+    };
+
+    // A source edited and a pin's note changed after the import stay; the rest goes.
+    const theirs = await computer(base, "theirs");
+    const received = await project(base, "received");
+    const undo = await imports(received, theirs);
+    const records = await listScientSourceRecords(theirs);
+    const editedHere = records.find((record) => record.title === edited.title)!;
+    await updateScientSourceMetadata({
+      root: theirs,
+      sourceId: editedHere.sourceId,
+      expectedRevision: editedHere.revision,
+      metadata: { ...editableMetadataFromRecord(editedHere), pages: "1-9" },
+    });
+    const notedPin = (await readScientProjectPins(received)).find(
+      (pin) => pin.work.title === noted.title,
+    )!;
+    await setScientProjectPinNote({
+      projectRoot: received,
+      citationKey: notedPin.citationKey,
+      note: "Mine now",
+      actor: "user",
+    });
+    const result = await undo();
+    expect(result).toMatchObject({ outcome: "undone" });
+    expect(result.outcome === "undone" && result.kept.toSorted()).toEqual(
+      [`pin ${notedPin.citationKey}`, `source ${editedHere.sourceId}`].toSorted(),
+    );
+    expect((await listScientSourceRecords(theirs)).map((record) => record.sourceId)).toEqual([
+      editedHere.sourceId,
+    ]);
+    expect((await readScientProjectPins(received)).map((pin) => pin.citationKey)).toEqual([
+      notedPin.citationKey,
+    ]);
+
+    // A second import of the same package joins what the first added: undoing the first keeps it.
+    const other = await computer(base, "other");
+    const again = await project(base, "again");
+    const undoFirst = await imports(again, other);
+    await imports(again, other);
+    expect(await undoFirst()).toMatchObject({ outcome: "undone" });
+    expect(await listScientSourceRecords(other)).toHaveLength(2);
+    expect(await readScientProjectPins(again)).toHaveLength(2);
   });
 });
