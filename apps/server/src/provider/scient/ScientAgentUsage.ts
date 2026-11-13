@@ -4,7 +4,11 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@t3tools/contracts";
-import type { ProviderUsageReader } from "@t3tools/provider-core/server/usage";
+import type {
+  ProviderUsageReader,
+  TranscriptUsageFormat,
+  UsageRecord,
+} from "@t3tools/provider-core/server/usage";
 import {
   clampPercent,
   makeUnavailableUsageLimits,
@@ -140,14 +144,30 @@ export const readScientAgentUsageLimits = Effect.fn("readScientAgentUsageLimits"
   );
 });
 
-/** Token and cost history from the conversations Scient runs with the agent; same format as Pi's. */
+// The agent writes Pi's format; its records are Scient Agent's own, never Pi's.
+const asScientAgent = (record: UsageRecord): UsageRecord => ({
+  ...record,
+  provider: "scient",
+  dedupeKey: record.dedupeKey === null ? null : `scient:${record.dedupeKey}`,
+});
+const scientAgentUsageFormat: TranscriptUsageFormat<unknown> = {
+  ...(piUsageFormat as TranscriptUsageFormat<unknown>),
+  parseLine: (line, state) =>
+    (piUsageFormat as TranscriptUsageFormat<unknown>).parseLine(line, state).map(asScientAgent),
+  parseProjected: (projected, state) =>
+    (piUsageFormat as TranscriptUsageFormat<unknown>)
+      .parseProjected(projected, state)
+      .map(asScientAgent),
+};
+
+/** Token and cost history from the conversations Scient runs with the agent. */
 export const scientAgentUsageReader: ProviderUsageReader<
   ScientAgentSettings,
   Path.Path | ServerConfig
 > = {
   kind: "transcripts",
   provider: "scient",
-  format: piUsageFormat,
+  format: scientAgentUsageFormat,
   directories: Effect.fn("scientAgentUsageReader.directories")(function* () {
     const path = yield* Path.Path;
     const config = yield* ServerConfig;

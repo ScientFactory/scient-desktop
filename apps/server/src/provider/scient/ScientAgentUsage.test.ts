@@ -2,7 +2,11 @@ import { assert, describe, it } from "@effect/vitest";
 import type { ProviderConnectionAccount } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
-import { readScientAgentUsageLimits, scientAgentUsageLimits } from "./ScientAgentUsage.ts";
+import {
+  readScientAgentUsageLimits,
+  scientAgentUsageLimits,
+  scientAgentUsageReader,
+} from "./ScientAgentUsage.ts";
 
 const CHECKED_AT = "2026-11-13T12:00:00.000Z";
 const RESET_MS = Date.parse("2026-11-16T09:00:00.000Z");
@@ -112,4 +116,29 @@ describe("readScientAgentUsageLimits", () => {
       );
     }),
   );
+});
+
+describe("scientAgentUsageReader", () => {
+  it("counts the agent's conversations as Scient Agent's, apart from Pi's", () => {
+    if (scientAgentUsageReader.kind !== "transcripts") throw new Error("transcripts reader");
+    const format = scientAgentUsageReader.format;
+    const state = format.state!.initial();
+    format.parseLine(JSON.stringify({ type: "session", id: "s1" }), state);
+    const [record] = format.parseLine(
+      JSON.stringify({
+        type: "message",
+        id: "m1",
+        timestamp: "2026-11-13T10:00:00.000Z",
+        message: {
+          role: "assistant",
+          provider: "openai-codex",
+          model: "gpt-6-luna",
+          usage: { input: 10, output: 5, cacheRead: 2, cacheWrite: 0, cost: { total: 0.01 } },
+        },
+      }),
+      state,
+    );
+    assert.strictEqual(record?.provider, "scient");
+    assert.isTrue(record?.dedupeKey?.startsWith("scient:"));
+  });
 });
