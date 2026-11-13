@@ -660,16 +660,54 @@ describe("library merge engine", () => {
         record(`source_pair${index}a`, { title: `Pair ${index}`, publisher: "North" }),
         record(`source_pair${index}b`, { title: `Pair ${index}`, publisher: "South" }),
       ]),
-      ...numbered(101, (index) =>
-        ["a", "b"].map((side) =>
-          record(`source_doi${index}${side}`, {
-            title: `Merged ${index}`,
-            identifiers: [{ scheme: "doi", value: `10.1000/merged.${index}` }],
-          }),
-        ),
-      ),
+      ...numbered(101, (index) => [record(`source_kept${index}`, { title: `Merged ${index}` })]),
     ]);
-    expect((await mergeScientLibraryDuplicates({ library })).mergedCount).toBe(101);
+    // Merge receipts and trash entries as a merge leaves them, without 101 merges' synced writes.
+    await NodeFSP.mkdir(NodePath.join(root, "merges"), { recursive: true });
+    await NodeFSP.mkdir(NodePath.join(root, "trash"), { recursive: true });
+    for (let index = 0; index < 101; index += 1) {
+      const mergeId = `merge_${String(index).padStart(32, "0")}`;
+      const away = record(`source_away${index}`, { title: `Merged ${index}` });
+      const mergedAt = new Date(Date.UTC(2026, 0, 1, 0, index)).toISOString();
+      await NodeFSP.writeFile(
+        NodePath.join(root, "merges", `${mergeId}.json`),
+        JSON.stringify({
+          formatVersion: 1,
+          mergeId,
+          survivorId: `source_kept${index}`,
+          loserId: away.sourceId,
+          kind: "same-identifier",
+          state: "done",
+          mergedAt,
+          mergedBy: "user",
+          survivorRevision: 1,
+          loserRevision: 1,
+          changes: [],
+          added: {
+            tags: [],
+            identifiers: [],
+            attachmentSha256: [],
+            externalReferences: [],
+            fieldProvenance: [],
+          },
+          conflicts: [],
+          zoteroBaseCopied: false,
+          collectionIds: [],
+          addedToCollectionIds: [],
+        }),
+      );
+      await NodeFSP.writeFile(
+        NodePath.join(root, "trash", `${away.sourceId}.json`),
+        JSON.stringify({
+          formatVersion: 2,
+          sourceId: away.sourceId,
+          removedAt: mergedAt,
+          removedBy: "user",
+          record: away,
+          mergedInto: { sourceId: `source_kept${index}`, mergeId },
+        }),
+      );
+    }
     const tree = async () => {
       const files = await NodeFSP.readdir(root, { recursive: true, withFileTypes: true });
       return Promise.all(
