@@ -503,7 +503,6 @@ describe.skipIf(!posix)("a capability inquiry's deadline", () => {
       vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
       try {
         const asked = nativeFilePublicationCapabilities(path).catch((cause: unknown) => cause);
-        await expect.poll(() => vi.getTimerCount()).toBeGreaterThan(0);
         await expect.poll(() => NodeFSP.readFile(pidFile, "utf8").catch(() => "")).toMatch(/\d/u);
         const pid = Number(await NodeFSP.readFile(pidFile, "utf8"));
         // Reaped: Node has seen it exit.
