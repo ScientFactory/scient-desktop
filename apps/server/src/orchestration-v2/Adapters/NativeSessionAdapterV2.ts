@@ -1836,7 +1836,12 @@ export function makeNativeSessionAdapterV2(
           request: ProviderAdapter.ProviderAdapterV2RollbackThreadInput,
         ) {
           if (active) return yield* protocolError("A running turn cannot be rewound.");
-          if (thread?.id !== request.providerThread.id) {
+          // A rewind whose file restore failed left this process on its new file; a retry
+          // starts again from the conversation Scient still has on record.
+          if (
+            thread?.id !== request.providerThread.id ||
+            thread.nativeThreadRef?.nativeId !== request.providerThread.nativeThreadRef?.nativeId
+          ) {
             const nativeId = request.providerThread.nativeThreadRef?.nativeId;
             if (!nativeId) return yield* protocolError("The native thread reference is missing.");
             yield* native.resume(nativeId, request.providerThread.nativeMetadata?.resumeCursor);
@@ -1857,13 +1862,13 @@ export function makeNativeSessionAdapterV2(
                 "This conversation was recorded before Scient could rewind it here. Fork it instead.",
               );
             const moved = yield* rewindBefore(entry.nativeId);
+            // Unpublished: the rollback service records it once the files are restored too.
             thread = {
               ...thread!,
               nativeThreadRef: ref(moved.nativeId),
               nativeMetadata: { ...thread!.nativeMetadata, resumeCursor: moved.resumeCursor },
               updatedAt: yield* DateTime.now,
             };
-            yield* emit({ type: "provider_thread.updated", driver, providerThread: thread });
           }
           return {
             providerThread: thread!,

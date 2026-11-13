@@ -1697,6 +1697,7 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 });
             }
             yield* settled;
+            yield* recordTurnEntry;
             yield* onUpdate({ type: "background", pending: false });
           });
           // Bound command acknowledgement and event settlement together. A hung RPC

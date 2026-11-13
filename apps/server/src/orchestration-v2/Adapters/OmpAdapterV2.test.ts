@@ -2669,6 +2669,12 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
                 leafId: listed.at(-1)!.id,
               };
             }
+            if (frame.type === "switch_session") {
+              const sessionPath = String(Reflect.get(frame, "sessionPath"));
+              peer.state.sessionFile = sessionPath;
+              peer.state.sessionOrdinal = Number(/models-session-(\d+)/u.exec(sessionPath)?.[1]);
+              return { cancelled: false };
+            }
             if (frame.type === "branch") {
               branched.push(String(Reflect.get(frame, "entryId")));
               peer.state.sessionOrdinal++;
@@ -2745,6 +2751,25 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           .pipe(Effect.flip);
         assert.equal(unrecorded._tag, "ProviderAdapterRollbackThreadError");
         assert.deepEqual(branched, ["user-2"]);
+        // A retry after a failed file restore starts from the conversation still on record.
+        const retried = yield* h.runtime.rollbackThread({
+          providerThread: before.providerThread,
+          target: {
+            type: "thread_start",
+            checkpointId: CheckpointId.make("retry"),
+            appRunOrdinal: 0,
+          },
+          providerThreadTurns: [first, second],
+        });
+        assert.deepEqual(branched, ["user-2", "user-1"]);
+        assert.includeMembers(
+          peer.state.frames.map((frame) => frame.type),
+          ["switch_session"],
+        );
+        assert.notEqual(
+          retried.providerThread.nativeThreadRef?.nativeId,
+          before.providerThread.nativeThreadRef?.nativeId,
+        );
       }),
     ),
   );
