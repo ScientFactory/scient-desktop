@@ -72,7 +72,7 @@ export interface DiskImage {
   readonly attach: (point?: string) => Promise<string>;
   /** Unmounts it, as an unplugged disk; fails only if the volume is still mounted afterwards. */
   readonly detach: () => Promise<void>;
-  /** Unmounts if needed and removes the image; logs instead of failing, the image is disposable. */
+  /** Unmounts if needed and removes the image; fails on a leaked handle or a mount left behind. */
   readonly dispose: () => Promise<void>;
 }
 
@@ -108,10 +108,20 @@ export async function createDiskImage(
   let mounted: { readonly point: string; readonly devices: ReadonlyArray<string> } | null = null;
   let points = 0;
 
+  // Before forcing, a handle this test process still holds is a leak in the code under test.
+  const heldHere = async (point: string) => {
+    const listed = await run("/usr/sbin/lsof", ["-n", "-P", "-t", "+f", "--", point], 10_000);
+    return listed.output.split(/\s+/u).includes(String(process.pid));
+  };
+
   const unmount = async (deadline: number) => {
     const current = mounted;
     if (current === null) return null;
     let result = await hdiutil(["detach", current.point], deadline - 10_000, 5);
+    if (result.code !== 0 && (await heldHere(current.point)))
+      throw new Error(
+        `This test's process still holds ${current.point} open:\n${await holders(current.point, current.devices)}`,
+      );
     if (result.code !== 0) result = await hdiutil(["detach", "-force", current.point], deadline, 3);
     if (result.code === 0 || !(await stillMounted(current.point))) {
       mounted = null;
@@ -156,14 +166,14 @@ export async function createDiskImage(
           `${describeRun(HDIUTIL, ["detach", current.point], failure)}\nHolders:\n${await holders(current.point, current.devices)}`,
         );
     },
+    // Only a disk system services kept from ejecting after it unmounted is tolerated.
     dispose: async () => {
       const current = mounted;
       const failure = await unmount(Date.now() + 40_000);
       if (failure !== null && current !== null) {
-        console.warn(
-          `Left disk image ${file} ${mounted === null ? "unmounted but not ejected" : "mounted"}: ${describeRun(HDIUTIL, ["detach", current.point], failure)}\nHolders:\n${await holders(current.point, current.devices)}`,
-        );
-        if (mounted !== null) return;
+        const report = `${describeRun(HDIUTIL, ["detach", current.point], failure)}\nHolders:\n${await holders(current.point, current.devices)}`;
+        if (mounted !== null) throw new Error(`Disk image ${file} is still mounted: ${report}`);
+        console.warn(`Disk image ${file} unmounted but not ejected: ${report}`);
       }
       await NodeFSP.rm(root, { recursive: true, force: true }).catch(() => undefined);
     },
