@@ -262,6 +262,8 @@ function makeHarness(options: HarnessOptions = {}) {
           ? Layer.empty
           : Layer.mock(ServerSettings.ServerSettingsService)({
               getSettings: options.getLaunchSettings,
+              // SCIENT-FORK: Scient's settings service also answers its committed custom models.
+              committedCustomModels: () => DEFAULT_SERVER_SETTINGS.customModels,
             }),
       ),
     ),

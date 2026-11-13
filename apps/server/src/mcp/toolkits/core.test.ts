@@ -655,7 +655,8 @@ it.effect("t3_queue list and read load only the queued runs and their messages",
     const server = yield* McpServer.McpServer;
     const call = (args: Record<string, unknown>) =>
       server
-        .callTool({ name: "t3_queue", arguments: args })
+        // SCIENT-FORK: Scient registers upstream's queue tool as `scient_queue`.
+        .callTool({ name: "scient_queue", arguments: args })
         .pipe(
           Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
           Effect.provideService(McpSchema.McpServerClient, client),
@@ -668,6 +669,8 @@ it.effect("t3_queue list and read load only the queued runs and their messages",
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
+        // SCIENT-FORK: Scient's caller tools also check the live owner's invocation policy.
+        Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
         Layer.provide(historyReads(reads)),
       ),
     ),
@@ -681,7 +684,8 @@ it.effect("handoff analytics read only the caller's active run and its message",
     const server = yield* McpServer.McpServer;
     yield* server
       .callTool({
-        name: "t3_queue",
+        // SCIENT-FORK: Scient registers upstream's queue tool as `scient_queue`.
+        name: "scient_queue",
         arguments: { action: "edit", queuedRunId: "run:queued", text: "Edited" },
       })
       .pipe(
@@ -695,11 +699,15 @@ it.effect("handoff analytics read only the caller's active run and its message",
       layerThreadToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
         Layer.provide(NodeCrypto.layer),
+        // SCIENT-FORK: Scient's caller tools also check the live owner's invocation policy.
+        Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
         Layer.provide(historyReads(reads)),
         Layer.provide(
           Layer.succeed(
             AnalyticsService.AnalyticsService,
             AnalyticsService.AnalyticsService.of({
+              // SCIENT-FORK: Scient's analytics service carries its controls too.
+              ...disabledAnalyticsService,
               record: () => Deferred.succeed(recorded, undefined).pipe(Effect.asVoid),
               flush: Effect.void,
               recordOwners: () => Effect.void,

@@ -624,6 +624,7 @@ const withNativeQueue = <A, E, R>(
                             Effect.succeedSome({
                               projectId,
                               title: name,
+                              hasCustomTitle: false,
                               workspaceRoot: cwd,
                               defaultModelSelection: modelSelection,
                               defaultThreadEnvMode: null,

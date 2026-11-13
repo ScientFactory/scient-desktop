@@ -796,7 +796,6 @@ export function layerWithRegistry<Error>(
     layerEventSinkProvided,
     layerContinuationWorkerProvided,
     layerCommandOutputHubProvided,
-    ThreadCommandExecutor.layer,
   ).pipe(
     Layer.provide(
       Layer.merge(
@@ -804,7 +803,8 @@ export function layerWithRegistry<Error>(
         (options.forkGitWorkflowLayer ?? Layer.empty).pipe(Layer.provide(layerServerConfig)),
       ),
     ),
-    Layer.provide(layerThreadCommandExecutor),
+    // SCIENT-FORK: one step below the runtime, so its layers see the executor it also exports.
+    Layer.provideMerge(layerThreadCommandExecutor),
     Layer.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
     Layer.provideMerge(options.mcpProviderSessionsLayer ?? McpProviderSessions.layer),
   );
