@@ -1,5 +1,11 @@
 import { render as _fixtureRender, type Screen, act } from "../../../test/render";
-import { EnvironmentId, ThreadId, ThreadSectionId, type ThreadSection } from "@t3tools/contracts";
+import {
+  DEFAULT_CLIENT_SETTINGS,
+  EnvironmentId,
+  ThreadId,
+  ThreadSectionId,
+  type ThreadSection,
+} from "@t3tools/contracts";
 import { useLayoutEffect, useState } from "react";
 
 import { describe, expect, it, vi } from "vite-plus/test";
@@ -56,6 +62,11 @@ vi.mock("./loadedEnvironments", () => ({
   frozenPlacementEnvironmentsKeyAtom: mocks.frozenAtom,
 }));
 vi.mock("../../state/server", () => ({ environmentServerConfigsAtom: mocks.configsAtom }));
+// The sidebar primitives read one animation setting; the full settings graph needs a live server.
+vi.mock("../../hooks/useSettings", () => ({
+  useClientSettings: <T,>(select: (settings: typeof DEFAULT_CLIENT_SETTINGS) => T) =>
+    select(DEFAULT_CLIENT_SETTINGS),
+}));
 // Placement stays unready here (an incomplete catalog); its own hook tests cover it.
 vi.mock(import("@effect/atom-react"), async (original) => ({
   ...(await original()),

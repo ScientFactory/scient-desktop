@@ -12,6 +12,7 @@ import { FetchHttpClient } from "effect/http";
 
 import { makeInstallerFilesystem } from "../src/provider/runtimeFilesystem.ts";
 import { makeAntigravityInstallation } from "../src/provider/AntigravityInstallation.ts";
+import * as ModelManifest from "../src/provider/ModelManifest.ts";
 import { decodeBoundedCatalogJson } from "../src/scient/providerLifecycle/ManagedRuntimeCatalog.ts";
 
 class AntigravityAcpQualificationError extends Schema.TaggedError<AntigravityAcpQualificationError>()(
@@ -94,6 +95,14 @@ const main = Effect.gen(function* () {
 await Effect.runPromise(
   main.pipe(
     Effect.scoped,
-    Effect.provide(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer, FetchHttpClient.layer)),
+    Effect.provide(
+      Layer.mergeAll(
+        NodeServices.layer,
+        NodeCrypto.layer,
+        FetchHttpClient.layer,
+        // Withdrawal checks read the bundled manifest; qualification needs no server state.
+        ModelManifest.layerTest,
+      ),
+    ),
   ),
 );

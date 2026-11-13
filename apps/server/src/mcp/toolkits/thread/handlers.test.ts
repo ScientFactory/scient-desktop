@@ -62,7 +62,12 @@ const matches = [projectId, otherProjectId].map((id) => ({
   snippet: id === projectId ? "Caller project result" : "Other project's private result",
   messageCreatedAt: null,
 }));
-const listed = (found: ReadonlyArray<(typeof matches)[number]>) => ({
+// T3's search result also names the calling thread, or null for an external client.
+const listed = (
+  found: ReadonlyArray<(typeof matches)[number]>,
+  currentThreadId: ThreadId | null = callerId,
+) => ({
+  currentThreadId,
   matches: found.map((match) => ({
     ...match,
     link: formatThreadLink({ environmentId, threadId: match.threadId }, match.title),
@@ -243,8 +248,8 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const { calls, search } = yield* makeHarness({ clientAccess: "read-only" });
-      expect(yield* search()).toEqual(listed(matches));
-      expect(yield* search(otherProjectId)).toEqual(listed([matches[1]!]));
+      expect(yield* search()).toEqual(listed(matches, null));
+      expect(yield* search(otherProjectId)).toEqual(listed([matches[1]!], null));
       expect(calls.policy).toBe(0);
     }),
 );

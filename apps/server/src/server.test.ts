@@ -44,6 +44,13 @@ import {
   MessageId,
   ExternalLauncherCommandNotFoundError,
   OrchestrationV2ShellSnapshot,
+  OrchestrationV2ShellHttpSnapshot,
+  OrchestrationV2ShellResumable,
+  type OrchestrationV2SubscribeShellInput,
+  type OrchestrationV2SubscribeThreadInput,
+  type EnvironmentOrchestrationShellSnapshotQuery,
+  type EnvironmentOrchestrationThreadBoundedSnapshotQuery,
+  type EnvironmentOrchestrationThreadHistoryQuery,
   OrchestrationV2ThreadBoundedSnapshot,
   OrchestrationV2TurnItem,
   OrchestrationV2SubagentJson,
@@ -112,6 +119,7 @@ import * as Redacted from "effect/Redacted";
 import * as Schema from "effect/Schema";
 import * as AcpErrors from "effect-acp/errors";
 import * as Stream from "effect/Stream";
+import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as Tracer from "effect/Tracer";
 import { ChildProcessSpawner } from "effect/process";
@@ -218,6 +226,10 @@ import {
   AntigravityInstallationError,
 } from "./provider/AntigravityInstallation.ts";
 import * as ProviderInstallation from "./provider/providerInstallation.ts";
+import * as ProviderInstallationGate from "./provider/ProviderInstallationGate.ts";
+import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
+import * as ProviderSessionRuntime from "./persistence/ProviderSessionRuntime.ts";
+import * as SecretCheck from "./secrets/SecretCheck.ts";
 import { CodexInstallation } from "./provider/CodexInstallation.ts";
 import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
 import { makeManualOnlyProviderMaintenanceCapabilities } from "@t3tools/provider-core/server/maintenanceResolver";
@@ -291,6 +303,7 @@ import {
   attributeSnapshotTransfer,
   openMeasuredWsClient,
   transferDelta,
+  type MeasuredWsClient,
 } from "../integration/NetworkTransferMeasurement.integration.ts";
 import { THREAD_HISTORY_PAGE_POLICY } from "./orchestration-v2/threadHistoryPaging.ts";
 import { makeSqlStatementCounter } from "../integration/SqlStatementCounter.integration.ts";
@@ -349,6 +362,73 @@ const decodeTransferHistoryPage = Schema.decodeUnknownEffect(
 const decodeTransferShellSnapshot = Schema.decodeUnknownEffect(
   Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellSnapshot)),
 );
+const decodeTransferShellHttpSnapshot = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellHttpSnapshot)),
+);
+const decodeTransferShellResumable = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(Schema.toCodecJson(OrchestrationV2ShellResumable)),
+);
+// The opt-ins current web and mobile clients send, as in integration/transferBudgetV2. Each is
+// `Required`, so an opt-in added to a contract fails typecheck here until this test sends it.
+const TRANSFER_CLIENT_BOUNDED_OPT_INS = {
+  compactTurnItems: "1",
+  dedupeBodies: "1",
+  compactIds: "1",
+  deferWork: "1",
+} satisfies Required<typeof EnvironmentOrchestrationThreadBoundedSnapshotQuery.Type>;
+const TRANSFER_CLIENT_HISTORY_OPT_INS = { compactIds: "1", deferWork: "1" } satisfies Required<
+  Omit<typeof EnvironmentOrchestrationThreadHistoryQuery.Type, "cursor" | "throughEntryId" | "view">
+>;
+const TRANSFER_CLIENT_SHELL_OPT_INS = {
+  omitIdleSubagents: "1",
+  omitOlderSettled: "1",
+} satisfies Required<Omit<typeof EnvironmentOrchestrationShellSnapshotQuery.Type, "resumeFrom">>;
+const TRANSFER_CLIENT_THREAD_SUBSCRIPTION = {
+  requestCompletionMarker: true,
+  acceptBoundedSnapshot: true,
+  acceptDeferredWork: true,
+  acceptCompactTurnItems: true,
+  acceptCompactIds: true,
+  acceptDedupedBodies: true,
+} satisfies Required<Omit<OrchestrationV2SubscribeThreadInput, "threadId" | "afterSequence">>;
+type TransferShellResumeField = "afterSequence" | "httpSnapshotFallback" | "knownProjectIdentities";
+const TRANSFER_CLIENT_SHELL_SUBSCRIPTION = {
+  requestCompletionMarker: true,
+  omitIdleSubagents: true,
+  omitOlderSettled: true,
+} satisfies Required<Omit<OrchestrationV2SubscribeShellInput, TransferShellResumeField>>;
+const transferQuery = (optIns: Readonly<Record<string, string>>) =>
+  new URLSearchParams(optIns).toString();
+const TRANSFER_CLIENT_BOUNDED_QUERY = transferQuery(TRANSFER_CLIENT_BOUNDED_OPT_INS);
+const TRANSFER_CLIENT_HISTORY_QUERY = transferQuery(TRANSFER_CLIENT_HISTORY_OPT_INS);
+const TRANSFER_CLIENT_SHELL_QUERY = transferQuery(TRANSFER_CLIENT_SHELL_OPT_INS);
+// A client that holds shell rows names their cursor in the same request.
+const transferClientShellResumeQuery = (resumeFrom: number) =>
+  transferQuery({
+    ...TRANSFER_CLIENT_SHELL_OPT_INS,
+    resumeFrom: String(resumeFrom),
+  } satisfies Required<typeof EnvironmentOrchestrationShellSnapshotQuery.Type>);
+type TransferSubscription =
+  | ({ readonly thread: ThreadId } & Pick<OrchestrationV2SubscribeThreadInput, "afterSequence">)
+  | ({ readonly shell: true } & Pick<OrchestrationV2SubscribeShellInput, TransferShellResumeField>);
+function transferSubscriptionStream(
+  client: MeasuredWsClient,
+  subscription: TransferSubscription,
+): Stream.Stream<OrchestrationV2ThreadStreamItem | OrchestrationV2ShellStreamItem, unknown> {
+  if ("thread" in subscription) {
+    const { thread, ...resume } = subscription;
+    return client.client[ORCHESTRATION_V2_WS_METHODS.subscribeThread]({
+      ...TRANSFER_CLIENT_THREAD_SUBSCRIPTION,
+      ...resume,
+      threadId: thread,
+    });
+  }
+  const { shell: _, ...resume } = subscription;
+  return client.client[ORCHESTRATION_V2_WS_METHODS.subscribeShell]({
+    ...TRANSFER_CLIENT_SHELL_SUBSCRIPTION,
+    ...resume,
+  });
+}
 const encodeTestJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
 // The server-router suite exercises the inherited cloud protocol directly.
@@ -945,6 +1025,10 @@ const buildAppUnderTest = (options?: {
                       ),
                       Effect.provideService(ThreadManagementV2.ThreadManagementService, threads),
                       Effect.provideService(
+                        EventSinkV2.EventSinkV2,
+                        Context.get(context, EventSinkV2.EventSinkV2),
+                      ),
+                      Effect.provideService(
                         CommandReceiptsV2.CommandReceiptStoreV2,
                         Context.get(context, CommandReceiptsV2.CommandReceiptStoreV2),
                       ),
@@ -1053,6 +1137,15 @@ const buildAppUnderTest = (options?: {
         // SCIENT-FORK:END
         // Provider installs run through T3's service, over the mocked installations below.
         Layer.provide(ProviderInstallation.layer),
+        // Provider maintenance and text generation wait on the server's one installation gate.
+        Layer.provide(ProviderInstallationGate.layer),
+        Layer.provide(Layer.mock(SecretCheck.SecretCheck)({})),
+        // The runtime layer, not the websocket layer, owns the one session scanner.
+        Layer.provide(
+          AgentSessionScanner.layer.pipe(
+            Layer.provide(Layer.mergeAll(ProviderSessionRuntime.layer, ProjectStoreV2.layer)),
+          ),
+        ),
         Layer.provide(
           Layer.mergeAll(
             Layer.mock(ModelManifest.ModelManifest)({
@@ -14837,9 +14930,6 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   TRANSFER_HISTORY_TURN_COUNT + 1,
                 );
 
-                // A long agent turn opens with a bounded first page (553203c57b).
-                for (const events of transferV2LongTurnThreadBatches(provider))
-                  yield* app.v2.eventSink.write({ events });
                 const getTransferPath = (path: string) =>
                   measureHttpGet({
                     url: `${baseUrl}${path}`,
@@ -14855,10 +14945,13 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                     const snapshot = yield* decodeTransferThreadSnapshot(
                       Buffer.from(http.decodedBody).toString("utf8"),
                     );
+                    const rows = snapshot.projection.visibleTurnItems;
+                    const workAnchor = rows.find((row) => row.item.deferredWork !== undefined);
                     return {
                       http,
-                      rows: snapshot.projection.visibleTurnItems.length,
+                      rows: rows.length,
                       cursor: snapshot.historyCursor,
+                      workAnchor,
                     };
                   });
                 const readLongTurnHistoryPage = (historyCursor: string, query: string) =>
@@ -14875,45 +14968,150 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                 const readFleetShell = (query: string) =>
                   Effect.gen(function* () {
                     const http = yield* getTransferPath(`/api/orchestration/shell?${query}`);
-                    const shell = yield* decodeTransferShellSnapshot(
-                      Buffer.from(http.decodedBody).toString("utf8"),
+                    const { threads, snapshotSequence, projectIdentities } =
+                      yield* decodeTransferShellHttpSnapshot(
+                        Buffer.from(http.decodedBody).toString("utf8"),
+                      );
+                    return { http, rows: threads.length, snapshotSequence, projectIdentities };
+                  });
+                // A new socket, read until the subscription caught up or the server ended it.
+                const openTransferSubscription = (subscription: TransferSubscription) =>
+                  Effect.gen(function* () {
+                    const socket = yield* openMeasuredWsClient({ url: wsUrl, cookie });
+                    const items = yield* transferSubscriptionStream(socket, subscription).pipe(
+                      Stream.takeUntil((item) => item.kind === "synchronized"),
+                      Stream.runCollect,
+                      Scope.provide(socket.scope),
+                      Effect.orDie,
                     );
-                    return { http, rows: shell.threads.length };
+                    const totals = socket.recorder.totals();
+                    yield* socket.close;
+                    return { kinds: items.map((item) => item.kind), items, totals };
                   });
 
-                const { cursor: _legacyCursor, ...longTurnColdOpenLegacy } =
-                  yield* readLongTurnColdOpen("compactTurnItems=1");
-                const { cursor: longTurnCursor, ...longTurnColdOpen } = yield* readLongTurnColdOpen(
-                  "compactTurnItems=1&dedupeBodies=1&compactIds=1",
+                // A phone that comes back after one ordinary turn replays it, without tool bodies.
+                const shortTurn = yield* app.v2.eventSink.write({
+                  events: transferV2TurnEvents(provider, TRANSFER_HISTORY_TURN_COUNT + 1, false),
+                });
+                const shortTurnResume = yield* openTransferSubscription({
+                  thread: TRANSFER_THREAD_ID,
+                  afterSequence: finalThreadSequence,
+                });
+                assert.notInclude(shortTurnResume.kinds, "snapshot");
+                // The byte cap below also passes when the resume skips the turn.
+                assert.isTrue(
+                  shortTurnResume.items.some(
+                    (item) => "sequence" in item && item.sequence === shortTurn.at(-1)!.sequence,
+                  ),
                 );
+
+                // A long agent turn that is still running cannot defer its work, so it loads in
+                // row-budget windows (553203c57b).
+                const [finishLongTurn, ...longTurnHistory] =
+                  transferV2LongTurnThreadBatches(provider).toReversed();
+                for (const events of longTurnHistory.toReversed())
+                  yield* app.v2.eventSink.write({ events });
+                const longTurnRunningColdOpenLegacy =
+                  yield* readLongTurnColdOpen("compactTurnItems=1");
+                const longTurnRunningColdOpen = yield* readLongTurnColdOpen(
+                  TRANSFER_CLIENT_BOUNDED_QUERY,
+                );
+                const longTurnCursor = longTurnRunningColdOpen.cursor;
                 if (longTurnCursor === null)
                   return yield* Effect.die("Expected older long-turn history");
-                const longTurnHistoryPageLegacy = yield* readLongTurnHistoryPage(
+                const longTurnRunningHistoryPageLegacy = yield* readLongTurnHistoryPage(
                   longTurnCursor,
                   "",
                 );
-                const longTurnHistoryPage = yield* readLongTurnHistoryPage(
+                const longTurnRunningHistoryPage = yield* readLongTurnHistoryPage(
                   longTurnCursor,
-                  "compactIds=1",
+                  TRANSFER_CLIENT_HISTORY_QUERY,
                 );
+
+                // Once it finishes, its work stays on the server until a group is expanded.
+                yield* app.v2.eventSink.write({ events: finishLongTurn! });
+                const longTurnColdOpen = yield* readLongTurnColdOpen(TRANSFER_CLIENT_BOUNDED_QUERY);
+                const { workAnchor } = longTurnColdOpen;
+                if (workAnchor?.item.deferredWork === undefined)
+                  return yield* Effect.die("Expected the finished long turn to defer its work");
+                const longTurnWorkPage = yield* readLongTurnHistoryPage(
+                  workAnchor.item.deferredWork.cursor,
+                  `view=work&throughEntryId=${encodeURIComponent(workAnchor.sourceItemId)}&compactIds=1`,
+                );
+                // Mobile opens a thread over the socket alone.
+                const socketOpen = yield* openTransferSubscription({
+                  thread: TRANSFER_V2_LONG_TURN_THREAD_ID,
+                });
+                const socketSnapshot = socketOpen.items.find(
+                  (item) => item.kind === "snapshot" && "projection" in item,
+                );
+                if (socketSnapshot?.kind !== "snapshot" || !("projection" in socketSnapshot))
+                  return yield* Effect.die("Expected a bounded socket snapshot");
+                const longTurnSocketColdOpen = {
+                  ...socketOpen,
+                  rows: socketSnapshot.projection.visibleTurnItems.length,
+                };
+                // The row cap below also passes when the socket ignores the deferral and sends a window.
+                assert.equal(longTurnSocketColdOpen.rows, longTurnColdOpen.rows);
+                const idleThreadResume = yield* openTransferSubscription({
+                  thread: TRANSFER_V2_LONG_TURN_THREAD_ID,
+                  afterSequence: socketSnapshot.snapshotSequence,
+                });
+                assert.deepEqual(idleThreadResume.kinds, ["synchronized"]);
 
                 // The transfer thread plus the long-turn thread.
                 const earlierThreads = decodedShell.threads.length + 1;
+                // Unlike integration/transferBudgetV2, the fleet has no project record. This app
+                // resolves identities for real, the fleet's folder is no repository, and a resume
+                // resends a root without an identity. That test covers the identity resend.
                 yield* app.v2.eventSink.write({ events: transferV2ShellFleetEvents(provider) });
                 const fleetShellLegacy = yield* readFleetShell("");
-                const fleetShell = yield* readFleetShell("omitIdleSubagents=1&omitOlderSettled=1");
+                const fleetShell = yield* readFleetShell(TRANSFER_CLIENT_SHELL_QUERY);
                 assert.equal(
                   fleetShellLegacy.rows,
                   earlierThreads +
                     TRANSFER_V2_SHELL_SETTLED_THREADS +
                     TRANSFER_V2_SHELL_IDLE_SUBAGENTS,
                 );
+                const { projectIdentities } = fleetShell;
+                if (projectIdentities === undefined)
+                  return yield* Effect.die(
+                    "Expected the shell snapshot to name its project identities",
+                  );
+                // A cold connect subscribes from the snapshot it just loaded and names its
+                // identities. Without them the resume sends the project again, in a marked snapshot.
+                const fleetShellSubscribe = yield* openTransferSubscription({
+                  shell: true,
+                  afterSequence: fleetShell.snapshotSequence,
+                  knownProjectIdentities: projectIdentities,
+                });
+                assert.notInclude(fleetShellSubscribe.kinds, "snapshot");
+                // A client that holds those rows asks the route whether they still resume.
+                const fleetShellResumeHttp = yield* getTransferPath(
+                  `/api/orchestration/shell?${transferClientShellResumeQuery(fleetShell.snapshotSequence)}`,
+                );
+                yield* decodeTransferShellResumable(
+                  Buffer.from(fleetShellResumeHttp.decodedBody).toString("utf8"),
+                );
+                const fleetShellResume = { http: fleetShellResumeHttp, rows: 0 };
+                // A cursor too old to replay gets the snapshot in the same answer.
+                const staleShellReload = yield* readFleetShell(
+                  transferClientShellResumeQuery(decodedShell.snapshotSequence),
+                );
+                assert.equal(staleShellReload.rows, fleetShell.rows);
+                // When that request fails, the socket tells the client to reload, with no snapshot.
+                const staleShellResume = yield* openTransferSubscription({
+                  shell: true,
+                  afterSequence: decodedShell.snapshotSequence,
+                  httpSnapshotFallback: true,
+                });
+                assert.deepEqual(staleShellResume.kinds, ["snapshot-required"]);
 
                 for (const events of transferV2StaleTodoListThreadBatches(provider)) {
                   yield* app.v2.eventSink.write({ events });
                 }
                 const staleTodoHttp = yield* getTransferPath(
-                  `/api/orchestration/threads/${TRANSFER_V2_STALE_TODO_THREAD_ID}/bounded?compactTurnItems=1&dedupeBodies=1&compactIds=1`,
+                  `/api/orchestration/threads/${TRANSFER_V2_STALE_TODO_THREAD_ID}/bounded?${TRANSFER_CLIENT_BOUNDED_QUERY}`,
                 );
                 const staleTodo = (yield* decodeTransferThreadSnapshot(
                   Buffer.from(staleTodoHttp.decodedBody).toString("utf8"),
@@ -14930,6 +15128,8 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   ),
                   TRANSFER_V2_STALE_TODO_SUBAGENTS_PER_RUN,
                 );
+                // The byte cap below also passes when the window loses the handoff.
+                assert.lengthOf(staleTodo.contextHandoffs, 1);
                 const staleTodoColdOpen = {
                   http: staleTodoHttp,
                   rows: staleTodo.visibleTurnItems.length,
@@ -14960,12 +15160,21 @@ it.live("reports thread HTTP and WebSocket transfer budgets", () =>
                   },
                   measuredTurnSqlStatements,
                   reconnectSqlStatements,
-                  longTurnColdOpenLegacy,
+                  shortTurnResume,
+                  longTurnRunningColdOpenLegacy,
+                  longTurnRunningColdOpen,
+                  longTurnRunningHistoryPageLegacy,
+                  longTurnRunningHistoryPage,
                   longTurnColdOpen,
-                  longTurnHistoryPageLegacy,
-                  longTurnHistoryPage,
+                  longTurnWorkPage,
+                  longTurnSocketColdOpen,
+                  idleThreadResume,
                   fleetShellLegacy,
                   fleetShell,
+                  fleetShellSubscribe,
+                  fleetShellResume,
+                  staleShellReload,
+                  staleShellResume,
                   staleTodoColdOpen,
                 } satisfies TransferBudgetRun;
               }),

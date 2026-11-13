@@ -3,11 +3,9 @@ import { replaceComposerContextReferences } from "@t3tools/shared/composerContex
 
 /**
  * A queued row's readable text. Scient file and PDF quotes decode to their
- * quoted text and comment; an image reference with a thumbnail shows nothing.
+ * quoted text and comment; inline references, images too, keep their labels in place.
  */
-export const queuePreviewText = (text: string, hasThumbnails: boolean): string =>
+export const queuePreviewText = (text: string): string =>
   composerCitationsToPlainText(
-    replaceComposerContextReferences(text, (reference) =>
-      reference.kind === "image" && hasThumbnails ? "" : reference.label,
-    ),
+    replaceComposerContextReferences(text, (reference) => reference.label),
   ).trim();

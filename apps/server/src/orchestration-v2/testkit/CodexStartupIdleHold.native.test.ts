@@ -170,6 +170,10 @@ it.effect("keeps a fresh Codex session through startup that outlasts the idle wi
                         },
                       });
                       break;
+                    // T3 12b29eb71d: Codex reads its configured reasoning summary before turn/start.
+                    case "config/read":
+                      yield* emit({ id: frame.id, result: { config: {}, origins: {} } });
+                      break;
                     case "turn/start":
                       offered.push(frame.method);
                       yield* emit({

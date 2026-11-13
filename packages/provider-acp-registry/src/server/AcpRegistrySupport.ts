@@ -1392,6 +1392,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
   const assertExecutableInRoot = Effect.fn("AcpRegistryCatalog.assertExecutableInRoot")(function* (
     root: string,
     executablePath: string,
+    options?: { readonly makeExecutable?: boolean },
   ) {
     const rootRealPath = yield* fileSystem.realPath(root);
     const executableRealPath = yield* fileSystem.realPath(executablePath);
@@ -1401,6 +1402,10 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
         reason: "archive_invalid",
         detail: "ACP Registry archive command resolves outside its installation directory.",
       });
+    }
+    // chmod follows symlinks, so only change the mode once the real path is known to be inside.
+    if (options?.makeExecutable && platform !== "win32") {
+      yield* fileSystem.chmod(executableRealPath, 0o755);
     }
     const info = yield* fileSystem.stat(executableRealPath);
     const hasExecutableMode = platform === "win32" || (info.mode & 0o111) !== 0;
@@ -1665,8 +1670,7 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           detail: `ACP Registry archive for ${agent.id} did not contain '${target.cmd}'.`,
         });
       }
-      if (platform !== "win32") yield* fileSystem.chmod(stagedExecutable, 0o755);
-      yield* assertExecutableInRoot(extractionRoot, stagedExecutable);
+      yield* assertExecutableInRoot(extractionRoot, stagedExecutable, { makeExecutable: true });
       const receipt = yield* encodeBinaryReceipt({
         agentId: agent.id,
         agentVersion: agent.version,

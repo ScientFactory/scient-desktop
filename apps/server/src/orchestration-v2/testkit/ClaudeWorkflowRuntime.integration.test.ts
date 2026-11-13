@@ -85,6 +85,7 @@ it.live("ingests coordinator-owned workflow members after successful root settle
             }),
           forkSession: () => Effect.die("unused native workflow fork"),
           subagentLaunchToolUseId: () => Effect.succeed(null),
+          subagentModel: () => Effect.succeed(null),
           assertComplete: Effect.void,
         },
       });

@@ -26,7 +26,7 @@ it("shows a quoted file selection as its text and comment", () => {
     suffix: "",
     comment: "Check it",
   };
-  expect(queuePreviewText(`Before ${serializeComposerCitation(quote)} after`, false)).toBe(
+  expect(queuePreviewText(`Before ${serializeComposerCitation(quote)} after`)).toBe(
     "Before the claim\nComment: Check it after",
   );
 });

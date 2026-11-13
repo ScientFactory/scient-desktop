@@ -433,7 +433,7 @@ interface ActivePiTurn {
   nativeAborted: boolean;
   sawAgentActivity: boolean;
   adoptedWake: boolean;
-  readonly promptMayBeCommandOnly: boolean;
+  promptMayBeCommandOnly: boolean;
   latestCompactionAfterTokens: number | null;
   lastLiveUsedTokens: number | null;
   /** Model requests Pi reported during this turn, added up for usage analytics. */
@@ -451,6 +451,8 @@ interface ActivePiTurn {
   /** Steers Pi queued in send order; it reads them at a step boundary, after running tools return. */
   readonly unreadSteers: Array<MessageId>;
   stopTreeRefs?: PiTurnTreeRefs | null;
+  /** The provider/model Pi reported on its latest assistant message. */
+  reportedModel?: string;
 }
 
 interface PiTurnTreeRefs {
@@ -783,11 +785,20 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
         void,
         ProviderAdapter.ProviderAdapterProtocolError
       > | null = null;
+      let pendingPromptResponsesDrained: Deferred.Deferred<
+        void,
+        ProviderAdapter.ProviderAdapterProtocolError
+      > | null = null;
       let closed = false;
       yield* Effect.addFinalizer(() =>
         Effect.gen(function* () {
           closed = true;
           sessionEntity = { ...sessionEntity, extensionStatuses: [] };
+          if (pendingPromptResponsesDrained !== null)
+            yield* Deferred.fail(
+              pendingPromptResponsesDrained,
+              protocolError("Pi session closed while awaiting prompt acknowledgment"),
+            );
           if (extensionStatusReset !== null)
             yield* Deferred.fail(
               extensionStatusReset.ready,
@@ -816,8 +827,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
       let contextWindow: number | null = null;
       const modelContextWindows = new Map<string, number>();
       let discoveredModels: ReadonlyArray<unknown> | null = null;
-      // Prompt ACKs lack IDs; retain session send order and ownership so late ACKs cannot affect new turns.
-      const pendingPromptResponses: Array<PiPromptSend> = [];
+      let nextPromptId = 0;
+      const pendingPromptResponses: Array<PiPromptSend & { readonly id: string }> = [];
       const pendingCompactResponses: Array<{
         readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
         readonly kind: "turn_start" | "steer";
@@ -835,8 +846,13 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
           heldPrompts.push(prompt);
           return;
         }
-        yield* send(prompt.record);
-        pendingPromptResponses.push(prompt);
+        const id = `t3-prompt-${nextPromptId++}`;
+        yield* send({ ...prompt.record, id });
+        pendingPromptResponsesDrained ??= yield* Deferred.make<
+          void,
+          ProviderAdapter.ProviderAdapterProtocolError
+        >();
+        pendingPromptResponses.push({ ...prompt, id });
       });
       // A just-released prompt has not started its run yet, so a settle probe
       // racing it would see Pi idle. Its ack re-arms the probe instead.
@@ -2118,6 +2134,7 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             status: interrupted ? "interrupted" : failure !== null ? "failed" : "completed",
             completedAt,
             ...(tokenUsage === undefined ? {} : { tokenUsage }),
+            ...(turn.reportedModel === undefined ? {} : { model: turn.reportedModel }),
             ...(turn.requestUsage === undefined
               ? {}
               : {
@@ -2502,6 +2519,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               }
             }
             yield* completeOpenStreamItems(turn);
+            const reportedProvider = recordString(message, "provider");
+            const reportedModelId = recordString(message, "model");
+            if (reportedProvider && reportedModelId) {
+              turn.reportedModel = `${reportedProvider}/${reportedModelId}`;
+            }
             if (
               recordString(message, "stopReason") === "stop" &&
               turn.failure === turn.modelFailure
@@ -2721,12 +2743,11 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 if (pendingCompact?.kind === "turn_start" && compactTurn !== null)
                   yield* markTurnAccepted(compactTurn);
                 if (
-                  pendingCompact?.kind === "turn_start" &&
                   compactTurn !== null &&
-                  compactTurn.promptMayBeCommandOnly &&
-                  !compactTurn.sawAgentActivity
+                  (compactTurn.settleWhenIdle ||
+                    (compactTurn.promptMayBeCommandOnly && !compactTurn.sawAgentActivity))
                 ) {
-                  yield* scheduleSettleProbe(compactTurn);
+                  yield* scheduleSettleProbe(compactTurn, compactTurn.settleWhenIdle);
                 }
                 return;
               }
@@ -2738,6 +2759,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                   errorLength: recordString(event, "error")?.length,
                 });
                 yield* emitSteeringError(compactTurn, event);
+                if (
+                  compactTurn.settleWhenIdle ||
+                  (compactTurn.promptMayBeCommandOnly && !compactTurn.sawAgentActivity)
+                ) {
+                  yield* scheduleSettleProbe(compactTurn, compactTurn.settleWhenIdle);
+                }
                 return;
               }
               if (!compactTurn.sawCompaction) {
@@ -2758,9 +2785,23 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               }
               return;
             }
-            // Only id-less prompts own ACK slots; a late reply to an id-bearing request must not take one.
-            if (command === "prompt" && typeof event["id"] === "string") return;
-            const pendingPrompt = command === "prompt" ? pendingPromptResponses.shift() : undefined;
+            const responseId = recordString(event, "id");
+            const promptIndex =
+              command !== "prompt"
+                ? -1
+                : responseId === undefined
+                  ? 0
+                  : pendingPromptResponses.findIndex((pending) => pending.id === responseId);
+            const pendingPrompt =
+              promptIndex < 0 ? undefined : pendingPromptResponses.splice(promptIndex, 1)[0];
+            if (
+              pendingPrompt !== undefined &&
+              pendingPromptResponses.length === 0 &&
+              pendingPromptResponsesDrained !== null
+            ) {
+              yield* Deferred.succeed(pendingPromptResponsesDrained, undefined);
+              pendingPromptResponsesDrained = null;
+            }
             const responseTurn =
               pendingPrompt?.providerTurnId === turn?.providerTurn.id ? turn : null;
             if (
@@ -2778,6 +2819,21 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               responseTurn.pendingSteerCount = Math.max(0, responseTurn.pendingSteerCount - 1);
               if (responseTurn.settleWhenIdle) yield* scheduleSettleProbe(responseTurn, true);
             }
+            if (
+              event["success"] === true &&
+              pendingPrompt?.kind === "turn_start" &&
+              responseTurn !== null &&
+              recordString(event["data"], "disposition") === "handled"
+            ) {
+              responseTurn.promptMayBeCommandOnly = true;
+            }
+            const consumedInputIsIdleCandidate =
+              responseTurn !== null &&
+              (responseTurn.settleWhenIdle ||
+                (responseTurn.promptMayBeCommandOnly && !responseTurn.sawAgentActivity)) &&
+              !pendingPromptResponses.some(
+                (pending) => pending.providerTurnId === responseTurn.providerTurn.id,
+              );
             if (event["success"] === true) {
               if (pendingPrompt?.kind === "turn_start" && responseTurn !== null)
                 yield* markTurnAccepted(responseTurn);
@@ -2789,15 +2845,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 responseTurn.unreadSteers.push(pendingPrompt.messageId);
                 yield* emitSteerStatus(responseTurn, pendingPrompt.messageId, "pending");
               }
-              // Command-only prompts emit no agent_settled; probe idle and re-queue behind preceding native events.
+              // Consumed input may emit no agent_settled; probe idle behind preceding native events.
               if (
-                pendingPrompt?.kind === "turn_start" &&
                 responseTurn !== null &&
-                ((responseTurn.promptMayBeCommandOnly && !responseTurn.sawAgentActivity) ||
-                  (responseTurn.adoptedWake &&
+                (consumedInputIsIdleCandidate ||
+                  (pendingPrompt?.kind === "turn_start" &&
+                    responseTurn.adoptedWake &&
                     (responseTurn.settleWhenIdle || responseTurn.promptMayBeCommandOnly)))
               ) {
-                yield* scheduleSettleProbe(responseTurn, responseTurn.adoptedWake);
+                yield* scheduleSettleProbe(
+                  responseTurn,
+                  responseTurn.adoptedWake || responseTurn.settleWhenIdle,
+                );
               }
               return;
             }
@@ -2808,6 +2867,8 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
                 errorLength: recordString(event, "error")?.length,
               });
               if (responseTurn !== null) yield* emitSteeringError(responseTurn, event);
+              if (consumedInputIsIdleCandidate && responseTurn !== null)
+                yield* scheduleSettleProbe(responseTurn, responseTurn.settleWhenIdle);
               return;
             }
             const failedTurn =
@@ -2872,6 +2933,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               turn.activeCompaction !== null ||
               turn.contextRecoveryPending
             ) {
+              return;
+            }
+            if (
+              turn.manualCompactInFlight ||
+              pendingCompactResponses.some(
+                (pending) => pending.providerTurnId === turn.providerTurn.id,
+              ) ||
+              pendingPromptResponses.some(
+                (pending) => pending.providerTurnId === turn.providerTurn.id,
+              )
+            ) {
+              turn.settleWhenIdle = true;
               return;
             }
             if (!probeFailed) {
@@ -2949,6 +3022,12 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               runtimeRetired = true;
               yield* invalidateNativeGeneration(false);
               const state = threadState;
+              closed = true;
+              if (pendingPromptResponsesDrained !== null)
+                yield* Deferred.fail(
+                  pendingPromptResponsesDrained,
+                  protocolError("Pi transport closed while awaiting prompt acknowledgment"),
+                );
               if (extensionStatusReset !== null)
                 yield* Deferred.fail(
                   extensionStatusReset.ready,
@@ -3397,12 +3476,18 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
             if (state === null) {
               return yield* protocolError("Pi session has no registered thread");
             }
-            if (state.activeTurn !== null) {
-              return yield* new ProviderAdapter.ProviderAdapterProtocolError({
-                driver: PI_PROVIDER,
-                detail: `Pi provider thread ${turnInput.providerThread.id} already has an active turn`,
-                reason: "previous_turn_active",
-              });
+            while (true) {
+              if (state.activeTurn !== null) {
+                return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+                  driver: PI_PROVIDER,
+                  detail: `Pi provider thread ${turnInput.providerThread.id} already has an active turn`,
+                  reason: "previous_turn_active",
+                });
+              }
+              if (closed || stopRequested)
+                return yield* protocolError("Cannot start a Pi turn after session closure");
+              if (pendingPromptResponsesDrained === null) break;
+              yield* Deferred.await(pendingPromptResponsesDrained);
             }
             if (
               state.providerThread.nativeThreadRef?.nativeId !==
@@ -3557,120 +3642,129 @@ export const makePiAdapterV2 = Effect.fn("makePiAdapterV2")(function* (
               unreadSteers: [],
             };
             // Lock only install/send/start events; correlated setup must leave the pump free for dialogs.
-            yield* Effect.gen(function* () {
-              if (
-                threadState !== state ||
-                state.activeTurn !== null ||
-                closed ||
-                stopRequested ||
-                rollbackBarrier !== null ||
-                state.providerThread.nativeThreadRef?.nativeId !==
-                  turnInput.providerThread.nativeThreadRef?.nativeId
-              )
-                return yield* protocolError("Pi turn ownership changed before it could start");
-              if (
-                turnInput.shouldStartProviderTurn !== undefined &&
-                !(yield* turnInput.shouldStartProviderTurn())
-              ) {
-                if (adoptedWork !== null) {
-                  yield* disposeBufferedWork(adoptedWork);
-                }
-                return yield* Effect.interrupt;
-              }
-              if (adoptedWork !== null && bufferedWork !== adoptedWork)
-                return yield* protocolError("Pi native generation was disposed before adoption");
-              if (adoptedWork === null && bufferedWork !== null)
-                return yield* protocolError(
-                  "Pi native work started while a prompt was being prepared",
-                );
-              const transferred = yield* Effect.sync(() => {
+            while (true) {
+              const pendingAck = yield* Effect.gen(function* () {
                 if (
-                  generationAdmissionClosed ||
+                  threadState !== state ||
+                  state.activeTurn !== null ||
+                  closed ||
                   stopRequested ||
-                  (adoptedWork !== null && bufferedWork !== adoptedWork)
+                  rollbackBarrier !== null ||
+                  state.providerThread.nativeThreadRef?.nativeId !==
+                    turnInput.providerThread.nativeThreadRef?.nativeId
                 )
-                  return false;
-                state.activeTurn = activeTurn;
-                if (adoptedWork !== null) bufferedWork = null;
-                return true;
-              }).pipe(generationAdmissionFence.withPermits(1));
-              if (!transferred)
-                return yield* protocolError("Pi native generation was disposed before adoption");
-              activeTurn.providerTurn = { ...activeTurn.providerTurn, nativeAcceptance: "unknown" };
-              if (!continuation && compactCommand !== null) {
-                yield* send(compactRpcRecord(compactCommand));
-                pendingCompactResponses.push({
-                  providerTurnId: providerTurn.id,
-                  kind: "turn_start",
-                });
-              } else if (payload !== null) {
-                yield* sendPrompt({
-                  providerTurnId: providerTurn.id,
-                  kind: "turn_start",
-                  record: {
-                    type: "prompt",
-                    message: payload.message,
-                    streamingBehavior: "steer",
-                    ...(payload.images.length === 0 ? {} : { images: payload.images }),
-                  },
-                });
-              }
-              yield* emit({
-                type: "provider_turn.updated",
-                driver: PI_PROVIDER,
-                threadId: turnInput.threadId,
-                providerTurn: activeTurn.providerTurn,
-              });
-              yield* updateProviderThread(state, {
-                status: "active",
-                firstRunOrdinal: state.providerThread.firstRunOrdinal ?? turnInput.runOrdinal,
-                lastRunOrdinal: turnInput.runOrdinal,
-              });
-              yield* updateProviderSession("running", null);
-              if (continuation && adoptedWork === null) yield* finalizeTurn(state);
-              if (outOfTurnExtensionErrors.length > 0) {
-                yield* Queue.offer(connection.events, { type: "t3.flush_extension_errors" });
-              }
-              if (adoptedWork !== null) {
-                for (const record of adoptedWork.records) {
-                  if (joiningWork && record["type"] === "agent_settled") {
-                    activeTurn.nativeAborted = record["aborted"] === true;
-                    activeTurn.settleWhenIdle = true;
-                    continue;
+                  return yield* protocolError("Pi turn ownership changed before it could start");
+                if (pendingPromptResponsesDrained !== null) return pendingPromptResponsesDrained;
+                if (
+                  turnInput.shouldStartProviderTurn !== undefined &&
+                  !(yield* turnInput.shouldStartProviderTurn())
+                ) {
+                  if (adoptedWork !== null) {
+                    yield* disposeBufferedWork(adoptedWork);
                   }
-                  yield* handleSessionEvent(record);
+                  return yield* Effect.interrupt;
                 }
-              }
-            }).pipe(
-              sessionEventPermit.withPermits(1),
-              Effect.mapError(
-                (cause) =>
-                  new ProviderAdapter.ProviderAdapterTurnStartError({
-                    driver: PI_PROVIDER,
-                    threadId: turnInput.threadId,
-                    providerThreadId: turnInput.providerThread.id,
-                    runId: turnInput.runId,
-                    providerTurn: activeTurn.providerTurn,
-                    cause,
-                  }),
-              ),
-              Effect.tapError(() =>
-                Effect.gen(function* () {
-                  if (state.activeTurn === activeTurn) state.activeTurn = null;
-                  yield* invalidateNativeGeneration(true);
-                  forcedSessionFailure = "Pi prompt delivery could not be confirmed.";
-                  yield* updateProviderSession(
-                    "error",
-                    "Pi prompt delivery could not be confirmed.",
+                if (adoptedWork !== null && bufferedWork !== adoptedWork)
+                  return yield* protocolError("Pi native generation was disposed before adoption");
+                if (adoptedWork === null && bufferedWork !== null)
+                  return yield* protocolError(
+                    "Pi native work started while a prompt was being prepared",
                   );
-                  yield* connection.terminate;
-                }),
-              ),
-            );
+                const transferred = yield* Effect.sync(() => {
+                  if (
+                    generationAdmissionClosed ||
+                    stopRequested ||
+                    (adoptedWork !== null && bufferedWork !== adoptedWork)
+                  )
+                    return false;
+                  state.activeTurn = activeTurn;
+                  if (adoptedWork !== null) bufferedWork = null;
+                  return true;
+                }).pipe(generationAdmissionFence.withPermits(1));
+                if (!transferred)
+                  return yield* protocolError("Pi native generation was disposed before adoption");
+                activeTurn.providerTurn = {
+                  ...activeTurn.providerTurn,
+                  nativeAcceptance: "unknown",
+                };
+                if (!continuation && compactCommand !== null) {
+                  yield* send(compactRpcRecord(compactCommand));
+                  pendingCompactResponses.push({
+                    providerTurnId: providerTurn.id,
+                    kind: "turn_start",
+                  });
+                } else if (payload !== null) {
+                  yield* sendPrompt({
+                    providerTurnId: providerTurn.id,
+                    kind: "turn_start",
+                    record: {
+                      type: "prompt",
+                      message: payload.message,
+                      streamingBehavior: "steer",
+                      ...(payload.images.length === 0 ? {} : { images: payload.images }),
+                    },
+                  });
+                }
+                yield* emit({
+                  type: "provider_turn.updated",
+                  driver: PI_PROVIDER,
+                  threadId: turnInput.threadId,
+                  providerTurn: activeTurn.providerTurn,
+                });
+                yield* updateProviderThread(state, {
+                  status: "active",
+                  firstRunOrdinal: state.providerThread.firstRunOrdinal ?? turnInput.runOrdinal,
+                  lastRunOrdinal: turnInput.runOrdinal,
+                });
+                yield* updateProviderSession("running", null);
+                if (continuation && adoptedWork === null) yield* finalizeTurn(state);
+                if (outOfTurnExtensionErrors.length > 0) {
+                  yield* Queue.offer(connection.events, { type: "t3.flush_extension_errors" });
+                }
+                if (adoptedWork !== null) {
+                  for (const record of adoptedWork.records) {
+                    if (joiningWork && record["type"] === "agent_settled") {
+                      activeTurn.nativeAborted = record["aborted"] === true;
+                      activeTurn.settleWhenIdle = true;
+                      continue;
+                    }
+                    yield* handleSessionEvent(record);
+                  }
+                }
+                return null;
+              }).pipe(
+                sessionEventPermit.withPermits(1),
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapter.ProviderAdapterTurnStartError({
+                      driver: PI_PROVIDER,
+                      threadId: turnInput.threadId,
+                      providerThreadId: turnInput.providerThread.id,
+                      runId: turnInput.runId,
+                      providerTurn: activeTurn.providerTurn,
+                      cause,
+                    }),
+                ),
+                Effect.tapError(() =>
+                  Effect.gen(function* () {
+                    if (state.activeTurn === activeTurn) state.activeTurn = null;
+                    yield* invalidateNativeGeneration(true);
+                    forcedSessionFailure = "Pi prompt delivery could not be confirmed.";
+                    yield* updateProviderSession(
+                      "error",
+                      "Pi prompt delivery could not be confirmed.",
+                    );
+                    yield* connection.terminate;
+                  }),
+                ),
+              );
+              if (pendingAck === null) break;
+              // The native event pump needs the permit to consume the actual ACK.
+              yield* Deferred.await(pendingAck);
+            }
             // Pi acks `prompt` only after slash-command expansion completes,
             // and extension commands may block on user dialogs indefinitely.
-            // Rejections therefore return later as id-less response records
-            // handled by the event pump.
+            // Correlated responses therefore return later through the event pump.
           },
           (effect, turnInput) =>
             effect.pipe(Effect.mapError((cause) => mapTurnStartError(turnInput, cause))),
@@ -4455,10 +4549,11 @@ function piQuestion(
   const detail = [recordString(event, "message"), recordString(event, "placeholder")].find(
     (text) => text !== undefined && text.trim().length > 0,
   );
+  const questionTitle = title.trim() ? title : "Question";
   return {
     id: questionId,
-    header: detail === undefined ? "Question" : title,
-    question: detail ?? title,
+    header: detail === undefined ? "Question" : questionTitle,
+    question: detail ?? questionTitle,
     ...(method === "editor" ? { initialAnswer: recordString(event, "prefill") ?? "" } : {}),
     options,
     multiSelect: false,

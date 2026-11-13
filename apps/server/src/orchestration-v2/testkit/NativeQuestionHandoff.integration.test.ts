@@ -116,6 +116,7 @@ it.live(
             forkSession: () =>
               Effect.die("Portable history must not restore native fork authority"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });

@@ -6,6 +6,7 @@ import * as Schema from "effect/Schema";
 import { Command, GlobalFlag } from "effect/cli";
 import * as CliError from "effect/cli/CliError";
 
+import { awaitServiceLauncherStop } from "../cloud/serviceLauncherClient.ts";
 import * as ServerConfig from "../config.ts";
 import { awaitLauncherLoss } from "../launcherWatch.ts";
 import * as DatabaseMaintenance from "../persistence/DatabaseMaintenance.ts";
@@ -15,13 +16,6 @@ import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } fr
 import { resolveCliCommand } from "./invocation.ts";
 
 const encodeCommand = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
-
-// The desktop launcher reads this process's stdout and stderr. Once it is gone,
-// every log write fails, and Node turns an unhandled stream error into a crash
-// that skips shutdown and leaves the ownership lock and runtime record behind.
-function ignoreClosedLauncherPipe(error: NodeJS.ErrnoException): void {
-  if (error.code !== "EPIPE" && error.code !== "ERR_STREAM_DESTROYED") throw error;
-}
 
 const runServerCommand = Effect.fn("server.runServerCommand")(function* (
   flags: CliServerFlags,
@@ -36,8 +30,10 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
   const logLevel = yield* GlobalFlag.LogLevel;
   const selectAutomaticPort = yield* AutomaticPort.make.pipe(Effect.provide(ProcessRunner.layer));
   const config = yield* resolveServerConfig(flags, logLevel, { ...options, selectAutomaticPort });
-  const run = runServer.pipe(
-    Effect.provideService(ServerConfig.ServerConfig, config),
+  const run = Effect.raceFirst(
+    runServer.pipe(Effect.provideService(ServerConfig.ServerConfig, config)),
+    awaitServiceLauncherStop().pipe(Effect.andThen(Effect.interrupt)),
+  ).pipe(
     // Settings' Reclaim stops the server; repair once the database is closed, before the restart.
     Effect.ensuring(
       // SCIENT-FORK:START — the repair holds server ownership until it finishes.
@@ -48,10 +44,6 @@ const runServerCommand = Effect.fn("server.runServerCommand")(function* (
     ),
   );
   if (config.mode !== "desktop" || config.desktopBootstrapToken === undefined) return yield* run;
-  yield* Effect.sync(() => {
-    process.stdout.on("error", ignoreClosedLauncherPipe);
-    process.stderr.on("error", ignoreClosedLauncherPipe);
-  });
   return yield* Effect.raceFirst(
     run,
     awaitLauncherLoss().pipe(

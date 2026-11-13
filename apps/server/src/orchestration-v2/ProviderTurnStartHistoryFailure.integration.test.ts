@@ -141,7 +141,7 @@ it.live.each(
                 stoppedDelegatedTaskParents.push(input.threadId);
               }),
           },
-          decorateProjectionStore: (store) => ({
+          wrapProjectionStore: (store) => ({
             ...store,
             canStartQueuedRun: (threadId) =>
               Effect.onExit(store.canStartQueuedRun(threadId), (exit) =>
@@ -615,7 +615,7 @@ it.live.each(
               item.nodeId === queued.rootNodeId &&
               item.title ===
                 (recoveryRead
-                  ? "Provider recovery state could not be prepared"
+                  ? "Couldn't read thread state"
                   : "Provider history could not be prepared"),
           ),
         );
@@ -715,11 +715,12 @@ it.live(
         assert.ok(sourceStart?.type === "emit_inbound");
         const entries = transcript.entries.slice(0, forkIndex);
         for (let attempt = 1; attempt <= 5; attempt += 1) {
-          const forkRequestId = 2 + attempt * 2;
+          // The source turn's config/read takes id 3, so the recorded fork is id 5.
+          const forkRequestId = 3 + attempt * 2;
           const startRequestId = forkRequestId + 1;
           const nativeId = `native-portable-attempt-${attempt}`;
           const forkFrame = yield* decodeFrame(
-            (yield* encodeFrame(forkRequest.frame)).replace('"id":4', `"id":${forkRequestId}`),
+            (yield* encodeFrame(forkRequest.frame)).replace('"id":5', `"id":${forkRequestId}`),
           );
           const startFrame = yield* decodeFrame(
             (yield* encodeFrame(sourceStart.frame))
@@ -755,7 +756,7 @@ it.live(
             type: "expect_outbound",
             label: "thread/unsubscribe/failed-target",
             frame: {
-              id: 14,
+              id: 15,
               method: "thread/unsubscribe",
               params: { threadId: "native-portable-attempt-5" },
             },
@@ -763,7 +764,7 @@ it.live(
           {
             type: "emit_inbound",
             label: "thread/unsubscribe/failed-target",
-            frame: { id: 14, result: {} },
+            frame: { id: 15, result: {} },
           },
           { type: "runtime_exit", status: "success" },
         );

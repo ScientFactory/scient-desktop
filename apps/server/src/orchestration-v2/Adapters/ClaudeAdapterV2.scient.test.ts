@@ -87,6 +87,7 @@ import { providerThreadRosterEvents } from "./ClaudeAdapterV2.wake.testkit.ts";
 import type { McpServerStatus } from "@anthropic-ai/claude-agent-sdk";
 import * as Clock from "effect/Clock";
 import type { ProviderNativeInventory } from "../../provider/ScientProviderInstanceSeams.ts";
+import * as ProviderInstallationGate from "../../provider/ProviderInstallationGate.ts";
 
 describe("ClaudeAdapterV2 background wake turns (Admission)", () => {
   it.effect(
@@ -337,6 +338,7 @@ describe("ClaudeAdapterV2 Auto-accept edits (Approvals)", () => {
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -501,6 +503,7 @@ describe("ClaudeAdapterV2 attachments (Attachments)", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -1072,6 +1075,7 @@ describe("ClaudeAdapterV2 background wake turns (Replacements)", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -1258,6 +1262,7 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
               }),
             forkSession: () => Effect.die("unused"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           }),
         );
@@ -1293,6 +1298,7 @@ describe("ClaudeAdapterV2 executable path (Sessions)", () => {
           NodeServices.layer,
           NodeCrypto.layer,
           McpProviderSessions.layer,
+          ProviderInstallationGate.layer,
         ),
       ),
     ),
@@ -1345,6 +1351,7 @@ describe("ClaudeAdapterV2 resume compaction (Sessions)", () => {
                 }),
               forkSession: () => Effect.die("unused"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              subagentModel: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -2726,6 +2733,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -2870,6 +2878,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
                 }),
               forkSession: () => Effect.die("unused forkSession"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              subagentModel: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -4391,6 +4400,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               }),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });
@@ -5008,6 +5018,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               },
               forkSession: () => Effect.die("unused forkSession"),
               subagentLaunchToolUseId: () => Effect.succeed(null),
+              subagentModel: () => Effect.succeed(null),
               assertComplete: Effect.void,
             },
           });
@@ -5194,6 +5205,7 @@ describe("ClaudeAdapterV2 restored upstream cases", () => {
               ),
             forkSession: () => Effect.die("unused forkSession"),
             subagentLaunchToolUseId: () => Effect.succeed(null),
+            subagentModel: () => Effect.succeed(null),
             assertComplete: Effect.void,
           },
         });

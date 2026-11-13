@@ -98,6 +98,7 @@ function codexReplayPreamble(input: {
   /** Text the adapter should send, when it differs from what the user typed. */
   readonly sentPrompt?: string;
   readonly startRequestId?: number;
+  readonly configRequestId?: number;
   readonly turnRequestId?: number;
   readonly cwd?: string;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
@@ -192,11 +193,26 @@ function codexReplayPreamble(input: {
         },
       },
     },
+    // Codex reads its configured reasoning summary before every turn/start.
+    {
+      type: "expect_outbound",
+      label: "config/read",
+      frame: {
+        id: input.configRequestId ?? 3,
+        method: "config/read",
+        params: { cwd: input.cwd ?? "/workspace", includeLayers: false },
+      },
+    },
+    {
+      type: "emit_inbound",
+      label: "config/read",
+      frame: { id: input.configRequestId ?? 3, result: { config: {}, origins: {} } },
+    },
     {
       type: "expect_outbound",
       label: "turn/start",
       frame: {
-        id: input.turnRequestId ?? 3,
+        id: input.turnRequestId ?? 4,
         method: "turn/start",
         params: {
           threadId: input.nativeThreadId,
@@ -206,7 +222,7 @@ function codexReplayPreamble(input: {
           approvalPolicy: "never",
           approvalsReviewer: "user",
           sandboxPolicy: { type: "dangerFullAccess" },
-          summary: "detailed",
+          summary: "auto",
           collaborationMode: { mode: "default", settings: { model: "gpt-5.4" } },
           additionalContext: {
             t3_code_runtime: {
@@ -226,7 +242,7 @@ function codexReplayPreamble(input: {
       type: "emit_inbound",
       label: "turn/start",
       frame: {
-        id: input.turnRequestId ?? 3,
+        id: input.turnRequestId ?? 4,
         result: { turn: makeCodexReplayTurn({ id: input.nativeTurnId, status: "inProgress" }) },
       },
     },
@@ -574,12 +590,12 @@ it.live.each(
         {
           type: "expect_outbound",
           frame: {
-            id: 4,
+            id: 5,
             method: "turn/interrupt",
             params: { threadId: nativeThreadId, turnId: nativeTurnId },
           },
         },
-        { type: "emit_inbound", frame: { id: 4, result: {} } },
+        { type: "emit_inbound", frame: { id: 5, result: {} } },
         {
           type: "emit_inbound",
           frame: {
@@ -592,9 +608,9 @@ it.live.each(
         },
         {
           type: "expect_outbound",
-          frame: { id: 5, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
+          frame: { id: 6, method: "thread/unsubscribe", params: { threadId: nativeThreadId } },
         },
-        { type: "emit_inbound", frame: { id: 5, result: { status: "unsubscribed" } } },
+        { type: "emit_inbound", frame: { id: 6, result: { status: "unsubscribed" } } },
         {
           type: "emit_inbound",
           frame: { method: "thread/closed", params: { threadId: nativeThreadId } },
@@ -625,8 +641,9 @@ it.live.each(
                         nativeTurnId: peerNativeTurnId,
                         prompt: peerPrompt,
                         cwd,
-                        startRequestId: 4,
-                        turnRequestId: 5,
+                        startRequestId: 5,
+                        configRequestId: 6,
+                        turnRequestId: 7,
                       }).slice(3),
                       peerDelta(peerPrefix),
                       {

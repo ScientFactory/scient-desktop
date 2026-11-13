@@ -192,6 +192,16 @@
       "path": "apps/server/src/policy/managedProviders.ts",
       "anchor": "known(\"omp\", \"Oh My Pi\", OmpSettings)",
       "purpose": "Let a managed policy name, allow and pin Oh My Pi instances like every built-in provider, so maxRuntimeMode and binaryPath locks reach its launches."
+    },
+    {
+      "path": "packages/provider-acp-registry/src/server/adapter.ts",
+      "anchor": "extractElicitationForm: extractOmpElicitationForm",
+      "purpose": "Upstream's ACP-registry adapter reads Oh My Pi's single-choice question forms; upstream code, classified so Scient's Oh My Pi seam check accounts for it."
+    },
+    {
+      "path": "packages/provider-acp-registry/src/server/ompAcp.ts",
+      "anchor": "export const extractOmpElicitationForm",
+      "purpose": "Upstream's Oh My Pi ACP question-form reader, used when Oh My Pi runs through the ACP registry rather than Scient's native provider."
     }
   ],
   "ompDiffSignals": ["Oh My Pi", "effect-omp-rpc", "provider/omp", "Omp", "\"omp\""],

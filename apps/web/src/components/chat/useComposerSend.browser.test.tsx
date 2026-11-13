@@ -192,6 +192,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       insertTextAtEnd: () => true,
       pasteTextAtEnd: () => true,
       citeAssistantText: () => true,
+      replyToResponse: () => true,
       citeText: () => true,
       openModelPicker: noop,
       stepReasoningEffort: noop,
@@ -359,6 +360,7 @@ async function setup(overrides: Partial<ComposerSendInput> = {}) {
       const { onResume } = useComposerResume({
         ...input,
         resumableRunId: RunId.make("resume"),
+        canResume: true,
         runtimeMode: "full-access",
         scrollToEnd: noop,
       });
@@ -443,7 +445,9 @@ function fanoutInput(fixture: Awaited<ReturnType<typeof setup>>) {
       reviewComments: [],
       threadContexts: [],
       environmentContexts: [],
+      replyTo: null,
       messageText: fixture.context.prompt,
+      draftText: fixture.context.prompt,
     },
     createdAt: "2026-10-20T00:00:00Z",
     attachmentsPromise: Promise.resolve([]),

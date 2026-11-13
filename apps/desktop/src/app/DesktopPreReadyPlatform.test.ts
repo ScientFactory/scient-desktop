@@ -135,16 +135,23 @@ describe("DesktopPreReadyPlatform", () => {
     let desktopName = "t3code.desktop";
     let desktopEntry = previousEntry;
     let iconInstalled = false;
-    copyFileSyncMock.mockImplementation((_source: string, destination: string) => {
-      // SCIENT-FORK:START desktop-state-isolation
-      iconInstalled = destination === "/xdg/icons/scient.desktop.png";
+    const iconSource = "/tmp/.mount_T3/resources/app.asar/apps/desktop/prod-resources/icon.png";
+    // SCIENT-FORK:START desktop-state-isolation
+    const iconPath = "/xdg/icons/scient.desktop.png";
+    // SCIENT-FORK:END desktop-state-isolation
+    const iconBytes = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path === iconSource) return iconBytes;
+      return "{}";
     });
     setDesktopNameMock.mockImplementation((name: string) => {
       desktopName = name;
     });
-    writeFileSyncMock.mockImplementation((path: string, contents: string) => {
-      if (path === "/xdg/applications/scient.desktop") desktopEntry = contents;
+    writeFileSyncMock.mockImplementation((path: string, contents: string | Buffer) => {
+      // SCIENT-FORK:START desktop-state-isolation
+      if (path === "/xdg/applications/scient.desktop") desktopEntry = String(contents);
       // SCIENT-FORK:END desktop-state-isolation
+      if (path === iconPath) iconInstalled = Buffer.compare(Buffer.from(contents), iconBytes) === 0;
     });
 
     return Effect.scoped(
@@ -177,18 +184,24 @@ describe("DesktopPreReadyPlatform", () => {
         );
         assert.include(identity.desktopEntry ?? "", "Icon=/xdg/icons/scient.desktop.png");
         // SCIENT-FORK:END desktop-state-isolation
-        assert.isTrue(identity.iconInstalled);
+        assert.equal(
+          copyFileSyncMock.mock.calls.length,
+          0,
+          "icon must not be copied out of the app bundle",
+        );
+        assert.isTrue(identity.iconInstalled, "icon must be written from the bundled bytes");
       }),
     ).pipe(Effect.ensuring(Effect.sync(() => vi.unstubAllEnvs())));
   });
 
   // SCIENT-FORK:START desktop-state-isolation
   // regression: 7733bc839e fix(desktop): make Linux URL handlers discoverable with the app icon
-  it.effect("still prepares the portal entry when the bundled icon cannot be copied", () => {
+  it.effect("still prepares the portal entry when the bundled icon cannot be read", () => {
     vi.stubEnv("VITE_DEV_SERVER_URL", "");
     getSwitchValueMock.mockReturnValue("");
-    copyFileSyncMock.mockImplementation(() => {
-      throw new Error("missing bundled icon");
+    readFileSyncMock.mockImplementation((path: string) => {
+      if (path.endsWith("/prod-resources/icon.png")) throw new Error("missing bundled icon");
+      return "{}";
     });
     return Effect.gen(function* () {
       yield* DesktopPreReadyPlatform.make;

@@ -180,6 +180,17 @@ visible. Google does not expose individual child status, names, models, usage,
 or reply ownership through ACP. A batch is not a separate controllable thread,
 and its launch description is not a child result.
 
+## Run a native goal
+
+When your Antigravity runtime offers `/goal`, send `/goal` followed by a verifiable
+objective. Antigravity keeps working until it completes the goal or you cancel it.
+If your runtime does not offer `/goal`, update Antigravity in provider settings
+when an update is offered, then refresh provider status.
+
+Use Stop to interrupt a running goal, then ask Antigravity to stop pursuing it
+before starting more work. Ordinary follow-ups wait until the running turn ends.
+Scient does not support Antigravity goal status, pause, resume, or clear commands.
+
 ## Accounts, disabling, and removal
 
 Each official ACP provider instance has a private profile, so multiple

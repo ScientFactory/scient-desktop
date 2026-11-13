@@ -53,7 +53,7 @@
   },
   {
     "path": "apps/server/src/cloud/bootService.ts",
-    "line": "return `The service is not running. Check the service log and \\`systemctl --user status ${BOOT_SERVICE_UNIT_FILE}\\`, then run \\`t3 service update\\`.`;",
+    "line": "return `The service is not running. Check the service log (on Linux, also \\`systemctl --user status ${BOOT_SERVICE_UNIT_FILE}\\`), then run \\`t3 service update\\`.`;",
     "rules": ["t3-command"],
     "kind": "dormant-service",
     "reason": "Boot-service status text, produced only for a managed service install, which Scient builds cannot create while safetyEnvelopeEnabled is true."

@@ -487,4 +487,33 @@ describe("Files panel search", () => {
     dispatchPreviewAction("find");
     await expect.element(search).toHaveFocus();
   });
+
+  it("keeps expanded folders when the panel remounts", async () => {
+    // SCIENT-FORK:START — Scient's lazy tree lists each folder through the mocked command.
+    setup();
+    const findTreeRow = (path: string) =>
+      document
+        .querySelector("file-tree-container")
+        ?.shadowRoot?.querySelector<HTMLElement>(`[data-item-path="${path}"]`) ?? null;
+    const panel = () => {
+      // The tree virtualizes its rows, so it needs a real viewport to render any.
+      const container = document.createElement("div");
+      container.style.cssText =
+        "display: flex; flex-direction: column; width: 320px; height: 480px;";
+      return render(<FileBrowserPanel {...props} cwd="/remount" />, { container });
+    };
+    // SCIENT-FORK:END
+    {
+      await using _first = await panel();
+      await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+      findTreeRow("src/")!.click();
+      await vi.waitFor(() =>
+        expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"),
+      );
+    }
+
+    await using _second = await panel();
+    await vi.waitFor(() => expect(findTreeRow("src/")).not.toBeNull());
+    await vi.waitFor(() => expect(findTreeRow("src/")!.getAttribute("aria-expanded")).toBe("true"));
+  });
 });

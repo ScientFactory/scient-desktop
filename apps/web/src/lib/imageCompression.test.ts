@@ -309,26 +309,36 @@ describe("compressImageForStash", () => {
 });
 
 describe("composer image thumbnails", () => {
+  it("gives the compressed file its source's thumbnail without decoding it again", async () => {
+    stubCanvasPipeline(() => 3);
+    const source = makeFile(3);
+    const compressed = makeFile(2, "image/webp");
+    // Compression can finish before the placeholder's thumbnail does.
+    const pendingThumbnail = createComposerImageThumbnail(source);
+
+    await inheritComposerImageThumbnail(source, compressed);
+
+    const sourceThumbnail = await pendingThumbnail;
+    expect(sourceThumbnail).toMatch(/^data:image\/png;base64,/);
+    expect(readComposerImageThumbnail(compressed)).toBe(sourceThumbnail);
+    expect(await createComposerImageThumbnail(compressed)).toBe(sourceThumbnail);
+    expect(createImageBitmap).toHaveBeenCalledTimes(1);
+  });
+
   // SCIENT-FORK:START
-  it.each(["square", "snapshot"] as const)(
-    "inherits the %s thumbnail without decoding again",
-    async (mode) => {
-      stubCanvasPipeline(() => 3);
-      const source = makeFile(3);
-      const compressed = makeFile(2, "image/webp");
-      const sourceThumbnail = await createComposerImageThumbnail(source, mode);
-      expect(sourceThumbnail).toMatch(/^data:image\/png;base64,/);
+  it("inherits only the crop modes the source rendered", async () => {
+    stubCanvasPipeline(() => 3);
+    const source = makeFile(3);
+    const compressed = makeFile(2, "image/webp");
+    const sourceThumbnail = await createComposerImageThumbnail(source, "snapshot");
 
-      inheritComposerImageThumbnail(source, compressed);
+    await inheritComposerImageThumbnail(source, compressed);
 
-      expect(readComposerImageThumbnail(compressed, mode)).toBe(sourceThumbnail);
-      expect(await createComposerImageThumbnail(compressed, mode)).toBe(sourceThumbnail);
-      expect(
-        readComposerImageThumbnail(compressed, mode === "square" ? "snapshot" : "square"),
-      ).toBeUndefined();
-      expect(createImageBitmap).toHaveBeenCalledTimes(1);
-    },
-  );
+    expect(readComposerImageThumbnail(compressed, "snapshot")).toBe(sourceThumbnail);
+    expect(await createComposerImageThumbnail(compressed, "snapshot")).toBe(sourceThumbnail);
+    expect(readComposerImageThumbnail(compressed, "square")).toBeUndefined();
+    expect(createImageBitmap).toHaveBeenCalledTimes(1);
+  });
   // SCIENT-FORK:END
 });
 

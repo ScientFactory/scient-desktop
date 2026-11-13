@@ -341,6 +341,7 @@ const makeWakeHarnessWithOptions = (options?: {
           }),
         forkSession: options?.forkSession ?? (() => Effect.die("unused forkSession")),
         subagentLaunchToolUseId: () => Effect.succeed(null),
+        subagentModel: () => Effect.succeed(null),
         assertComplete: Effect.void,
       },
     });

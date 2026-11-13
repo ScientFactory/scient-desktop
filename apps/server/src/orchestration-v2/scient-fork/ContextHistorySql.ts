@@ -21,8 +21,9 @@ export const handoffMetadataSql = (
     ELSE ${payload} END
 `;
 
+// json_valid is also false past SQLite's nesting limit; such a row still decodes as it is.
 export const turnItemMetadataSql = (sql: SqlClient.SqlClient, payload: Statement.Fragment) => sql`
-  CASE WHEN NOT json_valid(${payload}) THEN 'null'
+  CASE WHEN NOT json_valid(${payload}) THEN ${payload}
     WHEN json_extract(${payload}, '$.type') = 'handoff'
     THEN json_remove(${payload}, '$.summary', '$.scientSummaryBody') ELSE ${payload} END
 `;

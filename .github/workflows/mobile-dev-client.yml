@@ -85,7 +85,7 @@ jobs:
       T3_NATIVE_CLIENT_VERBOSE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ inputs.ref || github.sha }}
 
@@ -152,7 +152,7 @@ jobs:
 
       - name: Restore build cache
         if: github.event_name != 'pull_request'
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cache/t3-android-dev-client/gradle/caches
@@ -176,7 +176,7 @@ jobs:
           install-args: --filter=@t3tools/mobile... --filter=@t3tools/scripts...
 
       - name: Setup Java
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
         with:
           distribution: temurin
           java-version: 17
@@ -225,7 +225,7 @@ jobs:
       # SCIENT-FORK: the copy testers download when no shared cache holds the client.
       - name: Keep the client
         if: env.T3_NATIVE_CLIENT_CACHE == 'off'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mobile-dev-client-android-${{ matrix.abi }}-${{ github.run_id }}
           path: ${{ steps.build.outputs.file }}
@@ -260,7 +260,7 @@ jobs:
       T3_NATIVE_CLIENT_VERBOSE: "1"
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           ref: ${{ inputs.ref || github.sha }}
 
@@ -352,7 +352,7 @@ jobs:
       # SCIENT-FORK: the copy testers download when no shared cache holds the client.
       - name: Keep the client
         if: env.T3_NATIVE_CLIENT_CACHE == 'off'
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: mobile-dev-client-ios-${{ github.run_id }}
           path: ${{ steps.build.outputs.file }}

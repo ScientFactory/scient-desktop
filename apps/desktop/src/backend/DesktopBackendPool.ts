@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as SubscriptionRef from "effect/SubscriptionRef";
@@ -15,6 +16,8 @@ import { ChildProcessSpawner } from "effect/process";
 
 import * as DesktopBackendConfiguration from "./DesktopBackendConfiguration.ts";
 import * as DesktopBackendManager from "./DesktopBackendManager.ts";
+import * as DesktopHomeOwner from "./DesktopHomeOwner.ts";
+import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopObservability from "../app/DesktopObservability.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
@@ -112,6 +115,9 @@ export const layer = Layer.effect(
     // Parent instance scopes to the pool so shutdown runs stop finalizers before the OS kills backends.
     const layerScope = yield* Scope.Scope;
     const factoryContext = yield* Effect.context<BackendInstanceFactoryRequirements>();
+    const homeOwnerContext = yield* Effect.context<
+      FileSystem.FileSystem | Path.Path | DesktopEnvironment.DesktopEnvironment
+    >();
 
     // Persist fatal Windows fallbacks; transient transport failures must preserve the user's WSL preference.
     const handlePrimaryPreflightFailure = Effect.fn("desktop.backendPool.primaryPreflightFailed")(
@@ -174,12 +180,17 @@ export const layer = Layer.effect(
       onShutdown: () => desktopWindow.handleBackendNotReady,
       onPreflightFailed: handlePrimaryPreflightFailure,
       onStateDirOwned: () =>
-        electronDialog
-          .showErrorBox(
-            "This Scient data directory is unavailable",
-            "Another Scient server is using this data directory. Stop that server and reopen Scient.",
-          )
-          .pipe(Effect.andThen(electronApp.quit)),
+        DesktopHomeOwner.readLiveHomeOwner().pipe(
+          Effect.flatMap((owner) =>
+            electronDialog.showErrorBox(
+              // SCIENT-FORK: Scient branding.
+              DesktopHomeOwner.HOME_OWNED_TITLE,
+              DesktopHomeOwner.homeOwnedMessage(owner),
+            ),
+          ),
+          Effect.provideContext(homeOwnerContext),
+          Effect.andThen(electronApp.quit),
+        ),
     });
 
     const instancesRef = yield* SynchronizedRef.make<

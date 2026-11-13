@@ -1,7 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Executes the shipped Pi extension at its native JavaScript boundary.
-// SCIENT-FORK:START — Scient Extensions connectors: hashed connector tool aliases.
 import * as NodeCrypto from "node:crypto";
-// SCIENT-FORK:END
 import * as NodeModule from "node:module";
 import * as NodePath from "node:path";
 import * as NodeVM from "node:vm";
@@ -143,10 +141,9 @@ export async function loadMcpBridge(
       },
     },
     AbortSignal,
-    // SCIENT-FORK:START — Scient Extensions connectors: streamed responses and hashed aliases.
+    // SCIENT-FORK: Scient Extensions connectors: streamed responses.
     TextDecoder,
     NodeCrypto,
-    // SCIENT-FORK:END
     NodePath,
     Type: { Unsafe: (schema: unknown) => schema },
     fetch: async (

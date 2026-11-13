@@ -85,7 +85,9 @@ function appendUnavailableDynamicModelSelection(
   selectedModel: string | null | undefined,
   hiddenModels: ReadonlyArray<string>,
 ): AppModelOption[] {
-  if (provider !== "opencode" && provider !== "antigravity") return options;
+  if (provider !== "opencode" && provider !== "antigravity" && provider !== "cursor") {
+    return options;
+  }
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
   if (provider === "antigravity" && slug === ANTIGRAVITY_DEFAULT_MODEL) return options;
@@ -312,7 +314,9 @@ export function resolveAppModelSelectionForInstance(
   }
   if (
     resolutionOptions?.preserveUnavailableSelection &&
-    (entry.driverKind === "opencode" || entry.driverKind === "antigravity")
+    (entry.driverKind === "opencode" ||
+      entry.driverKind === "antigravity" ||
+      entry.driverKind === "cursor")
   ) {
     const unavailableSelection = normalizeCustomModelSlug(selectedModel);
     const hiddenModels = readInstanceModelPreferences(
@@ -401,6 +405,42 @@ export function getCustomModelOptionsByInstance(
   return out;
 }
 
+function getTextGenerationModelOptionsForInstance(
+  settings: UnifiedSettings,
+  entry: ProviderInstanceEntry,
+  selectedModel?: string | null,
+): AppModelOption[] {
+  const unsupported = new Set(
+    entry.models
+      .filter((model) => model.supportsTextGeneration === false)
+      .map((model) => model.slug),
+  );
+  // Filter after custom entries are rebuilt so a display-name override cannot restore a model.
+  return getAppModelOptionsForInstance(settings, entry, selectedModel).filter(
+    (option) => !unsupported.has(option.slug),
+  );
+}
+
+export function getTextGenerationModelOptionsByInstance(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+  selectedInstanceId?: ProviderInstanceId | null,
+  selectedModel?: string | null,
+): ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>> {
+  return new Map(
+    deriveProviderInstanceEntries(
+      providers.filter((provider) => provider.supportsTextGeneration !== false),
+    ).map((entry) => [
+      entry.instanceId,
+      getTextGenerationModelOptionsForInstance(
+        settings,
+        entry,
+        entry.instanceId === selectedInstanceId ? selectedModel : null,
+      ),
+    ]),
+  );
+}
+
 export function selectsPlanAgent(options: ModelSelection["options"]): boolean {
   return options?.some((option) => option.id === "agent" && option.value === "plan") ?? false;
 }
@@ -425,7 +465,7 @@ export function resolveAppModelSelectionState(
   if (entry) {
     const selectedModel = selectedEntry ? selection.model : null;
     // Use the cheap generation default; the catalog default is the expensive chat flagship.
-    const options = getAppModelOptionsForInstance(settings, entry);
+    const options = getTextGenerationModelOptionsForInstance(settings, entry);
     const model =
       resolveSelectableModel(entry.driverKind, selectedModel, options) ??
       resolveSelectableModel(
@@ -433,22 +473,28 @@ export function resolveAppModelSelectionState(
         DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind],
         options,
       ) ??
-      resolveAppModelSelectionForInstance(
-        entry.instanceId,
-        settings,
-        supportedProviders,
-        selectedModel,
-      ) ??
-      getAppModelOptionsForInstance(settings, entry).find((model) => !model.unavailableReason)
-        ?.slug ??
-      // Native agent automatic markers are resolved from a discovered catalog. Do
-      // not render one as a selectable native model before discovery succeeds.
+      // SCIENT-FORK:START — Scient's automatic pick ranks the generation options first.
+      (options.length > 0 ? resolveAutomaticModel(entry.driverKind, options) : undefined) ??
+      // SCIENT-FORK:END
+      options.find((option) => option.isDefault)?.slug ??
+      options[0]?.slug ??
+      // SCIENT-FORK:START — an unavailable model is never picked, and a native agent picks only
+      // from the models it shows, so one its curated defaults hide is never chosen.
+      (entry.driverKind === "pi" || entry.driverKind === "omp" || entry.driverKind === "scient"
+        ? undefined
+        : entry.models.find(
+            (model) => model.supportsTextGeneration !== false && !model.unavailableReason,
+          )?.slug) ??
+      // SCIENT-FORK:END
+      // SCIENT-FORK:START — Native agent automatic markers are resolved from a discovered
+      // catalog. Do not render one as a selectable native model before discovery succeeds.
       (entry.driverKind === "pi" ||
       entry.driverKind === "omp" ||
       entry.driverKind === "scient" ||
       (entry.models.length > 0 && entry.models.every((model) => model.unavailableReason))
         ? undefined
         : DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER[entry.driverKind]);
+    // SCIENT-FORK:END
     if (!model) {
       return createModelSelection(entry.instanceId, "", []);
     }

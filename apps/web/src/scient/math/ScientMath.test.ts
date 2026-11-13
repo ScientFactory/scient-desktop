@@ -25,6 +25,13 @@ describe("renderScientTexToHtml", () => {
     expect(renderScientTexToHtml("{unbalanced", false)).toBeNull();
   });
 
+  it("typesets an equation that fails only because of an unescaped percent", () => {
+    const html = renderScientTexToHtml("\\text{3.18% yield}", false);
+
+    expect(html).not.toBeNull();
+    expect(html).toContain("yield");
+  });
+
   it("caps pathological sizes so layout stays bounded", () => {
     const html = renderScientTexToHtml("\\rule{500em}{500em}", true);
 
