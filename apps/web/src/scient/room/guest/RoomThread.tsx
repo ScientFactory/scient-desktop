@@ -1,5 +1,6 @@
 import type { LegendListRef } from "@legendapp/list/react";
 import {
+  ROOM_ROLE_LABEL,
   EnvironmentId,
   type OrchestrationV2ThreadProjection,
   type RoomGuestView,
@@ -184,7 +185,8 @@ export function RoomThread({
                 />
                 <span>
                   {person.name}
-                  {person.participantId === participantId ? " (you)" : ""} · {person.role}
+                  {person.participantId === participantId ? " (you)" : ""} ·{" "}
+                  {ROOM_ROLE_LABEL[person.role]}
                 </span>
               </li>
             ))}

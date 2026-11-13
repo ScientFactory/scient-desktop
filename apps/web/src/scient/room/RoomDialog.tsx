@@ -5,6 +5,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
+  ROOM_ROLE_DESCRIPTION,
+  ROOM_ROLE_LABEL,
   type RoomAccessDuration,
   type RoomParticipant,
   type RoomParticipantId,
@@ -37,18 +39,8 @@ import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
 
-const ROLE_LABEL: Record<RoomRole, string> = {
-  watch: "Watch",
-  discuss: "Discuss",
-  agent: "Discuss and use the agent",
-};
-
-const ROLE_DESCRIPTION: Record<RoomRole, string> = {
-  watch: "Sees the thread live. Cannot write.",
-  discuss: "Talks with people here and can suggest messages for the agent.",
-  agent:
-    "Can also send to the agent and stop it. The agent works on this computer with your files and accounts.",
-};
+const ROLE_LABEL = ROOM_ROLE_LABEL;
+const ROLE_DESCRIPTION = ROOM_ROLE_DESCRIPTION;
 
 const DURATION_LABEL: Record<RoomAccessDuration, string> = {
   day: "1 day",
@@ -156,7 +148,7 @@ function RoomDialog({
             <section className="flex flex-col gap-2" aria-label="New invite">
               <div className="flex items-center gap-2">
                 <NativeSelect
-                  aria-label="Role"
+                  aria-label="Permission"
                   size="sm"
                   value={role}
                   onChange={(event) => setRole(event.target.value as RoomRole)}
@@ -306,7 +298,7 @@ function ParticipantRow(props: {
       ) : null}
       <span className="w-44 shrink-0">
         <NativeSelect
-          aria-label={`Role of ${participant.name ?? "invited person"}`}
+          aria-label={`Permission of ${participant.name ?? "invited person"}`}
           size="xs"
           value={participant.role}
           disabled={!props.canManage}

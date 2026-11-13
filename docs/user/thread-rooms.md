@@ -14,15 +14,17 @@ agent. It works on a computer with Scient Connect on and reachable.
 3. They open the link, type their name, and see the thread as you do, including
    command output and the agent's reasoning, from the start of the thread.
 
-Roles:
+Everyone in the room sees the same conversation. What differs is each person's
+permission:
 
-- **Watch** sees the thread and cannot write.
-- **Discuss** talks with people in the thread and can suggest a message for the agent.
-- **Discuss and use the agent** can also send messages to the agent, send anyone's
-  message to it, and stop it. The agent runs on your computer with your files and
-  accounts, so give this role only to people you trust with that.
+- **Can watch** sees the thread live and cannot write.
+- **Can talk with people** also writes to people in the thread and can suggest a
+  message for the agent.
+- **Can also message the agent** also sends messages to the agent, sends anyone's
+  message to it, and stops it. The agent runs on your computer with your files and
+  accounts, so give this only to people you trust with that.
 
-The header shows who is in the room and who has it open. Open it to change a role,
+The header shows who is in the room and who has it open. Open it to change a permission,
 copy an invite again, remove someone, or **Stop sharing**. A change applies at once.
 Archiving the thread also ends the room. Removing someone stops their access; it
 cannot take back what they already saw.

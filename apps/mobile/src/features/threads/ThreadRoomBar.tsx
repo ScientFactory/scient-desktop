@@ -1,6 +1,7 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   ROOM_PARTICIPANT_LIMIT,
+  ROOM_ROLE_LABEL,
   type RoomAccessDuration,
   type RoomParticipant,
   type RoomRole,
@@ -22,11 +23,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { roomCommandSucceeded } from "./room-command-result";
 import { useThreadRoom } from "./thread-room-state";
 
-const roles: ReadonlyArray<{ id: RoomRole; title: string }> = [
-  { id: "watch", title: "Watch: read only" },
-  { id: "discuss", title: "Discuss: talk to people" },
-  { id: "agent", title: "Agent: also send to the agent" },
-];
+const roles: ReadonlyArray<{ id: RoomRole; title: string }> = (
+  ["watch", "discuss", "agent"] as const
+).map((id) => ({ id, title: ROOM_ROLE_LABEL[id] }));
 const durations: ReadonlyArray<{ id: RoomAccessDuration; title: string }> = [
   { id: "day", title: "1 day" },
   { id: "week", title: "1 week" },
