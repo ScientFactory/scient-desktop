@@ -206,17 +206,15 @@ describe("ScientAgentBackgroundRuntime", () => {
               makeDirectory: () => Effect.void,
               readFileString: (path) =>
                 SubscriptionRef.get(record).pipe(
-                  Effect.flatMap((text) =>
-                    text === null
-                      ? Effect.fail(
-                          PlatformError.systemError({
-                            _tag: "NotFound",
-                            module: "FileSystem",
-                            method: "readFileString",
-                            pathOrDescriptor: path,
-                          }),
-                        )
-                      : Effect.succeed(text),
+                  Effect.filterOrFail(
+                    (text): text is string => text !== null,
+                    () =>
+                      PlatformError.systemError({
+                        _tag: "NotFound",
+                        module: "FileSystem",
+                        method: "readFileString",
+                        pathOrDescriptor: path,
+                      }),
                   ),
                 ),
               writeFileString: (_path, text) => SubscriptionRef.set(record, text),
