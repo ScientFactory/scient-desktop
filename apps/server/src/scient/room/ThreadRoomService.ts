@@ -601,10 +601,12 @@ const make = Effect.gen(function* () {
     const { thread, participant } = yield* authorize(session);
     if (!roleCanUseAgent(participant.role)) return yield* new RoomAccessError({ reason: "role" });
     yield* dispatchForGuest({
-      type: "thread.stop",
+      type: "thread.room.guest-dispatch",
       commandId: yield* commandId("stop"),
       threadId: thread.id,
-      reason: `Stopped by guest ${participant.name}.`,
+      participantId: participant.id,
+      messageId: MessageId.make(yield* random.uuidV4().pipe(Effect.orDie)),
+      send: { type: "stop" },
     });
   });
 
@@ -718,15 +720,16 @@ const make = Effect.gen(function* () {
       { type: "thread", item: openingSnapshot },
     ]).pipe(
       Stream.concat(
-        Stream.mergeAll(
-          [
-            live,
+        // A live read that fails ends the response, so the page reconnects instead of going stale.
+        Stream.merge(
+          live,
+          Stream.merge(
             presenceViews,
             Stream.fromEffect(
               Effect.as(untilExpiry, { type: "ended", reason: "expired" } as const),
             ),
-          ],
-          { concurrency: "unbounded" },
+          ),
+          { haltStrategy: "left" },
         ),
       ),
       Stream.takeUntil((event) => event.type === "ended"),

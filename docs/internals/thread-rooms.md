@@ -58,4 +58,5 @@ The guest page shares T3's `/guest` route, which runs without the app shell; the
 Guests' files are checked like T3 guest uploads and stored as thread attachments. The
 owner's files are claimed from pending uploads like a message's; their reservations
 name the room message they belong to. The attachment sweep keeps any file a room
-message holds. Deleting a room message deletes its files unless a sent copy holds them.
+message holds. Deleting a room message hides its files; they stay on disk while the thread
+lasts, because a fork or a message sent to the agent may hold them.

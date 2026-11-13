@@ -4499,6 +4499,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (!roleCanUseAgent(participant.role)) {
         return yield* roomDispatchError(command, ROOM_FAILURE.role);
       }
+      if (command.send.type === "stop") {
+        return {
+          type: "thread.stop" as const,
+          commandId: command.commandId,
+          threadId: command.threadId,
+          reason: `Stopped by guest ${participant.name}.`,
+        };
+      }
       const base = {
         type: "message.dispatch" as const,
         commandId: command.commandId,
@@ -16826,6 +16834,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.type === "thread.pull-request-watch.checks-reopen" ||
           command.type === "thread.interrupt.unresponsive" ||
           command.type === "thread.stop" ||
+          // SCIENT-FORK: a guest's Stop, like the owner's, may find nothing to stop.
+          (command.type === "thread.room.guest-dispatch" && command.send.type === "stop") ||
           command.type === "subagent.stop" ||
           // Closing a share again, or after it ended, is not an error.
           command.type === "thread.guest-share.close" ||

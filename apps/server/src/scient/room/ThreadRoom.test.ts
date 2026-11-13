@@ -432,3 +432,25 @@ it.effect("counts guests' messages as waiting on the owner until the owner looks
     assert.equal(yield* waiting, 0);
   }).pipe(Effect.provide(layerTest)),
 );
+
+// regression: a guest's Stop is checked against their role under the thread lock.
+it.effect("stops the thread only for a guest whose role still allows it", () =>
+  Effect.gen(function* () {
+    const room = yield* setup;
+    yield* room.invite("w", "watch");
+    yield* room.invite("d", "agent");
+    yield* room.join("w", "Wes");
+    yield* room.join("d", "Dru");
+    const stop = (participant: string, label: string) =>
+      room.orchestrator.dispatch({
+        type: "thread.room.guest-dispatch",
+        commandId: CommandId.make(label),
+        threadId,
+        participantId: RoomParticipantId.make(participant),
+        messageId: MessageId.make(label),
+        send: { type: "stop" },
+      });
+    assert.isTrue(yield* fails(stop("w", "stop-watch")));
+    assert.isFalse(yield* fails(stop("d", "stop-agent")));
+  }).pipe(Effect.provide(layerTest)),
+);

@@ -776,6 +776,7 @@ const make = Effect.gen(function* () {
         );
       // SCIENT-FORK: a guest's send to the agent starts a turn on the thread's provider.
       case "thread.room.guest-dispatch":
+        if (command.send.type === "stop") return Effect.void;
         return orchestrator.getThreadRecords(command.threadId, []).pipe(
           Effect.flatMap((projection) =>
             assertProviderInstanceEnabled({

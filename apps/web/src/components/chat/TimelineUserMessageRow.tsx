@@ -59,6 +59,8 @@ import {
 } from "./ExpandedImagePreview";
 
 import { GuestMessageName, guestBubbleClassName } from "./guestMessageStyle";
+// SCIENT-FORK: thread rooms.
+import { RoomSentLine } from "~/scient/room/RoomMessageRow";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { promptLinkFor } from "../promptLinks/copyPromptLink";
 import { PierreEntryIcon } from "./PierreEntryIcon";
@@ -806,6 +808,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <div aria-hidden>
           <GuestMessageName name={userMessage.guestName} />
         </div>
+      ) : null}
+      {/* SCIENT-FORK: a message from a thread room says where it came from. */}
+      {row.message.context?.room !== undefined ? (
+        <RoomSentLine room={row.message.context.room} />
       ) : null}
       {(row.message.inputIntent === "steer" ||
         row.message.inputIntent === "promoted_queued_to_steer") &&

@@ -3775,6 +3775,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
         attachments: Schema.Array(ChatAttachment),
       }),
       Schema.Struct({ type: Schema.Literal("room-message"), itemId: TurnItemId }),
+      /** Stops the thread's work, checked against the guest's role under the thread lock. */
+      Schema.Struct({ type: Schema.Literal("stop") }),
     ]),
   }),
   // SCIENT-FORK:END
