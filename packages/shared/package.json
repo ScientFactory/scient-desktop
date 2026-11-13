@@ -35,6 +35,10 @@
       "types": "./src/scientSignInPage.ts",
       "import": "./src/scientSignInPage.ts"
     },
+    "./scientGoogleSignIn": {
+      "types": "./src/scientGoogleSignIn.ts",
+      "import": "./src/scientGoogleSignIn.ts"
+    },
     "./scientBrowserProfileChoice": {
       "types": "./src/scientBrowserProfileChoice.ts",
       "import": "./src/scientBrowserProfileChoice.ts"

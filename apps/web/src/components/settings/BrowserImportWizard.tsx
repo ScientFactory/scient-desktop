@@ -6,6 +6,9 @@ import { ArrowDownIcon, ArrowRightIcon, CheckIcon, HardDriveIcon } from "lucide-
 import { useRef, useState } from "react";
 
 import { cn, randomUUID } from "~/lib/utils";
+// SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+import { protectedNotice } from "~/scient/accounts/importSummary";
+// SCIENT-FORK:END
 
 import { Button } from "../ui/button";
 import {
@@ -510,6 +513,10 @@ function DoneStep({
   skipped,
   skippedDomains,
   targetName,
+  // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+  protectedSkipped,
+  importedUnit,
+  // SCIENT-FORK:END
   destinationEnvironmentName,
   onClose,
 }: {
@@ -517,15 +524,25 @@ function DoneStep({
   readonly skipped: number;
   readonly skippedDomains: ReadonlyArray<string>;
   readonly targetName: string;
+  // SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+  readonly protectedSkipped?: number;
+  readonly importedUnit?: "signIns";
+  // SCIENT-FORK:END
   readonly destinationEnvironmentName: string;
   readonly onClose: () => void;
 }) {
+  // SCIENT-FORK:START — Scient Accounts: an import into Main counts the sign-ins it copied.
+  const importedCount =
+    importedUnit === "signIns"
+      ? `${imported.toLocaleString()} ${imported === 1 ? "sign-in" : "sign-ins"}`
+      : cookieResultCount(imported);
+  // SCIENT-FORK:END
   return (
     <>
       <DialogHeader>
         <DialogTitle>
           {imported > 0
-            ? `Imported ${cookieResultCount(imported)}`
+            ? `Imported ${importedCount}`
             : skipped > 0
               ? `Skipped ${cookieResultCount(skipped)}`
               : "No cookies found"}
@@ -536,6 +553,9 @@ function DoneStep({
             : skipped > 0
               ? `No cookies were imported for ${destinationEnvironmentName}.`
               : `There were no cookies to import for ${destinationEnvironmentName}.`}
+          {/* SCIENT-FORK:START — Scient Accounts: say why cookies were left behind. */}
+          {protectedSkipped ? ` ${protectedNotice(protectedSkipped)}` : null}
+          {/* SCIENT-FORK:END */}
         </DialogDescription>
       </DialogHeader>
       {skippedDomains.length > 0 ? (

@@ -8,6 +8,7 @@ import {
   INCOGNITO_BROWSER_PROFILE_ID,
   IsoDateTime,
   PRIMARY_LOCAL_ENVIRONMENT_ID,
+  type BrowserImportResult,
   type DesktopFillMainResult,
   type SessionCookie,
 } from "@t3tools/contracts";
@@ -254,12 +255,13 @@ export const fillMain = Effect.fn("DesktopAccounts.fillMain")(function* (input: 
 
 /**
  * A copy into Main of what `stage` puts in a throwaway in-memory partition, so Main itself is
- * written only by the copy. Null when refused or when a jar can't be opened.
+ * written only by the copy. An import's own summary comes back with the copy's. Null when refused
+ * or when a jar can't be opened.
  */
 export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(function* <E, R>(
   environmentId: string,
   input: CopyRules,
-  stage: (scope: string) => Effect.Effect<unknown, E, R>,
+  stage: (scope: string) => Effect.Effect<BrowserImportResult | void, E, R>,
 ) {
   const manager = yield* PreviewManager;
   const mainScope = resolvePartitionScope(environmentId, DEFAULT_BROWSER_PROFILE_ID);
@@ -268,14 +270,20 @@ export const fillMainStaged = Effect.fn("DesktopAccounts.fillMainStaged")(functi
     .pipe(Effect.option);
   if (main._tag === "None") return null;
   const scope = `scient-import-staging:${crypto.randomUUID()}`;
-  yield* stage(scope);
+  const staged = yield* stage(scope);
   const staging = yield* manager.getBrowserSession(scope, false).pipe(Effect.option);
   if (staging._tag === "None") return null;
-  return yield* Effect.promise(() =>
+  const filled = yield* Effect.promise(() =>
     underMainLock(environmentId, () => copyIntoMain(staging.value, main.value, input))
       .catch(() => null)
       .finally(() => staging.value.clearStorageData().catch(() => undefined)),
   );
+  if (!filled || !staged) return filled;
+  const { imported, skipped, skippedByReason } = staged;
+  return {
+    ...filled,
+    importSummary: { imported, skipped, ...(skippedByReason ? { skippedByReason } : {}) },
+  } satisfies DesktopFillMainResult;
 });
 
 const copyRecords = Effect.gen(function* () {
