@@ -58,6 +58,14 @@ conversations, and `/trace` shows this conversation in it. Both open in the conv
 The dashboard runs inside the conversation's agent, so it stops when that agent does; run `/stats`
 again to bring it back.
 
+Send `/plan` followed by what you want done to have Scient Agent plan first. It reads what it
+needs and drafts a plan, but changes nothing. The plan appears as a plan card, and a question asks
+you to **Approve and carry out** or **Refine plan**. Approve, and the agent leaves plan mode and
+carries out the plan in the same turn. Refine, and it asks what to change; answer in your next
+message. `/plan` alone turns plan mode on, and `/plan off` turns it off. Plan mode and a
+[goal](./composer.md#goals) cannot be on together. This needs a Scient Agent that supports plan
+mode; an older one says so.
+
 **Compact** shows its progress in the conversation. If a turn stops because the session reached a
 spending cap or the account hit a usage limit, the conversation says so, and the next message is
 refused until the cap is raised or the limit resets. When an account is past its usage limit but is

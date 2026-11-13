@@ -78,7 +78,9 @@ type NativeSessionPresentation =
       readonly beforeTokenCount?: number;
       readonly afterTokenCount?: number;
     }
-  | { readonly type: "todo_list"; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> };
+  | { readonly type: "todo_list"; readonly steps: ReadonlyArray<OrchestrationV2PlanStep> }
+  // SCIENT-FORK: a plan the agent proposed, shown as the shared plan card.
+  | { readonly type: "proposed_plan"; readonly markdown: string };
 
 /** SCIENT-FORK: one step of a native subagent's conversation; `id` is stable across reads. */
 export type NativeSubagentStep =
@@ -1433,6 +1435,37 @@ export function makeNativeSessionAdapterV2(
                         steps,
                       },
                     });
+                    // SCIENT-FORK:START - a proposed plan is a plan artifact, as for Claude.
+                  } else if (content.type === "proposed_plan") {
+                    const planId =
+                      previous?.type === "proposed_plan"
+                        ? previous.planId
+                        : yield* idAllocator.allocate.plan({
+                            threadId: owner.threadId,
+                            runId: owner.runId,
+                            driver,
+                          });
+                    item = {
+                      ...common,
+                      type: "proposed_plan",
+                      planId,
+                      markdown: content.markdown,
+                      streaming: false,
+                    };
+                    yield* emit({
+                      type: "plan.updated",
+                      driver,
+                      plan: {
+                        id: planId,
+                        threadId: owner.threadId,
+                        runId: owner.runId,
+                        nodeId: base.nodeId,
+                        kind: "proposed_plan",
+                        status: "active",
+                        markdown: content.markdown,
+                      },
+                    });
+                    // SCIENT-FORK:END
                   } else if (content.type === "compaction")
                     item = { ...common, ...content, driver };
                   else item = { ...common, ...content };
@@ -1733,24 +1766,27 @@ export function makeNativeSessionAdapterV2(
                   kind:
                     item.type === "todo_list"
                       ? "todo_list"
-                      : item.type === "compaction" ||
-                          item.type === "error" ||
-                          item.type === "system_notice"
-                        ? "system"
-                        : item.type === "approval_request"
-                          ? "approval_request"
-                          : item.type === "user_input_request"
-                            ? "user_input_request"
-                            : item.type === "dynamic_tool" ||
-                                item.type === "command_execution" ||
-                                item.type === "file_change" ||
-                                item.type === "web_search"
-                              ? "tool_call"
-                              : item.type === "subagent"
-                                ? "subagent"
-                                : item.type === "reasoning"
-                                  ? "reasoning"
-                                  : "assistant_message",
+                      : // SCIENT-FORK: a proposed plan is a plan node.
+                        item.type === "proposed_plan"
+                        ? "plan"
+                        : item.type === "compaction" ||
+                            item.type === "error" ||
+                            item.type === "system_notice"
+                          ? "system"
+                          : item.type === "approval_request"
+                            ? "approval_request"
+                            : item.type === "user_input_request"
+                              ? "user_input_request"
+                              : item.type === "dynamic_tool" ||
+                                  item.type === "command_execution" ||
+                                  item.type === "file_change" ||
+                                  item.type === "web_search"
+                                ? "tool_call"
+                                : item.type === "subagent"
+                                  ? "subagent"
+                                  : item.type === "reasoning"
+                                    ? "reasoning"
+                                    : "assistant_message",
                   status: item.status,
                   countsForRun: false,
                   providerThreadId: base.providerThreadId,

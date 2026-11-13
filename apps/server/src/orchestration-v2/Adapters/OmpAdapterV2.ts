@@ -57,6 +57,12 @@ import { makeOmpLiveVoice } from "../../provider/omp/OmpLiveVoice.ts";
 import { withOmpPromptCacheExpiry } from "../../provider/omp/OmpPromptCache.ts";
 // SCIENT-FORK: /goal drives Scient Agent's goal command.
 import { ompGoalUpdate, runOmpGoalTurn } from "../../provider/omp/OmpGoal.ts";
+// SCIENT-FORK: /plan drives Scient Agent's plan mode.
+import {
+  ompProposedPlan,
+  parseOmpPlanCommand,
+  runOmpPlanTurn,
+} from "../../provider/omp/OmpPlan.ts";
 import {
   assertReadableOmpSessionFile,
   ompSessionFilesEqual,
@@ -251,6 +257,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
         ...AcpProviderCapabilitiesV2.planning,
         emitsPlanUpdated: false,
         emitsTodoList: true,
+        // SCIENT-FORK: /plan drives Scient Agent's plan mode.
+        emitsProposedPlan: target.driverKind === "scient",
       },
       subagents: {
         ...AcpProviderCapabilitiesV2.subagents,
@@ -660,6 +668,8 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
           usageLimitNotice = usageLimit;
         });
         let nextWarningOrdinal = 0;
+        // SCIENT-FORK: each plan the agent proposes is its own card.
+        let proposedPlans = 0;
         let retrySequence = 0;
         let retryId: string | undefined;
         let retryProgress:
@@ -907,6 +917,18 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               if (event.type === "goal_updated") {
                 const update = ompGoalUpdate(event);
                 return update === undefined ? Effect.void : onUpdate({ type: "goal", ...update });
+              }
+              // SCIENT-FORK: the plan the agent proposes shows as a plan card.
+              if (event.type === "plan_proposed") {
+                const markdown = ompProposedPlan(event);
+                return markdown === undefined
+                  ? Effect.void
+                  : onUpdate({
+                      type: "item",
+                      id: `proposed-plan-${++proposedPlans}`,
+                      status: "completed",
+                      item: { type: "proposed_plan", markdown: client.redaction.text(markdown) },
+                    });
               }
               if (event.type === "todo_auto_clear") return publishTodos([]);
               if (event.type === "auto_retry_start" || event.type === "auto_retry_end") {
@@ -1847,8 +1869,12 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
               // SCIENT-FORK:START - /goal drives Scient Agent's goal command.
               const goalCommand =
                 target.driverKind === "scient" ? parseGoalCommand(turnInput.message) : null;
+              const planCommand =
+                target.driverKind === "scient" ? parseOmpPlanCommand(turnInput.message.text) : null;
               const refusal =
-                goalCommand === null ? commandRefusal(turnInput.message.text) : undefined;
+                goalCommand === null && planCommand === null
+                  ? commandRefusal(turnInput.message.text)
+                  : undefined;
               // SCIENT-FORK:END
               if (refusal !== undefined) {
                 yield* onUpdate({ type: "offered", nativeTurnId });
@@ -1878,10 +1904,16 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                 });
               if (model.provider.startsWith("scient_") && client.refreshModels)
                 yield* client.refreshModels();
-              const prompt = yield* payload(turnInput.message, {
-                provider: model.provider,
-                id: model.modelId,
-              });
+              // SCIENT-FORK: a /plan message sends its task as the prompt.
+              const prompt = yield* payload(
+                planCommand?.type === "enter"
+                  ? { ...turnInput.message, text: planCommand.task }
+                  : turnInput.message,
+                {
+                  provider: model.provider,
+                  id: model.modelId,
+                },
+              );
               const selected = getModelSelectionStringOptionValue(
                 turnInput.modelSelection,
                 "thinkingLevel",
@@ -2074,6 +2106,29 @@ export const makeOmpAdapterV2 = Effect.fn("makeOmpAdapterV2")(function* (
                       }),
                   ),
                 );
+              // SCIENT-FORK:END
+              // SCIENT-FORK:START - /plan drives Scient Agent's plan mode.
+              if (
+                planCommand !== null &&
+                (yield* runOmpPlanTurn({
+                  client,
+                  command: planCommand,
+                  nativeTurnId,
+                  runtime,
+                  onUpdate,
+                  notice: (message) => notice(message),
+                  redact: (text) => client.redaction.text(text),
+                }).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new NativeSessionOperationError({
+                        detail: client.redaction.text(cause.message),
+                        cause,
+                      }),
+                  ),
+                ))
+              )
+                return;
               // SCIENT-FORK:END
               yield* onUpdate({ type: "offered", nativeTurnId });
               yield* client.prompt({ ...prompt, streamingBehavior: "steer" }).pipe(
