@@ -280,13 +280,37 @@ describe("project notes", () => {
       expect(history?.[0]).toMatchObject({ note: first });
       expect(history).toHaveLength(SCIENT_PROJECT_NOTE_CHECKPOINTS + 1);
     }
-    // The lock is runtime state: Git leaves it out, and nothing else.
-    expect(
-      await NodeFSP.readFile(
-        NodePath.join(projectRoot, ".scient", "library", ".gitignore"),
-        "utf8",
-      ),
-    ).toBe("pins.lock\n");
+  });
+
+  it("leaves only the runtime lock out of Git, and never rewrites an ignore file", async () => {
+    const { library, projectRoot, add } = await setup();
+    await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: (await add("A")).sourceId,
+      actor: "user",
+      note: "Why",
+    });
+    const git = (...args: string[]) =>
+      NodeChildProcess.spawnSync("git", ["-C", projectRoot, ...args], { encoding: "utf8" });
+    git("init", "-q");
+    const folder = NodePath.join(projectRoot, ".scient", "library");
+    await NodeFSP.mkdir(NodePath.join(folder, "custom"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(folder, "custom", "pins.lock"), "theirs");
+    const ignored = (path: string) => git("check-ignore", "-q", path).status === 0;
+    expect(ignored(".scient/library/pins.lock")).toBe(true);
+    expect(ignored(".scient/library/custom/pins.lock")).toBe(false);
+    expect(ignored(".scient/library/pins.json")).toBe(false);
+
+    const edited = "# mine\n/pins.lock\n*.bak\n";
+    await NodeFSP.writeFile(NodePath.join(folder, ".gitignore"), edited);
+    await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: (await add("B")).sourceId,
+      actor: "user",
+    });
+    expect(await NodeFSP.readFile(NodePath.join(folder, ".gitignore"), "utf8")).toBe(edited);
   });
 
   it("waits for another process holding the project's pins lock, then sees its note", async () => {

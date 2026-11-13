@@ -252,7 +252,7 @@ async function ignoreRuntimeLock(directory: string): Promise<void> {
   try {
     await NodeFSP.writeFile(
       NodePath.join(directory, ".gitignore"),
-      `${SCIENT_PROJECT_PINS_LOCK}\n`,
+      `/${SCIENT_PROJECT_PINS_LOCK}\n`,
       { flag: "wx" },
     );
   } catch (error) {
