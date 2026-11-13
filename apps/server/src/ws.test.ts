@@ -163,6 +163,7 @@ import * as ExtensionsServices from "./scient/extensions/ExtensionsServices.ts";
 import { ExtensionsChangeFeed } from "./scient/extensions/ExtensionsRpcHandlers.ts";
 import * as ProviderConnectionManager from "./scient/providerLifecycle/ProviderConnectionManager.ts";
 import * as ProviderRuntimeManager from "./scient/providerLifecycle/ProviderRuntimeManager.ts";
+import { ScientAgentBackgroundRuntime } from "./scient/providerLifecycle/ScientAgentBackgroundRuntime.ts";
 import { WorkspaceBindingResolver } from "./scient/projectScope/WorkspaceBindingResolver.ts";
 // SCIENT-FORK:END
 import * as ManagedPolicy from "./policy/ManagedPolicy.ts";
@@ -832,6 +833,7 @@ const layerUnusedConfigRpcServices = Layer.mergeAll(
   Layer.mock(GeneratedDocumentStore.GeneratedDocumentStore)({}),
   Layer.mock(ProviderConnectionManager.ProviderConnectionManager)({}),
   Layer.mock(ProviderRuntimeManager.ProviderRuntimeManager)({}),
+  Layer.mock(ScientAgentBackgroundRuntime)({}),
   Layer.mock(WorkspaceBindingResolver)({}),
   Layer.mock(ExtensionsServices.ConnectorRuntime)({}),
   Layer.mock(ExtensionsServices.ExtensionDeliveryReceipts)({}),

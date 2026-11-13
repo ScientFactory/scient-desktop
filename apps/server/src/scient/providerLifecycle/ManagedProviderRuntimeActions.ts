@@ -626,6 +626,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     catalogRevision: Parameters<ProviderManagedRuntimeActions["run"]>[1],
     report: Parameters<ProviderManagedRuntimeActions["run"]>[2],
     awaitActivationWindow: NonNullable<Parameters<ProviderManagedRuntimeActions["run"]>[3]>,
+    options: Parameters<ProviderManagedRuntimeActions["run"]>[4],
   ) {
     const prepared = yield* prepareAction(action);
     const planned = prepared.plan;
@@ -661,6 +662,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
         runtime.install({
           artifact: actionArtifact,
           signal,
+          ...(options?.background ? { downloadTimeLimitMs: null } : {}),
           ...(input.qualify ? { qualify: input.qualify } : {}),
           beforeActivate: (activationSignal) =>
             runPromise(awaitActivationWindow, { signal: activationSignal }),
@@ -671,7 +673,14 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
             const downloadFinished =
               progress.totalBytes !== undefined && downloadedBytes === progress.totalBytes;
             const retry = progress.retry;
-            if (!stageChanged && !downloadAdvanced && !downloadFinished && !retry) return;
+            if (
+              !stageChanged &&
+              !downloadAdvanced &&
+              !downloadFinished &&
+              !retry &&
+              !progress.download
+            )
+              return;
             lastStatus = progress.stage;
             lastReportedBytes = downloadedBytes;
             runFork(
@@ -685,6 +694,7 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
                   ? {}
                   : { downloadedBytes: progress.downloadedBytes }),
                 ...(progress.totalBytes === undefined ? {} : { totalBytes: progress.totalBytes }),
+                ...(progress.download ? { download: progress.download } : {}),
               } satisfies ProviderManagedRuntimeProgress),
             );
           },
@@ -701,7 +711,8 @@ export const makeManagedProviderRuntimeResolution = Effect.fn(
     catalogRevision,
     report,
     awaitActivationWindow = Effect.void,
-  ) => runEffect(action, catalogRevision, report, awaitActivationWindow);
+    options,
+  ) => runEffect(action, catalogRevision, report, awaitActivationWindow, options);
 
   const summary = yield* getSummary.pipe(
     Effect.orElseSucceed(() => ({

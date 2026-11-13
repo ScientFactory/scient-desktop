@@ -10,6 +10,7 @@ import {
   ProviderConnectionSubmitAuthorizationCodeInput,
   ProviderRuntimeCancelInput,
   ProviderRuntimePlan,
+  ProviderRuntimePickInput,
   ProviderRuntimePlanInput,
   ProviderRuntimeStartInput,
   ProviderSignInPageClaimInput,
@@ -27,6 +28,7 @@ export const SCIENT_PROVIDER_CONNECTION_WS_METHODS = {
   serverPlanProviderRuntime: "server.planProviderRuntime",
   serverStartProviderRuntime: "server.startProviderRuntime",
   serverCancelProviderRuntime: "server.cancelProviderRuntime",
+  serverObserveProviderRuntimePick: "server.observeProviderRuntimePick",
 } as const;
 
 export const WsServerStartProviderConnectionRpc = Rpc.make(
@@ -98,5 +100,13 @@ export const WsServerCancelProviderRuntimeRpc = Rpc.make(
     payload: ProviderRuntimeCancelInput,
     success: ServerProviderUpdatedPayload,
     error: Schema.Union([ProviderConnectionError, EnvironmentAuthorizationError]),
+  },
+);
+
+export const WsServerObserveProviderRuntimePickRpc = Rpc.make(
+  SCIENT_PROVIDER_CONNECTION_WS_METHODS.serverObserveProviderRuntimePick,
+  {
+    payload: ProviderRuntimePickInput,
+    error: EnvironmentAuthorizationError,
   },
 );

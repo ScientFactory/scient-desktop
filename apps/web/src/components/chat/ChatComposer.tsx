@@ -969,6 +969,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   });
   // SCIENT-FORK:START — managed runtime updates and provider connection state
   const providerRuntimeUpdate = useComposerProviderRuntimeUpdate({
+    environmentId,
     selectedProviderEntry,
     selectedInstanceId,
     lockedProvider,

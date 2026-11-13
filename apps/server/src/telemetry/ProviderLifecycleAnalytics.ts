@@ -11,6 +11,8 @@ interface Operation {
   readonly outcome: "completed" | "failed" | "cancelled" | null;
   /** The owner's typed classification of a failure; never derived from its message. */
   readonly failureClass?: string;
+  /** Who started a runtime change and how its download went. */
+  readonly details?: Readonly<Record<string, unknown>>;
 }
 
 interface Snapshot {
@@ -50,6 +52,17 @@ function snapshot(provider: ServerProvider): Snapshot {
                 ? operation.status
                 : null,
           ...(operation.failureClass === undefined ? {} : { failureClass: operation.failureClass }),
+          details: {
+            trigger: operation.background ? "background" : "user",
+            ...(operation.attempt === undefined ? {} : { attempt: operation.attempt }),
+            ...(operation.download === undefined
+              ? {}
+              : {
+                  resumedBytes: operation.download.resumedBytes,
+                  downloadSource: operation.download.source,
+                  compressed: operation.download.compressed,
+                }),
+          },
         }
       : null,
     connection: connection
@@ -112,6 +125,7 @@ function lifecycleEvent(
       // The UI message is deliberately not inspected: it can contain paths,
       // credentials, provider output, or URLs. The owner sets the typed class.
       failureClass: next.outcome === "failed" ? (next.failureClass ?? "unknown") : "unknown",
+      ...next.details,
     },
   };
 }

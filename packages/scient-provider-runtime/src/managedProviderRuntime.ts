@@ -45,6 +45,14 @@ export interface ManagedProviderRuntimeProgress {
   readonly totalBytes?: number | undefined;
   /** Set while the download waits to try again after a temporary failure. */
   readonly retry?: ManagedRuntimeDownloadRetry | undefined;
+  /** Set once the download is complete, on the `verifying` stage. */
+  readonly download?: ManagedRuntimeDownloadFacts | undefined;
+}
+
+/** How a finished download went, for analytics. */
+export interface ManagedRuntimeDownloadFacts extends ManagedRuntimeDownloadResult {
+  /** The zstd copy, not the raw binary, was downloaded. */
+  readonly compressed: boolean;
 }
 
 export interface ManagedProviderRuntimeStateV1 {
@@ -108,6 +116,8 @@ export interface ManagedProviderRuntimeInstallInput {
   readonly beforeActivate?: (signal: AbortSignal) => Promise<void>;
   /** Told why the compressed copy failed, before the raw binary is downloaded; a throw stops the install. */
   readonly onCompressedFallback?: (cause: unknown) => void;
+  /** Per download copy; `null` waits as long as data keeps arriving. Ten minutes by default. */
+  readonly downloadTimeLimitMs?: number | null | undefined;
 }
 
 interface ManagedProviderRuntimeActivation {
@@ -673,6 +683,7 @@ export class ManagedProviderRuntime {
     readonly signal: AbortSignal;
     readonly onProgress: ManagedProviderRuntimeInstallInput["onProgress"];
     readonly onCompressedFallback: ManagedProviderRuntimeInstallInput["onCompressedFallback"];
+    readonly timeLimitMs: ManagedProviderRuntimeInstallInput["downloadTimeLimitMs"];
   }): Promise<void> {
     const { artifact, archivePath, signal, onProgress } = input;
     const compressed = artifact.compressed;
@@ -683,9 +694,10 @@ export class ManagedProviderRuntime {
       readonly checksum: ManagedRuntimeArtifact["checksum"];
       readonly size: number;
       readonly destination: string;
+      readonly compressed: boolean;
     }) => {
       onProgress?.({ stage: "downloading", downloadedBytes: 0, totalBytes: copy.size });
-      await this.#dependencies.download({
+      const result = await this.#dependencies.download({
         ...(copy.mirrorUrl
           ? {
               url: copy.mirrorUrl,
@@ -696,6 +708,7 @@ export class ManagedProviderRuntime {
         checksum: copy.checksum,
         destination: copy.destination,
         partialPath: this.#partialDownloadPath(copy.checksum),
+        ...(input.timeLimitMs === undefined ? {} : { timeLimitMs: input.timeLimitMs }),
         expectedSize: copy.size,
         signal,
         onProgress: (downloadedBytes, totalBytes) =>
@@ -703,12 +716,15 @@ export class ManagedProviderRuntime {
         onRetry: (retry) =>
           onProgress?.({ stage: "downloading", downloadedBytes: 0, totalBytes: copy.size, retry }),
       });
-      onProgress?.({ stage: "verifying" });
+      onProgress?.({
+        stage: "verifying",
+        ...(result ? { download: { ...result, compressed: copy.compressed } } : {}),
+      });
     };
     if (compressed && unpack) {
       const compressedPath = `${archivePath}.zst`;
       try {
-        await fetchVerified({ ...compressed, destination: compressedPath });
+        await fetchVerified({ ...compressed, destination: compressedPath, compressed: true });
         await this.#dependencies.verify(compressedPath, compressed.checksum);
         await unpack({
           source: compressedPath,
@@ -732,6 +748,7 @@ export class ManagedProviderRuntime {
       checksum: artifact.checksum,
       size: artifact.size,
       destination: archivePath,
+      compressed: false,
     });
     await this.#dependencies.verify(archivePath, artifact.checksum);
   }
@@ -739,7 +756,15 @@ export class ManagedProviderRuntime {
   async #installOwned(
     input: ManagedProviderRuntimeInstallInput,
   ): Promise<ManagedProviderRuntimeStatus> {
-    const { artifact, signal, onProgress, qualify, beforeActivate, onCompressedFallback } = input;
+    const {
+      artifact,
+      signal,
+      onProgress,
+      qualify,
+      beforeActivate,
+      onCompressedFallback,
+      downloadTimeLimitMs,
+    } = input;
     await NodeFSP.mkdir(this.#stagingDir, { recursive: true, mode: 0o700 });
     // This process launches what it installs. Pruning needs the mutation lock held here.
     await this.#lease(artifact.version);
@@ -764,6 +789,7 @@ export class ManagedProviderRuntime {
         signal,
         onProgress,
         onCompressedFallback,
+        timeLimitMs: downloadTimeLimitMs,
       });
       onProgress?.({ stage: "installing" });
       const stagedExecutable = await this.#dependencies.materialize({

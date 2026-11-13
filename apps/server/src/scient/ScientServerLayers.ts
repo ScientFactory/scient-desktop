@@ -16,6 +16,7 @@ import * as ProviderLifecycleCoordinator from "./providerLifecycle/ProviderLifec
 import * as ProviderActivity from "./providerLifecycle/ProviderActivity.ts";
 import * as ProviderRuntimeManager from "./providerLifecycle/ProviderRuntimeManager.ts";
 import * as ManagedRuntimeCatalogReconciler from "./providerLifecycle/ManagedRuntimeCatalogReconciler.ts";
+import * as ScientAgentBackgroundRuntime from "./providerLifecycle/ScientAgentBackgroundRuntime.ts";
 import * as ToolDiscovery from "./compute/ToolDiscovery.ts";
 import * as AnalysisService from "./analysis/AnalysisService.ts";
 import * as LocalAnalysisStore from "./analysis/LocalAnalysisStore.ts";
@@ -88,11 +89,14 @@ export const WorkspaceBindingResolverLayerLive = WorkspaceBindingResolver.layer.
 );
 
 /** Connection, runtime and catalog managers over one lifecycle coordinator. */
-export const ScientProviderLifecycleLive = Layer.mergeAll(
-  ProviderConnectionManager.layer,
-  ProviderRuntimeManager.layer,
-  ManagedRuntimeCatalogReconciler.layer,
-).pipe(
+export const ScientProviderLifecycleLive = ScientAgentBackgroundRuntime.layer.pipe(
+  Layer.provideMerge(
+    Layer.mergeAll(
+      ProviderConnectionManager.layer,
+      ProviderRuntimeManager.layer,
+      ManagedRuntimeCatalogReconciler.layer,
+    ),
+  ),
   Layer.provideMerge(ProviderLifecycleCoordinator.layer),
   Layer.provideMerge(ProviderActivity.layer),
 );

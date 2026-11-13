@@ -582,6 +582,7 @@ import {
   WsServerPlanProviderRuntimeRpc,
   WsServerStartProviderRuntimeRpc,
   WsServerCancelProviderRuntimeRpc,
+  WsServerObserveProviderRuntimePickRpc,
 } from "./scient/providerConnectionRpcs.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient custom model RPCs.
@@ -2520,6 +2521,7 @@ export const WsServerManagementRpcGroup = RpcGroup.make(
   WsServerPlanProviderRuntimeRpc,
   WsServerStartProviderRuntimeRpc,
   WsServerCancelProviderRuntimeRpc,
+  WsServerObserveProviderRuntimePickRpc,
   WsProviderConsumeResetCreditRpc,
   WsProviderAuthStartRpc,
   WsProviderAuthRespondRpc,
