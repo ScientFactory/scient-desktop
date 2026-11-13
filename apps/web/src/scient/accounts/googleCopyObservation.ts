@@ -126,7 +126,10 @@ export function observeGoogleCopy(
   const ledger = readLedger(environmentId);
   const copy = ledger[profileId];
   if (!copy || copy.generation !== generation) return;
-  if (beginAccountBrowserObservation(environmentId).context !== copy.context) {
+  // Consent off or unknown: nothing is recorded. Consent given again since: a new context, forgotten.
+  const current = beginAccountBrowserObservation(environmentId).context;
+  if (current === undefined) return;
+  if (current !== copy.context) {
     forget(environmentId, ledger, profileId);
     return;
   }

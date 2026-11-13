@@ -156,12 +156,15 @@ it("keeps a copy only under the consent it was made in", () => {
   // Turned off and on again while a window was open: its copy isn't followed either.
   note("browser_window", T0, { began: "consent-a" });
   expect(googleCopyGeneration(environmentId, "work")).toBeUndefined();
-  // A copy followed under one consent, then consent changes: forgotten, nothing sent.
+  // A copy followed under one consent. While consent is off or unknown, answers are set aside.
   note("browser_window", T0);
   observe(valid, T0 + MINUTE);
   state.context = undefined;
   observe(invalid, T0 + 2 * MINUTE);
+  expect(googleCopyGeneration(environmentId, "work")).toBeDefined();
+  // Consent given again is a new context: the copy is forgotten and nothing more is sent.
   state.context = "consent-c";
+  observe(invalid, T0 + 3 * MINUTE);
   expect(googleCopyGeneration(environmentId, "work")).toBeUndefined();
   expect(state.contexts).toEqual(["consent-b"]);
 });

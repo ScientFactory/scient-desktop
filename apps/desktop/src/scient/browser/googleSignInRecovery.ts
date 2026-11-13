@@ -105,11 +105,14 @@ export function watchSignInPopup(window: BrowserWindow, opener: WebContents, rep
   const popup = window.webContents;
   const pageUrl = opener.getURL();
   const restartUrl = signInRestartUrl(pageUrl);
-  let reported = false;
+  // Reported once as a window and once as a frame at most; a stopped window always closes.
+  let reportedWindow = false;
+  let reportedFrame = false;
   const stop = (page: DesktopPreviewSignInBlockedEvent["page"]) => {
-    if (reported) return;
-    reported = true;
-    report({ page, context: "popup", restartUrl, pageUrl });
+    if (!reportedWindow) {
+      reportedWindow = true;
+      report({ page, context: "popup", restartUrl, pageUrl });
+    }
     if (!window.isDestroyed()) window.close();
   };
   popup.on("did-fail-load", (_event, code, _description, url, isMainFrame) => {
@@ -117,8 +120,8 @@ export function watchSignInPopup(window: BrowserWindow, opener: WebContents, rep
     if (!page || !isBlockedGoogleSignIn(code, url)) return;
     if (isMainFrame) stop(page);
     // A sign-in frame inside the window: the window may still be of use, so it stays open.
-    else if (!reported) {
-      reported = true;
+    else if (!reportedFrame && !reportedWindow) {
+      reportedFrame = true;
       report({ page, context: "frame", restartUrl, pageUrl });
     }
   });

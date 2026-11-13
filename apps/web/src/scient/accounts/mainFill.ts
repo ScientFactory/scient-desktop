@@ -119,6 +119,19 @@ function mainSignedOutSince(accounts: ReadonlyArray<AccountSummary>) {
 const replaceGoogleIn = (accounts: ReadonlyArray<AccountSummary>) =>
   signedOutOfGoogle(accounts, DEFAULT_BROWSER_PROFILE_ID) ? { replaceGoogle: true } : {};
 
+/** The consent context each copy into Main began under, for following a Google copy it made. */
+const copyContexts = new WeakMap<DesktopFillMainResult, string | undefined>();
+
+/** `fillMain` whose results remember the consent in force before the copy started. */
+const observedFillMain =
+  (environmentId: EnvironmentId, fillMain: FillMain): FillMain =>
+  async (input) => {
+    const { context } = beginAccountBrowserObservation(environmentId);
+    const result = await fillMain(input);
+    if (result) copyContexts.set(result, context);
+    return result;
+  };
+
 /**
  * After a copy, each unit copied or already the same gets Main's row for the sign-in; a Google
  * unit written into Main starts being followed.
@@ -133,13 +146,9 @@ async function recordCopies(
   if (
     result.units.some(({ sites, outcome }) => outcome === "copied" && sites.includes(GOOGLE_SITE))
   )
-    // A copy into Main takes a moment, so it is observed under the consent in force as it lands.
-    noteGoogleCopy(
-      environmentId,
-      DEFAULT_BROWSER_PROFILE_ID,
-      "main_copy",
-      beginAccountBrowserObservation(environmentId),
-    );
+    noteGoogleCopy(environmentId, DEFAULT_BROWSER_PROFILE_ID, "main_copy", {
+      context: copyContexts.get(result),
+    });
   const landed = result.units.filter(({ outcome }) => outcome === "copied" || outcome === "same");
   for (const row of rows) {
     const sites = website(row)?.sites ?? [];
@@ -422,7 +431,7 @@ export function watchMainFill(registry: AtomRegistry.AtomRegistry, environmentId
   };
   const trigger = mainFillTrigger({
     environmentId,
-    fillMain,
+    fillMain: observedFillMain(environmentId, fillMain),
     current: read,
     record: (result, rows, from) => recordCopies(registry, environmentId, result, rows, from),
     later: (run, ms) => {
@@ -551,7 +560,10 @@ async function fillFromProfile(
     ...replaceGoogleIn(snapshot.accounts),
     skipSites: mainSignOuts(snapshot),
   };
-  const result = await fillMain(input).catch((cause: unknown) => {
+  const result = await observedFillMain(
+    environmentId,
+    fillMain,
+  )(input).catch((cause: unknown) => {
     warn("Couldn't fill Main from a profile", cause);
     return null;
   });
@@ -589,7 +601,10 @@ export async function copySignInIntoMain(environmentId: EnvironmentId, row: Acco
   if (!fillMain || !details || !profileId || !otherPersistentProfile(profileId)) return undefined;
   const snapshot = await readSnapshot(environmentId);
   if (!snapshot || !isUnrestricted(recordOf(snapshot, profileId))) return undefined;
-  const result = await fillMain({
+  const result = await observedFillMain(
+    environmentId,
+    fillMain,
+  )({
     environmentId,
     from: profileId,
     units: [details.sites],

@@ -36,7 +36,7 @@ import { hostsPreviewTab, PreviewWindowHost } from "../scient/multiWindow/Previe
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
 import type { DesktopPreviewSignInBlockedEvent } from "@t3tools/contracts";
-import { noteGoogleSignInBlocked } from "../scient/accounts/googleSignInBlocked";
+import { noteGoogleSignInBlocked, noteTabState } from "../scient/accounts/googleSignInBlocked";
 // SCIENT-FORK:END
 
 /** Every session this window renders as a hosted webview, in a fixed (non-display) order. */
@@ -142,6 +142,7 @@ export function startElectronBrowserHost(): () => void {
     preview.onOpenLink(openLinkInPreview),
     // SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.
     preview.onSignInBlocked(signInBlockedInPreview),
+    preview.onStateChange(noteTabState),
     // SCIENT-FORK:END
   ];
   return () => {

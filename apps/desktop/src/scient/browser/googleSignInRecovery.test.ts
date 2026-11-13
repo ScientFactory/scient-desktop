@@ -151,6 +151,11 @@ describe("watchSignInPopup", () => {
       expect.objectContaining({ page: "credentials", context: "frame" }),
     );
     expect(window.close).not.toHaveBeenCalled();
+
+    // The window itself then goes to Google's sign-in: it still closes, and says so.
+    contents.emit("did-fail-load", {}, -20, "ERR_BLOCKED_BY_CLIENT", IDENTIFIER, true);
+    expect(window.close).toHaveBeenCalledOnce();
+    expect(report).toHaveBeenLastCalledWith(expect.objectContaining({ context: "popup" }));
   });
 
   it("leaves other failures and other sites' popups alone", () => {

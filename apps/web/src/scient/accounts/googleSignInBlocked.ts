@@ -1,4 +1,8 @@
-import type { DesktopPreviewSignInBlockedEvent, EnvironmentId } from "@t3tools/contracts";
+import type {
+  DesktopPreviewSignInBlockedEvent,
+  DesktopPreviewTabState,
+  EnvironmentId,
+} from "@t3tools/contracts";
 import { create } from "zustand";
 
 import { recordAccountBrowserEvent } from "../analytics/accountBrowserAnalytics";
@@ -39,4 +43,14 @@ export function noteGoogleSignInBlocked(
     variant: event.page,
     context: event.context,
   });
+}
+
+/**
+ * A stopped sign-in is about one page: once the tab shows another address it is dropped, so coming
+ * back to the same address later doesn't bring an old explanation back.
+ */
+export function noteTabState(tabId: string, state: DesktopPreviewTabState) {
+  const blocked = useGoogleSignInBlocked.getState().byTabId[tabId];
+  if (blocked && state.navStatus.kind !== "Idle" && state.navStatus.url !== blocked.pageUrl)
+    useGoogleSignInBlocked.getState().dismiss(tabId);
 }
