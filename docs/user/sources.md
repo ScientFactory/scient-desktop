@@ -91,8 +91,18 @@ When the same paper reaches your Library twice, for example from two projects,
 Scient merges the copies on its own only when it is sure. They must share a
 DOI, PubMed, PMC, arXiv, OpenAlex or Semantic Scholar ID, the same Zotero
 item, or the same PDF, and also have the same title (ignoring case, spacing
-and punctuation) and the same type. Copies whose identifiers disagree are never merged on their own, and
-neither is a copy that matches two others that disagree with each other.
+and punctuation) and the same known type. Every copy in a merge must be joined
+to another this way and agree with all the others. Copies whose identifiers
+disagree are never merged on their own, and neither is a copy that matches two
+others that disagree with each other, nor two copies joined only through a
+third that disagrees with both.
+
+The same rule applies when you add a paper, import from Zotero or a reference
+file, add a PDF, or an agent adds one. A paper that shares an identifier, a
+Zotero item or a PDF with a copy already in your Library is taken for that copy
+only when the title and type agree too. Otherwise it is added as its own copy
+and the pair is listed below with the reason, so a wrong DOI on one paper never
+makes another paper stand in for it.
 
 Scient lists a pair for you to decide instead when:
 
@@ -100,7 +110,9 @@ Scient lists a pair for you to decide instead when:
   differ, one has no title or no known type, one is a preprint and the other
   the published paper, they are different arXiv versions, other identifiers
   differ, or you undid their merge. The pair says why, for example "Same
-  identifier, but the titles differ."
+  identifier, but the titles differ." or "Same PDF, but the titles differ."
+  Chapters of one book that carry the book's PDF are not listed for sharing it,
+  and neither is a chapter with its book.
 - they have the same title, first author and year.
 - they share an ISBN or ISSN and have the same title, or both are whole books
   with the same ISBN, and no identifiers disagree. Chapters of one book and
@@ -115,133 +127,34 @@ the pair off the list for good. Both have **Undo**. A long list shows part at
 a time; **Show more** at its end shows the next part. If the list changed in
 the meantime, it starts again from the top, so nothing is skipped.
 
-The **Merged** tab lists merges you can still undo, including those Scient
-made when a project moved into your Library, with the details that differed.
-**Undo** brings the other copy back; changes you made to the kept copy after the
-merge stay, and Scient says which. Scient never merges those two again on its
-own, not even when another project moves in; the pair is listed again, and you
-can still merge them or mark them as not duplicates. After a project moves
-into your Library, its summary line offers **Review** when some merges kept
-different values.
+The **Merged** tab lists merges you can still undo under **Can undo**,
+including those Scient made when a project moved into your Library, with the
+details that differed. **All** lists every merge, also those you undid and
+those that can no longer be undone, with the reason. **Undo** brings the other
+copy back; changes you made to the kept copy after the merge stay, and Scient
+says which. Scient never merges those two again on its own, not even when
+another project moves in or when Undo stopped halfway; the pair is listed
+again, and you can still merge them or mark them as not duplicates. After a
+project moves into your Library, its summary line offers **Review** when some
+merges kept different values.
 
-When a project copied from someone else names a paper and your Library has a
-copy that disagrees with it, for example the same DOI on a paper with another
-title, Scient does not link the two. The project shows the paper as the
-project recorded it, without your copy's PDF.
+Scient keeps the details of every merge for good, because they hold these
+Undo decisions. If one of them cannot be read (for example a damaged file
+from a sync), the screen says so, and Scient merges none of the copies it
+names on its own until the file is repaired. If not even their names can be
+read, it merges nothing on its own.
 
-## Import from Zotero
-
-1. Open Zotero on the same computer as the selected Scient environment, or
-   save a Zotero API key in **Accounts** (see below).
-2. In the **Library**, choose **Import sources → Import from Zotero**.
-3. Select **My Library**, one of your Zotero groups, or a specific collection.
-4. Select individual references, import the selected collection, or import the
-   complete library.
-
-Scient copies each reference's metadata, tags, child notes (as the source's
-note) and every PDF attachment into the project. A citation key the item
-already has, from Zotero or Better BibTeX, is kept. Each source also joins a
-Library collection named after each Zotero collection it is in. The Library
-keeps one level of nesting, so **Chapter 2** inside **Thesis** stays inside it;
-a collection nested deeper joins its ancestor one level down, and the import
-result says which ones did. The original Zotero records and attachments are
-never changed by an import.
-
-Zotero must be open in the same environment where the project runs. For a
-remote project, that means Zotero must run on the remote computer, not only on
-the computer displaying Scient. If Zotero blocks local access, enable **Allow
-other applications on this computer to communicate with Zotero** in Zotero's
-advanced settings and try again.
-
-### Zotero groups
-
-The library menu in the import picker lists the group libraries you can read
-after **My Library**: the groups Zotero on this computer syncs, or on zotero.org
-the groups your key may read (allow group access when you create the key). A
-key that reads groups but not your personal library works too; the picker then
-opens on a group and leaves **My Library** out.
-Choose a group to browse its collections and import from it; sources still go
-into the current project. A group item and an item of yours stay two separate
-sources, even when Zotero gives them the same key, and **Refresh from Zotero**
-reads each source again from the library it came from.
-
-### Your library on zotero.org
-
-When Zotero is not open on that computer, Scient can use your library on
-zotero.org instead. Create a key at zotero.org (**Settings → Security →
-Create new private key**), allow it to read your library and files, and save
-it in **Accounts** as the Zotero key. Allow write access too if you want to use
-**Send to Zotero**. Scient keeps the key in Accounts and sends it only to
-zotero.org. Turning the key **Off** in Accounts stops the Library from using it.
-Zotero on the computer is used first when both are available.
-
-### Keep sources up to date with Zotero
-
-Choose **Import sources → Refresh from Zotero** to bring changes you made in
-Zotero into sources imported from it. Fields you changed in Zotero are updated,
-new notes and PDFs come in, and tags you added or removed in Zotero are added or
-removed here. When you changed the same field both here and in Zotero, your
-version here is kept and the refresh lists it: choose **Use Zotero's** or **Keep
-mine**. An empty field in Zotero never clears one here, and an item you deleted
-in Zotero stays in your Library.
-
-### Send to Zotero
-
-Choose **Send to Zotero** from a source's actions to add it to your zotero.org
-library, or to update the Zotero item it came from with your changes here.
-Only fields that differ are sent, and an empty field here never clears one in
-Zotero. If the item was changed in Zotero after Scient last read it, nothing is
-overwritten: refresh from Zotero first, then send again. This needs the Zotero
-key in Accounts with write access. Changes are not sent automatically; there is
-no two-way sync.
-
-When your key may write to a group and the group lets you edit its library,
-**Send to Zotero** asks where to send: **My Library** or that group. A source
-sent to a library other than the one it came from gets a new item there and is
-linked to it from then on. Scient refuses to send to a group the key can only
-read.
-
-Long imports can continue in the background. Completed items remain saved, and
-an interrupted import can resume when the Library reopens. Exact duplicates are
-skipped. When a title, creator, and year look similar but do not prove that two
-records are identical, Scient asks whether to import the item separately.
-
-## Import PDF files
-
-1. In the **Library**, choose **Import sources → Import PDF files**.
-2. Select one or more PDFs.
-3. Review the imported records and correct any incomplete metadata.
-
-Scient copies each PDF into the project and creates an editable source record.
-It first uses metadata embedded in the file. When the PDF contains one clear
-DOI or explicitly labelled PMID, Scient can use that identifier to retrieve
-better bibliographic metadata or an abstract from PubMed, Crossref, or Europe
-PMC. It does not use fuzzy title matching, OCR, or an AI model to invent
-missing facts. The date a PDF file was made is not taken as the publication
-date; only a publication date the publisher embedded counts. A PDF remains
-importable when metadata cannot be resolved; the unknown fields stay visible
-for correction.
-
-To get faster, more reliable answers from Crossref, OpenAlex and Unpaywall, add
-a contact email in **Settings ▸ Documents ▸ Library**. Scient sends it only to
-those services, and sends no email while the field is empty.
-
-Scient also uses your own research keys when you add them in **Accounts** under
-**Research**: **OpenAlex** (get a free key at
-[openalex.org/settings/api](https://openalex.org/settings/api)), **Google Books**
-(an API key from the
-[Google Cloud console](https://console.cloud.google.com/apis/credentials) with
-the Books API turned on; if Google refuses the key, Scient asks without it),
-**NCBI / PubMed**, **Semantic Scholar** and the
-**Unpaywall email**. Without a key these services share a small allowance per
-network address, which can run out while adding many sources. A key you turn
-off in Accounts is not sent.
-
-For remote projects, the selected PDFs are transferred to the selected project
-environment. Metadata services receive only the exact public identifier used
-for lookup, not the PDF itself. PubMed metadata is provided through NCBI
-E-utilities and remains subject to the
-[NCBI disclaimer and copyright notice](https://www.ncbi.nlm.nih.gov/home/about/policies/).
+**A project's paper and your Library copy.** When a project copied from
+someone else names a paper and your Library has a copy that disagrees with it,
+for example the same DOI on a paper with another title, or more than one copy
+that matches, Scient does not link them on its own. The project shows the
+paper as the project recorded it, without your copy's PDF. Its details show
+**Library copy**: which copies Scient compared it with and why it did not link
+them. Choose **Link to this Library copy** when it is the same paper: the
+project then uses that copy and its PDF, and keeps the paper's citation key,
+its note for this project and its place in reviews. **Undo** in the
+confirmation goes back. Choose **Keep separate** when it is not; Scient stops
+asking, and **Ask again** withdraws that.
 
 ## Add by identifier
 
@@ -256,7 +169,9 @@ PMIDs, arXiv for arXiv IDs, and Open Library, then Google Books, for ISBNs.
 Each one that is found becomes its own source with the registry's title,
 authors and date, marked as checked. The input then lists anything it did not
 add and why: already in the Library (with **View**), not found, not an
-identifier, or a registry that could not be reached. Entries of the last kind
+identifier, or a registry that could not be reached. An identifier already in
+your Library is still looked up, because Scient only takes it for the copy you
+have when the registry's title and type agree with it. Entries of the last kind
 stay in the box so **Add** tries them again. Up to 50 identifiers can be added
 at a time.
 

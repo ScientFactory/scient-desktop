@@ -326,7 +326,7 @@ Use the databases the user names. For each search, log the database, the exact s
 
 ## Remove duplicates
 
-The Library already merges records with the same DOI or PMID, and the flow counts those as duplicates. Then work through \`possibleDuplicates\`: mark a duplicate only when both records are the same work, keeping the more complete or published version; use \`mark-distinct\` for different works that share a title.
+A record whose DOI or PMID is already in the Library is taken for that record only when its title and type agree too, and the flow counts it as a duplicate. One that shares an identifier but disagrees is kept as its own record, and the Library lists the pair with the reason (\`scient_sources_list\` with duplicates); settle it like the pairs below. Then work through \`possibleDuplicates\`: mark a duplicate only when both records are the same work, keeping the more complete or published version; use \`mark-distinct\` for different works that share a title.
 
 ## Screen
 
