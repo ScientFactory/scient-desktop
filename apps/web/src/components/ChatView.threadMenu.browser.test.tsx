@@ -192,18 +192,14 @@ it("a rejected send leaves the timeline when a new draft was typed meanwhile", a
   await vi.waitFor(() =>
     expect(dispatchedCommands().map((command) => command.type)).toContain("message.dispatch"),
   );
-  // SCIENT-FORK:START — Scient keeps the sent text in the composer until the server admits it,
-  // so the failed text stays there beside the new draft instead of in a copy toast.
-  const timeline = page.getByLabelText("Conversation");
-  await expect.element(timeline.getByText("Failed prompt")).toBeVisible();
-  await userEvent.keyboard(" Next draft");
+  await expect.element(page.getByText("Failed prompt")).toBeVisible();
+  await userEvent.keyboard("Next draft");
 
   await rejectPendingCommand("Attachment 'sample.png' cannot be sent.");
 
   await expect.element(page.getByText("Attachment 'sample.png' cannot be sent.")).toBeVisible();
-  await expect.element(timeline.getByText("Failed prompt")).not.toBeInTheDocument();
-  expect(editor.element().textContent).toContain("Failed prompt Next draft");
-  // SCIENT-FORK:END
+  await expect.element(page.getByText("Failed prompt")).not.toBeInTheDocument();
+  expect(editor.element().textContent).toContain("Next draft");
 });
 
 it("Enter on an empty prompt resumes an interrupted thread", async () => {

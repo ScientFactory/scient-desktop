@@ -104,8 +104,9 @@ The owned base is main after #870. The branch is `codex/t3-sync-f70e349eca-20261
 - **Cross-tab saves (#35110):** Scient's window sync for drafts and the prompt stash already merges
   on write and applies other windows' changes live, so T3's merge code is not taken; T3's tests
   pass.
-- **Failed-send restore (efd683ccc3):** not taken. Scient keeps the draft until the server accepts
-  the message and already removes the pending row on failure.
+- **Failed-send restore (efd683ccc3):** main's own change, merged here, now clears the composer
+  when a message is sent, as T3 does. A failed send puts the text back, or offers it in a "Restore
+  message" toast when a new draft was typed meanwhile. T3's test passes as written.
 - **Remembered Files folders (#35067):** rebuilt as a marked seam on Scient's lazy file tree.
 - **PDF viewer fixes (#33956, #35666):** Scient replaced `PdfViewer` with its own reader; the files
   stay deleted.
@@ -159,8 +160,7 @@ repeats.
 - **Model fallback:** T3's new pick from the raw model list (#24110) is skipped for Pi, Oh My Pi
   and Scient Agent, which pick only from the models they show.
 - **Tests:** Scient tests take T3's new fields and labels, its per-prompt Pi acknowledgement, its
-  per-turn Codex config read and its scrollbar hit test. A T3 test expecting the failed text to
-  leave the composer now checks Scient's behaviour: the text stays until the server accepts it.
+  per-turn Codex config read and its scrollbar hit test.
 
 ## Follow-ups
 
