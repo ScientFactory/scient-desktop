@@ -31,6 +31,8 @@ import {
 } from "../scient-provider/CodexNativeSession.ts";
 // SCIENT-FORK: shared native start receipts and prompt acceptance.
 import { turnStartErrorKeepingReceipt } from "../scient-provider/NativeTurnReceipts.ts";
+// SCIENT-FORK: temporary Computer Use launch paths (openai/codex#35448).
+import { codexComputerUsePathArgs } from "../../scient/providerLifecycle/CodexComputerUsePath.ts";
 // SCIENT-FORK:START Scient complete native input composition
 // SCIENT-FORK: native delivery uses the same complete input composition as preflight.
 import { formatScientCurrentInput } from "../ScientCurrentInput.ts";
@@ -1996,7 +1998,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         });
         const resolvedLaunch = yield* resolveSpawnCommand(
           settings.binaryPath || "codex",
-          codexAppServerArgs(resolveCodexLaunchArgs(settings.launchArgs, environment)),
+          [
+            // SCIENT-FORK: temporary — make ChatGPT's relative Computer Use entry start (openai/codex#35448).
+            // First, so explicit launch arguments still win.
+            ...(yield* codexComputerUsePathArgs(environment, fileSystem, path)),
+            ...codexAppServerArgs(resolveCodexLaunchArgs(settings.launchArgs, environment)),
+          ],
           { env: environment, extendEnv: false },
         );
         const launch = Object.freeze({
