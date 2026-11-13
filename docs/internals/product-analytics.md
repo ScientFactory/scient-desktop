@@ -662,6 +662,41 @@ A tool call that ends with no result is `exception` and Scient's, except argumen
 Compute runs also carry `actor` (`user` or `agent`), `entry` (`console`, `file`, `selection`,
 `cell`, `run-file`) and `runtimeSource`.
 
+## Why a turn or delegated task failed
+
+`provider.turn.failed` keeps `failureClass` and adds the cause a provider gave, when it gave one:
+
+- `failureCode`: one machine reason. Scient Agent reports its error classifier's kinds in
+  `prompt_result.error.kinds` (scient-agent `SA-FAILURE-KIND`), and
+  [`OmpTurnOutcome.ts`](../../apps/server/src/provider/omp/OmpTurnOutcome.ts) keeps the most
+  specific: `cost_cap`, then `oauth-expiry`, `usage-limit`, `account-policy`, `auth-failed`,
+  `content-blocked`, `payload-rejected`, `context-overflow` and so on down to `transient`, then
+  `http_<status>` for an agent without kinds. The OMP host names its own outcomes:
+  `process_exit`, `prompt_result_timeout`, `drain_busy`, `idle_confirmation_failed`,
+  `command_rejected`, `command_timeout` and `rpc_failed`. A retry the host stops after it never
+  resumed is `retry_stalled` unless the provider gave a code; an out-of-memory kill is `oom_kill`.
+  Claude result subtypes and process exits, `api_error_<status>`, and Codex error variants and
+  ChatGPT sharing codes come from those adapters.
+  [`failureCodes.ts`](../../packages/scient-analytics/src/failureCodes.ts) lists each
+  provider's known codes, ChatGPT sharing codes included by name, and the contract itself drops
+  anything else, since a code that only looks like an identifier may be free text a provider sent.
+- `httpStatus`: the provider's HTTP status, 100 to 599, on the failure itself
+  (`OrchestrationV2ProviderFailure.httpStatus`).
+- `retryAttempts`, also on `provider.turn.completed`: retry attempts the provider reported for the
+  turn's root, each retry cycle counted at its highest attempt. These are reported attempts, not
+  proven requests. Zero means none was reported.
+
+The failure is the run's latest failed root error item, as `latestRootProviderFailure` picks it; a
+retry that recovered or a subagent's error is not the turn's failure. These fields explain a
+failure; they do not change its class or what recovery does with it.
+
+A failed `mcp.delegated_task.finished` adds `failurePhase` (`before_provider` when the child run
+failed before its provider started a turn, `provider`, or `unknown` when there is no local child
+run, as for a task on another machine) and the child run's `failureClass`, `failureCode` and
+`httpStatus`, read by [`DelegatedTaskFailure.ts`](../../apps/server/src/telemetry/DelegatedTaskFailure.ts)
+from the run the task reported, never from its result text. A call refused before a task exists is
+a failed `mcp.tool.invoked`, not a finished task.
+
 Agents also run programs in their own terminal, which bypasses Scient's tools. At each turn's end
 the native observer sends one `provider.commands.observed` per program category the turn ran, with
 `commandCount`, `failedCount` and `stoppedCount`.

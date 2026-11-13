@@ -10,6 +10,7 @@ export {
   type NormalizationContext,
   type NormalizedEvent,
 } from "./contract.ts";
+export { analyticsFailureCode } from "./failureCodes.ts";
 export {
   createAnalyticsRuntime,
   type AnalyticsRuntime,

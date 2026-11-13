@@ -345,6 +345,11 @@
       "path": "apps/web/src/scient/accounts/accountIcons.json",
       "anchor": "\"github.com\"",
       "purpose": "Accounts-owned bundled logos; the OMP signal matches only inside their base64 image data. Nothing OMP mounts here."
+    },
+    {
+      "path": "packages/scient-analytics/src/failureCodes.ts",
+      "anchor": "const OMP_CODES = new Set([",
+      "purpose": "List the Scient Agent and Oh My Pi failure codes (the agent's error kinds and the OMP host's outcome reasons) that may leave the computer as failureCode; any other OMP string is dropped."
     }
   ]
 }
