@@ -593,10 +593,16 @@ under the same lock. The resolver treats tombstones as it treats the trash (by
 ID, alias, hydration ID, or a corroborated match of the pin's `work`, a
 merged-away copy only while its survivor is gone), so such a pin stays
 `removed` and its snapshot serves it; a `removed` resolution names the removed
-records in `candidateIds`. The move's per-record copy honours tombstones too,
-so an old copy of a moved project never copies the record back. Nothing clears
-a tombstone: a live record of the same work, imported again on purpose,
-resolves first. The Trash listing names, per entry, the checkouts that would
+records in `candidateIds`. The move asks the same rule
+(`scientProjectSourceRemovalCheck`) before it creates a library record or trash
+entry from a v1 store whose ID the library lacks, so neither an old copy nor
+another project that imported the same work under its own ID brings a removed
+record back; a contradicting work is still copied. PDFs, full text and
+highlights are copied only for the records and trash entries the library keeps
+(bytes a kept source shares stay); the rest is in the sealed pre-move archive
+and the move's backup, never in the live Library. Nothing clears a tombstone: a
+live record of the same work, imported again on purpose (by intake or a project
+package), resolves first. The Trash listing names, per entry, the checkouts that would
 keep citing it (`citedBy`), and the agent's permanent removal answers
 `stillCitedBy`.
 A `contradicted` pin is not hydrated either: the project snapshot serves it,

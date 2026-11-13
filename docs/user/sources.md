@@ -418,7 +418,8 @@ matched, not copied twice; PDFs and highlights they lack are added. A note this
 project already has stays, and the package's version goes into **Earlier
 versions**. A review that differs from this project's becomes a review with
 another version, to keep, replace or combine. This works with an empty Library
-and without the computer the package came from.
+and without the computer the package came from. Importing a package is a
+deliberate import, so a paper in it that you deleted for good comes back.
 
 ## Review and manage a source
 
@@ -463,7 +464,9 @@ you restore it; the message says how many other projects have it. Before
 in the trash: deleted for good, the paper stays out of your Library, and those
 projects keep citing it from their own copy of its citation details, listed as
 "Not in this Library". An agent that deletes a paper for good is told the same.
-Importing or adding the paper again puts it back on purpose. The Trash
+Only a deliberate import puts it back: adding the paper again, or importing a
+project package that has it. Moving another project into your Library, or an
+old copy of a project, brings back neither the paper nor its PDF. The Trash
 also holds the copies that merges took away: only the merge's **Undo** brings
 those back, and once the trash is emptied those merges can no longer be undone.
 
