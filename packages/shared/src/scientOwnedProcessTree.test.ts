@@ -347,6 +347,14 @@ describe.skipIf(Context.get(Context.empty(), HostProcess.Platform) === "win32")(
           detached: true,
           stdio: ["ignore", "pipe", "ignore"],
         });
+        // A failed assertion before the group kill below must not leave the root running.
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            try {
+              process.kill(-root.pid!, "SIGKILL");
+            } catch {}
+          }),
+        );
         const grandchild = yield* Effect.callback<number>((resume) => {
           root.stdout!.once("data", (chunk) =>
             resume(Effect.succeed(Number(String(chunk).trim()))),
