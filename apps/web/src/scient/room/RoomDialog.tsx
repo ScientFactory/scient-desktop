@@ -5,15 +5,13 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
-  ROOM_ROLE_DESCRIPTION,
   ROOM_ROLE_LABEL,
   type RoomAccessDuration,
   type RoomParticipant,
-  type RoomParticipantId,
   type RoomRole,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { CheckIcon, CopyIcon, UsersIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, LinkIcon, UsersIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { guestShareDialogThreadAtom } from "~/components/chat/guestShareDialogState";
@@ -27,9 +25,10 @@ import {
   DialogPopup,
   DialogTitle,
 } from "~/components/ui/dialog";
-import { Input } from "~/components/ui/input";
 import { NativeSelect } from "~/components/ui/select";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
+import { cn } from "~/lib/utils";
 import { appAtomRegistry } from "~/rpc/atomRegistry";
 import { useQuietThreadProjection } from "~/state/entities";
 import { useEnvironmentSubscription } from "~/state/query";
@@ -38,9 +37,6 @@ import { useEnvironmentScope } from "~/state/session";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { useOrchestrationCommand } from "~/state/use-orchestration-command";
-
-const ROLE_LABEL = ROOM_ROLE_LABEL;
-const ROLE_DESCRIPTION = ROOM_ROLE_DESCRIPTION;
 
 const DURATION_LABEL: Record<RoomAccessDuration, string> = {
   day: "1 day",
@@ -74,12 +70,6 @@ export function RoomDialogHost() {
   );
 }
 
-type InviteState =
-  | { readonly status: "idle" }
-  | { readonly status: "creating" }
-  | { readonly status: "created"; readonly url: string; readonly participantId: RoomParticipantId }
-  | { readonly status: "failed"; readonly message: string };
-
 const failureMessage = (
   result: Parameters<typeof squashAtomCommandFailure>[0],
   fallback: string,
@@ -87,6 +77,8 @@ const failureMessage = (
   const error = squashAtomCommandFailure(result);
   return error instanceof Error ? error.message : fallback;
 };
+
+const ROLES = ["watch", "discuss", "agent"] as const;
 
 function RoomDialog({
   threadRef,
@@ -106,24 +98,22 @@ function RoomDialog({
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "invite link" });
   const [role, setRole] = useState<RoomRole>("discuss");
   const [duration, setDuration] = useState<RoomAccessDuration>("week");
-  const [state, setState] = useState<InviteState>({ status: "idle" });
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
 
+  // One step: the invite is made and its link copied, ready to paste to the person.
   const createInvite = async () => {
-    setState({ status: "creating" });
+    setCreating(true);
+    setError(null);
     const result = await invite({
       environmentId: threadRef.environmentId,
       input: { threadId: threadRef.threadId, role, duration },
     });
-    if (result._tag === "Success") {
-      setState({ status: "created", ...result.value });
-      return;
-    }
-    if (isAtomCommandInterrupted(result)) {
-      setState({ status: "idle" });
-      return;
-    }
-    setState({ status: "failed", message: failureMessage(result, "Could not create an invite.") });
+    setCreating(false);
+    if (result._tag === "Success") copyToClipboard(result.value.url);
+    else if (!isAtomCommandInterrupted(result))
+      setError(failureMessage(result, "Could not create an invite."));
   };
 
   const act = (action: Parameters<typeof roomAction>[0]["input"]["action"]) =>
@@ -134,79 +124,69 @@ function RoomDialog({
 
   const people = room?.participants ?? [];
   return (
-    <Dialog open onOpenChange={(open) => (!open && state.status !== "creating" ? onClose() : null)}>
+    <Dialog open onOpenChange={(open) => (!open && !creating ? onClose() : null)}>
       <DialogPopup className="max-w-lg">
         <DialogHeader>
           <DialogTitle>Invite people</DialogTitle>
           <DialogDescription>
-            People you invite see this thread live, including the agent&apos;s work, and can talk
-            with you here. The agent only gets what someone sends to it.
+            They see this thread live. The agent only gets what someone sends to it.
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
           <div className="flex flex-col gap-4">
             <section className="flex flex-col gap-2" aria-label="New invite">
               <div className="flex items-center gap-2">
-                <NativeSelect
-                  aria-label="Permission"
-                  size="sm"
-                  value={role}
-                  onChange={(event) => setRole(event.target.value as RoomRole)}
-                >
-                  {(["watch", "discuss", "agent"] as const).map((value) => (
-                    <option key={value} value={value}>
-                      {ROLE_LABEL[value]}
-                    </option>
-                  ))}
-                </NativeSelect>
-                <NativeSelect
-                  aria-label="Access for"
-                  size="sm"
-                  value={duration}
-                  onChange={(event) => setDuration(event.target.value as RoomAccessDuration)}
-                >
-                  {(["day", "week", "month"] as const).map((value) => (
-                    <option key={value} value={value}>
-                      {DURATION_LABEL[value]}
-                    </option>
-                  ))}
-                </NativeSelect>
+                <span className="min-w-0 flex-1">
+                  <NativeSelect
+                    aria-label="Permission"
+                    size="sm"
+                    value={role}
+                    onChange={(event) => setRole(event.target.value as RoomRole)}
+                  >
+                    {ROLES.map((value) => (
+                      <option key={value} value={value}>
+                        {ROOM_ROLE_LABEL[value]}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </span>
+                <span className="w-28 shrink-0">
+                  <NativeSelect
+                    aria-label="Access for"
+                    size="sm"
+                    value={duration}
+                    onChange={(event) => setDuration(event.target.value as RoomAccessDuration)}
+                  >
+                    {(["day", "week", "month"] as const).map((value) => (
+                      <option key={value} value={value}>
+                        {DURATION_LABEL[value]}
+                      </option>
+                    ))}
+                  </NativeSelect>
+                </span>
                 <Button
                   size="sm"
-                  disabled={!canInvite || state.status === "creating"}
+                  className="shrink-0"
+                  disabled={!canInvite || creating}
                   onClick={() => void createInvite()}
                 >
-                  {state.status === "creating" ? "Creating..." : "Create invite"}
+                  {isCopied ? <CheckIcon /> : <LinkIcon />}
+                  {creating ? "Creating..." : isCopied ? "Link copied" : "Copy invite link"}
                 </Button>
               </div>
-              <p className="text-muted-foreground text-xs">{ROLE_DESCRIPTION[role]}</p>
-              {state.status === "created" ? (
-                <div className="flex items-center gap-2">
-                  <Input
-                    readOnly
-                    aria-label="Invite link"
-                    value={state.url}
-                    onFocus={(event) => event.currentTarget.select()}
-                  />
-                  <Button size="sm" variant="outline" onClick={() => copyToClipboard(state.url)}>
-                    {isCopied ? <CheckIcon /> : <CopyIcon />}
-                    {isCopied ? "Copied" : "Copy"}
-                  </Button>
-                </div>
-              ) : null}
-              {state.status === "created" ? (
+              {role === "agent" ? (
                 <p className="text-muted-foreground text-xs">
-                  This link works for one person. Create another for each person you invite.
+                  The agent works on this computer, with your files and accounts.
                 </p>
               ) : null}
-              {state.status === "failed" ? (
+              {error !== null ? (
                 <p role="alert" className="text-destructive text-xs">
-                  {state.message}
+                  {error}
                 </p>
               ) : null}
             </section>
             {people.length > 0 ? (
-              <ul className="flex flex-col gap-2" aria-label="People in this room">
+              <ul className="flex flex-col gap-1" aria-label="People in this room">
                 {people.map((participant) => (
                   <ParticipantRow
                     key={participant.id}
@@ -224,10 +204,10 @@ function RoomDialog({
             ) : null}
           </div>
         </DialogPanel>
-        <DialogFooter>
-          {room !== null ? (
+        {room !== null ? (
+          <DialogFooter>
             <Button
-              variant="destructive-outline"
+              variant="ghost-destructive"
               size="sm"
               disabled={!canOperate || closing}
               onClick={async () => {
@@ -238,11 +218,8 @@ function RoomDialog({
             >
               Stop sharing
             </Button>
-          ) : null}
-          <Button size="sm" onClick={onClose}>
-            Done
-          </Button>
-        </DialogFooter>
+          </DialogFooter>
+        ) : null}
       </DialogPopup>
     </Dialog>
   );
@@ -261,29 +238,49 @@ function ParticipantRow(props: {
     reportFailure: false,
   });
   const { copyToClipboard, isCopied } = useCopyToClipboard({ target: "invite link" });
-  const pending = participant.name === null;
+  const name = participant.name ?? "Invited";
   return (
     <li className="flex items-center gap-2">
       <span
         aria-hidden
-        className={
-          props.online
-            ? "size-2 shrink-0 rounded-full bg-success"
-            : "size-2 shrink-0 rounded-full bg-border"
-        }
+        className={cn("size-2 shrink-0 rounded-full", props.online ? "bg-success" : "bg-border")}
       />
-      <span className="min-w-0 flex-1 truncate text-sm">
-        {participant.name ?? "Invite not opened yet"}
-        <span className="sr-only">{props.online ? ", online" : ""}</span>
-        <span className="text-muted-foreground text-xs">
-          {" "}
-          · until {expiryLabel(participant.expiresAt)}
-        </span>
-      </span>
-      {pending ? (
-        <Button
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <span
+              className={cn(
+                "min-w-0 flex-1 truncate text-sm",
+                participant.name === null && "text-muted-foreground",
+              )}
+            />
+          }
+        >
+          {name}
+          <span className="sr-only">{props.online ? ", here now" : ""}</span>
+        </TooltipTrigger>
+        <TooltipPopup side="top">Access until {expiryLabel(participant.expiresAt)}</TooltipPopup>
+      </Tooltip>
+      <span className="w-48 shrink-0">
+        <NativeSelect
+          aria-label={`Permission of ${name}`}
           size="xs"
+          value={participant.role}
+          disabled={!props.canManage}
+          onChange={(event) => props.onRole(event.target.value as RoomRole)}
+        >
+          {ROLES.map((value) => (
+            <option key={value} value={value}>
+              {ROOM_ROLE_LABEL[value]}
+            </option>
+          ))}
+        </NativeSelect>
+      </span>
+      {participant.name === null ? (
+        <Button
+          size="icon-xs"
           variant="ghost-muted"
+          aria-label="Copy invite link again"
           onClick={async () => {
             const result = await inviteLink({
               environmentId: props.threadRef.environmentId,
@@ -293,32 +290,16 @@ function ParticipantRow(props: {
           }}
         >
           {isCopied ? <CheckIcon /> : <CopyIcon />}
-          {isCopied ? "Copied" : "Copy link"}
         </Button>
       ) : null}
-      <span className="w-44 shrink-0">
-        <NativeSelect
-          aria-label={`Permission of ${participant.name ?? "invited person"}`}
-          size="xs"
-          value={participant.role}
-          disabled={!props.canManage}
-          onChange={(event) => props.onRole(event.target.value as RoomRole)}
-        >
-          {(["watch", "discuss", "agent"] as const).map((value) => (
-            <option key={value} value={value}>
-              {ROLE_LABEL[value]}
-            </option>
-          ))}
-        </NativeSelect>
-      </span>
       <Button
-        size="xs"
-        variant="ghost-destructive"
+        size="icon-xs"
+        variant="ghost-muted"
         disabled={!props.canManage}
-        aria-label={`Remove ${participant.name ?? "invited person"}`}
+        aria-label={`Remove ${name}`}
         onClick={props.onRemove}
       >
-        Remove
+        <XIcon />
       </Button>
     </li>
   );

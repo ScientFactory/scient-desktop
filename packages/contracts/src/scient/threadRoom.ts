@@ -48,13 +48,6 @@ export const ROOM_ROLE_LABEL: Record<RoomRole, string> = {
   agent: "Can also message the agent",
 };
 
-export const ROOM_ROLE_DESCRIPTION: Record<RoomRole, string> = {
-  watch: "Sees the thread live, including the agent's work.",
-  discuss: "Also writes to people here and can suggest messages for the agent.",
-  agent:
-    "Also messages the agent and can stop it. The agent works on this computer with your files and accounts.",
-};
-
 export const RoomAccessDuration = Schema.Literals(["day", "week", "month"]);
 export type RoomAccessDuration = typeof RoomAccessDuration.Type;
 export const ROOM_ACCESS_DURATION_MS: Record<RoomAccessDuration, number> = {
