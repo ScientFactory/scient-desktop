@@ -232,16 +232,22 @@ export function overleafChipView(
 export function refusalText(
   refusal: ScientOverleafRefusal,
   action: "sync" | "connect" = "sync",
+  /** The sync had already changed the folder, so the refusal can't say nothing changed. */
+  afterProgress = false,
 ): string {
   return (
-    knownRefusalText(refusal, action) ?? refusal.message ?? `Sync stopped (${refusal.reason}).`
+    knownRefusalText(refusal, action, afterProgress) ??
+    refusal.message ??
+    `Sync stopped (${refusal.reason}).`
   );
 }
 
 function knownRefusalText(
   refusal: ScientOverleafRefusal,
   action: "sync" | "connect",
+  afterProgress: boolean,
 ): string | null {
+  const unchanged = afterProgress ? "so the sync stopped there" : "so nothing was changed";
   const filesystem = overleafFilesystemRefusalText(refusal.reason);
   if (filesystem !== null) return filesystem;
   const names = refusal.paths ?? (refusal.path ? [refusal.path] : []);
@@ -386,11 +392,11 @@ function knownRefusalText(
     case "request-incomplete":
       return "An earlier attempt stopped before it finished, so it isn't run again. Try again.";
     case "records-unreadable":
-      return "Scient can't read one of its Overleaf link records, so nothing was linked or changed. See Settings › Synced folders › Overleaf.";
+      return `Scient can't read one of its Overleaf link records, ${afterProgress ? "so the sync stopped there" : "so nothing was linked or changed"}. See Settings › Synced folders › Overleaf.`;
     case "editor-unsaved":
       return refusal.path
-        ? `${refusal.path} has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again. Nothing was changed.`
-        : "An open Scient window didn't answer the request to save its editors, so nothing was changed. Try again.";
+        ? `${refusal.path} has unsaved edits or a save that needs review. If the file was deleted, keep or discard its edits in the editor, then try again.${afterProgress ? "" : " Nothing was changed."}`
+        : `An open Scient window didn't answer the request to save its editors, ${unchanged}. Try again.`;
     case "overleaf-moved":
       return "Overleaf kept changing while the conflicts were shown. Sync again.";
     case "folder-kept-changing":
@@ -776,7 +782,7 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
     case "refused":
       return {
         title: "Couldn't sync with Overleaf",
-        lines: [...progress, refusalText(result.refusal)],
+        lines: [...progress, refusalText(result.refusal, "sync", progress.length > 0)],
         tone: "error",
         hasChanges: false,
         needsDecision: false,
@@ -784,7 +790,7 @@ export function overleafResultView(result: ScientOverleafSyncResult): OverleafRe
     case "unsettled":
       return {
         title: "Couldn't sync with Overleaf",
-        lines: [...progress, refusalText({ reason: result.reason })],
+        lines: [...progress, refusalText({ reason: result.reason }, "sync", progress.length > 0)],
         tone: "error",
         hasChanges: false,
         needsDecision: false,

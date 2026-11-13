@@ -422,6 +422,20 @@ describe("overleafResultView", () => {
       }).tone,
     ).toBe("error");
   });
+
+  it("never says nothing changed after it settled an interrupted sync", () => {
+    for (const refusal of [{ reason: "editor-unsaved" }, { reason: "records-unreadable" }]) {
+      const { lines } = overleafResultView({
+        _tag: "refused",
+        refusal,
+        retried: false,
+        settled: { outcome: "complete", interrupted: 0, markerPaths: [] },
+      });
+      expect(lines).toHaveLength(2);
+      expect(lines.join(" ")).not.toMatch(/nothing was (linked or )?changed/iu);
+    }
+    expect(refusalText({ reason: "editor-unsaved" })).toMatch(/nothing was changed/u);
+  });
 });
 
 describe("refusalText", () => {
