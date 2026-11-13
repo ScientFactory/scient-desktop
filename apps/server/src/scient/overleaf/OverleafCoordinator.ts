@@ -1035,7 +1035,8 @@ export const make = Effect.fn("OverleafCoordinator.make")(function* (
       return Effect.forEach([...versionsOf], ([relativePath, versions]) =>
         Effect.gen(function* () {
           const main =
-            versions.find((kept) => kept.retainedPath?.endsWith("/retained")) ?? versions[0]!;
+            versions.find((kept) => NodePath.basename(kept.retainedPath ?? "") === "retained") ??
+            versions[0]!;
           const others = unique(
             versions.filter((kept) => kept !== main).map((kept) => keptAt(kept.retainedPath)!),
           );
