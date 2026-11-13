@@ -8,7 +8,11 @@ import { readScientProjectIdentity } from "@scientfactory/project-init";
 import * as Schema from "effect/Schema";
 
 import { assessSourceMetadataDuplicate } from "./duplicates.ts";
-import { readLibraryAliasesAt, resolveScientLibraryAlias } from "./libraryAliases.ts";
+import {
+  readLibraryAliasesAt,
+  resolveScientLibraryAlias,
+  type ScientLibraryAliases,
+} from "./libraryAliases.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
 import {
   listScientLibraryInstances,
@@ -244,6 +248,74 @@ function matchWork(
     : { by: "contradicted", ids: assessment.matchingSourceIds };
 }
 
+interface RemovedSources {
+  readonly libraryId: string;
+  readonly records: ReadonlyArray<ScientSourceRecord>;
+}
+
+async function readRemovedSources(
+  root: string,
+  library: ScientLibraryLocation,
+  liveTarget: (sourceId: string) => string | null | Promise<string | null>,
+): Promise<RemovedSources> {
+  const [{ libraryId }, entries, deleted] = await Promise.all([
+    readScientLibraryManifest(root),
+    readScientSourceTrashEntries(library),
+    readScientSourceTombstones(library),
+  ]);
+  const records: ScientSourceRecord[] = [];
+  for (const entry of [...entries, ...deleted]) {
+    // A merge moves the losing record to the trash; that is not a removal while the winner lives.
+    if (!entry.mergedInto || (await liveTarget(entry.sourceId)) === null) {
+      records.push(entry.record);
+    }
+  }
+  return { libraryId, records };
+}
+
+/** The removed records a project source names: by ID, alias or hydration ID, else by its work. */
+function removedIdsFor(
+  removed: RemovedSources,
+  aliases: ScientLibraryAliases,
+  { projectSourceId, work }: ScientProjectSourceRequest,
+): ReadonlyArray<string> {
+  const ids = new Set([
+    projectSourceId,
+    resolveScientLibraryAlias(aliases, projectSourceId),
+    scientSourceIdFor(removed.libraryId, hydrationSourceKey(projectSourceId)),
+  ]);
+  const byId = removed.records.filter((record) => ids.has(record.sourceId));
+  if (byId.length > 0) return [...new Set(byId.map((record) => record.sourceId))];
+  const match = work === null ? null : matchWork(work, removed.records);
+  return match === null || match.by === "contradicted" ? [] : [...new Set(match.ids)];
+}
+
+/**
+ * Whether a project source is a removed work: a trashed or deleted record matches it as the
+ * resolver's removal step does, and no live record holds it or corroborates its work. The move
+ * asks before copying an old project's sources into the library. Caller holds the library lock.
+ */
+export function scientProjectSourceRemovalCheck(
+  library: ScientLibraryLocation,
+  root: string,
+  aliases: ScientLibraryAliases,
+): (request: ScientProjectSourceRequest) => Promise<boolean> {
+  let live: Promise<ReadonlyArray<ScientSourceRecord>> | undefined;
+  let removed: Promise<RemovedSources> | undefined;
+  const records = () => (live ??= listScientSourceRecords(library));
+  const liveTarget = async (sourceId: string) => {
+    const target = resolveScientLibraryAlias(aliases, sourceId);
+    return (await records()).some((record) => record.sourceId === target) ? target : null;
+  };
+  return async (request) => {
+    removed ??= readRemovedSources(root, library, liveTarget);
+    if (removedIdsFor(await removed, aliases, request).length === 0) return false;
+    if (await liveTarget(request.projectSourceId)) return false;
+    const match = request.work === null ? null : matchWork(request.work, await records());
+    return match === null || match.by === "contradicted";
+  };
+}
+
 function hydrationSourceKey(projectSourceId: string): string {
   return `project-source:${projectSourceId}`;
 }
@@ -337,39 +409,10 @@ async function resolveAt(
 
   // The map can be lost, or a crash can precede its write; the trash and the tombstones of
   // sources deleted for good still say what was removed.
-  let trash:
-    | Promise<{ readonly libraryId: string; readonly removed: ScientSourceRecord[] }>
-    | undefined;
-  const removedIds = async ({
-    projectSourceId,
-    work,
-  }: ScientProjectSourceRequest): Promise<ReadonlyArray<string>> => {
-    trash ??= Promise.all([
-      readScientLibraryManifest(root),
-      readScientSourceTrashEntries(library),
-      readScientSourceTombstones(library),
-    ]).then(([{ libraryId }, entries, deleted]) => ({
-      libraryId,
-      // A merge moves the losing record to the trash; that is not a removal while the winner lives.
-      removed: [...entries, ...deleted]
-        .filter((entry) => !entry.mergedInto || liveTarget(entry.sourceId) === null)
-        .map((entry) => entry.record),
-    }));
-    const { libraryId, removed } = await trash;
-    const ids = new Set([
-      projectSourceId,
-      resolveScientLibraryAlias(aliases, projectSourceId),
-      scientSourceIdFor(libraryId, hydrationSourceKey(projectSourceId)),
-    ]);
-    const byId = removed.filter((record) => ids.has(record.sourceId));
-    const match = byId.length === 0 && work !== null ? matchWork(work, removed) : null;
-    const found =
-      byId.length > 0
-        ? byId.map((record) => record.sourceId)
-        : match?.by === "contradicted"
-          ? []
-          : (match?.ids ?? []);
-    return [...new Set(found)];
+  let removedSources: Promise<RemovedSources> | undefined;
+  const removedIds = async (request: ScientProjectSourceRequest) => {
+    removedSources ??= readRemovedSources(root, library, liveTarget);
+    return removedIdsFor(await removedSources, aliases, request);
   };
 
   const results: ScientProjectSourceResolution[] = [];
