@@ -66,7 +66,7 @@ import { SourceEditorialStatus } from "./SourceEditorialStatus";
 import { verificationProblemLabel } from "./sourceLifecycleLabels";
 import { SourceReference } from "./SourceReference";
 import type { CitationStyleProject } from "./useProjectCitationStyle";
-import { useSourceNoteControls } from "./SourceNote";
+import { useSourceNoteControls, type SourceNoteSaveContext } from "./SourceNote";
 import type { SourceAnchorPoint } from "./sourceAnchor";
 
 type SourceRecord = ScientSourceDetailResult;
@@ -699,6 +699,7 @@ export function SourceDetails(props: {
   readonly onSaveNote: (
     note: string | null,
     expectedRevision: number,
+    context: SourceNoteSaveContext,
   ) => Promise<ScientSourceNoteUpdateResult>;
   readonly onRefreshMetadata: () => Promise<void>;
   readonly onRemove: () => Promise<void>;
@@ -731,7 +732,7 @@ export function SourceDetails(props: {
     record,
     readOnly: readOnly || !inProject,
     onSave: props.onSaveNote,
-    ...(library ? { heading: LIBRARY_LABELS.projectNote } : {}),
+    ...(library ? { heading: LIBRARY_LABELS.projectNote, history: record.projectNoteHistory } : {}),
   });
   const personalNote = useSourceNoteControls({
     record,

@@ -54,6 +54,7 @@ import {
   scientPinWorkFromRecord,
   scientProjectPinsText,
   type ScientProjectPin,
+  withScientProjectPinsLock,
 } from "./projectPins.ts";
 import {
   decodePersistedScientSourceRecord,
@@ -1996,7 +1997,9 @@ export interface ScientLibraryMoveInput {
 function withProjectLocks<A>(root: string, run: () => Promise<A>): Promise<A> {
   const lock = scientSourceStoreInternals.withOperationLock;
   return lock(`${root}:library-move`, () =>
-    lock(`${root}:reviews-write`, () => lock(`${root}:pins-write`, run)),
+    lock(`${root}:reviews-write`, () =>
+      withScientProjectPinsLock(root, run, { timeoutMs: MOVE_LOCK_TIMEOUT_MS }),
+    ),
   );
 }
 

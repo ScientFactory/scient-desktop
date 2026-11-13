@@ -317,6 +317,39 @@ describe("Sources tools on the library backend", () => {
     }),
   );
 
+  it.effect("replaces a project note only from the note it read, and restores an earlier one", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const added = yield* addSource(fixture, "Noted trial", "10.1000/noted");
+      const sourceId = added.sourceId!;
+      const pin = (note: string, noteBase?: string) =>
+        run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "pin", sourceId, note, ...(noteBase ? { noteBase } : {}) },
+          }),
+          fixture,
+        );
+      expect(yield* pin("First reading")).toMatchObject({ pin: { note: "First reading" } });
+      expect(yield* pin("Blind rewrite")).toMatchObject({
+        outcome: "stale",
+        pin: { note: "First reading" },
+      });
+      expect(yield* pin("Second reading", "First reading")).toMatchObject({
+        outcome: "existing",
+        pin: { note: "Second reading" },
+      });
+      const detail = yield* run(getScientSourceForInvocation({ sourceId }), fixture);
+      expect(detail.projectNoteHistory?.map((version) => [version.note, version.by])).toEqual([
+        ["First reading", "agent"],
+        ["Second reading", "agent"],
+      ]);
+      expect(yield* pin(detail.projectNoteHistory![0]!.note!, "Second reading")).toMatchObject({
+        outcome: "existing",
+        pin: { note: "First reading" },
+      });
+    }),
+  );
+
   it.effect("pins what an agent adds; list, library scope and search mark the pins", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

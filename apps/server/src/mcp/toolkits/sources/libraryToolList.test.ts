@@ -54,6 +54,6 @@ it.effect("measures the tool list each backend advertises", () =>
     expect({
       mcpToolListJsonBytes: budget.mcpToolListJsonBytes,
       projectMcpToolListJsonBytes: budget.mcpToolListJsonBytes - library + project,
-    }).toEqual({ mcpToolListJsonBytes: 112_832, projectMcpToolListJsonBytes: 110_848 });
+    }).toEqual({ mcpToolListJsonBytes: 112_927, projectMcpToolListJsonBytes: 110_848 });
   }),
 );

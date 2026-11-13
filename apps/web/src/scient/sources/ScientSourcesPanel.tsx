@@ -1086,8 +1086,8 @@ export function ScientSourcesPanel(props: {
             setSelectedSourceId(null);
           }}
           onEdit={() => setEditingSource(true)}
-          onSaveNote={(note, expectedRevision) =>
-            sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note)
+          onSaveNote={(note, expectedRevision, context) =>
+            sources.saveSourceNote(selectedRecord.sourceId, expectedRevision, note, context)
           }
           onRefreshMetadata={async () => {
             const result = await sources.refreshSourceMetadata(

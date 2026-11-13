@@ -130,6 +130,17 @@ export const ScientSourceDetailResult = Schema.Struct({
    */
   personalNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
   label: Schema.optionalKey(ScientSystematicReviewRecordLabel),
+  /** A pinned source's project-note versions, oldest first, ending with the note it has now. */
+  projectNoteHistory: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({
+        note: Schema.NullOr(Schema.String),
+        at: Schema.String,
+        kind: Schema.Literals(["original", "edit", "found"]),
+        by: Schema.optionalKey(Schema.Literals(["user", "agent"])),
+      }),
+    ),
+  ),
 });
 export type ScientSourceDetailResult = typeof ScientSourceDetailResult.Type;
 
@@ -252,6 +263,10 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
   sourceId: NonEmptyString,
   expectedRevision: Schema.Int.check(Schema.isGreaterThan(0)),
   note: ScientSourceNote,
+  /** A library's project note: the note the editor saw (absent: none). Another one answers `stale`. */
+  expectedNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /** The editor's autosave session; its saves within ten minutes are one history checkpoint. */
+  noteSession: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(64))),
 });
 export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
 export const ScientSourceNoteUpdateResult = Schema.Struct({
@@ -342,6 +357,8 @@ const PinAction = Schema.Struct({
   action: Schema.Literal("pin"),
   sourceId: NonEmptyString,
   note: Schema.optionalKey(Schema.NullOr(Schema.String.check(Schema.isMaxLength(20_000)))),
+  /** The note the writer saw on an existing pin; replacing or clearing one needs it. */
+  noteBase: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 const UnpinAction = Schema.Struct({ action: Schema.Literal("unpin"), citationKey: NonEmptyString });
 
@@ -412,6 +429,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
     "nothing-to-dismiss",
     "marked",
     "cleared",
+    "stale",
   ]),
   pin: Schema.optionalKey(PinSummary),
   pinChanges: Schema.optionalKey(
@@ -424,6 +442,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
           "not-pinned",
           "not-found",
           "refused",
+          "stale",
         ]),
         pin: Schema.optionalKey(PinSummary),
       }),

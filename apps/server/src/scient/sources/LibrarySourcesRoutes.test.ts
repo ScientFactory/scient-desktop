@@ -197,6 +197,7 @@ async function threeSources(fixture: Fixture) {
     projectRoot: fixture.root,
     citationKey: "vasopressinHere",
     note: "Why this project cites it.",
+    actor: "user",
   });
   await pin(fixture, c.sourceId);
   await removeScientSource({
@@ -344,6 +345,51 @@ describe("Library routes on the library backend", () => {
           expect(overview.activeOperation?.operationId).toBe(first.operationId);
         });
       }),
+  );
+
+  it.effect("answers two stale panels with the note saved first and its history", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const record = yield* Effect.promise(async () => {
+        const one = await libraryRecord(fixture, "one", { title: "Vasopressin timing" });
+        await pin(fixture, one.sourceId);
+        return one;
+      });
+      const store = yield* storeFor(fixture, "write");
+      const save = (note: string, session: string) =>
+        Effect.promise(() =>
+          updateLibraryProjectNote(store, {
+            sourceId: record.sourceId,
+            note,
+            expectedNote: null,
+            noteSession: session,
+          }),
+        );
+      expect(yield* save("From the first window", "a")).toMatchObject({ outcome: "updated" });
+      const second = yield* save("From the second window", "b");
+      expect(second).toMatchObject({
+        outcome: "stale",
+        record: { note: "From the first window" },
+      });
+      expect(encodeNoteAnswer(second).record).toMatchObject({ note: "From the first window" });
+      const detail = yield* Effect.promise(() =>
+        librarySourceDetail(store, { sourceId: record.sourceId }),
+      );
+      expect(detail).not.toHaveProperty("projectNoteHistory");
+      yield* Effect.promise(() =>
+        updateLibraryProjectNote(store, {
+          sourceId: record.sourceId,
+          note: "From the second window",
+          expectedNote: "From the first window",
+          noteSession: "b",
+        }),
+      );
+      expect(
+        yield* Effect.promise(() => librarySourceDetail(store, { sourceId: record.sourceId })),
+      ).toMatchObject({
+        projectNoteHistory: [{ note: "From the first window" }, { note: "From the second window" }],
+      });
+    }),
   );
 
   it.effect("catches up a stale pin snapshot at every change", () =>
@@ -558,7 +604,11 @@ describe("Library routes on the library backend", () => {
             sourceIds: [a.sourceId],
             includeNotes: true,
           }),
-          await updateLibraryProjectNote(write, { sourceId: a.sourceId, note: "Project reason." }),
+          await updateLibraryProjectNote(write, {
+            sourceId: a.sourceId,
+            note: "Project reason.",
+            expectedNote: "Why this project cites it.",
+          }),
           await updateLibrarySourceMetadata(write, {
             sourceId: a.sourceId,
             expectedRevision: noted.record.revision,

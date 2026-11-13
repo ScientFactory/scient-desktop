@@ -47,6 +47,7 @@ import {
   changeScientProjectPins,
   listScientProjectPinnedWorks,
   pinScientLibrarySource,
+  readScientProjectPinNoteHistory,
   renameScientProjectPinKey,
   setScientProjectPinNote,
   unpinScientLibrarySource,
@@ -420,10 +421,12 @@ export async function librarySourceDetail(
   const sourceId = await libraryIdOf(store, input.sourceId);
   const record = store.exists ? await readScientSourceRecord(store.library, sourceId) : null;
   if (record) {
+    const detail = await projectRecordOf(store, normalizeSourceRecordForRead(record));
     return {
-      ...(await projectRecordOf(store, normalizeSourceRecordForRead(record))),
+      ...detail,
       ...(input.personal ? { personalNote: record.note ?? null } : {}),
       ...scientSourceReadingState(record),
+      ...(detail.pinned ? await noteHistoryOf(store, detail.citationKey) : {}),
     };
   }
   const snapshot = (
@@ -441,7 +444,23 @@ export async function librarySourceDetail(
     pinned: true,
     fromSnapshot: true as const,
     projectNote: snapshot.projectNote,
+    ...(await noteHistoryOf(store, snapshot.citationKey)),
   };
+}
+
+async function noteHistoryOf(store: Store, citationKey: string | null | undefined) {
+  if (!citationKey) return {};
+  const versions = await readScientProjectPinNoteHistory({ projectRoot: store.root, citationKey });
+  return versions && versions.length > 1
+    ? {
+        projectNoteHistory: versions.map(({ note, at, kind, by }) => ({
+          note,
+          at,
+          kind,
+          ...(by ? { by } : {}),
+        })),
+      }
+    : {};
 }
 
 export async function libraryAttachmentMaterial(
@@ -541,7 +560,12 @@ export async function updateLibrarySourceMetadata(
 /** The panel's note here is this project's note on the pin; a source not pinned has none. */
 export async function updateLibraryProjectNote(
   store: Store,
-  input: { readonly sourceId: string; readonly note: string | null },
+  input: {
+    readonly sourceId: string;
+    readonly note: string | null;
+    readonly expectedNote?: string | null;
+    readonly noteSession?: string;
+  },
 ) {
   const sourceId = await libraryIdOf(store, input.sourceId);
   const pins = await projectPinsByLibraryId(store);
@@ -555,6 +579,9 @@ export async function updateLibraryProjectNote(
     projectRoot: store.root,
     citationKey: pin.citationKey,
     note: input.note,
+    base: input.expectedNote ?? null,
+    actor: ACTOR,
+    ...(input.noteSession !== undefined ? { session: input.noteSession } : {}),
   });
   if (updated.outcome === "not-pinned") throw new Error("The source is no longer pinned here.");
   return {
@@ -762,16 +789,22 @@ export async function organizeLibrarySources(
               projectRoot: store.root,
               citationKey: pinned.pin.citationKey,
               note: change.note,
+              base: change.noteBase ?? null,
+              actor: ACTOR,
             })
           : null;
       const pin = noted && noted.outcome !== "not-pinned" ? noted.pin : pinned.pin;
       if (pinned.outcome === "pinned") await syncProjectBibliography(store, ACTOR);
-      return { outcome: pinned.outcome, pin: pinSummary(pin) };
+      return {
+        outcome: noted?.outcome === "stale" ? ("stale" as const) : pinned.outcome,
+        pin: pinSummary(pin),
+      };
     }
     case "unpin": {
       const unpinned = await unpinScientLibrarySource({
         projectRoot: store.root,
         citationKey: change.citationKey,
+        actor: ACTOR,
       });
       if (unpinned.outcome === "not-pinned") return { outcome: "not-pinned" as const };
       await syncProjectBibliography(store, ACTOR);
@@ -853,6 +886,7 @@ async function changeLibraryPins(
             action: "pin" as const,
             sourceId: libraryIds.get(entry.sourceId) ?? entry.sourceId,
             ...(entry.note !== undefined ? { note: entry.note } : {}),
+            ...(entry.noteBase !== undefined ? { noteBase: entry.noteBase } : {}),
           }
         : entry,
     ),

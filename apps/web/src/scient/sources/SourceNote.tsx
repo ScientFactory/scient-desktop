@@ -35,11 +35,12 @@ import {
 } from "react";
 import ReactMarkdown from "react-markdown";
 
-import { cn } from "~/lib/utils";
+import { cn, randomUUID } from "~/lib/utils";
 
 import { Button } from "../../components/ui/button";
 import { Popover, PopoverClose, PopoverPopup, PopoverTrigger } from "../../components/ui/popover";
 import { ScientTooltip } from "../presentation/ScientTooltip";
+import { ProjectNoteHistory } from "./ProjectNoteHistory";
 
 const NOTE_AUTOSAVE_DELAY_MS = 600;
 const NOTE_MAX_LENGTH = 100_000;
@@ -65,9 +66,16 @@ function noteText(record: ScientSourceDetailResult, field: SourceNoteField): str
   return record[field] ?? "";
 }
 
+/** `base` is the note this editor last saw saved; a project note only replaces that one. */
+export interface SourceNoteSaveContext {
+  readonly base: string | null;
+  readonly session: string;
+}
+
 type SourceNoteSave = (
   note: string | null,
   expectedRevision: number,
+  context: SourceNoteSaveContext,
 ) => Promise<{ readonly outcome: string; readonly record: ScientSourceDetailResult }>;
 
 function useSourceNoteState(input: {
@@ -80,6 +88,9 @@ function useSourceNoteState(input: {
   const [confirmed, setConfirmed] = useState(() => noteText(input.record, field));
   const [status, setStatus] = useState<NoteStatus>("saved");
   const [error, setError] = useState<string | null>(null);
+  /** The note saved elsewhere when a save found it changed; the draft stays this editor's text. */
+  const [savedElsewhere, setSavedElsewhere] = useState<string | null>(null);
+  const [session] = useState(() => randomUUID());
   const recordRef = useRef(input.record);
   const draftRef = useRef(draft);
   const confirmedRef = useRef(confirmed);
@@ -130,13 +141,18 @@ function useSourceNoteState(input: {
     }
     let continueSaving = false;
     return await (async () => {
-      const result = await onSaveRef.current(submitted.trim() ? submitted : null, base.revision);
+      const seen = confirmedRef.current;
+      const result = await onSaveRef.current(submitted.trim() ? submitted : null, base.revision, {
+        base: seen.trim() ? seen : null,
+        session,
+      });
       recordRef.current = result.record;
       const remote = noteText(result.record, field);
       if (result.outcome === "stale" && remote !== confirmedRef.current && remote !== submitted) {
         conflictRef.current = true;
         if (mountedRef.current) {
           setStatus("conflict");
+          setSavedElsewhere(remote);
           setError("This note changed elsewhere. Your text is preserved here.");
         }
         return;
@@ -192,7 +208,68 @@ function useSourceNoteState(input: {
     setError(null);
   };
 
-  return { change, draft, error, flush: persist, status } as const;
+  /** After a conflict: save this editor's text over the note saved elsewhere, now that it was seen. */
+  const keepMine = () => {
+    if (savedElsewhere === null) return;
+    confirmedRef.current = savedElsewhere;
+    setConfirmed(savedElsewhere);
+    setSavedElsewhere(null);
+    change(draftRef.current);
+    void persist();
+  };
+
+  /** After a conflict: take the note saved elsewhere and drop this editor's text. */
+  const takeSaved = () => {
+    if (savedElsewhere === null) return;
+    conflictRef.current = false;
+    draftRef.current = savedElsewhere;
+    confirmedRef.current = savedElsewhere;
+    setDraft(savedElsewhere);
+    setConfirmed(savedElsewhere);
+    setSavedElsewhere(null);
+    setStatus("saved");
+    setError(null);
+  };
+
+  /** An earlier version, saved as a new change over the note this editor last saw. */
+  const restore = (value: string) => {
+    change(value);
+    void persist();
+  };
+
+  return {
+    change,
+    draft,
+    error,
+    flush: persist,
+    keepMine,
+    restore,
+    savedElsewhere,
+    status,
+    takeSaved,
+  } as const;
+}
+
+function NoteConflict(props: { readonly note: ReturnType<typeof useSourceNoteState> }) {
+  if (props.note.status !== "conflict" || props.note.savedElsewhere === null) return null;
+  return (
+    <div className="space-y-1.5 rounded-md border border-border p-2">
+      <p className="text-xs text-muted-foreground">Saved elsewhere</p>
+      {props.note.savedElsewhere.trim() ? (
+        <NotePreview value={props.note.savedElsewhere} />
+      ) : (
+        <p className="px-2 text-sm text-muted-foreground">No note</p>
+      )}
+      <div className="flex gap-1.5">
+        <Button size="xs" variant="outline" onClick={props.note.keepMine}>
+          Keep mine
+        </Button>
+        <Button size="xs" variant="ghost" onClick={props.note.takeSaved}>
+          Use saved
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 function NoteStatusLine(props: { readonly status: NoteStatus; readonly error: string | null }) {
@@ -599,6 +676,8 @@ export function useSourceNoteControls(props: {
   readonly heading?: string;
   readonly help?: string;
   readonly onSave: SourceNoteSave;
+  /** Earlier versions of a project note, restorable from the section. */
+  readonly history?: ScientSourceDetailResult["projectNoteHistory"];
 }) {
   const note = useSourceNoteState({ ...props, field: props.field ?? "note" });
   const headingId =
@@ -705,12 +784,18 @@ export function useSourceNoteControls(props: {
       ) : null
     ) : (
       <section className="space-y-1.5" aria-labelledby={headingId}>
-        <h3 id={headingId} className="text-sm font-medium text-foreground">
-          {heading}
-        </h3>
+        <div className="flex items-center justify-between gap-2">
+          <h3 id={headingId} className="text-sm font-medium text-foreground">
+            {heading}
+          </h3>
+          {props.history ? (
+            <ProjectNoteHistory versions={props.history} onRestore={note.restore} />
+          ) : null}
+        </div>
         {help}
         <InlineNoteEditor note={note} {...(props.heading ? { label: props.heading } : {})} />
         <NoteStatusLine status={note.status} error={note.error} />
+        <NoteConflict note={note} />
       </section>
     ),
   } as const;

@@ -41,6 +41,7 @@ import {
 } from "@scientfactory/scient-sources/library-root";
 import {
   pinScientLibrarySource,
+  readScientProjectPinNoteHistory,
   renameScientProjectPinKey,
   setScientProjectPinNote,
   unpinScientLibrarySource,
@@ -770,6 +771,8 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
                 projectRoot: store.root,
                 citationKey: pinned.pin.citationKey,
                 note: change.note ?? null,
+                base: change.noteBase ?? null,
+                actor: "agent",
               }),
             )
           : null;
@@ -778,13 +781,22 @@ const changeLibraryPinsOrMerges = Effect.fn("ScientSourcesToolkit.pinsAndMerges"
         yield* attempt(() => syncProjectBibliography(store, "agent"));
       }
       return {
-        outcome: pinned.outcome === "pinned" ? ("pinned" as const) : ("existing" as const),
+        outcome:
+          noted?.outcome === "stale"
+            ? ("stale" as const)
+            : pinned.outcome === "pinned"
+              ? ("pinned" as const)
+              : ("existing" as const),
         pin: pinSummary(pin),
       };
     }
     case "unpin": {
       const unpinned = yield* attempt(() =>
-        unpinScientLibrarySource({ projectRoot: store.root, citationKey: change.citationKey }),
+        unpinScientLibrarySource({
+          projectRoot: store.root,
+          citationKey: change.citationKey,
+          actor: "agent",
+        }),
       );
       if (unpinned.outcome === "not-pinned") return { outcome: "not-pinned" as const };
       yield* attempt(() => syncProjectBibliography(store, "agent"));
@@ -952,6 +964,15 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
       store.kind === "library"
         ? (yield* attempt(() => projectPinsByLibraryId(store))).get(sourceId)
         : undefined;
+    const noteHistory =
+      store.kind === "library" && pin
+        ? yield* attempt(() =>
+            readScientProjectPinNoteHistory({
+              projectRoot: store.root,
+              citationKey: pin.citationKey,
+            }),
+          )
+        : null;
     const categories = currentScientSourceCategories(
       record,
       yield* attempt(() => readScientSourceCategories(root)),
@@ -1002,6 +1023,15 @@ export const getScientSourceForInvocation = Effect.fn("ScientSourcesToolkit.get"
         ? {
             pinned: pin !== undefined,
             ...(pin ? { citationKey: pin.citationKey, projectNote: pin.note ?? null } : {}),
+            ...(noteHistory && noteHistory.length > 1
+              ? {
+                  projectNoteHistory: noteHistory.map(({ note, at, by }) => ({
+                    note,
+                    at,
+                    ...(by ? { by } : {}),
+                  })),
+                }
+              : {}),
             ...scientSourceReadingState(record),
           }
         : {}),

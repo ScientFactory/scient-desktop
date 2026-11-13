@@ -13,6 +13,7 @@ import {
   scientSourceTypeFromSnapshot,
   type ScientProjectSourceResolution,
 } from "./libraryInstanceMap.ts";
+import { withScientFileLock, type ScientLibraryLockOptions } from "./libraryLock.ts";
 import type { ScientLibraryLocation } from "./libraryRoot.ts";
 import {
   ScientSourceActor,
@@ -22,13 +23,23 @@ import {
   type ScientSourceRecord,
 } from "./model.ts";
 import {
+  readScientProjectNoteHistory,
+  recordScientProjectNoteChange,
+  scientProjectNoteVersionsWithCurrent,
+  type ScientProjectNoteChange,
+  type ScientProjectNoteVersion,
+} from "./projectNoteHistory.ts";
+import {
   listScientSourceRecords,
   readScientSourceRecord,
   scientSourceStoreInternals,
 } from "./store.ts";
 import { atomicWriteJson, snapshot } from "./storeFiles.ts";
 
-const SCIENT_PROJECT_PINS_PATH = [".scient", "library", "pins.json"] as const;
+const SCIENT_PROJECT_LIBRARY_PATH = [".scient", "library"] as const;
+const SCIENT_PROJECT_PINS_PATH = [...SCIENT_PROJECT_LIBRARY_PATH, "pins.json"] as const;
+/** The project's cross-process lock for `pins.json` and its note history; an empty file. */
+const SCIENT_PROJECT_PINS_LOCK = "pins.lock";
 // 20,000 pins with long author lists are about 26 MiB (scale gate); 16 MiB refused them.
 const MAX_PINS_BYTES = 64 * 1024 * 1024;
 const MAX_PIN_NOTE_LENGTH = 100_000;
@@ -189,8 +200,46 @@ async function projectRootFor(projectRoot: string): Promise<string> {
   return root;
 }
 
-function withPinsLock<A>(root: string, run: () => Promise<A>): Promise<A> {
-  return scientSourceStoreInternals.withOperationLock(`${root}:pins-write`, run);
+/**
+ * Every `pins.json` writer holds this, in this and any other Scient process using the same project
+ * folder (two servers with different Libraries included). Taken before the library lock, never
+ * inside one. It does not coordinate two synced copies of the folder or an older Scient.
+ */
+export function withScientProjectPinsLock<A>(
+  projectRoot: string,
+  run: () => Promise<A>,
+  options: ScientLibraryLockOptions = {},
+): Promise<A> {
+  return scientSourceStoreInternals.withOperationLock(`${projectRoot}:pins-write`, async () => {
+    const directory = NodePath.join(projectRoot, ...SCIENT_PROJECT_LIBRARY_PATH);
+    await NodeFSP.mkdir(directory, { recursive: true });
+    const lockPath = NodePath.join(await NodeFSP.realpath(directory), SCIENT_PROJECT_PINS_LOCK);
+    return withScientFileLock(lockPath, run, options);
+  });
+}
+
+const withPinsLock = <A>(root: string, run: () => Promise<A>) =>
+  withScientProjectPinsLock(root, run);
+
+/** Whether a writer that saw `base` may replace this pin's note; no base means "no note". */
+function noteBaseMatches(pin: ScientProjectPin, base: string | null | undefined): boolean {
+  return normalizePinNote(base) === pin.note;
+}
+
+function noteChange(
+  pin: ScientProjectPin,
+  next: string | undefined,
+  actor: ScientSourceActor,
+  session: string | undefined,
+): ScientProjectNoteChange {
+  return {
+    sourceId: pin.sourceId,
+    pinnedAt: pin.pinnedAt,
+    current: pin.note ?? null,
+    next: next ?? null,
+    actor,
+    ...(session !== undefined ? { session } : {}),
+  };
 }
 
 export function scientPinWorkFromRecord(record: ScientSourceRecord): ScientPinWork {
@@ -337,6 +386,13 @@ export async function pinScientLibrarySource(input: {
       ...(note !== undefined ? { note } : {}),
       work: scientPinWorkFromRecord(record),
     };
+    if (note !== undefined) {
+      await recordScientProjectNoteChange(root, {
+        ...noteChange(pin, note, input.actor, undefined),
+        current: null,
+        newPin: true,
+      });
+    }
     await writePinsDocument(root, document, [...document.pins, { pin, extra: {}, workExtra: {} }]);
     return { outcome: "pinned", pin };
   });
@@ -345,6 +401,7 @@ export async function pinScientLibrarySource(input: {
 export async function unpinScientLibrarySource(input: {
   readonly projectRoot: string;
   readonly citationKey: string;
+  readonly actor: ScientSourceActor;
 }): Promise<
   | { readonly outcome: "unpinned"; readonly pin: ScientProjectPin }
   | { readonly outcome: "not-pinned" }
@@ -354,6 +411,10 @@ export async function unpinScientLibrarySource(input: {
     const document = await readPinsDocument(root);
     const found = findPin(document.pins, input.citationKey);
     if (!found) return { outcome: "not-pinned" };
+    if (found.pin.note !== undefined) {
+      const { next: _keep, ...kept } = noteChange(found.pin, undefined, input.actor, undefined);
+      await recordScientProjectNoteChange(root, kept);
+    }
     await writePinsDocument(
       root,
       document,
@@ -369,16 +430,25 @@ export type ScientPinChangeResult =
   | ScientPinResult
   | { readonly outcome: "unpinned"; readonly pin: ScientProjectPin }
   | { readonly outcome: "not-pinned" }
+  /** A note change whose `noteBase` is not the pin's note now; `pin` holds the current note. */
+  | { readonly outcome: "stale"; readonly pin: ScientProjectPin }
   | { readonly outcome: "refused"; readonly message: string };
 
 export type ScientPinChange =
-  | { readonly action: "pin"; readonly sourceId: string; readonly note?: string | null }
+  | {
+      readonly action: "pin";
+      readonly sourceId: string;
+      readonly note?: string | null;
+      /** The note the writer saw on the pin; needed to replace or clear one. */
+      readonly noteBase?: string | null;
+    }
   | { readonly action: "unpin"; readonly citationKey: string };
 
 /**
  * Pins and unpins in order, each with the outcome `pinScientLibrarySource` or
  * `unpinScientLibrarySource` gives it alone, reading and writing `pins.json` once. A note sent
- * for a source already pinned replaces its note. A change that cannot be made is `refused`.
+ * for a source already pinned replaces its note when `noteBase` is the note it has, and is `stale`
+ * otherwise. A change that cannot be made is `refused`.
  */
 export async function changeScientProjectPins(input: {
   readonly projectRoot: string;
@@ -405,19 +475,24 @@ export async function changeScientProjectPins(input: {
       : new Map<StoredPin, ScientProjectSourceResolution>();
     const pins = new OrderedPins(document.pins, resolutions);
     const prefetched = new Map<string, Promise<ScientSourceRecord | null>>();
+    // Published before `pins.json`, in order, so a later change in the batch builds on an earlier.
+    const history: ScientProjectNoteChange[] = [];
     // In order: a later change in this batch may give the pin's key to another source.
     const withNote = (
       stored: StoredPin,
-      requested: string | null | undefined,
-    ): ScientProjectPin => {
-      if (requested === undefined) return stored.pin;
-      const note = normalizePinNote(requested);
-      if (note === stored.pin.note) return stored.pin;
+      change: Extract<ScientPinChange, { readonly action: "pin" }>,
+    ): ScientPinChangeResult => {
+      if (change.note === undefined) return { outcome: "existing", pin: stored.pin };
+      const note = normalizePinNote(change.note);
+      if (note === stored.pin.note) return { outcome: "existing", pin: stored.pin };
+      if (!noteBaseMatches(stored.pin, change.noteBase))
+        return { outcome: "stale", pin: stored.pin };
       const { note: _previous, ...rest } = stored.pin;
       const pin: ScientProjectPin = note === undefined ? rest : { ...rest, note };
+      history.push(noteChange(stored.pin, note, input.actor, undefined));
       pins.replace(stored, { ...stored, pin });
       changed = true;
-      return pin;
+      return { outcome: "existing", pin };
     };
     const pinChange = async (
       change: Extract<ScientPinChange, { readonly action: "pin" }>,
@@ -425,9 +500,9 @@ export async function changeScientProjectPins(input: {
       const record = await prefetched.get(change.sourceId)!;
       if (!record) return { outcome: "not-found" };
       const sameId = pins.firstWithSourceId(change.sourceId, record.sourceId);
-      if (sameId) return { outcome: "existing", pin: withNote(sameId, change.note) };
+      if (sameId) return withNote(sameId, change);
       const resolved = pins.firstResolvedTo(record.sourceId);
-      if (resolved) return { outcome: "existing", pin: withNote(resolved, change.note) };
+      if (resolved) return withNote(resolved, change);
       const note = normalizePinNote(change.note);
       const pin: ScientProjectPin = {
         citationKey: assignCitationKey({
@@ -443,6 +518,9 @@ export async function changeScientProjectPins(input: {
         ...(note !== undefined ? { note } : {}),
         work: scientPinWorkFromRecord(record),
       };
+      if (note !== undefined) {
+        history.push({ ...noteChange(pin, note, input.actor, undefined), newPin: true });
+      }
       pins.add({ pin, extra: {}, workExtra: {} });
       changed = true;
       taken.add(citationKeyComparisonValue(pin.citationKey));
@@ -473,6 +551,10 @@ export async function changeScientProjectPins(input: {
           results.push({ outcome: "not-pinned" });
           continue;
         }
+        if (found.pin.note !== undefined) {
+          const { next: _keep, ...kept } = noteChange(found.pin, undefined, input.actor, undefined);
+          history.push(kept);
+        }
         pins.remove(found);
         changed = true;
         taken.delete(citationKeyComparisonValue(found.pin.citationKey));
@@ -484,6 +566,7 @@ export async function changeScientProjectPins(input: {
         });
       }
     }
+    for (const change of history) await recordScientProjectNoteChange(root, change);
     if (changed) await writePinsDocument(root, document, pins.list());
     return results;
   });
@@ -618,13 +701,21 @@ export async function renameScientProjectPinKey(input: {
   });
 }
 
-/** Sets or clears the project note on a pin; the library record's personal note is untouched. */
+/**
+ * Sets or clears the project note on a pin (never the personal note). `base` is the note the writer
+ * saw (absent: none); another note writes nothing and answers `stale` with it, for the writer to
+ * reconcile. The note history is published before `pins.json`.
+ */
 export async function setScientProjectPinNote(input: {
   readonly projectRoot: string;
   readonly citationKey: string;
   readonly note: string | null;
+  readonly base?: string | null;
+  readonly actor: ScientSourceActor;
+  /** An editor's autosave session: its saves within ten minutes are one history checkpoint. */
+  readonly session?: string;
 }): Promise<
-  | { readonly outcome: "updated" | "unchanged"; readonly pin: ScientProjectPin }
+  | { readonly outcome: "updated" | "unchanged" | "stale"; readonly pin: ScientProjectPin }
   | { readonly outcome: "not-pinned" }
 > {
   const root = await projectRootFor(input.projectRoot);
@@ -634,8 +725,13 @@ export async function setScientProjectPinNote(input: {
     if (!found) return { outcome: "not-pinned" };
     const note = normalizePinNote(input.note);
     if (note === found.pin.note) return { outcome: "unchanged", pin: found.pin };
+    if (!noteBaseMatches(found.pin, input.base)) return { outcome: "stale", pin: found.pin };
     const { note: _previous, ...rest } = found.pin;
     const pin: ScientProjectPin = note === undefined ? rest : { ...rest, note };
+    await recordScientProjectNoteChange(
+      root,
+      noteChange(found.pin, note, input.actor, input.session),
+    );
     await writePinsDocument(
       root,
       document,
@@ -643,6 +739,22 @@ export async function setScientProjectPinNote(input: {
     );
     return { outcome: "updated", pin };
   });
+}
+
+/** A pin's project-note versions, oldest first, ending with the note it has now (if any). */
+export async function readScientProjectPinNoteHistory(input: {
+  readonly projectRoot: string;
+  readonly citationKey: string;
+}): Promise<ReadonlyArray<ScientProjectNoteVersion> | null> {
+  const root = await projectRootFor(input.projectRoot);
+  const found = findPin((await readPinsDocument(root)).pins, input.citationKey);
+  if (!found) return null;
+  return scientProjectNoteVersionsWithCurrent(
+    await readScientProjectNoteHistory(root, found.pin.sourceId),
+    found.pin.note ?? null,
+    found.pin.pinnedAt,
+    new Date().toISOString(),
+  );
 }
 
 /**
