@@ -90,7 +90,6 @@ export async function createDiskImage(
   const file = NodePath.join(root, "disk.dmg");
   const createArgs = [
     "create",
-    "-quiet",
     "-ov",
     "-size",
     `${options.megabytes ?? 40}m`,
