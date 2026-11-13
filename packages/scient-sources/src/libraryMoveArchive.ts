@@ -358,6 +358,7 @@ async function readRestoreProgress(projectRoot: string) {
 }
 
 /** A restore that stopped part way cannot finish; the move waits until it does or is abandoned. */
+// @effect-diagnostics-next-line extendsNativeError:off - The source stores are Promise-based; callers catch native errors.
 export class ScientPreMoveRestorePendingError extends Error {
   constructor(reason: string) {
     super(

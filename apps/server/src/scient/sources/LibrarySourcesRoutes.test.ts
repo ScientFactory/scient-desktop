@@ -429,9 +429,10 @@ describe("Library routes on the library backend", () => {
             survivorId: second.sourceId,
           },
         });
-        const notes = (detail: {
-          readonly projectNoteHistory?: ReadonlyArray<{ note: unknown }>;
-        }) => detail.projectNoteHistory?.map((version) => version.note);
+        const notes = (detail: Awaited<ReturnType<typeof librarySourceDetail>>) =>
+          "projectNoteHistory" in detail
+            ? detail.projectNoteHistory?.map((version) => version.note)
+            : undefined;
         const primary = await librarySourceDetail(store, { sourceId: second.sourceId });
         expect(primary).toMatchObject({ citationKey: firstKey, alsoCitedAs: [secondKey] });
         expect(notes(primary)).toEqual(["Why the first copy", "Same text"]);
