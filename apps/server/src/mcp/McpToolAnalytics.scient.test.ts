@@ -4,6 +4,7 @@ import { McpSchema, McpServer, Tool, Toolkit } from "effect/ai";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
@@ -112,3 +113,73 @@ it.effect("names a browser tool's failure and counts every browser call toward i
     ),
   );
 });
+
+const CallerFaultToolkit = Toolkit.make(
+  Tool.make("probe_page", {
+    description: "Refuses a non-positive page size.",
+    parameters: Schema.Struct({ limit: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)) }),
+    success: Schema.Struct({}),
+  }),
+  Tool.make("probe_cancelled", { description: "Is cancelled.", success: Schema.Struct({}) }),
+  Tool.make("probe_defect", { description: "Dies.", success: Schema.Struct({}) }),
+);
+
+it.effect(
+  "blames refused arguments on the caller and a cancellation on no one, not on Scient",
+  () =>
+    Effect.gen(function* () {
+      const recorded = yield* Queue.unbounded<Readonly<Record<string, unknown>>>();
+      const outcome = (name: string, args: Record<string, unknown> = {}) =>
+        Effect.gen(function* () {
+          const server = yield* McpServer.McpServer;
+          yield* server
+            .callTool({ name, arguments: args })
+            .pipe(
+              Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+              Effect.provideService(McpSchema.McpServerClient, client),
+              Effect.exit,
+            );
+          const { errorCode, failureOwner } = yield* Queue.take(recorded);
+          return { errorCode, failureOwner };
+        });
+      yield* Effect.gen(function* () {
+        expect(yield* outcome("probe_page", { limit: 0 })).toEqual({
+          errorCode: "invalid_params",
+          failureOwner: "input",
+        });
+        expect(yield* outcome("probe_cancelled")).toEqual({
+          errorCode: "interrupted",
+          failureOwner: "cancelled",
+        });
+        // A real defect stays Scient's: Effect returns it as a scrubbed internal-error result.
+        expect((yield* outcome("probe_defect")).failureOwner).not.toBe("input");
+      }).pipe(
+        Effect.provide(
+          McpHttpServer.toolkitRegistration(
+            CallerFaultToolkit,
+            McpToolAccess.toLayer(CallerFaultToolkit, {
+              probe_page: McpToolAccess.reads(() => Effect.succeed({})),
+              probe_cancelled: McpToolAccess.reads(() => Effect.interrupt),
+              probe_defect: McpToolAccess.reads(() => Effect.die("probe defect")),
+            }),
+          ).pipe(
+            Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
+            Layer.provide(McpToolAccessTestkit.fullAccessCapturedPolicyLayer),
+            Layer.provide(Layer.succeed(BrowserToolCalls, new BrowserToolCallLedger())),
+            Layer.provide(
+              Layer.succeed(
+                AnalyticsService.AnalyticsService,
+                AnalyticsService.AnalyticsService.of({
+                  ...disabledAnalyticsService,
+                  record: (event, properties) =>
+                    event === "mcp.tool.invoked"
+                      ? Queue.offer(recorded, properties ?? {}).pipe(Effect.asVoid)
+                      : Effect.void,
+                }),
+              ),
+            ),
+          ),
+        ),
+      );
+    }),
+);

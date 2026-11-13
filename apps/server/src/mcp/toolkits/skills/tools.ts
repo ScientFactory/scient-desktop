@@ -6,11 +6,14 @@ import { ScientOperation, type OperationDefinition } from "../../ScientOperation
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 
 const NonEmptyString = Schema.String.check(isTrimmedUnadvertised(), Schema.isMinLength(1));
-// Optional fields retain the existing {} call while keeping MCP inputs objects.
+/** Skills per page: `limit` defaults to the first and is capped at the second. */
+export const SKILL_PAGE_SIZE = { default: 20, max: 50 } as const;
+// Optional fields retain the existing {} call while keeping MCP inputs objects. A larger
+// `limit` is capped rather than refused: agents ask for 100 to see every skill at once.
 export const ScientSkillListInput = Schema.Struct({
   query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
   offset: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+  limit: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
 });
 export type ScientSkillListInput = typeof ScientSkillListInput.Type;
 const SkillName = Schema.String.check(
@@ -61,8 +64,7 @@ export const ScientSkillResource = Schema.Struct({
 });
 
 export const ScientSkillsListTool = Tool.make("scient_skills_list", {
-  description:
-    "List the Scient skills available this turn, or search their names and descriptions by keyword; a miss returns a browse page. Your provider's own skills are not included. Results are summaries: load a skill with scient_skill_load before you follow it. Unless scope.includesAllSkills is true, results are partial, and a pending or incomplete scope does not mean there are none. Continue with nextOffset.",
+  description: `List the Scient skills available this turn, or search their names and descriptions by keyword; a miss returns a browse page. Your provider's own skills are not included. Results are summaries: load a skill with scient_skill_load before you follow it. Unless scope.includesAllSkills is true, results are partial, and a pending or incomplete scope does not mean there are none. A page holds up to ${SKILL_PAGE_SIZE.max} skills, ${SKILL_PAGE_SIZE.default} by default; continue with nextOffset.`,
   parameters: ScientSkillListInput,
   success: Schema.Struct({
     skills: Schema.Array(
@@ -72,7 +74,7 @@ export const ScientSkillsListTool = Tool.make("scient_skills_list", {
         origin: NonEmptyString,
         invocationPolicy: Schema.Literals(["automatic", "explicit"]),
       }),
-    ).pipe(Schema.check(Schema.isMaxLength(50))),
+    ).pipe(Schema.check(Schema.isMaxLength(SKILL_PAGE_SIZE.max))),
     total: Schema.Int,
     nextOffset: Schema.NullOr(Schema.Int),
     scope: Schema.Struct({
