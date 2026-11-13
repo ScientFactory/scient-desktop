@@ -63,6 +63,7 @@ import {
   scientToolOutcome,
   ToolFailureNote,
   type ToolFailureFacts,
+  unresultedToolFailure,
 } from "../telemetry/ScientMcpAnalytics.ts";
 import { SCIENT_ACTION_TOOLS } from "../telemetry/ScientFeatureUsage.ts";
 // SCIENT-FORK:END
@@ -1368,6 +1369,9 @@ const withToolAnalytics =
                   const result = exit._tag === "Success" ? exit.value : undefined;
                   // A call that asks for input is retried with it, and that call is the one counted.
                   if (result instanceof McpSchema.InputRequired) return Effect.void;
+                  // SCIENT-FORK: refused arguments and cancellations are not Scient failures.
+                  if (exit._tag === "Failure")
+                    failure.unresulted = unresultedToolFailure(exit.cause);
                   // Handoff tools look up threads to record; the response must not wait on them.
                   return Effect.gen(function* () {
                     const endedAt = yield* Clock.currentTimeMillis;

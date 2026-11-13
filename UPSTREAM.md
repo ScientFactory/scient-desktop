@@ -2088,6 +2088,36 @@ Two marked focus seams keep the caret where the person is typing:
 - `ChatComposer.tsx` `insertVoiceTranscript`: a transcript lands seconds after recording, and it
   takes the caret only if focus is still in the composer or nowhere in particular.
 
+## Google sign-in in Scient's browser
+
+Google refuses sign-in inside Electron, so Scient stops its sign-in pages and explains them
+([Accounts internals](docs/internals/scient-accounts.md#google-sign-in-in-scients-browser)).
+The logic lives in `apps/desktop/src/scient/browser/googleSignIn*.ts`; marked blocks in upstream
+files only connect it:
+
+- `preview/BrowserSession.ts`: each preview partition installs `guardGoogleSignIn` (it owns the
+  session's `onBeforeRequest`; Electron allows one listener per event).
+- `preview/Manager.ts`: the tab's failed load gets an agent-readable description and emits
+  `DesktopPreviewSignInBlockedEvent`; popups are watched; in-page navigations check for Google's
+  refusal; `subscribeSignInBlocked`.
+- `ipc/channels.ts`, `ipc/methods/preview.ts`, `preload.ts`, contracts `ipc.ts`: the event's
+  channel and `onSignInBlocked`.
+- web `ElectronBrowserHost.tsx` records it once per hosting window; `PreviewView.tsx` shows the
+  recovery instead of the generic unreachable page.
+
+## Browser import: cookies left behind
+
+Marked blocks say why an import copied less than it read, chiefly Windows' app-bound (`v20`)
+Chromium cookies, which Scient doesn't try to bypass
+([browser import](docs/user/browser-import.md#when-some-cookies-cant-be-copied)):
+
+- contracts `browserImport.ts`: the `appBoundEncryption` unavailable reason, the `writeFailed`
+  failure, and `skippedByReason`/`importedGoogle` on the result.
+- desktop `preview/BrowserImport/*`: Windows Chromium sources listed but unavailable; skipped rows
+  counted by cause.
+- web `browserImportWizard.logic.ts`, `BrowserImportWizard.tsx`: the protected-cookie notice, and
+  an import into Main counted in sign-ins, partial when it kept one of Main's own.
+
 ## Git maintenance, untracked scans and owned processes
 
 Scient's checkpoints publish with a `git fetch`, which T3 does not (T3 uses `update-ref`), so

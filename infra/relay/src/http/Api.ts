@@ -85,6 +85,9 @@ import * as T3ChatAccounts from "../t3chat/T3ChatAccounts.ts";
 import { withSpanAttributes } from "../observability.ts";
 import { isRelayHookPath, redactRelayHookUrl } from "../hooks/HookForwarder.ts";
 import * as RelayDb from "../db.ts";
+// SCIENT-FORK:START link-supersession
+import * as LinkSupersession from "../environments/LinkSupersession.ts";
+// SCIENT-FORK:END link-supersession
 
 // Delegated IDs exceed the router's default 100-character limit; match the environment server.
 export const RELAY_HTTP_ROUTER_CONFIG = {
@@ -817,6 +820,9 @@ export const layerClientApi = HttpApiBuilder.group(
     const devices = yield* Devices.Devices;
     const t3Chat = yield* T3ChatAccounts.T3ChatAccounts;
     const tunnelLimits = yield* ManagedTunnelLimits.ManagedTunnelLimits;
+    // SCIENT-FORK:START link-supersession — optional so the API runs without the relay database.
+    const linkSupersession = yield* Effect.serviceOption(LinkSupersession.LinkSupersession);
+    // SCIENT-FORK:END link-supersession
     return handlers
       .handle(
         "listEnvironments",
@@ -857,6 +863,49 @@ export const layerClientApi = HttpApiBuilder.group(
             yield* appendRelayCredentialResponseHeaders;
             const { userId } = yield* RelayClientPrincipal;
             const result = yield* linker.link({ userId, request: payload });
+            // SCIENT-FORK:START link-supersession — this key now belongs to this account only.
+            if (Option.isSome(linkSupersession)) {
+              const own = yield* links.getForUser({ userId, environmentId: result.environmentId });
+              const others = own
+                ? yield* linkSupersession.value
+                    .otherAccountUserIds({
+                      userId,
+                      environmentId: result.environmentId,
+                      environmentPublicKey: own.environmentPublicKey,
+                    })
+                    .pipe(
+                      Effect.catchTags({
+                        LinkSupersessionPersistenceError: () =>
+                          relayInternalErrorResponse("internal_error"),
+                      }),
+                    )
+                : [];
+              yield* Effect.forEach(
+                others,
+                (otherUserId) =>
+                  unlinkEnvironmentRecord({
+                    userId: otherUserId,
+                    environmentId: result.environmentId,
+                    managedEndpointNamespace: config.managedEndpointNamespace,
+                  }).pipe(
+                    // Past loading, the grant is already revoked: a leftover tunnel serves no one
+                    // and its allocation stays for the managed-endpoint sweep.
+                    Effect.catchTags({
+                      ManagedEndpointDeprovisioningFailed: (error) =>
+                        error.stage === "load-allocation"
+                          ? relayInternalErrorResponse("internal_error")
+                          : Effect.logWarning("Could not remove a superseded account's tunnel", {
+                              environmentId: result.environmentId,
+                              stage: error.stage,
+                            }),
+                    }),
+                  ),
+                { discard: true },
+              ).pipe(
+                Effect.catchTags({ SqlError: () => relayInternalErrorResponse("internal_error") }),
+              );
+            }
+            // SCIENT-FORK:END link-supersession
             return {
               ok: true,
               cloudUserId: userId,

@@ -258,6 +258,9 @@ import {
   ScientSkillsLayerLive,
   WorkspaceBindingResolverLayerLive,
 } from "./scient/ScientServerLayers.ts";
+// SCIENT-FORK:START — Scient Cloud state shared with turn admission.
+import * as CloudSyncState from "./scient/cloud/CloudSyncState.ts";
+// SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Accounts: encrypted store and shared account service.
 import { ScientAccountsLayerLive } from "./scient/accounts/AccountsLayers.ts";
 // SCIENT-FORK:END
@@ -749,9 +752,14 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(ScientExtensionsLayerLive),
   // SCIENT-FORK:END
   // SCIENT-FORK:START — Scient Accounts: account grants are shared by RPC and agent consumers.
-  Layer.provideMerge(ScientAccountsLayerLive),
-  // Account checks reach the browser from RPC; the broker is one instance by memoization.
-  Layer.provideMerge(PreviewAutomationBroker.layer),
+  // Account checks reach the browser from RPC; the broker is one instance by memoization. One
+  // step for both, as `pipe` takes at most 20.
+  Layer.provideMerge(
+    ScientAccountsLayerLive.pipe(Layer.provideMerge(PreviewAutomationBroker.layer)),
+  ),
+  // SCIENT-FORK:END
+  // SCIENT-FORK:START — Scient Cloud: turn admission and the copy worker share one state file.
+  Layer.provideMerge(CloudSyncState.layer),
   // SCIENT-FORK:END
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
   Layer.provideMerge(ScientSkillsLayerLive),

@@ -287,6 +287,8 @@ export function makeProviderFailure(input: {
   readonly class?: OrchestrationV2ProviderFailureClass;
   readonly retryable?: boolean | null;
   readonly resetAt?: string | null;
+  // SCIENT-FORK: the provider's HTTP status beside the failure code.
+  readonly httpStatus?: number | null;
 }): OrchestrationV2ProviderFailure {
   const curated = curatedCauseMessages(input.cause);
   const rawMessage =
@@ -306,6 +308,14 @@ export function makeProviderFailure(input: {
     Number.isFinite(Date.parse(input.resetAt))
       ? { resetAt: DateTime.formatIso(DateTime.makeUnsafe(input.resetAt)) }
       : {}),
+    // SCIENT-FORK:START — the provider's HTTP status beside the failure code.
+    ...(input.httpStatus != null &&
+    Number.isInteger(input.httpStatus) &&
+    input.httpStatus >= 100 &&
+    input.httpStatus <= 599
+      ? { httpStatus: input.httpStatus }
+      : {}),
+    // SCIENT-FORK:END
   };
 }
 

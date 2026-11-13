@@ -1675,6 +1675,8 @@ export const OrchestrationV2ProviderFailure = Schema.Struct({
   code: Schema.NullOr(OrchestrationV2ProviderFailureCode),
   retryable: Schema.NullOr(Schema.Boolean),
   resetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  // SCIENT-FORK: the provider's HTTP status beside `code`; absent from older records.
+  httpStatus: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 100, maximum: 599 }))),
 });
 export type OrchestrationV2ProviderFailure = typeof OrchestrationV2ProviderFailure.Type;
 

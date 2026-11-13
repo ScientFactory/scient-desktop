@@ -26,6 +26,7 @@ const { fromPartition, sessions } = vi.hoisted(() => ({
       readonly webRequest: {
         readonly onBeforeSendHeaders: ReturnType<typeof vi.fn>;
         readonly onHeadersReceived: ReturnType<typeof vi.fn>;
+        readonly onBeforeRequest: ReturnType<typeof vi.fn>;
       };
       // SCIENT-FORK:END
     }
@@ -157,7 +158,11 @@ describe("BrowserSession", () => {
         setPermissionCheckHandler: vi.fn(),
         setUserAgent: vi.fn(),
         // SCIENT-FORK:START — Scient Browser: site identity hook.
-        webRequest: { onBeforeSendHeaders: vi.fn(), onHeadersReceived: vi.fn() },
+        webRequest: {
+          onBeforeSendHeaders: vi.fn(),
+          onHeadersReceived: vi.fn(),
+          onBeforeRequest: vi.fn(),
+        },
         // SCIENT-FORK:END
       };
       sessions.set(partition, browserSession);
@@ -241,7 +246,11 @@ describe("BrowserSession", () => {
             userAgent = next;
           }),
           // SCIENT-FORK:START — Scient Browser: site identity hook.
-          webRequest: { onBeforeSendHeaders: vi.fn(), onHeadersReceived: vi.fn() },
+          webRequest: {
+            onBeforeSendHeaders: vi.fn(),
+            onHeadersReceived: vi.fn(),
+            onBeforeRequest: vi.fn(),
+          },
           // SCIENT-FORK:END
         };
         sessions.set(partition, browserSession);

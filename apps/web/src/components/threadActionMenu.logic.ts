@@ -12,6 +12,7 @@ import {
 } from "../scient/conversationExport/menu";
 import type { OpenInNewWindowMenuId } from "../scient/multiWindow/openInNewWindow";
 import type { BrowserProfileMenuId } from "../scient/accounts/threadProfileMenu";
+import { shareMenuItems, type ShareLinkMenuId } from "../scient/cloud/menu";
 // SCIENT-FORK:END
 
 export type ThreadActionMenuId =
@@ -20,6 +21,7 @@ export type ThreadActionMenuId =
   | BrowserProfileMenuId
   | ConversationExportMenuId
   | OpenInNewWindowMenuId
+  | ShareLinkMenuId
   // SCIENT-FORK:END
   | "find"
   | "new-thread-on-branch"
@@ -149,6 +151,9 @@ export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean
     "project-settings",
     "mark-unread",
     "share-guest",
+    // SCIENT-FORK:START
+    "share-link",
+    // SCIENT-FORK:END
     "copy",
     "copy-path",
     "copy-branch",
@@ -231,9 +236,9 @@ export function buildThreadActionMenuItems(
         ]
       : []),
     { id: "mark-unread", label: "Mark unread", icon: "mail-open" },
-    ...(state.canShareWithGuest
-      ? [{ id: "share-guest" as const, label: "Share with guest", icon: "user-plus" }]
-      : []),
+    // SCIENT-FORK:START — one Share item: a lasting link, a live guest, or both in a submenu.
+    ...shareMenuItems(state.canShareWithGuest === true),
+    // SCIENT-FORK:END
     ...(state.projectFilter
       ? [
           {

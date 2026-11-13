@@ -80,6 +80,12 @@ export type OmpSessionUpdate =
       readonly stopReason?: "length" | "error" | "abort";
       /** A failure the user has to act on, such as a spending cap or a usage limit. */
       readonly failureClass?: "usage_limit";
+      /** ISO time at which the provider said the usage limit resets. */
+      readonly resetAt?: string;
+      /** Why the turn failed or stayed unconfirmed, for analytics: a provider cause or a host one. */
+      readonly failureCode?: string;
+      /** The provider's HTTP status, when the failure came from a request. */
+      readonly httpStatus?: number;
       readonly requestId?: string;
       /**
        * `command`: the prompt command itself was rejected, which the sender
@@ -394,6 +400,8 @@ interface TurnEvidence {
   promptError?: string | undefined;
   promptErrorCode?: string | undefined;
   promptHttpStatus?: number | undefined;
+  promptResetAt?: number | undefined;
+  promptErrorKinds?: ReadonlyArray<string> | undefined;
   retryExhausted?: boolean;
   retryFinalError?: string | undefined;
 }
@@ -599,7 +607,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       return {
         outcome,
         detail: clipOmpErrorMessage(input.target, failureDetail),
-        ...(commandRejected ? { source: "command" as const } : {}),
+        ...(commandRejected ? { source: "command" as const, failureCode: "command_rejected" } : {}),
       };
     }
     const verdict = classifyOmpTurnOutcome(input.target, {
@@ -610,8 +618,12 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       return {
         outcome: "unknown",
         ...(signal.type === "process-exit"
-          ? { source: "process" as const }
-          : { source: "unconfirmed" as const }),
+          ? { source: "process" as const, failureCode: "process_exit" }
+          : {
+              source: "unconfirmed" as const,
+              failureCode:
+                signal.type === "unconfirmed" ? (signal.reason ?? "unconfirmed") : "unconfirmed",
+            }),
       };
     }
     if (verdict.outcome === "failed") {
@@ -620,6 +632,9 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         detail: verdict.errorMessage,
         stopReason: verdict.stopReason,
         ...(verdict.failureClass ? { failureClass: verdict.failureClass } : {}),
+        ...(verdict.resetAt ? { resetAt: verdict.resetAt } : {}),
+        ...(verdict.failureCode ? { failureCode: verdict.failureCode } : {}),
+        ...(verdict.httpStatus ? { httpStatus: verdict.httpStatus } : {}),
       };
     }
     if (verdict.outcome === "completed" && verdict.stopReason) {
@@ -722,7 +737,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         type: "warning",
         message: `${input.target.name} did not report the result of this message.`,
       });
-      yield* applySignal({ type: "unconfirmed" });
+      yield* applySignal({ type: "unconfirmed", reason: "prompt_result_timeout" });
       return;
     }
     yield* scheduleDrainRetry;
@@ -765,7 +780,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         type: "warning",
         message: `${input.target.name} stayed busy after the turn ended.`,
       });
-      yield* applySignal({ type: "unconfirmed" });
+      yield* applySignal({ type: "unconfirmed", reason: "drain_busy" });
       return;
     }
     if (drainRetryPending) return;
@@ -791,7 +806,7 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
         type: "warning",
         message: `${input.target.name} did not confirm the session was idle.`,
       });
-      yield* applySignal({ type: "unconfirmed" });
+      yield* applySignal({ type: "unconfirmed", reason: "idle_confirmation_failed" });
       return;
     }
     if ((yield* Queue.size(inbox)) !== 0) return;
@@ -1073,6 +1088,8 @@ export const makeOmpSessionRuntime = Effect.fn("makeOmpSessionRuntime")(function
       evidence.promptError = event.promptError?.message;
       evidence.promptErrorCode = event.promptError?.code;
       evidence.promptHttpStatus = event.promptError?.httpStatus;
+      evidence.promptResetAt = event.promptError?.resetAt;
+      evidence.promptErrorKinds = event.promptError?.kinds;
       if (typeof event.agentInvoked === "boolean") {
         yield* applySignal({
           type: "prompt-result",

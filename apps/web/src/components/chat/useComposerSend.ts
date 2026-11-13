@@ -92,7 +92,10 @@ import {
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
-import { type ComposerSubmissionIntent } from "../../composer-logic";
+import {
+  collapseExpandedComposerCursor,
+  type ComposerSubmissionIntent,
+} from "../../composer-logic";
 import { type ChatMessage, DEFAULT_INTERACTION_MODE } from "../../types";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { newMessageId, newThreadId } from "~/lib/utils";
@@ -152,7 +155,7 @@ import {
   ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
   threadContextsOutsideEnvironment,
 } from "@t3tools/shared/composerContextReferences";
-import { draftSendState, prepareTurnAttachments } from "./chatViewSend";
+import { draftSendState, prepareTurnAttachments, restoreComposerDraft } from "./chatViewSend";
 import type {
   EnvironmentProject,
   EnvironmentThreadShell,
@@ -637,13 +640,16 @@ export function useComposerSend(input: ComposerSendInput) {
         .getState()
         .getComposerDraft(composerDraftTarget);
       const runtimeMode = draftSnapshotForSend?.runtimeMode ?? activeThread.runtimeMode;
+      // A send that cleared its draft owns its content; later typing or navigation cannot cancel it.
+      let draftClearedForSend = false;
       const isCurrentDraft = () =>
-        currentRouteThreadKeyRef.current === routeThreadKey &&
-        (directPrompt !== null ||
-          composerSubmissionMatchesDraft(
-            draftSnapshotForSend,
-            useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
-          ));
+        draftClearedForSend ||
+        (currentRouteThreadKeyRef.current === routeThreadKey &&
+          (directPrompt !== null ||
+            composerSubmissionMatchesDraft(
+              draftSnapshotForSend,
+              useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+            )));
       const assertCurrentDraft = () => {
         if (!isCurrentDraft())
           throw new Error("Your draft changed or you left this thread. Send again when ready.");
@@ -1217,6 +1223,9 @@ export function useComposerSend(input: ComposerSendInput) {
           const sendGeneration = ++composerSendGenerationRef.current;
           let submittedMessageId: MessageId | null = null;
           let requestAccepted = false;
+          const unadmittedDraft: { restore: ((interrupted: boolean) => void) | null } = {
+            restore: null,
+          };
           // SCIENT-FORK:START — the attempt runs as one settled unit: anything thrown fails it, and the
           // release below still runs, like the finally it replaces.
           const sendAttempt = await settlePromise(async () => {
@@ -1455,6 +1464,66 @@ export function useComposerSend(input: ComposerSendInput) {
             };
             setOptimisticUserMessages((existing) => [...existing, optimisticMessage]);
             setThreadError(threadIdForSend, null);
+            // SCIENT-FORK:START — the draft clears as the message shows, like upstream. A captured
+            // queue edit or extracted intent keeps it until admission: it binds their recovery journal.
+            if (directPrompt === null && !queueEdit && !extractedIntent) {
+              optimisticBlobPreviews.track(optimisticMessage);
+              promptRef.current = "";
+              clearComposerDraftContent(composerDraftTarget);
+              composerRef.current?.resetCursorState();
+              draftClearedForSend = true;
+              const composerHasDraft = () =>
+                composerDraftHasUserContent(
+                  useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+                );
+              const putDraftBack = () => {
+                restoreComposerDraft(composerDraftTarget, sendSnapshot);
+                if (currentRouteThreadKeyRef.current !== routeThreadKey) return;
+                promptRef.current = messageTextForSend;
+                composerRef.current?.resetCursorState({
+                  cursor: collapseExpandedComposerCursor(
+                    messageTextForSend,
+                    messageTextForSend.length,
+                  ),
+                  prompt: messageTextForSend,
+                  detectTrigger: true,
+                });
+              };
+              unadmittedDraft.restore = (interrupted) => {
+                // A restored draft clones its images, so the sent copies are no longer used.
+                optimisticBlobPreviews.release(optimisticMessage);
+                if (!composerHasDraft()) {
+                  putDraftBack();
+                  return;
+                }
+                // The toast holds the only copy of the failed message, so it stays until dismissed.
+                const recoveryToastId = toastManager.add(
+                  stackedThreadToast({
+                    type: "error",
+                    title: interrupted ? "Message may not have been sent" : "Message not sent",
+                    description:
+                      "Your new draft was kept. Restore the failed message to that conversation once the draft is sent or cleared.",
+                    timeout: 0,
+                    actionProps: {
+                      children: "Restore message",
+                      // Reads only state that outlives this composer, so it still works after a remount.
+                      onClick: () => {
+                        if (sendInFlightRef.current || composerHasDraft()) {
+                          toastManager.update(recoveryToastId, {
+                            description:
+                              "Send, stash or clear that conversation's current draft first.",
+                          });
+                          return;
+                        }
+                        putDraftBack();
+                        toastManager.close(recoveryToastId);
+                      },
+                    },
+                  }),
+                );
+              };
+            }
+            // SCIENT-FORK:END
             if (expiredTerminalContextCount > 0) {
               const toastCopy = buildExpiredTerminalContextToastCopy(
                 expiredTerminalContextCount,
@@ -1725,7 +1794,7 @@ export function useComposerSend(input: ComposerSendInput) {
                 setKeepFullHistory(routeThreadKey, false);
                 if (freshArm !== undefined) disarmFreshSession(routeThreadKey, freshArm);
                 // SCIENT-FORK:START — an admitted send retires its extracted intent and queue edit, then
-                // clears the draft it was sent from (only if the draft is unchanged since).
+                // clears a draft still held for admission (only if the draft is unchanged since).
                 requestAccepted = true;
                 if (extractedIntent) await consumeExtractedSubmission(extractedIntent);
                 const queued = "queued" in startResult.value && startResult.value.queued === true;
@@ -1743,7 +1812,9 @@ export function useComposerSend(input: ComposerSendInput) {
                     );
                   }
                 }
-                if (
+                if (draftClearedForSend) {
+                  flushComposerDraftPersistence();
+                } else if (
                   canAcknowledge &&
                   directPrompt === null &&
                   composerSubmissionMatchesDraft(
@@ -1838,11 +1909,13 @@ export function useComposerSend(input: ComposerSendInput) {
                 );
                 clearBackgroundDraftSubmissionByRef(scopeThreadRef(environmentId, threadIdForSend));
               }
-              // SCIENT-FORK:START — nothing has been cleared before admission, including attachment
-              // bytes. Remove the optimistic row without overwriting any typing during flight.
+              // SCIENT-FORK:START — a failed send leaves the timeline and returns its cleared draft
+              // without overwriting typing during flight; a held draft was never cleared.
               setOptimisticUserMessages((existing) =>
                 existing.filter((message) => message.id !== messageIdForSend),
               );
+              unadmittedDraft.restore?.(isAtomCommandInterrupted(failure));
+              unadmittedDraft.restore = null;
               // SCIENT-FORK:END
               if (!isAtomCommandInterrupted(failure)) {
                 const error = squashAtomCommandFailure(failure);
@@ -1905,6 +1978,7 @@ export function useComposerSend(input: ComposerSendInput) {
               setOptimisticUserMessages((existing) =>
                 existing.filter((message) => message.id !== failedMessageId),
               );
+              unadmittedDraft.restore?.(false);
             }
             setThreadError(
               threadIdForSend,

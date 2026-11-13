@@ -284,8 +284,15 @@ profile.
   release or operations procedure when that work is authorized.
 
 Use conventional-commit titles. PR descriptions include the problem, resulting
-behavior, verification, documentation impact, and the model and harness used.
-Contribution policy and evidence requirements: `CONTRIBUTING.md`.
+behavior, verification, documentation impact, platforms, and the model and
+harness used. Contribution policy and evidence requirements: `CONTRIBUTING.md`.
+
+PR descriptions and handbacks state the expected behavior on macOS, Windows and
+Linux, the checks that ran on each, and what remains unproven there. Put a
+difference between platforms first: a path that is macOS-only, skipped
+elsewhere, or never run on a real Windows or Linux computer, including gaps
+inherited from upstream. "Unaffected" needs its reason. CI with mocks does not
+qualify OS authenticators, installed browsers, live sites or installed builds.
 
 ## Documentation
 

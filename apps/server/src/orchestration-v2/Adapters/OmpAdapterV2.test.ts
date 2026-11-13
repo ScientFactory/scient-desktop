@@ -1044,6 +1044,114 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
       }),
     ),
   );
+  it.effect.each([
+    {
+      caseTitle: "carries the usage-limit reset time Scient Agent reports",
+      resetAt: Date.parse("2026-11-13T18:30:00.000Z"),
+      expected: "2026-11-13T18:30:00.000Z",
+    },
+    {
+      caseTitle: "reports no usage-limit reset time when Scient Agent sends none",
+      resetAt: undefined,
+      expected: undefined,
+    },
+  ])("$caseTitle", ({ resetAt, expected }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        const failed = {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorStatus: 429,
+          errorMessage: "429 Usage limit reached",
+        };
+        yield* peer.emit([
+          { type: "agent_start" },
+          { type: "message_end", messageId: "limited", message: failed },
+          { type: "agent_end", messages: [failed], isTerminal: true, yielded: true },
+          {
+            type: "prompt_result",
+            id: peer.state.frames.find((frame) => frame.type === "prompt")?.id,
+            agentInvoked: true,
+            status: "error",
+            sessionSettled: true,
+            error: {
+              message: "429 Usage limit reached",
+              httpStatus: 429,
+              retryable: true,
+              ...(resetAt === undefined ? {} : { resetAt }),
+            },
+          },
+        ]);
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        if (terminal.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
+        assert.equal(terminal.failure?.class, "usage_limit");
+        assert.equal(terminal.failure?.resetAt, expected);
+      }),
+    ),
+  );
+
+  it.effect.each([
+    {
+      caseTitle: "names a failure by the most specific kind Scient Agent reports",
+      kinds: ["transient", "auth-failed"],
+      expectedCode: "auth-failed",
+    },
+    {
+      caseTitle: "names a failure by its HTTP status when an older agent sends no kinds",
+      kinds: undefined,
+      expectedCode: "http_401",
+    },
+  ])("$caseTitle", ({ kinds, expectedCode }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const peer = scriptedOmpRpc({ models: [], initial: { provider: "test", id: "selected" } });
+        const h = yield* harness(false, {
+          makeProcess: peer.makeProcess,
+          target: scientAgentTarget,
+        });
+        yield* h.runtime.startTurn(h.input);
+        yield* peer.promptDelivered();
+        const failed = {
+          role: "assistant",
+          content: [],
+          stopReason: "error",
+          errorStatus: 401,
+          errorMessage: "401 invalid API key",
+        };
+        yield* peer.emit([
+          { type: "agent_start" },
+          { type: "message_end", messageId: "refused", message: failed },
+          { type: "agent_end", messages: [failed], isTerminal: true, yielded: true },
+          {
+            type: "prompt_result",
+            id: peer.state.frames.find((frame) => frame.type === "prompt")?.id,
+            agentInvoked: true,
+            status: "error",
+            sessionSettled: true,
+            error: {
+              message: "401 invalid API key",
+              httpStatus: 401,
+              retryable: false,
+              ...(kinds === undefined ? {} : { kinds }),
+            },
+          },
+        ]);
+        const terminal = yield* h.takeUntil((event) => event.type === "turn.terminal");
+        if (terminal.type !== "turn.terminal") return yield* Effect.die("Missing terminal");
+        assert.equal(terminal.failure?.class, "provider_error");
+        assert.equal(terminal.failure?.code, expectedCode);
+        assert.equal(terminal.failure?.httpStatus, 401);
+      }),
+    ),
+  );
 
   it.effect("budgets several native OMP images together against one serialized frame", () =>
     Effect.scoped(
@@ -2446,6 +2554,7 @@ it.layer(TestLayer)("OmpAdapterV2", (it) => {
           return yield* Effect.die("Missing unknown native outcome");
         assert.equal(terminal.status, "failed");
         assert.equal(terminal.failure?.class, "unknown");
+        assert.equal(terminal.failure?.code, "process_exit");
         assert.include(terminal.failure?.message ?? "", "outcome is unknown");
         assert.equal(terminal.threadDisposition, "broken");
         assert.equal(h.recorded.filter((event) => event.type === "turn.terminal").length, 1);

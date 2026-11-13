@@ -12,7 +12,8 @@
     "test:pdf-pagination": "node scripts/pdf-pagination-smoke.mjs",
     "test:mermaid-render": "node scripts/mermaid-render-smoke.mjs",
     "test:document-pdf": "node scripts/document-page-pdf-fixtures.mjs",
-    "test:svg-export": "node scripts/svg-export-smoke.mjs"
+    "test:svg-export": "node scripts/svg-export-smoke.mjs",
+    "test:google-sign-in": "node scripts/google-sign-in-smoke.mjs"
   },
   "dependencies": {
     "@clerk/electron": "catalog:",

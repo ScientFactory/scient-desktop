@@ -59,4 +59,19 @@ export const clerkInstanceForJwt = (config: Settings, token: string): ClerkInsta
     ? legacy
     : primaryClerkInstance(config);
 };
+
+/**
+ * Instances that may hold the user a bearer token names, most likely first. An opaque OAuth
+ * token names no issuer, so it may come from either instance.
+ */
+export const clerkInstancesForBearer = (
+  config: Settings,
+  token: string,
+): ReadonlyArray<ClerkInstance> => {
+  const legacy = legacyClerkInstance(config);
+  if (jwtIssuerHostname(token) !== undefined || !legacy) {
+    return [clerkInstanceForJwt(config, token)];
+  }
+  return [primaryClerkInstance(config), legacy];
+};
 // SCIENT-FORK:END clerk-legacy-instance

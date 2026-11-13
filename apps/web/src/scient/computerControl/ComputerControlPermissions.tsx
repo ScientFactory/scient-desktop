@@ -1,16 +1,11 @@
 import type { EnvironmentId, ToolHostPermission } from "@t3tools/contracts";
-import { useAtomValue } from "@effect/atom-react";
-import { Atom } from "effect/reactivity";
 import { useState } from "react";
 
 import { MacAccessibilityIcon, MacScreenRecordingIcon } from "~/components/Icons";
 import { PermissionChecklist } from "~/components/permissions/PermissionChecklist";
 import { usePermissionStatus } from "~/components/permissions/usePermissionStatus";
 import { SettingsRow } from "~/components/settings/settingsLayout";
-import { appAtomRegistry } from "~/rpc/atomRegistry";
-import { isThreadRunning } from "~/scient/desktopUpdate/otherUpdates.logic";
 import { usePrimaryEnvironmentId } from "~/state/environments";
-import { environmentThreadShells } from "~/state/threads";
 
 import {
   COMPUTER_CONTROL_PERMISSIONS as ALL,
@@ -41,46 +36,16 @@ const check = async (): Promise<Record<ToolHostPermission, boolean>> => {
   return { "screen-recording": screen, accessibility };
 };
 
-const runningThreadCountAtom = Atom.family((environmentId: EnvironmentId) =>
-  Atom.make(
-    (get) =>
-      get(environmentThreadShells.environmentThreadsAtom(environmentId)).filter(isThreadRunning)
-        .length,
-  ).pipe(Atom.withLabel(`scient-computer-control-running-threads:${environmentId}`)),
-);
-
-const screenRecordingWaitingAtom = Atom.make(false).pipe(
-  Atom.keepAlive,
-  Atom.withLabel("scient-computer-control-screen-recording-waiting"),
-);
-
-/** Keeps waiting if the notice scrolls away; one wait at a time. */
-function openScreenRecordingWhenThreadsFinish(environmentId: EnvironmentId): void {
-  if (appAtomRegistry.get(screenRecordingWaitingAtom)) return;
-  appAtomRegistry.set(screenRecordingWaitingAtom, true);
-  const unsubscribe = appAtomRegistry.subscribe(runningThreadCountAtom(environmentId), (count) => {
-    if (count > 0) return;
-    unsubscribe();
-    appAtomRegistry.set(screenRecordingWaitingAtom, false);
-    void desktopBridge()?.openSystemSettings("screen-recording");
-  });
-}
-
 /**
  * Both panes with live status. Allow asks macOS first, which lists Scient in the pane, then
- * opens the pane, so the user only turns Scient on. Screen Recording waits for running threads,
- * since macOS may close Scient when it is turned on.
+ * opens the pane, so the user only turns Scient on.
  */
 function ComputerControlPermissionChecklist({
   status,
-  environmentId,
 }: {
   status: Record<ToolHostPermission, boolean>;
-  environmentId: EnvironmentId;
 }) {
   const [requested, setRequested] = useState<ReadonlySet<ToolHostPermission>>(new Set());
-  const waiting = useAtomValue(screenRecordingWaitingAtom);
-  const runningThreads = useAtomValue(runningThreadCountAtom(environmentId));
   return (
     <PermissionChecklist
       permissions={ALL.map((permission) => ({
@@ -95,14 +60,11 @@ function ComputerControlPermissionChecklist({
         description: computerControlPermissionDescription(permission, {
           granted: status[permission],
           requested: requested.has(permission),
-          waitingFor: permission === "screen-recording" && waiting ? runningThreads : 0,
         }),
         granted: status[permission],
         onAllow: () => {
           setRequested((current) => new Set(current).add(permission));
-          if (permission === "screen-recording" && runningThreads > 0)
-            openScreenRecordingWhenThreadsFinish(environmentId);
-          else void desktopBridge()?.openSystemSettings(permission);
+          void desktopBridge()?.openSystemSettings(permission);
         },
       }))}
     />
@@ -113,13 +75,7 @@ const useComputerControlPermissionStatus = () =>
   usePermissionStatus(check, { "screen-recording": false, accessibility: false });
 
 /** Polls only while shown on the Mac running the conversation. */
-function LiveComputerControlPermissions({
-  refused,
-  environmentId,
-}: {
-  refused: boolean;
-  environmentId: EnvironmentId;
-}) {
+function LiveComputerControlPermissions({ refused }: { refused: boolean }) {
   const { status } = useComputerControlPermissionStatus();
   const ready = ALL.every((permission) => status[permission]);
   return (
@@ -131,7 +87,7 @@ function LiveComputerControlPermissions({
             : "Both permissions are on."
           : "The agent needs two macOS permissions for Scient. Click Allow on each and turn Scient on in the pane that opens; macOS lists Scient for you."}
       </p>
-      <ComputerControlPermissionChecklist status={status} environmentId={environmentId} />
+      <ComputerControlPermissionChecklist status={status} />
     </div>
   );
 }
@@ -152,8 +108,8 @@ export function ComputerControlPermissionNotice({
   if (permissions.length === 0) return null;
   return (
     <div className="mt-1 ms-7 max-w-md text-sm" data-computer-control-permissions>
-      {here && environmentId !== null ? (
-        <LiveComputerControlPermissions refused environmentId={environmentId} />
+      {here ? (
+        <LiveComputerControlPermissions refused />
       ) : (
         <p className="text-muted-foreground">
           macOS refused the agent on the Mac running this conversation. On that Mac, open System
@@ -187,7 +143,7 @@ export function ScientAgentComputerControlPermissionsRow({
       title="macOS permissions"
       description="What macOS asks before the agent can see and use other apps."
     >
-      <LiveComputerControlPermissions refused={false} environmentId={environmentId} />
+      <LiveComputerControlPermissions refused={false} />
     </SettingsRow>
   );
 }

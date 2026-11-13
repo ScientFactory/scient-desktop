@@ -431,6 +431,9 @@ jobs:
       - name: Verify SVG and PNG exports in Chromium
         if: ${{ matrix.part == 1 }}
         run: xvfb-run --auto-servernum node apps/desktop/scripts/svg-export-smoke.mjs
+      - name: Stop Google sign-in pages in Electron's browser
+        if: ${{ matrix.part == 1 }}
+        run: xvfb-run --auto-servernum node apps/desktop/scripts/google-sign-in-smoke.mjs
       # SCIENT-FORK:END
 
       - name: Test preview artifact validation
@@ -950,9 +953,15 @@ jobs:
         timeout-minutes: 15
         working-directory: apps/server
         run: vp test bench --run --fileParallelism=false --maxWorkers=1 --testTimeout=600000 src/scient/overleaf/OverleafSync.bench.ts -t "(incoming|outgoing) (10|50)$"
-      - name: Accounts and browser import tests on Windows
+      - name: Accounts, browser and browser import tests on Windows
         working-directory: apps/desktop
-        run: vp test run src/scient/accounts src/preview/BrowserImport
+        run: vp test run src/scient/accounts src/scient/browser src/preview/BrowserImport
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+      # Real Electron: Google's sign-in pages stop, other sites' passkeys still work.
+      - name: Stop Google sign-in pages in Electron's browser on Windows
+        working-directory: apps/desktop
+        run: node scripts/google-sign-in-smoke.mjs
       # Real Chrome and Edge windows: sign in to a local page, quit, read the profile back.
       - name: Sign in in a Chrome and an Edge window on Windows
         working-directory: apps/desktop
@@ -994,6 +1003,12 @@ jobs:
         run: node .github/scripts/overleaf-platform-tests.cjs --build-helpers
       - name: Require every macOS Overleaf platform file without skips
         run: node .github/scripts/overleaf-platform-tests.cjs
+      - name: Ensure Electron runtime is installed
+        run: vp run --filter @t3tools/desktop ensure:electron
+      # Real Electron: Google's sign-in pages stop, other sites' passkeys still work.
+      - name: Stop Google sign-in pages in Electron's browser on macOS
+        working-directory: apps/desktop
+        run: node scripts/google-sign-in-smoke.mjs
   # SCIENT-FORK:END
 
   # SCIENT-FORK:START — a reused main push skips the jobs that save main's dependency stores,

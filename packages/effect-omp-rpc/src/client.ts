@@ -281,6 +281,8 @@ const pick = <A>(
   guard: (value: unknown) => value is A,
 ): Record<string, A> => (guard(record[key]) ? { [key]: record[key] } : {});
 const isString = (value: unknown): value is string => typeof value === "string";
+const isStringArray = (value: unknown): value is ReadonlyArray<string> =>
+  Array.isArray(value) && value.every(isString);
 const isBoolean = (value: unknown): value is boolean => typeof value === "boolean";
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
@@ -336,6 +338,8 @@ const degradedProjection = (
               ...pick(error, "model", isString),
               ...pick(error, "httpStatus", isFiniteNumber),
               ...pick(error, "code", isString),
+              ...pick(error, "resetAt", isFiniteNumber),
+              ...pick(error, "kinds", isStringArray),
             },
           }
         : {}),

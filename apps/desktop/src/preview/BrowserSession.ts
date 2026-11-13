@@ -23,6 +23,7 @@ import { keepSessionCookies } from "../scient/accounts/keepSessionCookies.ts";
 // SCIENT-FORK:END
 // SCIENT-FORK:START — Scient Browser: sites that refuse Electron open normally.
 import { matchSiteBrowserIdentity } from "../scient/browser/siteBrowserIdentity.ts";
+import { guardGoogleSignIn } from "../scient/browser/googleSignInGuard.ts";
 // SCIENT-FORK:END
 
 const PREVIEW_PARTITION_PREFIX = SCIENT_DESKTOP_IDENTITY.previewPartitionPrefix;
@@ -594,6 +595,7 @@ export const make = Effect.gen(function* BrowserSessionMake() {
           // SCIENT-FORK:END
           // SCIENT-FORK:START — Scient Browser: sites that refuse Electron open normally.
           matchSiteBrowserIdentity(browserSession);
+          guardGoogleSignIn(browserSession);
           // SCIENT-FORK:END
           // Like Chrome, clipboard reads ask once per origin; both answers last for the session.
           const clipboardReadDecisions = new Map<string, boolean>();

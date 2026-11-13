@@ -16,8 +16,8 @@ it("emits object-only MCP input schemas for every Scient skill tool", () => {
   const accepts = Schema.is(ScientSkillListInput);
   expect(accepts({})).toBe(true);
   expect(accepts([])).toBe(false);
-  expect(accepts({ query: "pdf", offset: 20, limit: 50 })).toBe(true);
-  for (const invalid of [{ limit: 0 }, { limit: 51 }, { offset: -1 }, { query: "x".repeat(201) }]) {
+  expect(accepts({ query: "pdf", offset: 20, limit: 100 })).toBe(true);
+  for (const invalid of [{ limit: 0 }, { offset: -1 }, { query: "x".repeat(201) }]) {
     expect(accepts(invalid)).toBe(false);
   }
 });

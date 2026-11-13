@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import {
   createManagedRelayQueryManager,
+  // SCIENT-FORK:START account-deletion
+  deleteManagedRelayAccount,
+  // SCIENT-FORK:END account-deletion
   deregisterManagedRelayEnvironment,
   managedRelaySessionAtom,
   readManagedRelaySnapshotState,
@@ -35,6 +38,18 @@ export const deregisterManagedRelayEnvironmentCommand = createRuntimeCommand(
     execute: (input, registry) => deregisterManagedRelayEnvironment(registry, input),
   },
 );
+
+// SCIENT-FORK:START account-deletion
+export const deleteManagedRelayAccountCommand = createRuntimeCommand(managedRelayAtomRuntime, {
+  label: "mobile:managed-relay:delete-account",
+  scheduler: managedRelayMutationScheduler,
+  concurrency: {
+    mode: "serial",
+    key: (input: { readonly accountId: string }) => input.accountId,
+  },
+  execute: (input, registry) => deleteManagedRelayAccount(registry, input),
+});
+// SCIENT-FORK:END account-deletion
 
 const EMPTY_ENVIRONMENTS_ATOM = Atom.make(
   AsyncResult.success<ReadonlyArray<RelayClientEnvironmentRecord>>([]),

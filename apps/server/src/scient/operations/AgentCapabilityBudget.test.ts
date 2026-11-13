@@ -79,16 +79,19 @@ it.live(
         expect(loaded.result.instructions).toBe(
           fixture.releases.get(fixture.skills.at(-1)!.releaseKey)!.instructions,
         );
+        // Agents ask for more than a page holds; the tool caps each page instead of refusing.
         const names: string[] = [];
         let offset: number | null = 0;
         while (offset !== null) {
-          const page: Effect.Success<ReturnType<typeof listScientSkillsForInvocation>> =
-            yield* listScientSkillsForInvocation({ offset, limit: 20 }).pipe(
-              Effect.provideService(AgentInvocationContext, invocation),
-            );
-          expect(page.skills.length).toBeLessThanOrEqual(20);
-          names.push(...page.skills.map((skill) => skill.name));
-          offset = page.nextOffset;
+          const from: number = offset;
+          const { result } = yield* execute("scient_skills_list", {
+            offset: from,
+            limit: 100,
+          }).pipe(Effect.provideService(AgentInvocationContext, invocation));
+          if (!("skills" in result)) throw new Error("Expected Skill discovery success");
+          expect(result.skills).toHaveLength(Math.min(50, count - from));
+          names.push(...result.skills.map((skill) => skill.name));
+          offset = result.nextOffset;
         }
         expect(names).toEqual(fixture.skills.map((skill) => skill.name));
         expect(new Set(names).size).toBe(names.length);

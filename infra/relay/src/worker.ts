@@ -75,6 +75,13 @@ import * as HeldHooks from "./hooks/HeldHooks.ts";
 import * as HookInbox from "./hooks/HookInbox.ts";
 import * as HookInboxObject from "./hooks/HookInboxObject.ts";
 import * as MobileTelemetry from "./mobileTelemetry/MobileTelemetry.ts";
+// SCIENT-FORK:START account-deletion
+import * as AccountDeletion from "./account/AccountDeletion.ts";
+import * as AccountRecords from "./account/AccountRecords.ts";
+import * as LinkSupersession from "./environments/LinkSupersession.ts";
+import * as ClerkUsers from "./account/ClerkUsers.ts";
+import * as RelayAccountApi from "./http/AccountApi.ts";
+// SCIENT-FORK:END account-deletion
 
 const layerWebcrypto = Layer.mergeAll(
   Digest.layerWebCrypto,
@@ -104,6 +111,9 @@ const layerRelayApi = Layer.mergeAll(
   RelayHttpApi.layerTokenApi,
   RelayHttpApi.layerDpopClientApi,
   RelayHttpApi.layerServerApi,
+  // SCIENT-FORK:START account-deletion
+  RelayAccountApi.layerAccountApi,
+  // SCIENT-FORK:END account-deletion
 );
 
 const CloudMintKeyPair = Alchemy.KeyPair("CloudMintKeyPair");
@@ -308,7 +318,14 @@ export const layer = Api.make(
       }),
     });
 
-    const layerRuntime = Layer.empty.pipe(
+    // SCIENT-FORK:START account-deletion — heads the runtime chain, which is at pipe's arity limit.
+    const layerAccountDeletion = AccountDeletion.layer.pipe(
+      Layer.provideMerge(
+        Layer.mergeAll(AccountRecords.layer, ClerkUsers.layer, LinkSupersession.layer),
+      ),
+    );
+    const layerRuntime = layerAccountDeletion.pipe(
+      // SCIENT-FORK:END account-deletion
       Layer.provideMerge(MobileRegistrations.layer),
       Layer.provideMerge(AgentActivityPublisher.layer),
       Layer.provideMerge(EnvironmentConnector.layer),

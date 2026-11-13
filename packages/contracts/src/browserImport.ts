@@ -25,6 +25,9 @@ export const BrowserImportUnavailableReason = Schema.Literals([
   "needsFullDiskAccess",
   "browserRunning",
   "unsupportedPlatform",
+  // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+  "appBoundEncryption",
+  // SCIENT-FORK:END
 ]);
 export type BrowserImportUnavailableReason = typeof BrowserImportUnavailableReason.Type;
 
@@ -37,6 +40,9 @@ export const BrowserImportFailureReason = Schema.Literals([
   "profileNotSaved",
   "profileLimitReached",
   "readFailed",
+  // SCIENT-FORK:START — Scient Accounts: cookies read but none could be stored in the profile.
+  "writeFailed",
+  // SCIENT-FORK:END
 ]);
 export type BrowserImportFailureReason = typeof BrowserImportFailureReason.Type;
 
@@ -75,12 +81,28 @@ export const DesktopPreviewImportCookiesInputSchema = Schema.Struct({
   // SCIENT-FORK:END
 });
 
+// SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.
+/** Cookie rows left out, by cause; a row counts once, so the sum is at most `skipped`. */
+export const BrowserImportSkippedByReason = Schema.Struct({
+  /** Windows `v20` rows, readable only by the browser that wrote them. */
+  appBoundEncryption: Schema.Int,
+  decryptFailed: Schema.Int,
+  /** Partitioned rows without the stored ancestor bit their key needs. */
+  partitionUnsupported: Schema.Int,
+  writeFailed: Schema.Int,
+});
+export type BrowserImportSkippedByReason = typeof BrowserImportSkippedByReason.Type;
+// SCIENT-FORK:END
+
 export const BrowserImportResult = Schema.Struct({
   imported: Schema.Int,
   skipped: Schema.Int,
   skippedDomains: Schema.Array(Schema.String),
   // SCIENT-FORK:START — Scient Accounts: the sites an import brought cookies for.
   importedSites: Schema.optional(Schema.Int),
+  skippedByReason: Schema.optional(BrowserImportSkippedByReason),
+  /** Whether any imported cookie belongs to Google. */
+  importedGoogle: Schema.optional(Schema.Boolean),
   // SCIENT-FORK:END
 });
 export type BrowserImportResult = typeof BrowserImportResult.Type;
@@ -94,6 +116,9 @@ const BROWSER_IMPORT_UNAVAILABLE_COPY: Readonly<Record<BrowserImportUnavailableR
     "Give Scient Full Disk Access in System Settings → Privacy & Security, then retry.",
   browserRunning: "Quit the browser first so its cookie database can be read.",
   unsupportedPlatform: "Importing from this browser isn't possible on this platform.",
+  // SCIENT-FORK:START — Scient Accounts: Windows keeps Chromium sign-ins from other apps.
+  appBoundEncryption: "Windows protects this browser's saved sign-ins from other apps.",
+  // SCIENT-FORK:END
 };
 
 export const BROWSER_IMPORT_FAILURE_COPY: Readonly<Record<BrowserImportFailureReason, string>> = {
@@ -107,4 +132,7 @@ export const BROWSER_IMPORT_FAILURE_COPY: Readonly<Record<BrowserImportFailureRe
   profileLimitReached:
     "You've reached the profile limit. Delete a profile or import into an existing one.",
   readFailed: "The browser's cookie database could not be read.",
+  // SCIENT-FORK:START — Scient Accounts: cookies read but none could be stored in the profile.
+  writeFailed: "The cookies were read, but none could be saved into the profile.",
+  // SCIENT-FORK:END
 };

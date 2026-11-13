@@ -1,0 +1,71 @@
+// SCIENT-FORK:START account-deletion — whole file.
+import { RelayApi, RelayProtectedError } from "@t3tools/contracts/relay";
+import { withRelayClientTracing } from "@t3tools/shared/relayTracing";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
+import * as HttpApiClient from "effect/http-api/HttpApiClient";
+import type { AtomRegistry } from "effect/reactivity";
+
+import * as ManagedRelay from "./managedRelay.ts";
+import { managedRelaySessionAtom } from "./managedRelayState.ts";
+
+const isRelayProtectedError = Schema.is(RelayProtectedError);
+
+export class ManagedRelayAccountDeletionError extends Schema.TaggedError<ManagedRelayAccountDeletionError>()(
+  "ManagedRelayAccountDeletionError",
+  {
+    reason: Schema.Literals(["signed-out", "request-failed", "timed-out"]),
+    traceId: Schema.optional(Schema.String),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "signed-out":
+        return "Sign in to Scient Connect before deleting your account.";
+      case "timed-out":
+        return "Deleting your account took too long. Check your connection and try again.";
+      case "request-failed":
+        return "Could not delete your Scient account. Try again.";
+    }
+  }
+}
+
+/** Deletes the signed-in account on the relay. The caller signs out locally afterwards. */
+export const deleteManagedRelayAccount = Effect.fn(
+  "clientRuntime.managedRelaySession.deleteAccount",
+)(function* (registry: AtomRegistry.AtomRegistry, input: { readonly accountId: string }) {
+  const session = registry.get(managedRelaySessionAtom);
+  if (!session || session.accountId !== input.accountId) {
+    return yield* new ManagedRelayAccountDeletionError({ reason: "signed-out" });
+  }
+  const clerkToken = yield* session
+    .readClerkToken()
+    .pipe(
+      Effect.mapError(
+        (cause) => new ManagedRelayAccountDeletionError({ reason: "signed-out", cause }),
+      ),
+    );
+  if (!clerkToken) {
+    return yield* new ManagedRelayAccountDeletionError({ reason: "signed-out" });
+  }
+  const relay = yield* ManagedRelay.ManagedRelayClient;
+  const client = yield* HttpApiClient.make(RelayApi, { baseUrl: relay.relayUrl });
+  yield* client.account.deleteAccount({ headers: { authorization: `Bearer ${clerkToken}` } }).pipe(
+    withRelayClientTracing,
+    Effect.mapError(
+      (cause) =>
+        new ManagedRelayAccountDeletionError({
+          reason: "request-failed",
+          cause,
+          ...(isRelayProtectedError(cause) ? { traceId: cause.traceId } : {}),
+        }),
+    ),
+    Effect.timeoutOrElse({
+      duration: Duration.millis(ManagedRelay.MANAGED_RELAY_REQUEST_TIMEOUT_MS),
+      orElse: () => Effect.fail(new ManagedRelayAccountDeletionError({ reason: "timed-out" })),
+    }),
+  );
+});
+// SCIENT-FORK:END account-deletion

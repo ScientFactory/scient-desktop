@@ -154,6 +154,10 @@ export const OmpPromptError = Schema.Struct({
   retryable: Schema.Boolean,
   /** `cost_cap`: the session reached its spending cap and no request was sent. */
   code: maybeString,
+  /** Epoch ms at which the provider said the usage limit resets; older agents never send it. */
+  resetAt: maybeNumber,
+  /** The agent's error classifier labels (`auth-failed`, `transient`, ...); older agents never send it. */
+  kinds: Schema.optional(Schema.Array(Schema.String)),
 });
 export type OmpPromptError = typeof OmpPromptError.Type;
 

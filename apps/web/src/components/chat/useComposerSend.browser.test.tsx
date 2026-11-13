@@ -1075,6 +1075,50 @@ describe("mounted composer send admission owner", () => {
     ).toBe(newerDraft);
   });
 
+  it.each(["empty composer", "newer draft"] as const)(
+    "clears the draft as the message shows and returns a failed send: %s",
+    async (meanwhile) => {
+      await using fixture = await setup({});
+      const dispatched = Promise.withResolvers<void>();
+      const receipt = Promise.withResolvers<AtomCommandResult<{ queued: boolean }, unknown>>();
+      fixture.command.mockImplementationOnce(() => {
+        dispatched.resolve();
+        return receipt.promise;
+      });
+      using toast = vi.spyOn(toastManager, "add").mockReturnValue("synthetic-failed-send-toast");
+      const draftOf = () =>
+        useComposerDraftStore.getState().getComposerDraft(fixture.input.composerDraftTarget);
+      const sending = fixture.send();
+      await dispatched.promise;
+      expect(draftOf()?.prompt ?? "").toBe("");
+      if (meanwhile === "newer draft")
+        useComposerDraftStore
+          .getState()
+          .setPrompt(fixture.input.composerDraftTarget, "Newer question");
+      const newerDraft = draftOf();
+      const failed = await settlePromise(async () => {
+        throw new Error("Synthetic rejection");
+      });
+      if (failed._tag !== "Failure") throw new Error("Expected synthetic failure");
+      receipt.resolve(failed);
+      await sending;
+      if (meanwhile === "empty composer") {
+        expect(draftOf()?.prompt).toBe("$captured Please investigate");
+        expect(toast).not.toHaveBeenCalled();
+      } else {
+        expect(draftOf()).toBe(newerDraft);
+        expect(toast).toHaveBeenCalledOnce();
+        useComposerDraftStore.getState().setPrompt(fixture.input.composerDraftTarget, "");
+        // An unmounted composer leaves its route ref behind; recovery must not depend on it.
+        fixture.route.current = "unmounted";
+        const recovery = toast.mock.calls[0]![0] as { actionProps: { onClick: () => void } };
+        recovery.actionProps.onClick();
+        expect(draftOf()?.prompt).toBe("$captured Please investigate");
+      }
+      expect(draftSendState(fixture.input.routeThreadKey).sendInFlight.current).toBe(false);
+    },
+  );
+
   it("releases the resume lock when settings fail before dispatch", async () => {
     await using fixture = await setup({
       persistThreadSettingsForNextTurn: async () => {

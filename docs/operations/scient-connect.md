@@ -3,7 +3,8 @@
 Scient Connect is T3 Connect run by Scient: the relay in `infra/relay`, Clerk sign-in, Cloudflare
 tunnels, and the hosted app. This page is the Scient runbook. The inherited
 [Connect setup reference](./connect-setup.md), [architecture note](../internals/t3-connect.md) and
-[relay README](../../infra/relay/README.md) explain how the pieces work.
+[relay README](../../infra/relay/README.md) explain how the pieces work. Cloud copies and share
+links run on a separate Worker; see [Scient Cloud operations](./scient-cloud.md).
 
 ## What runs where
 
@@ -94,6 +95,21 @@ named in their issuer; command-line OAuth tokens try production, then developmen
 transition, delete both and redeploy; old builds' Connect then stops working. Accounts are separate
 per instance: a person who signed in on both has two relay accounts, and computers linked under one
 don't appear under the other.
+
+## Account deletion
+
+The phone app's Connect page in account settings offers **Delete account** (an App Store
+requirement for apps with sign-up). It calls the relay's `DELETE /v1/me`, which unlinks every
+computer (deleting its managed tunnel and DNS record), removes the account's relay rows, unlinks
+T3 Chat when that is on, and finally deletes the Clerk user through the Backend API with the
+secret key of the instance that issued the token. The Clerk user goes last, so a run that fails
+part-way can be retried with the same sign-in; every step tolerates an earlier partial run. Rows
+keyed by a computer's key (its credentials and agent activity) stay while another account still
+links that computer. Logs and traces already exported to Axiom age out with its retention.
+
+No Clerk dashboard setting is needed. Keep Clerk's own "Allow users to delete their accounts"
+off: its button in the profile view would delete the Clerk user but leave the relay's records and
+tunnels behind.
 
 ## Alerts
 

@@ -322,6 +322,16 @@
       "purpose": "Reuse the browser quit step in the Accounts browser picker."
     },
     {
+      "path": "apps/web/src/components/settings/browserImportWizard.logic.ts",
+      "anchor": "SCIENT-FORK:START — Scient Accounts: say why cookies were left behind.",
+      "purpose": "Carry protected cookies left behind, and an import into Main counted in sign-ins and partial, from the import to the wizard's result."
+    },
+    {
+      "path": "apps/web/src/browser/ElectronBrowserHost.tsx",
+      "anchor": "SCIENT-FORK:START — Scient Browser: Google sign-in is stopped and explained.",
+      "purpose": "Record a stopped Google sign-in once, in the app window hosting its tab, for the tab's recovery and Accounts analytics."
+    },
+    {
       "path": "apps/server/src/testUtils/shardWeights.json",
       "anchor": "\"src/assets/AssetAccess.test.ts\":",
       "purpose": "Generated test-support timing data for all server tests, including this seam. Estimates affect shard balance only; discovery determines inclusion."
@@ -562,6 +572,11 @@
       "path": "apps/server/src/scient/extensions/ConnectorAgentControl.ts",
       "anchor": "scient_account_sign_in",
       "purpose": "Send an agent signing in a local connector to the user's linked Accounts sign-in."
+    },
+    {
+      "path": "apps/server/src/scient/cloud/ShareBuilder.ts",
+      "anchor": "import { AccountsService } from \"../accounts/AccountsService.ts\";",
+      "purpose": "Remove the values saved in Scient Accounts from a conversation before it is shared as a link; the values never leave the computer."
     }
   ]
 }

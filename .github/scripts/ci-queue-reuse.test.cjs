@@ -300,6 +300,31 @@ for (const [name, change] of [
   });
 }
 
+// The queue merged MID on HEAD's green group; MID's own group must have qualified as well.
+for (const [name, change, headgreen] of [
+  // Its own group failed, so the lanes only it changed are unproven.
+  [
+    "failed its own run",
+    (f) => (f.jobs.get(11).find((job) => job.name === "Check").conclusion = "failure"),
+    true,
+  ],
+  // Its group passed, but its evidence is damaged: that is not a HEADGREEN merge.
+  ["has a corrupt receipt", (f) => (f.artifacts.get(11)[0].size_in_bytes = 0), false],
+]) {
+  test(`a two-entry push whose earlier entry ${name} runs full CI and says why`, async (t) => {
+    const f = fixture(t);
+    f.commit(HEAD, TREE, [MID, PR_HEAD]);
+    f.receipt.baseSha = MID;
+    f.commit(MID, OTHER, [BASE, OTHER]);
+    const first = f.queueRun(11, MID);
+    f.addRun(first, f.receiptFor(first, { treeSha: OTHER }));
+    change(f);
+    await refused(f);
+    const [message] = f.messages.filter((line) => line.startsWith("Running full CI"));
+    assert.equal(message.includes("HEADGREEN"), headgreen, message);
+  });
+}
+
 // Lands `entries` queue entries in one push: BASE -> ... -> HEAD, each qualified from its parent.
 function chainFixture(t, entries) {
   const f = fixture(t);

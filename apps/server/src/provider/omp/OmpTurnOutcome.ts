@@ -2,6 +2,9 @@
  * OMP reports model failures in turn data, not RPC errors. Combine assistant stop/error, exhausted
  * retry, and prompt_result evidence into one terminal outcome.
  */
+import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
+
 import type { OmpTarget } from "./OmpTarget.ts";
 
 /** Longest `errorMessage` reported on a failed turn. */
@@ -25,6 +28,10 @@ export interface OmpTurnEvidence {
   readonly promptErrorCode?: string | undefined;
   /** `prompt_result.error.httpStatus`. */
   readonly promptHttpStatus?: number | undefined;
+  /** `prompt_result.error.resetAt`, epoch ms. */
+  readonly promptResetAt?: number | undefined;
+  /** `prompt_result.error.kinds`: the agent's error classifier labels. */
+  readonly promptErrorKinds?: ReadonlyArray<string> | undefined;
   /** The last assistant `message_end` of this turn. */
   readonly stopReason?: string | undefined;
   readonly errorMessage?: string | undefined;
@@ -39,6 +46,12 @@ export type OmpTurnVerdict =
       readonly stopReason: "abort" | "error";
       readonly errorMessage: string;
       readonly failureClass?: "usage_limit";
+      /** ISO time at which the provider said the usage limit resets. */
+      readonly resetAt?: string;
+      /** Why the provider failed the turn: see {@link ompFailureCode}. */
+      readonly failureCode?: string;
+      /** The provider's HTTP status, when the failure came from a request. */
+      readonly httpStatus?: number;
     }
   | { readonly outcome: "completed"; readonly stopReason?: "length" }
   | { readonly outcome: "unknown" };
@@ -58,6 +71,57 @@ export const clipOmpErrorMessage = (
 
 const promptCategory = (status: string | undefined) =>
   status === "completed" || status === "error" || status === "aborted" ? status : undefined;
+
+const isoTime = (epochMs: number | undefined) =>
+  epochMs === undefined
+    ? Option.none()
+    : DateTime.make(epochMs).pipe(Option.map(DateTime.formatIso));
+
+/**
+ * The agent's error kinds, most specific cause first. A failure usually carries one kind; when it
+ * carries several (a usage limit is also transient), the earliest here names it. Kinds this list
+ * does not know are ignored.
+ */
+const OMP_FAILURE_KIND_PRIORITY = [
+  "oauth-expiry",
+  "usage-limit",
+  "account-policy",
+  "auth-failed",
+  "content-blocked",
+  "payload-rejected",
+  "context-overflow",
+  "grammar",
+  "fast-mode-unsupported",
+  "cache-control-unsupported",
+  "malformed-function-call",
+  "stale-responses-item",
+  "thinking-loop",
+  "empty-response",
+  "provider-finish-error",
+  "timeout",
+  "silent-abort",
+  "user-interrupt",
+  "abort",
+  "transient",
+] as const;
+
+const httpStatus = (value: number | undefined) =>
+  value !== undefined && Number.isInteger(value) && value >= 100 && value <= 599
+    ? value
+    : undefined;
+
+/**
+ * One code for why the provider failed a turn: `cost_cap`, then the agent's most specific error
+ * kind, then `http_<status>`. Agents before error kinds report only the status.
+ */
+const ompFailureCode = (evidence: OmpTurnEvidence): string | undefined => {
+  if (evidence.promptErrorCode === "cost_cap") return "cost_cap";
+  const kinds = new Set(evidence.promptErrorKinds);
+  const kind = OMP_FAILURE_KIND_PRIORITY.find((candidate) => kinds.has(candidate));
+  if (kind !== undefined) return kind;
+  const status = httpStatus(evidence.promptHttpStatus);
+  return status === undefined ? undefined : `http_${status}`;
+};
 
 const firstText = (...values: ReadonlyArray<string | undefined>) =>
   values.find((value) => value !== undefined && value.trim().length > 0);
@@ -79,6 +143,12 @@ export const classifyOmpTurnOutcome = (
       : evidence.stopReason === "error" || evidence.retryExhausted === true
         ? "error"
         : "completed");
+  const failureCode = ompFailureCode(evidence);
+  const status = httpStatus(evidence.promptHttpStatus);
+  const cause = {
+    ...(failureCode === undefined ? {} : { failureCode }),
+    ...(status === undefined ? {} : { httpStatus: status }),
+  };
   if (category === "aborted") {
     return {
       outcome: "failed",
@@ -88,9 +158,13 @@ export const classifyOmpTurnOutcome = (
         firstText(evidence.errorMessage, evidence.promptError),
         abortedFallback(target),
       ),
+      ...cause,
     };
   }
   if (category === "error") {
+    // A spending cap or a provider's 429 needs the user, not another attempt.
+    const usageLimit = evidence.promptErrorCode === "cost_cap" || evidence.promptHttpStatus === 429;
+    const resetAt = usageLimit ? isoTime(evidence.promptResetAt) : Option.none();
     return {
       outcome: "failed",
       stopReason: "error",
@@ -98,10 +172,9 @@ export const classifyOmpTurnOutcome = (
         target,
         firstText(evidence.retryFinalError, evidence.errorMessage, evidence.promptError),
       ),
-      // A spending cap or a provider's 429 needs the user, not another attempt.
-      ...(evidence.promptErrorCode === "cost_cap" || evidence.promptHttpStatus === 429
-        ? { failureClass: "usage_limit" as const }
-        : {}),
+      ...(usageLimit ? { failureClass: "usage_limit" as const } : {}),
+      ...(Option.isSome(resetAt) ? { resetAt: resetAt.value } : {}),
+      ...cause,
     };
   }
   return evidence.stopReason === "length"

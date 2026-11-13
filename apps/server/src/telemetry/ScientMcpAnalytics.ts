@@ -1,6 +1,8 @@
-import type { McpSchema } from "effect/ai";
+import { McpSchema } from "effect/ai";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { toolFailureAttribution } from "./FailureAttribution.ts";
@@ -59,6 +61,20 @@ export function closedErrorCode(value: string): string {
 export interface ToolFailureFacts {
   tag?: string;
   failureClass?: string;
+  /** Why the call ended with no result, when the caller explains it rather than Scient. */
+  unresulted?: "invalid_params" | "interrupted" | undefined;
+}
+
+const isInvalidParams = Schema.is(McpSchema.InvalidParams);
+
+/**
+ * Effect's MCP server turns a handler's own failures into results; a call ends with no result
+ * when its arguments are refused (InvalidParams, which the agent sees) or it is cancelled.
+ */
+export function unresultedToolFailure(cause: Cause.Cause<unknown>): ToolFailureFacts["unresulted"] {
+  if (Cause.hasInterruptsOnly(cause)) return "interrupted";
+  const error = Cause.findErrorOption(cause);
+  return Option.isSome(error) && isInvalidParams(error.value) ? "invalid_params" : undefined;
 }
 
 /** One tool call's failure facts, written where the typed failure is still in hand. */
@@ -100,7 +116,14 @@ export function scientToolOutcome(
 } {
   const outcome = toolOutcome(result);
   if (outcome.outcome !== "error") return outcome;
-  if (outcome.errorCode === "exception") return { ...outcome, failureOwner: "scient" };
+  if (outcome.errorCode === "exception")
+    return facts.unresulted === undefined
+      ? { ...outcome, failureOwner: "scient" }
+      : {
+          outcome: "error",
+          errorCode: facts.unresulted,
+          failureOwner: toolFailureAttribution(facts.unresulted).failureOwner,
+        };
   const tag = stringOf(result?.structuredContent, "_tag") ?? facts.tag;
   const reported = outcome.errorCode === "unknown" ? tag : outcome.errorCode;
   const errorCode = reported === undefined ? "unknown" : closedErrorCode(reported);

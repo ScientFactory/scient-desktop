@@ -219,6 +219,9 @@ import {
   runtimeModeCeilingRefusal,
   threadsStartingWork,
 } from "./DispatchModeLimit.ts";
+// SCIENT-FORK:START — Scient Cloud: threads continued on another computer take no new turns.
+import { CloudLeaseGuard } from "../scient/cloud/CloudSyncState.ts";
+// SCIENT-FORK:END
 import {
   applyToProjection,
   emptyProjection,
@@ -1498,6 +1501,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const messageIntake = yield* KeyedLock.make<ThreadId>();
+  // SCIENT-FORK:START — Scient Cloud lease guard; absent where the cloud state is not mounted.
+  const cloudLeaseGuard = yield* Effect.serviceOption(CloudLeaseGuard);
+  const continuedElsewhere = (threadId: ThreadId) =>
+    Option.isNone(cloudLeaseGuard)
+      ? Effect.succeed(false)
+      : cloudLeaseGuard.value.movedTo(threadId).pipe(Effect.map((moved) => moved !== undefined));
+  const continuedElsewhereRefusal = (command: OrchestrationV2ServerCommand) =>
+    new OrchestratorDispatchError({
+      commandId: command.commandId,
+      commandType: command.type,
+      cause: new Error(
+        "This conversation continued on another computer. Take it back to keep working here.",
+      ),
+    });
+  // SCIENT-FORK:END
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -2331,6 +2349,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       },
     ) {
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
+      // SCIENT-FORK:START — Scient Cloud: a thread continued on another computer starts nothing.
+      if (yield* continuedElsewhere(threadId)) return;
+      // SCIENT-FORK:END
       // SCIENT-FORK:START terminal-queue-promotion-fence
       yield* holdLatestTerminalBeforePromotion(threadId);
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
@@ -6878,6 +6899,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         : undefined,
     );
+    // SCIENT-FORK:START — Scient Cloud: a thread continued on another computer takes no new work.
+    if (yield* continuedElsewhere(command.threadId)) {
+      // Wakes and completions are accepted unchanged so their senders stop retrying.
+      if (command.notification !== undefined || command.delegatedCompletion !== undefined) {
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: yield* DateTime.now,
+          payload: projection.thread,
+        });
+        return;
+      }
+      return yield* continuedElsewhereRefusal(command);
+    }
+    // SCIENT-FORK:END
     if (command.steerFollowUpOfRunId !== undefined) {
       const source = projection.runs.find((run) => run.id === command.steerFollowUpOfRunId);
       if (
@@ -11445,6 +11484,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) {
+    // SCIENT-FORK:START — Scient Cloud: a thread continued on another computer takes no new work.
+    if (yield* continuedElsewhere(command.threadId))
+      return yield* continuedElsewhereRefusal(command);
+    // SCIENT-FORK:END
     const projection = yield* loadProjectionForCommand(
       command,
       [

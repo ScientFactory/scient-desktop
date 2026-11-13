@@ -25,7 +25,12 @@ it.
 - Which agent tools run, how long they take and whether they succeed.
 - When something fails, whether the cause was Scient, the code or document being
   run, a missing package or program, or a network service. Never the error
-  message or the error's name.
+  message.
+- When an agent's turn or a delegated task fails, the kind of failure from a
+  fixed list (for example an expired sign-in, a usage limit, a conversation too
+  long for the model, or a provider that was briefly unavailable), the
+  provider's HTTP status code, and how many times the provider retried. Never
+  the provider's error text.
 - Which kinds of programs agents run in their own terminal, such as Python, R,
   LaTeX or Stata, and how many fail. Only the kind, never the command.
 - For your own skills: where each one came from (a file, folder, zip, pasted
