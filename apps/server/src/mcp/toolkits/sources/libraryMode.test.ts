@@ -1116,7 +1116,15 @@ describe("Sources tools on the library backend", () => {
       expect(
         yield* run(
           organizeLibrarySourcesForInvocation({
-            change: { action: "undo-import", importId: imported.packageReport!.importId! },
+            change: {
+              action: "undo-import",
+              importId:
+                "packageReport" in imported &&
+                imported.packageReport &&
+                "importId" in imported.packageReport
+                  ? (imported.packageReport.importId ?? "")
+                  : "",
+            },
           }),
           other,
         ),
@@ -1131,7 +1139,9 @@ describe("Sources tools on the library backend", () => {
         fixture,
       );
       expect(outside).toMatchObject({ packageReport: { insideProject: false } });
-      expect(NodePath.dirname(outside.packagePath!)).toBe(fixture.base);
+      expect(NodePath.dirname("packagePath" in outside ? outside.packagePath! : "")).toBe(
+        fixture.base,
+      );
     }),
   );
 
