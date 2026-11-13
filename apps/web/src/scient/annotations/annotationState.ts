@@ -2,6 +2,7 @@ import type { PdfMaterial } from "@scientfactory/document-artifacts";
 import {
   liveScientAnnotations,
   type EnvironmentId,
+  type ScientAnnotationAlternative,
   type ScientAnnotationCommand,
   type ScientAnnotationMutationResult,
   type ScientPdfAnnotation,
@@ -129,6 +130,23 @@ export async function updateAnnotation(
     ...change,
   });
   return result?.annotation ?? null;
+}
+
+/** Makes another computer's kept version current, checked against the revision shown. */
+export async function applyAnnotationVersion(
+  pdf: AnnotatedPdf,
+  annotation: ScientPdfAnnotation,
+  version: Pick<ScientAnnotationAlternative, "revision" | "note" | "highlighted">,
+): Promise<ScientPdfAnnotation | null> {
+  const result = await send(pdf, {
+    action: "revert",
+    annotationId: annotation.annotationId,
+    expectedRevision: annotation.revision,
+    toRevision: version.revision,
+    toNote: version.note,
+    toHighlighted: version.highlighted,
+  });
+  return result?.outcome === "updated" ? result.annotation : null;
 }
 
 /** Removes with an Undo that brings the annotation back as it was. */

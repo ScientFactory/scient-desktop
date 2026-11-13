@@ -89,6 +89,8 @@ export const ScientSourceDetailRequest = Schema.Struct({
   ...ScientSourceRequest.fields,
   /** A review screen's request: the review's own record, from its snapshot when the library lacks it. */
   reviewId: Schema.optionalKey(NonEmptyString),
+  /** A library's project note and its history under this one of the source's keys (`alsoCitedAs`). */
+  citationKey: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceDetailRequest = typeof ScientSourceDetailRequest.Type;
 
@@ -305,6 +307,8 @@ export const ScientSourceNoteUpdateRequest = Schema.Struct({
   expectedNote: Schema.optionalKey(Schema.NullOr(Schema.String)),
   /** The editor's autosave session; its saves within ten minutes are one history checkpoint. */
   noteSession: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(64))),
+  /** A library's project note on this one of the source's keys; absent: the first pinned. */
+  citationKey: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceNoteUpdateRequest = typeof ScientSourceNoteUpdateRequest.Type;
 export const ScientSourceNoteUpdateResult = Schema.Struct({
@@ -447,22 +451,33 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
   /** Hides the move's summary lines in this checkout's status, until a later run. */
   Schema.Struct({ action: Schema.Literal("dismiss-move-summary") }),
   ...ScientSourcesPinRepairAction.members,
-  /** Puts the sealed copy from before a move (the newest, or archiveId) back in the project. */
+  /**
+   * Puts the sealed copy from before a move (the newest, or archiveId) back in the project;
+   * `abandon` instead drops a restore that stopped part way, so the next move takes in its part.
+   */
   Schema.Struct({
     action: Schema.Literal("restore-pre-move"),
     archiveId: Schema.optionalKey(NonEmptyString),
+    abandon: Schema.optionalKey(Schema.Boolean),
   }),
-  /** Writes this project's package to a new project folder (a dated name when absent). */
+  /**
+   * Writes this project's package to a new folder: `relativePath` (in the project, or absolute),
+   * or a dated folder made in `inFolder` (absolute) or the project.
+   */
   Schema.Struct({
     action: Schema.Literal("export-package"),
     relativePath: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(4_096))),
+    inFolder: Schema.optionalKey(NonEmptyString.check(Schema.isMaxLength(4_096))),
   }),
   /** The packages in the project's top-level folders. */
   Schema.Struct({ action: Schema.Literal("list-packages") }),
+  /** A package folder in the project, or an absolute path. */
   Schema.Struct({
     action: Schema.Literal("import-package"),
     relativePath: NonEmptyString.check(Schema.isMaxLength(4_096)),
   }),
+  /** Removes what that import added; what it joined stays. */
+  Schema.Struct({ action: Schema.Literal("undo-import"), importId: NonEmptyString }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
 
@@ -490,6 +505,24 @@ export const ScientProjectPackageReport = Schema.Struct({
   unavailable: Count,
   /** The files that no longer match the manifest. */
   changedFiles: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Export: whether the folder is inside the project (committed with it). */
+  insideProject: Schema.optionalKey(Schema.Boolean),
+  /** Import: undo-import takes it. */
+  importId: Schema.optionalKey(NonEmptyString),
+  /** Highlights changed apart on both computers: this one's stays, the other is history. */
+  annotationConflicts: Schema.optionalKey(Count),
+  /** Reviews whose decisions were equal and whose missing snapshot was added. */
+  snapshotsAdded: Schema.optionalKey(Count),
+  /** What could not be imported; never counted above. */
+  failed: Schema.optionalKey(
+    Schema.Array(
+      Schema.Struct({ part: Schema.String, item: Schema.String, message: Schema.String }),
+    ),
+  ),
+  /** Undo: what the import created that changed since, or that another import uses; it stays. */
+  kept: Schema.optionalKey(Schema.Array(Schema.String)),
+  /** Undo: what the import joined into what was here, and the highlights and reviews it brought. */
+  left: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ScientProjectPackageReport = typeof ScientProjectPackageReport.Type;
 

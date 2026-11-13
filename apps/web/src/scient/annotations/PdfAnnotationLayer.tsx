@@ -1,6 +1,7 @@
 import type { PdfSourceDescriptor, PdfTarget } from "@scientfactory/document-artifacts";
 import {
   scientAnnotationQuote,
+  type ScientAnnotationAlternative,
   type ScientPdfAnnotation,
   type ScientPdfAnnotationAnchor,
 } from "@t3tools/contracts";
@@ -20,6 +21,7 @@ import { Textarea } from "~/components/ui/textarea";
 
 import type { ScientPdfRuntime } from "../pdf/pdfRuntime";
 import {
+  applyAnnotationVersion,
   createAnnotation,
   removeAnnotation,
   updateAnnotation,
@@ -58,7 +60,7 @@ export function PdfAnnotationLayer(props: {
   readonly children: ReactNode;
 }) {
   const { container, ready, runtimeRef } = props;
-  const { pdf, annotations, citationKey } = useDocumentAnnotations(props.source);
+  const { pdf, annotations, citationKey, alternatives } = useDocumentAnnotations(props.source);
   const canChange = useCanChangeLibrary(pdf?.environmentId ?? null);
   const fileName = props.source?.fileName ?? "document.pdf";
   const painterRef = useRef<PdfAnnotationPainter | null>(null);
@@ -123,6 +125,15 @@ export function PdfAnnotationLayer(props: {
           bounds={open.bounds}
           draft={open._tag === "draft" ? open.anchor : null}
           annotation={saved}
+          alternatives={
+            saved
+              ? alternatives.filter(
+                  (version) =>
+                    version.annotationId === saved.annotationId &&
+                    (version.note !== saved.note || version.highlighted !== saved.highlighted),
+                )
+              : []
+          }
           onQuote={(annotation) =>
             void quoteInDocument(pdf.root, {
               quote: scientAnnotationQuote(annotation),
@@ -144,6 +155,8 @@ function AnnotationNotePopover(props: {
   readonly bounds: DOMRect;
   readonly draft: ScientPdfAnnotationAnchor | null;
   readonly annotation: ScientPdfAnnotation | null;
+  /** Another computer's versions of this annotation, from a project package. */
+  readonly alternatives: ReadonlyArray<ScientAnnotationAlternative>;
   readonly onQuote: (annotation: ScientPdfAnnotation) => void;
   readonly onClose: () => void;
 }) {
@@ -193,6 +206,31 @@ function AnnotationNotePopover(props: {
               }
             }}
           />
+          {annotation
+            ? props.alternatives.map((version) => (
+                <div
+                  key={`${version.revision}:${version.note}:${version.highlighted}`}
+                  className="flex flex-col gap-1 border-t border-border pt-2 text-xs"
+                >
+                  <span className="text-muted-foreground">Another computer's version</span>
+                  <p className="whitespace-pre-wrap break-words">
+                    {version.note || (version.highlighted ? "Highlight only" : "")}
+                  </p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="compact"
+                    disabled={props.readOnly}
+                    onClick={() => {
+                      onClose();
+                      void applyAnnotationVersion(pdf, annotation, version);
+                    }}
+                  >
+                    Use this version
+                  </Button>
+                </div>
+              ))
+            : null}
           <div className="flex items-center justify-between gap-1">
             {annotation ? (
               <Button

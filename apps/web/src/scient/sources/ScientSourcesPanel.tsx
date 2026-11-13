@@ -94,7 +94,7 @@ import { ReferenceFileReport } from "./ReferenceFileReport";
 import { isReferenceFileName } from "./referenceFileSummary";
 import { SourcesHeaderMenu } from "./SourcesHeaderMenu";
 import { sourcesCommands, useCanChangeLibrary, useCanRunSourcesCommand } from "./sourcesCommands";
-import { updateScientSourcePersonalNote } from "./client";
+import { readScientSource, updateScientSourceNote, updateScientSourcePersonalNote } from "./client";
 import {
   inLibraryNotProjectLabel,
   LIBRARY_LABELS,
@@ -1082,6 +1082,23 @@ export function ScientSourcesPanel(props: {
                     }
                     return result;
                   },
+                  // Another key's note is shown beside the cached detail, never cached as it.
+                  onLoadKeyNote: (citationKey: string) =>
+                    readScientSource(props.environmentId, {
+                      root: props.root,
+                      sourceId: selectedRecord.sourceId,
+                      citationKey,
+                    }),
+                  onSaveKeyNote: (citationKey, note, expectedRevision, context) =>
+                    updateScientSourceNote(props.environmentId, {
+                      root: props.root,
+                      sourceId: selectedRecord.sourceId,
+                      expectedRevision,
+                      note,
+                      expectedNote: context.base,
+                      noteSession: context.session,
+                      citationKey,
+                    }),
                   ...(canSetReading
                     ? {
                         onSetReadingState: (change: ReadingStateChange) =>

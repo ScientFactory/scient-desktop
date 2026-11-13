@@ -32,6 +32,7 @@ import {
   type ScientLibraryMoveJournal,
   type ScientLibraryMoveProgress,
 } from "./libraryMove.ts";
+import { ScientPreMoveRestorePendingError } from "./libraryMoveArchive.ts";
 import {
   ensureScientLibrary,
   listScientLibraryInstances,
@@ -1567,6 +1568,177 @@ describe("the sealed copy from before the move", () => {
     expect((await readScientProjectPins(elsewhere)).map((pin) => pin.sourceId)).toContain(
       b.sourceId,
     );
+  });
+
+  it("refuses an entry that names another place, and a move finishes an interrupted restore", async () => {
+    const { base, library, project, sha256 } = await seededMove();
+    const { journal } = await move(library, project);
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    const manifestPath = NodePath.join(elsewhere, journal!.archive!.path, "manifest.json");
+    const sealed = await NodeFSP.readFile(manifestPath, "utf8");
+
+    // A correctly hashed payload whose original path leaves the project.
+    const payload = Buffer.from("{}");
+    const name = `${"0".repeat(64)}.json`;
+    await NodeFSP.writeFile(
+      NodePath.join(elsewhere, journal!.archive!.path, "annotations", name),
+      payload,
+    );
+    const manifest = JSON.parse(sealed);
+    manifest.files.push({
+      path: `annotations/${name}`,
+      original: "../outside.json",
+      sha256: sha(payload),
+      bytes: payload.byteLength,
+    });
+    await NodeFSP.writeFile(manifestPath, JSON.stringify(manifest));
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toEqual({
+      outcome: "archive-changed",
+      files: [`annotations/${name}`],
+    });
+    expect(await exists(NodePath.join(base, "outside.json"))).toBe(false);
+    expect(await exists(NodePath.join(elsewhere, ".scient/sources"))).toBe(false);
+    await NodeFSP.writeFile(manifestPath, sealed);
+
+    // The store is published, then copying the highlights fails.
+    const failHighlights = async (from: string, to: string) => {
+      if (from.includes(`${NodePath.sep}annotations${NodePath.sep}`)) {
+        throw new Error("The disk is full.");
+      }
+      await NodeFSP.copyFile(from, to);
+    };
+    await expect(
+      restoreScientProjectPreMoveArchive({
+        projectRoot: elsewhere,
+        faults: { copyFile: failHighlights },
+      }),
+    ).rejects.toThrow("The disk is full.");
+    expect((await readScientLibraryMoveState({ library, projectRoot: elsewhere })).v1Present).toBe(
+      true,
+    );
+
+    // The archive changes before the next move: the move waits, keeping the restore's record.
+    const highlight = NodePath.join(
+      elsewhere,
+      journal!.archive!.path,
+      "annotations",
+      `${sha256}.json`,
+    );
+    const archived = await NodeFSP.readFile(highlight);
+    await NodeFSP.writeFile(highlight, "{}");
+    const theirs = await newLibrary(base, "other-computer");
+    await expect(move(theirs, elsewhere)).rejects.toBeInstanceOf(ScientPreMoveRestorePendingError);
+    expect(await listScientSourceRecords(theirs)).toEqual([]);
+    const progress = NodePath.join(elsewhere, ".scient/library/restore-progress.json");
+    expect(await exists(progress)).toBe(true);
+    await NodeFSP.writeFile(highlight, archived);
+    expect(await move(theirs, elsewhere)).toMatchObject({ outcome: "moved" });
+    expect(await exists(NodePath.join(theirs.root, "annotations/v1", `${sha256}.json`))).toBe(true);
+    expect(await exists(progress)).toBe(false);
+  });
+
+  it("follows no link on the way: manifest, staging folder or payload", async () => {
+    const { base, library, project } = await seededMove();
+    const { journal } = await move(library, project);
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    const archiveId = NodePath.basename(journal!.archive!.path);
+    const archive = NodePath.join(elsewhere, journal!.archive!.path);
+
+    // The staging parent leads to a sibling folder that holds a file where the restore stages.
+    const outside = NodePath.join(base, "outside");
+    await NodeFSP.mkdir(NodePath.join(outside, archiveId), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(outside, archiveId, "sentinel"), "keep");
+    const staging = NodePath.join(elsewhere, ".scient/library/.restoring-archive");
+    await NodeFSP.symlink(outside, staging);
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toEqual({
+      outcome: "archive-changed",
+      files: [`.scient/library/.restoring-archive/${archiveId}`],
+    });
+    expect(await NodeFSP.readdir(NodePath.join(outside, archiveId))).toEqual(["sentinel"]);
+    await NodeFSP.rm(staging);
+
+    // A payload that is a link to a file with the right bytes.
+    const manifest = JSON.parse(
+      await NodeFSP.readFile(NodePath.join(archive, "manifest.json"), "utf8"),
+    );
+    const pdf = manifest.files.find((file: { path: string }) => file.path.endsWith(".pdf"));
+    const sameBytes = NodePath.join(base, "same-bytes.pdf");
+    await NodeFSP.rename(NodePath.join(archive, pdf.path), sameBytes);
+    await NodeFSP.symlink(sameBytes, NodePath.join(archive, pdf.path));
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toEqual({
+      outcome: "archive-changed",
+      files: [pdf.path],
+    });
+
+    // The manifest itself is a link.
+    const manifestCopy = NodePath.join(base, "manifest.json");
+    await NodeFSP.rename(NodePath.join(archive, "manifest.json"), manifestCopy);
+    await NodeFSP.symlink(manifestCopy, NodePath.join(archive, "manifest.json"));
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere, archiveId })).toEqual(
+      { outcome: "archive-changed", files: ["manifest.json"] },
+    );
+    expect(await exists(NodePath.join(elsewhere, ".scient/sources"))).toBe(false);
+  });
+
+  it("never takes a part-written highlight copy for the project's own", async () => {
+    const { base, library, project, sha256 } = await seededMove();
+    const { journal } = await move(library, project);
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    const halfThenFail = async (from: string, to: string) => {
+      if (!from.includes(`${NodePath.sep}annotations${NodePath.sep}`)) {
+        return NodeFSP.copyFile(from, to);
+      }
+      const bytes = await NodeFSP.readFile(from);
+      await NodeFSP.writeFile(to, bytes.subarray(0, bytes.byteLength >> 1));
+      throw new Error("The disk is full.");
+    };
+    await expect(
+      restoreScientProjectPreMoveArchive({
+        projectRoot: elsewhere,
+        faults: { copyFile: halfThenFail },
+      }),
+    ).rejects.toThrow("The disk is full.");
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
+      outcome: "restored",
+      keptAnnotations: 0,
+    });
+    const restored = await NodeFSP.readFile(
+      NodePath.join(elsewhere, ".scient/annotations/v1", `${sha256}.json`),
+    );
+    expect(restored).toEqual(
+      await NodeFSP.readFile(
+        NodePath.join(elsewhere, journal!.archive!.path, "annotations", `${sha256}.json`),
+      ),
+    );
+  });
+
+  it("stops, keeping its progress, where a highlight cannot be published without replacing one", async () => {
+    const { base, library, project, sha256 } = await seededMove();
+    await move(library, project);
+    const elsewhere = NodePath.join(base, "elsewhere");
+    await NodeFSP.cp(project, elsewhere, { recursive: true });
+    const destination = NodePath.join(elsewhere, ".scient/annotations/v1", `${sha256}.json`);
+    // Another writer publishes the project's own highlights just as linking turns out unsupported.
+    const theirs = '{"theirs":true}\n';
+    const noLinks = async () => {
+      await NodeFSP.writeFile(destination, theirs);
+      throw Object.assign(new Error("operation not supported"), { code: "ENOTSUP" });
+    };
+    await expect(
+      restoreScientProjectPreMoveArchive({ projectRoot: elsewhere, faults: { link: noLinks } }),
+    ).rejects.toBeInstanceOf(ScientPreMoveRestorePendingError);
+    expect(await NodeFSP.readFile(destination, "utf8")).toBe(theirs);
+    await expect(
+      NodeFSP.stat(NodePath.join(elsewhere, ".scient/library/restore-progress.json")),
+    ).resolves.toBeTruthy();
+    expect(await restoreScientProjectPreMoveArchive({ projectRoot: elsewhere })).toMatchObject({
+      outcome: "restored",
+      keptAnnotations: 1,
+    });
+    expect(await NodeFSP.readFile(destination, "utf8")).toBe(theirs);
   });
 
   it("deletes nothing until the copy is sealed, and an interrupted copy finishes on the rerun", async () => {

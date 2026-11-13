@@ -35,7 +35,12 @@ purpose by editing the paper stays removed.
 **What a project folder holds.** Pins, project notes and their earlier versions
 (`.scient/library/note-history/`), systematic reviews with a copy of each named
 record (`.scient/library/reviews/`), the managed bibliography files, and, after
-a move, a sealed copy of the sources from before it. PDFs added later, their
+a move, a sealed copy of the sources from before it. Scient also keeps an empty
+lock file there, `.scient/library/pins.lock`, so two Scient windows or servers
+using the folder never save its pins at the same moment; when
+`.scient/library/.gitignore` does not exist it writes one with the single line
+`/pins.lock`, so git leaves out that lock and nothing else. An ignore file that
+is already there is never changed. PDFs added later, their
 highlights, personal notes and collections are in your Library, not in the
 folder. To give someone, or another computer, the project as it is now, save a
 [project package](#project-packages).
@@ -73,12 +78,16 @@ A note for this project is never overwritten by a change made elsewhere. If
 another window, another Scient on this computer or an agent changed it after
 you started typing, the note shows **Saved elsewhere** with that text next to
 yours: choose **Keep mine** or **Use saved**. **Earlier versions** next to the
-heading lists the note as it was first kept and the last 20 versions, with who
-saved each and when (typing in one sitting counts as one version); choosing
-one restores it as a new change. The versions travel with the project. Two
-copies of the folder synced by Dropbox or git are not coordinated: if both
-change a note, the sync tool decides, and the other text is kept as an earlier
-version the next time Scient saves the note.
+heading lists the first note the project kept (however it was written) and the
+last 20 versions, with who saved each and when (typing in one sitting counts as
+one version); choosing one restores it as a new change, never in place of the
+version before it. The versions travel with the project. After two papers this
+project cites were merged, the merged paper keeps both citation keys and each
+key keeps its own note: **Note for** above the note picks the key whose note
+and earlier versions you see and restore. Two copies of the
+folder synced by Dropbox or git are not coordinated: if both change a note, the
+sync tool decides. Scient keeps the other text only if it still sees it in the
+project's files the next time it saves the note.
 
 ### Reading and stars
 
@@ -104,7 +113,8 @@ have read it. If a PDF from the project was still open, the line also says how
 many files will be removed from the project later. If the move fails, the line
 says why; Scient tries again with the next change to the Library or its next
 background pass, and **Check again** shows the latest state. If the project's `.scient` folder is tracked in git, commit the
-change so PDFs stop being stored in git.
+change: the project's live sources then no longer hold PDFs, though the copy
+from before the move (below) still does until you delete it.
 
 If you put a paper in the Trash during an interrupted move, resuming keeps it
 there and finishes copying its PDFs, full text and highlights. **Restore** brings
@@ -118,7 +128,18 @@ highlights, in
 `manifest.json` listing every file and its checksum. Scient never reads it on
 its own. Ask an agent to restore the copy from before the move to bring it back
 into the project, on this computer or any other; the next change then moves it
-into that computer's Library. The copy costs disk space (the PDFs are stored
+into that computer's Library. Scient checks every file and path in the copy
+first and refuses one that was changed or names a place outside it. A restore
+that stops partway finishes the next time it is asked for, or before the next
+move. If it cannot finish because the copy has changed or is gone, the next
+move waits and its line says why: put the copy back and restore again, or ask
+an agent to abandon the unfinished restore, after which the move takes in what
+was already put back. A restore puts each highlight file back only where no
+file is, by a method that cannot replace one; on a drive that does not support
+it (some network and older removable drives), the restore stops there and says
+so, keeping its progress: run it again from a folder on a drive that does, or
+abandon it. Restoring joins the old sources to what the project has now: current pins
+and notes stay as they are, nothing is rolled back. The copy costs disk space (the PDFs are stored
 twice) and, if the folder is tracked in git, adds to the repository unless you
 leave it out. Scient adds no ignore rule and never deletes it; deleting the
 folder yourself is safe once you no longer need it. It shows the project as it
@@ -431,23 +452,76 @@ A project package is a folder with everything this project uses from your
 Library, for a collaborator, a supervisor, another computer or a backup: the
 pins with their citation details, project notes and their earlier versions,
 the systematic reviews with every source they name (also sources only a review
-names), the exact PDFs with their highlights, and the collections those sources
-are in. Personal notes, reading state and the rest of your Library stay out.
-It is plain files: JSON, the PDFs and a `manifest.json` with every file's
-checksum.
+names), the exact PDFs with their highlights, a paper's retraction or
+withdrawal notices, and the collections those sources are in, with the
+collections around them. Personal notes, reading state, saved searches and the
+rest of your Library stay out; saved searches are yours, not the project's. It
+is plain files: JSON, the PDFs and a `manifest.json` with every file's checksum.
 
-Choose **⋯** > **Project package** > **Save a project package**. Scient writes
-the package to a new folder in the project, "Scient project package" with the
-date, and says what was left out because this Library did not have it. To bring
-a package in, copy its folder into the project, then choose it under **Import
-a package in this project**. Scient checks every file against the manifest
-first and refuses a package that changed. Papers your Library already has are
-matched, not copied twice; PDFs and highlights they lack are added. A note this
-project already has stays, and the package's version goes into **Earlier
-versions**. A review that differs from this project's becomes a review with
-another version, to keep, replace or combine. This works with an empty Library
-and without the computer the package came from. Importing a package is a
-deliberate import, so a paper in it that you deleted for good comes back.
+Choose **⋯** > **Project package**. **Choose a folder…** saves it to a new
+folder, "Scient project package" with the date, in the folder you pick
+(starting beside the project). **In this project** saves it inside the project
+instead, the only choice when the project is on another computer: git then
+commits it with the project, PDFs included, and it takes disk space there.
+Scient says what was left out because this Library did not have it.
+
+An agent saves or imports a package inside the project (never in its
+`.scient` folder), or outside it only in a folder where you have saved or
+imported one of this project's packages yourself. A package whose files lead
+outside its folder through a link is refused.
+
+To bring a package in, choose its folder with **Choose a folder…** under
+**Import a package**, or pick one of the package folders in the project. Scient
+checks every file against the manifest first and refuses a package that
+changed. A PDF missing from the manifest is reported as unavailable and is
+never opened. Scient prepares each paper's PDF copies before joining it, so
+other Library edits can finish while those copies are being made.
+A paper joins one your Library already has only when the two are
+clearly the same work (the same identifier, title and type) and you have not
+marked them as not duplicates; this holds even when the paper there has the
+same ID or was matched by an earlier import, so a paper corrected since to
+another work is not joined. One that only looks alike (the same title, first
+author and year), or that contradicts the paper there, is added as its own
+paper, and nothing from it is attached to the other. A paper that changes here
+while the import is joining it is left as it is and named; import the package
+again to bring that one in.
+
+What an import joins to a paper you already have:
+
+- PDFs it lacks, and highlights: a highlight changed differently on both
+  computers keeps yours, and clicking it shows **Another computer's version**
+  with **Use this version**.
+- Retraction, withdrawal and other notices it lacks, even when this computer
+  checked the paper before, marked as from another computer's check; the more
+  serious state shows. Its identifier check is taken only when this computer
+  never checked it. An abstract is added when the paper has none.
+- A project note: one this project already has stays, and the package's text
+  and earlier versions join **Earlier versions**; a pin without a note takes
+  the package's.
+- A review that differs from this project's becomes a review with another
+  version, to keep, replace or combine; so does a review whose decisions are
+  the same but whose copy of the records differs, even a large review whose
+  copy is split into several files. Records only the package's copy describes
+  stay available when you choose that version.
+
+Anything that could not be imported is named, never counted as imported. This
+works with an empty Library and without the computer the package came from.
+Importing a package is a deliberate import, so a paper in it that you deleted
+for good comes back.
+
+The import's message has **Undo**. It removes only what the import created:
+new papers (to the trash, with the PDFs they came with), new pins, new
+collections, and the note it gave a pin that had none. Each goes only if it is
+still exactly as the import left it and no other import that is not undone
+uses it, in this project or (for papers and collections) any other. Anything
+you changed since, even before the import finished (a paper you edited, a pin
+whose note you changed, a collection you added to), or that another import
+joined, stays, and Undo names it. Undo leaves, and lists, everything the
+import joined to what you had: PDFs, notices and an abstract it added to your
+papers, earlier note versions, highlights, papers it added to your
+collections, and the reviews and review versions it brought. An import made
+before Undo kept this record keeps everything. If a step fails, Undo says so
+and is not marked done; run it again to finish.
 
 ## Review and manage a source
 
@@ -514,7 +588,9 @@ Select text in any PDF in your project, including a source's PDF, and choose
 **Highlight** or **Note** in the bar that appears. Highlights stay on the page
 the next time you open the PDF; a passage with a note is underlined. Click a
 highlight to add or change its note, **Remove** it (choose **Undo** in the
-message to bring it back), or **Quote in my document**.
+message to bring it back), or **Quote in my document**. A highlight a project
+package brought with a different note shows **Another computer's version**;
+**Use this version** makes it current, as a new change.
 
 **Quote in my document** puts the passage into the Markdown or LaTeX document
 in this project that you used last, as a quotation followed by its citation:
@@ -827,11 +903,13 @@ which attaches the same linked PDFs and reports the same unreadable entries and
 fields not kept, and write the
 Library to a project file in any of the four formats (`scient_sources_export`),
 never replacing an existing file unless asked to. It saves and imports project
-packages and restores the copy from before a move with `scient_sources_organize`.
-To change a note for this project it must say which note it read; if the note
-changed since, nothing is written and it gets the current note to reconcile.
-Everything an agent changes is
-credited to it and can be undone the same way as your own changes.
+packages (and undoes an import by its receipt) and restores the copy from
+before a move with `scient_sources_organize`. To change a note for this project
+it must say which note it read; if the note changed since, nothing is written
+and it gets the current note to reconcile. When two pins cite one paper (after
+a merge), it names the pin by its citation key to read or change that pin's
+note and its earlier versions. Everything an agent changes is credited to it
+and can be undone the same way as your own changes.
 
 An agent cites sources with `scient_sources_cite`: it gets the citation to
 write (`[@key]` or `\cite{key}`) after Scient checks each source against its

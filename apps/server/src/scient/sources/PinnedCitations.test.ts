@@ -19,6 +19,7 @@ import {
 } from "@scientfactory/scient-sources/project-pins";
 import {
   importScientSource,
+  listScientSourceRecords,
   readScientSourceRecord,
   updateScientSourceMetadata,
 } from "@scientfactory/scient-sources/store";
@@ -273,5 +274,43 @@ describe("pinned citations travel with the project", () => {
       false,
       false,
     ]);
+
+    // An edit of anything but a citation input leaves the missing ones unknown: still kept.
+    const [hydrated] = await listScientSourceRecords(collaborator);
+    await updateScientSourceMetadata({
+      root: collaborator,
+      sourceId: hydrated!.sourceId,
+      expectedRevision: hydrated!.revision,
+      metadata: { ...editableMetadataFromRecord(hydrated!), abstract: "Read later." },
+    });
+    await refreshScientProjectPinSnapshots({ projectRoot: elsewhere, library: collaborator });
+    const afterEdit = await syncPinnedBibliography({
+      root: elsewhere,
+      library: collaborator,
+      access: "write",
+      actor: "user",
+    });
+    expect(await managedFiles(elsewhere)).toEqual(written);
+    expect(afterEdit.keptEntries).toHaveLength(3);
+
+    // Correcting only the title never drops the pages and full date only the kept entry knows.
+    const current = (await listScientSourceRecords(collaborator)).find(
+      (record) => record.sourceId === hydrated!.sourceId,
+    )!;
+    await updateScientSourceMetadata({
+      root: collaborator,
+      sourceId: current.sourceId,
+      expectedRevision: current.revision,
+      metadata: { ...editableMetadataFromRecord(current), title: "A corrected title" },
+    });
+    await refreshScientProjectPinSnapshots({ projectRoot: elsewhere, library: collaborator });
+    const afterCorrection = await syncPinnedBibliography({
+      root: elsewhere,
+      library: collaborator,
+      access: "write",
+      actor: "user",
+    });
+    expect(await managedFiles(elsewhere)).toEqual(written);
+    expect(afterCorrection.keptEntries).toHaveLength(3);
   });
 });

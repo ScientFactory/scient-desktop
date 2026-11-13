@@ -598,6 +598,36 @@ describe("project pins", () => {
     ]);
   });
 
+  it("keeps the project's full date over a record that stores only the year", async () => {
+    const base = await fixture();
+    const author = await newLibrary(base, "author");
+    const projectRoot = await newProject(base);
+    const doi = [{ scheme: "doi", value: "10.1000/dated" }];
+    const dated = await addRecord(author.library, "dated", {
+      identifiers: doi,
+      issuedRaw: "2021-03-04",
+      issuedYear: 2021,
+    });
+    await pinScientLibrarySource({
+      projectRoot,
+      library: author.library,
+      sourceId: dated.sourceId,
+      actor: "user",
+    });
+    // Another computer's copy: a year and no stored date, which import writes independently.
+    const other = await newLibrary(base, "other");
+    await addRecord(other.library, "dated", {
+      identifiers: doi,
+      issuedRaw: null,
+      issuedYear: 2021,
+    });
+
+    const [work] = await listScientProjectPinnedWorks({ projectRoot, library: other.library });
+    expect(work).toMatchObject({ from: "library", record: { issuedRaw: "2021-03-04" } });
+    await refreshScientProjectPinSnapshots({ projectRoot, library: other.library });
+    expect((await readScientProjectPins(projectRoot))[0]?.work.issuedRaw).toBe("2021-03-04");
+  });
+
   it("renames a pin's project key, refusing one another pin uses", async () => {
     const base = await fixture();
     const { library } = await newLibrary(base, "state");

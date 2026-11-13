@@ -101,6 +101,9 @@ function noticeDate(value: string | undefined): string {
   }).format(date);
 }
 
+/** Evidence a project package brought: another computer's check, never one made here. */
+const CARRIED = " (from another computer's check)";
+
 /** The line shown on a source, or null when the registry reported nothing to warn about. */
 export function editorialStatusLine(status: EditorialStatus): {
   readonly text: string;
@@ -112,7 +115,7 @@ export function editorialStatusLine(status: EditorialStatus): {
   const notice = status.notices.find((entry) => entry.kind === NOTICE_FOR_STATE[state]);
   const date = noticeDate(notice?.date);
   return {
-    text: `${EDITORIAL_STATE_WORDS[state]}${date ? ` ${notice?.date?.length === 4 ? "in" : "on"} ${date}` : ""}`,
+    text: `${EDITORIAL_STATE_WORDS[state]}${date ? ` ${notice?.date?.length === 4 ? "in" : "on"} ${date}` : ""}${status.carriedAt ? CARRIED : ""}`,
     serious: state === "retracted" || state === "withdrawn",
     noticeDoi: notice?.doi ?? null,
   };
@@ -129,7 +132,8 @@ export function sourceTrustLabel(record: {
 }
 
 export function verificationProblemLabel(verification: Verification | undefined): string {
-  if (verification?.problem === "not-found") return " · Not found in registry";
-  if (verification?.problem === "mismatch") return " · Identifier names another work";
+  const carried = verification?.carriedAt ? CARRIED : "";
+  if (verification?.problem === "not-found") return ` · Not found in registry${carried}`;
+  if (verification?.problem === "mismatch") return ` · Identifier names another work${carried}`;
   return "";
 }

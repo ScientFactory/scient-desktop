@@ -34,6 +34,7 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 
 import { ServerConfig } from "../../../config.ts";
+import { exportLibraryProjectPackage } from "../../../scient/sources/LibraryProjectPackage.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
 import {
@@ -54,6 +55,7 @@ import {
   libraryReviewConflicts,
 } from "../../../scient/sources/LibrarySourcesRoutes.ts";
 import {
+  resolveScientLibraryStoreAt,
   ScientSourcesBackend,
   type ScientSourcesBackendKind,
 } from "../../../scient/sources/SourcesBackend.ts";
@@ -427,6 +429,67 @@ describe("Sources tools on the library backend", () => {
         outcome: "existing",
         pin: { note: "First reading" },
       });
+    }),
+  );
+
+  it.effect("reads and writes each merged pin's project note by its own key", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const first = (yield* addSource(fixture, "First copy", "10.1000/first")).sourceId!;
+      const later = (yield* addSource(fixture, "Later copy", "10.1000/later")).sourceId!;
+      const note = (sourceId: string, text: string, noteBase?: string, citationKey?: string) =>
+        run(
+          organizeLibrarySourcesForInvocation({
+            change: {
+              action: "pin",
+              sourceId,
+              note: text,
+              ...(noteBase ? { noteBase } : {}),
+              ...(citationKey ? { citationKey } : {}),
+            },
+          }),
+          fixture,
+        );
+      yield* note(first, "Why the first copy");
+      yield* note(first, "Same text", "Why the first copy");
+      yield* note(later, "Why the later copy");
+      yield* note(later, "Same text", "Why the later copy");
+      const keyOf = (pins: ReadonlyArray<{ sourceId: string; citationKey: string }>, id: string) =>
+        pins.find((pin) => pin.sourceId === id)!.citationKey;
+      const before = yield* Effect.promise(() => readScientProjectPins(fixture.root));
+      const firstKey = keyOf(before, first);
+      const laterKey = keyOf(before, later);
+      yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "merge", sourceIds: [first, later], survivorId: later },
+        }),
+        fixture,
+      );
+
+      const notesOf = (detail: {
+        readonly projectNoteHistory?: ReadonlyArray<{ note: string | null }>;
+      }) => detail.projectNoteHistory?.map((version) => version.note);
+      const survivor = yield* run(getScientSourceForInvocation({ sourceId: later }), fixture);
+      expect(survivor).toMatchObject({ citationKey: laterKey, alsoCitedAs: [firstKey] });
+      expect(notesOf(survivor)).toEqual(["Why the later copy", "Same text"]);
+      const earliest = yield* run(
+        getScientSourceForInvocation({ sourceId: later, citationKey: firstKey }),
+        fixture,
+      );
+      expect(notesOf(earliest)).toEqual(["Why the first copy", "Same text"]);
+
+      // Restoring the history it read lands on that pin, not on the one the ID resolves to.
+      expect(yield* note(later, "Why the first copy", "Same text", firstKey)).toMatchObject({
+        outcome: "existing",
+        pin: { citationKey: firstKey, note: "Why the first copy" },
+      });
+      const pins = yield* Effect.promise(() => readScientProjectPins(fixture.root));
+      expect(pins.map((pin) => [pin.citationKey, pin.note])).toEqual(
+        expect.arrayContaining([
+          [firstKey, "Why the first copy"],
+          [laterKey, "Same text"],
+        ]),
+      );
     }),
   );
 
@@ -1115,17 +1178,107 @@ describe("Sources tools on the library backend", () => {
         });
         return { ...fixture, root, stateDir: NodePath.join(fixture.base, "other-state") };
       });
-      expect(
-        yield* run(
-          organizeLibrarySourcesForInvocation({
-            change: { action: "import-package", relativePath: "handoff" },
-          }),
-          other,
-        ),
-      ).toMatchObject({ outcome: "imported", packageReport: { sources: 1, pins: 1 } });
+      const imported = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "import-package", relativePath: "handoff" },
+        }),
+        other,
+      );
+      expect(imported).toMatchObject({
+        outcome: "imported",
+        packageReport: { sources: 1, pins: 1, failed: [] },
+      });
       expect(yield* Effect.promise(() => readScientProjectPins(other.root))).toMatchObject([
         { note: "Why we cite it." },
       ]);
+      expect(
+        yield* run(
+          organizeLibrarySourcesForInvocation({
+            change: {
+              action: "undo-import",
+              importId:
+                "packageReport" in imported &&
+                imported.packageReport &&
+                "importId" in imported.packageReport
+                  ? (imported.packageReport.importId ?? "")
+                  : "",
+            },
+          }),
+          other,
+        ),
+      ).toMatchObject({ outcome: "undone", packageReport: { kept: [] } });
+      expect(yield* Effect.promise(() => readScientProjectPins(other.root))).toEqual([]);
+
+      // An agent writes only in the project, or where the person saved a package before.
+      const refused = (change: { relativePath?: string; inFolder?: string }) =>
+        run(
+          organizeLibrarySourcesForInvocation({ change: { action: "export-package", ...change } }),
+          fixture,
+        ).pipe(Effect.flip);
+      const elsewhere = NodePath.join(fixture.base, "elsewhere");
+      yield* Effect.promise(() => NodeFSP.mkdir(elsewhere));
+      yield* refused({ relativePath: "../elsewhere/handoff" });
+      yield* refused({ inFolder: elsewhere });
+      yield* Effect.promise(() =>
+        NodeFSP.symlink(elsewhere, NodePath.join(fixture.root, "linked")),
+      );
+      yield* refused({ relativePath: "linked/handoff" });
+      yield* refused({ relativePath: ".scient/handoff" });
+      expect(yield* Effect.promise(() => NodeFSP.readdir(elsewhere))).toEqual([]);
+
+      // It reads a package only from the project or a folder the person chose, and never through
+      // a link out of either or out of the package.
+      const importing = (relativePath: string) =>
+        run(
+          organizeLibrarySourcesForInvocation({
+            change: { action: "import-package", relativePath },
+          }),
+          fixture,
+        );
+      const away = NodePath.join(fixture.base, "away");
+      yield* Effect.promise(() =>
+        NodeFSP.cp(NodePath.join(fixture.root, "handoff"), NodePath.join(away, "handoff"), {
+          recursive: true,
+        }),
+      );
+      yield* importing(NodePath.join(away, "handoff")).pipe(Effect.flip);
+      yield* importing("../away/handoff").pipe(Effect.flip);
+      yield* Effect.promise(() => NodeFSP.symlink(away, NodePath.join(fixture.root, "away-link")));
+      yield* importing("away-link/handoff").pipe(Effect.flip);
+      yield* Effect.promise(async () => {
+        const pins = NodePath.join(fixture.root, "handoff", "project", "pins.json");
+        await NodeFSP.rm(pins);
+        await NodeFSP.symlink(NodePath.join(away, "handoff", "project", "pins.json"), pins);
+      });
+      expect(yield* importing("handoff")).toMatchObject({
+        outcome: "package-changed",
+        packageReport: { changedFiles: ["project/pins.json"] },
+      });
+
+      // Saved outside the project by the person: nothing for Git; the agent may use it then.
+      const store = yield* resolveScientLibraryStoreAt(fixture.root, "write").pipe(
+        Effect.provideService(ServerConfig, {
+          stateDir: fixture.stateDir,
+        } as ServerConfig["Service"]),
+        Effect.provideService(ScientSourcesBackend, "library"),
+      );
+      if (!store) throw new Error("Expected the library backend.");
+      yield* Effect.promise(() =>
+        exportLibraryProjectPackage(store, { inFolder: fixture.base }, "person"),
+      );
+      const outside = yield* run(
+        organizeLibrarySourcesForInvocation({
+          change: { action: "export-package", inFolder: fixture.base },
+        }),
+        fixture,
+      );
+      expect(outside).toMatchObject({ packageReport: { insideProject: false } });
+      expect(NodePath.dirname("packagePath" in outside ? outside.packagePath! : "")).toBe(
+        fixture.base,
+      );
+      expect(yield* importing("packagePath" in outside ? outside.packagePath! : "")).toMatchObject({
+        outcome: "imported",
+      });
     }),
   );
 

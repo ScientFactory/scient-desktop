@@ -1,5 +1,9 @@
 import type { PdfSourceDescriptor } from "@scientfactory/document-artifacts";
-import { EnvironmentId, type ScientPdfAnnotation } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  type ScientAnnotationAlternative,
+  type ScientPdfAnnotation,
+} from "@t3tools/contracts";
 import { useEffect, useState, useSyncExternalStore } from "react";
 
 import {
@@ -28,6 +32,7 @@ function documentTarget(source: PdfSourceDescriptor | null): DocumentTarget | nu
 }
 
 const NONE: ReadonlyArray<ScientPdfAnnotation> = [];
+const NO_ALTERNATIVES: ReadonlyArray<ScientAnnotationAlternative> = [];
 const noSubscription = () => () => undefined;
 
 export function usePdfAnnotations(pdf: AnnotatedPdf | null): ReadonlyArray<ScientPdfAnnotation> {
@@ -50,6 +55,8 @@ export function useDocumentAnnotations(source: PdfSourceDescriptor | null): {
   readonly annotations: ReadonlyArray<ScientPdfAnnotation>;
   /** The Library key a quote from this PDF cites, when it belongs to a Source that has one. */
   readonly citationKey: string | null;
+  /** Another computer's versions of these annotations, from a project package. */
+  readonly alternatives: ReadonlyArray<ScientAnnotationAlternative>;
 } {
   const target = documentTarget(source);
   const environmentId = target?.environmentId ?? null;
@@ -60,6 +67,7 @@ export function useDocumentAnnotations(source: PdfSourceDescriptor | null): {
     readonly key: string;
     readonly pdf: AnnotatedPdf;
     readonly citationKey: string | null;
+    readonly alternatives: ReadonlyArray<ScientAnnotationAlternative>;
   } | null>(null);
   const originSourceId =
     source?._tag === "workspace-pdf" && source.origin ? source.origin.sourceId : null;
@@ -85,13 +93,15 @@ export function useDocumentAnnotations(source: PdfSourceDescriptor | null): {
           const citationKey =
             (keyed.find((entry) => entry.sourceId === originSourceId) ?? keyed[0])?.citationKey ??
             null;
+          const alternatives = result.alternatives ?? NO_ALTERNATIVES;
           setLoaded((previous) =>
             previous?.key === targetKey &&
             previous.citationKey === citationKey &&
             previous.pdf.material.sha256 === pdf.material.sha256 &&
-            previous.pdf.material.byteLength === pdf.material.byteLength
+            previous.pdf.material.byteLength === pdf.material.byteLength &&
+            JSON.stringify(previous.alternatives) === JSON.stringify(alternatives)
               ? previous
-              : { key: targetKey, pdf, citationKey },
+              : { key: targetKey, pdf, citationKey, alternatives },
           );
         },
         () => undefined,
@@ -116,5 +126,6 @@ export function useDocumentAnnotations(source: PdfSourceDescriptor | null): {
     pdf,
     annotations: usePdfAnnotations(pdf),
     citationKey: current?.citationKey ?? null,
+    alternatives: current?.alternatives ?? NO_ALTERNATIVES,
   };
 }

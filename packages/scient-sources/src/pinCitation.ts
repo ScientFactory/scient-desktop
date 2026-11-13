@@ -74,9 +74,10 @@ export function withKnownPinCitationValues(
   // The date is one input; a bare year is less than a full date of the same year.
   const recordDate = record.issuedRaw?.trim() ?? "";
   const knownDate = work.issuedRaw?.trim() ?? "";
+  const yearOnly = recordDate === "" ? String(record.issuedYear ?? "") : recordDate;
   const lacksDate =
     (recordDate === "" && record.issuedYear === null) ||
-    (/^\d{4}$/u.test(recordDate) && knownDate.length > 4 && knownDate.startsWith(recordDate));
+    (/^\d{4}$/u.test(yearOnly) && knownDate.length > 4 && knownDate.startsWith(yearOnly));
   if (
     lacksDate &&
     (knownDate !== "" || work.issuedYear !== null) &&
@@ -92,9 +93,24 @@ export function withKnownPinCitationValues(
 const fromProjectFile = (sourceField: string | null) =>
   sourceField?.startsWith("project-file:") ?? false;
 
-/** A record hydrated from a pin snapshot, which knows nothing the snapshot did not. */
-export function scientRecordOnlyFromProjectFile(record: ScientSourceRecord): boolean {
-  return record.fieldProvenance.every((entry) => fromProjectFile(entry.sourceField));
+/**
+ * Whether an older snapshot's managed entry must be kept for this record: it was hydrated from
+ * that snapshot and a citation input the snapshot lacks is still unknown. A correction of another
+ * field (the title) waits in the kept entry's report: rendering now would drop pages or a date
+ * only that entry knows. Setting the unknown field itself makes it known.
+ */
+export function scientPinCitationStillUnknown(
+  work: ScientPinCitationWork,
+  record: ScientSourceRecord,
+): boolean {
+  if (scientPinWorkIsComplete(work)) return false;
+  const provenance = record.fieldProvenance;
+  if (!provenance.some((entry) => fromProjectFile(entry.sourceField))) return false;
+  return [...SCIENT_PIN_CITATION_TEXT_FIELDS, "tags" as const].some(
+    (field) =>
+      !(field in work) &&
+      !provenance.some((entry) => entry.field === field && !fromProjectFile(entry.sourceField)),
+  );
 }
 
 /**

@@ -148,6 +148,40 @@ export async function projectPinsByLibraryId(
 }
 
 /**
+ * The pin whose project note a caller means, among this project's pins of one library source:
+ * the one with `citationKey`, else the one stored under the ID the caller named, else the first
+ * pinned. `alsoCitedAs` names the others, each readable and writable by its own key.
+ */
+export async function projectPinOfLibrarySource(
+  store: ScientSourcesLibraryStore,
+  input: { readonly sourceId: string; readonly requestedId: string; readonly citationKey?: string },
+): Promise<{ readonly pin: ScientProjectPin; readonly alsoCitedAs: ReadonlyArray<string> } | null> {
+  if (!store.exists) return null;
+  const resolved = await resolveScientProjectPins({
+    projectRoot: store.root,
+    library: store.library,
+    mode: "read",
+    actor: "agent",
+  });
+  const pins = resolved
+    .flatMap(({ pin, resolution }) =>
+      resolution.kind === "resolved" && resolution.sourceId === input.sourceId ? [pin] : [],
+    )
+    .toSorted((left, right) => (left.pinnedAt < right.pinnedAt ? -1 : 1));
+  const pin =
+    input.citationKey !== undefined
+      ? pins.find((candidate) => candidate.citationKey === input.citationKey)
+      : (pins.find((candidate) => candidate.sourceId === input.requestedId) ??
+        pins.find((candidate) => candidate.sourceId === input.sourceId) ??
+        pins[0]);
+  if (!pin) return null;
+  return {
+    pin,
+    alsoCitedAs: pins.filter((other) => other !== pin).map((other) => other.citationKey),
+  };
+}
+
+/**
  * The library record a caller means: a library ID (merged IDs follow their alias), or a project
  * source ID this project stores, resolved through the instance map. Read access records nothing.
  */

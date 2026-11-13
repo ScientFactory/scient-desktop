@@ -27,6 +27,7 @@ export const LIBRARY_LABELS = {
   readingMenu: "Mark",
   citedAs: "Cited as",
   alsoCitedAs: "Also cited as",
+  noteForKey: "Note for",
   addFailed: "Not added to this project",
   removeFailed: "Not removed from this project",
   readingFailed: "Reading status was not changed",

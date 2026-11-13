@@ -236,6 +236,83 @@ describe("project notes", () => {
     expect(history?.at(-1)).toMatchObject({ note: null, kind: "found" });
   });
 
+  it("keeps the first note however it was written, past every later checkpoint", async () => {
+    const { library, projectRoot, add } = await setup();
+    const pinned = await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: (await add("A")).sourceId,
+      actor: "user",
+      note: "First on pinning",
+    });
+    await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: (await add("B")).sourceId,
+      actor: "agent",
+    });
+    const keys = (await readScientProjectPins(projectRoot)).map((pin) => pin.citationKey);
+    const firstKey = pinned.outcome === "pinned" ? pinned.pin.citationKey : "";
+    const otherKey = keys.find((key) => key !== firstKey)!;
+    await setScientProjectPinNote({
+      projectRoot,
+      citationKey: otherKey,
+      note: "First added later",
+      actor: "agent",
+    });
+    for (const [key, first] of [
+      [firstKey, "First on pinning"],
+      [otherKey, "First added later"],
+    ] as const) {
+      let base: string = first;
+      for (let index = 0; index < SCIENT_PROJECT_NOTE_CHECKPOINTS + 3; index += 1) {
+        const next = `${key} ${index}`;
+        await setScientProjectPinNote({
+          projectRoot,
+          citationKey: key,
+          note: next,
+          base,
+          actor: "user",
+        });
+        base = next;
+      }
+      const history = await readScientProjectPinNoteHistory({ projectRoot, citationKey: key });
+      expect(history?.[0]).toMatchObject({ note: first });
+      expect(history).toHaveLength(SCIENT_PROJECT_NOTE_CHECKPOINTS + 1);
+    }
+  });
+
+  it("leaves only the runtime lock out of Git, and never rewrites an ignore file", async () => {
+    const { library, projectRoot, add } = await setup();
+    await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: (await add("A")).sourceId,
+      actor: "user",
+      note: "Why",
+    });
+    const git = (...args: string[]) =>
+      NodeChildProcess.spawnSync("git", ["-C", projectRoot, ...args], { encoding: "utf8" });
+    git("init", "-q");
+    const folder = NodePath.join(projectRoot, ".scient", "library");
+    await NodeFSP.mkdir(NodePath.join(folder, "custom"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(folder, "custom", "pins.lock"), "theirs");
+    const ignored = (path: string) => git("check-ignore", "-q", path).status === 0;
+    expect(ignored(".scient/library/pins.lock")).toBe(true);
+    expect(ignored(".scient/library/custom/pins.lock")).toBe(false);
+    expect(ignored(".scient/library/pins.json")).toBe(false);
+
+    const edited = "# mine\n/pins.lock\n*.bak\n";
+    await NodeFSP.writeFile(NodePath.join(folder, ".gitignore"), edited);
+    await pinScientLibrarySource({
+      projectRoot,
+      library,
+      sourceId: (await add("B")).sourceId,
+      actor: "user",
+    });
+    expect(await NodeFSP.readFile(NodePath.join(folder, ".gitignore"), "utf8")).toBe(edited);
+  });
+
   it("waits for another process holding the project's pins lock, then sees its note", async () => {
     const { library, projectRoot, add } = await setup();
     const record = await add("A");

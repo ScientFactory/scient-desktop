@@ -24,9 +24,12 @@ import {
 import { withScientFileLock, withScientLibraryLock } from "./libraryLock.ts";
 import { markScientLibrarySourcesDistinct, mergeScientLibraryDuplicates } from "./libraryMerge.ts";
 import {
+  abandonScientPreMoveRestore,
+  finishScientPreMoveRestore,
   restoreScientPreMoveArchive,
   sealScientPreMoveArchive,
   type ScientPreMoveArchiveRestore,
+  type ScientPreMoveRestoreFaults,
 } from "./libraryMoveArchive.ts";
 import {
   decodeScientReviewSnapshotText,
@@ -2019,6 +2022,10 @@ async function recover(ctx: MoveContext): Promise<ScientLibraryMoveResult> {
     if (restored.result) return { outcome: "moved-back", journal: restored.journal };
     journal = restored.journal;
   }
+  await finishScientPreMoveRestore({
+    projectRoot: ctx.root,
+    storePresent: () => v1StorePresent(ctx.root),
+  });
   const v1 = await v1StorePresent(ctx.root);
   if (journal?.state === "moved-back") return { outcome: "moved-back", journal };
   if (!journal || journal.state === "done") {
@@ -2699,6 +2706,7 @@ export async function readScientLibraryMoveStatus(input: {
 export async function restoreScientProjectPreMoveArchive(input: {
   readonly projectRoot: string;
   readonly archiveId?: string;
+  readonly faults?: ScientPreMoveRestoreFaults;
 }): Promise<ScientPreMoveArchiveRestore> {
   const root = await NodeFSP.realpath(input.projectRoot);
   await readScientProjectIdentity(root);
@@ -2707,8 +2715,18 @@ export async function restoreScientProjectPreMoveArchive(input: {
       projectRoot: root,
       ...(input.archiveId ? { archiveId: input.archiveId } : {}),
       storePresent: () => v1StorePresent(root),
+      ...(input.faults ? { faults: input.faults } : {}),
     }),
   );
+}
+
+/** Abandons a restore that stopped part way: the next move takes in what it already put back. */
+export async function abandonScientProjectPreMoveRestore(input: {
+  readonly projectRoot: string;
+}): Promise<"dismissed" | "nothing-to-dismiss"> {
+  const root = await NodeFSP.realpath(input.projectRoot);
+  await readScientProjectIdentity(root);
+  return withProjectLocks(root, () => abandonScientPreMoveRestore(root));
 }
 
 /** Hides the summary of this checkout's latest move, until a later run has one of its own. */

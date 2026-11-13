@@ -13,6 +13,7 @@ import {
   assessSourceDuplicate,
   assessSourceMetadataDuplicate,
   sourceMetadataMatchIndex,
+  type ScientSourceIntakeExclusions,
 } from "./duplicates.ts";
 import { readScientLibraryExclusions, type ScientLibraryExclusions } from "./libraryExclusions.ts";
 import { withScientLibraryLock } from "./libraryLock.ts";
@@ -1184,7 +1185,7 @@ async function deleteTrashEntries(
   return { deletedSourceIds: entries.map((entry) => entry.sourceId), removedFileCount };
 }
 
-/** Caller holds the source-write lock, so no import can be between staging a PDF and its record. */
+/** Caller holds the source-write lock; prepared package blobs are rechecked when attached. */
 async function collectUnreferencedSourceFiles(paths: SourceStorePaths): Promise<number> {
   const live = await scanScientSourceRecords(paths);
   const trash = await scanTrash(paths);
@@ -2468,7 +2469,7 @@ export async function removeScientSourceStagedFileImport(
   );
 }
 
-async function stagePdf(input: {
+async function preparePdf(input: {
   readonly paths: SourceStorePaths;
   readonly operationId: string;
   readonly sourcePath: string;
@@ -2476,7 +2477,7 @@ async function stagePdf(input: {
   readonly expectedPdf?: ScientSourcePdfInspection;
   readonly importedAt: string;
   readonly retrieval?: ScientSourceAttachmentRetrieval;
-}): Promise<ScientSourceAttachment> {
+}) {
   const stagingDirectory = NodePath.join(input.paths.staging, input.operationId);
   await ensureDirectory(stagingDirectory);
   const temporaryPath = NodePath.join(stagingDirectory, `pdf-${NodeCrypto.randomUUID()}.tmp`);
@@ -2519,6 +2520,7 @@ async function stagePdf(input: {
         }
       }
     }
+    await NodeFSP.rm(temporaryPath, { force: true });
     const finalStats = await NodeFSP.lstat(finalPath);
     if (!finalStats.isFile() || finalStats.isSymbolicLink() || finalStats.size !== byteLength) {
       throw new Error("The project already contains an unsafe or damaged source PDF.");
@@ -2545,7 +2547,7 @@ async function stagePdf(input: {
         throw new Error("The project already contains a damaged source PDF.");
       }
     }
-    return {
+    const attachment: ScientSourceAttachment = {
       // A hash identifies immutable PDF bytes. An attachment ID identifies a
       // source-scoped reference to those bytes, so shared blobs need distinct
       // attachment IDs.
@@ -2559,6 +2561,23 @@ async function stagePdf(input: {
       importedAt: input.importedAt,
       ...(input.retrieval ? { retrieval: input.retrieval } : {}),
     };
+    return {
+      attachment,
+      verify: async () => {
+        const current = await NodeFSP.lstat(finalPath);
+        if (
+          !current.isFile() ||
+          current.isSymbolicLink() ||
+          current.dev !== finalStats.dev ||
+          current.ino !== finalStats.ino ||
+          current.size !== finalStats.size ||
+          current.mtimeMs !== finalStats.mtimeMs ||
+          current.ctimeMs !== finalStats.ctimeMs
+        ) {
+          throw new Error("The staged source PDF changed before it could be attached.");
+        }
+      },
+    };
   } finally {
     await targetHandle?.close();
     await NodeFSP.rm(temporaryPath, { force: true });
@@ -2566,6 +2585,10 @@ async function stagePdf(input: {
       if (!isNodeError(error, "ENOENT") && !isNodeError(error, "ENOTEMPTY")) throw error;
     });
   }
+}
+
+async function stagePdf(input: Parameters<typeof preparePdf>[0]): Promise<ScientSourceAttachment> {
+  return (await preparePdf(input)).attachment;
 }
 
 export interface ScientSourcePdfAttachmentResult {
@@ -2593,8 +2616,7 @@ export async function attachScientSourcePdf(
   input: AttachPdfInput,
 ): Promise<ScientSourcePdfAttachmentResult> {
   const paths = await sourceStorePaths(input.root);
-  assertSafeIdentifier(input.sourceId, "Source ID");
-  return withStoreLock(paths, "source-write", () => attachPdfLocked(paths, input));
+  return attachPdfReference(paths, input, () => stageInputPdf(paths, input));
 }
 
 /**
@@ -2621,13 +2643,69 @@ export async function attachScientSourcePaperPdf(
     ) {
       return { outcome: "not-same-work" as const, duplicate };
     }
-    return attachPdfLocked(paths, input);
+    return attachPdfLocked(paths, input, () => stageInputPdf(paths, input));
   });
+}
+
+function stageInputPdf(paths: SourceStorePaths, input: AttachPdfInput) {
+  return stagePdf({
+    paths,
+    operationId: `attach_${NodeCrypto.randomUUID()}`,
+    sourcePath: input.pdfPath,
+    ...(input.fileName ? { fileName: input.fileName } : {}),
+    ...(input.retrieval ? { retrieval: input.retrieval } : {}),
+    importedAt: new Date().toISOString(),
+  });
+}
+
+/** Bulk I/O precedes the Library hold; only an unchanged, verified blob can gain a reference. */
+async function preparePdfAttachment(input: {
+  readonly root: ScientSourceStoreLocation;
+  readonly pdfPath: string;
+  readonly expectedPdf: ScientSourcePdfInspection;
+  readonly fileName: string;
+  readonly retrieval?: ScientSourceAttachmentRetrieval;
+}) {
+  const paths = await sourceStorePaths(input.root);
+  const prepared = await preparePdf({
+    paths,
+    operationId: `package_${NodeCrypto.randomUUID()}`,
+    sourcePath: input.pdfPath,
+    fileName: input.fileName,
+    expectedPdf: input.expectedPdf,
+    importedAt: new Date().toISOString(),
+    ...(input.retrieval ? { retrieval: input.retrieval } : {}),
+  });
+  return (target: {
+    readonly sourceId: string;
+    readonly expectedRevision: number;
+    readonly actor: ScientSourceActor;
+  }) =>
+    attachPdfReference(paths, target, async () => {
+      await prepared.verify();
+      return prepared.attachment;
+    });
+}
+
+interface PdfReferenceTarget {
+  readonly sourceId: string;
+  readonly expectedRevision: number;
+  readonly actor?: ScientSourceActor;
+}
+
+async function attachPdfReference(
+  paths: SourceStorePaths,
+  input: PdfReferenceTarget,
+  getAttachment: () => Promise<ScientSourceAttachment>,
+): Promise<ScientSourcePdfAttachmentResult> {
+  assertSafeIdentifier(input.sourceId, "Source ID");
+  return withStoreLock(paths, "source-write", () => attachPdfLocked(paths, input, getAttachment));
 }
 
 async function attachPdfLocked(
   paths: SourceStorePaths,
-  input: AttachPdfInput,
+  input: PdfReferenceTarget,
+  getAttachment: () => Promise<ScientSourceAttachment>,
 ): Promise<ScientSourcePdfAttachmentResult> {
   const current = await readSourceRecordFromPaths(paths, input.sourceId);
   const emptyDuplicate: ScientSourceDuplicateAssessment = {
@@ -2638,14 +2716,7 @@ async function attachPdfLocked(
   if (current.revision !== input.expectedRevision) {
     return { outcome: "stale", record: current, duplicate: emptyDuplicate };
   }
-  const attachment = await stagePdf({
-    paths,
-    operationId: `attach_${NodeCrypto.randomUUID()}`,
-    sourcePath: input.pdfPath,
-    ...(input.fileName ? { fileName: input.fileName } : {}),
-    ...(input.retrieval ? { retrieval: input.retrieval } : {}),
-    importedAt: new Date().toISOString(),
-  });
+  const attachment = await getAttachment();
   const currentAttachment = current.attachments.some(
     (existingAttachment) => existingAttachment.sha256 === attachment.sha256,
   );
@@ -2747,6 +2818,33 @@ interface ImportScientSourceInput {
   readonly verification?: ScientSourceVerification;
   readonly editorialStatus?: ScientSourceEditorialStatus;
   readonly pdfRetrieval?: ScientSourceAttachmentRetrieval;
+  /**
+   * The ID the candidate already has elsewhere (a package's record): the Library's exclusions of
+   * that ID apply too, so a pair kept apart is never joined through the newly derived ID.
+   */
+  readonly incomingSourceId?: string;
+  /** Records the caller found to be another work: never reused. */
+  readonly refusedSourceIds?: ReadonlyArray<string>;
+}
+
+/** The exclusions an intake assesses with, including those of the candidate's incoming identity. */
+function withIncomingIdentity(
+  exclusions: ScientLibraryExclusions | undefined,
+  input: ImportScientSourceInput,
+): ScientSourceIntakeExclusions | undefined {
+  const incoming = input.incomingSourceId;
+  const refused = new Set(input.refusedSourceIds ?? []);
+  if (incoming === undefined && refused.size === 0) return exclusions;
+  const asIncoming = (other: string) => incoming !== undefined && incoming !== other;
+  return {
+    isDistinct: (own, other) =>
+      refused.has(other) ||
+      (exclusions?.isDistinct(own, other) ?? false) ||
+      (asIncoming(other) && (exclusions?.isDistinct(incoming!, other) ?? false)),
+    keptApart: (own, other) =>
+      exclusions?.keptApart(own, other) ??
+      (asIncoming(other) ? (exclusions?.keptApart(incoming!, other) ?? null) : null),
+  };
 }
 
 async function intakeExclusions(
@@ -2792,7 +2890,7 @@ export async function readScientSourceIntakeExclusions(
 function intakeAssessor(
   paths: SourceStorePaths,
   existing: ReadonlyArray<ScientSourceRecord>,
-  exclusions: ScientLibraryExclusions | undefined,
+  exclusions: ScientSourceIntakeExclusions | undefined,
   operationId?: string,
 ) {
   const owner = storeOwnerId(paths);
@@ -2863,8 +2961,14 @@ async function importScientSourceWithRecordLookup(
         ? await operationRecordSnapshot(paths, input.operationId)
         : await listScientSourceRecordsFromPaths(paths);
     const exclusions = await intakeExclusions(paths, existing);
+    const assessedExclusions = withIncomingIdentity(exclusions, input);
     const assess = (records: ReadonlyArray<ScientSourceRecord>, pdfSha256?: string) =>
-      intakeAssessor(paths, records, exclusions, input.operationId)(input.candidate, pdfSha256);
+      intakeAssessor(
+        paths,
+        records,
+        assessedExclusions,
+        input.operationId,
+      )(input.candidate, pdfSha256);
     const importedAt = new Date().toISOString();
     const preliminaryDuplicate = assess(existing, input.expectedPdf?.sha256);
     if (duplicateBlocksImport(preliminaryDuplicate, input.allowPossibleMetadataMatch ?? false)) {
@@ -3082,6 +3186,7 @@ export async function updateScientSourceExternalReferences(input: {
 
 /** For sibling store modules (collections, reviews) that share this store's safety rules. */
 export const scientSourceStoreInternals = {
+  preparePdfAttachment,
   sourceStorePaths,
   readSourceRecordFromPaths,
   readScientSourceRecordIfPresent,

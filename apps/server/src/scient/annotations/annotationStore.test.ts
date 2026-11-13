@@ -12,6 +12,7 @@ import {
   MAX_ANNOTATIONS_PER_PDF,
   mutateScientAnnotations,
   readScientAnnotationFile,
+  scientAnnotationAlternatives,
   type ScientAnnotationFile,
 } from "./annotationStore.ts";
 import { readerAnchor, temporaryProject } from "./annotationTestUtils.ts";
@@ -139,6 +140,36 @@ describe("applyAnnotationCommand", () => {
         toRevision: 1,
       }).result.outcome,
     ).toBe("not-found");
+  });
+
+  it("offers another computer's version and reverts to exactly that one of two at its revision", () => {
+    let file = apply(emptyFile(), create("ann_00000001", "mine")).file;
+    file = apply(file, {
+      action: "update",
+      annotationId: "ann_00000001",
+      expectedRevision: 1,
+      note: "mine, revised",
+    }).file;
+    // A package kept the other computer's note at the same revision as this one's first.
+    const theirs = {
+      ...file.history[0]!,
+      note: "theirs",
+      importedAt: "2026-11-12T00:00:00.000Z",
+    };
+    file = { ...file, history: [...file.history, theirs] };
+    expect(scientAnnotationAlternatives(file)).toEqual([
+      expect.objectContaining({ revision: 1, note: "theirs" }),
+    ]);
+    const reverted = apply(file, {
+      action: "revert",
+      annotationId: "ann_00000001",
+      expectedRevision: 2,
+      toRevision: 1,
+      toNote: "theirs",
+      toHighlighted: true,
+    });
+    expect(reverted.result).toMatchObject({ outcome: "updated", annotation: { note: "theirs" } });
+    expect(scientAnnotationAlternatives(reverted.file)).toEqual([]);
   });
 
   it("stops creating at the per-PDF limit", () => {

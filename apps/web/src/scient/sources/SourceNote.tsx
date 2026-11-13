@@ -90,7 +90,9 @@ function useSourceNoteState(input: {
   const [error, setError] = useState<string | null>(null);
   /** The note saved elsewhere when a save found it changed; the draft stays this editor's text. */
   const [savedElsewhere, setSavedElsewhere] = useState<string | null>(null);
-  const [session] = useState(() => randomUUID());
+  const [firstSession] = useState(() => randomUUID());
+  /** A restore starts a new session, so it never replaces the checkpoint saved before it. */
+  const sessionRef = useRef(firstSession);
   const recordRef = useRef(input.record);
   const draftRef = useRef(draft);
   const confirmedRef = useRef(confirmed);
@@ -144,7 +146,7 @@ function useSourceNoteState(input: {
       const seen = confirmedRef.current;
       const result = await onSaveRef.current(submitted.trim() ? submitted : null, base.revision, {
         base: seen.trim() ? seen : null,
-        session,
+        session: sessionRef.current,
       });
       recordRef.current = result.record;
       const remote = noteText(result.record, field);
@@ -233,6 +235,7 @@ function useSourceNoteState(input: {
 
   /** An earlier version, saved as a new change over the note this editor last saw. */
   const restore = (value: string) => {
+    sessionRef.current = randomUUID();
     change(value);
     void persist();
   };

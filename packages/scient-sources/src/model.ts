@@ -87,6 +87,8 @@ export const ScientSourceVerification = Schema.Struct({
   checkedAt: Schema.optionalKey(NonEmptyString),
   /** Why a checked identifier stays unverified: the registry has no such work, or another one. */
   problem: Schema.optionalKey(Schema.Literals(["not-found", "mismatch"])),
+  /** Brought from another computer's check (a project package) at this time; not checked here. */
+  carriedAt: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceVerification = typeof ScientSourceVerification.Type;
 
@@ -108,6 +110,8 @@ export const ScientSourceEditorialStatus = Schema.Struct({
   state: Schema.Literals(["retracted", "withdrawn", "expression-of-concern", "corrected", "none"]),
   notices: Schema.Array(ScientSourceEditorialNotice).pipe(Schema.check(Schema.isMaxLength(64))),
   checkedAt: NonEmptyString,
+  /** Brought from another computer's check (a project package) at this time; not checked here. */
+  carriedAt: Schema.optionalKey(NonEmptyString),
 });
 export type ScientSourceEditorialStatus = typeof ScientSourceEditorialStatus.Type;
 

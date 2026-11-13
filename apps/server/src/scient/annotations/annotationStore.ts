@@ -16,6 +16,7 @@ import {
   ScientAnnotationActor,
   ScientAnnotationNote,
   ScientPdfAnnotation,
+  type ScientAnnotationAlternative,
   type ScientAnnotationCommand,
   type ScientAnnotationMutationResult,
   type ScientPdfAnnotation as ScientPdfAnnotationType,
@@ -58,6 +59,8 @@ const AnnotationHistoryEntry = Schema.Struct({
   note: ScientAnnotationNote,
   updatedAt: ScientPdfAnnotation.fields.updatedAt,
   updatedBy: ScientAnnotationActor,
+  /** Another computer's version a project package brought, kept beside this one's. */
+  importedAt: Schema.optionalKey(ScientPdfAnnotation.fields.updatedAt),
 });
 export type AnnotationHistoryEntry = typeof AnnotationHistoryEntry.Type;
 
@@ -212,7 +215,10 @@ export function applyAnnotationCommand(
       } else {
         const earlier = file.history.find(
           (entry) =>
-            entry.annotationId === current.annotationId && entry.revision === command.toRevision,
+            entry.annotationId === current.annotationId &&
+            entry.revision === command.toRevision &&
+            (command.toNote === undefined || entry.note === command.toNote) &&
+            (command.toHighlighted === undefined || entry.highlighted === command.toHighlighted),
         );
         if (!earlier) return unchanged("not-found", null);
         target = { highlighted: earlier.highlighted, note: earlier.note };
@@ -420,4 +426,30 @@ export async function listScientAnnotationFiles(
     }
   }
   return { files, unreadable };
+}
+
+/** Versions a package brought of live annotations that differ from what they show now. */
+export function scientAnnotationAlternatives(
+  file: ScientAnnotationFile,
+): ReadonlyArray<ScientAnnotationAlternative> {
+  const live = new Map(
+    file.annotations
+      .filter((annotation) => annotation.deletedAt === null)
+      .map((annotation) => [annotation.annotationId, annotation] as const),
+  );
+  return file.history.flatMap((entry) => {
+    const current = live.get(entry.annotationId);
+    if (entry.importedAt === undefined || !current) return [];
+    if (current.note === entry.note && current.highlighted === entry.highlighted) return [];
+    return [
+      {
+        annotationId: entry.annotationId,
+        revision: entry.revision,
+        highlighted: entry.highlighted,
+        note: entry.note,
+        updatedAt: entry.updatedAt,
+        importedAt: entry.importedAt,
+      },
+    ];
+  });
 }

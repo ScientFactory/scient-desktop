@@ -9,7 +9,9 @@ import * as Schema from "effect/Schema";
 
 import { resolveScientProjectSources } from "./libraryInstanceMap.ts";
 import {
-  decodeScientReviewSnapshotText,
+  publishScientReviewSnapshotAt,
+  readScientReviewSnapshotAt,
+  removeScientReviewSnapshotAt,
   scientReviewNamedIds,
   scientReviewSnapshotText,
   scientReviewWorkFromRecord,
@@ -39,7 +41,6 @@ import {
 const REVIEWS_DIRECTORY = ".scient/library/reviews";
 const CONFLICTS_DIRECTORY = ".scient/library/conflicts/reviews";
 const MAX_REVIEW_BYTES = 8 * 1024 * 1024;
-const MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024;
 const STAGES: ReadonlyArray<ScientReviewStage> = ["title-abstract", "full-text"];
 const decodeReview = Schema.decodeUnknownSync(ScientSystematicReview);
 const validateReview = Schema.decodeSync(ScientSystematicReview);
@@ -74,8 +75,6 @@ const conflictFolder = (root: string, reviewId: string) => {
 };
 const reviewFile = (root: string, reviewId: string) =>
   NodePath.join(root, ...REVIEWS_DIRECTORY.split("/"), `${reviewId}.json`);
-const snapshotFile = (root: string, reviewId: string) =>
-  NodePath.join(root, ...REVIEWS_DIRECTORY.split("/"), `${reviewId}.works.json`);
 
 async function readText(filePath: string): Promise<string | null> {
   try {
@@ -293,7 +292,18 @@ export async function resolveScientReviewConflict(input: {
     const folder = conflictFolder(root, input.reviewId);
     if (!/^[0-9a-f]{12}$/u.test(input.conflictId)) return { outcome: "not-found" };
     const conflictReviewPath = NodePath.join(folder, `${input.conflictId}.json`);
-    const conflictSnapshotPath = NodePath.join(folder, `${input.conflictId}.works.json`);
+    const conflictSnapshot = {
+      projectRoot: root,
+      directory: `${CONFLICTS_DIRECTORY}/${input.reviewId}`,
+      name: input.conflictId,
+      reviewId: input.reviewId,
+    };
+    const inForceSnapshot = {
+      projectRoot: root,
+      directory: REVIEWS_DIRECTORY,
+      name: input.reviewId,
+      reviewId: input.reviewId,
+    };
     const incomingText = await readText(conflictReviewPath);
     const existingText = await readText(reviewFile(root, input.reviewId));
     if (!incomingText || !existingText) return { outcome: "not-found" };
@@ -305,10 +315,13 @@ export async function resolveScientReviewConflict(input: {
     }
     const incoming = decodeReview(JSON.parse(incomingText));
     const existing = decodeReview(JSON.parse(existingText));
-    const incomingSnapshotText = await readText(conflictSnapshotPath);
-    const existingSnapshotText = await readText(snapshotFile(root, input.reviewId));
-    const snapshotOf = (text: string | null) =>
-      (text && decodeScientReviewSnapshotText(text, input.reviewId)) || new Map();
+    // Either version's snapshot may be sharded: read as every reader does, file and shards.
+    const incomingEntries = await readScientReviewSnapshotAt(conflictSnapshot);
+    const existingEntries = await readScientReviewSnapshotAt(inForceSnapshot);
+    const textOf = (entries: ReadonlyMap<string, ScientReviewWork>) =>
+      entries.size > 0 ? scientReviewSnapshotText(input.reviewId, entries) : null;
+    const incomingSnapshotText = textOf(incomingEntries);
+    const existingSnapshotText = textOf(existingEntries);
 
     let report: ScientReviewCombineReport | null = null;
     let next: ScientSystematicReview | null = null;
@@ -336,16 +349,10 @@ export async function resolveScientReviewConflict(input: {
         ]);
         next = combined.review;
         report = combined.report;
-        entries = new Map([
-          ...snapshotOf(incomingSnapshotText),
-          ...snapshotOf(existingSnapshotText),
-        ]);
+        entries = new Map([...incomingEntries, ...existingEntries]);
       } else {
         next = incoming;
-        entries = new Map([
-          ...snapshotOf(existingSnapshotText),
-          ...snapshotOf(incomingSnapshotText),
-        ]);
+        entries = new Map([...existingEntries, ...incomingEntries]);
       }
     }
     if (next && entries) {
@@ -376,11 +383,8 @@ export async function resolveScientReviewConflict(input: {
       const kept = new Map([...entries].filter(([sourceId]) => named.has(sourceId)));
       await assertScientProjectDirectory(root, NodePath.dirname(reviewFile(root, input.reviewId)));
       // Section 4's order: the snapshot first, read back, then the review that names its records.
-      await publishChecked(
-        snapshotFile(root, input.reviewId),
-        scientReviewSnapshotText(input.reviewId, kept),
-        MAX_SNAPSHOT_BYTES,
-      );
+      // Joined into what is there, so a crash before the review is written loses no entry.
+      await publishScientReviewSnapshotAt(inForceSnapshot, kept);
       await publishChecked(
         reviewFile(root, input.reviewId),
         `${JSON.stringify(next, null, 2)}\n`,
@@ -388,7 +392,7 @@ export async function resolveScientReviewConflict(input: {
       );
     }
     await NodeFSP.rm(conflictReviewPath, { force: true });
-    await NodeFSP.rm(conflictSnapshotPath, { force: true });
+    await removeScientReviewSnapshotAt(conflictSnapshot);
     const worthKeeping =
       report !== null &&
       report.undecidedPairs.length + report.differingSearches.length + report.reopened.length > 0;

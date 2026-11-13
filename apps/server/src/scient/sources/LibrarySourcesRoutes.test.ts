@@ -392,6 +392,84 @@ describe("Library routes on the library backend", () => {
     }),
   );
 
+  it.effect("reads and restores each merged key's project note through the panel", () =>
+    Effect.gen(function* () {
+      const fixture = yield* Effect.promise(setup);
+      const { first, second, firstKey, secondKey } = yield* Effect.promise(async () => {
+        const one = await libraryRecord(fixture, "pair1", { title: "Shock trial" });
+        const two = await libraryRecord(fixture, "pair2", { title: "Shock trial" });
+        const keys: string[] = [];
+        for (const [record, why] of [
+          [one, "Why the first copy"],
+          [two, "Why the second copy"],
+        ] as const) {
+          const citationKey = (await pin(fixture, record.sourceId)).citationKey;
+          keys.push(citationKey);
+          for (const [note, base] of [
+            [why, null],
+            ["Same text", why],
+          ] as const) {
+            await setScientProjectPinNote({
+              projectRoot: fixture.root,
+              citationKey,
+              note,
+              base,
+              actor: "user",
+            });
+          }
+        }
+        return { first: one, second: two, firstKey: keys[0]!, secondKey: keys[1]! };
+      });
+      const store = yield* storeFor(fixture, "write");
+      yield* Effect.promise(async () => {
+        await organizeLibrarySources(store, {
+          change: {
+            action: "merge",
+            sourceIds: [first.sourceId, second.sourceId],
+            survivorId: second.sourceId,
+          },
+        });
+        const notes = (detail: Awaited<ReturnType<typeof librarySourceDetail>>) =>
+          "projectNoteHistory" in detail
+            ? detail.projectNoteHistory?.map((version) => version.note)
+            : undefined;
+        const primary = await librarySourceDetail(store, { sourceId: second.sourceId });
+        expect(primary).toMatchObject({ citationKey: firstKey, alsoCitedAs: [secondKey] });
+        expect(notes(primary)).toEqual(["Why the first copy", "Same text"]);
+        const other = await librarySourceDetail(store, {
+          sourceId: second.sourceId,
+          citationKey: secondKey,
+        });
+        expect(other).toMatchObject({ citationKey: firstKey, projectNote: "Same text" });
+        expect(notes(other)).toEqual(["Why the second copy", "Same text"]);
+
+        // Restoring the version read under the second key changes only that pin's note.
+        const restored = await updateLibraryProjectNote(store, {
+          sourceId: second.sourceId,
+          citationKey: secondKey,
+          note: "Why the second copy",
+          expectedNote: "Same text",
+          noteSession: "restore",
+        });
+        expect(restored).toMatchObject({
+          outcome: "updated",
+          record: { projectNote: "Why the second copy" },
+        });
+        expect(
+          (await readScientProjectPins(fixture.root)).map((pin) => [pin.citationKey, pin.note]),
+        ).toEqual(
+          expect.arrayContaining([
+            [firstKey, "Same text"],
+            [secondKey, "Why the second copy"],
+          ]),
+        );
+        await expect(
+          librarySourceDetail(store, { sourceId: second.sourceId, citationKey: "nobody2026" }),
+        ).rejects.toThrow("does not cite this source");
+      });
+    }),
+  );
+
   it.effect("catches up a stale pin snapshot at every change", () =>
     Effect.gen(function* () {
       const fixture = yield* Effect.promise(setup);

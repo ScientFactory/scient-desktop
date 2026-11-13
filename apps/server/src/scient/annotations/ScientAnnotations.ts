@@ -42,6 +42,7 @@ import {
   listScientAnnotationFiles,
   mutateScientAnnotations,
   readScientAnnotationFile,
+  scientAnnotationAlternatives,
   type AnnotationHistoryEntry,
   type ScientAnnotationFile,
   type ScientAnnotationHome,
@@ -416,6 +417,7 @@ export const layer = Layer.succeed(ScientAnnotations, {
           return {
             material: pdf.material,
             annotations: file?.annotations ?? [],
+            alternatives: file ? scientAnnotationAlternatives(file) : [],
             sources: records
               .filter((record) =>
                 record.attachments.some((attachment) => attachment.sha256 === pdf.material.sha256),
@@ -435,6 +437,7 @@ export const layer = Layer.succeed(ScientAnnotations, {
       status: "available",
       material: read.value.material,
       annotations: liveScientAnnotations(read.value.annotations),
+      ...(read.value.alternatives.length > 0 ? { alternatives: read.value.alternatives } : {}),
       sources: read.value.sources,
     } as const;
   }),

@@ -143,6 +143,7 @@ export const LIBRARY_ORGANIZE_ACTION_PARITY: Record<
   "restore-pre-move": ["restore-pre-move"],
   "export-package": ["export-package"],
   "import-package": ["import-package"],
+  "undo-import": ["undo-import"],
   // Agents find package folders with their own file tools.
   "list-packages": [],
 };

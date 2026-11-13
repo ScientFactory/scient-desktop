@@ -13,6 +13,8 @@ import {
   MenuSubTrigger,
 } from "../../components/ui/menu";
 import { toastManager } from "../../components/ui/toast";
+import { readLocalApi } from "../../localApi";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { organizeScientSources } from "./client";
 
 type PackageListing = NonNullable<ScientSourcesOrganizeResult["packages"]>;
@@ -29,7 +31,10 @@ function exportedDescription(report: PackageReport): string {
     report.unavailable > 0
       ? ` ${plural(report.unavailable, "PDF or source was", "PDFs or sources were")} not in this Library.`
       : "";
-  return `${plural(report.sources, "source", "sources")}, ${plural(report.pdfs, "PDF", "PDFs")}, ${plural(report.reviews, "review", "reviews")}.${unavailable}`;
+  const inside = report.insideProject
+    ? " It is in the project folder, so Git commits it with the project and it takes disk space there."
+    : "";
+  return `${plural(report.sources, "source", "sources")}, ${plural(report.pdfs, "PDF", "PDFs")}, ${plural(report.reviews, "review", "reviews")}.${unavailable}${inside}`;
 }
 
 function importedDescription(report: PackageReport): string {
@@ -41,13 +46,28 @@ function importedDescription(report: PackageReport): string {
   const notes = report.notesKept
     ? ` ${plural(report.notesKept, "note here was", "notes here were")} kept; the package's version is in Earlier versions.`
     : "";
+  const highlights = report.annotationConflicts
+    ? ` ${plural(report.annotationConflicts, "highlight was", "highlights were")} changed on both computers; yours stays, theirs is in its history.`
+    : "";
   const conflicts = report.reviewConflicts
     ? ` ${plural(report.reviewConflicts, "review differs", "reviews differ")}: choose a version in Systematic reviews.`
     : "";
-  return `${parts.join(", ")}.${notes}${conflicts}`;
+  const unavailable =
+    report.unavailable > 0
+      ? ` ${plural(report.unavailable, "PDF or source was", "PDFs or sources were")} not in the package.`
+      : "";
+  const failed = report.failed?.length
+    ? ` ${plural(report.failed.length, "part", "parts")} could not be imported: ${report.failed.map((entry) => entry.item).join(", ")}.`
+    : "";
+  return `${parts.join(", ")}.${notes}${highlights}${conflicts}${unavailable}${failed}`;
 }
 
-/** Export this project's package to a project folder, or import one found in the project. */
+/** The folder above the project, where a package goes by default. */
+function parentOf(root: string): string {
+  return root.replace(/[\\/]+$/u, "").replace(/[\\/][^\\/]+$/u, "") || root;
+}
+
+/** Save this project's package where the person chooses, or import one. */
 export function ProjectPackageSubmenu(props: {
   readonly environmentId: EnvironmentId;
   readonly root: string;
@@ -55,6 +75,9 @@ export function ProjectPackageSubmenu(props: {
 }) {
   const [packages, setPackages] = useState<PackageListing | null>(null);
   const [working, setWorking] = useState(false);
+  // A chosen folder names this computer's files, so only the local environment can use one.
+  const local = props.environmentId === usePrimaryEnvironmentId();
+  const pickFolder = local && window.desktopBridge ? readLocalApi()?.dialogs.pickFolder : undefined;
 
   const organize = (change: Parameters<typeof organizeScientSources>[1]["change"]) =>
     organizeScientSources(props.environmentId, { root: props.root, change });
@@ -70,15 +93,46 @@ export function ProjectPackageSubmenu(props: {
     }
   };
 
-  const exportPackage = () =>
+  const exportPackage = (inFolder?: string) =>
     run(async () => {
-      const result = await organize({ action: "export-package" });
+      const result = await organize({
+        action: "export-package",
+        ...(inFolder ? { inFolder } : {}),
+      });
       toastManager.add({
         type: "success",
         title: `Saved the project package to ${result.packagePath ?? "the project"}`,
         ...(result.packageReport ? { description: exportedDescription(result.packageReport) } : {}),
       });
     }, "The project package was not saved");
+
+  const exportElsewhere = async (pick: NonNullable<typeof pickFolder>) => {
+    const folder = await pick({ initialPath: parentOf(props.root) }).catch(() => null);
+    if (folder) await exportPackage(folder);
+  };
+
+  const undoImport = (importId: string) =>
+    run(async () => {
+      const result = await organize({ action: "undo-import", importId });
+      await props.onImported();
+      const kept = result.packageReport?.kept ?? [];
+      const left = result.packageReport?.left ?? [];
+      const description = [
+        kept.length > 0
+          ? `Changed since or used by another import, so kept: ${kept.join(", ")}.`
+          : "",
+        left.length > 0
+          ? `Left as evidence: ${left.length} things it added to what was already here (PDFs, highlights, notices, reviews).`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ");
+      toastManager.add({
+        type: "success",
+        title: result.outcome === "undone" ? "Import undone" : "That import was already undone",
+        ...(description ? { description } : {}),
+      });
+    }, "The import was not undone");
 
   const importPackage = (relativePath: string) =>
     run(async () => {
@@ -95,12 +149,30 @@ export function ProjectPackageSubmenu(props: {
         return;
       }
       await props.onImported();
-      toastManager.add({
-        type: "success",
+      const report = result.packageReport;
+      const importId = report?.importId;
+      const id = toastManager.add({
+        type: report?.failed?.length ? "warning" : "success",
         title: `Imported ${relativePath}`,
-        ...(result.packageReport ? { description: importedDescription(result.packageReport) } : {}),
+        ...(report ? { description: importedDescription(report) } : {}),
+        ...(importId
+          ? {
+              actionProps: {
+                children: "Undo",
+                onClick: () => {
+                  toastManager.close(id);
+                  void undoImport(importId);
+                },
+              },
+            }
+          : {}),
       });
     }, "The project package was not imported");
+
+  const importChosen = async (pick: NonNullable<typeof pickFolder>) => {
+    const folder = await pick({ initialPath: parentOf(props.root) }).catch(() => null);
+    if (folder) await importPackage(folder);
+  };
 
   return (
     <MenuSub
@@ -116,12 +188,24 @@ export function ProjectPackageSubmenu(props: {
         Project package
       </MenuSubTrigger>
       <MenuSubPopup className="min-w-56">
-        <MenuItem onClick={() => void exportPackage()}>Save a project package</MenuItem>
+        <MenuGroup>
+          <MenuGroupLabel>Save a project package</MenuGroupLabel>
+          {pickFolder ? (
+            <MenuItem onClick={() => void exportElsewhere(pickFolder)}>Choose a folder…</MenuItem>
+          ) : null}
+          <MenuItem onClick={() => void exportPackage()}>
+            <span className="min-w-0 flex-1 truncate">In this project</span>
+            <MenuItemDetail>Committed with it</MenuItemDetail>
+          </MenuItem>
+        </MenuGroup>
         <MenuSeparator />
         <MenuGroup>
-          <MenuGroupLabel>Import a package in this project</MenuGroupLabel>
+          <MenuGroupLabel>Import a package</MenuGroupLabel>
+          {pickFolder ? (
+            <MenuItem onClick={() => void importChosen(pickFolder)}>Choose a folder…</MenuItem>
+          ) : null}
           {packages === null ? (
-            <MenuItem disabled>Looking for packages…</MenuItem>
+            <MenuItem disabled>Looking in this project…</MenuItem>
           ) : packages.length === 0 ? (
             <MenuItem disabled>No package folder in this project</MenuItem>
           ) : (
