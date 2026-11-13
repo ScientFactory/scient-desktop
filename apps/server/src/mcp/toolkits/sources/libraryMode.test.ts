@@ -1191,6 +1191,14 @@ describe("Sources tools on the library backend", () => {
       expect(yield* Effect.promise(() => readScientProjectPins(other.root))).toMatchObject([
         { note: "Why we cite it." },
       ]);
+      const history = yield* run(
+        organizeLibrarySourcesForInvocation({ change: { action: "list-package-imports" } }),
+        other,
+      );
+      expect(history).toMatchObject({
+        outcome: "listed",
+        packageImports: [{ canUndo: true, added: { sources: 1, pins: 1 } }],
+      });
       expect(
         yield* run(
           organizeLibrarySourcesForInvocation({

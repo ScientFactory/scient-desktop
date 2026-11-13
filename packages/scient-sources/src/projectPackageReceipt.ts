@@ -132,6 +132,70 @@ async function readScientProjectPackageReceipt(
   }
 }
 
+function joinedEvidence(receipt: ScientProjectPackageReceipt): ReadonlyArray<string> {
+  return receipt.added.created
+    ? [
+        ...(receipt.joined.evidence ?? []),
+        ...receipt.added.annotationFiles.map((file) => `highlights ${file.path}`),
+        ...receipt.added.reviewFiles.map((file) => `review file ${file.path}`),
+      ]
+    : (receipt.joined.evidence ?? []);
+}
+
+async function retainedPapers(
+  library: ScientLibraryLocation,
+  receipt: ScientProjectPackageReceipt,
+) {
+  const aliases = await readScientLibraryAliases(library);
+  const ids: string[] = [];
+  for (const id of new Set(
+    receipt.added.sources.map((id) => resolveScientLibraryAlias(aliases, id)),
+  )) {
+    if (await readScientSourceRecord(library, id)) ids.push(id);
+  }
+  return ids;
+}
+
+/** Durable project receipts, newest first, including the complete evidence left by Undo. */
+export async function listScientProjectPackageImports(input: {
+  readonly library: ScientLibraryLocation;
+  readonly projectId: string;
+}) {
+  const directory = NodePath.join(input.library.root, RECEIPTS_DIRECTORY);
+  const names = await NodeFSP.readdir(directory).catch((error: unknown) => {
+    if (isNodeError(error, "ENOENT")) return [];
+    throw error;
+  });
+  const imports = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    const receipt = await readScientProjectPackageReceipt(input.library, name.slice(0, -5));
+    if (!receipt || receipt.projectId !== input.projectId) continue;
+    imports.push({
+      importId: receipt.importId,
+      packageTitle: receipt.packageTitle,
+      importedAt: receipt.importedAt,
+      undoneAt: receipt.undone?.at ?? null,
+      canUndo: receipt.undone === undefined,
+      added: {
+        sources: receipt.added.sources.length,
+        pdfs: receipt.added.pdfs.length,
+        pins: receipt.added.pins.length,
+        collections: receipt.added.collections.length,
+        reviews: receipt.added.reviewFiles.length,
+      },
+      sourcesMatched: receipt.joined.sources,
+      failed: receipt.failed,
+      kept: receipt.undone?.kept ?? [],
+      left: joinedEvidence(receipt),
+      retainedSourceIds: await retainedPapers(input.library, receipt),
+    });
+  }
+  return imports.sort(
+    (a, b) => b.importedAt.localeCompare(a.importedAt) || a.importId.localeCompare(b.importId),
+  );
+}
+
 /** Every other import in this Library not undone: one may use what this one created. */
 async function otherImports(
   library: ScientLibraryLocation,
@@ -196,21 +260,9 @@ export async function undoScientProjectPackageImport(input: {
   const receipt = await readScientProjectPackageReceipt(input.library, input.importId);
   if (!receipt || receipt.projectId !== input.projectId) return { outcome: "not-found" };
   if (receipt.undone) return { outcome: "already-undone" };
-  const aliases = await readScientLibraryAliases(input.library);
-  const retainedSourceIds: string[] = [];
-  for (const id of new Set(
-    receipt.added.sources.map((id) => resolveScientLibraryAlias(aliases, id)),
-  )) {
-    if (await readScientSourceRecord(input.library, id)) retainedSourceIds.push(id);
-  }
+  const retainedSourceIds = await retainedPapers(input.library, receipt);
   const created = receipt.added.created;
-  const left = created
-    ? [
-        ...(receipt.joined.evidence ?? []),
-        ...receipt.added.annotationFiles.map((file) => `highlights ${file.path}`),
-        ...receipt.added.reviewFiles.map((file) => `review file ${file.path}`),
-      ]
-    : (receipt.joined.evidence ?? []);
+  const left = joinedEvidence(receipt);
   if (!created) {
     const kept = everythingAdded(receipt);
     await writeScientProjectPackageReceipt(input.library, {

@@ -674,7 +674,7 @@ export function ScientSourcesPanel(props: {
           conflicting
             ? (sources.overview.issues[0]?.message ?? "Scient will not change conflicting files.")
             : (setupError ??
-              "The Library is kept in this project so it stays portable and reviewable.")
+              "Use Project package to carry this project’s sources, PDFs and highlights.")
         }
         action={
           conflicting ? null : (
@@ -1737,12 +1737,11 @@ export function ScientSourcesPanel(props: {
                   ),
                 }
               : {})}
-            {...(scopes?.listed !== "project"
-              ? {
-                  description:
-                    "Import PDFs, a reference file (.bib, RIS, CSL-JSON, EndNote XML) or Zotero.",
-                }
-              : {})}
+            description={
+              scopes?.listed === "project"
+                ? "Use a project package to carry PDFs and highlights: Recover → Save a current package."
+                : "Import PDFs, references or Zotero; use a project package to carry PDFs and highlights."
+            }
           />
         </>
       ) : (

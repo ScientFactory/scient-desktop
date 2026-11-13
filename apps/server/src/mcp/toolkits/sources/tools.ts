@@ -44,6 +44,7 @@ import {
   ScientSourcesMergeDifferences,
   ScientSourcesPossibleDuplicateKind,
   ScientProjectPackageReport,
+  ScientProjectPackageImports,
 } from "@t3tools/contracts";
 import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
@@ -1163,6 +1164,7 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     inFolder: Schema.optionalKey(NonEmptyString),
   }),
   Schema.Struct({ action: Schema.Literal("import-package"), relativePath: NonEmptyString }),
+  Schema.Struct({ action: Schema.Literal("list-package-imports") }),
   Schema.Struct({ action: Schema.Literal("undo-import"), importId: NonEmptyString }),
 ]);
 export type ScientSourcesLibraryOrganizeAction = typeof ScientSourcesLibraryOrganizeAction.Type;
@@ -1196,6 +1198,7 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
     "no-archive",
     "archive-changed",
     "exported",
+    "listed",
     "imported",
     "not-a-package",
     "package-changed",
@@ -1227,10 +1230,11 @@ export const ScientSourcesLibraryOrganizeResult = Schema.Struct({
   restoredPdfs: Schema.optionalKey(Schema.Int),
   packagePath: Schema.optionalKey(NonEmptyString),
   packageReport: Schema.optionalKey(ScientProjectPackageReport),
+  packageImports: Schema.optionalKey(ScientProjectPackageImports),
 });
 
 const ScientSourcesLibraryOrganizeTool = organizeTool(
-  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note, on the pin citationKey names when several cite it; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer (abandon: true drops one that stopped part way and blocks the move); export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes or saved searches; relativePath, or a dated folder in inFolder; using paths on this environment, never .scient or an existing package), import-package brings one in from the named folder; undo-import with its importId removes unchanged project additions, keeps all Library papers and returns retainedSourceIds. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes).`,
+  `${ORGANIZE_DESCRIPTION} pin a source here (note: its project note, on the pin citationKey names when several cite it; replacing one needs noteBase, the note you read, else stale with the current note: reconcile, never resend blindly); unpin by citationKey; merge duplicate sources (undo-merge with mergeId); mark-distinct: not duplicates (clear-distinct undoes); move-back returns this project's sources from the Library into the project; dismiss-move-summary clears the move summary in scient_sources_list; restore-pre-move restores the sealed pre-move copy, on any computer (abandon: true drops one that stopped part way and blocks the move); export-package saves this project's handoff folder (pins, notes, reviews, records, PDFs, highlights; no personal notes or saved searches; relativePath, or a dated folder in inFolder; using paths on this environment, never .scient or an existing package), import-package brings one in from the named folder; list-package-imports lists this project’s imports, dates, counts, Undo availability and everything kept or left as evidence; undo-import with its importId removes unchanged project additions, keeps all Library papers and returns retainedSourceIds. A pin with libraryMatch: link-pin (sourceId, librarySourceId) only when the user confirms it is that work (unlink-pin undoes); keep-pin-separate records it is none (clear-pin-separate undoes).`,
   ScientSourcesLibraryOrganizeAction,
   ScientSourcesLibraryOrganizeResult,
 );

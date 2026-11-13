@@ -1472,6 +1472,7 @@ async function importCollections(
 }
 export {
   undoScientProjectPackageImport,
+  listScientProjectPackageImports,
   type ScientProjectPackageUndo,
 } from "./projectPackageReceipt.ts";
 

@@ -4,7 +4,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
-import { initializeScientProject } from "@scientfactory/project-init";
+import { initializeScientProject, readScientProjectIdentity } from "@scientfactory/project-init";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 
@@ -34,6 +34,7 @@ import {
 import type { ScientSourceCandidate } from "./model.ts";
 import {
   exportScientProjectPackage,
+  listScientProjectPackageImports,
   importScientProjectPackage,
   ScientProjectPackageManifest,
   scientProjectPackageInternals,
@@ -166,6 +167,73 @@ const importInto = (root: string, library: ScientLibraryLocation, folder: string
   importScientProjectPackage({ projectRoot: root, library, folder, actor: "user" });
 
 describe("importing a project package", () => {
+  it("lists only this project's durable imports and keeps the full Undo report reachable", async () => {
+    const { base, mine, source } = await setup();
+    const paper = await add(mine, "history");
+    await pinned(mine, source, paper.sourceId);
+    const handoff = NodePath.join(base, "handoff");
+    await exportTo(source, mine, handoff);
+    const theirs = await computer(base, "theirs");
+    const received = await project(base, "received");
+    const { projectId } = await readScientProjectIdentity(received);
+    expect(await listScientProjectPackageImports({ library: theirs, projectId })).toEqual([]);
+    const imported = await importInto(received, theirs, handoff);
+    if (imported.outcome !== "imported") throw new Error("Expected import");
+    await importInto(await project(base, "unrelated"), theirs, handoff);
+    await withPdf(mine, base, paper.sourceId);
+    const current = NodePath.join(base, "current-handoff");
+    await exportTo(source, mine, current);
+    const joined = await importInto(received, theirs, current);
+    if (joined.outcome !== "imported") throw new Error("Expected joined import");
+    const [pin] = await readScientProjectPins(received);
+    await setScientProjectPinNote({
+      projectRoot: received,
+      citationKey: pin!.citationKey,
+      note: "Written after import",
+      base: null,
+      actor: "user",
+    });
+    const before = (await listScientProjectPackageImports({ library: theirs, projectId })).find(
+      (entry) => entry.importId === imported.importId,
+    );
+    expect(before).toMatchObject({
+      importId: imported.importId,
+      canUndo: true,
+      added: { sources: 1, pins: 1 },
+      failed: [],
+    });
+    const undone = await undoScientProjectPackageImport({
+      projectRoot: received,
+      projectId,
+      library: theirs,
+      importId: imported.importId,
+      actor: "user",
+    });
+    if (undone.outcome !== "undone") throw new Error("Expected Undo");
+    const joinedUndo = await undoScientProjectPackageImport({
+      projectRoot: received,
+      projectId,
+      library: theirs,
+      importId: joined.importId,
+      actor: "user",
+    });
+    if (joinedUndo.outcome !== "undone") throw new Error("Expected joined Undo");
+    expect(joinedUndo.left).toEqual([expect.stringMatching(/^PDF /u)]);
+    const receipts = await listScientProjectPackageImports({ library: theirs, projectId });
+    expect(receipts).toHaveLength(2);
+    const first = receipts.find((entry) => entry.importId === imported.importId);
+    const second = receipts.find((entry) => entry.importId === joined.importId);
+    expect(first).toMatchObject({
+      canUndo: false,
+      kept: undone.kept,
+      left: undone.left,
+      retainedSourceIds: undone.retainedSourceIds,
+    });
+    expect(first?.undoneAt).toBeTruthy();
+    expect(first?.kept).toContain(`pin ${pin!.citationKey}`);
+    expect(second).toMatchObject({ canUndo: false, left: joinedUndo.left });
+  });
+
   it.each(["proposal", "doi-fallback"] as const)(
     "honors project Keep separate after facts agree through the %s path",
     async (path) => {

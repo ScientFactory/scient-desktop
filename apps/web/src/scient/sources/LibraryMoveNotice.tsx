@@ -22,23 +22,40 @@ export function LibraryMoveNotice(props: {
   const { line } = props.move;
   if (!line) return null;
   return (
-    <div className="mx-3 mt-2 flex items-center gap-2 text-xs text-muted-foreground">
-      <span className="min-w-0 flex-1 break-words tabular-nums">{line.text}</span>
-      {props.onReview && line.text.includes(SCIENT_LIBRARY_MERGES_TO_REVIEW) ? (
-        <Button size="xs" variant="ghost" onClick={props.onReview}>
-          {DUPLICATE_LABELS.review}
-        </Button>
-      ) : null}
-      {line.action === "dismiss" && props.move.canChange ? (
-        <Button size="xs" variant="ghost" onClick={() => void props.move.dismiss()}>
-          Dismiss
-        </Button>
-      ) : null}
-      {line.action === "retry" ? (
-        <Button size="xs" variant="ghost" onClick={props.move.retry}>
-          Check again
-        </Button>
-      ) : null}
+    <div className="mx-3 mt-2 text-xs text-muted-foreground">
+      <div className="flex items-start gap-2">
+        <div className="min-w-0 flex-1 break-words tabular-nums">
+          {line.action === "dismiss" ? (
+            <>
+              <p>
+                Moved into your Library. A copy of the project's sources from before the move is
+                kept in the project.
+              </p>
+              <details className="mt-1">
+                <summary className="cursor-pointer">Show locations</summary>
+                <p className="mt-1">{line.text}</p>
+                {props.onReview && line.text.includes(SCIENT_LIBRARY_MERGES_TO_REVIEW) ? (
+                  <Button size="xs" variant="ghost" onClick={props.onReview}>
+                    {DUPLICATE_LABELS.review}
+                  </Button>
+                ) : null}
+              </details>
+            </>
+          ) : (
+            line.text
+          )}
+        </div>
+        {line.action === "dismiss" && props.move.canChange ? (
+          <Button size="xs" variant="ghost" onClick={() => void props.move.dismiss()}>
+            Dismiss
+          </Button>
+        ) : null}
+        {line.action === "retry" ? (
+          <Button size="xs" variant="ghost" onClick={props.move.retry}>
+            Check again
+          </Button>
+        ) : null}
+      </div>
     </div>
   );
 }

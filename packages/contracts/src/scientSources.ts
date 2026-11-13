@@ -476,6 +476,7 @@ export const ScientSourcesLibraryOrganizeAction = Schema.Union([
     action: Schema.Literal("import-package"),
     relativePath: NonEmptyString.check(Schema.isMaxLength(4_096)),
   }),
+  Schema.Struct({ action: Schema.Literal("list-package-imports") }),
   /** Removes what that import added; what it joined stays. */
   Schema.Struct({ action: Schema.Literal("undo-import"), importId: NonEmptyString }),
 ]);
@@ -528,6 +529,30 @@ export const ScientProjectPackageReport = Schema.Struct({
   left: Schema.optionalKey(Schema.Array(Schema.String)),
 });
 export type ScientProjectPackageReport = typeof ScientProjectPackageReport.Type;
+
+export const ScientProjectPackageImports = Schema.Array(
+  Schema.Struct({
+    importId: NonEmptyString,
+    packageTitle: Schema.String,
+    importedAt: Schema.String,
+    undoneAt: Schema.NullOr(Schema.String),
+    canUndo: Schema.Boolean,
+    added: Schema.Struct({
+      sources: Count,
+      pdfs: Count,
+      pins: Count,
+      collections: Count,
+      reviews: Count,
+    }),
+    sourcesMatched: Count,
+    failed: Schema.Array(
+      Schema.Struct({ part: Schema.String, item: Schema.String, message: Schema.String }),
+    ),
+    kept: Schema.Array(Schema.String),
+    left: Schema.Array(Schema.String),
+    retainedSourceIds: Schema.Array(NonEmptyString),
+  }),
+);
 
 const PinSummary = Schema.Struct({
   citationKey: NonEmptyString,
@@ -616,6 +641,7 @@ export const ScientSourcesOrganizeResult = Schema.Struct({
   ),
   /** What an export or import of a project package did. */
   packageReport: Schema.optionalKey(ScientProjectPackageReport),
+  packageImports: Schema.optionalKey(ScientProjectPackageImports),
 });
 export type ScientSourcesOrganizeResult = typeof ScientSourcesOrganizeResult.Type;
 

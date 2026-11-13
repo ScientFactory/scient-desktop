@@ -1311,7 +1311,13 @@ files and joined evidence stay. `retainedSourceIds` names imported papers still
 live in the Library, following merge aliases and deduplicating survivors;
 `kept` names preserved project additions and `left` lists joined evidence.
 A receipt without `added.created` keeps everything. A failed step leaves the
-receipt available to retry. The panel reports the retained paper count and
+receipt available to retry. `list-package-imports`, shared by the panel and
+`scient_sources_organize`, reads only this project's receipts, newest first
+with the import ID as a tie-breaker. It returns dates, added counts, failures,
+Undo availability, retained paper IDs and the complete `kept` and `left` lists,
+including after Undo. Recover → Package imports reads that list on every open
+and after Undo; Undo rechecks the receipt and each project's addition at apply.
+The panel reports the retained paper count and
 **Show them** selects All Library with an explicit source-ID filter and a
 **Show all** control; other list filters and selections are cleared first.
 
@@ -1508,6 +1514,12 @@ dismissed. After a choice the review and the list are read again; nothing is
 patched locally. A read-only session sees the line and both versions, with the
 choices disabled and no Dismiss.
 
+The Markdown Library citation popup is constrained to the rich editor pane's
+available inline width, including panes narrower than the popup's usual width.
+The completed move notice keeps paths, merge results and older Undo limits under
+Show locations. Empty Sources text directs people to a project package to carry
+PDFs and highlights.
+
 #### The Library in daily use (5e-4)
 
 Everything here depends on the overview's `scopes`, not on `libraryBackend`: a
@@ -1532,6 +1544,16 @@ results other than the personal note's own lack `personalNote`; the reducer
 keeps the one on screen (`keepPersonalFields`), and when the revision moved the
 panel reads the detail again in the background so a later save is not made on
 an older note.
+
+The note editor submits the draft with the last note it saw as its checked base.
+`scientSourcesHttp.ts` forwards the complete note request, including
+`expectedNote`, `noteSession` and `citationKey`, through the generated HTTP client.
+Keep mine uses the text shown under Saved elsewhere for one checked write.
+A returned note that still differs from the submitted text stops in conflict,
+including a repeated refusal with the same remote text. No automatic retry follows
+a refusal. A successful whitespace-normalized answer becomes the confirmed draft;
+only text typed during a successful request can start another save. Blurring or
+unmounting a conflicted editor does not silently choose Keep mine.
 
 **Reading status and star.** Rows show an unread dot and a star; details show
 "Mark read" / "Mark unread" and the star; the row menu has the reading change;
