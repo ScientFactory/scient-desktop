@@ -11,7 +11,7 @@ import {
   type RoomRole,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
-import { CheckIcon, CopyIcon, LinkIcon, UsersIcon, XIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, UsersIcon, XIcon } from "lucide-react";
 import { useState } from "react";
 
 import { guestShareDialogThreadAtom } from "~/components/chat/guestShareDialogState";
@@ -150,7 +150,7 @@ function RoomDialog({
                     ))}
                   </NativeSelect>
                 </span>
-                <span className="w-28 shrink-0">
+                <span className="w-36 shrink-0">
                   <NativeSelect
                     aria-label="Access for"
                     size="sm"
@@ -166,12 +166,13 @@ function RoomDialog({
                 </span>
                 <Button
                   size="sm"
+                  variant="outline"
                   className="shrink-0"
                   disabled={!canInvite || creating}
                   onClick={() => void createInvite()}
                 >
-                  {isCopied ? <CheckIcon /> : <LinkIcon />}
-                  {creating ? "Creating..." : isCopied ? "Link copied" : "Copy invite link"}
+                  {isCopied ? <CheckIcon /> : <CopyIcon />}
+                  {isCopied ? "Copied" : "Copy link"}
                 </Button>
               </div>
               {role === "agent" ? (
