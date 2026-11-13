@@ -134,7 +134,6 @@ export interface RoomDecision {
 
 const unchanged: RoomDecision = { thread: null, items: [], releasedAttachmentIds: [] };
 
-/** Participants whose access ended are dropped whenever the room changes. */
 const withRoom = (
   thread: OrchestrationV2AppThread,
   room: ThreadRoom | null,
@@ -147,6 +146,31 @@ const withRoom = (
       : { ...room, participants: room.participants.filter((p) => !isExpired(p, now)) },
   updatedAt: now,
 });
+
+const WAITING_LIMIT = 50;
+
+/** The thread with a room message no longer waiting on the owner, or null if it was not. */
+function withoutWaiting(
+  thread: OrchestrationV2AppThread,
+  itemId: TurnItemId,
+  now: DateTime.Utc,
+): OrchestrationV2AppThread | null {
+  const room = thread.room ?? null;
+  if (room === null || !(room.waiting ?? []).includes(itemId)) return null;
+  return withRoom(
+    thread,
+    { ...room, waiting: (room.waiting ?? []).filter((id) => id !== itemId) },
+    now,
+  );
+}
+
+/** Opening the thread is seeing what people wrote. */
+export function roomAfterVisit(thread: OrchestrationV2AppThread): OrchestrationV2AppThread["room"] {
+  const room = thread.room ?? null;
+  return room === null || (room.waiting?.length ?? 0) === 0 ? room : { ...room, waiting: [] };
+}
+
+/** Participants whose access ended are dropped whenever the room changes. */
 
 const newRoomMessage = (input: {
   readonly thread: OrchestrationV2AppThread;
@@ -231,6 +255,11 @@ export function decideOwnerRoomAction(
       if (!validPost(action.text, action.attachments)) return Result.fail(ROOM_FAILURE.empty);
       return Result.map(replyFor(action.replyTo, input.target), (replyTo) => ({
         ...unchanged,
+        // Answering in the room is the owner looking at it.
+        thread:
+          (room.waiting?.length ?? 0) === 0
+            ? null
+            : withRoom(thread, { ...room, waiting: [] }, now),
         items: [
           newRoomMessage({
             thread,
@@ -254,6 +283,7 @@ export function decideOwnerRoomAction(
       if (item.deletedAt !== undefined) return Result.succeed(unchanged);
       return Result.succeed({
         ...unchanged,
+        thread: withoutWaiting(thread, item.id, now),
         items: [deletedItem(item, now)],
         releasedAttachmentIds: filesReleasedByDelete(item),
       });
@@ -331,12 +361,18 @@ export function decideServerRoomAction(
     }
     case "guest-post": {
       const participant = activeParticipant(room, action.participantId, now);
-      if (participant === null) return Result.fail(ROOM_FAILURE.notMember);
+      if (room === null || participant === null) return Result.fail(ROOM_FAILURE.notMember);
       if (!roleCanPost(participant.role)) return Result.fail(ROOM_FAILURE.role);
       if (input.messageExists) return Result.fail("This message was already posted.");
       if (!validPost(action.text, action.attachments)) return Result.fail(ROOM_FAILURE.empty);
+      const itemId = roomMessageItemId(action.roomMessageId);
       return Result.map(replyFor(action.replyTo, input.target), (replyTo) => ({
         ...unchanged,
+        thread: withRoom(
+          thread,
+          { ...room, waiting: [...(room.waiting ?? []), itemId].slice(-WAITING_LIMIT) },
+          now,
+        ),
         items: [
           newRoomMessage({
             thread,
@@ -368,6 +404,7 @@ export function decideServerRoomAction(
       if (item.deletedAt !== undefined) return Result.succeed(unchanged);
       return Result.succeed({
         ...unchanged,
+        thread: withoutWaiting(thread, item.id, now),
         items: [deletedItem(item, now)],
         releasedAttachmentIds: filesReleasedByDelete(item),
       });
@@ -407,6 +444,8 @@ function roomMessageAgentText(item: RoomMessageItem, sentBy: RoomAuthor): string
 
 export interface RoomSend {
   readonly item: RoomMessageItem;
+  /** The thread once the message no longer waits on the owner, or null. */
+  readonly thread: OrchestrationV2AppThread | null;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly context: OrchestrationMessageContext;
@@ -443,6 +482,7 @@ export function decideRoomMessageSend(input: {
   const startedAt = item.startedAt ?? item.updatedAt;
   return Result.succeed({
     item: updated,
+    thread: withoutWaiting(input.thread, item.id, now),
     text: roomMessageAgentText(item, sentBy),
     attachments: item.attachments ?? [],
     context: {

@@ -65,6 +65,7 @@ import {
 import { guestThreadModel } from "../../guest/guestView.ts";
 import * as CommandOutputHub from "../../orchestration-v2/CommandOutputHub.ts";
 import * as Orchestrator from "../../orchestration-v2/Orchestrator.ts";
+import * as ThreadManagement from "../../orchestration-v2/ThreadManagementService.ts";
 import { coalesceThreadLiveStream } from "../../orchestration-v2/ThreadLiveEventCoalescer.ts";
 import { buildBoundedThreadStreamSnapshot } from "../../orchestration-v2/ThreadStream.ts";
 import {
@@ -249,6 +250,7 @@ const threadOf = (event: OrchestrationV2DomainEvent): OrchestrationV2AppThread |
 
 const make = Effect.gen(function* () {
   const orchestrator = yield* Orchestrator.OrchestratorV2;
+  const threads = yield* ThreadManagement.ThreadManagementService;
   const commandOutputs = yield* CommandOutputHub.CommandOutputHub;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -326,10 +328,11 @@ const make = Effect.gen(function* () {
     return { thread, room, participant } satisfies RoomSession;
   });
 
+  // Through thread management, so a guest's send passes the same provider checks as the owner's.
   const dispatchForGuest = (
     command: Parameters<Orchestrator.OrchestratorV2["Service"]["dispatch"]>[0],
   ) =>
-    orchestrator.dispatch(command).pipe(
+    threads.dispatch(command).pipe(
       Effect.mapError(
         (error) =>
           new RoomAccessError({
@@ -650,13 +653,10 @@ const make = Effect.gen(function* () {
       })
       .pipe(Effect.mapError(() => new RoomAccessError({ reason: "closed" })));
     const providers = yield* providerRegistry.getProviders;
+    // Expiry ends the stream below; views only follow the room's membership and roles.
+    const openedAt = yield* DateTime.now;
     const viewOf = (current: OrchestrationV2AppThread): RoomStreamEvent | null => {
-      const view = roomGuestView(
-        current,
-        participant.id,
-        onlineOf(thread.id),
-        DateTime.nowUnsafe(),
-      );
+      const view = roomGuestView(current, participant.id, onlineOf(thread.id), openedAt);
       return view === null
         ? null
         : { type: "view", view, model: guestThreadModel(current.modelSelection, providers) };

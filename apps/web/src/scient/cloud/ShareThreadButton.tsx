@@ -36,7 +36,7 @@ export function ShareThreadButton({ threadRef }: { threadRef: ScopedThreadRef })
         </MenuItem>
         <MenuItem onClick={() => openGuestShareDialog(threadRef)}>
           <UserPlusIcon aria-hidden />
-          Invite a guest…
+          Invite people…
         </MenuItem>
       </MenuPopup>
     </Menu>

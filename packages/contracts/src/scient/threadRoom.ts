@@ -36,6 +36,7 @@ export const ROOM_MESSAGE_MAX_LENGTH = GUEST_MESSAGE_MAX_LENGTH;
 export const ROOM_MESSAGE_MAX_ATTACHMENTS = GUEST_MESSAGE_MAX_ATTACHMENTS;
 export const ROOM_MESSAGE_MAX_ATTACHMENT_BYTES = GUEST_MESSAGE_MAX_ATTACHMENT_BYTES;
 export const ROOM_REPLY_EXCERPT_MAX_LENGTH = 200;
+const ROOM_WAITING_LIMIT = 50;
 
 /** Watch reads; Discuss also talks to people; Agent also talks to the agent. */
 export const RoomRole = Schema.Literals(["watch", "discuss", "agent"]);
@@ -67,8 +68,14 @@ export const ThreadRoom = Schema.Struct({
   host: TrimmedNonEmptyString,
   createdAt: IsoDateTime,
   participants: Schema.Array(RoomParticipant).check(Schema.isMaxLength(ROOM_PARTICIPANT_LIMIT)),
+  /** Guests' messages since the owner last looked, newest last; they count as waiting on the owner. */
+  waiting: Schema.optional(Schema.Array(TurnItemId).check(Schema.isMaxLength(ROOM_WAITING_LIMIT))),
 });
 export type ThreadRoom = typeof ThreadRoom.Type;
+
+/** How many guest messages a room waits on the owner for, as the sidebar counts them. */
+export const roomWaitingCount = (room: ThreadRoom | null | undefined): number =>
+  room?.waiting?.length ?? 0;
 
 export const RoomAuthor = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("owner") }),

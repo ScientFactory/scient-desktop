@@ -215,6 +215,7 @@ import {
   guestDirectSend,
   roleCanUseAgent,
   ROOM_FAILURE,
+  roomAfterVisit,
   roomAnchorRunOrdinal,
   roomItemAfterCancelledSend,
   roomMessageItemId,
@@ -4246,6 +4247,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       payload: {
         lastVisitedAt: movesForward ? visitedAt.value : thread.lastVisitedAt,
         ...(opens ? { opens } : {}),
+        // SCIENT-FORK: opening the thread is seeing what people wrote in its room.
+        ...(thread.room == null ? {} : { room: roomAfterVisit(thread) }),
       },
     });
   });
@@ -4520,7 +4523,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     const event = emit(events, command);
     if (decided.success.thread !== null) {
       yield* event({
-        type: "thread.metadata-updated",
+        // Not a metadata change: no relay publication or pull request refresh.
+        type: "thread.guest-share-updated",
         threadId: command.threadId,
         providerInstanceId: thread.providerInstanceId,
         occurredAt: now,
@@ -4610,6 +4614,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
     if (Result.isFailure(decided)) return yield* roomDispatchError(command, decided.failure);
     // Emitted before the message so the send and the record commit together.
+    if (decided.success.thread !== null) {
+      yield* emit(
+        events,
+        command,
+      )({
+        // Not a metadata change: no relay publication or pull request refresh.
+        type: "thread.guest-share-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: decided.success.thread,
+      });
+    }
     yield* emit(
       events,
       command,
@@ -12635,7 +12652,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     }
     // The agent text and the shown text of a guest message must stay the guest's words.
-    if (queuedMessage.context?.guest !== undefined) {
+    // SCIENT-FORK: so must a message sent from a room, whose shown words are the post's.
+    if (queuedMessage.context?.guest !== undefined || queuedMessage.context?.room !== undefined) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
@@ -17316,6 +17334,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ),
       );
     }
+    // SCIENT-FORK: a guest's send to the agent keeps its place among messages the same way.
+    if (command.type === "thread.room.guest-dispatch")
+      return yield* messageIntake.withLock(command.threadId, dispatch);
     // Answering a message-mode question can also start a follow-up.
     return yield* command.type === "runtime-request.respond"
       ? withSubagentParentLock(command.threadId, dispatch)
