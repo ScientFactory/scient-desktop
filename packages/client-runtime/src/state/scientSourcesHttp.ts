@@ -283,33 +283,19 @@ export const refreshEnvironmentScientSourceMetadata = Effect.fn(
 
 export const updateEnvironmentScientSourceNote = Effect.fn(
   "clientRuntime.state.updateEnvironmentScientSourceNote",
-)(function* (input: {
-  readonly prepared: PreparedConnection;
-  readonly root: ScientSourceNoteUpdateRequest["root"];
-  readonly sourceId: ScientSourceNoteUpdateRequest["sourceId"];
-  readonly expectedRevision: ScientSourceNoteUpdateRequest["expectedRevision"];
-  readonly note: ScientSourceNoteUpdateRequest["note"];
-}) {
+)(function* (input: { readonly prepared: PreparedConnection } & ScientSourceNoteUpdateRequest) {
   const signer = yield* Effect.serviceOption(ManagedRelayDpopSigner);
   const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+  const { prepared, ...payload } = input;
   return yield* executeAuthenticatedEnvironmentHttpRequest({
-    prepared: input.prepared,
+    prepared,
     signer,
     remoteAuthorization,
     method: "POST",
     url: (urls) => urls.updateNote(),
     timeoutMs: REQUEST_TIMEOUT_MS,
     group: "scientSources",
-    request: ({ client, headers }) =>
-      client.updateNote({
-        headers,
-        payload: {
-          root: input.root,
-          sourceId: input.sourceId,
-          expectedRevision: input.expectedRevision,
-          note: input.note,
-        },
-      }),
+    request: ({ client, headers }) => client.updateNote({ headers, payload }),
   });
 });
 

@@ -98,7 +98,6 @@ function useSourceNoteState(input: {
   const confirmedRef = useRef(confirmed);
   const mountedRef = useRef(true);
   const savingRef = useRef(false);
-  const saveAgainRef = useRef(false);
   const conflictRef = useRef(false);
   const onSaveRef = useRef(input.onSave);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- keeps onSaveRef holding the latest save callback
@@ -111,13 +110,15 @@ function useSourceNoteState(input: {
     recordRef.current = input.record;
     const remote = noteText(input.record, field);
     if (remote === draftRef.current) {
+      conflictRef.current = false;
+      setSavedElsewhere(null);
       confirmedRef.current = remote;
       setConfirmed(remote);
       setStatus("saved");
       setError(null);
       return;
     }
-    if (draftRef.current === confirmedRef.current) {
+    if (!conflictRef.current && draftRef.current === confirmedRef.current) {
       draftRef.current = remote;
       confirmedRef.current = remote;
       setDraft(remote);
@@ -128,10 +129,7 @@ function useSourceNoteState(input: {
   }, [input.record, field]);
 
   const persist = useStableCallback(async function persistNote() {
-    if (savingRef.current) {
-      saveAgainRef.current = true;
-      return;
-    }
+    if (savingRef.current || conflictRef.current) return;
     const submitted = draftRef.current;
     if (submitted === confirmedRef.current) return;
 
@@ -150,7 +148,7 @@ function useSourceNoteState(input: {
       });
       recordRef.current = result.record;
       const remote = noteText(result.record, field);
-      if (result.outcome === "stale" && remote !== confirmedRef.current && remote !== submitted) {
+      if (remote.trim() !== submitted.trim()) {
         conflictRef.current = true;
         if (mountedRef.current) {
           setStatus("conflict");
@@ -161,11 +159,14 @@ function useSourceNoteState(input: {
       }
 
       confirmedRef.current = remote;
+      const draftUnchanged = draftRef.current === submitted;
+      if (draftUnchanged) draftRef.current = remote;
       if (mountedRef.current) {
         setConfirmed(remote);
+        if (draftUnchanged) setDraft(remote);
         setStatus(draftRef.current === remote ? "saved" : "pending");
       }
-      continueSaving = true;
+      continueSaving = !draftUnchanged;
     })()
       .catch(async () => {
         if (mountedRef.current) {
@@ -175,12 +176,7 @@ function useSourceNoteState(input: {
       })
       .finally(() => {
         savingRef.current = false;
-        if (
-          continueSaving &&
-          !conflictRef.current &&
-          (saveAgainRef.current || draftRef.current !== confirmedRef.current)
-        ) {
-          saveAgainRef.current = false;
+        if (continueSaving && !conflictRef.current && draftRef.current !== confirmedRef.current) {
           void persistNote();
         }
       });
@@ -203,11 +199,12 @@ function useSourceNoteState(input: {
   }, [persist]);
 
   const change = (value: string) => {
-    conflictRef.current = false;
     draftRef.current = value;
     setDraft(value);
-    setStatus(value === confirmedRef.current ? "saved" : "pending");
-    setError(null);
+    if (!conflictRef.current) {
+      setStatus(value === confirmedRef.current ? "saved" : "pending");
+      setError(null);
+    }
   };
 
   /** After a conflict: save this editor's text over the note saved elsewhere, now that it was seen. */
@@ -216,6 +213,7 @@ function useSourceNoteState(input: {
     confirmedRef.current = savedElsewhere;
     setConfirmed(savedElsewhere);
     setSavedElsewhere(null);
+    conflictRef.current = false;
     change(draftRef.current);
     void persist();
   };

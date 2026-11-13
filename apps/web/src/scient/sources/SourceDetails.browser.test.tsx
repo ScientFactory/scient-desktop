@@ -3,7 +3,8 @@ import type { ScientSourceDetailResult } from "@t3tools/contracts";
 import { expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 
-import { render } from "../../../test/render";
+import { fakeTimers, render } from "../../../test/render";
+import { advanceTestClock } from "../../../test/testClock";
 import { SourceDetails } from "./SourceDetails";
 
 vi.mock("@scientfactory/scient-citations", () => ({ formatSourceReference: () => "Reference" }));
@@ -70,65 +71,91 @@ it("saves My note against the library record's revision, apart from this project
   expect(saveProjectNote).not.toHaveBeenCalled();
 });
 
-it("keeps both texts when this project's note changed elsewhere, and saves mine only when asked", async () => {
-  const saveProjectNote = vi
-    .fn<
-      (
-        note: string | null,
-        expectedRevision: number,
-        context: { readonly base: string | null; readonly session: string },
-      ) => Promise<{ outcome: "stale" | "updated"; record: ScientSourceDetailResult }>
-    >()
-    .mockResolvedValueOnce({
-      outcome: "stale",
-      record: {
-        ...record,
-        note: "Changed in another window",
-        projectNote: "Changed in another window",
-      },
-    })
-    .mockImplementation(async (note) => ({
-      outcome: "updated",
-      record: { ...record, ...(note ? { note } : {}), projectNote: note },
-    }));
-  await using _screen = await render(
-    <SourceDetails
-      record={record}
-      diagnostics={[]}
-      library={{
-        canSavePersonalNote: false,
-        onSavePersonalNote: async () => ({ outcome: "unchanged", record }),
-      }}
-      onBack={() => undefined}
-      onEdit={() => undefined}
-      onSaveNote={saveProjectNote}
-      onRefreshMetadata={async () => undefined}
-      onRemove={async () => undefined}
-      onOpenPdf={() => undefined}
-    />,
+it("Keep mine saves the draft against the displayed conflict once, including normalized whitespace", async ({
+  signal,
+}) => {
+  await using resources = new AsyncDisposableStack();
+  const clock = fakeTimers();
+  resources.defer(() => clock[Symbol.dispose]());
+  let stored = "Changed in another window";
+  let requests = 0;
+  const saveProjectNote = vi.fn(
+    async (
+      note: string | null,
+      _revision: number,
+      context: { base: string | null; session: string },
+    ) => {
+      requests += 1;
+      if (requests > 4) throw new Error("Unbounded note saves");
+      const outcome = context.base === stored ? ("updated" as const) : ("stale" as const);
+      if (outcome === "updated") stored = note?.trim() ?? "";
+      return { outcome, record: { ...record, note: stored, projectNote: stored } };
+    },
   );
-
-  await userEvent.click(page.getByRole("button", { name: "Edit note for this project" }));
-  await userEvent.keyboard(", mine");
-  await userEvent.tab();
-
-  await expect.element(page.getByText("Saved elsewhere")).toBeVisible();
-  await expect.element(page.getByText("Changed in another window")).toBeVisible();
-  expect(saveProjectNote).toHaveBeenLastCalledWith(
-    "Why I cite this here, mine",
-    7,
-    expect.objectContaining({ base: "Why I cite this here" }),
-  );
-
-  await userEvent.click(page.getByRole("button", { name: "Keep mine" }));
-  await vi.waitFor(() =>
-    expect(saveProjectNote).toHaveBeenLastCalledWith(
-      "Why I cite this here, mine",
-      7,
-      expect.objectContaining({ base: "Changed in another window" }),
+  const screen = resources.use(
+    await render(
+      <SourceDetails
+        record={record}
+        diagnostics={[]}
+        library={{
+          canSavePersonalNote: false,
+          onSavePersonalNote: async () => ({ outcome: "unchanged", record }),
+        }}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onSaveNote={saveProjectNote}
+        onRefreshMetadata={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
     ),
   );
-  await expect.element(page.getByText("Saved elsewhere")).not.toBeInTheDocument();
+  await userEvent.click(page.getByRole("button", { name: "Edit note for this project" }));
+  await userEvent.keyboard(", mine ");
+  await userEvent.tab();
+  await expect.element(page.getByText("Saved elsewhere")).toBeVisible();
+  expect(stored).toBe("Changed in another window");
+  await userEvent.click(page.getByRole("button", { name: "Keep mine" }));
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Saved");
+  expect(stored).toBe("Why I cite this here, mine");
+  expect(saveProjectNote.mock.calls[1]?.[2].base).toBe("Changed in another window");
+  await advanceTestClock(signal, 5_000);
+  expect(saveProjectNote).toHaveBeenCalledTimes(2);
+});
+
+it("Keep mine shows a second refused write without retrying it", async ({ signal }) => {
+  await using resources = new AsyncDisposableStack();
+  const clock = fakeTimers();
+  resources.defer(() => clock[Symbol.dispose]());
+  const remote = "Changed in another window";
+  let requests = 0;
+  const saveProjectNote = vi.fn(async () => {
+    requests += 1;
+    if (requests > 4) throw new Error("Unbounded refused saves");
+    return { outcome: "stale" as const, record: { ...record, note: remote, projectNote: remote } };
+  });
+  resources.use(
+    await render(
+      <SourceDetails
+        record={record}
+        diagnostics={[]}
+        onBack={() => undefined}
+        onEdit={() => undefined}
+        onSaveNote={saveProjectNote}
+        onRefreshMetadata={async () => undefined}
+        onRemove={async () => undefined}
+        onOpenPdf={() => undefined}
+      />,
+    ),
+  );
+  await userEvent.click(page.getByRole("button", { name: "Edit source note" }));
+  await userEvent.keyboard(", mine");
+  await userEvent.tab();
+  await expect.element(page.getByText("Saved elsewhere")).toBeVisible();
+  await userEvent.click(page.getByRole("button", { name: "Keep mine" }));
+  await expect.element(page.getByText("Saved elsewhere")).toBeVisible();
+  await advanceTestClock(signal, 5_000);
+  expect(saveProjectNote).toHaveBeenCalledTimes(2);
 });
 
 it("saves a restored earlier version as its own checkpoint, apart from this editor's autosave", async () => {
