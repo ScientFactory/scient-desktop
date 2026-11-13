@@ -15,6 +15,8 @@ import { sourcesCommands, useCanRunSourcesCommand } from "./sourcesCommands";
 
 const ASK_AGAIN_MS = 1_000;
 const ASK_AFTER_FAILURE_MS = 5_000;
+// Every project not moved yet waits until its first change or the background pass.
+const ASK_WHILE_WAITING_MS = 10_000;
 // A move back with a lost answer may still be waiting for its turn: two minutes of checks.
 const UNCONFIRMED_CHECKS = 24;
 
@@ -34,8 +36,8 @@ const oneCheckLess = <A extends { readonly checksLeft: number }>(pending: A): A 
 
 /**
  * The project's move into the personal Library. Asked only on a server that keeps one: when the
- * panel opens, after each Library change, about once a second while the move waits or runs, and
- * every few seconds after a read that failed.
+ * panel opens, after each Library change, about once a second while the move runs, every ten
+ * seconds while it waits, and every few seconds after a read that failed.
  */
 export function useLibraryMoveStatus(input: {
   readonly environmentId: EnvironmentId;
@@ -103,12 +105,15 @@ export function useLibraryMoveStatus(input: {
   useEffect(() => {
     if (!tracked) return;
     const answered = reading?.context === context ? reading : null;
+    const shown = answered?.status ?? null;
     const wait =
-      movingBack || libraryMoveRunning(answered?.status ?? null)
+      movingBack || (libraryMoveRunning(shown) && shown?.state !== "waiting")
         ? ASK_AGAIN_MS
         : answered?.failed || backUnconfirmed
           ? ASK_AFTER_FAILURE_MS
-          : null;
+          : shown?.state === "waiting"
+            ? ASK_WHILE_WAITING_MS
+            : null;
     if (wait === null) return;
     const timer = window.setTimeout(() => setAsks((value) => value + 1), wait);
     return () => window.clearTimeout(timer);

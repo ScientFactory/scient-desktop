@@ -15,6 +15,7 @@ import * as Effect from "effect/Effect";
 
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
 import { WorkspaceBindingResolver } from "../../../scient/projectScope/WorkspaceBindingResolver.ts";
+import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
 import {
   workspaceResolverForTest,
   workspaceScopeForTest,
@@ -115,6 +116,7 @@ const provide = <A, E, R>(effect: Effect.Effect<A, E, R>, root: string) => {
       assertCurrentThreadScope: () =>
         resolveThread().pipe(Effect.map((resolved) => resolved.binding)),
     }),
+    Effect.provideService(ScientSourcesBackend, "project"),
   );
 };
 

@@ -15,6 +15,7 @@ import { AgentInvocationContext } from "../operations/AgentInvocationContext.ts"
 import { userRunInvocation } from "../accounts/checkAccounts.ts";
 import { ThreadId } from "@t3tools/contracts";
 import type * as PaperQueue from "./paperQueue.ts";
+import { ScientSourcesBackend } from "../sources/SourcesBackend.ts";
 
 const asked = vi.hoisted(() => ({ requests: [] as Array<unknown> }));
 
@@ -131,6 +132,7 @@ it.effect("attaches to a named source at its current revision, or says it is mis
           AgentInvocationContext,
           invocationWith(["accounts", "sources:write"]),
         ),
+        Effect.provideService(ScientSourcesBackend, "project"),
       );
     expect(yield* ask(record!.sourceId)).toEqual({
       asked: { doi: "10.1/x", source: { sourceId: record!.sourceId, expectedRevision: 1 } },

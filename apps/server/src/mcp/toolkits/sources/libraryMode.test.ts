@@ -146,9 +146,7 @@ const run = <A, E, R>(
     // The library backend reads only the state folder from the server configuration.
     Effect.provideService(ServerConfig, { stateDir: fixture.stateDir } as ServerConfig["Service"]),
   );
-  return options.backend === "project"
-    ? provided
-    : provided.pipe(Effect.provideService(ScientSourcesBackend, "library"));
+  return provided.pipe(Effect.provideService(ScientSourcesBackend, options.backend ?? "library"));
 };
 
 function candidate(

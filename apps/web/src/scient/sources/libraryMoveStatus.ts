@@ -22,7 +22,7 @@ interface LibraryMoveLine {
 
 const RUNNING = new Set<ScientSourcesMoveStatus["state"]>(["waiting", "moving", "restoring"]);
 
-/** While the move waits or runs, the status is asked again about once a second. */
+/** While the move waits or runs, the status is asked again. */
 export function libraryMoveRunning(status: ScientSourcesMoveStatus | null): boolean {
   return status !== null && RUNNING.has(status.state);
 }

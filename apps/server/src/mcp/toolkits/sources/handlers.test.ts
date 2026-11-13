@@ -36,6 +36,7 @@ import {
 } from "../../../scient/sources/SourceIdentifierResolver.ts";
 import * as MetadataHttp from "../../../scient/sources/metadataHttp.ts";
 import { SourceIdentifierBatchLookup } from "../../../scient/sources/SourceIdentifierAdd.ts";
+import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
 import {
   getScientSourceForInvocation,
   listScientSourcesForInvocation,
@@ -283,6 +284,7 @@ const provideContext = <A, E, R>(
   effect.pipe(
     Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
     Effect.provideService(WorkspaceBindingResolver, input.query),
+    Effect.provideService(ScientSourcesBackend, "project"),
     Effect.provideService(SourceIdentifierLookup, input.lookup ?? offlineLookup),
   );
 

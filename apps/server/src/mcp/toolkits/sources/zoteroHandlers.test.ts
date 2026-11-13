@@ -17,6 +17,7 @@ import {
 } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { fakeZoteroTransport, zoteroItem } from "../../../scient/sources/Zotero.testkit.ts";
 import { ZoteroTransports, type ZoteroAccess } from "../../../scient/sources/ZoteroConnections.ts";
+import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
 import {
   browseZoteroForInvocation,
   importZoteroForInvocation,
@@ -73,6 +74,7 @@ function inProject(root: string, transports: Omit<ZoteroAccess, "webKey">) {
       ),
       Effect.provideService(WorkspaceBindingResolver, resolver),
       Effect.provideService(ZoteroTransports, transports),
+      Effect.provideService(ScientSourcesBackend, "project"),
     );
 }
 

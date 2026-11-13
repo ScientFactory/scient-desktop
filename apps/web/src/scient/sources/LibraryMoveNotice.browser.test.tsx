@@ -157,6 +157,22 @@ describe("the Library's move line", () => {
     expect(mocks.readLibraryMoveStatus).toHaveBeenCalledTimes(3);
   });
 
+  it("asks every ten seconds while the move waits", async ({ signal }) => {
+    await using resources = new AsyncDisposableStack();
+    const clock = fakeTimers();
+    resources.defer(() => clock[Symbol.dispose]());
+    setup([{ state: "waiting" }, { state: "moving", progress: null }]);
+    const screen = resources.use(await render(<Harness libraryBackend />, { router: false }));
+
+    await expect
+      .element(screen.getByText("The Library is waiting to move out of this project."))
+      .toBeVisible();
+    await advanceTestClock(signal, 9_000);
+    expect(mocks.readLibraryMoveStatus).toHaveBeenCalledTimes(1);
+    await advanceTestClock(signal, 1_000);
+    await expect.element(screen.getByText("Moving the Library out of this project.")).toBeVisible();
+  });
+
   it("stops asking when the panel closes", async ({ signal }) => {
     await using resources = new AsyncDisposableStack();
     const clock = fakeTimers();

@@ -45,15 +45,15 @@ const sourcesToolBytes = (backend: ScientSourcesBackendKind) =>
     ),
   );
 
-// The switch (5e) moves this number into agentContextBudget.scient.json; the same tools are
-// swapped one for one, so the whole list grows by exactly the Sources tools' difference.
-it.effect("measures the tool list the library backend advertises", () =>
+// The budget file holds the library backend's list; the project backend swaps the same tools one
+// for one, so its whole list differs by exactly the Sources tools' difference.
+it.effect("measures the tool list each backend advertises", () =>
   Effect.gen(function* () {
     const project = yield* sourcesToolBytes("project");
     const library = yield* sourcesToolBytes("library");
     expect({
       mcpToolListJsonBytes: budget.mcpToolListJsonBytes,
-      libraryMcpToolListJsonBytes: budget.mcpToolListJsonBytes - project + library,
-    }).toEqual({ mcpToolListJsonBytes: 110_848, libraryMcpToolListJsonBytes: 112_832 });
+      projectMcpToolListJsonBytes: budget.mcpToolListJsonBytes - library + project,
+    }).toEqual({ mcpToolListJsonBytes: 112_832, projectMcpToolListJsonBytes: 110_848 });
   }),
 );

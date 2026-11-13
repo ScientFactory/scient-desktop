@@ -163,6 +163,7 @@ const withServices = <A, E>(
         ),
       );
     return yield* test(settled).pipe(
+      Effect.provideService(ScientSourcesBackend, "project"),
       Effect.provideService(AccountsService, {
         ...fakeAccounts().service,
         setPaperQueue: (summary) => Queue.offer(announced, summary).pipe(Effect.asVoid),

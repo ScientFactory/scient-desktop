@@ -12,8 +12,10 @@ import {
   textPdf,
   writeProjectFile,
 } from "./annotationTestUtils.ts";
+import { ScientSourcesBackend } from "../sources/SourcesBackend.ts";
 import { layer, ScientAnnotations } from "./ScientAnnotations.ts";
 
+const onProjectBackend = Effect.provideService(ScientSourcesBackend, "project");
 const project = Effect.acquireDisposable(Effect.promise(temporaryProject));
 const write = (root: string, relativePath: string, pages: ReadonlyArray<ReadonlyArray<string>>) =>
   Effect.promise(() => writeProjectFile(root, relativePath, textPdf(pages)));
@@ -79,7 +81,7 @@ describe("ScientAnnotations", () => {
       expect(copy.status === "available" && copy.annotations.map((a) => a.annotationId)).toEqual([
         "ann_reader0001",
       ]);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+    }).pipe(Effect.scoped, Effect.provide(layer), onProjectBackend),
   );
 
   it.effect("reports a folder that is not a Scient project as unavailable", () =>
@@ -91,7 +93,7 @@ describe("ScientAnnotations", () => {
         relativePath: "x.pdf",
       });
       expect(result).toEqual({ status: "unavailable" });
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+    }).pipe(Effect.scoped, Effect.provide(layer), onProjectBackend),
   );
 
   it.effect("lets an agent highlight a Source's PDF by quote, then remove and restore it", () =>
@@ -167,7 +169,7 @@ describe("ScientAnnotations", () => {
       });
       expect(restored.result).toMatchObject({ outcome: "restored", annotation: { revision: 3 } });
       expect(restored.history.map((entry) => entry.revision)).toEqual([1, 2]);
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+    }).pipe(Effect.scoped, Effect.provide(layer), onProjectBackend),
   );
 
   it.effect("tells an agent when a quote is missing or repeated", () =>
@@ -188,6 +190,6 @@ describe("ScientAnnotations", () => {
       expect(yield* annotate("p < 0.05")).toEqual({ outcome: "quote-ambiguous", pages: [1, 2] });
       expect((yield* annotate("p < 0.05", 2)).outcome).toBe("created");
       expect(yield* annotate("not in this paper")).toEqual({ outcome: "quote-not-found" });
-    }).pipe(Effect.scoped, Effect.provide(layer)),
+    }).pipe(Effect.scoped, Effect.provide(layer), onProjectBackend),
   );
 });

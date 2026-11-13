@@ -22,6 +22,7 @@ import {
 } from "../../../scient/projectScope/WorkspaceBindingTestUtils.ts";
 import { dispatchScientOperation } from "../../../scient/operations/AgentOperationDispatcher.ts";
 import * as AgentInvocationContext from "../../../scient/operations/AgentInvocationContext.ts";
+import { ScientSourcesBackend } from "../../../scient/sources/SourcesBackend.ts";
 import {
   SourceIdentifierLookup,
   verifiableSourceIdentifier,
@@ -186,6 +187,7 @@ const provideContext = <A, E, R>(
   effect.pipe(
     Effect.provideService(AgentInvocationContext.AgentInvocationContext, input.invocation),
     Effect.provideService(WorkspaceBindingResolver, input.query),
+    Effect.provideService(ScientSourcesBackend, "project"),
     Effect.provideService(SourceIdentifierLookup, offlineLookup),
   );
 

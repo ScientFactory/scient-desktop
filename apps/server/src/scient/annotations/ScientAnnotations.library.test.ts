@@ -175,7 +175,9 @@ describe("annotations on the library backend", () => {
       const { root, sourceId, sourcePdfPath, material } = project;
       const annotations = yield* ScientAnnotations;
       const libraryFolder = NodePath.join(project.stateDir, "scient", "library");
-      const own = yield* annotations.forDocument({ root, relativePath: "notes/own.pdf" });
+      const own = yield* annotations
+        .forDocument({ root, relativePath: "notes/own.pdf" })
+        .pipe(on("project", project));
       if (own.status !== "available") throw new Error("Expected the project PDF to open");
 
       // Before the move, on today's backend.

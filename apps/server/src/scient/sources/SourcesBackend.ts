@@ -24,8 +24,8 @@ import { moveProjectIntoLibrary } from "./LibraryMove.ts";
 
 export type ScientSourcesBackendKind = "project" | "library";
 
-/** The Sources backend this build runs. Only the switch (5e) changes it; no setting reaches it. */
-const SCIENT_SOURCES_BACKEND: ScientSourcesBackendKind = "project";
+/** The Sources backend this build runs; no setting reaches it. "project" keeps every store in its project folder. */
+const SCIENT_SOURCES_BACKEND: ScientSourcesBackendKind = "library";
 
 /** Tests select the library through this reference; production code only reads its default. */
 export const ScientSourcesBackend = Context.Reference<ScientSourcesBackendKind>(
